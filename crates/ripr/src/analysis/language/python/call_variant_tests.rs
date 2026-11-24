@@ -1,7 +1,9 @@
 //! Tests for the strip-side and `round`-digits gate (#16203): the edit is
 //! discriminated only by an argument the two versions treat differently.
 
-use super::call_variant::{CallVariant, call_variant, elements_agree, variant_agrees};
+use super::call_variant::{
+    CallVariant, call_variant, elements_agree, round_half_even, variant_agrees,
+};
 use super::classify::{PythonNoBehaviorContext, classify_change_with_context};
 use super::owners_tests::{extract_owners, extract_tests};
 use super::reexport_tests::{unique_tempdir, write_file};
@@ -352,7 +354,66 @@ fn agreement_follows_python_strip_and_round() {
     };
     assert_eq!(variant_agrees(&unreachable, "1.5"), None);
     assert_eq!(variant_agrees(&round, "\"1.5\""), None);
-    assert_eq!(variant_agrees(&round, "1e3"), None);
+    // Scientific notation is the same digits at another scale.
+    assert_eq!(variant_agrees(&round, "1e3"), Some(true));
+    assert_eq!(variant_agrees(&round, "1.5E3"), Some(true));
+    assert_eq!(variant_agrees(&round, "1.25e1"), Some(true));
+    assert_eq!(variant_agrees(&round, "1.25e-1"), Some(false));
+    assert_eq!(variant_agrees(&round, "1e+3"), Some(true));
+    assert_eq!(variant_agrees(&coarse, "2.5e-5"), Some(true));
+    assert_eq!(variant_agrees(&round, "1e400"), None);
+    assert_eq!(variant_agrees(&round, "1e5x"), None);
+    assert_eq!(variant_agrees(&round, "1e"), None);
+}
+
+#[test]
+fn an_exact_tie_rounds_to_the_even_digit() {
+    // A tie the binary value holds exactly: Python rounds 2.5 to 2 and 3.5
+    // to 4, 0.125 to 0.12 and 0.375 to 0.38. A digit after the tie rounds up.
+    assert_eq!(round_half_even(&[2, 5], 1, 0), (vec![2], 0));
+    assert_eq!(round_half_even(&[3, 5], 1, 0), (vec![4], 0));
+    assert_eq!(round_half_even(&[1, 2, 5], 3, 2), (vec![1, 2], -2));
+    assert_eq!(round_half_even(&[3, 7, 5], 3, 2), (vec![3, 8], -2));
+    assert_eq!(round_half_even(&[2, 5, 1], 2, 0), (vec![3], 0));
+}
+
+#[test]
+fn a_module_that_defines_round_is_not_read_as_the_builtin() -> Result<(), String> {
+    // A local `round` is another call: `money(1.5)` returns `3.5` and `4.5`,
+    // so the assertion discriminates and the gate must not model the builtin
+    // (#16221 review).
+    let source = "def round(x, digits):
+    return x + digits
+
+
+def money(x):
+    return round(x, 2)
+";
+    let finding = classify_source(
+        source,
+        6,
+        "    return round(x, 2)",
+        "    return round(x, 3)",
+        "from src.text import money
+
+
+def test_money():
+    assert money(1.5) == 3.5
+",
+    )?;
+    assert_eq!(finding.class, ExposureClass::Exposed);
+    Ok(())
+}
+
+#[test]
+fn a_number_in_scientific_notation_is_read_like_its_digits() -> Result<(), String> {
+    // `round(1.0001e3, 2)` and `round(1.0001e3, 3)` both return `1000.1`, so
+    // the exact assertion passes either way (#16221 review).
+    let finding = classify_money(
+        "from src.text import money\n\n\ndef test_money():\n    assert money(1.0001e3) == 1000.1\n",
+    )?;
+    assert_eq!(finding.class, ExposureClass::WeaklyExposed);
+    Ok(())
 }
 
 #[test]

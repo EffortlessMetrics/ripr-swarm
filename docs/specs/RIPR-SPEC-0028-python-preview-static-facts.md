@@ -2204,12 +2204,14 @@ flips the literal `reverse` flag alone on one `sorted(<parameter>)` or
 `<parameter>.sort()` call with no other argument (#16203), changes the result
 only for a string with whitespace on a side one version keeps, a number the
 two counts round differently (read as exact decimal half-to-even rounding
-within 15 significant digits, spellings of 48 digits and counts within ±20;
-the binary rounding of a `float` is not simulated), or a collection holding
-two different elements, where two scalars agree only as Python compares them:
-above `2^53` a float spelling is the nearest representable double, so
-`9007199254740993` and `9007199254740993.0` are unequal while
-`9007199254740994.0` is exact. The parameter must be one the body never
+of the spelling, in plain or scientific notation, within 15 significant
+digits, 48 mantissa digits, an exponent within ±400 and counts within ±20;
+the binary rounding of a `float` is not simulated, and a number beyond
+those bounds is not read), or a collection holding two different elements,
+where two scalars agree only as Python compares them: an int spelling is the
+exact number and a float spelling is the nearest representable double, so
+above `2^53` `9007199254740993` and `9007199254740993.0` are unequal while
+`9007199254740992` and `9007199254740993.0` are equal. The parameter must be one the body never
 rebinds; for a sort, the changed line must also be the start of the first
 top-level body statement that names the parameter, and name it once, so the
 sort sees the collection the test passed. A body statement holding a

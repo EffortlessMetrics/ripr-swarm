@@ -4733,6 +4733,8 @@ fixtures = [
   "fixtures/python_strip_side_no_exposed_credit",
   "fixtures/python_round_digits_no_exposed_credit",
   "fixtures/python_sort_direction_no_exposed_credit",
+  "fixtures/python_round_agreeing_input_no_exposed_credit",
+  "fixtures/python_sort_agreeing_list_no_exposed_credit",
   "fixtures/python_truthiness_swap_falsy_input_control",
   "fixtures/python_truthiness_swap_inline_rebind_control",
   "fixtures/python_truthiness_swap_indirect_call_control",
