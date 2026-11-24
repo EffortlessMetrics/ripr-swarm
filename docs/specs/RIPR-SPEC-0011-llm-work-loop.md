@@ -858,7 +858,8 @@ no-start, with the refusal reasons above. When the current change binds such a
 no-path finding to an exact seam and the inventory independently finds no test
 path, both `ripr repair <id>` and `ripr agent repair --seam-id <id> --phase before`
 refuse before writing a workflow or attempt. The inspection card still names
-an admitted proposed test target. Start eligibility is separate from
+an admitted proposed test target. The facade uses the same comparison base
+for selection and Start admission. Start eligibility is separate from
 what check knows about reach: wording and ranking that speak to reach
 (`finding_reads_unreached_or_limited`) still read the unreferenced finding as
 unreached. On a seam the inventory reads as gripped, a reached gap leads it, and

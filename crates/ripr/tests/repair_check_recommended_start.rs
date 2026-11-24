@@ -571,6 +571,41 @@ fn a_called_but_unreached_new_function_refuses_with_the_no_path_reason() -> Resu
     Ok(())
 }
 
+#[test]
+fn an_explicit_base_is_used_by_selection_and_before_phase() -> Result<(), String> {
+    let repo = repo(
+        "loyalty-explicit-base",
+        CALLED_BASE,
+        CALLED_NEW,
+        LOYALTY_TEST,
+        true,
+    )?;
+    let root = &repo.root;
+    let refused = ripr(root, &["repair", "--base", "main"])?;
+    let reason = text(&refused.stderr);
+    assert_eq!(refused.status.code(), Some(3), "{reason}");
+    assert!(reason.contains("no test that reaches"), "{reason}");
+    assert_eq!(attempts(root), 0);
+
+    // This comparison is empty. The automatic selector can choose the
+    // unscoped candidate, and the before phase must use that same base.
+    let started = ripr(root, &["repair", "--base", "HEAD", "--json"])?;
+    assert_eq!(started.status.code(), Some(0), "{}", text(&started.stderr));
+    let packet: serde_json::Value =
+        serde_json::from_slice(&started.stdout).map_err(|error| format!("repair JSON: {error}"))?;
+    let id = packet["repair_attempt"]["attempt_id"]
+        .as_str()
+        .ok_or("missing attempt id")?;
+    let status = ripr(root, &["status", "--attempt", id, "--json"])?;
+    assert_eq!(status.status.code(), Some(0), "{}", text(&status.stderr));
+    let status: serde_json::Value =
+        serde_json::from_slice(&status.stdout).map_err(|error| format!("status JSON: {error}"))?;
+    assert_eq!(status["attempt"]["seam_id"], "b00649b71c24c956", "{status}");
+    assert_eq!(status["attempt"]["state"], "awaiting_edit", "{status}");
+    assert_eq!(attempts(root), 1);
+    Ok(())
+}
+
 /// #12867 / #13203 A0: a seam whose repair target is only a producer-owned
 /// proposed new test file now starts (bare and by id) when the producer names
 /// the workspace, while a seam the producer admits no proposal for (here a

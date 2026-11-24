@@ -2769,6 +2769,7 @@ fn run_agent_repair_phase(
             )?;
             if let Some(reason) = app::task_first::changed_seam_no_path_start_refusal(
                 &before_input.root,
+                base.as_deref(),
                 &before_config,
                 &seam_id,
                 &before_report.classified,
