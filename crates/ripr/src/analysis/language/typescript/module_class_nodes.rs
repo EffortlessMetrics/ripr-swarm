@@ -26,11 +26,12 @@
 //! (`this.name`, `this?.name`, `this.#name`) to a member it declares or a field
 //! it assigns as `this.name = ...`, calls `this.name(...)` only for an instance
 //! method it declares, has no static member or block, and never uses `super`
-//! or `new.target`. A method is a node only when its name is the only
+//! or `new.target`, and every `new Class(...)` in the module is the receiver
+//! of a call to one of its methods. A method is a node only when its name is the only
 //! member of that name in the class (quoted keys included), nothing in the
 //! module assigns a member of that name, and no literal bracket key of that
 //! name (`["name"]`) appears in the module. An instance kept in a variable (`const s = new Class();
-//! s.method()`) is not followed.
+//! s.method()`) refuses the whole class.
 
 use super::class_entries::{executed_this_source, rebinds_this_member, runs_this_method_reference};
 use super::module_value_reads::{never_mutated_in_module, past_type_arguments};
@@ -142,6 +143,12 @@ pub(super) fn module_class<'a>(class: &'a Class<'a>, source: &'a str) -> Option<
     methods.retain(|(name, _)| {
         counts.get(name) == Some(&1) && !other_keys.iter().any(|other| other == name)
     });
+    // A field, accessor or quoted key of the same name replaces the method on
+    // every instance, so `this.name(...)` may call anything.
+    callable.retain(|name: &String| {
+        name.starts_with('#')
+            || (counts.get(name.as_str()) == Some(&1) && !other_keys.contains(name))
+    });
     Some(ModuleClass {
         name: id.name.as_str(),
         decl_start: id.span.start as usize,
@@ -172,6 +179,7 @@ pub(super) fn method_nodes<'s>(
         if !declared_once
             || taken(class.name)
             || !constructs(masked, class.name)
+            || !every_construction_calls_a_method(masked, class.name, &class.callable)
             || !never_mutated_in_module(source, masked, class.name, Some(class.decl_start), None)
             || this_escapes(class.text, &class.members, &class.callable)
         {
@@ -383,7 +391,7 @@ fn is_construction_at(text: &str, idx: usize, name: &str) -> bool {
             })
 }
 
-/// Keys of the methods `calls` runs as `new Class(...).method(`. `scope` is
+/// Keys of the methods `calls` runs synchronously as `new Class(...).method(`. `scope` is
 /// the whole enclosing function: when it mentions the class name in any other
 /// way (a parameter, a local, an alias) the name may be rebound there, so the
 /// class contributes nothing.
@@ -393,7 +401,10 @@ pub(super) fn constructed_method_calls<'n>(
     nodes: &'n [MethodNode<'_>],
 ) -> BTreeSet<&'n str> {
     let mut found = BTreeSet::new();
-    let mut masked: Option<String> = None;
+    // Only code that runs when `calls` runs: a nested function, a deferred or
+    // stored arrow (`const later = () => new C().m()`, `setTimeout(...)`) is
+    // blanked. A body the blanking cannot isolate gives no edge.
+    let mut masked: Option<Option<String>> = None;
     let mut refused: BTreeSet<&str> = BTreeSet::new();
     for node in nodes {
         if refused.contains(node.class) || !calls.contains(node.class) {
@@ -408,7 +419,9 @@ pub(super) fn constructed_method_calls<'n>(
             refused.insert(node.class);
             continue;
         }
-        let code = masked.get_or_insert_with(|| ts_mask_literals_and_comments(calls));
+        let Some(code) = masked.get_or_insert_with(|| executed_body(calls)) else {
+            return found;
+        };
         let called = code.match_indices(node.class).any(|(idx, _)| {
             if !is_construction_at(code, idx, node.class) {
                 return false;
@@ -428,6 +441,54 @@ pub(super) fn constructed_method_calls<'n>(
         }
     }
     found
+}
+
+/// Whether every `new NAME(...)` in `masked` is the direct receiver of a call
+/// to one of the class's own methods, `new NAME(...).method(`. Any other use
+/// hands the instance on, and `Object.getPrototypeOf(new NAME())` or a kept
+/// instance can replace a method on the prototype every later instance uses.
+fn every_construction_calls_a_method(
+    masked: &str,
+    name: &str,
+    callable: &BTreeSet<String>,
+) -> bool {
+    masked.match_indices(name).all(|(idx, _)| {
+        if !is_construction_at(masked, idx, name) {
+            return true;
+        }
+        let rest = past_type_arguments(&masked[idx + name.len()..]);
+        let Some(arguments_end) = balanced_paren_end(rest) else {
+            return false;
+        };
+        let Some(member) = rest[arguments_end..].trim_start().strip_prefix('.') else {
+            return false;
+        };
+        let member = member.trim_start();
+        let method_end = member
+            .find(|ch: char| !is_javascript_identifier_char(ch))
+            .unwrap_or(member.len());
+        callable.contains(&member[..method_end])
+            && past_type_arguments(&member[method_end..]).starts_with('(')
+    })
+}
+
+/// The code of the function `text` that runs when it is called, through
+/// `executed_this_source` on its body alone (its own `function` keyword or
+/// arrow header would read as a nested function). `None` without a block
+/// body (an expression arrow) or when the blanking cannot isolate a scope.
+fn executed_body(text: &str) -> Option<String> {
+    let code = super::tests_extract::byte_preserving_code_mask(text)?;
+    let mut depth = 0usize;
+    let brace = code.char_indices().find_map(|(index, ch)| {
+        match ch {
+            '(' | '[' => depth += 1,
+            ')' | ']' => depth = depth.saturating_sub(1),
+            '{' if depth == 0 => return Some(index),
+            _ => {}
+        }
+        None
+    })?;
+    executed_this_source(&format!("body(){}", text.get(brace..)?))
 }
 
 /// Byte offset just past the `)` that closes the `(` `text` starts with.

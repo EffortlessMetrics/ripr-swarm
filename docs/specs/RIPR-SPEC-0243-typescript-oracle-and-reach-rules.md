@@ -1032,7 +1032,10 @@ Candidates come from the first non-empty tier:
    declaration that is not exported has one node per plain instance method,
    `X.method`, in the same graph under the same hop bound. A function or
    method reaches `X.method` by `new X(...).method(` written as one
-   expression, when every mention of `X` in that function is a construction.
+   expression in code that runs when it runs (not inside a nested function,
+   or an arrow other than a synchronous array callback, such as
+   `const later = () => new X().m()` or `setTimeout(() => ...)`), when every
+   mention of `X` in that function is a construction.
    `X.method` calls what its text bare-calls, the sibling methods it calls
    as `this.other(` (or hands by reference to a synchronous array callback),
    and the methods it runs on a class it constructs the same way. A method
@@ -1046,7 +1049,8 @@ Candidates come from the first non-empty tier:
    other mention refuses the whole class); the class text uses `this` only
    as a plain access `this.name` / `this?.name` / `this.#name` to a member
    the class body declares or a field it assigns as `this.name = ...`, calls
-   `this.name(...)` only for an instance method the class declares (a field
+   `this.name(...)` only for an instance method the class declares and no
+   field, accessor or quoted key shares the name of (a field
    or getter may hold `Object.prototype.valueOf`, which returns the
    instance; any other member must be followed by a separator or operator
    that cannot call it, so `(this.f)()`, `this.f!()`, `this.f<T>()` and a
@@ -1057,16 +1061,19 @@ Candidates come from the first non-empty tier:
    member such as `this.constructor`, `this.__proto__`, `this.valueOf()` or
    `this.__defineGetter__`, a static block's `this.prototype`,
    `super.valueOf()` or `new.target.prototype` refuses every method, since
-   any of them can replace a method on the instance the entry calls; a
-   `this` in a comment, a string or a type position, or a member name spelled
-   with a unicode escape, also refuses the class, since the class text is
-   not masked); a method is a node only when
+   any of them can replace a method on the instance the entry calls; the
+   class text is not masked, so a `this` in a comment, a string or a type
+   position is scanned like code and may refuse the class, and a member name
+   spelled with a unicode escape refuses it); every `new X(...)` in the
+   module is the direct receiver of a call to one of its methods,
+   `new X(...).method(` (a kept, passed or inspected instance, such as
+   `Object.getPrototypeOf(new X())`, refuses the class); a method is a node only when
    no other member of the class has its name (a field, an accessor, a
    static, or a member whose key is the same name quoted, `"write" = ...`),
    it is not a generator, nothing in the module assigns a member of that
    name on any receiver, and no literal bracket key of that name
    (`["write"]`) appears anywhere in the module, even as a read. Limits: an instance kept in a
-   variable (`const s = new X(); s.method()`) is not followed, and neither
+   variable (`const s = new X(); s.method()`) refuses the whole class, and neither
    is a class expression, a static method, an accessor or a constructor body.
    **Cross-module continuation (#13592).** The same chain continues across an
    import: an exported function of module X that bare-calls a binding it
