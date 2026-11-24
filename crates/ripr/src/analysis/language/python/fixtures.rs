@@ -998,9 +998,11 @@ pub(super) fn attach_fixture_defs(
 }
 
 /// Whether `name` is a parameter pytest injects into the fixture whose
-/// definition text is `body_text`: a parameter without a default. pytest
-/// leaves a defaulted parameter (`def client(items_app=other)`) at its
-/// default, so it never requests a fixture of that name.
+/// definition text is `body_text`: a required positional-or-keyword or
+/// keyword-only parameter. pytest's fixture argument reader skips
+/// positional-only parameters, and it leaves a defaulted parameter
+/// (`def client(items_app=other)`) at its default, so neither requests a
+/// fixture of that name.
 fn fixture_injects_parameter(body_text: &str, name: &str) -> bool {
     let Ok(Mod::Module(module)) = parse(body_text, Mode::Module, "<python-fixture-signature>")
     else {
@@ -1011,9 +1013,8 @@ fn fixture_injects_parameter(body_text: &str, name: &str) -> bool {
         Some(Stmt::AsyncFunctionDef(function)) => &function.args,
         _ => return false,
     };
-    args.posonlyargs
+    args.args
         .iter()
-        .chain(&args.args)
         .chain(&args.kwonlyargs)
         .any(|arg| arg.def.arg.as_str() == name && arg.default.is_none())
 }

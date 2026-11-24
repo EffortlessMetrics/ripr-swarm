@@ -2149,7 +2149,8 @@ four hops. A dependency resolves from the requesting test's scope first
 fixture dependency for the test that ultimately requests it, falling back
 to the requesting fixture's file and its conftest chain. A dependency the
 test directly parametrizes is supplied by pytest rather than by its
-fixture, and a parameter with a default is never injected, so either ends
+fixture, a parameter with a default is never injected, and pytest's fixture
+argument reader skips a positional-only parameter, so any of the three ends
 the chain. Every `return` or `yield` of a supplying fixture counts under
 any spacing Python allows, including a bare exit; an exit that does not
 return the same plain name, a rebound, cyclic or over-cap link, or an
@@ -2162,7 +2163,8 @@ Tests: `route_identity_tests.rs::a_nested_fixture_client_over_the_owners_app_is_
 `route_identity_tests.rs::nested_fixture_chains_that_cannot_be_read_stay_unidentified`,
 `route_identity_tests.rs::a_test_module_app_override_wins_over_the_conftest_app_fixture`,
 `route_identity_tests.rs::a_directly_parametrized_app_dependency_is_not_followed_to_its_fixture`,
-`route_identity_tests.rs::a_defaulted_app_parameter_is_not_a_fixture_request` and
+`route_identity_tests.rs::a_defaulted_app_parameter_is_not_a_fixture_request`,
+`route_identity_tests.rs::a_positional_only_app_parameter_is_not_a_fixture_request` and
 `route_identity_tests.rs::an_exit_the_reader_cannot_use_fails_the_chain_closed`.
 
 ## Metrics

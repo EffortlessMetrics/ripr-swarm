@@ -566,6 +566,32 @@ fn a_defaulted_app_parameter_is_not_a_fixture_request() -> Result<(), String> {
 }
 
 #[test]
+fn a_positional_only_app_parameter_is_not_a_fixture_request() -> Result<(), String> {
+    let unidentified = Some(PythonRelationKind::ApiClientRouteUnidentifiedApp);
+    // pytest's fixture argument reader skips positional-only parameters, so a
+    // client fixture declared `def client(items_app, /)` never has that
+    // fixture injected and supplies no application.
+    let root_posonly = format!(
+        "{CLIENT_IMPORTS}from app.a import app\n\n@pytest.fixture\ndef items_app():\n    return app\n\n@pytest.fixture\ndef client(items_app, /):\n    return TestClient(items_app)\n"
+    );
+    assert_eq!(fixture_relation(&root_posonly)?, unidentified);
+    // The same holds for a positional-only parameter at an intermediate hop.
+    let mid_posonly = format!(
+        "{CLIENT_IMPORTS}from app.a import app\n\n@pytest.fixture\ndef base_app():\n    return app\n\n@pytest.fixture\ndef items_app(base_app, /):\n    return base_app\n\n@pytest.fixture\ndef client(items_app):\n    return TestClient(items_app)\n"
+    );
+    assert_eq!(fixture_relation(&mid_posonly)?, unidentified);
+    // A keyword-only parameter is injected like an ordinary one.
+    let keyword_only = format!(
+        "{CLIENT_IMPORTS}from app.a import app\n\n@pytest.fixture\ndef items_app():\n    return app\n\n@pytest.fixture\ndef client(*, items_app):\n    return TestClient(items_app)\n"
+    );
+    assert_eq!(
+        fixture_relation(&keyword_only)?,
+        Some(PythonRelationKind::ApiClientRouteCall)
+    );
+    Ok(())
+}
+
+#[test]
 fn an_exit_the_reader_cannot_use_fails_the_chain_closed() -> Result<(), String> {
     let unidentified = Some(PythonRelationKind::ApiClientRouteUnidentifiedApp);
     // An early bare return supplies no application on that path.
