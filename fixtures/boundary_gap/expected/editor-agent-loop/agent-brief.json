@@ -96,7 +96,7 @@
       }
     }
   ],
-  "value_basis": "`expression` and `arm_result` come from the changed code: assert what it does now, not the pre-change value. `candidate_values` are inputs. If the change looks wrong, report it.",
+  "value_basis": "`expression` and `arm_result` come from the changed code: assert what it does now; an input whose behavior did not change keeps its value. `candidate_values` are candidates for the test, inputs to try or values to assert; they are not all of one kind. If the change looks wrong, report it.",
   "warnings": [],
   "working_set": {
     "base": null,
