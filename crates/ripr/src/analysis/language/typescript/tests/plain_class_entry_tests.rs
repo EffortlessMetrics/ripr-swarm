@@ -85,6 +85,19 @@ fn entry_reaches_a_function_only_a_method_calls() {
 }
 
 #[test]
+fn jsdoc_tag_in_the_class_is_no_decorator() {
+    // ohash documents its methods with `@param`: an `@` in a comment or a
+    // literal is not a decorator.
+    let source = SRC.replacen(
+        "  write(record: any): string {",
+        "  /** @param record the input */\n  write(record: any): string {\n    const at = \"a@b\";",
+        1,
+    );
+    assert_ne!(source, SRC);
+    assert_eq!(entry_hops(&source, "write"), [("serialize".to_string(), 1)]);
+}
+
+#[test]
 fn typed_or_spaced_construction_is_read_through() {
     for construction in ["new Serializer<string>()", "new Serializer ()"] {
         let source = SRC.replacen("new Serializer()", construction, 1);

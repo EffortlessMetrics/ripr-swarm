@@ -1012,13 +1012,18 @@ Candidates come from the first non-empty tier:
    code calls. When the building function declares the binding's own name,
    mentions of the name inside it are the inner binding and are left out of
    the module-wide scan; every mention outside it must be an allowlisted read
-   and, when the building function's body holds any block (a class, a
-   method, a nested function or a block statement whose code may run
-   later), a construction `new X(...)`, with no code outside it naming `prototype`, `__proto__`,
-   `constructor`, `getPrototypeOf`, `setPrototypeOf` or `Reflect` (an
-   allowlisted read such as `patch(X.prototype)`, or the prototype of an
-   instance a method hands back, could replace a method every later instance
-   runs). A top-level name the building function also declares as
+   and, when the building function's parsed body holds any block or arrow
+   (a class, a method, a nested function or a block statement whose code
+   may run later), a construction that goes straight into one of its own
+   method calls, `new X(...).method(` (not `constructor`, `valueOf`,
+   `toString`, `toLocaleString` or `__proto__`), with no text outside it,
+   literals and comments included, naming `prototype`, `__proto__`,
+   `constructor`, `getPrototypeOf`, `setPrototypeOf` or `Reflect`, and no
+   `this` in the body other than `this.x`, `this?.x`, `this[...]` or the
+   receiver of `.call(` / `.apply(` (an allowlisted read such as
+   `patch(X.prototype)`, a kept instance, `new X()["__proto__"]`, or a method
+   that returns `this` or hands it to other code, could replace a method
+   every later instance runs). A top-level name the building function also declares as
    a member (`compare(a, b) { ... }`) is no edge, and neither is a call
    followed by `:` (a conditional arm reads like a return type). A function
    passed by reference as the whole first argument of a synchronous array
@@ -1034,8 +1039,11 @@ Candidates come from the first non-empty tier:
    closure edges below may still read it as value-passing reach. Limits: the
    class is one node, so a method no entry calls is reached with the rest of
    the class, and so is a function only a method the building function itself
-   replaces calls (static text reach, as for the bare-call graph); the
-   receiver of the array method is not typed.
+   replaces calls (static text reach, as for the bare-call graph); a
+   function the body runs with `.call(this` / `.apply(this` is trusted not
+   to keep the instance (any prototype word it names outside the building
+   function still refuses the value); the receiver of the array method is
+   not typed.
    **Methods of a module-private class (#15928).** A top-level `class X`
    declaration that is not exported has one node per plain instance method,
    `X.method`, in the same graph under the same hop bound. A function or
@@ -1052,7 +1060,8 @@ Candidates come from the first non-empty tier:
    owner then carries the exported entries that reach its node, and so does
    a module function only such a method calls. Fail-closed: the class has no
    `extends`, no decorator (on the class, a member or a parameter: any `@`
-   in the class text refuses it), no computed member and no `return` in its
+   in the class's code, outside comments and literals, refuses it; a JSDoc
+   `@param` does not), no computed member and no `return` in its
    constructor; its name is declared once
    in the file and every other mention outside the declaration is a
    construction `new X(...)` (a property of the same name `o.X`, which

@@ -74,8 +74,10 @@ pub(super) fn module_class<'a>(class: &'a Class<'a>, source: &'a str) -> Option<
         || !class.decorators.is_empty()
         // A member or parameter decorator receives the prototype (or adds an
         // initializer bound to the instance) and may replace any method
-        // without naming it in the class text. Any `@` refuses the class.
-        || span_text(source, class.span).contains('@')
+        // without naming it in the class text. Any `@` in code (not in a
+        // comment or literal, so a JSDoc `@param` stays) refuses the class.
+        || ts_mask_literals_and_comments(span_text(source, class.span))
+            .contains('@')
     {
         return None;
     }

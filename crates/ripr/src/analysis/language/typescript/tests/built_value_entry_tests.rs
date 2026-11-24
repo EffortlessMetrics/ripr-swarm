@@ -179,8 +179,56 @@ fn module_level_write_to_the_built_value_disables_it() {
             "prototype of a handed-back instance",
             "export function proto(): any {\n  return Object.getPrototypeOf(new Serializer().serialize({}));\n}\n",
         ),
+        (
+            "prototype key in a literal",
+            "export function patch(): void {\n  new Serializer()[\"__proto__\"].serialize = () => \"\";\n}\n",
+        ),
+        (
+            "prototype function named in a literal",
+            "export function proto(): any {\n  return Object[\"getPrototypeOf\"](new Serializer().serialize({}));\n}\n",
+        ),
+        (
+            "instance kept",
+            "export function keep(): any {\n  const s = new Serializer();\n  return s;\n}\n",
+        ),
+        (
+            "constructor read off the instance",
+            "export function ctor(): any {\n  return new Serializer().constructor;\n}\n",
+        ),
     ] {
         let source = format!("{SRC}{tail}");
+        assert!(entry_names(&source, "Serializer").is_empty(), "{label}");
+        assert!(entry_names(&source, "compareStrings").is_empty(), "{label}");
+    }
+}
+
+#[test]
+fn building_function_that_may_hand_the_instance_out_is_not_followed() {
+    for (label, from, to) in [
+        (
+            "returned this",
+            "    compare(a: any, b: any): number {",
+            "    self(): any {\n      return this;\n    }\n    compare(a: any, b: any): number {",
+        ),
+        (
+            "this passed on",
+            "      return compareStrings(a, b);",
+            "      keep(this);\n      return compareStrings(a, b);",
+        ),
+        (
+            "brace in a default parameter literal",
+            "const Serializer = /*@__PURE__*/ (function () {",
+            "const Serializer = /*@__PURE__*/ (function (open = `{`) {",
+        ),
+    ] {
+        let mut source = SRC.replacen(from, to, 1);
+        assert_ne!(source, SRC, "{label}: fixture not rewritten");
+        if label.starts_with("brace") {
+            // The parsed body, not the first `{` of the function text, decides
+            // whether the building function has nested code.
+            source
+                .push_str("export function patch(o: any): void {\n  o(Serializer.prototype);\n}\n");
+        }
         assert!(entry_names(&source, "Serializer").is_empty(), "{label}");
         assert!(entry_names(&source, "compareStrings").is_empty(), "{label}");
     }

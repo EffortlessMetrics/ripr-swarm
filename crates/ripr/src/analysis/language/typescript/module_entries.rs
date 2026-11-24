@@ -231,6 +231,8 @@ struct BuiltValue<'s> {
     /// function runs when the module loads, and what it declares (the methods
     /// of a class it returns) runs through the value.
     text: &'s str,
+    /// The function's body block, from the parsed span.
+    body: &'s str,
     /// The function's byte range when its body declares the binding's own
     /// name (`class X {}` then `return X`): every mention of the name inside
     /// is the inner binding, not the module-level one.
@@ -314,6 +316,7 @@ pub(crate) fn module_entries_and_outbound<'a>(
                 built.get(name).and_then(|value| value.shadow.as_ref()),
             ) && built.get(name).is_none_or(|value| {
                 built_value_stays_inside(
+                    source,
                     &masked_source,
                     name,
                     decl_starts.get(name).copied(),
@@ -976,12 +979,13 @@ fn built_value<'a>(
     if !call.arguments.is_empty() || call.optional {
         return None;
     }
-    let (span, statements) = match unwrap_type_wrappers(&call.callee) {
+    let (span, body, statements) = match unwrap_type_wrappers(&call.callee) {
         Expression::FunctionExpression(func) if !func.generator && !func.r#async => {
-            (func.span, &func.body.as_ref()?.statements)
+            let body = func.body.as_ref()?;
+            (func.span, body.span, &body.statements)
         }
         Expression::ArrowFunctionExpression(arrow) if !arrow.expression && !arrow.r#async => {
-            (arrow.span, &arrow.body.statements)
+            (arrow.span, arrow.body.span, &arrow.body.statements)
         }
         _ => return None,
     };
@@ -1000,6 +1004,7 @@ fn built_value<'a>(
     });
     Some(BuiltValue {
         text: span_text(source, span),
+        body: span_text(source, body),
         shadow: declares_name.then_some(span.start as usize..span.end as usize),
     })
 }
@@ -1038,6 +1043,7 @@ fn word_at(text: &str, idx: usize, word: &str) -> bool {
 /// of `name` is `new NAME(`, and no code names `prototype`, `__proto__`,
 /// `constructor`, `getPrototypeOf`, `setPrototypeOf` or `Reflect`.
 fn built_value_stays_inside(
+    source: &str,
     masked: &str,
     name: &str,
     declaration: Option<usize>,
@@ -1046,13 +1052,20 @@ fn built_value_stays_inside(
     // A value whose building function body has no block (so no class,
     // nested function, method or arrow body) made all its calls at load
     // time; nothing a later write does can undo them.
-    let body = value
-        .text
-        .find('{')
-        .map_or("", |brace| &value.text[brace + 1..]);
-    let body_masked = ts_mask_literals_and_comments(body);
+    let inner = value
+        .body
+        .strip_prefix('{')
+        .and_then(|rest| rest.strip_suffix('}'))
+        .unwrap_or(value.body);
+    let body_masked = ts_mask_literals_and_comments(inner);
     if !body_masked.contains('{') && !body_masked.contains("=>") {
         return true;
+    }
+    // A method may hand the instance back (`return this`) or give it to code
+    // outside (`helper(this)`). Only member access on `this` and handing it to
+    // `.call(` / `.apply(` as the receiver are allowed.
+    if hands_this_out(&body_masked) {
+        return false;
     }
     let outside = |idx: usize| {
         value
@@ -1060,13 +1073,13 @@ fn built_value_stays_inside(
             .as_ref()
             .is_none_or(|range| !range.contains(&idx))
     };
+    // Every outside mention is `new NAME(...).method(`: the instance goes
+    // straight into one of its own calls, never `new NAME()["__proto__"]`.
     let only_constructed = masked.match_indices(name).all(|(idx, _)| {
         !outside(idx)
             || declaration == Some(idx)
             || !word_at(masked, idx, name)
-            || (masked[..idx].trim_end().ends_with("new")
-                && super::module_value_reads::past_type_arguments(&masked[idx + name.len()..])
-                    .starts_with('('))
+            || constructed_and_called_at(masked, idx, name)
     });
     only_constructed
         && [
@@ -1079,10 +1092,75 @@ fn built_value_stays_inside(
         ]
         .iter()
         .all(|word| {
-            masked
-                .match_indices(word)
-                .all(|(idx, _)| !outside(idx) || !word_at(masked, idx, word))
+            // The source, not the masked text: `Object["getPrototypeOf"]`
+            // names the word inside a literal.
+            source.match_indices(word).all(|(idx, _)| !outside(idx))
         })
+}
+
+/// `new NAME(...).method(` at `idx`, the mention of `name` in `masked`.
+fn constructed_and_called_at(masked: &str, idx: usize, name: &str) -> bool {
+    let before = masked[..idx].trim_end();
+    if !before.strip_suffix("new").is_some_and(|rest| {
+        !rest.ends_with(|ch: char| is_javascript_identifier_char(ch) || ch == '.')
+    }) {
+        return false;
+    }
+    let rest = past_type_arguments(&masked[idx + name.len()..]);
+    let Some(close) = balanced_paren_close(rest) else {
+        return false;
+    };
+    let Some(member) = rest[close..].trim_start().strip_prefix('.') else {
+        return false;
+    };
+    let member = member.trim_start();
+    let end = member
+        .find(|ch: char| !is_javascript_identifier_char(ch))
+        .unwrap_or(member.len());
+    end > 0
+        && !matches!(
+            &member[..end],
+            "constructor" | "valueOf" | "toString" | "toLocaleString" | "__proto__"
+        )
+        && past_type_arguments(&member[end..]).starts_with('(')
+}
+
+/// Offset just past the `)` closing the `(` that `text` starts with.
+fn balanced_paren_close(text: &str) -> Option<usize> {
+    if !text.starts_with('(') {
+        return None;
+    }
+    let mut depth = 0usize;
+    for (offset, ch) in text.char_indices() {
+        match ch {
+            '(' => depth += 1,
+            ')' => {
+                depth = depth.checked_sub(1)?;
+                if depth == 0 {
+                    return Some(offset + 1);
+                }
+            }
+            _ => {}
+        }
+    }
+    None
+}
+
+/// Whether masked code uses `this` other than as `this.x`, `this?.x`,
+/// `this[...]`, or the first argument of `.call(` / `.apply(`.
+fn hands_this_out(code: &str) -> bool {
+    code.match_indices("this").any(|(idx, _)| {
+        if !word_at(code, idx, "this") || code[..idx].ends_with('.') {
+            return false;
+        }
+        let after = code[idx + 4..].trim_start();
+        let member = after.starts_with('.') || after.starts_with("?.") || after.starts_with('[');
+        let receiver = {
+            let before = code[..idx].trim_end();
+            before.ends_with(".call(") || before.ends_with(".apply(")
+        };
+        !(member || receiver)
+    })
 }
 
 /// `name(...) {` or `name(...): T {` in `text`: a method or shorthand member
