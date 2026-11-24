@@ -1034,7 +1034,9 @@ Candidates come from the first non-empty tier:
    method reaches `X.method` by `new X(...).method(` written as one
    expression in code that runs when it runs (not inside a nested function,
    or an arrow other than a synchronous array callback, such as
-   `const later = () => new X().m()` or `setTimeout(() => ...)`), when every
+   `const later = () => new X().m()` or `setTimeout(() => ...)`; a function
+   with an expression body or a header other than `(params) [: Type] [=>] {`
+   gives no construction edge), when every
    mention of `X` in that function is a construction.
    `X.method` calls what its text bare-calls, the sibling methods it calls
    as `this.other(` (or hands by reference to a synchronous array callback),
@@ -1049,8 +1051,9 @@ Candidates come from the first non-empty tier:
    other mention refuses the whole class); the class text uses `this` only
    as a plain access `this.name` / `this?.name` / `this.#name` to a member
    the class body declares or a field it assigns as `this.name = ...`, calls
-   `this.name(...)` only for an instance method the class declares and no
-   field, accessor or quoted key shares the name of (a field
+   `this.name(...)` only for an instance method the class declares that no
+   field, accessor or quoted key shares the name of and that nothing in the
+   module reassigns (a field
    or getter may hold `Object.prototype.valueOf`, which returns the
    instance; any other member must be followed by a separator or operator
    that cannot call it, so `(this.f)()`, `this.f!()`, `this.f<T>()` and a

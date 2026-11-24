@@ -171,6 +171,20 @@ pub(super) fn method_nodes<'s>(
 ) -> Vec<MethodNode<'s>> {
     let mut nodes = Vec::new();
     for class in classes {
+        // A method the module may replace (`this.write = ...` in the
+        // constructor, `o.write = ...`, `["write"]`) may be anything when
+        // called, so it is no safe call target either.
+        let callable: BTreeSet<String> = class
+            .callable
+            .iter()
+            .filter(|name| {
+                name.starts_with('#')
+                    || !(rebinds_this_member(class.text, name)
+                        || super::class_entries::assigns_member_named(masked, name)
+                        || mentions_literal_key(source, name))
+            })
+            .cloned()
+            .collect();
         let declared_once = classes
             .iter()
             .filter(|other| other.name == class.name)
@@ -179,9 +193,9 @@ pub(super) fn method_nodes<'s>(
         if !declared_once
             || taken(class.name)
             || !constructs(masked, class.name)
-            || !every_construction_calls_a_method(masked, class.name, &class.callable)
+            || !every_construction_calls_a_method(masked, class.name, &callable)
             || !never_mutated_in_module(source, masked, class.name, Some(class.decl_start), None)
-            || this_escapes(class.text, &class.members, &class.callable)
+            || this_escapes(class.text, &class.members, &callable)
         {
             continue;
         }
@@ -478,17 +492,64 @@ fn every_construction_calls_a_method(
 /// body (an expression arrow) or when the blanking cannot isolate a scope.
 fn executed_body(text: &str) -> Option<String> {
     let code = super::tests_extract::byte_preserving_code_mask(text)?;
-    let mut depth = 0usize;
-    let brace = code.char_indices().find_map(|(index, ch)| {
-        match ch {
-            '(' | '[' => depth += 1,
-            ')' | ']' => depth = depth.saturating_sub(1),
-            '{' if depth == 0 => return Some(index),
-            _ => {}
-        }
-        None
-    })?;
+    let brace = body_brace(&code)?;
     executed_this_source(&format!("body(){}", text.get(brace..)?))
+}
+
+/// Offset of the `{` that opens the body of the function `code` starts with:
+/// `[async] [function[*]] [name] (params) [: Type] [=>] {` or `x => {`.
+/// `None` for any other header, so an expression arrow whose first brace
+/// belongs to a nested function (`(x) => x ? () => { ... } : 0`) gives no
+/// body.
+fn body_brace(code: &str) -> Option<usize> {
+    let trimmed = code.trim_start();
+    let mut rest = trimmed;
+    for keyword in ["async", "function"] {
+        if let Some(after) = rest.strip_prefix(keyword)
+            && !after.starts_with(is_javascript_identifier_char)
+        {
+            rest = after.trim_start();
+        }
+    }
+    rest = rest.strip_prefix('*').unwrap_or(rest).trim_start();
+    let name_end = rest
+        .find(|ch: char| !is_javascript_identifier_char(ch))
+        .unwrap_or(rest.len());
+    let after_name = rest[name_end..].trim_start();
+    let tail = if after_name.starts_with('(') {
+        let close = balanced_paren_end(after_name)?;
+        let after_params = &after_name[close..];
+        let header_end = after_params.find('{')?;
+        let header = &after_params[..header_end];
+        let annotation = match header.split_once("=>") {
+            Some((annotation, between)) if between.trim().is_empty() => annotation,
+            Some(_) => return None,
+            None => header,
+        }
+        .trim();
+        let plain_type = annotation.is_empty()
+            || annotation.strip_prefix(':').is_some_and(|ty| {
+                ty.chars().all(|ch| {
+                    is_javascript_identifier_char(ch)
+                        || ch.is_whitespace()
+                        || matches!(ch, '<' | '>' | '[' | ']' | '.' | '|' | ',')
+                })
+            });
+        if !plain_type {
+            return None;
+        }
+        &after_params[header_end..]
+    } else {
+        // `x => {`: one bare parameter.
+        if name_end == 0 {
+            return None;
+        }
+        after_name.strip_prefix("=>")?.trim_start()
+    };
+    if !tail.starts_with('{') {
+        return None;
+    }
+    Some(code.len() - tail.len())
 }
 
 /// Byte offset just past the `)` that closes the `(` `text` starts with.

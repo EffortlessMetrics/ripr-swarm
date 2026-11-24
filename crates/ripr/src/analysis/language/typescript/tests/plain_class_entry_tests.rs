@@ -171,6 +171,10 @@ fn entry_that_does_not_call_the_method_directly_gets_no_edge() {
             "export function serialize(input: any): string {\n  setTimeout(() => new Serializer().write(input));\n  return \"\";\n}",
         ),
         (
+            "expression arrow returning a closure",
+            "export const serialize = (input: any) =>\n  input ? () => {\n    return new Serializer().write(input);\n  } : null;",
+        ),
+        (
             "inside a string",
             "export function serialize(input: any): string {\n  return \"new Serializer().write(input)\";\n}",
         ),
@@ -233,17 +237,11 @@ fn method_an_instance_member_may_replace_is_no_node() {
             1,
         );
         assert_ne!(source, SRC, "{label}: fixture not rewritten");
-        // A declared member of the same name makes `this.order(...)` a call of
-        // anything, so the class is not followed at all. A constructor
-        // assignment leaves `write` a node with no edge to `order`.
-        let write = entry_hops(&source, "write");
-        if label == "constructor assignment" {
-            assert_eq!(write, [("serialize".to_string(), 1)], "{label}");
-        } else {
-            assert!(write.is_empty(), "{label}: write");
+        // `write` calls `this.order(...)`, which may now be anything, so the
+        // class is not followed at all.
+        for owner in ["write", "order", "compareKeys"] {
+            assert!(entry_hops(&source, owner).is_empty(), "{label}: {owner}");
         }
-        assert!(entry_hops(&source, "order").is_empty(), "{label}: order");
-        assert!(entry_hops(&source, "compareKeys").is_empty(), "{label}");
     }
     let assigned = format!("{SRC}export function patch(o: any): void {{\n  o.order = 1;\n}}\n");
     assert!(entry_hops(&assigned, "order").is_empty(), "member assigned");
@@ -333,6 +331,10 @@ fn a_class_whose_this_escapes_has_no_method_node() {
         (
             "prototype of a constructed instance",
             "  p = Object.getPrototypeOf(new Serializer());\n  constructor() {\n    Object.assign(this.p, { order: (k: string[]) => k });\n  }\n",
+        ),
+        (
+            "constructor-assigned call target",
+            "  constructor(o?: any) {\n    this.describe = Object.prototype.valueOf;\n    Object.assign(this.describe(), o);\n  }\n",
         ),
         (
             "super",
