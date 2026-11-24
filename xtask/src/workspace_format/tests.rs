@@ -4,9 +4,19 @@ use std::path::{Path, PathBuf};
 use serde_json::{Value, json};
 
 use super::{
-    COMMAND_LINE_BUDGET, RustfmtInvocation, argument_length, batch, beside_cargo,
-    canonical_or_keep, command_line_length, formatter, invocations, read_metadata, run_all,
+    COMMAND_LINE_BUDGET, RustfmtInvocation, argument_length, batch, canonical_or_keep,
+    command_line_length, formatter, invocations, metadata_arguments, read_metadata,
+    read_metadata_through, run_all, serving_cargo,
 };
+
+/// The `cargo` a test asks for metadata, found as the step finds it.
+fn serving_cargo_for_test() -> std::ffi::OsString {
+    serving_cargo(
+        std::env::var_os("CARGO").as_deref(),
+        std::env::var_os("PATH").as_deref(),
+    )
+    .map_or_else(|| std::ffi::OsString::from("cargo"), Into::into)
+}
 
 /// The workspace root of a `cargo metadata --no-deps` document.
 fn workspace_root_of(document: &Value) -> Result<PathBuf, String> {
@@ -445,8 +455,9 @@ fn no_config_path_is_passed_so_rustfmt_finds_each_files_nearest_config() -> Resu
 }
 
 /// cargo-fmt runs `RUSTFMT` when it is set, else the rustfmt beside the
-/// `cargo` that serves the step. A different `rustfmt` earlier on `PATH`
-/// must not be picked up.
+/// `cargo` that serves the step: the one `CARGO` names, else the first one on
+/// `PATH`. A different `rustfmt` earlier on `PATH`, or a later directory's
+/// toolchain, must not be picked up.
 #[test]
 fn the_formatter_is_rustfmt_env_else_the_rustfmt_beside_cargo() -> Result<(), String> {
     fn named(name: &str) -> String {
@@ -465,65 +476,210 @@ fn the_formatter_is_rustfmt_env_else_the_rustfmt_beside_cargo() -> Result<(), St
             .as_nanos()
     ));
     let toolchain = root.join("toolchain");
+    let other = root.join("other-toolchain");
     let shadow = root.join("shadow");
-    let empty = root.join("empty");
-    for directory in [&toolchain, &shadow, &empty] {
+    let bare = root.join("bare-cargo");
+    for directory in [&toolchain, &other, &shadow, &bare] {
         std::fs::create_dir_all(directory).map_err(|err| err.to_string())?;
     }
     for file in [
         toolchain.join(named("cargo")),
         toolchain.join(named("rustfmt")),
+        other.join(named("cargo")),
+        other.join(named("rustfmt")),
         shadow.join(named("rustfmt")),
-        empty.join(named("cargo")),
+        bare.join(named("cargo")),
     ] {
         std::fs::write(&file, "").map_err(|err| err.to_string())?;
     }
-    let toolchain_dir = toolchain.clone();
-    let shadow_dir = shadow.clone();
-    let empty_dir = empty.clone();
-    let toolchain_dir = toolchain_dir.to_string_lossy().into_owned();
-    let shadow_dir = shadow_dir.to_string_lossy().into_owned();
-    let empty_dir = empty_dir.to_string_lossy().into_owned();
-    let join = std::env::join_paths([&shadow_dir, &toolchain_dir, &empty_dir])
-        .map_err(|err| err.to_string())?;
+    let os = |path: &Path| path.to_string_lossy().into_owned();
+    let cargo = |directory: &Path| directory.join(named("cargo")).into_os_string();
+    let missing = |directory: &Path| {
+        Err(format!(
+            "no rustfmt sits beside the cargo that serves this step ({}); install the rustfmt \
+             component for that toolchain, or set RUSTFMT to the formatter to run",
+            directory.join(named("cargo")).display()
+        ))
+    };
 
     // PATH-shadowing control: the shadowing rustfmt comes first on PATH, and
-    // the toolchain's own rustfmt is still the one run.
+    // the first cargo's own rustfmt is still the one run.
+    let path = std::env::join_paths([os(&shadow), os(&toolchain), os(&other), os(&bare)])
+        .map_err(|err| err.to_string())?;
     assert_eq!(
-        beside_cargo("rustfmt", Some(join.as_os_str())),
-        Some(toolchain.join(named("rustfmt")))
+        serving_cargo(None, Some(path.as_os_str())),
+        Some(toolchain.join(named("cargo")))
     );
     assert_eq!(
-        formatter(None, Some(join.as_os_str())),
+        formatter(
+            None,
+            serving_cargo(None, Some(path.as_os_str()))
+                .as_deref()
+                .map(Path::as_os_str)
+        ),
         Ok(toolchain.join(named("rustfmt")))
     );
-    // RUSTFMT names the formatter outright.
+
+    // CARGO names the cargo that serves the step, wherever it sits on PATH.
+    assert_eq!(
+        serving_cargo(Some(&cargo(&other)), Some(path.as_os_str())),
+        Some(other.join(named("cargo")))
+    );
+    assert_eq!(
+        formatter(None, Some(&cargo(&other))),
+        Ok(other.join(named("rustfmt")))
+    );
+    // An empty CARGO names none, so PATH decides.
+    assert_eq!(
+        serving_cargo(Some(std::ffi::OsStr::new("")), Some(path.as_os_str())),
+        Some(toolchain.join(named("cargo")))
+    );
+
+    // The first cargo on PATH has no rustfmt beside it: its formatter is
+    // missing, and no later toolchain's is borrowed.
+    let bare_first =
+        std::env::join_paths([os(&bare), os(&toolchain)]).map_err(|err| err.to_string())?;
+    assert_eq!(
+        formatter(
+            None,
+            serving_cargo(None, Some(bare_first.as_os_str()))
+                .as_deref()
+                .map(Path::as_os_str)
+        ),
+        missing(&bare)
+    );
+    // Nor is one borrowed beside a CARGO that has none.
+    assert_eq!(formatter(None, Some(&cargo(&bare))), missing(&bare));
+
+    // RUSTFMT names the formatter outright; an empty RUSTFMT is read as unset.
     assert_eq!(
         formatter(
             Some(std::ffi::OsStr::new("/opt/other/rustfmt")),
-            Some(join.as_os_str())
+            Some(&cargo(&toolchain))
         ),
         Ok(PathBuf::from("/opt/other/rustfmt"))
     );
-    // A PATH whose first cargo has no rustfmt beside it is not a formatter
-    // source, and an empty RUSTFMT is not one either.
-    let only_empty = std::env::join_paths([&empty_dir]).map_err(|err| err.to_string())?;
     assert_eq!(
-        formatter(Some(std::ffi::OsStr::new("")), Some(only_empty.as_os_str())),
-        Err(
-            "no rustfmt sits beside the cargo on PATH; install the rustfmt component for the \
-             pinned toolchain, or set RUSTFMT to the formatter to run"
-                .to_string()
-        )
+        formatter(Some(std::ffi::OsStr::new("")), Some(&cargo(&toolchain))),
+        Ok(toolchain.join(named("rustfmt")))
     );
+
+    // No cargo at all serves the step and no RUSTFMT is set.
+    assert_eq!(serving_cargo(None, None), None);
     let Err(error) = formatter(None, None) else {
-        return Err("no PATH and no RUSTFMT must not name a formatter".to_owned());
+        return Err("no cargo and no RUSTFMT must not name a formatter".to_owned());
     };
     assert!(
         error.contains("set RUSTFMT"),
         "the remedy names the override: {error}"
     );
     let _ = std::fs::remove_dir_all(&root);
+    Ok(())
+}
+
+/// cargo-fmt asks for the metadata offline first, and once more without
+/// `--offline` only when that fails.
+#[test]
+fn metadata_is_asked_for_offline_first_and_retried_without_it() -> Result<(), String> {
+    let words = |list: &[&str]| {
+        list.iter()
+            .map(|word| (*word).to_owned())
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(
+        metadata_arguments(true),
+        words(&[
+            "metadata",
+            "--no-deps",
+            "--offline",
+            "--format-version",
+            "1"
+        ])
+    );
+    assert_eq!(
+        metadata_arguments(false),
+        words(&["metadata", "--no-deps", "--format-version", "1"])
+    );
+    let document = r#"{"workspace_root":"/repo","packages":[]}"#;
+
+    // The offline question answers: it is the only one asked.
+    let mut asked = Vec::new();
+    let answered = read_metadata_through("cargo", &mut |offline| {
+        asked.push(offline);
+        Ok(document.to_owned())
+    })?;
+    assert_eq!(asked, [true]);
+    assert_eq!(answered["workspace_root"], "/repo");
+
+    // The offline question fails: the same question is asked once more, online.
+    let mut asked = Vec::new();
+    let retried = read_metadata_through("cargo", &mut |offline| {
+        asked.push(offline);
+        if offline {
+            Err("needs the index".to_owned())
+        } else {
+            Ok(document.to_owned())
+        }
+    })?;
+    assert_eq!(asked, [true, false]);
+    assert_eq!(retried["workspace_root"], "/repo");
+
+    // Both fail: the failure names both.
+    let mut asked = Vec::new();
+    let Err(error) = read_metadata_through("cargo", &mut |offline| {
+        asked.push(offline);
+        Err(format!("attempt {offline}"))
+    }) else {
+        return Err("two failed questions must not read a document".to_owned());
+    };
+    assert_eq!(asked, [true, false]);
+    assert!(
+        error.contains("failed offline (attempt true)")
+            && error.contains("without --offline (attempt false)"),
+        "{error}"
+    );
+
+    // Output that is not a document is refused.
+    let Err(error) = read_metadata_through("cargo", &mut |_| Ok("not a document".to_owned()))
+    else {
+        return Err("text that is not JSON must not read as a document".to_owned());
+    };
+    assert!(
+        error.starts_with("cargo metadata --no-deps printed no JSON document"),
+        "{error}"
+    );
+    Ok(())
+}
+
+/// A formatter that cannot be started stops the step at that batch, as
+/// cargo-fmt stops there: no later batch is started against it.
+#[test]
+fn a_formatter_that_cannot_start_stops_the_step() -> Result<(), String> {
+    fn invocation(argument: &str) -> RustfmtInvocation {
+        RustfmtInvocation {
+            argv: vec![argument.to_owned()],
+            root_count: 0,
+        }
+    }
+    let mut diagnostics = Vec::new();
+    let Err(error) = run_all(
+        "ripr-no-such-formatter",
+        &[invocation("a"), invocation("b"), invocation("c")],
+        &[],
+        Some(&mut diagnostics),
+    ) else {
+        return Err("a formatter that cannot start must fail the step".to_owned());
+    };
+    assert!(
+        error.starts_with("failed to run ripr-no-such-formatter:"),
+        "{error}"
+    );
+    assert_eq!(
+        diagnostics.len(),
+        1,
+        "the batches after the one that could not start were not run: {diagnostics:?}"
+    );
+    assert_eq!(diagnostics[0].outcome, "status_call_unavailable");
     Ok(())
 }
 
@@ -589,7 +745,7 @@ fn from_a_member_directory_only_that_member_is_rewritten() -> Result<(), String>
         invocations(&document, false, &workspace_root.join("alpha").join("src")).is_err(),
         "below a member's manifest there is nothing to format"
     );
-    let program = formatter(None, std::env::var_os("PATH").as_deref())?;
+    let program = formatter(None, Some(&serving_cargo_for_test()))?;
     for invocation in &plan {
         let args = invocation
             .argv
@@ -628,7 +784,7 @@ fn in_this_workspace_the_invocation_directory_scopes_the_plan() -> Result<(), St
     // `cargo metadata` reads the process working directory, which other
     // tests in this process move.
     let _cwd_guard = crate::acquire_test_cwd_read_guard();
-    let document = read_metadata(&[])?;
+    let document = read_metadata(&serving_cargo_for_test(), &[])?;
     let workspace_root = workspace_root_of(&document)?;
     let every = planned_roots(&invocations(&document, false, &workspace_root)?);
     assert!(every.len() > 400, "roots from the root: {}", every.len());
@@ -665,7 +821,7 @@ fn the_plan_lists_the_roots_cargo_fmt_lists() -> Result<(), String> {
     // process move. This test starts in `xtask/`, where the plan is xtask's
     // own; the oracle is for the plan read from the workspace root.
     let _cwd_guard = crate::acquire_test_cwd_read_guard();
-    let document = read_metadata(&[])?;
+    let document = read_metadata(&serving_cargo_for_test(), &[])?;
     let workspace_root = workspace_root_of(&document)?;
     let plan = invocations(&document, true, &workspace_root)?;
     assert!(
