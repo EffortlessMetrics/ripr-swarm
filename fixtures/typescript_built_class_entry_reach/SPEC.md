@@ -32,11 +32,13 @@ cargo xtask fixtures typescript_built_class_entry_reach
 - The change inside the class (owner `Serializer`) and the change in
   `compareStrings` are related to the `serialize` test through the bounded
   module-entry relation and read `static_unknown`, not `no_static_path`.
-- The change in `compareLengths` stays `no_static_path` with no related
-  test: a function handed to `setTimeout` is not run by the call.
+- The change in `compareLengths` gets no call edge: a function handed to
+  `setTimeout` is not run by the call. It reads `static_unknown` only
+  through the closure entry (#13592), which names `later` as a
+  value-passing caller and starts no repair.
 
 ## Must Not
 
 - Reach `exposed` through the entry relation, or start a repair from it.
-- Relate the `later` test to `compareLengths`.
+- Relate the `later` test to `compareLengths` through a call edge.
 - Use mutation-runtime outcome vocabulary reserved for real mutation execution.
