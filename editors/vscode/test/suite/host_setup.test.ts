@@ -1,4 +1,5 @@
 import * as assert from 'assert';
+import { createHash } from 'crypto';
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
@@ -14,6 +15,8 @@ suite('VS Code test host setup', () => {
     'RIPR_TEST_MULTIROOT_ONLY', 'RIPR_TEST_ACTIONABLE_QUEUE_ROOT',
     'RIPR_TEST_BASE_REF', 'RIPR_TEST_CLIPBOARD_CAPTURE_PATH',
     'RIPR_TEST_SERVER_PATH', 'RIPR_TEST_PACKAGED_SERVER_PATH',
+    'RIPR_TEST_PACKAGED_SERVER_SHA256', 'RIPR_TEST_REPAIR_START_CASE',
+    'RIPR_TEST_REPAIR_START_WORKSPACE', 'RIPR_REPO_EXPOSURE_SEAM_LIMIT',
     'RIPR_TEST_REQUIRE_RAN', 'RIPR_TEST_MULTIROOT', 'RIPR_TEST_GREP',
     'RIPR_TEST_MULTIROOT_PATH', 'RIPR_TEST_MULTIROOT_RECEIPT',
   ];
@@ -100,6 +103,73 @@ suite('VS Code test host setup', () => {
     assert.strictEqual(retention.retained_because, 'test_host_failure');
     assert.strictEqual(retention.error.message, message);
   }
+
+  test('a focused repair Start run requires an explicit packaged server', async () => {
+    process.env.RIPR_TEST_REPAIR_START_CASE = 'called';
+    await main(runtime);
+    assert.deepStrictEqual(events, []);
+    assertFailure('repair Start proof requires a trusted isolated profile, staged fixture, supplied extension and digest-pinned packaged server');
+  });
+
+  function configureRepairStartRun() {
+    const fixture = path.join(root, 'fixture');
+    const extension = path.join(root, 'extension');
+    fs.mkdirSync(fixture);
+    fs.writeFileSync(path.join(fixture, 'sentinel'), 'pre-staged fixture');
+    process.env.RIPR_TEST_REPAIR_START_CASE = 'uncalled';
+    process.env.RIPR_TEST_REPAIR_START_WORKSPACE = fixture;
+    process.env.RIPR_TEST_EXTENSION_PATH = extension;
+    process.env.RIPR_TEST_PACKAGED_SERVER_PATH = process.env.RIPR_TEST_SERVER_PATH;
+    const serverBytes = fs.readFileSync(process.env.RIPR_TEST_SERVER_PATH!);
+    process.env.RIPR_TEST_PACKAGED_SERVER_SHA256 = createHash('sha256').update(serverBytes).digest('hex');
+    return { fixture, extension };
+  }
+
+  test('a focused repair Start run refuses the wrong server digest before launching the host', async () => {
+    configureRepairStartRun();
+    process.env.RIPR_TEST_PACKAGED_SERVER_SHA256 = '0'.repeat(64);
+    const staleSetup = path.join(artifactRoot, 'setup-editor-host.json');
+    const staleLog = path.join(artifactRoot, 'vscode-test-user-data', 'logs', 'old-host.log');
+    fs.mkdirSync(path.dirname(staleLog), { recursive: true });
+    fs.writeFileSync(staleSetup, '{"status":"pass","nonce":"old"}');
+    fs.writeFileSync(staleLog, 'old host proof');
+    await main(runtime);
+    assert.deepStrictEqual(events, []);
+    assert.ok(!fs.existsSync(staleSetup));
+    assert.ok(!fs.existsSync(staleLog));
+    assertFailure('repair Start proof server does not match the supplied SHA-256');
+  });
+
+  test('a focused repair Start run uses only the supplied fixture and required suite', async () => {
+    const { fixture, extension } = configureRepairStartRun();
+    runtime.downloadVSCode = async (_cache, selectedExtension) => {
+      assert.strictEqual(selectedExtension, extension);
+      return vscodeExecutablePath;
+    };
+    runtime.runTests = async (options) => {
+      events.push('host');
+      assert.strictEqual(options.extensionDevelopmentPath, extension);
+      assert.strictEqual(options.launchArgs?.[1], fixture);
+      assert.strictEqual(process.env.RIPR_TEST_GREP, '^Packaged Repair Start ');
+      assert.strictEqual(process.env.RIPR_TEST_REQUIRE_RAN,
+        'Packaged Repair Start distinguishes inspection from an enabled Start for the current gap');
+      const settings = JSON.parse(fs.readFileSync(path.join(artifactRoot, 'vscode-test-user-data',
+        'User', 'settings.json'), 'utf8'));
+      assert.strictEqual(settings['ripr.server.path'], process.env.RIPR_TEST_PACKAGED_SERVER_PATH);
+      assert.strictEqual(settings['ripr.server.autoDownload'], false);
+      assert.strictEqual(settings['ripr.baseRef'], 'main');
+      assert.strictEqual(settings['ripr.check.mode'], 'deep');
+      assert.strictEqual(settings['ripr.diagnosticProfile'], 'full');
+      assert.strictEqual(process.env.RIPR_REPO_EXPOSURE_SEAM_LIMIT, '0');
+      return 0;
+    };
+
+    await main(runtime);
+    assert.deepStrictEqual(events, ['host']);
+    assert.deepStrictEqual(exits, []);
+    assert.strictEqual(fs.readFileSync(path.join(fixture, 'sentinel'), 'utf8'), 'pre-staged fixture');
+    assert.ok(!fs.existsSync(path.join(artifactRoot, 'workspace')));
+  });
 
   test('a rejected host download invokes zero producers and retains the original failure', async () => {
     fs.mkdirSync(artifactRoot);

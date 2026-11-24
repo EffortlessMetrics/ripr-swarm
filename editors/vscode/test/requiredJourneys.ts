@@ -50,11 +50,18 @@ export const PACKAGED_SERVER_HANDSHAKE: RequiredJourney = {
   test: 'accepts the real packaged server through initialize and shutdown',
 };
 
+export const PACKAGED_REPAIR_START: RequiredJourney = {
+  file: 'packaged_repair_start.test.ts',
+  suite: 'Packaged Repair Start',
+  test: 'distinguishes inspection from an enabled Start for the current gap',
+};
+
 export const ALL_REQUIRED_JOURNEYS: RequiredJourney[] = [
   PACKAGED_TRUST_TRUSTED,
   PACKAGED_TRUST_UNTRUSTED,
   ...REAL_SERVER_JOURNEYS,
   PACKAGED_SERVER_HANDSHAKE,
+  PACKAGED_REPAIR_START,
 ];
 
 export function fullTitle(journey: RequiredJourney): string {

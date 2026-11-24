@@ -1,10 +1,11 @@
 import * as path from 'path';
 import * as fs from 'fs';
 import { execFileSync, spawn } from 'child_process';
+import { createHash } from 'crypto';
 import { runTests } from '@vscode/test-electron';
 import { downloadVSCodeWithRetry, requireEditorDisplay, resetEditorSetupEvidence, verifyHostPrerequisites } from './hostPrerequisites';
 import { stageGenuineActionableQueue } from './actionableQueueFixture';
-import { REQUIRED_TITLE_SEPARATOR, requiredJourneyTitles } from './requiredJourneys';
+import { fullTitle, PACKAGED_REPAIR_START, REQUIRED_TITLE_SEPARATOR, requiredJourneyTitles } from './requiredJourneys';
 import { finalizeHostRun, resetHostLogDir, resolveUserDataDir } from './hostDiagnostics';
 
 function runGit(workspacePath: string, args: string[]): string {
@@ -205,8 +206,33 @@ export async function main(runtime: TestHostRuntime = defaultTestHostRuntime) {
   try {
     resetEditorSetupEvidence(artifactRoot);
     resetHostLogDir(userDataPath);
+    const repairStartCase = process.env.RIPR_TEST_REPAIR_START_CASE;
+    const repairStart = repairStartCase !== undefined;
+    const testServerPath = process.env.RIPR_TEST_SERVER_PATH;
+    const packagedServerPath = process.env.RIPR_TEST_PACKAGED_SERVER_PATH;
+    const workspaceTrustMode = parseWorkspaceTrustMode(process.env.RIPR_TEST_WORKSPACE_TRUST);
+    const repairWorkspace = process.env.RIPR_TEST_REPAIR_START_WORKSPACE;
+    const suppliedExtension = process.env.RIPR_TEST_EXTENSION_PATH;
+    if (repairStart) {
+      const serverDigest = process.env.RIPR_TEST_PACKAGED_SERVER_SHA256 ?? '';
+      if (repairStartCase !== 'called' && repairStartCase !== 'uncalled') {
+        throw new Error('RIPR_TEST_REPAIR_START_CASE must be called or uncalled');
+      }
+      if (workspaceTrustMode !== 'trusted' || process.env.RIPR_TEST_MULTIROOT_ONLY === '1'
+        || !process.env.RIPR_TEST_ARTIFACT_ROOT || !repairWorkspace || !path.isAbsolute(repairWorkspace)
+        || !suppliedExtension || !path.isAbsolute(suppliedExtension) || !testServerPath
+        || !path.isAbsolute(testServerPath) || testServerPath !== packagedServerPath
+        || !/^[a-f0-9]{64}$/.test(serverDigest)) {
+        throw new Error('repair Start proof requires a trusted isolated profile, staged fixture, supplied extension and digest-pinned packaged server');
+      }
+      const actualDigest = createHash('sha256').update(fs.readFileSync(testServerPath)).digest('hex');
+      if (actualDigest !== serverDigest) {
+        throw new Error('repair Start proof server does not match the supplied SHA-256');
+      }
+      process.env.RIPR_REPO_EXPOSURE_SEAM_LIMIT = '0';
+    }
     const extensionDevelopmentPath = path.resolve(
-      process.env.RIPR_TEST_EXTENSION_PATH ?? path.resolve(__dirname, '../../')
+      suppliedExtension ?? path.resolve(__dirname, '../../')
     );
     const extensionTestsPath = path.resolve(__dirname, './suite/index');
     const templatePath = path.resolve(
@@ -216,9 +242,8 @@ export async function main(runtime: TestHostRuntime = defaultTestHostRuntime) {
     const cachePath = path.join(artifactRoot, 'vscode-test-cache');
     const runId = String(process.pid);
     const extensionsPath = path.join(artifactRoot, 'vscode-test-extensions', runId);
-    const workspacePath = path.join(artifactRoot, 'workspace');
-    const baseRef = stageIntegrationWorkspace(templatePath, workspacePath);
-    const workspaceTrustMode = parseWorkspaceTrustMode(process.env.RIPR_TEST_WORKSPACE_TRUST);
+    const workspacePath = repairWorkspace && repairStart ? repairWorkspace : path.join(artifactRoot, 'workspace');
+    const baseRef = repairStart ? 'main' : stageIntegrationWorkspace(templatePath, workspacePath);
     process.env.RIPR_TEST_BASE_REF = baseRef;
     fs.mkdirSync(cachePath, { recursive: true });
     fs.mkdirSync(extensionsPath, { recursive: true });
@@ -232,7 +257,7 @@ export async function main(runtime: TestHostRuntime = defaultTestHostRuntime) {
     runtime.requireEditorDisplay(process.platform, process.env);
     const vscodeExecutablePath = await runtime.downloadVSCode(cachePath, extensionDevelopmentPath);
     await runtime.verifyHostPrerequisites(vscodeExecutablePath, artifactRoot);
-    if (workspaceTrustMode === 'trusted' && process.env.RIPR_TEST_MULTIROOT_ONLY !== '1'
+    if (!repairStart && workspaceTrustMode === 'trusted' && process.env.RIPR_TEST_MULTIROOT_ONLY !== '1'
       && !process.env.RIPR_TEST_ACTIONABLE_QUEUE_ROOT) {
       process.env.RIPR_TEST_ACTIONABLE_QUEUE_ROOT = await runtime.stageGenuineActionableQueue(
         path.resolve(__dirname, '../../../../'), path.join(artifactRoot, `actionable-queue-${runId}`)
@@ -251,7 +276,6 @@ export async function main(runtime: TestHostRuntime = defaultTestHostRuntime) {
       '--user-data-dir',
       userDataPath,
     ];
-    const testServerPath = process.env.RIPR_TEST_SERVER_PATH;
     if (testServerPath) {
       const userSettingsPath = path.join(userDataPath, 'User');
       fs.mkdirSync(userSettingsPath, { recursive: true });
@@ -261,19 +285,22 @@ export async function main(runtime: TestHostRuntime = defaultTestHostRuntime) {
           'ripr.server.path': testServerPath,
           'ripr.server.autoDownload': false,
           'ripr.baseRef': baseRef,
-          'ripr.check.mode': 'draft',
+          'ripr.check.mode': repairStart ? 'deep' : 'draft',
           'ripr.seamDiagnostics': true,
-          'ripr.diagnosticProfile': 'actionable',
+          'ripr.diagnosticProfile': repairStart ? 'full' : 'actionable',
           'security.workspace.trust.enabled': workspaceTrustMode !== 'trusted',
         }, null, 2)}\n`
       );
     }
 
-    if (process.env.RIPR_TEST_MULTIROOT_ONLY !== '1') {
+    if (repairStart) {
+      process.env.RIPR_TEST_GREP = `^${PACKAGED_REPAIR_START.suite} `;
+      process.env.RIPR_TEST_REQUIRE_RAN = fullTitle(PACKAGED_REPAIR_START);
+    } else if (process.env.RIPR_TEST_MULTIROOT_ONLY !== '1') {
       process.env.RIPR_TEST_REQUIRE_RAN = requiredJourneyTitles(
         workspaceTrustMode,
         testServerPath,
-        process.env.RIPR_TEST_PACKAGED_SERVER_PATH
+        packagedServerPath
       ).join(
         REQUIRED_TITLE_SEPARATOR
       );
@@ -292,7 +319,7 @@ export async function main(runtime: TestHostRuntime = defaultTestHostRuntime) {
     // The multi-root host greps a different suite, so the main host's required
     // journeys are not registered there.
     delete process.env.RIPR_TEST_REQUIRE_RAN;
-    if (workspaceTrustMode === 'trusted') {
+    if (!repairStart && workspaceTrustMode === 'trusted') {
       // Same test-host lane, separate empty profile: other suites open files,
       // mutate configuration and restart servers, which would mask ambiguity.
       if (!testServerPath || !fs.existsSync(testServerPath)) {
