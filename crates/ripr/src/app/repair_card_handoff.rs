@@ -1037,14 +1037,18 @@ pub(crate) fn bound_finding_is_unreferenced_new_function(
 }
 
 /// A bound candidate-current no-path finding can veto a suggested start
-/// even when the seam packet has a usable test target (#4668). Use the
-/// full occurrence join, including the most-specific claimant, before
-/// applying the same unreferenced-owner exception as `ripr check`.
+/// when the seam inventory also finds no test path (#4668). An instant
+/// changed-line finding may miss existing tests that the seam inventory
+/// traces, so it cannot veto a reached seam. Use the full occurrence join
+/// before applying the same unreferenced-owner exception as `ripr check`.
 pub(crate) fn bound_no_path_start_refusal<'a>(
     findings: &'a [crate::domain::Finding],
     entry: &ClassifiedSeam,
     candidate_seams: &[ClassifiedSeam],
 ) -> Option<&'a crate::domain::Finding> {
+    if entry.evidence.reach.state != crate::domain::StageState::No {
+        return None;
+    }
     let eligibility = repair_packet_eligibility(entry);
     let finding = finding_for_seam(
         findings,

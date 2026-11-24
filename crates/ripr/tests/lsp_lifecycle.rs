@@ -3327,6 +3327,17 @@ fn refreshed_seam_session(
     }
     let (uri, diagnostic) = seam_diagnostic
         .ok_or("fixture setup: the boundary change must publish a seam diagnostic")?;
+    // These tests exercise a reached seam whose existing tests miss the
+    // boundary, independently of instant mode's changed-line finding.
+    if diagnostic
+        .pointer("/data/evidence/reach")
+        .and_then(serde_json::Value::as_str)
+        != Some("yes")
+    {
+        return Err(format!(
+            "fixture setup: the seam must be reached: {diagnostic}"
+        ));
+    }
     // Precondition: this is the production payload, not an injected summary.
     for injected in ["fix_instruction", "witness", "finding_id"] {
         if diagnostic.pointer(&format!("/data/{injected}")).is_some() {
