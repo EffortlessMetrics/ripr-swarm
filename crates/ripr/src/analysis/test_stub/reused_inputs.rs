@@ -160,6 +160,28 @@ pub(super) fn reused_inputs(
     if rebinds || wraps || reassignable || !standard_macros_only(&file, &in_scope, (start, end)) {
         return None;
     }
+    // Every name the file declares or imports. A `type i64 = f64;` or a
+    // `use` of a type named `u8` would change what the stub's `let amount:
+    // i64` means.
+    let declared: Vec<String> = file
+        .syntax()
+        .descendants()
+        .filter_map(|node| {
+            ast::Name::cast(node.clone())
+                .map(|name| unraw(name.text()).to_string())
+                .or_else(|| {
+                    ast::UseTree::cast(node)
+                        .and_then(|tree| tree.path())
+                        .and_then(|path| path.segment())
+                        .and_then(|segment| segment.name_ref())
+                        .map(|imported| unraw(imported.text()).to_string())
+                })
+        })
+        .collect();
+    let type_shadowed = |ty: &str| {
+        ty.split(|c: char| !(c.is_alphanumeric() || c == '_'))
+            .any(|word| !word.is_empty() && declared.iter().any(|name| name == word))
+    };
     let (arguments, test) = file
         .syntax()
         .descendants()
@@ -180,7 +202,10 @@ pub(super) fn reused_inputs(
             let leaves_first = function.syntax().descendants_with_tokens().any(|inner| {
                 matches!(
                     inner.kind(),
-                    SyntaxKind::RETURN_EXPR | SyntaxKind::TRY_EXPR | SyntaxKind::QUESTION
+                    SyntaxKind::RETURN_EXPR
+                        | SyntaxKind::TRY_EXPR
+                        | SyntaxKind::QUESTION
+                        | SyntaxKind::RETURN_KW
                 ) && inner.text_range().end() <= node.text_range().start()
             });
             // An earlier operand of the assertion may hold one in its tokens.
@@ -209,7 +234,7 @@ pub(super) fn reused_inputs(
                 bindings.iter().zip(arguments).zip(&signature.params)
             {
                 if open.contains(binding) {
-                    if !literal_fits(&param.ty, &argument) {
+                    if !literal_fits(&param.ty, &argument) || type_shadowed(&param.ty) {
                         return None;
                     }
                     values.push((binding.clone(), argument));
@@ -714,8 +739,9 @@ fn reaches_seam(
             return false;
         };
         // The evaluator compares integers untyped, so every integer literal
-        // in the guard must fit each integer parameter it names, or a lint
-        // allowance elsewhere may let the literal wrap.
+        // in the guard must fit each integer type in play (a parameter it
+        // names or a literal's suffix), or a lint allowance elsewhere may let
+        // the literal wrap.
         let named: Vec<&str> = condition
             .syntax()
             .descendants_with_tokens()
@@ -729,12 +755,32 @@ fn reaches_seam(
             })
             .filter(|ty| INTEGER_TYPES.contains(ty))
             .collect();
-        let literals_fit = condition
+        let literals = condition
             .syntax()
             .descendants_with_tokens()
             .filter_map(|element| element.into_token())
             .filter(|token| token.kind() == SyntaxKind::INT_NUMBER)
-            .all(|literal| named.iter().all(|ty| literal_fits(ty, literal.text())));
+            .collect::<Vec<_>>();
+        // A suffixed literal types its comparison too; with none of either,
+        // an integer literal is an `i32`.
+        let mut in_play: Vec<&str> = named;
+        in_play.extend(literals.iter().filter_map(|literal| {
+            INTEGER_TYPES
+                .iter()
+                .find(|suffix| literal.text().ends_with(*suffix))
+                .copied()
+        }));
+        if in_play.is_empty() {
+            in_play.push("i32");
+        }
+        let literals_fit = literals.iter().all(|literal| {
+            let text = literal.text();
+            let digits = INTEGER_TYPES
+                .iter()
+                .find_map(|suffix| text.strip_suffix(*suffix))
+                .unwrap_or(text);
+            in_play.iter().all(|ty| literal_fits(ty, digits))
+        });
         if !literals_fit || condition_value(file, &condition, inputs) != Some(false) {
             return false;
         }

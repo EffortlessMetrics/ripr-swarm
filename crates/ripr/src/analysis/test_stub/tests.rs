@@ -3262,10 +3262,7 @@ fn boundary_stub_copies_other_inputs_from_an_existing_test() -> Result<(), Strin
         // A comparison in a tail assignment's place runs after its value.
         (
             module_for(
-                &owner.replace(
-                    "    if rate >= 10_000 {\n        return Err(2);\n    }\n    Ok(amount)",
-                    "    let mut hit = [false; 2];\n    hit[usize::from(rate >= 10_000)] = {\n        if amount > 5 {\n            return Err(3);\n        }\n        false\n    }",
-                ),
+                "pub type Unit = ();\npub fn tax(amount: i64, rate: u32) -> Unit {\n    let mut hit = [false; 2];\n    hit[usize::from(rate >= 10_000)] = {\n        if amount > 5 {\n            return;\n        }\n        false\n    }\n}\n",
                 "    #[test]\n    fn computes() {\n        let _ = tax(7, 825);\n    }\n",
             ),
             None,
@@ -3336,6 +3333,30 @@ fn boundary_stub_copies_other_inputs_from_an_existing_test() -> Result<(), Strin
                 "    #[test]\n    fn computes() {\n        assert_eq!(tax(7, 825), Ok(7));\n    }\n",
             ),
             Some(("7", "computes")),
+        ),
+        // A `return` in an earlier statement macro's tokens may leave the
+        // test.
+        (
+            module(
+                "    #[test]\n    fn early() {\n        assert!({ if true { return; } true });\n        let _ = tax(7, 825);\n    }\n",
+            ),
+            None,
+        ),
+        // A suffixed guard literal that does not fit its own type may wrap.
+        (
+            module_for(
+                &owner.replace("    if amount < 0 {", "    if amount > 0 && 263u8 == 7 {"),
+                "    #[test]\n    fn computes() {\n        assert_eq!(tax(7, 825), Ok(7));\n    }\n",
+            ),
+            None,
+        ),
+        // A local type of a primitive's name changes what the stub's `let`
+        // annotation means.
+        (
+            module(
+                "    #[allow(non_camel_case_types)]\n    type i64 = f64;\n    #[test]\n    fn computes() {\n        assert_eq!(tax(7, 825), Ok(7));\n    }\n",
+            ),
+            None,
         ),
         // A standard derive does not.
         (
@@ -3486,7 +3507,11 @@ fn boundary_stub_copies_other_inputs_from_an_existing_test() -> Result<(), Strin
         );
         // The expected value always stays the developer's to write.
         assert!(
-            stub.text.contains("let expected: Result<i64, u8> = todo!("),
+            stub.text.contains(if source.contains("-> Unit {") {
+                "let actual = tax(amount, rate);"
+            } else {
+                "let expected: Result<i64, u8> = todo!("
+            }),
             "{}",
             stub.text
         );

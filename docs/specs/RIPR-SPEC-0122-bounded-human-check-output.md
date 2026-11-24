@@ -669,19 +669,22 @@ the expected value stays a `todo!()`. The values are copied only when:
 - it sits in a `#[test]` function that is not `should_panic`, `ignore` or a
   ripr stub and carries only plain attributes (`test`, lint levels, `doc`),
   outside closures, `async` blocks and `cfg`, with no `return` or `?` before
-  it in the test or inside the assertion holding it;
+  it in the test (an earlier macro's tokens included) or inside the
+  assertion holding it;
 - the owner has no `mut` parameter and the file never names
   `overflowing_literals`, so no input is reassigned and no literal wraps;
 - each copied literal fits its parameter's declared type as written: an
   in-range integer literal for an integer type, a float literal for `f32` or
   `f64` that stays finite, `true`/`false`, a char literal, a string literal for `&str`, a byte
-  string for `&[u8]` (an alias or any other type takes no copy);
+  string for `&[u8]` (an alias or any other type takes no copy), and no name
+  the file declares or imports shadows that primitive type;
 - the copied values do not steer the owner away from the statement holding
   the changed comparison (an earlier guard on the written inputs alone is
   outside this check, as it is for any boundary stub): each earlier statement that names a copied
   parameter (including a `{name}` or `{:name$}` format capture) is an `if` without `else`
   whose condition evaluates to false with every integer literal in it
-  fitting each integer parameter it names, no earlier statement binds the
+  fitting each integer type in play (a parameter it names or a literal's
+  suffix, else `i32`), no earlier statement binds the
   name of a written or copied input, nothing before the
   comparison calls `include!` or a macro other than a standard one (which
   may read a copied value without naming it), and the comparison's own statement is not a
