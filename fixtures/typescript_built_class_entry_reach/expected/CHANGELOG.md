@@ -22,3 +22,15 @@ Command:
 
 Updated:
 - `expected/check.json`
+
+## Pending — typescript_built_class_entry_reach (3)
+
+Reason:
+RIPR-SPEC-0243: with main's closure edges (#13592) the setTimeout control compareLengths reads static_unknown as value-passing reach, never a call edge or repair; the class and compareStrings readings are unchanged
+
+Command:
+`cargo xtask goldens bless typescript_built_class_entry_reach --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
