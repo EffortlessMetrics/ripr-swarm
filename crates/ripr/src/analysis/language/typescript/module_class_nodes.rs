@@ -24,8 +24,9 @@
 //! `new Class(...)` in the module, and the calling scope mentions the name
 //! only as a construction, and the class uses `this` only as a plain access
 //! (`this.name`, `this?.name`, `this.#name`) to a member it declares or a field
-//! it assigns as `this.name = ...`, calls `this.name(...)` only for a method
-//! it declares, and never uses `super` or `new.target`. A method is a node only when its name is the only
+//! it assigns as `this.name = ...`, calls `this.name(...)` only for an instance
+//! method it declares, has no static member or block, and never uses `super`
+//! or `new.target`. A method is a node only when its name is the only
 //! member of that name in the class (quoted keys included), nothing in the
 //! module assigns a member of that name, and no literal bracket key of that
 //! name (`["name"]`) appears in the module. An instance kept in a variable (`const s = new Class();
@@ -80,11 +81,21 @@ pub(super) fn module_class<'a>(class: &'a Class<'a>, source: &'a str) -> Option<
     let mut methods = Vec::new();
     let mut callable = BTreeSet::new();
     for element in &class.body.body {
+        // A static member or block runs with `this` bound to the class, so
+        // the text cannot tell its `this.NAME` from an instance's: a class
+        // with any static code is not followed.
         let (key, computed) = match element {
-            ClassElement::MethodDefinition(method) => (&method.key, method.computed),
-            ClassElement::PropertyDefinition(property) => (&property.key, property.computed),
-            ClassElement::AccessorProperty(property) => (&property.key, property.computed),
-            ClassElement::StaticBlock(_) | ClassElement::TSIndexSignature(_) => continue,
+            ClassElement::MethodDefinition(method) if !method.r#static => {
+                (&method.key, method.computed)
+            }
+            ClassElement::PropertyDefinition(property) if !property.r#static => {
+                (&property.key, property.computed)
+            }
+            ClassElement::AccessorProperty(property) if !property.r#static => {
+                (&property.key, property.computed)
+            }
+            ClassElement::TSIndexSignature(_) => continue,
+            _ => return None,
         };
         // A computed member may define any name.
         if computed {
@@ -259,17 +270,65 @@ fn this_member_access(after: &str) -> Option<ThisAccess<'_>> {
         return None;
     }
     let assigns = next.starts_with('=') && !next.starts_with("==") && !next.starts_with("=>");
-    let invoked = past_type_arguments(next);
-    let calls = invoked.starts_with('(')
-        || invoked.starts_with('`')
-        || invoked
-            .strip_prefix("?.")
-            .is_some_and(|rest| rest.trim_start().starts_with('('));
+    // A new statement on the next line (no semicolon) starts with a word.
+    let next_line_word = tail[name_end..]
+        .split_once(|ch: char| !ch.is_whitespace())
+        .is_some_and(|(space, _)| space.contains('\n'))
+        && next.starts_with(|ch: char| is_javascript_identifier_char(ch));
+    let calls = !(next_line_word || ends_without_call(next));
     Some(ThisAccess {
         name,
         assigns,
         calls,
     })
+}
+
+/// Whether `next`, the text after `this.NAME`, ends the access without
+/// calling it. Only a known separator, operator or member access counts; a
+/// call through parentheses (`(this.f)()`), a comment, a TS `!` or type
+/// arguments (`this.f!()`, `this.f<T>()`) or a tagged template may call the
+/// member with `this` as its receiver.
+fn ends_without_call(next: &str) -> bool {
+    let after_parens = next.trim_start_matches(|ch: char| ch == ')' || ch.is_whitespace());
+    if after_parens.len() != next.len() && !after_parens.is_empty() {
+        let skipped = &next[..next.len() - after_parens.len()];
+        return (skipped.contains('\n') && after_parens.starts_with(is_javascript_identifier_char))
+            || ends_without_call_token(after_parens);
+    }
+    ends_without_call_token(next)
+}
+
+fn ends_without_call_token(next: &str) -> bool {
+    let Some(first) = next.chars().next() else {
+        return true;
+    };
+    if first == '?' {
+        return !next
+            .strip_prefix("?.")
+            .is_some_and(|rest| rest.trim_start().starts_with('('));
+    }
+    if first == '!' {
+        return next.starts_with("!=");
+    }
+    matches!(
+        first,
+        '.' | ';'
+            | ','
+            | '['
+            | ']'
+            | '}'
+            | ':'
+            | '+'
+            | '-'
+            | '*'
+            | '%'
+            | '&'
+            | '|'
+            | '^'
+            | '='
+            | '>'
+            | ')'
+    )
 }
 
 fn word_at_any(text: &str, word: &str) -> bool {

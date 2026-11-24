@@ -1046,9 +1046,13 @@ Candidates come from the first non-empty tier:
    other mention refuses the whole class); the class text uses `this` only
    as a plain access `this.name` / `this?.name` / `this.#name` to a member
    the class body declares or a field it assigns as `this.name = ...`, calls
-   `this.name(...)` only for a method the class declares (a field or getter
-   may hold `Object.prototype.valueOf`, which returns the instance), and
-   never uses `super` or `new.target` (`Object.assign(this, o)`,
+   `this.name(...)` only for an instance method the class declares (a field
+   or getter may hold `Object.prototype.valueOf`, which returns the
+   instance; any other member must be followed by a separator or operator
+   that cannot call it, so `(this.f)()`, `this.f!()`, `this.f<T>()` and a
+   comment before `(` refuse the class), has no static member or static
+   block (whose `this` is the class), and never uses `super` or
+   `new.target` (`Object.assign(this, o)`,
    `this[key] = f`, `(this as any).name`, `const self = this`, an inherited
    member such as `this.constructor`, `this.__proto__`, `this.valueOf()` or
    `this.__defineGetter__`, a static block's `this.prototype`,

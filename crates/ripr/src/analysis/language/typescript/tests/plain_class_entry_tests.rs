@@ -292,6 +292,26 @@ fn a_class_whose_this_escapes_has_no_method_node() {
             "  #self: any = Object.prototype.valueOf;\n  constructor(o?: any) {\n    Object.assign(this.#self(), o);\n  }\n",
         ),
         (
+            "parenthesized field call",
+            "  self: any = Object.prototype.valueOf;\n  constructor(o?: any) {\n    Object.assign((this.self)(), o);\n  }\n",
+        ),
+        (
+            "field call behind a comment",
+            "  self: any = Object.prototype.valueOf;\n  constructor(o?: any) {\n    Object.assign(this.self/**/(), o);\n  }\n",
+        ),
+        (
+            "non-null field call",
+            "  self: any = Object.prototype.valueOf;\n  constructor(o?: any) {\n    Object.assign(this.self!(), o);\n  }\n",
+        ),
+        (
+            "field call with type arguments",
+            "  self: any = Object.prototype.valueOf;\n  constructor(o?: any) {\n    Object.assign(this.self<{ a: 1 }>(), o);\n  }\n",
+        ),
+        (
+            "static method shadowing an inherited name",
+            "  static valueOf() {\n    return 0;\n  }\n  constructor(o?: any) {\n    Object.assign(this.valueOf(), o);\n  }\n",
+        ),
+        (
             "super",
             "  constructor(o?: any) {\n    Object.assign(super.valueOf(), o);\n  }\n",
         ),
