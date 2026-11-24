@@ -800,3 +800,37 @@ fn an_owner_modules_reexport_of_its_imported_app_is_its_own_app() -> Result<(), 
     );
     Ok(())
 }
+
+#[test]
+fn a_case_capture_that_rebinds_the_app_parameter_stops_the_chain() -> Result<(), String> {
+    let unidentified = Some(PythonRelationKind::ApiClientRouteUnidentifiedApp);
+    let head = format!(
+        "{CLIENT_IMPORTS}from app.a import app\nfrom app.b import other_app\n\n@pytest.fixture\ndef base_app():\n    return app\n\n@pytest.fixture\ndef rival():\n    return other_app\n\n"
+    );
+    let tail = "\n\n@pytest.fixture\ndef client(items_app):\n    return TestClient(items_app)\n";
+    // `case base_app:` captures: it binds `base_app` to `rival`, so the
+    // fixture returns the rival application under the name the chain follows
+    // to the `base_app` fixture (#15868 review).
+    let captured = format!(
+        "{head}@pytest.fixture\ndef items_app(base_app, rival):\n    match rival:\n        case base_app:\n            return base_app{tail}"
+    );
+    assert_eq!(fixture_relation(&captured)?, unidentified);
+    // The same capture at an intermediate hop.
+    let mid_captured = format!(
+        "{head}@pytest.fixture\ndef items_app(mid_app):\n    return mid_app\n\n@pytest.fixture\ndef mid_app(base_app, rival):\n    match rival:\n        case base_app:\n            return base_app{tail}"
+    );
+    assert_eq!(fixture_relation(&mid_captured)?, unidentified);
+    // A sequence pattern spells the capture the same way.
+    let in_pattern = format!(
+        "{head}@pytest.fixture\ndef items_app(base_app, rival):\n    match rival:\n        case [base_app]:\n            return base_app{tail}"
+    );
+    assert_eq!(fixture_relation(&in_pattern)?, unidentified);
+    // Without the capture the parameter is followed to the fixture behind it.
+    let plain =
+        format!("{head}@pytest.fixture\ndef items_app(base_app):\n    return base_app{tail}");
+    assert_eq!(
+        fixture_relation(&plain)?,
+        Some(PythonRelationKind::ApiClientRouteCall)
+    );
+    Ok(())
+}

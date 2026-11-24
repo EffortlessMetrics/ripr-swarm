@@ -2162,7 +2162,9 @@ starts with punctuation (`return[other]`, `yield+x`) and a parenthesized yield
 (`returns = ...`) is not an exit. An exit that does not
 return the same plain name, a rebound, cyclic or over-cap link, or an
 unresolved dependency leaves the application unidentified and earns no
-oracle credit.
+oracle credit. A link's parameter is rebound by every statement that
+binds the name, a `case` capture included (`case base_app:` binds
+`base_app`), and such a link ends the chain.
 
 Tests: `route_identity_tests.rs::a_nested_fixture_client_over_the_owners_app_is_identified`,
 `route_identity_tests.rs::a_nested_fixture_client_over_a_rival_app_does_not_relate`,
@@ -2172,6 +2174,9 @@ Tests: `route_identity_tests.rs::a_nested_fixture_client_over_the_owners_app_is_
 `route_identity_tests.rs::a_directly_parametrized_app_dependency_is_not_followed_to_its_fixture`,
 `route_identity_tests.rs::a_defaulted_app_parameter_is_not_a_fixture_request`,
 `route_identity_tests.rs::a_positional_only_app_parameter_is_not_a_fixture_request`,
+`route_identity_tests.rs::a_parenthesized_yield_counts_as_an_exit`,
+`route_identity_tests.rs::a_test_parameter_pytest_does_not_inject_does_not_start_the_chain`,
+`route_identity_tests.rs::a_case_capture_that_rebinds_the_app_parameter_stops_the_chain`,
 `literal_fixture_tests.rs::a_positional_only_test_parameter_is_not_a_fixture_request`,
 `route_identity_tests.rs::an_exit_whose_value_starts_with_punctuation_fails_the_chain_closed` and
 `route_identity_tests.rs::an_exit_the_reader_cannot_use_fails_the_chain_closed`.

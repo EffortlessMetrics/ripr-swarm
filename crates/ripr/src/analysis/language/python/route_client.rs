@@ -219,8 +219,9 @@ fn bare_names(region: &str) -> Vec<String> {
 
 /// Whether `line` (one logical statement) binds `name`: assignment targets
 /// (plain, augmented, annotated, chained, tuple), `for` targets, `as` names,
-/// walrus, `def`/`class`/`import` names and function parameters, including the
-/// body of a one-line compound statement (`if flag: api = other()`).
+/// walrus, `def`/`class`/`import` names and function parameters, a `case`
+/// capture, and the body of a one-line compound statement
+/// (`if flag: api = other()`).
 fn line_binds(line: &str, name: &str) -> bool {
     let line = line.trim();
     let line = line.strip_prefix("async ").unwrap_or(line);
@@ -239,6 +240,21 @@ fn line_binds(line: &str, name: &str) -> bool {
             {
                 return true;
             }
+        }
+        // A `case` pattern captures every bare name it spells (`case app:`,
+        // `case [app]`, `case Point(app)`). A name in its guard is only a use,
+        // so the clause head is read as binding one name more than it may:
+        // that withholds.
+        "case" => {
+            let head = line
+                .get(..header_colon(line).unwrap_or(line.len()))
+                .unwrap_or(line);
+            // Split on what is not an identifier character: a capture in
+            // brackets or braces, or a dotted name's last part, reads like a
+            // bare one, which withholds.
+            return head
+                .split(|ch: char| !is_python_identifier_char(ch))
+                .any(|spelled| spelled == name);
         }
         _ => {}
     }
