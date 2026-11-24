@@ -175,6 +175,10 @@ fn entry_that_does_not_call_the_method_directly_gets_no_edge() {
             "export const serialize = (input: any) =>\n  input ? () => {\n    return new Serializer().write(input);\n  } : null;",
         ),
         (
+            "conditional return type",
+            "export function serialize(input: any): A extends B ? C : D {\n  return new Serializer().write(input);\n}",
+        ),
+        (
             "inside a string",
             "export function serialize(input: any): string {\n  return \"new Serializer().write(input)\";\n}",
         ),
@@ -336,6 +340,7 @@ fn a_class_whose_this_escapes_has_no_method_node() {
             "constructor-assigned call target",
             "  constructor(o?: any) {\n    this.describe = Object.prototype.valueOf;\n    Object.assign(this.describe(), o);\n  }\n",
         ),
+        ("member decorator", "  @patch\n  helper(): void {}\n"),
         (
             "super",
             "  constructor(o?: any) {\n    Object.assign(super.valueOf(), o);\n  }\n",
@@ -359,6 +364,20 @@ fn a_class_whose_this_escapes_has_no_method_node() {
         assert!(entry_hops(&source, "order").is_empty(), "{label}");
         assert!(entry_hops(&source, "compareKeys").is_empty(), "{label}");
     }
+    // A construction may call only a method nothing reassigns: here the
+    // constructor makes `describe` return the instance.
+    let reassigned_target = format!(
+        "{}export function patch(f: any): void {{\n  Object.assign(Object.getPrototypeOf(new Serializer().describe([])), {{ order: f }});\n}}\n",
+        SRC.replacen(
+            "  describe(keys: string[]): string {",
+            "  constructor() {\n    this.describe = Object.prototype.valueOf;\n  }\n  describe(keys: string[]): string {",
+            1,
+        )
+    );
+    assert!(
+        entry_hops(&reassigned_target, "compareKeys").is_empty(),
+        "construction of a reassigned method"
+    );
     // Bracket and cast writes are refused by the member-write guards even
     // where `this` alone would not be.
     for (label, member) in [

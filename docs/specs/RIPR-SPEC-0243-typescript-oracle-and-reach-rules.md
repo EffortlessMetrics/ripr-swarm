@@ -1043,7 +1043,8 @@ Candidates come from the first non-empty tier:
    and the methods it runs on a class it constructs the same way. A method
    owner then carries the exported entries that reach its node, and so does
    a module function only such a method calls. Fail-closed: the class has no
-   `extends`, no decorator, no computed member and no `return` in its
+   `extends`, no decorator (on the class, a member or a parameter: any `@`
+   in the class text refuses it), no computed member and no `return` in its
    constructor; its name is declared once
    in the file and every other mention outside the declaration is a
    construction `new X(...)` or a read the value-read allowlist accepts (an

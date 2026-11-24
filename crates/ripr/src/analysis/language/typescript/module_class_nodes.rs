@@ -25,9 +25,12 @@
 //! only as a construction, and the class uses `this` only as a plain access
 //! (`this.name`, `this?.name`, `this.#name`) to a member it declares or a field
 //! it assigns as `this.name = ...`, calls `this.name(...)` only for an instance
-//! method it declares, has no static member or block, and never uses `super`
-//! or `new.target`, and every `new Class(...)` in the module is the receiver
-//! of a call to one of its methods. A method is a node only when its name is the only
+//! method it declares that nothing in the module reassigns, has no static
+//! member or block and no member or parameter decorator (no `@` at all), and
+//! never uses `super` or `new.target`, and every `new Class(...)` in the
+//! module is the receiver of a call to one of its methods. A construction
+//! edge comes only from code that runs when its function runs, in a function
+//! whose header is `(params) [: Type] [=>] {`. A method is a node only when its name is the only
 //! member of that name in the class (quoted keys included), nothing in the
 //! module assigns a member of that name, and no literal bracket key of that
 //! name (`["name"]`) appears in the module. An instance kept in a variable (`const s = new Class();
@@ -69,6 +72,10 @@ pub(super) fn module_class<'a>(class: &'a Class<'a>, source: &'a str) -> Option<
         || class.r#abstract
         || class.declare
         || !class.decorators.is_empty()
+        // A member or parameter decorator receives the prototype (or adds an
+        // initializer bound to the instance) and may replace any method
+        // without naming it in the class text. Any `@` refuses the class.
+        || span_text(source, class.span).contains('@')
     {
         return None;
     }
