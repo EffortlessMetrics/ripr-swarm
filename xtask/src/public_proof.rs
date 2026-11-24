@@ -429,6 +429,19 @@ struct Rate {
     rate: f64,
 }
 
+impl Rate {
+    fn display_percent(&self) -> String {
+        let denominator = u128::from(self.denominator);
+        // Round the exact fraction to tenths of a percent, with ties rounded
+        // up as in the canonical receipt. The receipt's decimal is already rounded.
+        let scaled = u128::from(self.numerator) * 1_000;
+        let Some(tenths) = (scaled + denominator / 2).checked_div(denominator) else {
+            return "n/a".to_string();
+        };
+        format!("{}.{}%", tenths / 10, tenths % 10)
+    }
+}
+
 fn req_rate(value: &Value, key: &str, ctx: &str) -> Result<Rate, String> {
     let node = field(value, key);
     let numerator = field(node, "numerator")
@@ -741,7 +754,7 @@ fn derived(id: &str, r: &Receipts) -> Result<Option<Derived>, String> {
                 &format!(
                     "verdict corpus, upstream cases only; all {} cases: {}",
                     all.denominator,
-                    percent(all.rate)
+                    all.display_percent()
                 ),
             )
         }
@@ -1391,7 +1404,7 @@ fn shortfalls(page: &mut Page, r: &Receipts, bars: &[Bar]) -> Result<(), String>
         "- **Wrong gaps.** On changes from real repositories ripr reported a gap on {} of {} whose tests caught every listed mutant ({}): {}. On the authored cases, which were written to fill empty corpus cells, it did so on {} of {} ({}).",
         false_actionable.numerator,
         false_actionable.denominator,
-        percent(false_actionable.rate),
+        false_actionable.display_percent(),
         if false_cases.is_empty() {
             "no case recorded".to_string()
         } else {
@@ -1399,7 +1412,7 @@ fn shortfalls(page: &mut Page, r: &Receipts, bars: &[Bar]) -> Result<(), String>
         },
         authored_false_actionable.numerator,
         authored_false_actionable.denominator,
-        percent(authored_false_actionable.rate)
+        authored_false_actionable.display_percent()
     ));
 
     let abstention = origin_rate(&r.verdicts, "upstream", "abstention_rate")?;
@@ -1408,10 +1421,10 @@ fn shortfalls(page: &mut Page, r: &Receipts, bars: &[Bar]) -> Result<(), String>
         "- **Mostly unsure.** On real-repository changes it abstained on {} of {} cases ({}); on the authored cases, {} of {} ({}). Abstaining is the safe failure, but each abstention is a change ripr gave the developer no help on.",
         abstention.numerator,
         abstention.denominator,
-        percent(abstention.rate),
+        abstention.display_percent(),
         authored_abstention.numerator,
         authored_abstention.denominator,
-        percent(authored_abstention.rate)
+        authored_abstention.display_percent()
     ));
 
     let families = field(&r.mutation, "scored_families");
@@ -1801,7 +1814,7 @@ fn verdict_section(page: &mut Page, verdicts: &Value) -> Result<(), String> {
             "{}/{} ({})",
             rate.numerator,
             rate.denominator,
-            percent(rate.rate)
+            rate.display_percent()
         )
     };
     let mut rate_rows = Vec::new();
@@ -2820,6 +2833,48 @@ mod tests {
             origin_rate(&broken, "upstream", "false_verdict_rate")
                 .is_err_and(|e| e.contains("by_origin.upstream"))
         );
+        Ok(())
+    }
+
+    #[test]
+    fn verdict_percentages_round_counts_once() -> Result<(), String> {
+        let mut receipts = load(&workspace_root())?;
+        receipts.verdicts["abstention_rate"] =
+            serde_json::json!({"numerator": 314, "denominator": 871, "rate": "0.3605"});
+        receipts.verdicts["by_origin"]["upstream"]["abstention_rate"] =
+            serde_json::json!({"numerator": 38, "denominator": 41, "rate": "0.9268"});
+        receipts.verdicts["by_origin"]["authored"]["abstention_rate"] =
+            serde_json::json!({"numerator": 276, "denominator": 830, "rate": "0.3325"});
+
+        let mut table = Page(String::new());
+        verdict_section(&mut table, &receipts.verdicts)?;
+        let row = table
+            .0
+            .lines()
+            .find(|line| line.starts_with("| Abstained ("))
+            .ok_or("missing verdict table abstention row")?;
+        assert!(
+            row.contains("| 314/871 (36.1%) | 38/41 (92.7%) | 276/830 (33.3%) |"),
+            "{row}"
+        );
+
+        let mut prose = Page(String::new());
+        shortfalls(&mut prose, &receipts, &bars(&receipts)?)?;
+        assert!(
+            prose
+                .0
+                .contains("on the authored cases, 276 of 830 (33.3%)"),
+            "{}",
+            prose.0
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn verdict_percentage_uses_canonical_half_up_ties() -> Result<(), String> {
+        let receipt =
+            serde_json::json!({"tie": {"numerator": 1, "denominator": 16, "rate": "0.0625"}});
+        assert_eq!(req_rate(&receipt, "tie", "test")?.display_percent(), "6.3%");
         Ok(())
     }
 
