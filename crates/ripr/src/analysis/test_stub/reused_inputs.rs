@@ -155,9 +155,12 @@ pub(super) fn reused_inputs(
             let test = proven_test_call(&node, start, end)?;
             let function = node.ancestors().find_map(ast::Fn::cast)?;
             // A `return` or `?` earlier in the test may leave it first.
-            let leaves_first = function.syntax().descendants().any(|inner| {
-                matches!(inner.kind(), SyntaxKind::RETURN_EXPR | SyntaxKind::TRY_EXPR)
-                    && inner.text_range().end() <= node.text_range().start()
+            // A `?` inside a macro's tokens is only a token, so count those too.
+            let leaves_first = function.syntax().descendants_with_tokens().any(|inner| {
+                matches!(
+                    inner.kind(),
+                    SyntaxKind::RETURN_EXPR | SyntaxKind::TRY_EXPR | SyntaxKind::QUESTION
+                ) && inner.text_range().end() <= node.text_range().start()
             });
             if leaves_first {
                 return None;
@@ -551,6 +554,20 @@ fn reaches_seam(
             else {
                 return false;
             };
+            // A comparison in a closure or `async` block runs only if and
+            // when something later calls it, which a copied value may decide.
+            let deferred = comparison
+                .syntax()
+                .ancestors()
+                .take_while(|ancestor| ancestor != &node)
+                .any(|ancestor| {
+                    ast::ClosureExpr::can_cast(ancestor.kind())
+                        || ast::BlockExpr::cast(ancestor)
+                            .is_some_and(|block| block.async_token().is_some())
+                });
+            if deferred {
+                return false;
+            }
             let assignment = ast::ExprStmt::cast(node.clone())
                 .and_then(|stmt| stmt.expr())
                 .and_then(|expr| match expr {

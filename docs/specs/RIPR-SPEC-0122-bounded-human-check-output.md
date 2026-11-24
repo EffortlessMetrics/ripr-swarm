@@ -680,7 +680,8 @@ the expected value stays a `todo!()`. The values are copied only when:
   parameter (including a `{name}` format capture) is an `if` without `else`
   whose condition evaluates to false, no earlier statement binds the name of
   a written or copied input, and the comparison's own statement is not a
-  `let` or an assignment and names a copied value only after the comparison;
+  `let` or an assignment, does not hold the comparison inside a closure or
+  `async` block, and names a copied value only after the comparison;
 - nothing in the module declares, binds, imports or renames another item of
   the owner's name;
 - the module calls only standard macros (`assert_eq!`, `vec!`, `println!` and

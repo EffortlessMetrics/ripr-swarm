@@ -3173,6 +3173,25 @@ fn boundary_stub_copies_other_inputs_from_an_existing_test() -> Result<(), Strin
             ),
             None,
         ),
+        // A comparison inside a closure runs only when the closure is
+        // called, which the copied value may decide after the comparison.
+        (
+            module_for(
+                &owner.replace(
+                    "    if rate >= 10_000 {",
+                    "    if std::iter::repeat_with(|| rate >= 10_000).take(amount as usize).any(|b| b) {",
+                ),
+                "    #[test]\n    fn computes() {\n        assert_eq!(tax(7, 825), Ok(7));\n    }\n",
+            ),
+            None,
+        ),
+        // A `?` inside an assertion before the call may leave the test.
+        (
+            module(
+                "    #[test]\n    fn early() -> Result<(), u8> {\n        assert_eq!(tax(1, 1)?, 1);\n        let _ = tax(2, 825);\n        Ok(())\n    }\n",
+            ),
+            None,
+        ),
         // A standard derive does not.
         (
             module(
