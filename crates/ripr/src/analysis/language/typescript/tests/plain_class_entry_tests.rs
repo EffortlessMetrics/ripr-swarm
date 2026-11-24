@@ -268,6 +268,38 @@ fn a_class_whose_this_escapes_has_no_method_node() {
             "  constructor(o?: any) {\n    Object.assign(this?.valueOf(), o);\n  }\n",
         ),
         (
+            "prototype in a static block",
+            "  static {\n    Object.assign(this.prototype, { order: (k: string[]) => k });\n  }\n",
+        ),
+        (
+            "inherited getter definer",
+            "  constructor() {\n    this.__defineGetter__(\"order\", () => (k: string[]) => k);\n  }\n",
+        ),
+        (
+            "escaped member name",
+            "  constructor(o?: any) {\n    Object.assign(this.co\\u006estructor.prototype, o);\n  }\n",
+        ),
+        (
+            "field called for the receiver",
+            "  toString: any = Object.prototype.valueOf;\n  constructor(o?: any) {\n    Object.assign(this.toString(), o);\n  }\n",
+        ),
+        (
+            "inherited call returning the receiver",
+            "  constructor(o?: any) {\n    Object.assign(this.toLocaleString(), o);\n  }\n",
+        ),
+        (
+            "private field called for the receiver",
+            "  #self: any = Object.prototype.valueOf;\n  constructor(o?: any) {\n    Object.assign(this.#self(), o);\n  }\n",
+        ),
+        (
+            "super",
+            "  constructor(o?: any) {\n    Object.assign(super.valueOf(), o);\n  }\n",
+        ),
+        (
+            "new.target",
+            "  constructor(o?: any) {\n    Object.assign(new.target.prototype, o);\n  }\n",
+        ),
+        (
             "alias",
             "  constructor() {\n    const self = this;\n    void self;\n  }\n",
         ),
@@ -302,11 +334,11 @@ fn a_class_whose_this_escapes_has_no_method_node() {
         assert_ne!(source, SRC, "{label}: fixture not rewritten");
         assert!(entry_hops(&source, "order").is_empty(), "{label}");
     }
-    // A private field read and an optional member read are plain member
-    // accesses.
+    // A private field read, an optional read of a declared field and a field
+    // the constructor assigns are plain member accesses.
     let private = SRC.replacen(
         "  describe(keys: string[]): string {",
-        "  #n = 0;\n  count(): number {\n    return this.#n + (this?.constructorCount ?? 0);\n  }\n  constructorCount = 0;\n  describe(keys: string[]): string {",
+        "  #n = 0;\n  count(): number {\n    return this.#n + (this?.constructorCount ?? 0) + this.seen.length;\n  }\n  constructorCount = 0;\n  constructor() {\n    this.seen = [];\n  }\n  describe(keys: string[]): string {",
         1,
     );
     assert_eq!(

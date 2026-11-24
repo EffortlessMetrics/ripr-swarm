@@ -1044,13 +1044,19 @@ Candidates come from the first non-empty tier:
    construction `new X(...)` or a read the value-read allowlist accepts (an
    alias, a type position, a re-export, a subclass, a prototype write or any
    other mention refuses the whole class); the class text uses `this` only
-   as a plain member access `this.name` / `this?.name` / `this.#name` to a
-   member other than `constructor`, `__proto__` or `valueOf`
-   (`Object.assign(this, o)`, `this[key] = f`, `(this as any).name`,
-   `const self = this` or `Object.assign(this.constructor.prototype, o)`
-   refuses every method, since any of them can replace a method on the
-   instance the entry calls; a `this` in a comment, a string or a type
-   position also refuses the class, since the class text is not masked); a method is a node only when
+   as a plain access `this.name` / `this?.name` / `this.#name` to a member
+   the class body declares or a field it assigns as `this.name = ...`, calls
+   `this.name(...)` only for a method the class declares (a field or getter
+   may hold `Object.prototype.valueOf`, which returns the instance), and
+   never uses `super` or `new.target` (`Object.assign(this, o)`,
+   `this[key] = f`, `(this as any).name`, `const self = this`, an inherited
+   member such as `this.constructor`, `this.__proto__`, `this.valueOf()` or
+   `this.__defineGetter__`, a static block's `this.prototype`,
+   `super.valueOf()` or `new.target.prototype` refuses every method, since
+   any of them can replace a method on the instance the entry calls; a
+   `this` in a comment, a string or a type position, or a member name spelled
+   with a unicode escape, also refuses the class, since the class text is
+   not masked); a method is a node only when
    no other member of the class has its name (a field, an accessor, a
    static, or a member whose key is the same name quoted, `"write" = ...`),
    it is not a generator, nothing in the module assigns a member of that

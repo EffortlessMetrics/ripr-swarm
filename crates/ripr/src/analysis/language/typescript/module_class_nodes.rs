@@ -22,9 +22,10 @@
 //! with no `extends`, no decorator, no computed member and no `return` in its
 //! constructor, its name is declared once and never written, aliased, exported or used as anything but
 //! `new Class(...)` in the module, and the calling scope mentions the name
-//! only as a construction, and the class uses `this` only as a plain member
-//! access (`this.name` or `this?.name`) to a member other than `constructor`,
-//! `__proto__` or `valueOf`, which hand back the instance or its prototype. A method is a node only when its name is the only
+//! only as a construction, and the class uses `this` only as a plain access
+//! (`this.name`, `this?.name`, `this.#name`) to a member it declares or a field
+//! it assigns as `this.name = ...`, calls `this.name(...)` only for a method
+//! it declares, and never uses `super` or `new.target`. A method is a node only when its name is the only
 //! member of that name in the class (quoted keys included), nothing in the
 //! module assigns a member of that name, and no literal bracket key of that
 //! name (`["name"]`) appears in the module. An instance kept in a variable (`const s = new Class();
@@ -44,6 +45,11 @@ pub(super) struct ModuleClass<'s> {
     pub(super) text: &'s str,
     /// `(name, method text)` of each method that may be a node.
     methods: Vec<(&'s str, &'s str)>,
+    /// Identifier names of the members the class body declares.
+    members: BTreeSet<&'s str>,
+    /// Names of the methods the class body declares, with `#` for a private
+    /// one: the only members `this.NAME(...)` may call.
+    callable: BTreeSet<String>,
 }
 
 /// One followable method: `key` is `Class.method`.
@@ -72,6 +78,7 @@ pub(super) fn module_class<'a>(class: &'a Class<'a>, source: &'a str) -> Option<
     // on every instance.
     let mut other_keys: Vec<String> = Vec::new();
     let mut methods = Vec::new();
+    let mut callable = BTreeSet::new();
     for element in &class.body.body {
         let (key, computed) = match element {
             ClassElement::MethodDefinition(method) => (&method.key, method.computed),
@@ -82,6 +89,13 @@ pub(super) fn module_class<'a>(class: &'a Class<'a>, source: &'a str) -> Option<
         // A computed member may define any name.
         if computed {
             return None;
+        }
+        if let (ClassElement::MethodDefinition(method), PropertyKey::PrivateIdentifier(name)) =
+            (element, key)
+            && method.kind == MethodDefinitionKind::Method
+            && method.value.body.is_some()
+        {
+            callable.insert(format!("#{}", name.name));
         }
         let PropertyKey::StaticIdentifier(name) = key else {
             if let Some(name) = key.static_name() {
@@ -101,6 +115,9 @@ pub(super) fn module_class<'a>(class: &'a Class<'a>, source: &'a str) -> Option<
             {
                 return None;
             }
+            if method.kind == MethodDefinitionKind::Method {
+                callable.insert(name.to_string());
+            }
             if method.kind == MethodDefinitionKind::Method
                 && !method.r#static
                 && !method.value.generator
@@ -119,6 +136,8 @@ pub(super) fn module_class<'a>(class: &'a Class<'a>, source: &'a str) -> Option<
         decl_start: id.span.start as usize,
         text: span_text(source, class.span),
         methods,
+        members: counts.into_keys().collect(),
+        callable,
     })
 }
 
@@ -143,7 +162,7 @@ pub(super) fn method_nodes<'s>(
             || taken(class.name)
             || !constructs(masked, class.name)
             || !never_mutated_in_module(source, masked, class.name, Some(class.decl_start), None)
-            || this_escapes(class.text)
+            || this_escapes(class.text, &class.members, &class.callable)
         {
             continue;
         }
@@ -167,43 +186,95 @@ pub(super) fn method_nodes<'s>(
     nodes
 }
 
-/// Whether the class text uses `this` other than as a plain member access
-/// `this.NAME` / `this?.NAME` / `this.#name`. Any other use (`Object.assign(this, o)`,
-/// `this[key] = f`, `const self = this`, `(this as any).NAME`, `helper(this)`)
-/// may replace a method on the very instance the entry calls, so no method of
-/// the class is a node. A member that hands back the instance or its prototype
-/// (`this.constructor`, `this.__proto__`, `this.valueOf`) escapes the same way:
-/// `Object.assign(this.constructor.prototype, o)` replaces every method.
-fn this_escapes(text: &str) -> bool {
-    text.match_indices("this").any(|(idx, _)| {
-        let before = text[..idx].chars().next_back();
-        let after_word = &text[idx + 4..];
-        if before.is_some_and(|ch| is_javascript_identifier_char(ch) || ch == '.')
-            || after_word
-                .chars()
-                .next()
-                .is_some_and(is_javascript_identifier_char)
-        {
-            return false;
-        }
-        let rest = after_word.trim_start();
-        let member = rest
-            .strip_prefix("?.")
-            .or_else(|| rest.strip_prefix('.'))
-            .map(str::trim_start);
-        !member.is_some_and(|tail| {
-            let name_end = tail
-                .char_indices()
-                .find(|&(offset, ch)| {
-                    !(is_javascript_identifier_char(ch) || (offset == 0 && ch == '#'))
-                })
-                .map_or(tail.len(), |(offset, _)| offset);
-            let name = &tail[..name_end];
-            !name.is_empty()
-                && !name.starts_with(|ch: char| ch.is_ascii_digit())
-                && !matches!(name, "constructor" | "__proto__" | "valueOf")
+/// Whether the class text may reach its instance or prototype other than
+/// through a plain access to its own members. `this` counts as plain only as
+/// `this.NAME` / `this?.NAME` / `this.#name`, where NAME is a member the class
+/// body declares or a field the class assigns as `this.NAME = ...`. Any other
+/// use (`Object.assign(this, o)`, `this[key] = f`, `const self = this`,
+/// `(this as any).NAME`, `helper(this)`) or an inherited member
+/// (`this.constructor`, `this.__proto__`, `this.valueOf()`, a static block's
+/// `this.prototype`, `this.__defineGetter__`) may replace a method on the very
+/// instance the entry calls, so no method of the class is a node. So may
+/// `super` and `new.target`, which reach the same objects without `this`, and
+/// a call `this.NAME(...)` of anything but a method the class declares: a
+/// field or getter may hold `Object.prototype.valueOf`, which returns the
+/// instance when called through it.
+fn this_escapes(text: &str, members: &BTreeSet<&str>, callable: &BTreeSet<String>) -> bool {
+    if word_at_any(text, "super") || text.contains("new.target") {
+        return true;
+    }
+    let accesses: Vec<Option<ThisAccess<'_>>> = text
+        .match_indices("this")
+        .filter(|&(idx, _)| bounded(text, idx, "this") && !text[..idx].ends_with('.'))
+        .map(|(idx, _)| this_member_access(&text[idx + 4..]))
+        .collect();
+    let assigned: BTreeSet<&str> = accesses
+        .iter()
+        .flatten()
+        .filter(|access| access.assigns)
+        .map(|access| access.name)
+        .collect();
+    accesses.iter().any(|access| {
+        !access.as_ref().is_some_and(|access| {
+            let name = access.name;
+            if access.calls {
+                return callable.contains(name);
+            }
+            name.starts_with('#')
+                || (!matches!(name, "constructor" | "__proto__" | "prototype")
+                    && (members.contains(name) || assigned.contains(name)))
         })
     })
+}
+
+/// A plain member access after a `this` keyword.
+struct ThisAccess<'t> {
+    name: &'t str,
+    /// The target of a plain `=`.
+    assigns: bool,
+    /// Called: `(`, `?.(`, a tagged template, or type arguments then `(`.
+    calls: bool,
+}
+
+/// The access when `after` (the text after a `this` keyword) is a plain
+/// member access `.NAME` / `?.NAME` / `.#name`. `None` for any other use, and
+/// for a name spelled with a unicode escape.
+fn this_member_access(after: &str) -> Option<ThisAccess<'_>> {
+    let rest = after.trim_start();
+    let tail = rest
+        .strip_prefix("?.")
+        .or_else(|| rest.strip_prefix('.'))?
+        .trim_start();
+    let name_end = tail
+        .char_indices()
+        .find(|&(offset, ch)| !(is_javascript_identifier_char(ch) || (offset == 0 && ch == '#')))
+        .map_or(tail.len(), |(offset, _)| offset);
+    let name = &tail[..name_end];
+    let next = tail[name_end..].trim_start();
+    if name.is_empty()
+        || name == "#"
+        || name.starts_with(|ch: char| ch.is_ascii_digit())
+        || tail[name_end..].starts_with('\\')
+    {
+        return None;
+    }
+    let assigns = next.starts_with('=') && !next.starts_with("==") && !next.starts_with("=>");
+    let invoked = past_type_arguments(next);
+    let calls = invoked.starts_with('(')
+        || invoked.starts_with('`')
+        || invoked
+            .strip_prefix("?.")
+            .is_some_and(|rest| rest.trim_start().starts_with('('));
+    Some(ThisAccess {
+        name,
+        assigns,
+        calls,
+    })
+}
+
+fn word_at_any(text: &str, word: &str) -> bool {
+    text.match_indices(word)
+        .any(|(idx, _)| bounded(text, idx, word))
 }
 
 /// `["NAME"]`, `['NAME']` or `` [`NAME`] `` anywhere in the module: a
