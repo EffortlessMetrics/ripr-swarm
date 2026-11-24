@@ -487,12 +487,20 @@ format and numbering, and the policy surfaces that should fail quickly before
 review.
 
 The formatting step of `check-fast`, `ci-fast`, local `precommit` and `shape`
-is the `cargo fmt` obligation run as bounded `rustfmt` batches over the same
-target roots, one batch group per edition. `cargo fmt` passes every root on
-one command line, which Windows caps at 32,767 characters; package `ripr`
-passed that with its integration-test roots, and the step failed with
-os error 206 before rustfmt started (#12004). The hosted workflow keeps its
-explicit `cargo fmt --check` step.
+is the `cargo fmt` obligation run as bounded `rustfmt` batches. `cargo fmt`
+passes every root on one command line, which Windows caps at 32,767
+characters; this workspace's 491 roots pass that, and the step failed with
+os error 206 before rustfmt started (#12004). The step makes the decisions
+the pinned `cargo fmt` makes without `--all`, and differs only in batching:
+it runs `RUSTFMT` when that is set and otherwise the `rustfmt` beside the
+`cargo` on `PATH`, never a `rustfmt` found on `PATH` on its own; it formats
+every workspace member when started from the workspace root, only the member
+under the invocation directory when started inside one, and refuses from
+anywhere else; it hands every target to rustfmt once, grouped by its
+edition; it passes no config, so `rustfmt` finds the nearest `rustfmt.toml`
+for each file; and it runs every batch before it reports the first failure,
+so one `--check` shows every diff. The hosted workflow keeps its explicit
+`cargo fmt --check` step.
 
 Local `precommit` also runs `goldens check` when the diff against
 `origin/main` touches output-surface code (`crates/ripr/src/output/`,

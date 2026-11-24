@@ -4,14 +4,25 @@ use std::path::{Path, PathBuf};
 use serde_json::{Value, json};
 
 use super::{
-    COMMAND_LINE_BUDGET, FORMATTED_TARGET_KINDS, RustfmtInvocation, argument_length, batch,
-    command_line_length, invocations,
+    COMMAND_LINE_BUDGET, RustfmtInvocation, argument_length, batch, beside_cargo,
+    canonical_or_keep, command_line_length, formatter, invocations, read_metadata, run_all,
 };
 
-fn package(id: &str, edition: &str, targets: &[(&str, &str)]) -> Value {
+/// The workspace root of a `cargo metadata --no-deps` document.
+fn workspace_root_of(document: &Value) -> Result<PathBuf, String> {
+    document["workspace_root"]
+        .as_str()
+        .map(PathBuf::from)
+        .ok_or_else(|| "cargo metadata reports no workspace root".to_string())
+}
+
+/// One workspace package as `cargo metadata --no-deps` reports it. Each
+/// target is `(kind, src path)`; a target may name its own edition.
+fn package(directory: &str, edition: &str, targets: &[(&str, &str)]) -> Value {
     json!({
-        "id": id,
+        "id": format!("{directory} 0.1.0 (path+file:///repo/{directory})"),
         "edition": edition,
+        "manifest_path": format!("/repo/{directory}/Cargo.toml"),
         "targets": targets
             .iter()
             .map(|(kind, src_path)| json!({ "kind": [kind], "src_path": src_path }))
@@ -19,15 +30,33 @@ fn package(id: &str, edition: &str, targets: &[(&str, &str)]) -> Value {
     })
 }
 
-fn metadata(workspace_root: &str, packages: Vec<Value>) -> Value {
-    json!({
-        "workspace_root": workspace_root,
-        "packages": packages,
-    })
+fn metadata(packages: Vec<Value>) -> Value {
+    json!({ "workspace_root": "/repo", "packages": packages })
 }
 
 fn roots_of(invocation: &RustfmtInvocation) -> &[String] {
     &invocation.argv[invocation.argv.len() - invocation.root_count..]
+}
+
+fn planned_roots(plan: &[RustfmtInvocation]) -> BTreeSet<String> {
+    plan.iter()
+        .flat_map(|invocation| roots_of(invocation).iter().cloned())
+        .collect()
+}
+
+/// A two-member workspace: `old` on edition 2021 and `new` on 2024.
+fn two_members() -> Value {
+    metadata(vec![
+        package("old", "2021", &[("lib", "/repo/old/src/lib.rs")]),
+        package(
+            "new",
+            "2024",
+            &[
+                ("bin", "/repo/new/src/main.rs"),
+                ("test", "/repo/new/tests/a.rs"),
+            ],
+        ),
+    ])
 }
 
 /// The reported shape of this workspace (#12004): one package with more than
@@ -106,41 +135,24 @@ fn an_empty_root_list_runs_nothing() {
     assert!(batch(&head, &[]).is_empty());
 }
 
+/// The edition each run names, in plan order.
+fn editions(plan: &[RustfmtInvocation]) -> Result<Vec<&str>, String> {
+    plan.iter()
+        .map(|invocation| {
+            invocation
+                .argv
+                .iter()
+                .position(|argument| argument == "--edition")
+                .and_then(|edition| invocation.argv.get(edition + 1))
+                .map(String::as_str)
+                .ok_or_else(|| format!("run names no edition: {:?}", invocation.argv))
+        })
+        .collect()
+}
+
 #[test]
 fn each_edition_runs_rustfmt_once_per_batch_and_check_is_optional() -> Result<(), String> {
-    let document = metadata(
-        "/repo",
-        vec![
-            package(
-                "old 0.1.0 (path+file:///repo/old)",
-                "2021",
-                &[("lib", "/repo/old/src/lib.rs")],
-            ),
-            package(
-                "new 0.1.0 (path+file:///repo/new)",
-                "2024",
-                &[
-                    ("bin", "/repo/new/src/main.rs"),
-                    ("test", "/repo/new/tests/a.rs"),
-                ],
-            ),
-        ],
-    );
-    /// The edition each run names, in plan order.
-    fn editions(plan: &[RustfmtInvocation]) -> Result<Vec<&str>, String> {
-        plan.iter()
-            .map(|invocation| {
-                invocation
-                    .argv
-                    .iter()
-                    .position(|argument| argument == "--edition")
-                    .and_then(|edition| invocation.argv.get(edition + 1))
-                    .map(String::as_str)
-                    .ok_or_else(|| format!("run names no edition: {:?}", invocation.argv))
-            })
-            .collect()
-    }
-    let checked = invocations(&document, true)?;
+    let checked = invocations(&two_members(), true, Path::new("/repo"))?;
     assert_eq!(editions(&checked)?, ["2021", "2024"]);
     for invocation in &checked {
         assert!(
@@ -157,7 +169,7 @@ fn each_edition_runs_rustfmt_once_per_batch_and_check_is_optional() -> Result<()
             .ok_or_else(|| format!("run carries no --check: {:?}", invocation.argv))?;
         assert!(check < invocation.argv.len() - invocation.root_count);
     }
-    let written = invocations(&document, false)?;
+    let written = invocations(&two_members(), false, Path::new("/repo"))?;
     assert_eq!(editions(&written)?, ["2021", "2024"]);
     assert!(
         written
@@ -167,60 +179,283 @@ fn each_edition_runs_rustfmt_once_per_batch_and_check_is_optional() -> Result<()
     Ok(())
 }
 
+/// cargo-fmt scopes `cargo fmt` without `--all` by the invocation directory:
+/// every member from the workspace root, the member under the invocation
+/// directory inside one, nothing elsewhere.
 #[test]
-fn roots_are_the_targets_cargo_fmt_hands_to_rustfmt() -> Result<(), String> {
-    let targets: Vec<Value> = FORMATTED_TARGET_KINDS
+fn the_invocation_directory_decides_which_members_are_formatted() -> Result<(), String> {
+    let every = invocations(&two_members(), true, Path::new("/repo"))?;
+    assert_eq!(
+        planned_roots(&every),
+        BTreeSet::from([
+            "/repo/new/src/main.rs".to_owned(),
+            "/repo/new/tests/a.rs".to_owned(),
+            "/repo/old/src/lib.rs".to_owned(),
+        ])
+    );
+    let member = invocations(&two_members(), true, Path::new("/repo/new"))?;
+    assert_eq!(
+        planned_roots(&member),
+        BTreeSet::from([
+            "/repo/new/src/main.rs".to_owned(),
+            "/repo/new/tests/a.rs".to_owned(),
+        ])
+    );
+    let other = invocations(&two_members(), true, Path::new("/repo/old"))?;
+    assert_eq!(
+        planned_roots(&other),
+        BTreeSet::from(["/repo/old/src/lib.rs".to_owned()])
+    );
+    // Inside a member, but below its manifest, or outside the workspace: no
+    // package is selected, and cargo-fmt refuses ("Failed to find targets")
+    // rather than widening.
+    for elsewhere in ["/repo/new/src", "/repo/new/tests", "/elsewhere"] {
+        let refused = invocations(&two_members(), true, Path::new(elsewhere));
+        assert_eq!(
+            refused,
+            Err(format!(
+                "cargo fmt finds no target from {elsewhere}: run it from the workspace root \
+                 or from a member directory"
+            )),
+            "{elsewhere}"
+        );
+    }
+    // A workspace of one package is that package wherever the caller stands.
+    let single = metadata(vec![package(
+        "one",
+        "2024",
+        &[("lib", "/repo/one/src/lib.rs")],
+    )]);
+    let plan = invocations(&single, true, Path::new("/elsewhere"))?;
+    assert_eq!(
+        planned_roots(&plan),
+        BTreeSet::from(["/repo/one/src/lib.rs".to_owned()])
+    );
+    Ok(())
+}
+
+/// A member with no target is not a package to format.
+#[test]
+fn a_member_without_targets_refuses() {
+    let document = metadata(vec![
+        package("empty", "2024", &[]),
+        package("full", "2024", &[("lib", "/repo/full/src/lib.rs")]),
+    ]);
+    assert_eq!(
+        invocations(&document, true, Path::new("/repo/empty")),
+        Err(
+            "cargo fmt finds no target from /repo/empty: run it from the workspace root or \
+             from a member directory"
+                .to_string()
+        )
+    );
+}
+
+#[test]
+fn roots_are_every_target_whatever_its_kind_or_extension() -> Result<(), String> {
+    // cargo-fmt reads each target's kind for its verbose listing only, and
+    // filters no root by extension: whatever cargo reports goes to rustfmt.
+    let names = [
+        "lib",
+        "bin",
+        "example",
+        "test",
+        "bench",
+        "custom-build",
+        "proc-macro",
+        // A kind this code does not know: cargo-fmt hands it over too.
+        "metabuild",
+    ];
+    let targets: Vec<Value> = names
         .iter()
         .map(|kind| json!({ "kind": [kind], "src_path": format!("/repo/kinds/{kind}.rs") }))
+        .chain([json!({ "kind": ["bin"], "src_path": "/repo/kinds/main.c" })])
         .collect();
-    let document = metadata(
-        "/repo",
-        vec![
-            json!({
-                "id": "kinds 0.1.0 (path+file:///repo/kinds)",
-                "edition": "2024",
-                "targets": targets,
-            }),
-            package(
-                "skipped 0.1.0 (path+file:///repo/skipped)",
-                "2024",
-                &[
-                    // Not a Rust source root.
-                    ("bin", "/repo/skipped/src/main.c"),
-                    // A kind `cargo fmt` does not hand to rustfmt.
-                    ("metabuild", "/repo/skipped/metabuild.rs"),
-                ],
-            ),
-        ],
-    );
-    let plan = invocations(&document, true)?;
-    let roots = plan
-        .iter()
-        .flat_map(|invocation| roots_of(invocation).iter().cloned())
-        .collect::<BTreeSet<_>>();
-    let expected = FORMATTED_TARGET_KINDS
+    let document = metadata(vec![json!({
+        "id": "kinds 0.1.0 (path+file:///repo/kinds)",
+        "edition": "2024",
+        "manifest_path": "/repo/kinds/Cargo.toml",
+        "targets": targets,
+    })]);
+    let roots = planned_roots(&invocations(&document, true, Path::new("/repo"))?);
+    let expected = names
         .iter()
         .map(|kind| format!("/repo/kinds/{kind}.rs"))
+        .chain(["/repo/kinds/main.c".to_owned()])
         .collect::<BTreeSet<_>>();
-    assert_eq!(roots.len(), expected.len());
     assert_eq!(roots, expected);
     Ok(())
 }
 
+/// cargo-fmt keys its target set by path alone, so the first target that names
+/// a path decides the edition of its only run.
 #[test]
-fn a_package_without_an_edition_is_refused() {
-    let document = metadata(
-        "/repo",
-        vec![json!({ "id": "odd", "edition": "", "targets": [] })],
-    );
+fn a_path_two_targets_name_runs_once_under_the_first_targets_edition() -> Result<(), String> {
+    let document = metadata(vec![json!({
+        "id": "shared 0.1.0 (path+file:///repo/shared)",
+        "edition": "2024",
+        "manifest_path": "/repo/shared/Cargo.toml",
+        "targets": [
+            { "kind": ["test"], "src_path": "/repo/shared/tests/shared.rs", "edition": "2021" },
+            { "kind": ["bin"], "src_path": "/repo/shared/tests/shared.rs", "edition": "2024" },
+        ],
+    })]);
+    let plan = invocations(&document, true, Path::new("/repo"))?;
+    let mut runs = Vec::new();
+    for invocation in &plan {
+        runs.push((
+            editions(std::slice::from_ref(invocation))?[0].to_owned(),
+            roots_of(invocation).to_vec(),
+        ));
+    }
     assert_eq!(
-        invocations(&document, true),
-        Err("workspace package odd reports no edition".to_string())
+        runs,
+        [(
+            "2021".to_owned(),
+            vec!["/repo/shared/tests/shared.rs".to_owned()]
+        )]
     );
+    Ok(())
+}
+
+/// cargo-fmt runs every edition group before it reports the first failure, so
+/// one `--check` run shows every diff. A failed batch hides no later batch.
+#[test]
+fn every_batch_runs_before_the_first_failure_is_reported() -> Result<(), String> {
+    fn batch_of(argument: &str) -> RustfmtInvocation {
+        RustfmtInvocation {
+            argv: vec![argument.to_owned()],
+            root_count: 0,
+        }
+    }
+    let good = || batch_of("--version");
+    let bad = || batch_of("--ripr-not-a-cargo-flag");
+    assert_eq!(run_all("cargo", &[], &[], None), Ok(()));
+    assert_eq!(run_all("cargo", &[good()], &[], None), Ok(()));
+    assert_eq!(run_all("cargo", &[good(), good()], &[], None), Ok(()));
+    for order in [[bad(), good()], [good(), bad()]] {
+        let mut diagnostics = Vec::new();
+        let Err(error) = run_all("cargo", &order, &[], Some(&mut diagnostics)) else {
+            return Err("a failed batch must fail the step".to_owned());
+        };
+        assert!(
+            error.starts_with(
+                "cargo --ripr-not-a-cargo-flag (0 target roots; paths elided) failed with"
+            ),
+            "{error}"
+        );
+        assert_eq!(diagnostics.len(), 2, "both batches ran");
+        // A recorded argument list carries the stand-in for the root paths
+        // and says so; it is not read as what rustfmt ran with.
+        assert!(
+            diagnostics.iter().all(|row| row
+                .argv
+                .last()
+                .is_some_and(|arg| arg.ends_with("paths elided)"))),
+            "{diagnostics:?}"
+        );
+        let outcomes = diagnostics
+            .iter()
+            .map(|row| row.outcome)
+            .collect::<Vec<_>>();
+        let ran = order
+            .iter()
+            .map(|invocation| {
+                if invocation.argv[0] == "--version" {
+                    "pass"
+                } else {
+                    "failed"
+                }
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(outcomes, ran, "{error}");
+    }
+    let Err(error) = run_all("cargo", &[bad(), good(), bad()], &[], None) else {
+        return Err("two failed batches must fail the step".to_owned());
+    };
+    assert!(error.ends_with("; 2 batches failed"), "{error}");
+    Ok(())
+}
+
+/// cargo-fmt groups by each target's own edition, which defaults to its
+/// package's.
+#[test]
+fn a_target_edition_overrides_its_package_edition() -> Result<(), String> {
+    let document = json!({
+        "workspace_root": "/repo",
+        "packages": [{
+            "id": "mixed 0.1.0 (path+file:///repo/mixed)",
+            "edition": "2024",
+            "manifest_path": "/repo/mixed/Cargo.toml",
+            "targets": [
+                { "kind": ["lib"], "src_path": "/repo/mixed/src/lib.rs", "edition": "2024" },
+                { "kind": ["test"], "src_path": "/repo/mixed/tests/old.rs", "edition": "2021" },
+                { "kind": ["test"], "src_path": "/repo/mixed/tests/none.rs" },
+            ],
+        }],
+    });
+    let plan = invocations(&document, true, Path::new("/repo"))?;
+    let mut by_root = Vec::new();
+    for invocation in &plan {
+        let edition = editions(std::slice::from_ref(invocation))?[0];
+        for root in roots_of(invocation) {
+            by_root.push((root.clone(), edition.to_owned()));
+        }
+    }
+    assert_eq!(
+        by_root,
+        [
+            ("/repo/mixed/tests/old.rs".to_owned(), "2021".to_owned()),
+            ("/repo/mixed/src/lib.rs".to_owned(), "2024".to_owned()),
+            ("/repo/mixed/tests/none.rs".to_owned(), "2024".to_owned()),
+        ]
+    );
+    Ok(())
 }
 
 #[test]
-fn a_workspace_rustfmt_config_is_passed_to_every_run() -> Result<(), String> {
+fn a_target_whose_package_reports_no_edition_is_refused() {
+    let document = json!({
+        "workspace_root": "/repo",
+        "packages": [{
+            "id": "odd",
+            "edition": "",
+            "manifest_path": "/repo/odd/Cargo.toml",
+            "targets": [{ "kind": ["lib"], "src_path": "/repo/odd/src/lib.rs" }],
+        }],
+    });
+    assert_eq!(
+        invocations(&document, true, Path::new("/repo")),
+        Err("target /repo/odd/src/lib.rs reports no edition".to_string())
+    );
+}
+
+/// cargo-fmt passes no config: rustfmt finds the nearest `rustfmt.toml` or
+/// `.rustfmt.toml` for each file, so a member's own config keeps applying.
+#[test]
+fn no_config_path_is_passed_so_rustfmt_finds_each_files_nearest_config() -> Result<(), String> {
+    let plan = invocations(&two_members(), true, Path::new("/repo"))?;
+    assert!(!plan.is_empty());
+    assert!(
+        plan.iter()
+            .all(|invocation| !invocation.argv.iter().any(|arg| arg.contains("config"))),
+        "{plan:?}"
+    );
+    Ok(())
+}
+
+/// cargo-fmt runs `RUSTFMT` when it is set, else the rustfmt beside the
+/// `cargo` that serves the step. A different `rustfmt` earlier on `PATH`
+/// must not be picked up.
+#[test]
+fn the_formatter_is_rustfmt_env_else_the_rustfmt_beside_cargo() -> Result<(), String> {
+    fn named(name: &str) -> String {
+        if cfg!(windows) {
+            format!("{name}.exe")
+        } else {
+            name.to_owned()
+        }
+    }
     let root: PathBuf = std::env::temp_dir().join(format!(
         "ripr-workspace-format-{}-{}",
         std::process::id(),
@@ -229,39 +464,210 @@ fn a_workspace_rustfmt_config_is_passed_to_every_run() -> Result<(), String> {
             .map_err(|err| err.to_string())?
             .as_nanos()
     ));
-    std::fs::create_dir_all(&root).map_err(|err| err.to_string())?;
-    let config = root.join(".rustfmt.toml");
-    std::fs::write(&config, "max_width = 100\n").map_err(|err| err.to_string())?;
-    let document = metadata(
-        &root.to_string_lossy(),
-        vec![package(
-            "one 0.1.0 (path+file:///one)",
-            "2024",
-            &[("lib", "/one/src/lib.rs")],
-        )],
-    );
-    let plan = invocations(&document, true).inspect_err(|_| {
-        let _ = std::fs::remove_dir_all(&root);
-    })?;
-    std::fs::remove_dir_all(&root).map_err(|err| err.to_string())?;
-    assert_eq!(plan.len(), 1);
+    let toolchain = root.join("toolchain");
+    let shadow = root.join("shadow");
+    let empty = root.join("empty");
+    for directory in [&toolchain, &shadow, &empty] {
+        std::fs::create_dir_all(directory).map_err(|err| err.to_string())?;
+    }
+    for file in [
+        toolchain.join(named("cargo")),
+        toolchain.join(named("rustfmt")),
+        shadow.join(named("rustfmt")),
+        empty.join(named("cargo")),
+    ] {
+        std::fs::write(&file, "").map_err(|err| err.to_string())?;
+    }
+    let toolchain_dir = toolchain.clone();
+    let shadow_dir = shadow.clone();
+    let empty_dir = empty.clone();
+    let toolchain_dir = toolchain_dir.to_string_lossy().into_owned();
+    let shadow_dir = shadow_dir.to_string_lossy().into_owned();
+    let empty_dir = empty_dir.to_string_lossy().into_owned();
+    let join = std::env::join_paths([&shadow_dir, &toolchain_dir, &empty_dir])
+        .map_err(|err| err.to_string())?;
+
+    // PATH-shadowing control: the shadowing rustfmt comes first on PATH, and
+    // the toolchain's own rustfmt is still the one run.
     assert_eq!(
-        plan[0].argv[..3],
-        [
-            "--config-path".to_owned(),
-            config.to_string_lossy().into_owned(),
-            "--edition".to_owned()
-        ]
+        beside_cargo("rustfmt", Some(join.as_os_str())),
+        Some(toolchain.join(named("rustfmt")))
     );
+    assert_eq!(
+        formatter(None, Some(join.as_os_str())),
+        Ok(toolchain.join(named("rustfmt")))
+    );
+    // RUSTFMT names the formatter outright.
+    assert_eq!(
+        formatter(
+            Some(std::ffi::OsStr::new("/opt/other/rustfmt")),
+            Some(join.as_os_str())
+        ),
+        Ok(PathBuf::from("/opt/other/rustfmt"))
+    );
+    // A PATH whose first cargo has no rustfmt beside it is not a formatter
+    // source, and an empty RUSTFMT is not one either.
+    let only_empty = std::env::join_paths([&empty_dir]).map_err(|err| err.to_string())?;
+    assert_eq!(
+        formatter(Some(std::ffi::OsStr::new("")), Some(only_empty.as_os_str())),
+        Err(
+            "no rustfmt sits beside the cargo on PATH; install the rustfmt component for the \
+             pinned toolchain, or set RUSTFMT to the formatter to run"
+                .to_string()
+        )
+    );
+    let Err(error) = formatter(None, None) else {
+        return Err("no PATH and no RUSTFMT must not name a formatter".to_owned());
+    };
+    assert!(
+        error.contains("set RUSTFMT"),
+        "the remedy names the override: {error}"
+    );
+    let _ = std::fs::remove_dir_all(&root);
     Ok(())
 }
 
-/// `cargo fmt -v` lists the roots it hands to rustfmt. It can speak only for a
-/// package whose one line still fits (#12004), but it reads every package the
-/// same way, so the packages short enough to run are the oracle for the plan.
+/// Two members with different formatting: run from one member's directory,
+/// the step formats that member and leaves the other as it was, as `cargo fmt`
+/// does. The document is the one `cargo metadata` reports for that workspace.
+#[test]
+fn from_a_member_directory_only_that_member_is_rewritten() -> Result<(), String> {
+    let root: PathBuf = std::env::temp_dir().join(format!(
+        "ripr-workspace-format-members-{}-{}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_err(|err| err.to_string())?
+            .as_nanos()
+    ));
+    for member in ["alpha", "beta"] {
+        let directory = root.join(member).join("src");
+        std::fs::create_dir_all(&directory).map_err(|err| err.to_string())?;
+        std::fs::write(
+            root.join(member).join("Cargo.toml"),
+            format!("[package]\nname = \"{member}\"\nversion = \"0.1.0\"\nedition = \"2021\"\n"),
+        )
+        .map_err(|err| err.to_string())?;
+        std::fs::write(directory.join("lib.rs"), "pub fn one( ) -> u8 { 1 }\n")
+            .map_err(|err| err.to_string())?;
+    }
+    std::fs::write(
+        root.join("Cargo.toml"),
+        "[workspace]\nmembers = [\"alpha\", \"beta\"]\nresolver = \"2\"\n",
+    )
+    .map_err(|err| err.to_string())?;
+    let output = crate::run::capture_output_in_dir(
+        "cargo",
+        &[
+            "metadata".to_owned(),
+            "--no-deps".to_owned(),
+            "--format-version".to_owned(),
+            "1".to_owned(),
+        ],
+        &root,
+        "cargo metadata",
+    )?;
+    assert!(output.status.success(), "cargo metadata: {}", output.stderr);
+    let document: Value = serde_json::from_str(&output.stdout)
+        .map_err(|err| format!("cargo metadata printed no JSON document: {err}"))?;
+    let workspace_root = workspace_root_of(&document)?;
+
+    // From the workspace root both members; from inside one member that
+    // member alone; below its manifest, nothing.
+    let every = planned_roots(&invocations(&document, false, &workspace_root)?);
+    assert_eq!(every.len(), 2, "{every:?}");
+    let plan = invocations(&document, false, &workspace_root.join("alpha"))?;
+    let roots = planned_roots(&plan);
+    assert_eq!(
+        roots.iter().cloned().collect::<Vec<_>>(),
+        [canonical_or_keep(&root.join("alpha").join("src/lib.rs"))
+            .to_string_lossy()
+            .into_owned()],
+        "{roots:?}"
+    );
+    assert!(
+        invocations(&document, false, &workspace_root.join("alpha").join("src")).is_err(),
+        "below a member's manifest there is nothing to format"
+    );
+    let program = formatter(None, std::env::var_os("PATH").as_deref())?;
+    for invocation in &plan {
+        let args = invocation
+            .argv
+            .iter()
+            .map(String::as_str)
+            .collect::<Vec<_>>();
+        let output = crate::run::capture_output(&program.to_string_lossy(), &args, "rustfmt")?;
+        assert!(
+            output.status.success(),
+            "rustfmt {args:?} exited {}: {}",
+            output.status,
+            output.stderr
+        );
+    }
+    let alpha = std::fs::read_to_string(root.join("alpha").join("src/lib.rs"))
+        .map_err(|err| err.to_string())?;
+    let beta = std::fs::read_to_string(root.join("beta").join("src/lib.rs"))
+        .map_err(|err| err.to_string())?;
+    assert_eq!(
+        alpha, "pub fn one() -> u8 {\n    1\n}\n",
+        "alpha was formatted"
+    );
+    assert_eq!(
+        beta, "pub fn one( ) -> u8 { 1 }\n",
+        "beta was left as it was"
+    );
+    let _ = std::fs::remove_dir_all(&root);
+    Ok(())
+}
+
+/// In this repository the `xtask` alias runs from `xtask/` as readily as from
+/// the root. There the step is xtask's own; from the root it is every
+/// member's; from a directory that is neither it refuses.
+#[test]
+fn in_this_workspace_the_invocation_directory_scopes_the_plan() -> Result<(), String> {
+    // `cargo metadata` reads the process working directory, which other
+    // tests in this process move.
+    let _cwd_guard = crate::acquire_test_cwd_read_guard();
+    let document = read_metadata(&[])?;
+    let workspace_root = workspace_root_of(&document)?;
+    let every = planned_roots(&invocations(&document, false, &workspace_root)?);
+    assert!(every.len() > 400, "roots from the root: {}", every.len());
+    let member = planned_roots(&invocations(
+        &document,
+        false,
+        &workspace_root.join("xtask"),
+    )?);
+    let xtask_directory = canonical_or_keep(&workspace_root.join("xtask"));
+    let inside_xtask = every
+        .iter()
+        .filter(|root| Path::new(root).starts_with(&xtask_directory))
+        .cloned()
+        .collect::<BTreeSet<_>>();
+    assert!(!inside_xtask.is_empty(), "{every:?}");
+    assert_eq!(member, inside_xtask, "from inside xtask/: xtask alone");
+    for elsewhere in ["xtask/src", "docs", "crates"] {
+        assert!(
+            invocations(&document, false, &workspace_root.join(elsewhere)).is_err(),
+            "from {elsewhere}: the plan must refuse"
+        );
+    }
+    Ok(())
+}
+
+/// `cargo fmt -v` lists the roots it hands to rustfmt, every package the same
+/// way, so its listing is the oracle for the plan. It prints the listing
+/// before it starts rustfmt, so it is complete even for the package whose one
+/// line is too long for the host to start rustfmt (#12004: `ripr` on
+/// Windows).
 #[test]
 fn the_plan_lists_the_roots_cargo_fmt_lists() -> Result<(), String> {
-    let plan = super::plan(true, &[])?;
+    // `cargo` reads the process working directory, which other tests in this
+    // process move. This test starts in `xtask/`, where the plan is xtask's
+    // own; the oracle is for the plan read from the workspace root.
+    let _cwd_guard = crate::acquire_test_cwd_read_guard();
+    let document = read_metadata(&[])?;
+    let workspace_root = workspace_root_of(&document)?;
+    let plan = invocations(&document, true, &workspace_root)?;
     assert!(
         plan.iter()
             .all(|invocation| command_line_length(&invocation.argv) <= COMMAND_LINE_BUDGET),
@@ -270,13 +676,14 @@ fn the_plan_lists_the_roots_cargo_fmt_lists() -> Result<(), String> {
     let planned = plan
         .iter()
         .flat_map(|invocation| roots_of(invocation).iter().cloned())
+        .map(|path| path.strip_prefix(r"\\?\").unwrap_or(&path).to_owned())
         .collect::<BTreeSet<_>>();
     assert!(
         planned.len() > 400,
         "this workspace is the large one: {}",
         planned.len()
     );
-    for package in ["ripr-contract", "xtask", "repo-policy"] {
+    for package in ["ripr", "ripr-contract", "xtask", "repo-policy"] {
         let output = crate::run::capture_output(
             "cargo",
             &["fmt", "-p", package, "--check", "-v"],
@@ -285,7 +692,6 @@ fn the_plan_lists_the_roots_cargo_fmt_lists() -> Result<(), String> {
         let listed = output
             .stdout
             .lines()
-            .chain(output.stderr.lines())
             .filter_map(|line| {
                 let quoted = line.trim().strip_prefix('[')?;
                 let quoted = quoted.rsplit_once(']')?.1.trim();
