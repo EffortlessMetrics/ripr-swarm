@@ -575,19 +575,25 @@ fn helper_candidates_from_callers<'a>(
     dunder_module_helper: bool,
     owners: &[PythonOwner],
 ) -> Vec<HelperOwnerCallCandidate<'a>> {
-    let mut found: Vec<HelperOwnerCallCandidate<'a>> = Vec::new();
-    let mut seen: std::collections::HashSet<(&'a Path, &'a str)> = std::collections::HashSet::new();
     push_candidates_from_callers(
         owner,
         callers,
         all_tests,
         dunder_module_helper,
         owners,
-        false,
-        &mut seen,
-        &mut found,
-    );
-    found
+        CallerScan::default(),
+    )
+    .found
+}
+
+/// What one scan of the callers collects: the tests already credited, by
+/// file and name, and the candidates found. With `route_requests_only`, a
+/// test is related only when it requests one of the caller's routes.
+#[derive(Default)]
+struct CallerScan<'a> {
+    route_requests_only: bool,
+    seen: std::collections::HashSet<(&'a Path, &'a str)>,
+    found: Vec<HelperOwnerCallCandidate<'a>>,
 }
 
 /// The route relation for the routed handlers whose own scope calls the
@@ -616,36 +622,34 @@ fn route_scope_handler_candidates<'a>(
     if callers.is_empty() {
         return Vec::new();
     }
-    let mut seen: std::collections::HashSet<(&'a Path, &'a str)> = related
-        .iter()
-        .map(|candidate| {
-            (
-                candidate.candidate.test.file.as_path(),
-                candidate.candidate.test.qualified_name.as_str(),
-            )
-        })
-        .collect();
-    let mut found: Vec<HelperOwnerCallCandidate<'a>> = Vec::new();
-    push_candidates_from_callers(
-        owner, callers, all_tests, true, owners, true, &mut seen, &mut found,
-    );
-    found
+    let scan = CallerScan {
+        route_requests_only: true,
+        seen: related
+            .iter()
+            .map(|candidate| {
+                (
+                    candidate.candidate.test.file.as_path(),
+                    candidate.candidate.test.qualified_name.as_str(),
+                )
+            })
+            .collect(),
+        found: Vec::new(),
+    };
+    push_candidates_from_callers(owner, callers, all_tests, true, owners, scan).found
 }
 
 /// The candidates of `callers`, each with whether its path crossed a module
-/// boundary, added to `found` unless `seen` already holds the test. With
-/// `route_requests_only`, a test is related only when it requests one of the
-/// caller's routes.
+/// boundary, added to the scan unless it already holds the test.
 fn push_candidates_from_callers<'a>(
     owner: &PythonOwner,
     callers: Vec<(&PythonOwner, bool)>,
     all_tests: &'a [PythonTest],
     dunder_module_helper: bool,
     owners: &[PythonOwner],
-    route_requests_only: bool,
-    seen: &mut std::collections::HashSet<(&'a Path, &'a str)>,
-    found: &mut Vec<HelperOwnerCallCandidate<'a>>,
-) {
+    mut scan: CallerScan<'a>,
+) -> CallerScan<'a> {
+    let route_requests_only = scan.route_requests_only;
+    let CallerScan { seen, found, .. } = &mut scan;
     let token = crate::analysis::cancellation::current_token();
     for (caller, cross_module) in callers {
         // The relation is per-test and pure, so a large workspace scans it
@@ -726,6 +730,7 @@ fn push_candidates_from_callers<'a>(
         }
     }
     sort_candidates(found);
+    scan
 }
 
 /// Whether `caller` calls `owner` itself, under the name its own module
