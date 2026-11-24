@@ -509,6 +509,40 @@ fn a_gripped_spot_beside_a_noticed_candidate_is_already_checked() -> Result<(), 
     Ok(())
 }
 
+const LOYALTY_BASE: &str = "pub fn doubled(x: u64) -> u64 {\n    x * 2\n}\n";
+const LOYALTY_NEW: &str = "pub fn doubled(x: u64) -> u64 {\n    x * 2\n}\n\npub fn loyalty_price(amount: u64, member_years: u32) -> u64 {\n    if member_years >= 5 {\n        amount - amount * 5 / 100\n    } else {\n        amount\n    }\n}\n";
+const LOYALTY_TEST: &str =
+    "use fx::doubled;\n\n#[test]\nfn doubles() {\n    assert_eq!(doubled(2), 4);\n}\n";
+
+/// #15926: a new function no test calls. Check's top gap (the `member_years >= 5`
+/// predicate, no test reaches it) leads the refusal's reasons, and its reason
+/// says no test reaches the code instead of "cannot tell from reading".
+#[test]
+fn an_unreached_new_function_leads_with_checks_no_path_reason() -> Result<(), String> {
+    let repo = repo("loyalty", LOYALTY_BASE, LOYALTY_NEW, LOYALTY_TEST, true)?;
+    let repair = ripr(&repo.root, &["repair"])?;
+    let err = text(&repair.stderr);
+    if repair.status.code() != Some(3) || !err.contains("code=no_eligible_seam") {
+        return Err(format!("the change must refuse:\n{err}"));
+    }
+    let first = err
+        .lines()
+        .skip_while(|line| *line != "Why:")
+        .nth(1)
+        .unwrap_or_default();
+    if !first.starts_with("  - the code at src/lib.rs:6 `member_years >= 5`: `ripr check` finds no test that reaches this changed code")
+    {
+        return Err(format!("check's top gap must lead with its no-path reason:\n{err}"));
+    }
+    if err.contains("cannot tell from reading the code") {
+        return Err(format!("a no-path gap is not unknown:\n{err}"));
+    }
+    if attempts(&repo.root) != 0 {
+        return Err("no attempt may start".to_string());
+    }
+    Ok(())
+}
+
 /// #12867 / #13203 A0: a seam whose repair target is only a producer-owned
 /// proposed new test file now starts (bare and by id) when the producer names
 /// the workspace, while a seam the producer admits no proposal for (here a

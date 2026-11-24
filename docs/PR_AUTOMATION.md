@@ -498,6 +498,10 @@ prepared in the environment, `precommit` prints `goldens check: INCOMPLETE
 to close the gap, and hosted CI still owns those fixtures. The step is not part
 of the hosted collect-all policy run, which has its own goldens job.
 
+Start `cargo xtask check-fast`, `ci-fast`, `precommit` and `shape` at the
+RIPR workspace root. A call from a member or documentation directory reports
+the resolved root and exits before formatting or writing gate reports.
+
 The strict `check-fast` receipt consumer requires all six unconditional `Ran`
 receipts (`fmt --check`, static-language, command-catalog, generated,
 generated-clean and lint-policy), including for a valid empty diff. Policy and
