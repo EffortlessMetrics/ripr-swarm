@@ -2,8 +2,8 @@
 //! another digit count for `round`, or the other sort direction (#16203).
 //!
 //! `s.strip()` to `s.lstrip()` gives a different result only for a string
-//! with trailing whitespace; `round(x, 2)` to `round(x, 3)` only for a number
-//! with more than two decimal places; `sorted(xs)` to
+//! with trailing whitespace; `round(x, 2)` to `round(x, 3)` only for a
+//! number the two counts round differently; `sorted(xs)` to
 //! `sorted(xs, reverse=True)` only for a list holding two different
 //! elements. A strong exact-value assertion whose
 //! every call passes a value outside that set passes before and after the
@@ -46,8 +46,9 @@ pub(super) enum CallVariant {
         old: String,
         new: String,
     },
-    /// `round(param, old)` to `round(param, new)`.
-    Round { param: String, old: u32, new: u32 },
+    /// `round(param, old)` to `round(param, new)`; a negative count rounds
+    /// to tens, hundreds and coarser.
+    Round { param: String, old: i32, new: i32 },
     /// `sorted(param)` or `param.sort()` with its `reverse=` flag flipped.
     Sort {
         param: String,
@@ -101,19 +102,32 @@ pub(super) fn call_variant(old_line: &str, new_line: &str) -> Option<CallVariant
             })
         }
         (Tok::Int { .. }, Tok::Int { .. }) => {
-            let shape = matches!(at(-4), Some((Tok::Name { .. }, name)) if name == "round")
-                && not_attribute(-5)
-                && matches!(at(-3), Some((Tok::Lpar, _)))
-                && matches!(at(-2), Some((Tok::Name { .. }, _)))
-                && matches!(at(-1), Some((Tok::Comma, _)))
+            // A negative count lexes as a `-` before the digits; both sides
+            // must spell the sign alike, or the edit changes more than the
+            // count and the token counts already differed above.
+            let negative = matches!(at(-1), Some((Tok::Minus, _)));
+            let (round_at, lpar_at, param_at, comma_at) = if negative {
+                (-5, -4, -3, -2)
+            } else {
+                (-4, -3, -2, -1)
+            };
+            let shape = matches!(at(round_at), Some((Tok::Name { .. }, name)) if name == "round")
+                && not_attribute(round_at - 1)
+                && matches!(at(lpar_at), Some((Tok::Lpar, _)))
+                && matches!(at(param_at), Some((Tok::Name { .. }, _)))
+                && matches!(at(comma_at), Some((Tok::Comma, _)))
                 && matches!(at(1), Some((Tok::Rpar, _)));
             if !shape {
                 return None;
             }
+            let count = |token: &Token| -> Option<i32> {
+                let count = token.1.parse::<i32>().ok()?;
+                Some(if negative { -count } else { count })
+            };
             Some(CallVariant::Round {
-                param: at(-2).map(|(_, text)| text.clone())?,
-                old: old[i].1.parse().ok()?,
-                new: new[i].1.parse().ok()?,
+                param: at(param_at).map(|(_, text)| text.clone())?,
+                old: count(&old[i])?,
+                new: count(&new[i])?,
             })
         }
         _ => None,
@@ -230,6 +244,12 @@ pub(super) fn python_call_variant_evidence(
         // spells.
         return None;
     }
+    // A recursive call can hand the owner an argument no related test
+    // passes (`clean(s.replace(" ", ""))`), so the entry rows do not cover
+    // what the versions see; the boundary rule refuses the same inference.
+    if owner.term_facts.calls_own_name() {
+        return None;
+    }
     let variant = call_variant(old_line, new_line)?;
     // A bare `round` or `sorted` is the builtin only when nothing in the
     // owner's file rebinds the name.
@@ -293,11 +313,21 @@ pub(super) fn python_call_variant_evidence(
         CallVariant::Round { param, old, new } => PythonCallVariantEvidence {
             old_call: format!("round({param}, {old})"),
             new_call: format!("round({param}, {new})"),
-            discriminator: format!(
-                "`{param}` with more than {} decimal place{}",
-                old.min(new),
-                if old.min(new) == 1 { "" } else { "s" }
-            ),
+            discriminator: if old.min(new) < 0 {
+                // A negative count rounds to a multiple of `10^-count`;
+                // a value already on that grid reads the same both ways.
+                let grid = 10i64
+                    .checked_pow((-old.min(new)).min(18) as u32)
+                    .map(|value| value.to_string())
+                    .unwrap_or_else(|| format!("10^{}", -old.min(new)));
+                format!("`{param}` with a value that is not a multiple of {grid}")
+            } else {
+                format!(
+                    "`{param}` with more than {} decimal place{}",
+                    old.min(new),
+                    if old.min(new) == 1 { "" } else { "s" }
+                )
+            },
         },
         CallVariant::Sort {
             param,
@@ -358,10 +388,7 @@ pub(super) fn variant_agrees(variant: &CallVariant, value: &str) -> Option<bool>
             }
             Some(strip(&text, old)? == strip(&text, new)?)
         }
-        CallVariant::Round { old, new, .. } => {
-            let digits = decimal_places(value)?;
-            Some(digits <= (*old).min(*new))
-        }
+        CallVariant::Round { old, new, .. } => round_agrees(value, *old, *new),
         // A sort reads a collection, never a scalar binding.
         CallVariant::Sort { .. } => None,
     }
@@ -385,18 +412,106 @@ fn strip_discriminator(old: &str, new: &str) -> &'static str {
     }
 }
 
-/// Decimal places of a plain int or float literal, trailing zeros dropped.
-fn decimal_places(value: &str) -> Option<u32> {
+/// Longest literal, and coarsest count magnitude, the reader evaluates. A
+/// float's stored binary value can round unlike its decimal spelling near a
+/// half-way point, and the farther the spelling goes past `f64`'s roughly 17
+/// significant digits the wider that gap grows; beyond these bounds the
+/// reader returns None rather than claim agreement.
+const MAX_ROUND_DIGITS: usize = 15;
+const MAX_ROUND_COUNT: i32 = 20;
+const MAX_ROUND_SPELLING: usize = 48;
+
+/// Whether `round(value, old)` and `round(value, new)` return the same
+/// number, read as exact decimal half-to-even rounding. Python rounds a
+/// float by its binary value, which can break a decimal tie the other way;
+/// the read stays inside [`MAX_ROUND_DIGITS`], where the two roundings the
+/// spelling decides cannot silently coincide, and refuses anything else.
+fn round_agrees(value: &str, old: i32, new: i32) -> Option<bool> {
+    if old.unsigned_abs() > MAX_ROUND_COUNT as u32 || new.unsigned_abs() > MAX_ROUND_COUNT as u32 {
+        return None;
+    }
     let text = value.trim().replace('_', "");
     let unsigned = text.strip_prefix('-').unwrap_or(&text);
     let (whole, fraction) = unsigned.split_once('.').unwrap_or((unsigned, ""));
     if whole.is_empty() && fraction.is_empty()
+        || whole.len() + fraction.len() > MAX_ROUND_SPELLING
         || !whole.chars().all(|ch| ch.is_ascii_digit())
         || !fraction.chars().all(|ch| ch.is_ascii_digit())
     {
         return None;
     }
-    u32::try_from(fraction.trim_end_matches('0').len()).ok()
+    let mut digits: Vec<u8> = whole
+        .chars()
+        .chain(fraction.chars())
+        .map(|ch| ch as u8 - b'0')
+        .collect();
+    let leading = digits.iter().position(|&digit| digit != 0);
+    let Some(leading) = leading else {
+        // Zero agrees under any two counts (and `-0.0 == 0.0`).
+        return Some(true);
+    };
+    let digits = digits.split_off(leading);
+    if digits.len() > MAX_ROUND_DIGITS {
+        return None;
+    }
+    // `round` treats both signs alike, so the magnitudes decide.
+    Some(
+        round_half_even(&digits, fraction.len(), old)
+            == round_half_even(&digits, fraction.len(), new),
+    )
+}
+
+/// One exact `round(<digits> * 10^-scale, keep)` as `(digits, exponent)`:
+/// the value is `digits * 10^exponent`, rounded half to even. A `keep`
+/// below zero rounds to a multiple of `10^-keep`.
+fn round_half_even(digits: &[u8], scale: usize, keep: i32) -> (Vec<u8>, i32) {
+    let int_len = digits.len() as i64 - scale as i64;
+    // The kept digits end at the `10^keep` place, index `int_len + keep`.
+    let cut = int_len + keep as i64;
+    if cut >= digits.len() as i64 {
+        return normalize_rounded(digits.to_vec(), -(scale as i32));
+    }
+    let cut = cut.max(0) as usize;
+    let mut kept = digits[..cut].to_vec();
+    let dropped = digits.get(cut).copied().unwrap_or(0);
+    let rest_nonzero = digits[cut..].iter().any(|&digit| digit != 0);
+    let round_up = match dropped.cmp(&5) {
+        std::cmp::Ordering::Greater => true,
+        std::cmp::Ordering::Less => false,
+        std::cmp::Ordering::Equal => {
+            if rest_nonzero {
+                true
+            } else {
+                // An exact tie rounds to the even last digit.
+                kept.last().is_some_and(|&digit| digit % 2 == 1)
+            }
+        }
+    };
+    if round_up {
+        let mut index = kept.len();
+        while index > 0 {
+            index -= 1;
+            if kept[index] == 9 {
+                kept[index] = 0;
+            } else {
+                kept[index] += 1;
+                break;
+            }
+        }
+        if index == 0 && (kept.is_empty() || kept.first() == Some(&0)) {
+            kept.insert(0, 1);
+        }
+    }
+    normalize_rounded(kept, (int_len - cut as i64) as i32)
+}
+
+/// Trim trailing zeros so equal values render as one `(digits, exponent)`.
+fn normalize_rounded(mut digits: Vec<u8>, mut exponent: i32) -> (Vec<u8>, i32) {
+    while digits.last() == Some(&0) && digits.len() > 1 {
+        digits.pop();
+        exponent += 1;
+    }
+    (digits, exponent)
 }
 
 /// Each token of one trimmed line with its source spelling; None when the

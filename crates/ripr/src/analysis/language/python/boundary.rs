@@ -2345,9 +2345,13 @@ pub(super) fn literal_value(text: &str) -> Option<String> {
 
 /// Literal equality as Python compares scalar values: decimals by value
 /// (`100 == 100.0`), bools against numbers (`True == 1`, `False == 0`),
-/// strings by decoded content, and `True`/`False`/`None` by identity.
+/// strings by decoded content, and `True`/`False`/`None` by identity. Above
+/// `2^53` a float spelling holds the nearest representable double, so an
+/// int spelling and its `.0` spelling can be unequal
+/// (`9007199254740993 != 9007199254740993.0`).
 /// Returns `None` when static evidence cannot read the comparison (mixed
-/// unreadable kinds, escapes, prefixes) rather than a definite inequality.
+/// unreadable kinds, escapes, prefixes, numbers past the `u128` reach)
+/// rather than a definite inequality.
 pub(super) fn literals_equal(left: &str, right: &str) -> Option<bool> {
     match (bool_as_decimal(left), bool_as_decimal(right)) {
         (Some(left), Some(right)) => return Some(left == right),
@@ -2364,7 +2368,18 @@ pub(super) fn literals_equal(left: &str, right: &str) -> Option<bool> {
         (None, None) => {}
     }
     match (canonical_decimal(left), canonical_decimal(right)) {
-        (Some(left), Some(right)) => return Some(left == right),
+        (Some(canonical_left), Some(canonical_right)) => {
+            if canonical_left != canonical_right {
+                return Some(false);
+            }
+            // One int spelling and one float spelling still differ above
+            // `2^53`, where the float spelling is the rounded double; None
+            // past the grid's reach refuses rather than claim equality.
+            if left.contains('.') != right.contains('.') {
+                return int_on_double_grid(&canonical_left);
+            }
+            return Some(true);
+        }
         (Some(_), None) | (None, Some(_)) => return None,
         (None, None) => {}
     }
@@ -2433,6 +2448,23 @@ pub(super) fn canonical_decimal(text: &str) -> Option<String> {
     })
 }
 
+/// Whether the integer `canonical` is a value a Python float spelling with
+/// those digits can hold. Up to `2^53` every such integer is exact; above
+/// it, doubles step by `2^(exponent - 52)`, so an odd integer and its
+/// `.0` spelling are unequal (`9007199254740993.0` holds ...992) while a
+/// multiple of the step is exact (`9007199254740994.0`). None past the
+/// `u128` reach, where the grid cannot be read.
+fn int_on_double_grid(canonical: &str) -> Option<bool> {
+    let digits = canonical.strip_prefix('-').unwrap_or(canonical);
+    let value = digits.parse::<u128>().ok()?;
+    if value <= 1u128 << 53 {
+        return Some(true);
+    }
+    let exponent = u128::BITS - 1 - value.leading_zeros();
+    let step = 1u128.checked_shl(exponent - 52)?;
+    Some(value % step == 0)
+}
+
 /// Whether a parametrize argname may name something other than the case
 /// value where the owner call reads it, beyond the statement bindings the
 /// recorded cases already exclude (`parametrize.rs`, #4612 review): a
@@ -2497,6 +2529,25 @@ mod literals_equal_tests {
         assert_eq!(literals_equal("0", "False"), Some(true));
         assert_eq!(literals_equal("True", "2"), Some(false));
         assert_eq!(literals_equal("2", "True"), Some(false));
+    }
+
+    #[test]
+    fn an_int_spelling_its_float_spelling_above_two_to_the_53rd() {
+        // Python stores `9007199254740993.0` as `...992`, so the int spelling
+        // and the float spelling are unequal; `...994.0` is exact.
+        assert_eq!(
+            literals_equal("9007199254740993", "9007199254740993.0"),
+            Some(false)
+        );
+        assert_eq!(
+            literals_equal("9007199254740994", "9007199254740994.0"),
+            Some(true)
+        );
+        assert_eq!(
+            literals_equal("9007199254740992", "9007199254740992.0"),
+            Some(true)
+        );
+        assert_eq!(literals_equal("4", "4.0"), Some(true));
     }
 }
 

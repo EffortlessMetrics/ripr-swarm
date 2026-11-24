@@ -178,33 +178,33 @@ pub(super) fn term_facts(
         }
         _ => None,
     };
-    // Each statement's text and start line are read once; the line comes
-    // from the source's line index, not a rescan of the file prefix.
-    let statements: Vec<(String, usize)> = body
+    // The statement texts once: the scan below reads each of them for every
+    // parameter.
+    let statement_texts: Vec<String> = body
         .iter()
-        .map(|statement| {
-            (
-                text_for_range(source, statement.range()),
-                line_for_range_start(source, statement.range()),
-            )
-        })
+        .map(|statement| text_for_range(source, statement.range()))
         .collect();
     let first_mention_lines = parameters
         .iter()
         .filter_map(|parameter| {
             // #16221: Python NFKC-normalises identifiers, so a raw spelling
-            // match can miss a prior use (`K` for `K`). Abstain on a
-            // non-ASCII parameter or a non-ASCII statement before the first
-            // use rather than reason from the original singleton.
+            // match can miss a prior use (`K` for `K`). A non-ASCII character
+            // in code may spell the parameter under such a normalization or a
+            // confusable, so abstain for that parameter; non-ASCII string
+            // data or comment text cannot name it.
             if !parameter.name.is_ascii() {
                 return None;
             }
-            for (text, line) in &statements {
-                if !text.is_ascii() {
+            let mut first = None;
+            for (statement, text) in body.iter().zip(&statement_texts) {
+                if code_holds_non_ascii(text) {
                     return None;
                 }
                 if code_mentions(text, &parameter.name) {
-                    return Some((parameter.name.clone(), *line));
+                    let start = usize::from(statement.range().start());
+                    let line = source.get(..start)?.matches('\n').count() + 1;
+                    first = Some((parameter.name.clone(), line));
+                    break;
                 }
             }
             None
@@ -234,6 +234,16 @@ pub(super) fn term_facts(
 /// comment; a word token must stand as a whole identifier.
 fn code_mentions(text: &str, token: &str) -> bool {
     code_mention_count(text, token) > 0
+}
+
+/// Whether `text` holds a non-ASCII character outside strings and comments:
+/// such a character may spell an identifier in code, and Python may
+/// normalize it onto another name (`K` is `K`), so a raw-text scan cannot
+/// safely read past it (#16221).
+fn code_holds_non_ascii(text: &str) -> bool {
+    let mut hidden = PythonHiddenCode::new(text);
+    text.char_indices()
+        .any(|(offset, ch)| !ch.is_ascii() && !hidden.hides(offset))
 }
 
 /// How many times `text` holds `token` as code (see `code_mentions`).

@@ -2,6 +2,7 @@
 //! discriminated only by an argument the two versions treat differently.
 
 use super::call_variant::{CallVariant, call_variant, elements_agree, variant_agrees};
+use super::classify::{PythonNoBehaviorContext, classify_change_with_context};
 use super::owners_tests::{extract_owners, extract_tests};
 use super::reexport_tests::{unique_tempdir, write_file};
 use super::*;
@@ -140,6 +141,84 @@ fn an_input_with_more_decimals_keeps_a_round_change_exposed() -> Result<(), Stri
 }
 
 #[test]
+fn a_literal_both_counts_round_alike_does_not_expose_a_round_change() -> Result<(), String> {
+    // `round(1.0001, 2)` and `round(1.0001, 3)` both return `1.0`, so the
+    // exact assertion passes either way although the literal has four
+    // decimal places (#16221).
+    let finding = classify_money(
+        "from src.text import money\n\n\ndef test_money():\n    assert money(1.0001) == 1.0\n",
+    )?;
+    assert_eq!(finding.class, ExposureClass::WeaklyExposed);
+    assert!(
+        finding
+            .activation
+            .missing_discriminators
+            .iter()
+            .any(|fact| fact.value == "call `money` with `x` with more than 2 decimal places"),
+        "{:?}",
+        finding.activation.missing_discriminators
+    );
+    Ok(())
+}
+
+#[test]
+fn a_negative_count_agreeing_input_does_not_expose_a_round_change() -> Result<(), String> {
+    // `round(100, -1)` and `round(100, -2)` both return `100` (#16221).
+    let source = "def money(x):\n    return round(x, -1)\n";
+    let finding = classify_source(
+        source,
+        2,
+        "    return round(x, -1)",
+        "    return round(x, -2)",
+        "from src.text import money\n\n\ndef test_money():\n    assert money(100) == 100\n",
+    )?;
+    assert_eq!(finding.class, ExposureClass::WeaklyExposed);
+    assert!(
+        finding
+            .activation
+            .missing_discriminators
+            .iter()
+            .any(|fact| fact
+                .value
+                .contains("`x` with a value that is not a multiple of 100")),
+        "{:?}",
+        finding.activation.missing_discriminators
+    );
+    Ok(())
+}
+
+#[test]
+fn a_negative_count_off_grid_input_keeps_a_round_change_exposed() -> Result<(), String> {
+    // `round(120, -1)` is `120` and `round(120, -2)` is `100`.
+    let source = "def money(x):\n    return round(x, -1)\n";
+    let finding = classify_source(
+        source,
+        2,
+        "    return round(x, -1)",
+        "    return round(x, -2)",
+        "from src.text import money\n\n\ndef test_money():\n    assert money(120) == 120\n",
+    )?;
+    assert_eq!(finding.class, ExposureClass::Exposed);
+    Ok(())
+}
+
+#[test]
+fn a_recursive_owner_keeps_the_entry_rows_from_reading_agreement() -> Result<(), String> {
+    // The recursive call hands `clean` an argument no test passes, so the
+    // entry rows do not cover what the versions see (#16221).
+    let source = "def clean(s):\n    if \" \" in s:\n        return clean(s.replace(\" \", \"\"))\n    return s.strip()\n";
+    let finding = classify_source(
+        source,
+        4,
+        "    return s.strip()",
+        "    return s.lstrip()",
+        "from src.text import clean\n\n\ndef test_clean():\n    assert clean(\"a\") == \"a\"\n",
+    )?;
+    assert_eq!(finding.class, ExposureClass::Exposed);
+    Ok(())
+}
+
+#[test]
 fn an_unread_argument_keeps_its_reading() -> Result<(), String> {
     let finding = classify_clean(
         "from src.text import clean\n\nWORDS = [\"a \"]\n\n\ndef test_clean():\n    assert clean(\"a\") == \"a\"\n    assert clean(*WORDS) == \"a\"\n",
@@ -165,6 +244,20 @@ fn only_a_strip_side_or_round_digits_edit_on_a_name_is_read() {
             old: 2,
             new: 0,
         })
+    );
+    // A negative count lexes as a `-` before the digits.
+    assert_eq!(
+        call_variant("return round(x, -1)", "return round(x, -2)"),
+        Some(CallVariant::Round {
+            param: "x".to_string(),
+            old: -1,
+            new: -2,
+        })
+    );
+    // A binary subtraction is not a signed count.
+    assert_eq!(
+        call_variant("return round(x, 1 - 2)", "return round(x, 1 - 3)"),
+        None
     );
     // An argument to strip changes which characters go.
     assert_eq!(
@@ -231,7 +324,33 @@ fn agreement_follows_python_strip_and_round() {
     };
     assert_eq!(variant_agrees(&round, "1.50"), Some(true));
     assert_eq!(variant_agrees(&round, "-7"), Some(true));
+    // `round(1.0001, 2)` and `round(1.0001, 3)` both return `1.0`: digits
+    // beyond both counts can round away under either.
+    assert_eq!(variant_agrees(&round, "1.0001"), Some(true));
     assert_eq!(variant_agrees(&round, "1.255"), Some(false));
+    let coarse = CallVariant::Round {
+        param: "x".to_string(),
+        old: 0,
+        new: 1,
+    };
+    assert_eq!(variant_agrees(&coarse, "2.5"), Some(false));
+    // A negative count rounds to tens and hundreds.
+    let negative = CallVariant::Round {
+        param: "x".to_string(),
+        old: -1,
+        new: -2,
+    };
+    assert_eq!(variant_agrees(&negative, "100"), Some(true));
+    assert_eq!(variant_agrees(&negative, "120"), Some(false));
+    assert_eq!(variant_agrees(&negative, "-140"), Some(false));
+    // Beyond the read's bounds the rule refuses rather than claim agreement.
+    assert_eq!(variant_agrees(&round, "123456789012345678901"), None);
+    let unreachable = CallVariant::Round {
+        param: "x".to_string(),
+        old: 21,
+        new: 3,
+    };
+    assert_eq!(variant_agrees(&unreachable, "1.5"), None);
     assert_eq!(variant_agrees(&round, "\"1.5\""), None);
     assert_eq!(variant_agrees(&round, "1e3"), None);
 }
@@ -284,6 +403,74 @@ fn a_list_the_body_changes_before_the_sort_keeps_its_reading() -> Result<(), Str
         "    return sorted(xs, reverse=True)[0]",
         "from src.text import low\n\n\ndef test_low():\n    assert low([4]) == 4\n",
     )?;
+    assert_eq!(finding.class, ExposureClass::Exposed);
+    Ok(())
+}
+
+#[test]
+fn an_unrelated_non_ascii_string_does_not_block_the_sort_reading() -> Result<(), String> {
+    // Non-ASCII string data cannot name the parameter, so the scan reads the
+    // changed line as the first mention and the agreeing list downgrades
+    // (#16221).
+    let source = "def top(xs):\n    label = \"r\u{e9}sultat\"\n    return sorted(xs)[0]\n";
+    let finding = classify_source(
+        source,
+        3,
+        "    return sorted(xs)[0]",
+        "    return sorted(xs, reverse=True)[0]",
+        "from src.text import top\n\n\ndef test_top():\n    assert top([4]) == 4\n",
+    )?;
+    assert_eq!(finding.class, ExposureClass::WeaklyExposed);
+    assert_eq!(finding.ripr.infect.state, StageState::Weak);
+    Ok(())
+}
+
+#[test]
+fn a_list_python_compares_unequal_keeps_a_sort_direction_flip_exposed() -> Result<(), String> {
+    // Python stores `9007199254740993.0` as `...992`, so the two elements are
+    // unequal and the direction decides which comes first (#16221).
+    let finding = classify_top(
+        "from src.text import top\n\n\ndef test_top():\n    assert top([9007199254740993, 9007199254740993.0]) == 9007199254740993\n",
+    )?;
+    assert_eq!(finding.class, ExposureClass::Exposed);
+    Ok(())
+}
+
+#[test]
+fn a_list_python_compares_equal_does_not_expose_a_sort_direction_flip() -> Result<(), String> {
+    // `9007199254740992.0` is exact, so both elements compare equal and the
+    // direction cannot matter.
+    let finding = classify_top(
+        "from src.text import top\n\n\ndef test_top():\n    assert top([9007199254740992, 9007199254740992.0]) == 9007199254740992\n",
+    )?;
+    assert_eq!(finding.class, ExposureClass::WeaklyExposed);
+    Ok(())
+}
+
+#[test]
+fn a_line_inside_a_multiline_string_is_not_read_as_a_call() -> Result<(), String> {
+    // The interior line is data; how the methods treat the argument cannot
+    // gate a change to it (#16221).
+    let source = "def template(s):\n    return \"\"\"a\nreturn s.strip()\nb\"\"\"\n";
+    let owners = extract_owners(Path::new("src/text.py"), source);
+    let tests = extract_tests(
+        Path::new("tests/test_text.py"),
+        "from src.text import template\n\n\ndef test_template():\n    assert template(\"a\") == \"a\\nreturn s.strip()\\nb\"\n",
+    );
+    let finding = classify_change_with_context(
+        Path::new("src/text.py"),
+        3,
+        "return s.strip()",
+        Some("return s.lstrip()"),
+        &owners,
+        &tests,
+        PythonNoBehaviorContext {
+            new_line_in_multiline_string: true,
+            ..PythonNoBehaviorContext::default()
+        },
+        Some(source),
+    )
+    .ok_or_else(|| "a call change should classify".to_string())?;
     assert_eq!(finding.class, ExposureClass::Exposed);
     Ok(())
 }
