@@ -316,8 +316,9 @@ pub(super) fn python_call_variant_evidence(
             discriminator: if old.min(new) < 0 {
                 // A negative count rounds to a multiple of `10^-count`;
                 // a value already on that grid reads the same both ways.
+                let grid_exponent = u32::try_from(-old.min(new)).unwrap_or(u32::MAX).min(18);
                 let grid = 10i64
-                    .checked_pow((-old.min(new)).min(18) as u32)
+                    .checked_pow(grid_exponent)
                     .map(|value| value.to_string())
                     .unwrap_or_else(|| format!("10^{}", -old.min(new)));
                 format!("`{param}` with a value that is not a multiple of {grid}")
@@ -471,7 +472,7 @@ fn round_half_even(digits: &[u8], scale: usize, keep: i32) -> (Vec<u8>, i32) {
     if cut >= digits.len() as i64 {
         return normalize_rounded(digits.to_vec(), -(scale as i32));
     }
-    let cut = cut.max(0) as usize;
+    let cut = usize::try_from(cut.max(0)).unwrap_or(usize::MAX);
     let mut kept = digits[..cut].to_vec();
     let dropped = digits.get(cut).copied().unwrap_or(0);
     let rest_nonzero = digits[cut..].iter().any(|&digit| digit != 0);
