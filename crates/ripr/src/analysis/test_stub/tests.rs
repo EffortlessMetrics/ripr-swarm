@@ -3358,6 +3358,22 @@ fn boundary_stub_copies_other_inputs_from_an_existing_test() -> Result<(), Strin
             ),
             None,
         ),
+        // An attribute macro on the owner may rewrite its body.
+        (
+            module_for(
+                &format!("#[contracts::requires(rate < 10_000 || amount == 0)]\n{owner}"),
+                "    #[test]\n    fn computes() {\n        assert_eq!(tax(7, 825), Ok(7));\n    }\n",
+            ),
+            None,
+        ),
+        // A plain attribute on the owner does not.
+        (
+            module_for(
+                &format!("#[inline]\n#[must_use]\n{owner}"),
+                "    #[test]\n    fn computes() {\n        assert_eq!(tax(7, 825), Ok(7));\n    }\n",
+            ),
+            Some(("7", "computes")),
+        ),
         // A standard derive does not.
         (
             module(

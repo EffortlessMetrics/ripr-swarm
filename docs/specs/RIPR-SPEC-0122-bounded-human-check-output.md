@@ -671,6 +671,9 @@ the expected value stays a `todo!()`. The values are copied only when:
   outside closures, `async` blocks and `cfg`, with no `return` or `?` before
   it in the test (an earlier macro's tokens included) or inside the
   assertion holding it;
+- the owner and any module around it carry only plain attributes (lint
+  levels, `doc`, `inline`, `must_use`, `cfg`), since an attribute macro may
+  rewrite the body;
 - the owner has no `mut` parameter and the file never names
   `overflowing_literals`, so no input is reassigned and no literal wraps;
 - each copied literal fits its parameter's declared type as written: an

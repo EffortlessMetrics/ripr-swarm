@@ -56,6 +56,11 @@ const PLAIN_TEST_ATTRIBUTES: [&str; 6] = ["test", "allow", "expect", "warn", "de
 /// name may emit a function of the owner's name.
 const MODULE_ATTRIBUTES: [&str; 4] = ["cfg", "should_panic", "ignore", "derive"];
 
+/// The attributes that leave an owner's body as written.
+const OWNER_ATTRIBUTES: [&str; 8] = [
+    "allow", "expect", "warn", "deny", "doc", "inline", "must_use", "cfg",
+];
+
 /// The primitive integer types.
 const INTEGER_TYPES: [&str; 12] = [
     "i8", "i16", "i32", "i64", "i128", "isize", "u8", "u16", "u32", "u64", "u128", "usize",
@@ -157,7 +162,29 @@ pub(super) fn reused_inputs(
             _ => true,
         })
     });
-    if rebinds || wraps || reassignable || !standard_macros_only(&file, &in_scope, (start, end)) {
+    // An attribute macro on the owner, or on a module around it, may
+    // rewrite its body, for example to add a precondition on a copied value.
+    let rewritable = owner
+        .attrs()
+        .chain(
+            owner
+                .syntax()
+                .ancestors()
+                .filter_map(ast::Module::cast)
+                .flat_map(|module| module.attrs().collect::<Vec<_>>()),
+        )
+        .any(|attr| {
+            !attr
+                .meta()
+                .and_then(|meta| meta.simple_name())
+                .is_some_and(|attr_name| OWNER_ATTRIBUTES.contains(&attr_name.as_str()))
+        });
+    if rebinds
+        || wraps
+        || reassignable
+        || rewritable
+        || !standard_macros_only(&file, &in_scope, (start, end))
+    {
         return None;
     }
     // Every name the file declares or imports. A `type i64 = f64;` or a
