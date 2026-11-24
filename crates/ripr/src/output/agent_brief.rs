@@ -26,9 +26,12 @@ const WORKFLOW_DIR: &str = "target/ripr/workflow";
 /// trial an agent read `arm_result: "450"`, doubted the change and pinned the
 /// pre-change `400`, so its test failed on the changed code (#12078). Stated
 /// once per brief, only when it names a seam. An input whose behavior the
-/// change left alone keeps its value, so that value is the one to assert; and
-/// an error seam's candidate is the error to expect, not an input to pass.
-pub(crate) const VALUE_BASIS_NOTE: &str = "`expression` and `arm_result` come from the changed code: assert what it does now; an input whose behavior did not change keeps its value. `candidate_values` are inputs to try, except on an error seam, where they name the error to expect. If the change looks wrong, report it.";
+/// change left alone keeps its value, so that value is the one to assert.
+/// `candidate_values` mix missing-discriminator records with values observed
+/// in existing tests without recording which is which, so the note calls
+/// them candidates and does not promise that all are inputs or all are
+/// expected values.
+pub(crate) const VALUE_BASIS_NOTE: &str = "`expression` and `arm_result` come from the changed code: assert what it does now; an input whose behavior did not change keeps its value. `candidate_values` are candidates for the test, inputs to try or values to assert; they are not all of one kind. If the change looks wrong, report it.";
 
 #[derive(Clone, Copy)]
 enum WorkingSetEncoding {
@@ -902,9 +905,12 @@ mod tests {
         assert!(
             VALUE_BASIS_NOTE.contains("an input whose behavior did not change keeps its value")
         );
-        // An error seam's missing discriminator is the variant to expect,
-        // an output, so the note must not call every candidate an input.
-        assert!(VALUE_BASIS_NOTE.contains("the error to expect"));
+        // Candidate values mix missing-discriminator records (an expected
+        // value on an error seam) with inputs observed in existing tests, and
+        // the producer does not record which is which, so the note must not
+        // call them all inputs nor all expected values.
+        assert!(VALUE_BASIS_NOTE.contains("not all of one kind"));
+        assert!(!VALUE_BASIS_NOTE.contains("are inputs"));
 
         let empty = render(&no_seams)?;
         assert_eq!(

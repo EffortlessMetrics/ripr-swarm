@@ -19036,8 +19036,8 @@ Field contract:
   non-empty. It says `expression` and `arm_result` are read from the changed
   code, so a new test asserts what that code does now (an input whose
   behavior did not change keeps its value), and that `candidate_values` are
-  inputs to try, except on an error seam, where they name the error to
-  expect (#15361).
+  candidates for the test, inputs to try or values to assert, not all of one
+  kind (#15361).
 - `top_seams[]` — ranked seam summaries, intentionally smaller than full agent
   seam packets.
 - `top_seams[].why_now.reason` — one of
