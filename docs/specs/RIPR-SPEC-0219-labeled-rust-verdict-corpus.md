@@ -359,6 +359,11 @@ the corpus counts. The summary is therefore a function of the rows: the dx
 scoreboard (`verdict-corpus:` sources) and the public proof receipt derive
 it from the committed rows, so parallel case PRs share no line.
 
+For a verdict-corpus population with a nonzero denominator, the Public Proof
+verdict table and shortfall prose compute percentages from the exact numerator
+and denominator. They round once to one decimal place, rounding halfway values
+up. The JSON receipt and scoreboard retain their rate definitions.
+
 A live case is scored only when its `ripr check --json` output establishes
 the measurement (#11272). The harness fixes two facts before ripr runs: the
 language the case's anchor file dispatches to, and the digest of the diff
@@ -811,6 +816,15 @@ The derived rates' consumers are tested beside them:
 `xtask/src/public_proof.rs`. The same consumer's
 `verdict_receipt_rejects_a_row_that_hides_a_false_verdict` rejects a false
 outcome relabeled as ideal while its independently loaded case stays unchanged.
+
+Public proof display regressions in `xtask/src/public_proof.rs`:
+
+- `verdict_percentages_round_counts_once` checks exact-count rounding in the
+  verdict table and shortfall prose.
+- `verdict_percentage_uses_canonical_half_up_ties` checks an exact halfway value.
+- `verdict_zero_denominator_preserves_existing_receipt_behavior` checks the
+  existing rejection of the canonical empty marker and the legacy display
+  for a numeric zero-denominator receipt.
 
 Relabel tests live in `xtask/src/reports/verdict_corpus_relabel_tests.rs`:
 
