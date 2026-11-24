@@ -136,7 +136,21 @@ pub(super) fn reused_inputs(
         .filter(|node| in_scope(node))
         .filter_map(ast::Name::cast)
         .any(|bound| unraw(bound.text()) == unraw(name));
-    if rebinds || !standard_macros_only(&file, &in_scope) {
+    // With `overflowing_literals` allowed, a literal may wrap, so neither a
+    // copied value nor a guard's comparison reads as written.
+    let wraps = file
+        .syntax()
+        .text()
+        .to_string()
+        .contains("overflowing_literals");
+    // A `mut` parameter may be reassigned before the comparison.
+    let reassignable = owner.param_list().is_some_and(|params| {
+        params.params().any(|param| match param.pat() {
+            Some(ast::Pat::IdentPat(ident)) => ident.mut_token().is_some(),
+            _ => true,
+        })
+    });
+    if rebinds || wraps || reassignable || !standard_macros_only(&file, &in_scope) {
         return None;
     }
     let (arguments, test) = file
@@ -162,7 +176,15 @@ pub(super) fn reused_inputs(
                     SyntaxKind::RETURN_EXPR | SyntaxKind::TRY_EXPR | SyntaxKind::QUESTION
                 ) && inner.text_range().end() <= node.text_range().start()
             });
-            if leaves_first {
+            // An earlier operand of the assertion may hold one in its tokens.
+            let exits_inside = ast::MacroCall::cast(node.clone())
+                .and_then(|call| call.token_tree())
+                .is_some_and(|tree| {
+                    tree.syntax().descendants_with_tokens().any(|inner| {
+                        matches!(inner.kind(), SyntaxKind::RETURN_KW | SyntaxKind::QUESTION)
+                    })
+                });
+            if leaves_first || exits_inside {
                 return None;
             }
             // An ignored test never ran the call, and an attribute macro may
@@ -208,6 +230,8 @@ pub(super) fn reused_inputs(
 /// may replace `assert_eq!` with one that never type-checks its arguments.
 fn standard_macros_only(file: &SourceFile, in_scope: &impl Fn(&SyntaxNode) -> bool) -> bool {
     let standard = |name: &str| STANDARD_MACROS.contains(&unraw(name));
+    // An import or rename may also replace a standard derive.
+    let replaceable = |name: &str| standard(name) || STANDARD_DERIVES.contains(&unraw(name));
     let calls_standard = file
         .syntax()
         .descendants()
@@ -232,14 +256,14 @@ fn standard_macros_only(file: &SourceFile, in_scope: &impl Fn(&SyntaxNode) -> bo
         if let Some(rename) = ast::Rename::cast(node.clone()) {
             return rename
                 .name()
-                .is_some_and(|renamed| standard(renamed.text()));
+                .is_some_and(|renamed| replaceable(renamed.text()));
         }
         if let Some(tree) = ast::UseTree::cast(node.clone()) {
             return tree
                 .path()
                 .and_then(|path| path.segment())
                 .and_then(|segment| segment.name_ref())
-                .is_some_and(|imported| standard(imported.text()));
+                .is_some_and(|imported| replaceable(imported.text()));
         }
         ast::Attr::cast(node).is_some_and(|attr| {
             attr.meta()
@@ -465,8 +489,20 @@ pub(super) fn literal_fits(ty_text: &str, literal: &str) -> bool {
         let other = if ty == "f32" { "f64" } else { "f32" };
         let float_like =
             body.contains('.') || body.contains(['e', 'E']) || body.ends_with(ty.as_str());
+        // Finite at the declared precision, or `overflowing_literals`
+        // rejects the stub's `let`.
+        let value = body
+            .strip_suffix(ty.as_str())
+            .unwrap_or(body)
+            .replace('_', "");
+        let finite = if ty == "f32" {
+            value.parse::<f32>().is_ok_and(f32::is_finite)
+        } else {
+            value.parse::<f64>().is_ok_and(f64::is_finite)
+        };
         return numeric
             && float_like
+            && finite
             && !body.starts_with("0x")
             && !body.starts_with("0b")
             && !body.starts_with("0o")
@@ -568,13 +604,19 @@ fn reaches_seam(
             if deferred {
                 return false;
             }
-            let assignment = ast::ExprStmt::cast(node.clone())
-                .and_then(|stmt| stmt.expr())
-                .and_then(|expr| match expr {
-                    ast::Expr::BinExpr(bin) => bin.op_kind(),
-                    _ => None,
-                })
-                .is_some_and(|op| matches!(op, ast::BinaryOp::Assignment { .. }));
+            // An assignment runs its right side before its place, so a
+            // comparison anywhere inside one may follow a copied value.
+            let assignment = comparison
+                .syntax()
+                .ancestors()
+                .take_while(|ancestor| ancestor != &node)
+                .chain(
+                    ast::ExprStmt::cast(node.clone())
+                        .and_then(|stmt| stmt.expr())
+                        .map(|expr| expr.syntax().clone()),
+                )
+                .filter_map(ast::BinExpr::cast)
+                .any(|bin| matches!(bin.op_kind(), Some(ast::BinaryOp::Assignment { .. })));
             let start = node.text_range().start();
             let end = comparison.syntax().text_range().end();
             let rebinds_before = node

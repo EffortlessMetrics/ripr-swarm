@@ -669,10 +669,12 @@ the expected value stays a `todo!()`. The values are copied only when:
 - it sits in a `#[test]` function that is not `should_panic`, `ignore` or a
   ripr stub and carries only plain attributes (`test`, lint levels, `doc`),
   outside closures, `async` blocks and `cfg`, with no `return` or `?` before
-  it in the test;
+  it in the test or inside the assertion holding it;
+- the owner has no `mut` parameter and the file never names
+  `overflowing_literals`, so no input is reassigned and no literal wraps;
 - each copied literal fits its parameter's declared type as written: an
   in-range integer literal for an integer type, a float literal for `f32` or
-  `f64`, `true`/`false`, a char literal, a string literal for `&str`, a byte
+  `f64` that stays finite, `true`/`false`, a char literal, a string literal for `&str`, a byte
   string for `&[u8]` (an alias or any other type takes no copy);
 - the copied values do not steer the owner away from the statement holding
   the changed comparison (an earlier guard on the written inputs alone is
@@ -680,7 +682,7 @@ the expected value stays a `todo!()`. The values are copied only when:
   parameter (including a `{name}` format capture) is an `if` without `else`
   whose condition evaluates to false, no earlier statement binds the name of
   a written or copied input, and the comparison's own statement is not a
-  `let` or an assignment, does not hold the comparison inside a closure or
+  `let`, does not hold the comparison inside an assignment, a closure or an
   `async` block, and names a copied value only after the comparison;
 - nothing in the module declares, binds, imports or renames another item of
   the owner's name;
@@ -689,7 +691,8 @@ the expected value stays a `todo!()`. The values are copied only when:
   owner's name, and the file defines, imports or `#[macro_use]`s no macro of
   a standard macro's name;
 - the test module carries no attribute other than the plain ones, `cfg`,
-  `should_panic`, `ignore` and standard `derive`s, since an attribute or
+  `should_panic`, `ignore` and standard `derive`s (none imported or renamed
+  under a standard name), since an attribute or
   derive macro may emit a function of the owner's name; macros defined in
   another file (a crate-root `#[macro_use]` or `macro_rules!`) are not seen,
   and the type check above still keeps the stub compiling.

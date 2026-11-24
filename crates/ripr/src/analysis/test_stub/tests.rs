@@ -3192,6 +3192,49 @@ fn boundary_stub_copies_other_inputs_from_an_existing_test() -> Result<(), Strin
             ),
             None,
         ),
+        // A `return` in an earlier assertion operand may leave the test.
+        (
+            module(
+                "    #[test]\n    fn early() {\n        assert_eq!({ if true { return; } Ok(7) }, tax(7, 825));\n    }\n",
+            ),
+            None,
+        ),
+        // A comparison in an assignment's place runs after its right side.
+        (
+            module_for(
+                &owner.replace(
+                    "    if rate >= 10_000 {",
+                    "    let mut hit = [false; 2];\n    {\n        hit[usize::from(rate >= 10_000)] = amount > 5;\n    }\n    if hit[1] {",
+                ),
+                "    #[test]\n    fn computes() {\n        assert_eq!(tax(7, 825), Ok(7));\n    }\n",
+            ),
+            None,
+        ),
+        // A `mut` parameter may be reassigned before the comparison.
+        (
+            module_for(
+                &owner.replace("rate: u32", "mut rate: u32").replace(
+                    "    if amount < 0 {",
+                    "    rate = rate.min(0);\n    if rate == 0 && amount == 7 {",
+                ),
+                "    #[test]\n    fn computes() {\n        assert_eq!(tax(7, 825), Ok(7));\n    }\n",
+            ),
+            None,
+        ),
+        // With `overflowing_literals` allowed, a literal may wrap.
+        (
+            module(
+                "    #[test]\n    #[allow(overflowing_literals)]\n    fn computes() {\n        assert_eq!(tax(7, 825), Ok(7));\n    }\n",
+            ),
+            None,
+        ),
+        // An imported derive of a standard name may emit anything.
+        (
+            module(
+                "    use custom::Debug;\n    #[derive(Debug)]\n    struct S;\n    #[test]\n    fn computes() {\n        assert_eq!(tax(7, 825), Ok(7));\n    }\n",
+            ),
+            None,
+        ),
         // A standard derive does not.
         (
             module(
@@ -3430,6 +3473,8 @@ fn copied_literal_must_fit_the_parameter_type() {
         ("f32", "1f64"),
         ("f64", "3i32"),
         ("bool", "1"),
+        ("f32", "1e100"),
+        ("f64", "1e400"),
         ("&str", "'c'"),
         ("&[u8]", "\"ab\""),
         ("Cents", "5"),
