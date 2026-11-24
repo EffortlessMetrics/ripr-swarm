@@ -1072,7 +1072,7 @@ pub(super) fn visit_exprs_in_statements(statements: &[Stmt], visit: &mut impl Fn
     });
 }
 
-fn walk_arguments(args: &ast::Arguments, visit: &mut impl FnMut(&Expr)) {
+pub(super) fn walk_arguments(args: &ast::Arguments, visit: &mut impl FnMut(&Expr)) {
     for default in args
         .posonlyargs
         .iter()
@@ -1094,7 +1094,7 @@ fn walk_arguments(args: &ast::Arguments, visit: &mut impl FnMut(&Expr)) {
     }
 }
 
-fn walk_expr(expr: &Expr, visit: &mut impl FnMut(&Expr)) {
+pub(super) fn walk_expr(expr: &Expr, visit: &mut impl FnMut(&Expr)) {
     visit(expr);
     match expr {
         Expr::BoolOp(bool_op) => {

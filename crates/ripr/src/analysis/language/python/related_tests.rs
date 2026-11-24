@@ -467,7 +467,25 @@ pub(super) fn helper_owner_call_candidates_indexed<'a>(
         } else {
             (module_function_callers(owner, owners), true)
         };
-    helper_candidates_from_callers(owner, callers, all_tests, dunder_module_helper, owners)
+    let mut found =
+        helper_candidates_from_callers(owner, callers, all_tests, dunder_module_helper, owners);
+    if dunder_module_helper {
+        let routed = route_scope_handler_candidates(owner, owners, all_tests, &found);
+        found.extend(routed);
+        sort_candidates(&mut found);
+    }
+    found
+}
+
+/// Candidates by test file, then test name.
+fn sort_candidates(found: &mut [HelperOwnerCallCandidate<'_>]) {
+    found.sort_by(|left, right| {
+        left.candidate
+            .test
+            .file
+            .cmp(&right.candidate.test.file)
+            .then_with(|| left.candidate.test.name.cmp(&right.candidate.test.name))
+    });
 }
 
 /// Callers of the owner within [`MAX_HELPER_CALLER_DEPTH`] hops, each with
@@ -559,6 +577,75 @@ fn helper_candidates_from_callers<'a>(
 ) -> Vec<HelperOwnerCallCandidate<'a>> {
     let mut found: Vec<HelperOwnerCallCandidate<'a>> = Vec::new();
     let mut seen: std::collections::HashSet<(&'a Path, &'a str)> = std::collections::HashSet::new();
+    push_candidates_from_callers(
+        owner,
+        callers,
+        all_tests,
+        dunder_module_helper,
+        owners,
+        false,
+        &mut seen,
+        &mut found,
+    );
+    found
+}
+
+/// The route relation for the routed handlers whose own scope calls the
+/// owner, when the textual caller list does not make them callers (#14150
+/// review). A decorator of a nested definition is not read as a call by the
+/// textual list, and a comprehension target that shares the helper's name
+/// hides the helper from it, while the parse shows the handler itself calls
+/// the helper. Only a test that requests one of the handler's routes is
+/// related, through the route relation alone; a test a caller already
+/// related keeps that caller.
+fn route_scope_handler_candidates<'a>(
+    owner: &PythonOwner,
+    owners: &[PythonOwner],
+    all_tests: &'a [PythonTest],
+    related: &[HelperOwnerCallCandidate<'a>],
+) -> Vec<HelperOwnerCallCandidate<'a>> {
+    let callers: Vec<(&PythonOwner, bool)> = owners
+        .iter()
+        .filter(|caller| {
+            !std::ptr::eq(*caller, owner)
+                && !caller.route_paths.is_empty()
+                && caller_directly_calls_owner(caller, owner, owners)
+        })
+        .map(|caller| (caller, false))
+        .collect();
+    if callers.is_empty() {
+        return Vec::new();
+    }
+    let mut seen: std::collections::HashSet<(&'a Path, &'a str)> = related
+        .iter()
+        .map(|candidate| {
+            (
+                candidate.candidate.test.file.as_path(),
+                candidate.candidate.test.qualified_name.as_str(),
+            )
+        })
+        .collect();
+    let mut found: Vec<HelperOwnerCallCandidate<'a>> = Vec::new();
+    push_candidates_from_callers(
+        owner, callers, all_tests, true, owners, true, &mut seen, &mut found,
+    );
+    found
+}
+
+/// The candidates of `callers`, each with whether its path crossed a module
+/// boundary, added to `found` unless `seen` already holds the test. With
+/// `route_requests_only`, a test is related only when it requests one of the
+/// caller's routes.
+fn push_candidates_from_callers<'a>(
+    owner: &PythonOwner,
+    callers: Vec<(&PythonOwner, bool)>,
+    all_tests: &'a [PythonTest],
+    dunder_module_helper: bool,
+    owners: &[PythonOwner],
+    route_requests_only: bool,
+    seen: &mut std::collections::HashSet<(&'a Path, &'a str)>,
+    found: &mut Vec<HelperOwnerCallCandidate<'a>>,
+) {
     let token = crate::analysis::cancellation::current_token();
     for (caller, cross_module) in callers {
         // The relation is per-test and pure, so a large workspace scans it
@@ -593,14 +680,24 @@ fn helper_candidates_from_callers<'a>(
         // handler module's own binding of the owner. A handler further away
         // keeps the generic caller reading. The caller-side facts are
         // loop-invariant, so they are read once per caller.
-        let route_caller = !caller.route_paths.is_empty()
-            && !caller.route_dispatch_ambiguous
-            && caller_directly_calls_owner(caller, owner, owners);
+        let route_caller =
+            !caller.route_paths.is_empty() && caller_directly_calls_owner(caller, owner, owners);
         for test in reached {
+            let by_route_request =
+                related_test_relation(test, caller) == Some(PythonRelationKind::ApiClientRouteCall);
+            // A request that another route of the application answers as well
+            // may never reach this caller, so a relation that rests on that
+            // request alone is withheld: the route relation and the generic
+            // caller relations with it (#14150 review). A test that calls the
+            // caller itself keeps its relation.
+            if by_route_request && caller.route_dispatch_ambiguous {
+                continue;
+            }
+            if route_requests_only && !by_route_request {
+                continue;
+            }
             if seen.insert((test.file.as_path(), test.qualified_name.as_str())) {
-                let via_route = route_caller
-                    && related_test_relation(test, caller)
-                        == Some(PythonRelationKind::ApiClientRouteCall);
+                let via_route = route_caller && by_route_request;
                 found.push(HelperOwnerCallCandidate {
                     candidate: PythonRelatedCandidate {
                         test,
@@ -628,14 +725,7 @@ fn helper_candidates_from_callers<'a>(
             }
         }
     }
-    found.sort_by(|left, right| {
-        left.candidate
-            .test
-            .file
-            .cmp(&right.candidate.test.file)
-            .then_with(|| left.candidate.test.name.cmp(&right.candidate.test.name))
-    });
-    found
+    sort_candidates(found);
 }
 
 /// Whether `caller` calls `owner` itself, under the name its own module

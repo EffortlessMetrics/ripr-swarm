@@ -550,11 +550,35 @@ handler must call the helper directly, under the name its own module binds the
 helper to: the bare name in the helper's file, or an exact
 `from <helper module> import <name>` elsewhere. A call in a parameter default
 does not count, because Python evaluates it when the module is defined, not
-per request. A call inside a nested `def` or `lambda` body does not count
-either, because it runs only if the handler invokes that scope; the handler's
-own scope is read, so a helper the handler calls itself is still related when
-a nested function sits beside the call. The relation is uncertain, carries no
-oracle, and never reaches `exposed`.
+per request. A call inside a nested
+`def` block, `async def` block, `class` body or `lambda` body does not count
+either, nor does one in the element, targets, conditions or later iterables
+of a generator expression, because it runs only if the handler calls or
+iterates that scope. What runs while the handler runs does count, among them a
+decorator, a default or an annotation of a nested definition and the first
+iterable of a generator expression. The handler's own scope is read from the
+parse the adapter already made, with each deferred part removed by its parsed
+extent, so the spelling and the indentation of a line do not matter. A name
+the handler's own scope binds, such as a nested `def` with the helper's name,
+an annotated or tuple assignment, a `match` capture or a walrus, is not read
+as the helper; a comprehension's target and a `global` declaration bind
+nothing in that scope, so they do not hide it there. A `global` declaration
+of the helper's name still withholds the relation by the module-level
+rule, because the declaring function may rebind the name. A helper the
+handler calls
+itself is still related when a nested function sits beside the call, and
+the handler's own scope alone decides the route relation: a decorator of
+a nested definition, or a comprehension target that shares the helper's
+name, keeps the helper out of the textual list of a handler's callees
+without keeping it out of the handler's own scope, so a test that
+requests the route is related and a test that calls the handler itself
+keeps the reading of that textual list. The
+relation is uncertain, carries no oracle, and never reaches `exposed`. For a
+route that
+another route can answer as well it is withheld, and so is a generic caller
+relation that rests on that request alone, whether the handler shares the
+helper's module or not; a test that calls the handler itself keeps its
+relation.
 A top-level `click.command` or `click.group` function that no test calls is
 related, with the weak `cli_runner_invoke` relation, to a test that passes it
 as the first argument of `<runner>.invoke(` (`runner.invoke(hello, [...])`),

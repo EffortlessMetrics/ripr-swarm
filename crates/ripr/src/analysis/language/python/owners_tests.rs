@@ -647,7 +647,7 @@ fn owner_from_function(
     // already read it. The route-helper relation claims the handler calls the
     // helper itself, so it reads the handler's own scope only (#14150 review).
     let route_scope_callees = if routed_handler {
-        super::module_callees::own_scope_callees(&callee_text, &parameters)
+        super::module_callees::own_scope_callees(context.source, body, &parameters)
     } else {
         Vec::new()
     };
