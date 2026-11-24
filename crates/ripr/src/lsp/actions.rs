@@ -3,6 +3,7 @@ use super::action_contract::{
     action_data, disabled_reason_emittable, parse_validated_action_data,
 };
 use super::client_features::ClientFeatureProfile;
+use super::component_outcome::{AnalysisComponent, ComponentState};
 use super::fix_instruction_authority;
 use super::gap_artifacts::{
     ValidatedGapArtifact, bind_portable_command, editor_command_is_safe, workspace_path_is_safe,
@@ -888,6 +889,15 @@ pub(super) fn seam_repair_start_command(
     snapshot: &AnalysisSnapshot,
     root: &str,
 ) -> Option<String> {
+    // Retained diagnostics still support inspection after truncation, but
+    // a partial inventory cannot promise a Start. An absent card witness
+    // without a recorded inventory limit keeps the ordinary seam route.
+    if snapshot.component_outcomes.iter().any(|outcome| {
+        outcome.component == AnalysisComponent::SeamInventory
+            && outcome.state == ComponentState::Limited
+    }) {
+        return None;
+    }
     if let Some(candidate_seams) = snapshot.repair_card_candidate_seams.as_deref()
         && crate::app::repair_card_handoff::bound_no_path_start_refusal(
             &snapshot.findings,

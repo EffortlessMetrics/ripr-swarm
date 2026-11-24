@@ -3520,10 +3520,11 @@ fn no_test_path_start_uses_the_saved_workspace_finding_over_stdio() -> Result<()
     const CANONICAL_GAP: &str =
         "gap:rust:src/lib.rs:loyalty_price:predicate_boundary:predicate:member_years==5";
 
-    for (base, changed, line, mode, startable) in [
-        (LOYALTY_BASE, LOYALTY_NEW, 6, "deep", true),
-        (CALLED_BASE, CALLED_NEW, 10, "deep", false),
-        (LOYALTY_BASE, LOYALTY_NEW, 6, "instant", false),
+    for (base, changed, line, mode, cap, startable) in [
+        (LOYALTY_BASE, LOYALTY_NEW, 6, "deep", "0", true),
+        (CALLED_BASE, CALLED_NEW, 10, "deep", "0", false),
+        (LOYALTY_BASE, LOYALTY_NEW, 6, "instant", "0", false),
+        (LOYALTY_BASE, LOYALTY_NEW, 6, "deep", "2", false),
     ] {
         let fixture = unique_compat_fixture_root("repair-start")?;
         let root = &fixture.path;
@@ -3575,7 +3576,7 @@ fn no_test_path_start_uses_the_saved_workspace_finding_over_stdio() -> Result<()
         )?;
 
         let uri = editor_file_uri(&root.join("src/lib.rs"))?;
-        let mut session = LspSession::spawn()?;
+        let mut session = LspSession::spawn_with_env(&[("RIPR_REPO_EXPOSURE_SEAM_LIMIT", cap)])?;
         let initialize = session.request("initialize", json!({
             "rootUri": editor_file_uri(root)?,
             "initializationOptions": {"baseRef":"main", "checkMode":mode, "diagnosticProfile":"full"},
@@ -3634,31 +3635,6 @@ fn no_test_path_start_uses_the_saved_workspace_finding_over_stdio() -> Result<()
         let actions = expect_result(&reply, "textDocument/codeAction")?
             .as_array()
             .ok_or("missing code action array")?;
-        let card_action = actions
-            .iter()
-            .find(|action| {
-                action["command"]["command"] == "ripr.copyContext"
-                    && action
-                        .pointer("/command/arguments/0/label")
-                        .and_then(Value::as_str)
-                        == Some("repair_card")
-            })
-            .ok_or("missing direct-copy RepairCard")?;
-        assert_eq!(
-            card_action["data"]["evidence_identity"],
-            diagnostic["data"]["evidence_identity"]
-        );
-        let card: Value = serde_json::from_str(
-            card_action
-                .pointer("/command/arguments/0/packet")
-                .and_then(Value::as_str)
-                .ok_or("missing card payload")?,
-        )
-        .map_err(|e| e.to_string())?;
-        assert_eq!(card["subject"]["seam_id"], seam);
-        assert_eq!(card["subject"]["canonical_gap_id"], CANONICAL_GAP);
-        assert_eq!(card["snapshot"]["currentness"], "current");
-        assert_eq!(card["selected_target"]["file"], "tests/loyalty_price.rs");
         let start = actions.iter().find(|action| {
             action["command"]["command"] == "ripr.copyAgentRepairCommand"
                 && action["disabled"].is_null()
@@ -3666,9 +3642,9 @@ fn no_test_path_start_uses_the_saved_workspace_finding_over_stdio() -> Result<()
         assert_eq!(
             start.is_some(),
             startable,
-            "{mode} seam at line {line}: unexpected Start repair"
+            "{mode} seam at line {line}, cap {cap}: unexpected Start repair"
         );
-        if let Some(start) = start {
+        let start_command = if let Some(start) = start {
             let command = start
                 .pointer("/command/arguments/0/command")
                 .and_then(Value::as_str)
@@ -3679,14 +3655,83 @@ fn no_test_path_start_uses_the_saved_workspace_finding_over_stdio() -> Result<()
                 start["data"]["evidence_identity"],
                 diagnostic["data"]["evidence_identity"]
             );
-            assert_eq!(card["canonical_next_action"]["action_class"], "run_command");
-            assert_eq!(
-                card["canonical_next_action"]["command"]["role"],
-                "inspection"
-            );
+            Some(command)
         } else {
-            assert_eq!(card["instruction"]["state"], "static_limitation");
-            assert!(card["next_action"].is_null(), "{card}");
+            None
+        };
+
+        // Request the server's read-only packet for the same current spot.
+        // The command string is data, and none of the offered commands run.
+        let reply = session.request(
+            "workspace/executeCommand",
+            json!({"command":"ripr.collectEvidenceContext","arguments":[{
+                "seam_id": seam,
+                "evidence_identity": diagnostic["data"]["evidence_identity"]
+            }]}),
+        )?;
+        let context = expect_result(&reply, "ripr.collectEvidenceContext")?;
+        assert_eq!(context["seam_id"], seam);
+        assert_eq!(context["base"], "main");
+        assert_eq!(context["mode"], mode);
+        assert_eq!(context["range"]["start"], line);
+        assert_eq!(context["evidence_path"]["reach"], "missing");
+        assert_eq!(context["suggested_test"]["file"], "tests/loyalty_price.rs");
+        assert_eq!(context.get("repair_command"), Some(&json!(start_command)));
+        let inspection = context["agent_packet_command"]
+            .as_str()
+            .ok_or("missing inspection command")?;
+        assert!(inspection.contains(&format!("--seam-id {seam}")));
+
+        let card_action = actions.iter().find(|action| {
+            action["command"]["command"] == "ripr.copyContext"
+                && action
+                    .pointer("/command/arguments/0/label")
+                    .and_then(Value::as_str)
+                    == Some("repair_card")
+        });
+        if cap == "0" {
+            let card_action = card_action.ok_or("missing direct-copy RepairCard")?;
+            assert_eq!(
+                card_action["data"]["evidence_identity"],
+                diagnostic["data"]["evidence_identity"]
+            );
+            let card: Value = serde_json::from_str(
+                card_action
+                    .pointer("/command/arguments/0/packet")
+                    .and_then(Value::as_str)
+                    .ok_or("missing card payload")?,
+            )
+            .map_err(|e| e.to_string())?;
+            assert_eq!(card["subject"]["seam_id"], seam);
+            assert_eq!(card["subject"]["canonical_gap_id"], CANONICAL_GAP);
+            assert_eq!(card["snapshot"]["currentness"], "current");
+            assert_eq!(card["selected_target"]["file"], "tests/loyalty_price.rs");
+            if startable {
+                assert_eq!(card["canonical_next_action"]["action_class"], "run_command");
+                assert_eq!(
+                    card["canonical_next_action"]["command"]["role"],
+                    "inspection"
+                );
+            } else {
+                assert_eq!(card["instruction"]["state"], "static_limitation");
+                assert!(card["next_action"].is_null(), "{card}");
+            }
+        } else {
+            assert!(card_action.is_none(), "capped inventory cannot bind a card");
+            let status = execute_compat_command(&mut session, "ripr.collectWorkspaceStatus")?;
+            assert_eq!(status["run_status"], "limited");
+            let components = status
+                .pointer("/analysis_status/components")
+                .and_then(Value::as_array)
+                .ok_or("missing component outcomes")?;
+            assert!(
+                components.iter().any(|outcome| {
+                    outcome["component"] == "seam_inventory"
+                        && outcome["state"] == "limited"
+                        && outcome["kind"] == "seam_inventory_truncated"
+                }),
+                "{components:?}"
+            );
         }
         let hover = session.request(
             "textDocument/hover",

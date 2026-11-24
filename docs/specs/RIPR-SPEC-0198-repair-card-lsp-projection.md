@@ -104,6 +104,9 @@ is unreferenced in the workspace. Instant analysis can miss tests that
 the seam inventory traces. Reached seams still use the usual repair
 admission and dirty-source preflight. A proposed target can stay visible
 during this check, and the card keeps its own inspection route gate.
+If a full refresh reports a truncated seam inventory, retained spots
+remain inspectable, but code actions, hover and the standard evidence
+context packet omit Start until a complete inventory is available.
 
 `witness_from_findings`, `workspace_identity_for`, and `latest_attempt_for_seam`
 are raised from private to `pub(crate)` in `app/repair_card_handoff.rs` with

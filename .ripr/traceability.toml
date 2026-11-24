@@ -17272,6 +17272,7 @@ id = "RIPR-SPEC-0214"
 name = "MCP repair transaction projection"
 spec = "docs/specs/RIPR-SPEC-0214-mcp-repair-transaction-projection.md"
 tests = [
+  "crates/ripr/tests/mcp_cli_repair_parity.rs::called_unreached_proposal_cannot_prepare_a_repair_over_stdio",
   "crates/ripr/tests/support/mcp_attempt_inventory.rs::inventory_discovery_empty_store_and_argument_refusals",
   "crates/ripr/tests/support/mcp_attempt_inventory.rs::inventory_refuses_lossy_directory_identity_and_recovers",
   "crates/ripr/tests/support/mcp_attempt_inventory.rs::inventory_real_durable_attempt_edit_refresh_and_corruption_recovery",
