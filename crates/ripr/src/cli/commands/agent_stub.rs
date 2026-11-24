@@ -957,6 +957,39 @@ weakly_gripped = "off"
         Ok(())
     }
 
+    /// #8361: a stub for an owner named `actual` binds `let actual =
+    /// actual(..)`. That local cannot take the donor test's call, so a second
+    /// `--write` must still copy the donor's input, recognize its own stub
+    /// and leave the file byte-identical.
+    #[test]
+    fn second_write_keeps_copied_inputs_when_the_owner_is_named_actual() -> Result<(), String> {
+        const SOURCE: &str = "pub type Verdict = bool;\npub fn actual(amount: i64, rate: u32) -> Verdict {\n    if rate > 500 {\n        amount > 0\n    } else {\n        false\n    }\n}\n\n#[cfg(test)]\nmod tests {\n    use super::*;\n\n    #[test]\n    fn approves() {\n        assert!(actual(7, 900));\n    }\n}\n";
+        let root = scratch_crate("rewrite-actual", SOURCE)?;
+        stub_write_at(&root, "src/lib.rs:3", "predicate")
+            .map_err(|error| format!("first write must succeed: {error:?}"))?;
+        let first =
+            std::fs::read_to_string(root.join("src/lib.rs")).map_err(|error| error.to_string())?;
+        let second = stub_write_at(&root, "src/lib.rs:3", "predicate");
+        let rewritten =
+            std::fs::read_to_string(root.join("src/lib.rs")).map_err(|error| error.to_string())?;
+        let _ = std::fs::remove_dir_all(&root);
+        second.map_err(|error| format!("second write must stay ready: {error:?}"))?;
+        if !first.contains("let amount: i64 = 7;") || !first.contains("let actual = actual(") {
+            return Err(format!(
+                "fixture: the first write must copy `amount` and bind `actual`:\n{first}"
+            ));
+        }
+        if first.matches("fn actual_boundary_discriminator").count() != 1 {
+            return Err(format!("first write must add exactly one stub:\n{first}"));
+        }
+        if rewritten != first {
+            return Err(format!(
+                "second write must leave the file byte-identical:\n{rewritten}"
+            ));
+        }
+        Ok(())
+    }
+
     /// #8990 review X3: `already_present` is read before the CLI reports the
     /// idempotent write. When the placement file changes after resolution so
     /// the stub is gone, the revalidation hands back a fresh not-present
