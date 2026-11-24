@@ -253,6 +253,168 @@ fn command_words(command: &str) -> Vec<String> {
     words
 }
 
+/// `git <args>` in `root`: its trimmed stdout.
+fn git_text(root: &Path, args: &[&str]) -> Result<String, String> {
+    let output = without_repository_env(Command::new("git"))
+        .current_dir(root)
+        .args(args)
+        .output()
+        .map_err(|error| format!("git {args:?}: {error}"))?;
+    if !output.status.success() {
+        return Err(format!(
+            "git {args:?} exited {}: {}",
+            output.status,
+            String::from_utf8_lossy(&output.stderr)
+        ));
+    }
+    Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
+}
+
+/// `command` run by the host's shell from `caller`, as a reader pastes it:
+/// `sh -c` on Unix, a batch file under `cmd` on Windows. Those are the shells
+/// the route's quoting is written for; the argument list a `Command` takes
+/// never parses the quotes, so it cannot stand in for them.
+#[cfg(unix)]
+fn run_in_host_shell(caller: &Path, command: &str) -> Result<std::process::Output, String> {
+    without_repository_env(Command::new("sh"))
+        .args(["-c", command])
+        .current_dir(caller)
+        .output()
+        .map_err(|error| format!("sh -c: {error}"))
+}
+
+#[cfg(windows)]
+fn run_in_host_shell(caller: &Path, command: &str) -> Result<std::process::Output, String> {
+    let script = scratch("shell-route-script")?;
+    // The batch file is named alone on `cmd`'s command line and enters the
+    // caller's directory itself: a quoted path with a space is not a name
+    // `cmd` is sure to read as this file.
+    // The scratch root can be root-relative (`	mp`); `cd /d` needs the drive.
+    let enter = format!(
+        r#"@cd /d "{}" || exit /b 1"#,
+        native_absolute(caller)?.display()
+    );
+    std::fs::write(
+        script.0.join("route.cmd"),
+        format!("{enter}\r\n{command}\r\n"),
+    )
+    .map_err(|error| format!("write route.cmd: {error}"))?;
+    without_repository_env(Command::new("cmd"))
+        .args(["/C", "route.cmd"])
+        .current_dir(&script.0)
+        .output()
+        .map_err(|error| format!("cmd /C route.cmd: {error}"))
+}
+
+/// `value` as one argument with a space kept inside, for the shell
+/// [`run_in_host_shell`] runs: a reader who picks such a path quotes it.
+#[cfg(unix)]
+fn shell_word(value: &str) -> String {
+    format!("'{}'", value.replace('\'', "'\\''"))
+}
+
+#[cfg(windows)]
+fn shell_word(value: &str) -> String {
+    format!("\"{value}\"")
+}
+
+/// #15548 review: the printed command is run by the host's shell, as a reader
+/// pastes it, on a bare repository and a work-tree path that each hold a
+/// space. The caller stands in an unrelated repository and gains no work tree.
+#[test]
+fn the_printed_work_tree_route_runs_through_the_host_shell_on_spaced_paths() -> Result<(), String> {
+    let seed = ts_project("shell route seed")?;
+    git(&seed.0, &["init", "-q", "-b", "main"])?;
+    git(&seed.0, &["config", "user.email", "ripr@example.invalid"])?;
+    git(&seed.0, &["config", "user.name", "ripr tests"])?;
+    git(&seed.0, &["add", "."])?;
+    git(&seed.0, &["commit", "-q", "-m", "base"])?;
+    let bare = scratch("shell route bare")?;
+    let bare_name = bare
+        .0
+        .file_name()
+        .ok_or("the bare scratch directory has no name")?
+        .to_string_lossy()
+        .into_owned();
+    git(
+        &seed.0,
+        &["clone", "-q", "--bare", ".", &format!("../{bare_name}")],
+    )?;
+    let bare_root = native_absolute(&bare.0)?;
+    assert!(
+        bare_root.to_string_lossy().contains(' '),
+        "the bare repository's path holds a space: {}",
+        bare_root.display()
+    );
+
+    let unrelated = ts_project("shell route unrelated")?;
+    git(&unrelated.0, &["init", "-q", "-b", "main"])?;
+    git(
+        &unrelated.0,
+        &["config", "user.email", "ripr@example.invalid"],
+    )?;
+    git(&unrelated.0, &["config", "user.name", "ripr tests"])?;
+    git(&unrelated.0, &["add", "."])?;
+    git(&unrelated.0, &["commit", "-q", "-m", "unrelated"])?;
+
+    let doctor = text(&ripr(
+        &unrelated.0,
+        &["doctor", "--root", &bare_root.display().to_string()],
+    )?);
+    let command = doctor
+        .split('`')
+        .find(|span| span.starts_with("git --git-dir="))
+        .ok_or_else(|| format!("no bound work-tree command in the doctor output:\n{doctor}"))?;
+    // The route spells the root with forward separators; the quote is the host's.
+    let spelled = bare_root.display().to_string().replace('\\', "/");
+    assert!(
+        command.contains(&format!("--git-dir=\"{spelled}\""))
+            || command.contains(&format!("--git-dir='{spelled}'")),
+        "the repository's spaced path is quoted as one argument: {command}"
+    );
+    let before = worktree_list(&unrelated.0)?;
+
+    // The work tree sits in a directory whose path holds a space. Its own
+    // name is one Git can use as a branch name: the route names no branch, so
+    // `git worktree add <path>` makes one from the directory's name.
+    let work_tree = scratch("shell route work tree")?;
+    let work_tree_root = native_absolute(&work_tree.0)?.join("checkout");
+    assert!(
+        work_tree_root.to_string_lossy().contains(' '),
+        "the work-tree path holds a space: {}",
+        work_tree_root.display()
+    );
+    // `<path>` is the reader's choice, quoted for the shell when it holds a space.
+    let pasted = command.replace("<path>", &shell_word(&work_tree_root.display().to_string()));
+    let output = run_in_host_shell(&unrelated.0, &pasted)?;
+    assert!(
+        output.status.success(),
+        "the pasted route did not run: {pasted}\n{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(
+        work_tree_root.join(".git").is_file() && work_tree_root.join("pricing.ts").is_file(),
+        "the pasted route did not create the work tree at <path>: {}\n{pasted}",
+        work_tree_root.display()
+    );
+    assert_eq!(
+        git_text(&work_tree_root, &["rev-parse", "HEAD"])?,
+        git_text(&bare_root, &["rev-parse", "HEAD"])?,
+        "the work tree checks out the bare repository's commit"
+    );
+    assert_eq!(
+        git_text(&work_tree_root, &["rev-parse", "--is-bare-repository"])?,
+        "false"
+    );
+    assert_eq!(
+        worktree_list(&unrelated.0)?,
+        before,
+        "the caller's repository gained a work tree"
+    );
+    let _ = std::fs::remove_dir_all(&work_tree.0);
+    Ok(())
+}
+
 /// #15297 review: the route for a bare repository names the repository's own
 /// path, so it works from a directory that is not that repository, and the
 /// printed command really creates the work tree where it says. The caller's
@@ -323,7 +485,9 @@ fn bare_repository_route_is_bound_to_the_repository_and_runs_from_an_unrelated_d
     );
 
     // A bare repository created on one branch that received its commit on
-    // another: not empty, and a work tree needs that branch named.
+    // another: not empty, and a work tree needs that branch named. A tag of
+    // the same name is there too: `git worktree add` reads the name as the
+    // branch, so the route keeps the branch's own name.
     let misdirected = scratch("bare-route-misdirected")?;
     git(&misdirected.0, &["init", "--bare", "-q", "-b", "main", "."])?;
     let misdirected_name = misdirected
@@ -339,6 +503,7 @@ fn bare_repository_route_is_bound_to_the_repository_and_runs_from_an_unrelated_d
             "-q",
             &format!("../{misdirected_name}"),
             "main:refs/heads/feature",
+            "main:refs/tags/feature",
         ],
     )?;
     let misdirected_root = native_absolute(&misdirected.0)?;
@@ -386,8 +551,8 @@ fn bare_repository_route_is_bound_to_the_repository_and_runs_from_an_unrelated_d
     let (_tagged_work_tree, command) =
         run_printed_work_tree_route(&unrelated.0, &tagged_root, "bare-route-tag")?;
     assert!(
-        command.ends_with(" worktree add <path> v1"),
-        "the route names the tag that holds the commit: {command}"
+        command.ends_with(" worktree add <path> refs/tags/v1"),
+        "the route names the tag that holds the commit, in full: {command}"
     );
     Ok(())
 }

@@ -29,19 +29,27 @@ const ROUTE_TOOL_TIMEOUT: Duration = Duration::from_secs(5);
 pub(crate) enum BareHead {
     /// `HEAD` names a commit, which a new work tree checks out.
     Resolves,
-    /// `HEAD` names nothing and no ref exists: the repository has no commit.
+    /// `HEAD` names nothing and no ref holds a commit: the repository has none.
     Empty,
-    /// `HEAD` names nothing while a ref holds a commit, which is the first
-    /// such ref Git lists: a branch, a tag or a remote-tracking ref.
+    /// `HEAD` names nothing while a ref holds a commit: the first such ref in
+    /// Git's own order that Git shows to peel to a commit, a branch, a tag or
+    /// a remote-tracking ref; a ref that holds a blob or a tree is passed over,
+    /// because a work tree cannot check it out. The string is the name the
+    /// route gives `git worktree add` for that ref ([`checkout_name`]).
     Headless(String),
-    /// Git did not answer, so none of the above can be claimed.
+    /// Git did not answer, or no ref it lists peels to a commit while the
+    /// listing was cut short, so none of the above can be claimed.
     Unconfirmed,
 }
 
+/// How many refs the route reads to find one that holds a commit.
+const MAX_ROUTE_REFS: usize = 64;
+
 fn bare_head(root: &Path) -> BareHead {
+    // `HEAD^{commit}` succeeds only when `HEAD` peels to a commit.
     let resolved = run_git_output_with_deadline(
         root,
-        &["rev-parse", "--verify", "--quiet", "HEAD"],
+        &["rev-parse", "--verify", "--quiet", "HEAD^{commit}"],
         Some(ROUTE_TOOL_TIMEOUT),
     );
     match resolved {
@@ -54,22 +62,65 @@ fn bare_head(root: &Path) -> BareHead {
     // `HEAD` names nothing. That is an empty repository only when no ref at
     // all holds a commit: a bare repository can hold pushed branches while
     // `HEAD` still names the branch it was created with, and it can hold its
-    // commit under a tag or a remote-tracking ref alone.
+    // commit under a tag or a remote-tracking ref alone. A ref can also hold
+    // a blob or a tree, so each is read with the type of the object it names
+    // and, for a tag, of the object it peels to.
+    let count = format!("--count={MAX_ROUTE_REFS}");
     let refs = run_git_output_with_deadline(
         root,
-        &["for-each-ref", "--count=1", "--format=%(refname:short)"],
+        &[
+            "for-each-ref",
+            count.as_str(),
+            "--format=%(refname) %(objecttype) %(*objecttype)",
+        ],
         Some(ROUTE_TOOL_TIMEOUT),
     );
-    match refs {
-        Ok(output) if output.status.success() => {
-            let first = String::from_utf8_lossy(&output.stdout).trim().to_string();
-            if first.is_empty() {
-                BareHead::Empty
-            } else {
-                BareHead::Headless(first)
-            }
-        }
-        Ok(_) | Err(_) => BareHead::Unconfirmed,
+    let output = match refs {
+        Ok(output) if output.status.success() => output,
+        Ok(_) | Err(_) => return BareHead::Unconfirmed,
+    };
+    let listed = String::from_utf8_lossy(&output.stdout);
+    let lines: Vec<&str> = listed.lines().collect();
+    if let Some(reference) = lines.iter().copied().find_map(commit_ref) {
+        return BareHead::Headless(checkout_name(&reference));
+    }
+    if lines.len() >= MAX_ROUTE_REFS {
+        // Cut short with no commit seen: a later ref may hold one.
+        return BareHead::Unconfirmed;
+    }
+    BareHead::Empty
+}
+
+/// The full name of the ref one `for-each-ref` line describes, when the
+/// object it names, or the object a tag peels to, is a commit. The line is
+/// the ref's full name, the type of the object it names and the type of the
+/// object a tag peels to, which is empty for anything that is not a tag.
+fn commit_ref(line: &str) -> Option<String> {
+    let mut fields = line.split(' ');
+    let reference = fields.next()?;
+    let named = fields.next();
+    let peeled = fields.next();
+    let holds_commit = match named {
+        Some("commit") => true,
+        Some("tag") => peeled == Some("commit"),
+        _ => false,
+    };
+    (holds_commit && reference.starts_with("refs/")).then(|| reference.to_string())
+}
+
+/// The name the route gives `git worktree add <path> <name>` for a ref the
+/// listing showed to hold a commit. A branch is named by its own name, the one
+/// form in which `worktree add` checks the branch out: given in full, it
+/// detaches `HEAD` at the commit. `worktree add` reads a name as a branch
+/// before anything else, so a tag of the same name does not come between. A
+/// branch whose own name begins with `-` would be read as an option, so it is
+/// named in full and the work tree is detached at its commit. A tag or a
+/// remote-tracking ref is checked out detached either way and is named in
+/// full, which nothing else answers to.
+fn checkout_name(reference: &str) -> String {
+    match reference.strip_prefix("refs/heads/") {
+        Some(branch) if !branch.starts_with('-') => branch.to_owned(),
+        _ => reference.to_owned(),
     }
 }
 
@@ -221,7 +272,8 @@ mod tests {
 
         // A bare repository whose `HEAD` still names the branch it was created
         // with, while a pushed branch holds the commit: not empty, and the
-        // work tree needs that branch named.
+        // work tree needs that branch named. A branch is named by its own
+        // name, the form in which `git worktree add` checks the branch out.
         let misdirected = create("misdirected")?;
         git_in(&misdirected, &["init", "--bare", "-b", "main", "."])?;
         git_in(
@@ -245,6 +297,7 @@ mod tests {
             )),
             "{route}"
         );
+        assert!(!route.contains("refs/heads/feature"), "{route}");
         assert!(route.contains("from any directory"), "{route}");
         assert!(!route.contains("has no commits yet"), "{route}");
         assert!(!route.contains("git clone"), "{route}");
@@ -277,11 +330,14 @@ mod tests {
                 "main:refs/tags/v1",
             ],
         )?;
-        assert_eq!(bare_head(&tagged), BareHead::Headless("v1".to_owned()));
+        assert_eq!(
+            bare_head(&tagged),
+            BareHead::Headless("refs/tags/v1".to_owned())
+        );
         let route = bare_root_work_tree_route(&tagged)?;
         assert!(
             route.contains(&format!(
-                "`git --git-dir={} worktree add <path> v1`",
+                "`git --git-dir={} worktree add <path> refs/tags/v1`",
                 bound(&tagged)?
             )),
             "{route}"
@@ -301,16 +357,157 @@ mod tests {
         )?;
         assert_eq!(
             bare_head(&remote_only),
-            BareHead::Headless("origin/main".to_owned())
+            BareHead::Headless("refs/remotes/origin/main".to_owned())
         );
         let route = bare_root_work_tree_route(&remote_only)?;
         assert!(
             route.contains(&format!(
-                "`git --git-dir={} worktree add <path> origin/main`",
+                "`git --git-dir={} worktree add <path> refs/remotes/origin/main`",
                 bound(&remote_only)?
             )),
             "{route}"
         );
+        assert!(!route.contains("has no commits yet"), "{route}");
+
+        // A ref can hold a blob or a tree, which a work tree cannot check
+        // out. A tree tag sorts before a tag that holds the commit: the tag
+        // is named, by its full name, and the tree is passed over (#15548
+        // review).
+        let mixed = create("mixed refs")?;
+        git_in(&mixed, &["init", "--bare", "-q", "-b", "main", "."])?;
+        git_in(
+            &seed,
+            &[
+                "push",
+                "-q",
+                &mixed.display().to_string(),
+                "main^{tree}:refs/tags/a-tree",
+                "main:refs/tags/z-commit",
+            ],
+        )?;
+        assert_eq!(
+            bare_head(&mixed),
+            BareHead::Headless("refs/tags/z-commit".to_owned())
+        );
+        let route = bare_root_work_tree_route(&mixed)?;
+        assert!(
+            route.contains(&format!(
+                "`git --git-dir={} worktree add <path> refs/tags/z-commit`",
+                bound(&mixed)?
+            )),
+            "{route}"
+        );
+        assert!(!route.contains("a-tree"), "{route}");
+
+        // A branch and a tag of one name both hold the commit. The branch
+        // sorts first and is the ref selected, and it keeps its own name:
+        // `git worktree add` reads a name as a branch before anything else.
+        let clashed = create("same-named branch and tag")?;
+        git_in(&clashed, &["init", "--bare", "-q", "-b", "main", "."])?;
+        git_in(
+            &seed,
+            &[
+                "push",
+                "-q",
+                &clashed.display().to_string(),
+                "main:refs/heads/v1",
+                "main:refs/tags/v1",
+            ],
+        )?;
+        assert_eq!(bare_head(&clashed), BareHead::Headless("v1".to_owned()));
+        let route = bare_root_work_tree_route(&clashed)?;
+        assert!(
+            route.contains(&format!(
+                "`git --git-dir={} worktree add <path> v1`",
+                bound(&clashed)?
+            )),
+            "{route}"
+        );
+        assert!(!route.contains("refs/heads/v1"), "{route}");
+
+        // A branch whose own name begins with `-` would be read as an option:
+        // it is named in full, and the work tree is detached at its commit.
+        let dashed = create("dash-leading branch")?;
+        git_in(&dashed, &["init", "--bare", "-q", "-b", "main", "."])?;
+        git_in(
+            &seed,
+            &[
+                "push",
+                "-q",
+                &dashed.display().to_string(),
+                "main:refs/heads/-weird",
+            ],
+        )?;
+        assert_eq!(
+            bare_head(&dashed),
+            BareHead::Headless("refs/heads/-weird".to_owned())
+        );
+        let route = bare_root_work_tree_route(&dashed)?;
+        assert!(
+            route.contains(&format!(
+                "`git --git-dir={} worktree add <path> refs/heads/-weird`",
+                bound(&dashed)?
+            )),
+            "{route}"
+        );
+        assert!(!route.contains("<path> -weird`"), "{route}");
+
+        // Only refs that hold no commit: the repository has none, and the
+        // route offers a clone alone, not a work tree as the other choice.
+        let no_commit = create("no commit refs")?;
+        git_in(&no_commit, &["init", "--bare", "-q", "-b", "main", "."])?;
+        git_in(
+            &seed,
+            &[
+                "push",
+                "-q",
+                &no_commit.display().to_string(),
+                "main^{tree}:refs/tags/a-tree",
+            ],
+        )?;
+        assert_eq!(bare_head(&no_commit), BareHead::Empty);
+        let route = bare_root_work_tree_route(&no_commit)?;
+        assert!(
+            route.contains("This bare repository has no commits yet"),
+            "{route}"
+        );
+        assert!(!route.contains("worktree add"), "{route}");
+        // `HEAD` itself pointing at a tree is not a commit either: the route
+        // does not offer a work tree of it.
+        git_in(&no_commit, &["symbolic-ref", "HEAD", "refs/tags/a-tree"])?;
+        assert!(
+            !matches!(bare_head(&no_commit), BareHead::Resolves),
+            "a tree behind `HEAD` is not a commit"
+        );
+        let route = bare_root_work_tree_route(&no_commit)?;
+        assert!(
+            route.contains("This bare repository has no commits yet"),
+            "{route}"
+        );
+        assert!(!route.contains("worktree add"), "{route}");
+
+        // More refs than the route reads, none holding a commit among them
+        // and a commit behind them: nothing is claimed, and the route names
+        // both commands.
+        let cut_short = create("cut short refs")?;
+        git_in(&cut_short, &["init", "--bare", "-q", "-b", "main", "."])?;
+        let mut pushes = vec!["push".to_string(), "-q".to_string()];
+        pushes.push(cut_short.display().to_string());
+        for index in 0..64 {
+            pushes.push(format!("main^{{tree}}:refs/tags/t-{index:04}"));
+        }
+        pushes.push("main:refs/tags/z-commit".to_string());
+        let pushes = pushes.iter().map(String::as_str).collect::<Vec<_>>();
+        git_in(&seed, &pushes)?;
+        assert_eq!(bare_head(&cut_short), BareHead::Unconfirmed);
+        let route = bare_root_work_tree_route(&cut_short)?;
+        assert!(route.contains("worktree add"), "{route}");
+        assert!(route.contains("git clone"), "{route}");
+        assert!(
+            !route.contains("This bare repository has no commits yet"),
+            "{route}"
+        );
+        assert!(!route.contains("names no commit"), "{route}");
 
         // A spaced path stays one shell argument in the command, closed in
         // the quote the host's shell reads: `'` on Unix, `"` on Windows.
@@ -336,6 +533,11 @@ mod tests {
             remote_only,
             refused,
             spaced,
+            mixed,
+            clashed,
+            dashed,
+            no_commit,
+            cut_short,
         ] {
             let _ = std::fs::remove_dir_all(&dir);
         }
