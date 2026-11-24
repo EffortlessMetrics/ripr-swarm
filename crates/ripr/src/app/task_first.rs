@@ -2553,10 +2553,9 @@ pub(crate) fn changed_seam_no_path_start_refusal(
     if entry.evidence.reach.state != crate::domain::StageState::No {
         return None;
     }
-    let files = live_check_diff_files(root, None)?;
-    if !seam_touches_change(entry, &files) {
-        return None;
-    }
+    // Check scopes the evidence to the live change. Its producer can place
+    // the finding at an unchanged consumer, so bind the exact occurrence
+    // from that one run instead of filtering on the literal diff span.
     let findings = default_check_findings(root, config).ok()?;
     super::repair_card_handoff::bound_no_path_start_refusal(&findings, entry, classified)
         .map(check_limited_reason)
