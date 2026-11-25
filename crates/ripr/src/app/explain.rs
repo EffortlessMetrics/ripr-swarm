@@ -720,7 +720,7 @@ fn changed_line_reason(
     // analyzed, so no line-level reason applies to it.
     if let Some(setting) = index.configured_exclusion_of(&key) {
         return format!(
-            "That file is left out by the configured `{setting}` in ripr.toml, so this run did not analyze it; remove or narrow that pattern to analyze it"
+            "That file is left out by the configured `{setting}` in ripr.toml, so this run did not analyze it; removing or narrowing that pattern lifts that exclusion, though a built-in generated-file rule can still leave the file out"
         );
     }
     let Some(lines) = index.lines_of(&key) else {

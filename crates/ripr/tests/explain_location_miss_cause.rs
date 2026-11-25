@@ -395,6 +395,47 @@ fn a_miss_in_a_configured_excluded_file_names_the_setting() -> Result<(), String
     require_absent("explain", &unchanged.1, &[CONFIGURED_OUT])
 }
 
+/// The preview-language branch hands its configured exclusions to the miss
+/// the same way: a changed Python file that `[languages.python]
+/// excluded_file_patterns` leaves out names that setting (#16250).
+#[cfg(feature = "lang-python")]
+#[test]
+fn a_miss_in_a_python_file_the_configuration_excludes_names_the_setting() -> Result<(), String> {
+    let repo = Repo::create_with(
+        &[
+            (
+                "ripr.toml",
+                "[languages]\nenabled = [\"rust\", \"python\"]\n\n[languages.python]\nexcluded_file_patterns = [\"tool.py\"]\n",
+            ),
+            (
+                "tool.py",
+                "def fee(n):\n    if n > 10:\n        return 5\n    return 0\n",
+            ),
+        ],
+        &[(
+            "tool.py",
+            "def fee(n):\n    if n >= 10:\n        return 5\n    return 0\n",
+        )],
+    )?;
+    for (label, run) in [
+        ("explain", repo.explain("tool.py:2")?),
+        ("context", repo.context("tool.py:2")?),
+    ] {
+        require_miss(label, "tool.py:2", &run, Some(NO_FINDING_IN_FILE))?;
+        require_contains(
+            label,
+            &run.1,
+            "That file is left out by the configured `[languages.python] excluded_file_patterns` in ripr.toml, so this run did not analyze it",
+        )?;
+        require_absent(
+            label,
+            &run.1,
+            &[NOT_IN_DIFF, LINE_CHANGED, LINE_NOT_CHANGED, ONLY_REMOVES],
+        )?;
+    }
+    Ok(())
+}
+
 /// An incomplete run may never have analyzed the file, so it must not give
 /// the "nothing there to report" reason. Rust is switched off here, so the
 /// changed `src/lib.rs` has no finding because it was not analyzed. A build

@@ -280,7 +280,9 @@ exists, but this run has no finding anywhere in it
 - The third means the file exists and this run reported nothing in it. The
   next sentence says which reason applies to the line you named: a pattern in
   `ripr.toml` (`generated_file_patterns` or `excluded_file_patterns`) left
-  the file out, so it was not analyzed (remove or narrow the pattern); the
+  the file out, so it was not analyzed (removing or narrowing the pattern
+  lifts that exclusion, though a built-in generated-file rule can still
+  apply); the
   diff changes no text line of the file; the line is not one the diff changed
   (the changed lines are listed); or the line changed and has no finding, as
   a comment or test code does. When the analysis was incomplete, the message
