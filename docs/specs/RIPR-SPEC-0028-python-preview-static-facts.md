@@ -2204,9 +2204,9 @@ on a parameter with no arguments, or another literal digit count in
 changes the literal fallback alone of `<parameter>.get(<literal key>, <literal>)`
 (#16203), changes the result only for a string with whitespace on a side one
 version keeps, a number with more decimal places than the smaller count, a
-collection holding two different elements, or a dict without the key. The parameter must be one the body
-never rebinds; for a sort or a lookup, the changed line must also be the start of the first
-top-level body statement that names the parameter, and name it once, so the
+collection holding two different elements, or a dict without the key. The
+parameter must be one the body never rebinds; for a sort or a lookup, the
+changed line must also be the start of the first top-level body statement that names the parameter, and name it once, so the
 call sees the collection the test passed; because Python normalizes
 identifiers, a non-ASCII parameter or statement before that line leaves the
 reading alone. A bare `round` or `sorted` must name
@@ -2219,7 +2219,8 @@ are all such scalars, not a parametrize case value the
 test may change in place) and both versions give the same result, the edit
 reads `weakly_exposed` and the missing discriminator names the separating
 input. List elements agree only when they share a spelling or are plain strings
-or ints of equal value. A call the reader cannot resolve, or no resolved call
+or ints of equal value; a lookup key matches by Python equality, and a float key
+is not read. A call the reader cannot resolve, or no resolved call
 at all, leaves the reading to the other rules.
 
 Tests: `call_variant_tests.rs::inputs_without_trailing_whitespace_do_not_expose_strip_to_lstrip`,
@@ -2244,7 +2245,8 @@ Tests: `call_variant_tests.rs::inputs_without_trailing_whitespace_do_not_expose_
 `call_variant_tests.rs::a_dict_without_the_key_keeps_a_get_fallback_change_exposed`,
 `call_variant_tests.rs::an_unpacked_dict_keeps_a_get_fallback_change_exposed`,
 `call_variant_tests.rs::only_a_lone_literal_fallback_edit_on_a_named_get_is_read`,
-`call_variant_tests.rs::dict_keys_are_read_only_from_a_literal_display`.
+`call_variant_tests.rs::dict_keys_are_read_only_from_a_literal_display`,
+`call_variant_tests.rs::a_parametrized_dict_keeps_a_get_fallback_change_exposed`.
 
 ## Changed Range Header Amendment (#12948)
 

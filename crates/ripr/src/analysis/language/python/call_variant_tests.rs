@@ -628,4 +628,25 @@ fn dict_keys_are_read_only_from_a_literal_display() {
     assert_eq!(key_present(&keys(&["\"k\""]), "'k'"), Some(true));
     assert_eq!(key_present(&keys(&["\"j\""]), "\"k\""), Some(false));
     assert_eq!(key_present(&keys(&["1"]), "\"1\""), None);
+    // Python finds an int key under an equal bool, but a float key is not
+    // read: `2**53 + 1` and its float spelling are different keys.
+    assert_eq!(key_present(&keys(&["1"]), "True"), Some(true));
+    // A string against `None` or a bool is not read.
+    assert_eq!(key_present(&keys(&["None"]), "\"k\""), None);
+    assert_eq!(
+        key_present(&keys(&["9007199254740993"]), "9007199254740992.0"),
+        None
+    );
+    assert_eq!(key_present(&keys(&["1.5"]), "2"), None);
+    assert_eq!(key_present(&keys(&["1_000"]), "1000"), Some(true));
+}
+
+#[test]
+fn a_parametrized_dict_keeps_a_get_fallback_change_exposed() -> Result<(), String> {
+    // The test removes the key from the decorator's dict before the call.
+    let finding = classify_score(
+        "import pytest\n\nfrom src.text import score\n\n\n@pytest.mark.parametrize(\"d\", [{\"k\": 2}])\ndef test_score(d):\n    d.pop(\"k\")\n    assert score(d) == 1\n",
+    )?;
+    assert_eq!(finding.class, ExposureClass::Exposed);
+    Ok(())
 }

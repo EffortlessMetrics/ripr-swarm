@@ -298,9 +298,9 @@ pub(super) fn python_call_variant_evidence(
     {
         return None;
     }
-    // A list is mutable: the body must not reach it before the changed line,
-    // and the line must name it once, so the sort sees the list the test
-    // passed.
+    // A list or dict is mutable: the body must not reach it before the
+    // changed line, and the line must name it once, so the call sees the
+    // collection the test passed.
     if matches!(
         variant,
         CallVariant::Sort { .. } | CallVariant::GetFallback { .. }
@@ -417,7 +417,9 @@ pub(super) fn key_present(keys: &[String], key: &str) -> Option<bool> {
         if float(candidate) {
             return None;
         }
-        if literals_equal(candidate, key)? {
+        // Digit separators are spelling only (`1_000 == 1000`).
+        let unseparated = |text: &str| literal_value(text).unwrap_or_else(|| text.to_string());
+        if literals_equal(&unseparated(candidate), &unseparated(key))? {
             return Some(true);
         }
     }
