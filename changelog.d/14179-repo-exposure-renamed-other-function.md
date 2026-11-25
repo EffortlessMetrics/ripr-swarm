@@ -1,0 +1,2 @@
+<!-- section: Fixed -->
+- Analysis: the whole-repository exposure report no longer credits a direct call of a changed function when the test's bare call is bound by a renaming import to another function (`use super::other as discount;`) or only by a standard-library glob; the test keeps at most a proximity relation, as `ripr check` on a diff already reads it. Pinned in the evidence-promotion honesty corpus with a qualified-call control (#14179, #14069).

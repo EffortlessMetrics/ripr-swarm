@@ -460,6 +460,23 @@ pub(super) fn match_direct_owner_call(
         }) {
             continue;
         }
+        // #14069 (#14179): a test whose every spelling of the owner's name is
+        // a bare call bound by a renaming import of another function, or
+        // only by standard-library globs, runs that other function. The
+        // finding-level relation demotes the same call to name-only, so the
+        // seam does not take it as a direct call either; a weaker relation
+        // matched below may still keep the test.
+        if owner.free_function
+            && owner.function.is_some_and(|function| {
+                crate::analysis::classify::test_calls_only_a_renamed_other_function(
+                    context.index,
+                    function,
+                    indexed.test,
+                )
+            })
+        {
+            continue;
+        }
         let test_prefix = match (prefix, cross_package_owner) {
             (Some(guard), Some(function))
                 if !indexed.path_normalized.starts_with(guard)
