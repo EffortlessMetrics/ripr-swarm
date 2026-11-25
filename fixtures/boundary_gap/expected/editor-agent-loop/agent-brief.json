@@ -96,7 +96,7 @@
       }
     }
   ],
-  "value_basis": "`expression`/`arm_result`: changed code, so assert what it does now; an input the change left alone keeps its value. `candidate_values`: inputs or values to assert, not all of one kind.",
+  "value_basis": "`expression`/`arm_result`: current source behavior; a seam counts as changed code here only where its `why_now.reason` is `changed_line_intersects_seam`; assert what it does now. `candidate_values`: inputs or values to assert, not all of one kind.",
   "warnings": [],
   "working_set": {
     "base": null,

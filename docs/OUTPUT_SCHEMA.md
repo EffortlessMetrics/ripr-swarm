@@ -19033,10 +19033,17 @@ Field contract:
 - `limits.default` — always `3`.
 - `limits.hard_cap` — always `10`.
 - `value_basis` — optional top-level note, present only when `top_seams` is
-  non-empty. It says `expression` and `arm_result` are read from the changed
-  code, so a new test asserts what that code does now (an input whose
-  behavior did not change keeps its value), and that `candidate_values` are
-  inputs or values to assert, not all of one kind (#15361). The published
+  non-empty. While a changed line reaches every named seam (each
+  `why_now.reason` is `changed_line_intersects_seam`), it says `expression`
+  and `arm_result` are read from the changed code, so a new test asserts what
+  that code does now (an input whose behavior did not change keeps its
+  value), and that `candidate_values` are inputs or values to assert, not
+  all of one kind (#15361). For any other named seam (a seam asked for by
+  its ID, a repository fallback after a comment-only or an unrelated change,
+  a seam chosen for its owner, its test or its file), it says the values are
+  the current source's behavior, that a seam counts as changed code there
+  only where its `why_now.reason` is `changed_line_intersects_seam`, and the
+  same about `candidate_values` (#15361 review). The published
   schema does not declare this property: its
   root object accepts extra properties, and a newly declared property with a
   constraint counts as a breaking change under the schema-compatibility

@@ -5,4 +5,5 @@ id = "RIPR-SPEC-0010"
 tests = [
   "crates/ripr/src/output/agent_brief.rs::tests::agent_brief_names_seam_values_as_changed_behavior_to_pin",
   "crates/ripr/tests/cli_smoke/agent_output_budget.rs::agent_brief_json_states_the_value_basis_as_one_string_or_leaves_it_out",
+  "crates/ripr/tests/task_first_facade/brief_diff_status.rs::brief_empty_and_ordinary_patches_keep_successful_selection",
 ]
