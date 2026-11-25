@@ -1511,9 +1511,12 @@ fn finding_message(finding: &Finding) -> String {
 /// noticed by tests", "partly noticed", "reached but not noticed", "no test
 /// path", "unclear") and states no runtime verdict.
 ///
-/// A reached-but-not-noticed finding claims a reaching test only when reach is
-/// `yes` and not callee-only, the same guard the human classification hint
-/// applies (#7003, #7330); weak or callee-only reach keeps the uncertainty.
+/// The two classes whose plain name claims a reaching test ("partly
+/// noticed", "reached") claim it only when reach is `yes` and not callee-only,
+/// the same guard the human hint and Summary apply (#7003, #7330, #15295).
+/// When tests call the owner but infection is `no` (a skipped branch, a
+/// default every call overrides), the message says the change is not
+/// exercised instead of reached.
 fn finding_class_message_predicate(finding: &Finding) -> &'static str {
     let reach_established = finding.ripr.reach.state == StageState::Yes
         && !finding
@@ -1525,6 +1528,12 @@ fn finding_class_message_predicate(finding: &Finding) -> &'static str {
         ExposureClass::ReachableUnrevealed if !reach_established => {
             "has no assertion that appears to notice a change, and test reach to it is not established"
         }
+        ExposureClass::WeaklyExposed if !reach_established => {
+            "has only a weak check that may notice a change, and test reach to it is not established"
+        }
+        ExposureClass::ReachableUnrevealed if finding.ripr.infect.state == StageState::No => {
+            "is in code tests call, but no test input appears to exercise it"
+        }
         ExposureClass::Exposed => "appears noticed by tests",
         ExposureClass::WeaklyExposed => "is only partly noticed by tests",
         ExposureClass::ReachableUnrevealed => {
@@ -1532,7 +1541,7 @@ fn finding_class_message_predicate(finding: &Finding) -> &'static str {
         }
         ExposureClass::NoStaticPath => "has no test path that static analysis could find",
         ExposureClass::InfectionUnknown => {
-            "may be reached by tests, but their inputs are not visible to static analysis"
+            "may be reached by tests, but static analysis cannot tell whether their inputs exercise it"
         }
         ExposureClass::PropagationUnknown => {
             "may be reached by tests, but static analysis cannot tell whether a wrong result reaches an assertion"
@@ -1580,11 +1589,16 @@ fn sentence(text: &str) -> String {
     }
 }
 
-/// The reconciled next step as alert text: one line. The internal analyzer
-/// route stays out of the next step itself (#15309) and in the structured
-/// limitation fields.
+/// The reconciled next step as alert text: one line. Only line breaks and the
+/// indentation around them become one space; spaces inside a line stay, so a
+/// quoted literal (an exact error message to assert) keeps its bytes. The
+/// internal analyzer route stays out of the next step itself (#15309).
 fn alert_next_step(step: &str) -> String {
-    bounded_single_line(step, usize::MAX)
+    step.lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty())
+        .collect::<Vec<_>>()
+        .join(" ")
 }
 
 fn seam_message(entry: &ClassifiedSeam) -> String {
@@ -3807,6 +3821,27 @@ weakly_gripped = "note"
             );
         }
 
+        // A weak finding without established reach does not claim that tests
+        // partly notice the change (#15374 review, same guard as #15295).
+        let mut weak_unreached = sample_finding();
+        weak_unreached.ripr.reach = stage(StageState::Weak, "same-file test link only");
+        let message = finding_message(&weak_unreached);
+        assert!(!message.contains("partly noticed by tests"), "{message}");
+        assert!(
+            message.contains("test reach to it is not established."),
+            "{message}"
+        );
+
+        // Tests call the owner but no input exercises the change: not "reached".
+        let mut skipped = reached.clone();
+        skipped.ripr.infect = stage(StageState::No, "no related test enters the branch");
+        let message = finding_message(&skipped);
+        assert!(!message.contains("is reached by tests"), "{message}");
+        assert!(
+            message.contains("is in code tests call, but no test input appears to exercise it."),
+            "{message}"
+        );
+
         // Empty expression: a plain subject, still one sentence.
         let mut bare = sample_finding();
         bare.probe.expression.clear();
@@ -4405,6 +4440,56 @@ weakly_gripped = "note"
         assert_eq!(visible.len(), 1, "default policy hides strongly_gripped");
         assert_eq!(visible[0], both[1]);
         Ok(())
+    }
+
+    /// #15374 review: seam alerts are one bounded line led by the rule title.
+    #[test]
+    fn seam_message_is_one_bounded_line() {
+        let multi = classified_seam_at(
+            SeamGripClass::WeaklyGripped,
+            "src/pricing.rs",
+            "pricing::discounted_total",
+            SeamKind::PredicateBoundary,
+            (42, 88),
+            "amount\n        >= discount_threshold",
+        );
+        let message = seam_message(&multi);
+        assert!(!message.contains('\n'), "{message}");
+        assert!(
+            message.ends_with(": `amount >= discount_threshold`."),
+            "{message}"
+        );
+        assert!(!message.contains("weakly_gripped"), "{message}");
+
+        let long = classified_seam_at(
+            SeamGripClass::WeaklyGripped,
+            "src/pricing.rs",
+            "pricing::discounted_total",
+            SeamKind::PredicateBoundary,
+            (42, 88),
+            &"x + ".repeat(80),
+        );
+        let message = seam_message(&long);
+        assert!(message.contains("...`."), "{message}");
+        assert!(!message.contains("...."), "{message}");
+        let quoted = message
+            .split('`')
+            .nth(1)
+            .map_or(0, |quote| quote.chars().count());
+        assert!(quoted <= MAX_EXPRESSION_CHARS, "{message}");
+    }
+
+    /// #15374 review: the next step keeps spaces inside a quoted literal.
+    #[test]
+    fn alert_next_step_keeps_literal_spacing_and_joins_lines() {
+        assert_eq!(
+            alert_next_step("assert the error is \"too  low\""),
+            "assert the error is \"too  low\""
+        );
+        assert_eq!(
+            alert_next_step("first line\n    second  line\n"),
+            "first line second  line"
+        );
     }
 
     fn weakly_gripped_classified() -> ClassifiedSeam {
