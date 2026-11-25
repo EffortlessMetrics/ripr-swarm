@@ -1033,7 +1033,7 @@ fn repair_card_body(
                 CODE_FIELD_CHAR_BUDGET,
             )));
             body.push_str(
-                "\n\nIt prints the `--attempt ... --phase after` command that verifies the new test.",
+                "\n\nIt prints the `continue --attempt` command that verifies the new test.",
             );
         }
     }
@@ -1758,7 +1758,11 @@ mod tests {
             body.contains(&format!("Start the repair:\n`{command}`")),
             "{body}"
         );
-        assert!(body.contains("--phase after"), "{body}");
+        assert!(
+            body.contains("It prints the `continue --attempt` command"),
+            "{body}"
+        );
+        assert!(!body.contains("--phase after"), "{body}");
         assert!(!body.contains("Verify:"), "{body}");
 
         let blank = comment_body(&serde_json::json!({
