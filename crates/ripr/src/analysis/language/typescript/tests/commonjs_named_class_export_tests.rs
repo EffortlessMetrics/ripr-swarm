@@ -14,10 +14,12 @@
 //! * The members of one class share the one export slot `Cart`. When a later
 //!   top-level statement assigns `Cart` again (another class, a class with no
 //!   method, or any value) the earlier class is dead and yields no owner, the
-//!   same fail-closed rule as a reassigned function export (#4638); a
-//!   reassigned function export now also counts value assignments that are
-//!   not functions, and two entries of one `module.exports = { ... }` object
-//!   with the same key still count as two assignments.
+//!   same fail-closed rule as a reassigned function export (#4638), which
+//!   now also counts later value assignments that are not functions. An
+//!   earlier one (the `exports.Cart = void 0;` that compiled TypeScript and
+//!   Babel hoist) is overwritten by the definition and keeps it. Two entries
+//!   of one `module.exports = { ... }` object with the same key still count
+//!   as two assignments.
 //! * Instance fields of the class and a declared class of the same name read
 //!   under the property name, so field shadowing and repeated-name guards
 //!   see them.
@@ -230,6 +232,33 @@ fn a_function_export_reassigned_to_a_value_yields_no_owner() -> Result<(), Strin
 }
 
 #[test]
+fn an_earlier_hoisted_export_initializer_does_not_drop_the_definition() -> Result<(), String> {
+    // Compiled TypeScript and Babel CommonJS output hoist
+    // `exports.NAME = void 0;` above the real definition, which overwrites it.
+    for (label, source) in [
+        (
+            "hoisted-class",
+            format!("exports.Cart = void 0;\nexports.Cart = class {BODY};\n"),
+        ),
+        (
+            "hoisted-class-module-exports",
+            format!("module.exports.Cart = undefined;\nmodule.exports.Cart = class {BODY};\n"),
+        ),
+    ] {
+        let finding = diff_finding(label, &source, &jest_test(NAMED_REQUIRE, CALL))?;
+        expect_related(label, &finding, true)?;
+    }
+    let function = "exports.total = void 0;\nexports.total = function (n) {\n  return n;\n};\n";
+    let owners = extract_owners(Path::new("src/cart.js"), function);
+    if !owners.iter().any(|owner| owner.name == "total") {
+        return Err(format!(
+            "a hoisted initializer dropped the function {owners:?}"
+        ));
+    }
+    Ok(())
+}
+
+#[test]
 fn a_duplicated_key_in_one_export_object_still_reads_as_reassigned() -> Result<(), String> {
     let source = "module.exports = {\n  total(n) {\n    return n;\n  },\n  total(n) {\n    return n - 5;\n  },\n};\n";
     let owners = extract_owners(Path::new("src/cart.js"), source);
@@ -248,11 +277,15 @@ fn a_duplicated_key_in_one_export_object_still_reads_as_reassigned() -> Result<(
 
 #[test]
 fn a_named_export_class_reads_under_its_property_for_fields_and_repeats() -> Result<(), String> {
-    let source = "class Cart {\n  total() {}\n}\nexports.Cart = class Basket {\n  total = () => 0;\n  total() {}\n};\nexports.Order = class Order {};\n";
+    let source = "class Cart {\n  total() {}\n}\nexports.Cart = class Basket {\n  total = () => 0;\n  total() {}\n};\nexports.Order = class Order {};\nexports.A = class Inner {};\nexports.B = class Inner {};\n";
     let allocator = Allocator::default();
     let parsed = Parser::new(&allocator, source, SourceType::mjs()).parse();
     let repeated = repeated_class_names(&parsed.program);
-    if !repeated.contains("Cart") || repeated.contains("Basket") || repeated.contains("Order") {
+    if !repeated.contains("Cart")
+        || ["Basket", "Order", "Inner", "A", "B"]
+            .iter()
+            .any(|name| repeated.contains(*name))
+    {
         return Err(format!("unexpected repeated class names {repeated:?}"));
     }
     let fields = class_instance_field_names(&parsed.program);

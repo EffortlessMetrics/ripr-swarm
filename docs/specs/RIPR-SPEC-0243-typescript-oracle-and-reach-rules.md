@@ -1458,8 +1458,12 @@ one class share the one export slot `Cart`: a later top-level assignment to the
 same slot (another class, a class with no method, or any other value) leaves the
 earlier class dead, so it yields no owner, the fail-closed rule of a reassigned
 function export (#4638), which now also counts a non-function value assigned to
-the slot. Instance fields and the repeated-class-name guard read such a class
-under the property name.
+the slot after the definition. An earlier one, such as the hoisted
+`exports.Cart = void 0;` of compiled TypeScript and Babel output, is overwritten
+by the definition and does not drop it; a property write on a whole-module
+`module.exports = function` is not a named-slot write. Instance fields and the
+repeated-class-name guard read such a class under the property name, not its
+inner id.
 
 ### Observation guard
 

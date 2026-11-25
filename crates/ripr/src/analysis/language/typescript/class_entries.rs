@@ -671,16 +671,21 @@ pub(crate) fn repeated_class_names(program: &oxc_ast::ast::Program<'_>) -> BTree
         seen: BTreeMap::new(),
     };
     counter.visit_program(program);
-    // `exports.Cart = class { ... }` is reachable as `Cart` whatever its own
-    // id names it; counted under the property so a declared `class Cart`
-    // beside it reads as repeated.
+    // `exports.Cart = class Basket { ... }` is reachable as `Cart`, never as
+    // `Basket` (that id binds only inside its body), so it is counted under
+    // the property instead of its id: a declared `class Cart` beside it reads
+    // as repeated, and `exports.A = class X {}; exports.B = class X {}` does
+    // not repeat `X`.
     for statement in &program.body {
-        if let Some((property, class)) = super::owners::commonjs_named_class_export(statement)
-            && class
-                .id
-                .as_ref()
-                .is_none_or(|id| id.name.as_str() != property)
-        {
+        if let Some((property, class)) = super::owners::commonjs_named_class_export(statement) {
+            if let Some(id) = class.id.as_ref() {
+                if id.name.as_str() == property {
+                    continue;
+                }
+                if let Some(count) = counter.seen.get_mut(id.name.as_str()) {
+                    *count = count.saturating_sub(1);
+                }
+            }
             *counter.seen.entry(property.to_string()).or_default() += 1;
         }
     }

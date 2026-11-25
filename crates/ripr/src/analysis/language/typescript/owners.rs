@@ -341,66 +341,76 @@ fn without_reassigned_commonjs_exports(
         .iter()
         .filter(|(owner, slot, _)| slot.is_some() && owner.exported_as_default)
         .count();
-    // The statements assigning each slot: those that yielded an owner, plus
-    // every top-level `exports.NAME = ...` / `module.exports.NAME = ...`
-    // whatever its value. The members of one inline `exports.Cart = class`
-    // share the slot `Cart` and one statement, so they count once, and a
-    // later `exports.Cart = class {}` with no method (or any other value)
-    // still marks the earlier class dead. Only slots an owner uses are
+    // Two owner assignments of one slot fail closed together (#4638): which
+    // one a test reaches is left unmodeled. The members of one inline
+    // `exports.Cart = class` share one assignment, so they count once; each
+    // entry of `module.exports = { f, f }` is its own. Every other top-level
+    // `exports.NAME = ...` / `module.exports.NAME = ...` statement (another
+    // value, a class with no method) replaces an owner only when it comes
+    // AFTER the owner's statement: an earlier one, such as the
+    // `exports.total = void 0;` that compiled TypeScript and Babel hoist above
+    // the real definition, is overwritten by it. Only slots an owner uses are
     // tracked; borrowing them keeps a large CommonJS module from cloning one
     // string per export (#10017, #10087).
-    let duplicated: std::collections::HashSet<String> = {
-        let mut slot_statements: std::collections::HashMap<
-            &str,
-            std::collections::BTreeSet<(usize, usize)>,
-        > = std::collections::HashMap::new();
-        // Slots a named export or export-object entry owns. A bare
-        // `module.exports = function total` is the default slot, not the
-        // property `total`: a later `exports.total = 1` writes a property and
-        // leaves that function live, so the statement scan skips it.
-        let mut named_slots: std::collections::HashSet<&str> = std::collections::HashSet::new();
-        for (owner, slot, index) in &owners {
-            if let Some(slot) = slot.as_deref() {
-                slot_statements.entry(slot).or_default().insert(*index);
-                if !owner.exported_as_default {
-                    named_slots.insert(slot);
-                }
+    let mut slot_assignments: std::collections::HashMap<
+        &str,
+        std::collections::BTreeSet<(usize, usize)>,
+    > = std::collections::HashMap::new();
+    for (_, slot, assignment) in &owners {
+        if let Some(slot) = slot.as_deref() {
+            slot_assignments
+                .entry(slot)
+                .or_default()
+                .insert(*assignment);
+        }
+    }
+    let duplicated: std::collections::HashSet<String> = slot_assignments
+        .iter()
+        .filter(|(_, assignments)| assignments.len() > 1)
+        .map(|(slot, _)| (*slot).to_string())
+        .collect();
+    // The last top-level statement writing each named slot an owner uses. A
+    // bare `module.exports = function total` is the default slot, not the
+    // property `total`: a later `exports.total = 1` writes a property and
+    // leaves that function live, so only named-export owners consult this.
+    let mut last_named_write: std::collections::HashMap<String, usize> =
+        std::collections::HashMap::new();
+    if owners
+        .iter()
+        .any(|(owner, slot, _)| slot.is_some() && !owner.exported_as_default)
+    {
+        for (index, stmt) in body.iter().enumerate() {
+            if let Some(property) = commonjs_named_export_property(stmt)
+                && slot_assignments.contains_key(property)
+            {
+                last_named_write.insert(property.to_string(), index);
             }
         }
-        if !named_slots.is_empty() {
-            for (index, stmt) in body.iter().enumerate() {
-                if let Some(property) = commonjs_named_export_property(stmt)
-                    && named_slots.contains(property)
-                    && let Some(statements) = slot_statements.get_mut(property)
-                {
-                    statements.insert((index, 0));
-                }
-            }
-        }
-        slot_statements
-            .into_iter()
-            .filter(|(_, statements)| statements.len() > 1)
-            .map(|(slot, _)| slot.to_string())
-            .collect()
-    };
+    }
     owners
         .into_iter()
-        .filter(|(owner, slot, _)| {
+        .filter(|(owner, slot, (statement, _))| {
             let Some(slot) = slot else {
                 return true;
             };
-            if owner.exported_as_default && bare_default_count > 1 {
-                return false;
+            if owner.exported_as_default {
+                return bare_default_count <= 1 && !duplicated.contains(slot);
             }
             !duplicated.contains(slot)
+                && last_named_write
+                    .get(slot)
+                    .is_none_or(|last| *last <= *statement)
         })
         .map(|(owner, _, _)| owner)
         .collect()
 }
 
-/// The property `NAME` of a top-level `exports.NAME = ...` or
-/// `module.exports.NAME = ...` plain assignment statement, whatever its value.
-fn commonjs_named_export_property<'a>(stmt: &'a Statement<'a>) -> Option<&'a str> {
+/// The property `NAME` and the assignment of a top-level `exports.NAME = ...`
+/// or `module.exports.NAME = ...` plain assignment statement, whatever its
+/// value.
+fn commonjs_named_export_assignment<'a>(
+    stmt: &'a Statement<'a>,
+) -> Option<(&'a str, &'a oxc_ast::ast::AssignmentExpression<'a>)> {
     let Statement::ExpressionStatement(expression) = stmt else {
         return None;
     };
@@ -418,7 +428,13 @@ fn commonjs_named_export_property<'a>(stmt: &'a Statement<'a>) -> Option<&'a str
         Expression::StaticMemberExpression(object) => is_module_exports(object),
         _ => false,
     };
-    named_export_object.then(|| target.property.name.as_str())
+    named_export_object.then(|| (target.property.name.as_str(), &**assign))
+}
+
+/// The property `NAME` of a top-level `exports.NAME = ...` or
+/// `module.exports.NAME = ...` plain assignment statement, whatever its value.
+fn commonjs_named_export_property<'a>(stmt: &'a Statement<'a>) -> Option<&'a str> {
+    commonjs_named_export_assignment(stmt).map(|(property, _)| property)
 }
 
 /// The property and class of a top-level `exports.NAME = class ...` or
@@ -426,13 +442,7 @@ fn commonjs_named_export_property<'a>(stmt: &'a Statement<'a>) -> Option<&'a str
 pub(crate) fn commonjs_named_class_export<'a>(
     stmt: &'a Statement<'a>,
 ) -> Option<(&'a str, &'a Class<'a>)> {
-    let property = commonjs_named_export_property(stmt)?;
-    let Statement::ExpressionStatement(expression) = stmt else {
-        return None;
-    };
-    let Expression::AssignmentExpression(assign) = &expression.expression else {
-        return None;
-    };
+    let (property, assign) = commonjs_named_export_assignment(stmt)?;
     match assign.right.get_inner_expression() {
         Expression::ClassExpression(class) => Some((property, class)),
         _ => None,
