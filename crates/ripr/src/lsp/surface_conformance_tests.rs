@@ -44,6 +44,16 @@ const CASES: &[(&str, &str, &str)] = &[
         "python",
         "static_unknown",
     ),
+    (
+        "python_patched_callee_reachable_unrevealed",
+        "python",
+        "reachable_unrevealed",
+    ),
+    (
+        "python_full_list_selector_integer_pin_no_exposed_credit",
+        "python",
+        "infection_unknown",
+    ),
     ("ts_already_observed", "typescript", "exposed"),
     (
         "ts_class_getter_factory_read",
