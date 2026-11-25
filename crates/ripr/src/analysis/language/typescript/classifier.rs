@@ -3699,8 +3699,57 @@ fn ts_operand_binding_unstable(source: &str, name: &str) -> bool {
                         ')' => depth - 1,
                         _ => depth,
                     });
-                let previous = masked[open..at].iter().rev().find(|ch| !ch.is_whitespace());
-                if depth != 0 || !matches!(previous, Some('(' | ',' | '{' | '[' | ':')) {
+                let previous = masked[open..at]
+                    .iter()
+                    .rposition(|ch| !ch.is_whitespace())
+                    .map(|index| open + index);
+                // A `:` is a rename only after a plain key that follows `{`
+                // or `,` (`{ a: name = 'x' }`), not a conditional's
+                // (`other = c ? 'skip' : name = 'Bob'`).
+                let rename = |colon: usize| {
+                    let mut cursor = colon;
+                    while cursor > open && masked[cursor - 1].is_whitespace() {
+                        cursor -= 1;
+                    }
+                    let key_end = cursor;
+                    while cursor > open && ident(&masked[cursor - 1]) {
+                        cursor -= 1;
+                    }
+                    while cursor > open && masked[cursor - 1].is_whitespace() {
+                        cursor -= 1;
+                    }
+                    cursor < key_end && cursor > open && matches!(masked[cursor - 1], '{' | ',')
+                };
+                // The innermost enclosing bracket: a `{` after `=>` or `)` is
+                // a function body (`other = () => { name = 'Bob' }`), not a
+                // destructuring pattern.
+                let mut nesting = 0usize;
+                let mut innermost = None;
+                for index in (open + 1..at).rev() {
+                    match masked[index] {
+                        ')' | ']' | '}' => nesting += 1,
+                        '(' | '[' | '{' if nesting > 0 => nesting -= 1,
+                        '(' | '[' | '{' => {
+                            innermost = Some(index);
+                            break;
+                        }
+                        _ => {}
+                    }
+                }
+                let in_body = innermost.is_some_and(|brace| {
+                    masked[brace] == '{' && {
+                        let head: String = masked[open..brace].iter().collect();
+                        let head = head.trim_end();
+                        head.ends_with("=>") || head.ends_with(')')
+                    }
+                });
+                let declaration = !in_body
+                    && match previous.map(|index| (index, masked[index])) {
+                        Some((_, '(' | ',' | '{' | '[')) => true,
+                        Some((colon, ':')) => rename(colon),
+                        _ => false,
+                    };
+                if depth != 0 || !declaration {
                     return true;
                 }
             }

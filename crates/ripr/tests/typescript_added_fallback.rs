@@ -880,6 +880,16 @@ fn parenthesized_spaced_and_parameter_default_writes_unbind_the_argument() -> Re
             "weakly_exposed",
         ),
         (
+            "conditional-default-writes-operand",
+            "{ name, other = false ? 'skip' : name = 'Bob' }: { name: string | null; other?: string }",
+            "weakly_exposed",
+        ),
+        (
+            "arrow-body-default-writes-operand",
+            "name: string | null, other = () => { name = 'Bob' }",
+            "weakly_exposed",
+        ),
+        (
             "own-default-only",
             "name: string | null = 'x', other = 'y'",
             "exposed",
