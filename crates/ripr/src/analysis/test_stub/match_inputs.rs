@@ -527,6 +527,11 @@ pub(super) fn catches_all(pat: &ast::Pat, file: &SourceFile) -> bool {
 /// (a `let`, closure or pattern binding), assigns it, or names it inside a
 /// macro call.
 fn unstable_before(owner: &ast::Fn, name: &str, match_expr: &ast::MatchExpr) -> bool {
+    unstable_before_offset(owner, name, match_expr.syntax().text_range().start())
+}
+
+/// [`unstable_before`] for any position `start` in the owner's body.
+pub(super) fn unstable_before_offset(owner: &ast::Fn, name: &str, start: TextSize) -> bool {
     let Some(body) = owner.body() else {
         return true;
     };
@@ -556,7 +561,6 @@ fn unstable_before(owner: &ast::Fn, name: &str, match_expr: &ast::MatchExpr) -> 
     if declared_mut || local_item {
         return true;
     }
-    let start = match_expr.syntax().text_range().start();
     body.syntax()
         .descendants()
         .filter(|node| node.text_range().start() < start)
@@ -631,7 +635,7 @@ fn is_integer_type(ty: &str) -> bool {
 }
 
 /// `&str` or `&'a str`, as written.
-fn is_str_ref(raw: &str) -> bool {
+pub(super) fn is_str_ref(raw: &str) -> bool {
     let Some(rest) = raw.trim().strip_prefix('&') else {
         return false;
     };

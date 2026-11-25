@@ -809,6 +809,63 @@ naming `ripr check` for detail, instead of the repository-wide `ripr pilot`
 route. When every candidate was dropped as already noticed, the outcome is the nothing-to-do one instead. Without a diff scope the repository route is kept. Eligibility and the
 `no_eligible_seam` code are unchanged.
 
+## Amendment (#15615): changed spots lead the capped refusal list
+
+The no-eligible reason list stays capped at three rows. Rows about the change
+are listed before rows counting spots outside it. When the rows overflow the
+cap and both kinds are present, the outside counts fold into one row
+("outside your changed lines, N repairable spots are not offered, ...") that
+follows at most two leading rows (framing notes, then changed rows), so a changed spot is never hidden behind
+outside counts. For an open change the lead reads "none is ready for an
+automatic repair on your changed lines", and changed rows past the cap are
+disclosed as "(and N more on your changed lines; `ripr check ...` shows the
+change's findings)" with the same base. Rows that fit keep their own wording.
+
+A change with an already-gripped spot and no open spot takes the
+nothing-to-do outcome directly only when no repair candidate sits on the
+changed lines. A candidate is
+open until `ripr check`'s closure decides it: one that check cannot judge
+leaves the change open (and keeps the outside counts), and one that check reads
+as noticed ends on the nothing-to-do outcome with the gripped spots named
+directly and, as in the shortcut, no spot outside the change listed.
+
+## Amendment (#15926): check's open gaps lead, and no-path reads as no-path
+
+Among the rows about the change, the spots `ripr check` itself leaves open
+(it offers no start for them) come first. When check's top gap (the finding
+its human triage selects) is one of them, it leads, so the cap does not hide
+it; the others follow check's report order. A spot check reads as `no_static_path` says that no test
+reaches the changed code and points to `ripr check` for the detail and a stub
+command when it can draft one, instead of the unknown wording ("cannot tell
+from reading the code").
+
+## Amendment (#15926, decision): an unreferenced new function is a repair start
+
+A `no_static_path` finding whose owner nothing in the workspace calls
+(`Finding::is_unreferenced_no_static_path`, RIPR-SPEC-0219: reach `no`, the
+`(unreferenced in workspace)` marker, and no named static limit) is a
+test-side gap, not a static limit: ripr knows no test reaches it, and the work
+is writing that test. Check's human triage already reads it so (#14919). The
+repair route now agrees: `gap_bound_repair::finding_is_static_limited` exempts
+it, so when its seam passes the shared repair-packet flip with an admitted test
+target (an existing file or a producer-owned proposal), `ripr check` prints its
+`ripr repair <id>` line, bare `ripr repair` starts it, `ripr pilot` prints the
+same start, and the repair card's next action runs the route. The card reads
+the seam flip for this finding instead of the check witness, which names no fix
+site for a function no test calls. A no-path finding whose owner other
+workspace code calls, any unknown class, and any named static limitation stay
+no-start, with the refusal reasons above. When the current change binds such a
+no-path finding to an exact seam and the inventory independently finds no test
+path, both `ripr repair <id>` and `ripr agent repair --seam-id <id> --phase before`
+refuse before writing a workflow or attempt. The inspection card still names
+an admitted proposed test target. The facade uses the same comparison base
+for selection and Start admission. Start eligibility is separate from
+what check knows about reach: wording and ranking that speak to reach
+(`finding_reads_unreached_or_limited`) still read the unreferenced finding as
+unreached. On a seam the inventory reads as gripped, a reached gap leads it, and
+its own reason says no test reaches the code and that check prints the repair
+start when it can offer one, never that check offers none.
+
 ## Amendment (#12867): no start whose handoff card cannot be produced
 
 A start publishes an attempt and then renders the handoff card, which names the
@@ -839,10 +896,10 @@ generated or vendored, wrong package, private owner, colliding file, stale
 source, cross-language, path escape) still has no proposal and refuses as
 before; a proposal without an identity or one the evidence does not hold keeps
 the no-target text. `ripr check` and `ripr repair` read the same gate; a
-`no path` (static-limited) finding keeps the F3 rule (#12888) and prints no
-runnable repair line even where bare `ripr repair <id>` starts the
-proposal-only seam, so the F3 silence is unchanged. Starting does not create the
-proposed file, generate a test body or grant production-source permission.
+`no path` (static-limited) finding bound to an unreached seam keeps the F3 rule
+(#12888) and offers no Start even with an admitted proposal. The #15926 decision
+above allows the unreferenced case, where check prints the start. Starting does
+not create the proposed file, generate a test body or grant production-source permission.
 
 ## Amendment (#13203 A): an attempt binds the proposal it follows
 

@@ -125,6 +125,9 @@ pub(crate) struct RustTestStub {
     /// #8361: how the receiver was built when ripr could name a constructor
     /// (`subject = TokenBucket::new(5), as in the existing test ...`).
     pub(crate) receiver_setup: Option<String>,
+    /// #8361: the inputs copied from an existing test's call
+    /// (`amount = 10_000, as in the existing test ...`).
+    pub(crate) input_setup: Option<String>,
 }
 
 /// Typed reason no stub was produced. Every refusal names what blocked it.
@@ -534,6 +537,7 @@ fn rust_test_stub_for_target(
         fill_ins: body.fill_ins,
         derived_inputs: body.derived_inputs,
         receiver_setup: body.receiver_setup,
+        input_setup: body.input_setup,
     })
 }
 
@@ -781,6 +785,7 @@ struct StubBody {
     fill_ins: Vec<String>,
     derived_inputs: Vec<String>,
     receiver_setup: Option<String>,
+    input_setup: Option<String>,
 }
 
 /// Where the test sits relative to the owner's module, which decides how
@@ -900,6 +905,12 @@ fn stub_body(
         });
     }
 
+    // #8361: a boundary on a `&str` parameter's length writes a string of
+    // exactly that length (a literal, so it holds in either test scope).
+    if boundary.is_empty() {
+        boundary = length_inputs::length_inputs(seam, signature, source);
+    }
+
     // #8361: a match-arm stub writes the value the changed arm's own pattern
     // names (`Event::Fail`, `2`) for each parameter it decides.
     // The receiver state the arm also needs is named on the receiver line.
@@ -920,6 +931,55 @@ fn stub_body(
     // #11402: the pushed-into buffer starts empty, so the contents check
     // below reads exactly what this one call pushed.
     let pushed = pushed_buffer_parameter(seam, signature, source);
+
+    // #8361: a boundary stub on a free function copies the parameters the
+    // comparison does not read from an existing test's literal call, so the
+    // stub runs on one concrete case.
+    let bindings: Vec<String> = signature
+        .params
+        .iter()
+        .enumerate()
+        .map(|(index, param)| {
+            param
+                .name
+                .clone()
+                .unwrap_or_else(|| format!("arg{}", index + 1))
+        })
+        .collect();
+    let reused = (seam.kind() == SeamKind::PredicateBoundary
+        && !boundary.is_empty()
+        && signature.receiver.is_none()
+        && self_type.is_none()
+        && qualified_self.is_none()
+        && matches!(path_scope, PathScope::ChildModule))
+    .then(|| {
+        let open: Vec<String> = bindings
+            .iter()
+            .filter(|binding| {
+                !boundary.iter().any(|(name, _)| name == *binding)
+                    && pushed.as_ref().is_none_or(|(name, _)| name != *binding)
+            })
+            .cloned()
+            .collect();
+        reused_inputs::reused_inputs(
+            signature,
+            &bindings,
+            &open,
+            &boundary,
+            seam.byte_offset(),
+            scope,
+        )
+    })
+    .flatten();
+    let input_setup = reused.as_ref().map(|reused| {
+        let values = reused
+            .values
+            .iter()
+            .map(|(binding, value)| format!("{binding} = {value}"))
+            .collect::<Vec<_>>()
+            .join(", ");
+        format!("{values}, as in the existing test `{}`", reused.test)
+    });
 
     let receiver = match (signature.receiver, self_type) {
         (Some(receiver), Some(self_type)) => {
@@ -977,12 +1037,20 @@ fn stub_body(
         (None, _) => None,
     };
 
+    if let Some(reused) = &reused {
+        let names = reused
+            .values
+            .iter()
+            .map(|(binding, _)| format!("`{binding}`"))
+            .collect::<Vec<_>>()
+            .join(", ");
+        lines.push(format!(
+            "// ripr: {names} as in the existing test `{}`; change it if this case needs another value",
+            reused.test
+        ));
+    }
     let mut arguments = Vec::new();
-    for (index, param) in signature.params.iter().enumerate() {
-        let binding = param
-            .name
-            .clone()
-            .unwrap_or_else(|| format!("arg{}", index + 1));
+    for (param, binding) in signature.params.iter().zip(bindings) {
         let declared = impl_stand_in(&param.ty).unwrap_or_else(|| param.ty.clone());
         let ty = rebase_paths(
             &concrete_type(&declared, owner_self, owner_trait),
@@ -1001,6 +1069,9 @@ fn stub_body(
             .as_ref()
             .filter(|(name, _)| name == &binding)
             .map(|(_, empty)| empty);
+        let copied = reused
+            .as_ref()
+            .and_then(|reused| reused.values.iter().find(|(name, _)| name == &binding));
         match (empty, boundary.iter().find(|(name, _)| name == &binding)) {
             (Some(empty), _) => {
                 lines.push(format!("{keyword} {binding}: {binding_ty} = {empty};"));
@@ -1009,6 +1080,11 @@ fn stub_body(
                 lines.push(format!("{keyword} {binding}: {binding_ty} = {value};"));
                 derived_inputs.push(format!("{binding} = {value}"));
                 written_inputs.push((binding.clone(), value.clone()));
+            }
+            (None, None) if copied.is_some() => {
+                let value = copied.map(|(_, value)| value.as_str()).unwrap_or_default();
+                lines.push(format!("{keyword} {binding}: {binding_ty} = {value};"));
+                written_inputs.push((binding.clone(), value.to_string()));
             }
             (None, None) => {
                 let label = format!("ripr: choose `{binding}`{}", input_hint(seam, &binding));
@@ -1097,7 +1173,7 @@ fn stub_body(
             let hint = if derived_inputs.is_empty() {
                 discriminator_hint(seam)
             } else {
-                format!(" for {}", derived_inputs.join(", "))
+                format!(" for {}", inputs_text(&written_inputs))
             };
             let traits = value_traits(&return_type, source);
             let label = match traits {
@@ -1181,7 +1257,7 @@ fn stub_body(
         let hint = if derived_inputs.is_empty() {
             discriminator_hint(seam)
         } else {
-            format!(" for {}", derived_inputs.join(", "))
+            format!(" for {}", inputs_text(&written_inputs))
         };
         for (binding, ty) in targets {
             let label = if pushed.as_ref().is_some_and(|(name, _)| name == &binding) {
@@ -1216,6 +1292,7 @@ fn stub_body(
         fill_ins,
         derived_inputs,
         receiver_setup,
+        input_setup,
     })
 }
 
@@ -1311,6 +1388,15 @@ fn pushed_buffer_parameter(
         "Vec::new()"
     };
     Some((receiver.to_string(), empty.to_string()))
+}
+
+/// `name = value` for each written input, for a fill-in label.
+fn inputs_text(inputs: &[(String, String)]) -> String {
+    inputs
+        .iter()
+        .map(|(binding, value)| format!("{binding} = {value}"))
+        .collect::<Vec<_>>()
+        .join(", ")
 }
 
 /// Concrete boundary inputs from a single comparison over integer
@@ -2031,8 +2117,10 @@ fn escape(text: &str) -> String {
 }
 
 mod expected_value;
+mod length_inputs;
 mod match_inputs;
 mod receiver;
+mod reused_inputs;
 
 #[cfg(test)]
 mod tests;

@@ -178,6 +178,14 @@ const VERSION_AUTHORITIES: &[(&str, &[VersionProducer])] = &[
         )],
     ),
     (
+        "context-refusal",
+        &[producer(
+            "crates/ripr/src/output/json/context_packet.rs",
+            "pub(crate) const CONTEXT_PACKET_VERSION_CONTRACT: &str = \"",
+            1,
+        )],
+    ),
+    (
         // `ripr agent status --json`, the inventory document. The one-attempt
         // document (`--attempt <id>`) has its own constant and is not
         // published here.
@@ -725,6 +733,14 @@ const CONTRACTS: &[VerificationContract] = &[
         subject: ContractSubject::Document,
         doc_path: "docs/OUTPUT_SCHEMA.md",
         doc_markers: &["seam_id_unknown", "run_limitations"],
+    },
+    VerificationContract {
+        schema_path: "schemas/ripr/context-refusal.schema.json",
+        schema_pointer: None,
+        fixture_path: "tests/fixtures/verification/ripr/context-refusal.valid.json",
+        subject: ContractSubject::Document,
+        doc_path: "docs/OUTPUT_SCHEMA.md",
+        doc_markers: &["check_artifact_unusable", "run_limitations"],
     },
     // `ripr agent packet --seam-id <id> --json`. The fixture is a capture of
     // a write-targeted-test packet with the host's absolute root made

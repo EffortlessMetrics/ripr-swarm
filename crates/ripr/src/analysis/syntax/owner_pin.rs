@@ -5008,8 +5008,10 @@ fn admitted_assertions(
 ///   nested item or `use` item anywhere in its body;
 /// - the helper is a plain function: no attributes other than
 ///   `#[track_caller]`, no generics or `where` clause, not `async`, `const`
-///   or `unsafe`, no `self` parameter, and no `return` or `?`
-///   in its body, so the assertion cannot be skipped by an early exit;
+///   or `unsafe`, no `self` parameter, and no `return` in its body, so
+///   the assertion cannot be skipped by an early exit; a `?` is allowed
+///   only when every eager call is `check(..)?`, so its error fails the
+///   test (#14116);
 /// - the helper passes the test's own escape gate (only trusted macros, no
 ///   closure exits or `yield`) and its supported item context.
 ///
@@ -5045,6 +5047,8 @@ fn local_helper_assertions(
         .collect();
     let mut called = BTreeMap::<String, Vec<usize>>::new();
     let mut eager_called = BTreeMap::<String, Vec<usize>>::new();
+    // Names with an eager call whose error the test does not propagate.
+    let mut unpropagated = BTreeSet::<String>::new();
     let mut calls_per_line = BTreeMap::<usize, usize>::new();
     // Method calls and macro invocations count too: a macro's operand is
     // an unparsed token tree that may hold another call.
@@ -5074,9 +5078,26 @@ fn local_helper_assertions(
             continue;
         }
         let name = name.text().to_string();
+        // `check(..)?` evaluates its call before the `?` reads the result,
+        // so the call is eager wherever its `?` is.
+        let propagated = propagates_to_test(&call);
+        let evaluated = if propagated {
+            call.syntax().parent()
+        } else {
+            Some(call.syntax().clone())
+        };
         if !bound.contains(&name)
-            && eager_path(call.syntax().clone(), test, false, first_return).is_ok()
+            && evaluated.is_some_and(|node| eager_path(node, test, false, first_return).is_ok())
         {
+            if !propagated {
+                unpropagated.insert(name.clone());
+            }
+            // An argument runs before the helper is entered, so a `return`,
+            // `break`, `continue` or `yield` there can leave without calling
+            // it. `eager_path` reads only exits that start before the call.
+            if arguments_may_leave(&call) {
+                continue;
+            }
             let line = lines.line(call.syntax().text_range().start());
             if lines.line(call.syntax().text_range().end()) == line {
                 eager_called.entry(name.clone()).or_default().push(line);
@@ -5097,7 +5118,13 @@ fn local_helper_assertions(
         };
         if helper.syntax() == test.syntax()
             || helper.syntax().parent().as_ref() != Some(&module)
-            || !plain_check_helper(helper, trusted, empty_macros, json_uses)
+            || !plain_check_helper(
+                helper,
+                trusted,
+                empty_macros,
+                json_uses,
+                !unpropagated.contains(&name),
+            )
         {
             continue;
         }
@@ -5190,15 +5217,43 @@ fn plain_parameter_names(helper: &ast::Fn) -> Vec<String> {
     if rebound { Vec::new() } else { names }
 }
 
+/// Whether an argument of `call` holds a `return`, `break`, `continue` or
+/// `yield`, which may leave before the call is made. Fails closed: one in
+/// a closure argument counts too.
+fn arguments_may_leave(call: &ast::CallExpr) -> bool {
+    call.arg_list().is_some_and(|arguments| {
+        arguments.syntax().descendants().any(|node| {
+            ast::ReturnExpr::can_cast(node.kind())
+                || ast::BreakExpr::can_cast(node.kind())
+                || ast::ContinueExpr::can_cast(node.kind())
+                || ast::YieldExpr::can_cast(node.kind())
+        })
+    })
+}
+
+/// Whether `call`'s value is the operand of a `?` (`check(..)?`), so an
+/// error it returns leaves the test and fails it. [`eager_path`] already
+/// keeps the call out of closures and `async` blocks, so the `?` returns
+/// from the test itself.
+fn propagates_to_test(call: &ast::CallExpr) -> bool {
+    call.syntax()
+        .parent()
+        .is_some_and(|parent| ast::TryExpr::can_cast(parent.kind()))
+}
+
 /// A synchronous helper with no early exit: see [`local_helper_assertions`].
 /// Its return type does not swallow a panic from the borrowed `assert_eq!`,
-/// even if the caller discards a returned `Result`. Fallible macros and `?`
-/// remain refused; their errors could otherwise skip the assertion unnoticed.
+/// even if the caller discards a returned `Result`. Fallible macros remain
+/// refused, and so does a `?` unless `errors_fail_test`: every eager call
+/// of the helper is `check(..)?`, so an error that skips the assertion
+/// fails the test instead of leaving it passing (#14116). A `return` still
+/// refuses: `return Ok(())` skips the assertion without an error.
 fn plain_check_helper(
     helper: &ast::Fn,
     trusted: &[&str],
     empty_macros: &BTreeMap<String, ast::MacroRules>,
     json_uses: &[ast::Use],
+    errors_fail_test: bool,
 ) -> bool {
     let Some(body) = helper.body() else {
         return false;
@@ -5215,7 +5270,8 @@ fn plain_check_helper(
             .param_list()
             .is_some_and(|params| params.self_param().is_none())
         && !body.syntax().descendants().any(|node| {
-            ast::ReturnExpr::can_cast(node.kind()) || ast::TryExpr::can_cast(node.kind())
+            ast::ReturnExpr::can_cast(node.kind())
+                || (ast::TryExpr::can_cast(node.kind()) && !errors_fail_test)
         })
         && has_escape(body.syntax(), trusted, empty_macros, json_uses, false).is_none()
         && supported_item_context(helper.syntax())

@@ -2504,9 +2504,10 @@ fn has_ranked_repair_route(finding: &Finding) -> bool {
         // static-limited finding never prints a repair route
         // (`printed_repair_route`), so its advisory next step must not lift
         // it to the routed tier over a gap whose route does print.
-        // #14919: an unreferenced owner is a gap but prints no repair route
-        // either (the app's repair gate still refuses it), so it ranks by
-        // class among the gaps, behind every gap whose route prints.
+        // #14919: an unreferenced owner ranks by class among the gaps,
+        // behind every gap whose route prints. Since #15926 its route can
+        // print too (when its seam passes the repair-packet flip); the rank
+        // stays conservative so Start here does not move.
         return !is_static_limited(finding)
             && !finding.is_unreferenced_no_static_path()
             && has_repair_route(finding);

@@ -1343,7 +1343,19 @@ general combinator, callback or mutation adequacy.
    - The helper runs to its end on every call: no attributes other than
      `#[track_caller]`, no generic parameters or `where` clause, not `async`,
      `const` or `unsafe`, no `self` parameter, and no `return`
-     or `?` anywhere in its body. It passes the same escape gate as a test
+     anywhere in its body. A `?` in its body is allowed only when every
+     eager call of the helper in the test is the operand of a `?`
+     (`check(..)?;` in a `Result` test, #14116): an error that skips the
+     borrowed assertion then leaves the test and fails it, as a `?` in a
+     root test does. One eager call that discards the result (`let _ =
+     check(..)`, a bare `check(..);`) refuses the helper. A call whose
+     result feeds a method or another call (`check(..).ok()`,
+     `drop(check(..))`, `(check(..))?`) is not eager, so like any deferred
+     call it neither lends nor refuses. A `?` inside a closure in the
+     helper still refuses under the escape gate. A call whose arguments
+     hold a `return`, `break`, `continue` or `yield` lends nothing, since
+     an argument runs before the helper is entered and may leave first
+     (#16215 review); this applies to every helper call, not only `?`. It passes the same escape gate as a test
      (only the trusted standard macros, no `break`, `continue` or `yield`) and
      the same item-context and cfg gates, and the macros it invokes join the
      workspace macro-binding check of rule 4. A scoped binding (a
@@ -1353,8 +1365,8 @@ general combinator, callback or mutation adequacy.
      An explicit return type is allowed (#7818): a synchronous call runs the
      panic assertion even if the caller discards a returned `Result` or
      `Option`. This lends only the `assert_eq!`, never the returned value or
-     error. An early exit, including an opaque `ensure!`/`bail!`, still refuses
-     the helper; rule 7a's separate fallible-literal grammar is unchanged.
+     error. A `return`, an opaque `ensure!`/`bail!`, and a `?` whose error a
+     call site may discard still refuse the helper; rule 7a's separate fallible-literal grammar is unchanged.
    - The assertion sits on the helper's own eager path and is uniquely
      identified by its line and text, as rule 1 requires within a test.
    - The assertion must also reach the test's oracle facts through the
@@ -2847,6 +2859,15 @@ evaluating standard macros (`assert*`, `debug_assert*`, `dbg`, `format`,
 macro, or once more outside the untrusted macro keeps the parsed reading, as
 does an assertion that spells no call of the owner.
 
+A plain local bound directly to an owner call reaches the macro the same way
+(#16192): `let r = pick(0); assert_eq!(check_ok!(r), Ok(Mode::A))` reads as an
+`unknown` oracle for `pick`. The local counts only when it is declared once
+with a plain or `mut` identifier pattern, its initializer is exactly one call
+of the owner, and every use of it in the test body sits inside this
+assertion's untrusted macros. A use anywhere else (another assertion, a
+clone, a helper argument) may observe the result, so the assertion keeps its
+parsed reading.
+
 ## Required Evidence
 
 - Rule 7 (#6482): in the RIPR-SPEC-0219 verdict corpus, `grid-arith-helper`
@@ -3378,7 +3399,8 @@ assertions. This repair shares the existing callback without that larger migrati
 - Rule 7 follows one hop into one same-module check helper. Helpers of
   helpers, helpers called in a closure or in a loop other than over a
   non-empty array, cross-module and cross-file helpers, generic helpers
-  and helpers with early exits keep the rule-1 refusal. A helper's arguments are its parameters, whose values stay
+  and helpers with a `return` or a `?` the test does not propagate keep
+  the rule-1 refusal. A helper's arguments are its parameters, whose values stay
   unresolved (RIPR-SPEC-0229); rule 7 establishes execution and call identity
   only. The one exception is a short-circuit tail (#7969), whose run check
   reads the plain literal a test passes at each eager helper call; it

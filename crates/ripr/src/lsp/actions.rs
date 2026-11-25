@@ -3,6 +3,7 @@ use super::action_contract::{
     action_data, disabled_reason_emittable, parse_validated_action_data,
 };
 use super::client_features::ClientFeatureProfile;
+use super::component_outcome::{AnalysisComponent, ComponentState};
 use super::fix_instruction_authority;
 use super::gap_artifacts::{
     ValidatedGapArtifact, bind_portable_command, editor_command_is_safe, workspace_path_is_safe,
@@ -880,6 +881,36 @@ fn gap_identities_overlap(left: &Value, right: &Value) -> bool {
     false
 }
 
+/// A saved-workspace finding may withhold a start the classified seam could
+/// otherwise format. This ceiling leaves the packet and card readable and
+/// lets code actions, hover, and the standard context packet agree.
+pub(super) fn seam_repair_start_command(
+    entry: &ClassifiedSeam,
+    snapshot: &AnalysisSnapshot,
+    root: &str,
+) -> Option<String> {
+    // Retained diagnostics still support inspection after truncation, but
+    // a partial inventory cannot promise a Start. An absent card witness
+    // without a recorded inventory limit keeps the ordinary seam route.
+    if snapshot.component_outcomes.iter().any(|outcome| {
+        outcome.component == AnalysisComponent::SeamInventory
+            && outcome.state == ComponentState::Limited
+    }) {
+        return None;
+    }
+    if let Some(candidate_seams) = snapshot.repair_card_candidate_seams.as_deref()
+        && crate::app::repair_card_handoff::bound_no_path_start_refusal(
+            &snapshot.findings,
+            entry,
+            candidate_seams,
+        )
+        .is_some()
+    {
+        return None;
+    }
+    repair_start_command_for(entry, root)
+}
+
 fn push_seam_actions(
     actions: &mut CodeActionResponse,
     params: &CodeActionParams,
@@ -962,7 +993,7 @@ fn push_seam_actions(
     // payload's `root` field stays the portable role (`COMMAND_ROOT`).
     let root = loop_commands::bound_root(&context.snapshot.root.to_string_lossy());
     if !instruction_blocks_repair
-        && let Some(command) = repair_start_command_for(context.seam, &root)
+        && let Some(command) = seam_repair_start_command(context.seam, context.snapshot, &root)
     {
         // #13636: `ripr agent repair` refuses a dirty production premise
         // ("commit first ... Nothing was started"). Ask its own preflight so

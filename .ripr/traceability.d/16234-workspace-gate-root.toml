@@ -1,0 +1,6 @@
+[[extend]]
+id = "RIPR-SPEC-0060"
+tests = [
+  "xtask/tests/workspace_gate_root.rs::public_gates_refuse_nested_calls_before_touching_the_workspace",
+]
+code = ["xtask/src/workspace_gate.rs"]

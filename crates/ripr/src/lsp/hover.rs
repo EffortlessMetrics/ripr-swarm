@@ -12,7 +12,6 @@ use crate::output::agent_seam_packets::{
     allowed_edit_surface_for_gap_route, gap_record_packet_do_not_do,
     suggested_assertion_for_classified_seam, targeted_test_brief_outline_for_classified_seam,
 };
-use crate::output::evidence_record::repair_start_command_for;
 use crate::output::first_useful_action::DEFAULT_FIRST_USEFUL_ACTION_OUT;
 use crate::output::human::{plain_observation_wording, plain_stop_condition};
 use crate::output::placeholder_assertion::fill_in_note_line;
@@ -1416,7 +1415,7 @@ fn push_editor_commands(
     // Only a seam `agent repair` would accept (the fail-closed repair-packet
     // flip, RIPR-SPEC-0087 §8, plus a test-surface target) names the repair
     // start; any other seam's hover stays as it was (#3906).
-    if let Some(repair) = repair_start_command_for(entry, &root) {
+    if let Some(repair) = super::actions::seam_repair_start_command(entry, snapshot, &root) {
         // #13636: the start refuses a dirty production premise; name the
         // commit step first, as the inert "Start repair" action does.
         if let Some(commit) = super::actions::seam_start_commit_step(&snapshot.root, &root) {

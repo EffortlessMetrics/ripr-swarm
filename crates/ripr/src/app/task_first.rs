@@ -857,10 +857,11 @@ fn ineligibility_label(reason: RepairPacketIneligibility) -> &'static str {
 /// once the list fills, a repeated omitted reason must not inflate the
 /// count of distinct omitted reasons (a review finding on the first #8728
 /// pass: A, B, C, D, D reads as "two more" although only D is omitted).
+const MAX_LISTED_REASONS: usize = 3;
+
 fn collect_no_eligible_reasons<'a>(
     refusal_reasons: impl Iterator<Item = &'a str>,
 ) -> (Vec<String>, usize) {
-    const MAX_LISTED_REASONS: usize = 3;
     let mut reasons: Vec<String> = Vec::new();
     let mut distinct: Vec<String> = Vec::new();
     for reason in refusal_reasons {
@@ -873,6 +874,87 @@ fn collect_no_eligible_reasons<'a>(
         }
     }
     (reasons, distinct.len())
+}
+
+/// Spots outside the changed lines, by state, for the compact summary row a
+/// capped refusal shows after the changed spots (#15615).
+#[derive(Clone, Copy, Default)]
+struct OutsideCounts {
+    repairable: usize,
+    blocked: usize,
+    noticed: usize,
+}
+
+impl OutsideCounts {
+    /// One row for every outside count, or `None` when there is none.
+    fn summary(self) -> Option<String> {
+        let plural = |count: usize, one: &'static str, many: &'static str| {
+            if count == 1 { one } else { many }
+        };
+        let mut parts = Vec::new();
+        if self.repairable > 0 {
+            parts.push(format!(
+                "{} repairable {} not offered",
+                self.repairable,
+                plural(self.repairable, "spot is", "spots are")
+            ));
+        }
+        if self.blocked > 0 {
+            parts.push(format!("{} cannot start a repair", self.blocked));
+        }
+        if self.noticed > 0 {
+            parts.push(format!(
+                "{} {} already noticed by existing tests",
+                self.noticed,
+                plural(self.noticed, "is", "are")
+            ));
+        }
+        let list = match parts.as_slice() {
+            [] => return None,
+            [one] => one.clone(),
+            [rest @ .., last] => format!("{} and {last}", rest.join(", ")),
+        };
+        let hint = if self.repairable > 0 {
+            " (to repair an outside spot anyway, pass its id: `ripr repair <seam-id>`)"
+        } else {
+            ""
+        };
+        Some(format!(
+            "outside your changed lines, {list}; they are not listed, since that says nothing about your change{hint}"
+        ))
+    }
+}
+
+/// Order and bound the no-eligible reasons (#15615). Framing notes come
+/// first, then the spots on the change, then the spots outside it. When the
+/// rows overflow the cap while both changed and outside rows are present,
+/// the outside rows collapse into one summary row that keeps its place after
+/// the changed rows, so a changed spot is never the row the cap hides behind
+/// outside counts. Changed rows past the cap count toward the remainder.
+fn order_no_eligible_reasons(
+    lead: &[String],
+    changed: &[String],
+    outside_rows: &[String],
+    outside: OutsideCounts,
+) -> (Vec<String>, usize) {
+    let all = || lead.iter().chain(changed).chain(outside_rows);
+    let (listed, total) = collect_no_eligible_reasons(all().map(String::as_str));
+    if listed.len() == total || changed.is_empty() || outside_rows.is_empty() {
+        return (listed, total);
+    }
+    let Some(summary) = outside.summary() else {
+        return (listed, total);
+    };
+    let (framed, _) = collect_no_eligible_reasons(lead.iter().chain(changed).map(String::as_str));
+    let changed_slots = MAX_LISTED_REASONS.saturating_sub(1);
+    let head = framed.len().min(changed_slots);
+    collect_no_eligible_reasons(
+        framed[..head]
+            .iter()
+            .map(String::as_str)
+            .chain(std::iter::once(summary.as_str()))
+            .chain(lead.iter().chain(changed).map(String::as_str)),
+    )
 }
 
 /// How to widen the seam budget, named once so every truncation refusal gives
@@ -1097,10 +1179,27 @@ pub(crate) fn resolve_repair_start(
         }
     }
     let gripped_on_change = gripped_reasons.iter().filter(|(off, _)| !off).count();
-    let mut refusal_reasons: Vec<String> = Vec::new();
+    // #15615: rows are kept in three groups so the capped list shows the
+    // changed spots before the counts of spots outside the change.
+    let mut lead_reasons: Vec<String> = Vec::new();
+    let mut changed_reasons: Vec<String> = Vec::new();
+    let mut changed_caveats: Vec<String> = Vec::new();
+    let mut outside_reasons: Vec<String> = Vec::new();
+    let mut outside = OutsideCounts::default();
+    // The gripped rows on the change, kept for the verdict after check's
+    // closure below when it closes every candidate as noticed.
+    let gripped_on_change_reasons: Vec<String> = gripped_reasons
+        .iter()
+        .filter(|(off, _)| !off)
+        .map(|(_, reason)| reason.clone())
+        .collect();
+    // A changed candidate is still open until check's closure decides it, so
+    // only a change with none takes the already-checked shortcut; otherwise a
+    // candidate check cannot judge would end on "nothing to do" (#16216).
     let all_changed_checked = matches!(scope, Some(ChangeScope::TouchesSeams(_)))
         && gripped_on_change > 0
-        && open_on_change == 0;
+        && open_on_change == 0
+        && candidates.is_empty();
     let mut change = if all_changed_checked {
         NoEligibleChange::AlreadyChecked
     } else if matches!(scope, Some(ChangeScope::TouchesNoSeam(_))) {
@@ -1114,7 +1213,7 @@ pub(crate) fn resolve_repair_start(
         // Every spot on the changed lines is already gripped: say only that.
         // A missing-evidence or test-layout demand about code the change
         // never touched would contradict `ripr check`'s "nothing to repair".
-        refusal_reasons.extend(
+        changed_reasons.extend(
             gripped_reasons
                 .into_iter()
                 .filter(|(off, _)| !off)
@@ -1130,14 +1229,14 @@ pub(crate) fn resolve_repair_start(
                 }
                 text.push(')');
             }
-            refusal_reasons.push(text);
+            changed_reasons.push(text);
         }
         let mut gripped_off_change = 0usize;
         let mut gripped_other_check = 0usize;
         for (off, reason) in gripped_reasons {
             if scope.is_none() {
                 // Without the diff, the reason names its own spot only.
-                refusal_reasons.push(reason);
+                changed_reasons.push(reason);
             } else if off {
                 gripped_off_change += 1;
             } else {
@@ -1146,6 +1245,11 @@ pub(crate) fn resolve_repair_start(
                 gripped_other_check += 1;
             }
         }
+        outside = OutsideCounts {
+            repairable: eligible_off_change,
+            blocked: blocked_off_change,
+            noticed: gripped_off_change,
+        };
         if eligible_off_change > 0 {
             let (noun, verb) = if eligible_off_change == 1 {
                 ("spot", "is")
@@ -1158,8 +1262,7 @@ pub(crate) fn resolve_repair_start(
                 ),
                 _ => String::new(),
             };
-            refusal_reasons.insert(
-                0,
+            outside_reasons.push(
                 format!(
                     "{lead}{eligible_off_change} repairable {noun} outside your changed lines {verb} not offered, since repairing {} would not address your change (to repair one anyway, pass its id: `ripr repair <seam-id>`)",
                     if eligible_off_change == 1 { "it" } else { "them" }
@@ -1172,7 +1275,7 @@ pub(crate) fn resolve_repair_start(
             } else {
                 "spots outside your changed lines cannot start a repair either and are"
             };
-            refusal_reasons.push(format!(
+            outside_reasons.push(format!(
                 "{blocked_off_change} {noun} not listed, since that says nothing about your change"
             ));
         }
@@ -1182,7 +1285,7 @@ pub(crate) fn resolve_repair_start(
             } else {
                 "spots outside your changed lines are"
             };
-            refusal_reasons.push(format!(
+            outside_reasons.push(format!(
                 "{gripped_off_change} {noun} already noticed by existing tests and not listed, since that says nothing about your change"
             ));
         }
@@ -1192,7 +1295,7 @@ pub(crate) fn resolve_repair_start(
             } else {
                 "parts of your changed lines are"
             };
-            refusal_reasons.push(format!(
+            changed_caveats.push(format!(
                 "{gripped_other_check} other {noun} already noticed by existing tests, but that is a different check than the one still open, so it does not mean the open one is covered"
             ));
         }
@@ -1201,7 +1304,7 @@ pub(crate) fn resolve_repair_start(
         if eligible_off_change == 0
             && let Some(ChangeScope::TouchesNoSeam(lines)) = &scope
         {
-            refusal_reasons.insert(
+            lead_reasons.insert(
                 0,
                 format!(
                     "your changed lines ({lines}) touch no code ripr can start a repair on, the same as `ripr check`"
@@ -1224,7 +1327,7 @@ pub(crate) fn resolve_repair_start(
         .then(|| unscoped_diff_note(diff.as_deref(), base, subject))
         .flatten()
     {
-        refusal_reasons.insert(0, note);
+        lead_reasons.insert(0, note);
     }
     // #12831: eligible seams on the change. `ripr check` is the authority on
     // the change, so its single recommended start wins; failing that, a seam
@@ -1243,6 +1346,10 @@ pub(crate) fn resolve_repair_start(
             let before = candidates.len();
             let mut left_open = false;
             let mut kept = Vec::new();
+            // Rows check leaves open: check's top gap first, then report
+            // order; the lone-survivor row (below) trails them.
+            let mut open_rows: Vec<(usize, String)> = Vec::new();
+            let check_top = crate::output::human::selected_triage_finding(output, &config);
             for (id, note) in std::mem::take(&mut candidates) {
                 let closed = classified
                     .iter()
@@ -1259,18 +1366,38 @@ pub(crate) fn resolve_repair_start(
                     })
                     .and_then(|(entry, finding)| {
                         if finding.class == crate::domain::ExposureClass::Exposed {
-                            Some(format!("{}: {CHECK_NOTICED_REASON}", seam_label(entry)))
+                            Some((
+                                None,
+                                format!("{}: {CHECK_NOTICED_REASON}", seam_label(entry)),
+                            ))
                         } else if super::gap_bound_repair::finding_is_static_limited(finding) {
-                            Some(format!("{}: {CHECK_UNKNOWN_REASON}", seam_label(entry)))
+                            // #15926: check's top gap (the finding its human
+                            // triage selects), when it is a changed candidate
+                            // check closes, leads the open rows so the cap
+                            // does not hide it; the rest follow report order.
+                            let rank = if check_top.is_some_and(|top| std::ptr::eq(top, finding)) {
+                                0
+                            } else {
+                                output
+                                    .findings
+                                    .iter()
+                                    .position(|candidate| std::ptr::eq(candidate, finding))
+                                    .map_or(usize::MAX - 1, |position| position + 1)
+                            };
+                            Some((
+                                Some(rank),
+                                format!("{}: {}", seam_label(entry), check_limited_reason(finding)),
+                            ))
                         } else {
                             None
                         }
                     });
                 match closed {
-                    Some(reason) => {
-                        left_open |= reason.ends_with(CHECK_UNKNOWN_REASON);
-                        refusal_reasons.push(reason);
+                    Some((Some(rank), reason)) => {
+                        left_open = true;
+                        open_rows.push((rank, reason));
                     }
+                    Some((None, reason)) => changed_reasons.push(reason),
                     None => kept.push((id, note)),
                 }
             }
@@ -1280,17 +1407,34 @@ pub(crate) fn resolve_repair_start(
             if kept.len() == 1 && kept.len() < before {
                 let (_, note) = kept.remove(0);
                 left_open = true;
-                refusal_reasons.push(format!(
-                    "the code at {} `{}`: `ripr check` recommends no repair start for this change; to repair it anyway, run `{}`",
-                    note.location, note.code, note.command
+                open_rows.push((
+                    usize::MAX,
+                    format!(
+                        "the code at {} `{}`: `ripr check` recommends no repair start for this change; to repair it anyway, run `{}`",
+                        note.location, note.code, note.command
+                    ),
                 ));
             }
+            // #15926: what check leaves open on the change leads the changed
+            // rows (check's top gap first), ahead of the repair-only states.
+            open_rows.sort_by_key(|(rank, _)| *rank);
+            changed_reasons.splice(0..0, open_rows.into_iter().map(|(_, reason)| reason));
             candidates = kept;
             change = change_after_closure(change, !candidates.is_empty(), left_open, before > 0);
         }
     }
+    if change == NoEligibleChange::AlreadyChecked && !all_changed_checked && gripped_on_change > 0 {
+        // Check's closure found every changed candidate already noticed, so
+        // this is the already-checked shape after all: name the gripped spots
+        // themselves (not "a different check than the one still open") and
+        // leave out the spots outside the change, as the shortcut does.
+        changed_caveats = gripped_on_change_reasons;
+        outside_reasons.clear();
+        outside = OutsideCounts::default();
+    }
+    changed_reasons.append(&mut changed_caveats);
     let (reasons, reasons_total) =
-        collect_no_eligible_reasons(refusal_reasons.iter().map(String::as_str));
+        order_no_eligible_reasons(&lead_reasons, &changed_reasons, &outside_reasons, outside);
     let (eligible_ids, candidate_notes): (Vec<String>, Vec<RepairCandidateNote>) =
         candidates.into_iter().unzip();
     let head = current_git_head(root).ok();
@@ -1461,6 +1605,29 @@ fn recommended_seam(
 /// (#12849): check offers none for a static-limited finding.
 const CHECK_UNKNOWN_REASON: &str = "`ripr check` cannot tell from reading the code whether tests would notice this and offers no repair start for it, so inspect it by hand before adding a test";
 
+/// Why a changed spot check reads as `no_static_path` is no start (#15926):
+/// check does tell here, no test reaches the code, so the unknown sentence
+/// ("cannot tell ... inspect it by hand") would misdescribe it.
+/// The reason for a no-path finding whose owner nothing in the workspace calls
+/// (#15926). Check can offer a start for it, so the reason does not say it
+/// offers none.
+const CHECK_UNREFERENCED_REASON: &str = "`ripr check` finds no test that reaches this changed code, and nothing in the workspace calls it: write a new test that calls it (`ripr check` prints the repair start when it can offer one)";
+const CHECK_NO_PATH_REASON: &str = "`ripr check` finds no test that reaches this changed code and offers no repair start for it, so write a new test for it by hand (`ripr check` shows the detail, and a stub command when it can draft one)";
+
+/// The check-limited reason for a finding check offers no start for: the
+/// no-path sentence for `no_static_path`, the unknown sentence otherwise.
+fn check_limited_reason(finding: &crate::domain::Finding) -> &'static str {
+    if finding.is_unreferenced_no_static_path() {
+        CHECK_UNREFERENCED_REASON
+    } else if finding.class == crate::domain::ExposureClass::NoStaticPath
+        && finding.static_limit_kind.is_none()
+    {
+        CHECK_NO_PATH_REASON
+    } else {
+        CHECK_UNKNOWN_REASON
+    }
+}
+
 /// Why a changed spot needs no repair when `ripr check` already reads it as
 /// noticed by a test (#11401). It speaks to the changed code itself, unlike
 /// [`GRIPPED_SPOT_REASON`].
@@ -1536,8 +1703,8 @@ fn notice_what_check_notices<'a>(
 /// Why a changed spot whose whole seam the inventory reads as gripped is still
 /// open: `ripr check` does not read the changed line as noticed (#15278).
 fn check_reads_open_reason(finding: &crate::domain::Finding) -> String {
-    if super::gap_bound_repair::finding_is_static_limited(finding) {
-        CHECK_UNKNOWN_REASON.to_string()
+    if super::gap_bound_repair::finding_reads_unreached_or_limited(finding) {
+        check_limited_reason(finding).to_string()
     } else {
         format!(
             "`ripr check` reads this changed code as {} (tests reach it but do not clearly notice it), and the existing tests that grip the spot elsewhere do not close that: write or strengthen the test by hand",
@@ -2372,6 +2539,34 @@ pub(crate) fn default_check_findings(
     super::gap_bound_repair::default_check_output(root, None, config).map(|output| output.findings)
 }
 
+/// An exact seam start still needs the same no-path veto as the editor and
+/// MCP when the current change binds an unreached finding to it.
+pub(crate) fn changed_seam_no_path_start_refusal(
+    root: &Path,
+    base: Option<&str>,
+    config: &crate::config::RiprConfig,
+    seam_id: &str,
+    classified: &[crate::analysis::ClassifiedSeam],
+) -> Option<&'static str> {
+    let entry = classified
+        .iter()
+        .find(|entry| entry.seam.id().as_str() == seam_id)?;
+    if entry.evidence.reach.state != crate::domain::StageState::No
+        || repair_packet_eligibility(entry)
+            .readiness
+            .canonical_gap_id
+            .is_none()
+    {
+        return None;
+    }
+    // Check scopes the evidence to the live change. Its producer can place
+    // the finding at an unchanged consumer, so bind the exact occurrence
+    // from that one run instead of filtering on the literal diff span.
+    let check = super::gap_bound_repair::default_check_output(root, base, config).ok()?;
+    super::repair_card_handoff::bound_no_path_start_refusal(&check.findings, entry, classified)
+        .map(check_limited_reason)
+}
+
 /// The reading of [`check_reading_of_gripped_seam`] from check's findings,
 /// for a seam already known to be on the change.
 fn check_reading_from_findings(
@@ -2390,7 +2585,7 @@ fn check_reading_from_findings(
         .collect();
     let lead = open
         .iter()
-        .find(|finding| !super::gap_bound_repair::finding_is_static_limited(finding))
+        .find(|finding| !super::gap_bound_repair::finding_reads_unreached_or_limited(finding))
         .or_else(|| open.first());
     match lead {
         Some(finding) => CheckReadingOfGrippedSeam::Open {
@@ -4719,6 +4914,100 @@ fn held_inline_target(
 
 #[cfg(test)]
 pub(crate) mod tests {
+    /// A changed finding bound by location to one strongly gripped seam at
+    /// line 88 (#15926 gripped-seam reading).
+    fn gripped_reading_fixture() -> crate::analysis::ClassifiedSeam {
+        let mut entry = crate::app::repair_card_handoff::tests::spanned_twin_boundary_entry(
+            10,
+            88,
+            crate::analysis::seams::SeamSpan {
+                start_line: 88,
+                end_line: 88,
+                start_column: 1,
+                end_column: 10,
+            },
+        );
+        entry.class = crate::analysis::seams::SeamGripClass::StronglyGripped;
+        entry
+    }
+
+    fn located_finding(id: &str, reached: bool) -> crate::domain::Finding {
+        let mut finding = crate::app::repair_card_handoff::tests::producer_gap_finding(
+            id,
+            "gap:rust:src/pricing.rs:pricing::discounted_total:predicate_boundary:predicate",
+            "src/pricing.rs",
+            "pricing::discounted_total",
+            "predicate",
+        );
+        finding.probe.location.line = 88;
+        if !reached {
+            finding.class = crate::domain::ExposureClass::NoStaticPath;
+            finding.ripr.reach.state = crate::domain::StageState::No;
+            finding.ripr.reach.summary = format!(
+                "No static test path found for the changed owner {}",
+                crate::domain::UNREFERENCED_IN_WORKSPACE
+            );
+            finding.related_tests.clear();
+        }
+        finding
+    }
+
+    fn open_reading(
+        findings: &[crate::domain::Finding],
+    ) -> Result<(crate::domain::ExposureClass, String), String> {
+        let entry = gripped_reading_fixture();
+        match super::check_reading_from_findings(findings, &entry, std::slice::from_ref(&entry)) {
+            super::CheckReadingOfGrippedSeam::Open { class, reason } => Ok((class, reason)),
+            _ => Err("the bound finding must open the gripped seam".to_string()),
+        }
+    }
+
+    /// #15926: an unreferenced no-path finding is start-eligible, but the
+    /// gripped-seam reading still says no test reaches it, and does not say
+    /// check offers no start.
+    #[test]
+    fn a_gripped_seam_read_as_unreferenced_says_no_test_reaches_it() -> Result<(), String> {
+        let finding = located_finding("finding:unref", false);
+        if !finding.is_unreferenced_no_static_path() {
+            return Err("fixture: the finding must read as unreferenced".to_string());
+        }
+        let (class, reason) = open_reading(std::slice::from_ref(&finding))?;
+        if class != crate::domain::ExposureClass::NoStaticPath {
+            return Err(format!(
+                "the reading must keep the no-path class: {class:?}"
+            ));
+        }
+        if !reason.contains("finds no test that reaches this changed code")
+            || reason.contains("tests reach it")
+            || reason.contains("offers no repair start")
+        {
+            return Err(format!(
+                "wrong reason for an unreferenced finding: {reason}"
+            ));
+        }
+        Ok(())
+    }
+
+    /// #15926: with a reached gap and an unreferenced no-path finding on the
+    /// same seam, the reached gap leads in either report order.
+    #[test]
+    fn a_reached_gap_leads_an_unreferenced_reading_in_either_order() -> Result<(), String> {
+        let reached = located_finding("finding:reached", true);
+        let unreferenced = located_finding("finding:unref", false);
+        for findings in [
+            vec![reached.clone(), unreferenced.clone()],
+            vec![unreferenced.clone(), reached.clone()],
+        ] {
+            let (class, reason) = open_reading(&findings)?;
+            if class != reached.class
+                || !reason.contains("tests reach it but do not clearly notice it")
+            {
+                return Err(format!("the reached gap must lead: {class:?}: {reason}"));
+            }
+        }
+        Ok(())
+    }
+
     #[test]
     fn build_output_refusal_is_decided_by_variant_not_wording() {
         use crate::edit_cage::BuildOutputPreconditionError::{Inspection, NotIgnored};
@@ -7220,6 +7509,67 @@ pub(crate) mod tests {
             vec!["a".to_string(), "b".to_string(), "c".to_string()]
         );
         assert_eq!(total, 5, "five distinct reasons, not one per seam");
+    }
+
+    /// #15615: a changed spot is listed ahead of the outside counts, which
+    /// collapse into one summary row when the rows overflow the cap. The
+    /// fully changed-first control shows that ordering alone would push the
+    /// outside counts into the remainder instead.
+    #[test]
+    fn no_eligible_reasons_list_the_changed_spot_before_outside_counts() {
+        let rows = |items: &[&str]| items.iter().map(|s| s.to_string()).collect::<Vec<_>>();
+        let outside_rows = rows(&[
+            "2 repairable outside",
+            "4 blocked outside",
+            "3 noticed outside",
+        ]);
+        let outside = OutsideCounts {
+            repairable: 2,
+            blocked: 4,
+            noticed: 3,
+        };
+        let (listed, total) =
+            order_no_eligible_reasons(&[], &rows(&["changed at :12"]), &outside_rows, outside);
+        assert_eq!(listed.len(), 2, "{listed:?}");
+        assert_eq!(listed[0], "changed at :12");
+        assert_eq!(
+            listed[1],
+            "outside your changed lines, 2 repairable spots are not offered, 4 cannot start a repair and 3 are already noticed by existing tests; they are not listed, since that says nothing about your change (to repair an outside spot anyway, pass its id: `ripr repair <seam-id>`)"
+        );
+        assert_eq!(total, 2, "nothing is hidden behind a remainder");
+
+        // Changed detail past the cap: two changed rows and the summary are
+        // listed, and the third changed row is the remainder.
+        let (listed, total) = order_no_eligible_reasons(
+            &[],
+            &rows(&["changed at :11", "changed at :19", "changed at :27"]),
+            &outside_rows,
+            outside,
+        );
+        assert_eq!(listed[..2], rows(&["changed at :11", "changed at :19"]));
+        assert!(
+            listed[2].starts_with("outside your changed lines, "),
+            "{listed:?}"
+        );
+        assert_eq!(total, 4);
+
+        // Rows that fit keep their own wording, changed first.
+        let (listed, total) = order_no_eligible_reasons(
+            &[],
+            &rows(&["changed at :12"]),
+            &rows(&["3 noticed outside"]),
+            OutsideCounts {
+                noticed: 3,
+                ..OutsideCounts::default()
+            },
+        );
+        assert_eq!(listed, rows(&["changed at :12", "3 noticed outside"]));
+        assert_eq!(total, 2);
+
+        // Without a changed row the outside rows keep the plain cap.
+        let (listed, total) = order_no_eligible_reasons(&[], &[], &outside_rows, outside);
+        assert_eq!(listed, outside_rows);
+        assert_eq!(total, 3);
     }
 
     fn awaiting(
