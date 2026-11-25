@@ -587,6 +587,17 @@ fn spreads_computed_keys_and_accessors_are_unreadable_literals() -> Result<(), S
                 r"expect(title({ '__pr\u006fto__': { name: 'Bob' } })).toBe('Bob');",
                 "weakly_exposed",
             ),
+            // A comment before an own key keeps `name` present.
+            (
+                "commented-own-key",
+                "expect(title({ /* note */ name: 'Bob' })).toBe('Bob');",
+                "weakly_exposed",
+            ),
+            (
+                "line-commented-own-key",
+                "expect(title({ // note\n name: 'Bob' })).toBe('Bob');",
+                "weakly_exposed",
+            ),
             // Controls: an own empty value and a plain missing key still read.
             (
                 "own-empty",

@@ -2979,8 +2979,14 @@ fn ts_input_class_literal_unreadable(argument: &str, target: &TsInputClassTarget
     // A `__proto__` entry (bare or quoted) sets the prototype, so a field the
     // literal does not own can still read a value through it. An escape
     // (`'na\u006de'`, `'__pr\u006fto__'`) can spell either key without its
-    // text, so any backslash makes the keys unreadable too.
-    if target.field.is_some() && (argument.contains("__proto__") || argument.contains('\\')) {
+    // text, so any backslash makes the keys unreadable too. A comment
+    // (`{ /* note */ name: 'Bob' }`) stays in the raw key head the readers
+    // compare, so any comment opener makes them unreadable as well.
+    if target.field.is_some()
+        && ["__proto__", "\\", "/*", "//"]
+            .iter()
+            .any(|marker| argument.contains(marker))
+    {
         return true;
     }
     let masked = ts_mask_literals_and_comments(argument.trim());
