@@ -94,15 +94,17 @@ impl CheckVerification {
 ///   behavior exactly: at least one related test whose relation establishes
 ///   reach ([`crate::domain::RelationReason::establishes_reach`]) and that
 ///   either is a contributing row of `strong` or `medium` strength here, or
-///   is an examined-only row (ripr ran its assertions against this change
-///   and matched none) of a test that is a
+///   is an examined-only row (ripr ran the test and kept its first assertion
+///   as its oracle text) of a test that is a
 ///   contributing, reaching `strong` / `medium` row on another finding of
 ///   the same owner function in the run. An examined-only row alone proves
 ///   nothing: its oracle text is just the test's first assertion, which may
 ///   be a smoke `is_ok()`. A static limit's reaching test is often
 ///   examined-only, so the same-owner cross-check is what lets a test that
-///   pins that function vouch for it. A limit no test reaches, reached only
-///   by tests that assert nothing, or whose assertion ripr refused to credit
+///   pins that function vouch for it. An examined-only row is read by its
+///   role alone: what it matched or failed to credit is not asked of it. A
+///   limit no test reaches, or whose reaching contributing rows assert
+///   nothing or have an assertion ripr refused to credit
 ///   (`assertion_not_credited`, strength `none`), is not a finished
 ///   workflow.
 fn is_test_unclosable_limit(finding: &Finding, exact_tests: &ExactTests<'_>) -> bool {
@@ -232,6 +234,12 @@ impl CheckOutput {
         let exact_tests: ExactTests<'_> = self
             .findings
             .iter()
+            // A withheld finding contributes no exact row, so a voucher that
+            // was opted out or suppressed vouches for nothing. The count
+            // checks below already refuse a run that withholds an exposed
+            // finding (the summary counts it), which makes this filter
+            // redundant today; it keeps the voucher rule true on its own,
+            // should the summary ever count only reported findings.
             .filter(|finding| {
                 !withheld.contains(finding.id.as_str())
                     && finding.is_candidate_actionable()
@@ -757,6 +765,22 @@ mod tests {
             scope_label: String::new(),
         }];
         assert_eq!(withheld.verification().closable_limits, None);
+
+        // A withheld voucher vouches for nothing: with the exposed finding
+        // that holds the exact row opted out, the limit's examined-only row
+        // has no test behind it, and the run refuses. The refusal is
+        // overdetermined: the count checks refuse a withheld exposed finding
+        // as well, so this case does not depend on the withheld filter of the
+        // exact rows (a removal control on that filter left every test green).
+        let mut withheld_voucher = complete_with(examined_only("test_a"))?;
+        withheld_voucher.owner_opt_outs = vec![crate::analysis::owner_opt_out::OwnerOptOut {
+            finding_id: "a".to_string(),
+            owner: "f".to_string(),
+            reason: crate::analysis::owner_opt_out::OwnerOptOutReason::MutantsSkip,
+            scope: crate::analysis::owner_opt_out::OwnerOptOutScope::Fn,
+            scope_label: String::new(),
+        }];
+        assert_eq!(withheld_voucher.verification().closable_limits, None);
 
         // Counts that do not reconcile with the full summary refuse.
         let mut drift = complete_with(limits_only())?;
