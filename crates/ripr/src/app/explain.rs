@@ -699,8 +699,9 @@ const MAX_NEARBY_CHANGED_LINES: usize = 5;
 /// `index` is the complete run's own changed-line set. It holds added text
 /// lines only, so a binary or mode-only change is absent from it and the
 /// first sentence claims no more than that. Nor does a changed line without
-/// a finding establish why: a complete run can leave a file out by
-/// configuration, so that sentence lists the possible reasons.
+/// a finding establish why, so that sentence lists the possible reasons. A
+/// file the operator's configuration left out is named as such first
+/// (#16250).
 fn changed_line_reason(
     index: &crate::analysis_outcome::ChangedLineIndex,
     wanted_file: &str,
@@ -715,6 +716,13 @@ fn changed_line_reason(
         .filter(|component| matches!(component, std::path::Component::Normal(_)))
         .collect();
     let key = crate::analysis::stable_path_text(&respelled);
+    // #16250: a file the operator's own configuration left out was never
+    // analyzed, so no line-level reason applies to it.
+    if let Some(setting) = index.configured_exclusion_of(&key) {
+        return format!(
+            "That file is left out by the configured `{setting}` in ripr.toml, so this run did not analyze it; remove or narrow that pattern to analyze it"
+        );
+    }
     let Some(lines) = index.lines_of(&key) else {
         return "This run's diff changes no text line of that file, and ripr reports a finding only on a changed line".to_string();
     };
