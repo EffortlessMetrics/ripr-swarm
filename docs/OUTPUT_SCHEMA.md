@@ -1165,7 +1165,7 @@ text report for coding agents. It is not JSON and carries no `schema_version`;
 its stability contract is the line grammar below. It is a pure projection of
 the same triage selector, candidate-actionable filter and scope-bound drill-in
 commands `--format human` uses, so it adds no verdict, class or ranking. It is
-diff-scoped, refuses `--suppression-policy` like SARIF and the badge formats,
+diff-scoped, refuses `--suppression-policy` like the badge formats,
 and has no legend or repeated disclaimers.
 
 ```text
@@ -5074,8 +5074,8 @@ ripr check --format repo-sarif-compact
 `sarif-compact` and `repo-sarif-compact` (#13195) render the same documents
 minified: parsed values are identical to `sarif`/`repo-sarif`, including the
 `RIPR_SARIF_RESULTS_BYTES` results bound (#13102, default 1,000,000 pretty
-bytes; `0` removes the cap; results are kept by level, errors then warnings
-then notes; an unparseable value fails the run) and its in-band disclosure (`limited_results_bound`, `document_complete: false`,
+bytes; `0` removes the cap; unsuppressed results are kept before suppressed
+ones, then by level, errors then warnings then notes; an unparseable value fails the run) and its in-band disclosure (`limited_results_bound`, `document_complete: false`,
 `results_rendered`/`results_total`/`results_omitted`). A bounded document
 stays valid SARIF 2.1.0 and is incomplete, never a clean run.
 The pretty `sarif` and `repo-sarif` bytes are unchanged.
@@ -5221,7 +5221,10 @@ Every result carries:
   authority.
 
 Suppressed exposure-gap Findings remain visible with SARIF suppression metadata
-when their configured severity is visible. Results whose configured severity is
+when their configured severity is visible. Entries match by the same rule as
+`check --suppression-policy` (`finding_id`, `path` + `function`, or a `path`
+glob, with optional `static_class`), and an explicit `--suppression-policy`
+replaces `[suppressions] path` for a SARIF run (#15377). Results whose configured severity is
 `off` are omitted. See RIPR-SPEC-0008 for the full suppression and baseline
 policy contract.
 

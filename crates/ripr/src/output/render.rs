@@ -114,7 +114,7 @@ pub(crate) fn render_check_with_config_and_progress(
             // Fail-closed budget resolution: an unparseable
             // `RIPR_SARIF_RESULTS_BYTES` aborts the run, never rendering.
             let results_budget = sarif::sarif_results_byte_budget()?;
-            let suppressions = load_suppressions(output, config)?;
+            let suppressions = sarif_suppressions(output, config)?;
             Ok(sarif::render_findings_sarif_anchored(
                 output,
                 config,
@@ -125,7 +125,7 @@ pub(crate) fn render_check_with_config_and_progress(
         }
         OutputFormat::SarifCompact => {
             let results_budget = sarif::sarif_results_byte_budget()?;
-            let suppressions = load_suppressions(output, config)?;
+            let suppressions = sarif_suppressions(output, config)?;
             Ok(sarif::render_findings_sarif_compact_anchored(
                 output,
                 config,
@@ -594,6 +594,29 @@ fn detect_python_repo_exposure_guidance(
     }
 
     Some(repo_exposure::PythonRepoExposureGuidance { python_file_count })
+}
+
+/// The entries SARIF marks results with (#15377). An explicit
+/// `--suppression-policy` file replaces the implicit `[suppressions] path`
+/// manifest for the run, so a workflow passing the same flag to its findings
+/// and SARIF runs gets one decision; it was already loaded fail-closed when
+/// the check applied it, and a read failure here still refuses the render.
+fn sarif_suppressions(
+    output: &CheckOutput,
+    config: &RiprConfig,
+) -> Result<Vec<suppressions::SuppressionEntry>, String> {
+    match &output.suppression {
+        Some(applied) => {
+            let policy = std::path::Path::new(&applied.policy_path);
+            let resolved = if policy.is_absolute() {
+                policy.to_path_buf()
+            } else {
+                output.root.join(policy)
+            };
+            suppressions::load_check_suppression_policy(&resolved)
+        }
+        None => load_suppressions(output, config),
+    }
 }
 
 fn load_suppressions(
