@@ -1519,6 +1519,12 @@ fn six_step_agent_contract(reported: ReportedRun) -> Result<(), String> {
     let waiting = mcp.tool("ripr_get_receipt_status", json!({ "receipt_id": id }))?;
     assert_eq!(waiting["status"], "awaiting_edit", "{waiting}");
     assert!(waiting.get("test_run").is_none(), "{waiting}");
+    assert!(
+        waiting["limitations"]
+            .to_string()
+            .contains("this document reports static receipt state only"),
+        "{waiting}"
+    );
     assert_eq!(
         read("src/lib.rs")?,
         production_before,
@@ -1715,6 +1721,14 @@ fn six_step_agent_contract(reported: ReportedRun) -> Result<(), String> {
     let mcp_receipt = restarted.tool("ripr_get_receipt_status", json!({ "receipt_id": id }))?;
     assert_eq!(mcp_receipt["test_run"], *test_run, "{mcp_receipt}");
     assert_eq!(mcp_receipt["status"], "improved", "{mcp_receipt}");
+    // The scope limitation names the relayed report instead of claiming
+    // the document is static-only while it carries test counts.
+    assert!(
+        mcp_receipt["limitations"]
+            .to_string()
+            .contains("`test_run` relays the caller's own test report, which RIPR did not execute"),
+        "{mcp_receipt}"
+    );
     let finished_manifest = manifest("after finish")?;
     let terminal = finished_manifest["terminal_artifacts"]
         .as_array()

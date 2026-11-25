@@ -2234,7 +2234,7 @@ fn receipt_status_output_schema() -> Value {
                     "currentness": { "type": "object" },
                     "test_run": {
                         "type": "object",
-                        "description": "Present only for a finished attempt whose issued receipt records that ripr ran no test: the same object `ripr agent status --attempt <id> --json` emits. `not_recorded` when the caller reported no run; `caller_reported` with file, ran, passed, failed and next_step when the finish retained one. ripr ran nothing either way, and it never changes `status`.",
+                        "description": "Finished attempt whose receipt records no ripr-run test: the `test_run` of `ripr agent status --attempt <id> --json`. ripr ran nothing; never changes `status`.",
                         "properties": {
                             "status": { "type": "string", "enum": ["not_recorded", "caller_reported"] },
                             "test_changed": { "type": ["string", "null"] },
@@ -3981,7 +3981,12 @@ mod tests {
         // status answer (+100 bytes on that tool): full 42,466, so only
         // the opt-in full budget moves, from 42,300 to 42,600. The slim
         // default every session pays is unchanged.
-        for (mode, budget) in [(ToolsListMode::Slim, 12_300), (ToolsListMode::Full, 42_600)] {
+        // #16251 budget decision: the full listing declares the optional
+        // `test_run` object on receipt status with every field the shared
+        // CLI reading emits, so a validating host can type the counts.
+        // Measured full 43,051 (slim 12,140, unchanged by this change), so
+        // only the opt-in full budget moves, from 42,600 to 43,200.
+        for (mode, budget) in [(ToolsListMode::Slim, 12_300), (ToolsListMode::Full, 43_200)] {
             let payload = tools_list_result_for(mode);
             let bytes = serde_json::to_vec(&payload)
                 .map_err(|error| format!("measure tools/list payload: {error}"))?

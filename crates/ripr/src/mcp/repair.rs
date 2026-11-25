@@ -672,8 +672,13 @@ pub(super) fn durable_receipt_document(
         ) => "limited",
         _ => status,
     };
+    let scope = if test_run.is_some() {
+        "`status` reports static receipt state only; `test_run` relays the caller's own test report, which RIPR did not execute"
+    } else {
+        "this document reports static receipt state only"
+    };
     let mut limitations = vec![
-        "static movement and focused runtime test execution remain separate evidence axes; this document reports static receipt state only".to_string(),
+        format!("static movement and focused runtime test execution remain separate evidence axes; {scope}"),
         "RIPR executed nothing to produce this state and executes nothing in response to reading it".to_string(),
     ];
     if matches!(
