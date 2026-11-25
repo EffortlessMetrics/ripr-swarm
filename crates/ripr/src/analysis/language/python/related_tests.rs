@@ -77,6 +77,11 @@ pub(super) enum PythonRelationKind {
     /// The test calls a same-module caller of the owner, and no test calls the
     /// owner itself (#4568). Reach evidence only; never an oracle.
     HelperOwnerCall,
+    /// The test requests, through a client identified as the handler's own
+    /// application, a route whose handler directly calls the owner (#14150).
+    /// Reach evidence only; never an oracle: the response assertion is not
+    /// shown to observe the helper's changed behavior.
+    RouteHelperCall,
     /// The test calls a function of another module that imports and calls
     /// the owner, possibly through same-module callers on either side, and no
     /// test calls the owner itself (#12955). Reach evidence only; the
@@ -111,6 +116,7 @@ impl PythonRelationKind {
             Self::FixtureName => 1,
             Self::FixtureOwnerCall => 2,
             Self::HelperOwnerCall => 2,
+            Self::RouteHelperCall => 2,
             Self::CrossModuleCallerCall => 2,
             Self::CliRunnerInvoke => 2,
             Self::ActivationLimited => 0,
@@ -156,6 +162,7 @@ impl PythonRelationKind {
             Self::FixtureName => "fixture_name",
             Self::FixtureOwnerCall => "fixture_owner_call",
             Self::HelperOwnerCall => "helper_owner_call",
+            Self::RouteHelperCall => "route_helper_call",
             Self::CrossModuleCallerCall => "cross_module_caller_call",
             Self::CliRunnerInvoke => "cli_runner_invoke",
             Self::ActivationLimited => "test_activation_unestablished",
@@ -460,12 +467,38 @@ pub(super) fn helper_owner_call_candidates_indexed<'a>(
         } else {
             (module_function_callers(owner, owners), true)
         };
-    helper_candidates_from_callers(owner, callers, all_tests, dunder_module_helper, owners)
+    let mut found =
+        helper_candidates_from_callers(owner, callers, all_tests, dunder_module_helper, owners);
+    if dunder_module_helper {
+        let routed = route_scope_handler_candidates(owner, owners, all_tests, &found);
+        found.extend(routed);
+        sort_candidates(&mut found);
+    }
+    found
+}
+
+/// Candidates by test file, then test name.
+fn sort_candidates(found: &mut [HelperOwnerCallCandidate<'_>]) {
+    found.sort_by(|left, right| {
+        left.candidate
+            .test
+            .file
+            .cmp(&right.candidate.test.file)
+            .then_with(|| left.candidate.test.name.cmp(&right.candidate.test.name))
+    });
 }
 
 /// Callers of the owner within [`MAX_HELPER_CALLER_DEPTH`] hops, each with
 /// whether its path crossed into the owner's module from another module
-/// (#12955). Same-module callers come first, at every hop.
+/// (#12955). Same-module callers come first, at every hop. An edge is read
+/// from the caller's textual list of callees, which counts a call anywhere
+/// in its span, with one exception: a routed handler is followed only
+/// through a call its own scope makes, as the route relation reads it
+/// (#14150 review), and a callee defined `async def` only through a call
+/// the caller awaits (#15882 review). A helper the handler only mentions
+/// inside a nested definition it never invokes is not called by it, for
+/// these relations as for the route relation; a test that calls the handler
+/// itself keeps its relation where the handler does call the helper.
 fn module_function_callers<'o>(
     owner: &PythonOwner,
     owners: &'o [PythonOwner],
@@ -499,6 +532,17 @@ fn module_function_callers<'o>(
                     caller.file.as_path() == *file
                         && caller.name != *name
                         && caller.module_callees.iter().any(|callee| callee == name)
+                        && calls_in_own_scope(
+                            caller,
+                            // A bare name reaches a top-level function of that
+                            // file, not a method that spells the same.
+                            owners.iter().find(|bound| {
+                                top_level_function(bound)
+                                    && bound.file.as_path() == *file
+                                    && bound.name == *name
+                            }),
+                            name,
+                        )
                 })
                 .map(|(_, _, crossed)| *crossed)
                 .min();
@@ -519,6 +563,7 @@ fn module_function_callers<'o>(
                 && cross_module_entries
                     .iter()
                     .any(|entry| std::ptr::eq(*entry, caller))
+                && calls_the_imported_helper_in_own_scope(caller, owner, owners)
             {
                 crossing.push((caller, true));
             }
@@ -543,6 +588,57 @@ fn module_function_callers<'o>(
     callers
 }
 
+/// Whether `caller` may be followed through the bare call of `name` that its
+/// textual list shows. A routed handler is followed only when its own scope
+/// makes that call, and awaits it where the callee is a coroutine function, a
+/// reading that can only withhold. Any other owner keeps the textual list,
+/// which over-approximates: a call that owner makes only in a nested scope is
+/// followed still.
+fn calls_in_own_scope(caller: &PythonOwner, callee: Option<&PythonOwner>, name: &str) -> bool {
+    caller.route_paths.is_empty() || calls_in_own_scope_awaited(caller, callee, name)
+}
+
+/// Whether the routed handler `caller` calls `name` in its own scope, and
+/// awaits that call where `callee` is defined `async def`: the body of a
+/// coroutine function runs only through an awaited call, and a call the
+/// handler does not await only constructs the coroutine (#15882 review).
+fn calls_in_own_scope_awaited(
+    caller: &PythonOwner,
+    callee: Option<&PythonOwner>,
+    name: &str,
+) -> bool {
+    caller
+        .route_scope_callees
+        .iter()
+        .any(|callee_name| callee_name == name)
+        && callee.is_none_or(|callee| {
+            !is_coroutine_function(callee)
+                || caller
+                    .route_scope_awaited_callees
+                    .iter()
+                    .any(|awaited| awaited == name)
+        })
+}
+
+/// Whether `owner` is defined `async def`, so that a call of it runs its body
+/// only once awaited.
+fn is_coroutine_function(owner: &PythonOwner) -> bool {
+    owner
+        .decorators
+        .iter()
+        .any(|decorator| decorator == "async_def")
+}
+
+/// [`calls_in_own_scope`] for a caller in another module, which names the
+/// owner by the binding its own module gives it.
+fn calls_the_imported_helper_in_own_scope(
+    caller: &PythonOwner,
+    owner: &PythonOwner,
+    owners: &[PythonOwner],
+) -> bool {
+    caller.route_paths.is_empty() || caller_directly_calls_owner(caller, owner, owners)
+}
+
 fn helper_candidates_from_callers<'a>(
     owner: &PythonOwner,
     callers: Vec<(&PythonOwner, bool)>,
@@ -550,8 +646,81 @@ fn helper_candidates_from_callers<'a>(
     dunder_module_helper: bool,
     owners: &[PythonOwner],
 ) -> Vec<HelperOwnerCallCandidate<'a>> {
-    let mut found: Vec<HelperOwnerCallCandidate<'a>> = Vec::new();
-    let mut seen: std::collections::HashSet<(&'a Path, &'a str)> = std::collections::HashSet::new();
+    push_candidates_from_callers(
+        owner,
+        callers,
+        all_tests,
+        dunder_module_helper,
+        owners,
+        CallerScan::default(),
+    )
+    .found
+}
+
+/// What one scan of the callers collects: the tests already credited, by
+/// file and name, and the candidates found. With `route_requests_only`, a
+/// test is related only when it requests one of the caller's routes.
+#[derive(Default)]
+struct CallerScan<'a> {
+    route_requests_only: bool,
+    seen: std::collections::HashSet<(&'a Path, &'a str)>,
+    found: Vec<HelperOwnerCallCandidate<'a>>,
+}
+
+/// The route relation for the routed handlers whose own scope calls the
+/// owner, when the textual caller list does not make them callers (#14150
+/// review). A decorator of a nested definition is not read as a call by the
+/// textual list, and a comprehension target that shares the helper's name
+/// hides the helper from it, while the parse shows the handler itself calls
+/// the helper. Only a test that requests one of the handler's routes is
+/// related, through the route relation alone; a test a caller already
+/// related keeps that caller.
+fn route_scope_handler_candidates<'a>(
+    owner: &PythonOwner,
+    owners: &[PythonOwner],
+    all_tests: &'a [PythonTest],
+    related: &[HelperOwnerCallCandidate<'a>],
+) -> Vec<HelperOwnerCallCandidate<'a>> {
+    let callers: Vec<(&PythonOwner, bool)> = owners
+        .iter()
+        .filter(|caller| {
+            !std::ptr::eq(*caller, owner)
+                && !caller.route_paths.is_empty()
+                && caller_directly_calls_owner(caller, owner, owners)
+        })
+        .map(|caller| (caller, false))
+        .collect();
+    if callers.is_empty() {
+        return Vec::new();
+    }
+    let scan = CallerScan {
+        route_requests_only: true,
+        seen: related
+            .iter()
+            .map(|candidate| {
+                (
+                    candidate.candidate.test.file.as_path(),
+                    candidate.candidate.test.qualified_name.as_str(),
+                )
+            })
+            .collect(),
+        found: Vec::new(),
+    };
+    push_candidates_from_callers(owner, callers, all_tests, true, owners, scan).found
+}
+
+/// The candidates of `callers`, each with whether its path crossed a module
+/// boundary, added to the scan unless it already holds the test.
+fn push_candidates_from_callers<'a>(
+    owner: &PythonOwner,
+    callers: Vec<(&PythonOwner, bool)>,
+    all_tests: &'a [PythonTest],
+    dunder_module_helper: bool,
+    owners: &[PythonOwner],
+    mut scan: CallerScan<'a>,
+) -> CallerScan<'a> {
+    let route_requests_only = scan.route_requests_only;
+    let CallerScan { seen, found, .. } = &mut scan;
     let token = crate::analysis::cancellation::current_token();
     for (caller, cross_module) in callers {
         // The relation is per-test and pure, so a large workspace scans it
@@ -581,20 +750,43 @@ fn helper_candidates_from_callers<'a>(
         } else {
             all_tests.iter().filter(|test| related(test)).collect()
         };
+        // An identified route request reaches a helper only when the routed
+        // handler calls it directly (#14150): one hop, resolved through the
+        // handler module's own binding of the owner. A handler further away
+        // keeps the generic caller reading. The caller-side facts are
+        // loop-invariant, so they are read once per caller.
+        let route_caller =
+            !caller.route_paths.is_empty() && caller_directly_calls_owner(caller, owner, owners);
         for test in reached {
+            let by_route_request =
+                related_test_relation(test, caller) == Some(PythonRelationKind::ApiClientRouteCall);
+            // A request that another route of the application answers as well
+            // may never reach this caller, so a relation that rests on that
+            // request alone is withheld: the route relation and the generic
+            // caller relations with it (#14150 review). A test that calls the
+            // caller itself keeps its relation.
+            if by_route_request && caller.route_dispatch_ambiguous {
+                continue;
+            }
+            if route_requests_only && !by_route_request {
+                continue;
+            }
             if seen.insert((test.file.as_path(), test.qualified_name.as_str())) {
+                let via_route = route_caller && by_route_request;
                 found.push(HelperOwnerCallCandidate {
                     candidate: PythonRelatedCandidate {
                         test,
                         relation: if super::test_activation::activation_control(test).is_some() {
                             PythonRelationKind::ActivationLimited
+                        } else if via_route {
+                            PythonRelationKind::RouteHelperCall
                         } else if cross_module {
                             PythonRelationKind::CrossModuleCallerCall
                         } else {
                             PythonRelationKind::HelperOwnerCall
                         },
                     },
-                    caller: if cross_module && caller.file != owner.file {
+                    caller: if (cross_module || via_route) && caller.file != owner.file {
                         format!(
                             "{} ({})",
                             caller.qualified_name,
@@ -603,19 +795,32 @@ fn helper_candidates_from_callers<'a>(
                     } else {
                         caller.qualified_name.clone()
                     },
-                    cross_module,
+                    cross_module: cross_module && !via_route,
                 });
             }
         }
     }
-    found.sort_by(|left, right| {
-        left.candidate
-            .test
-            .file
-            .cmp(&right.candidate.test.file)
-            .then_with(|| left.candidate.test.name.cmp(&right.candidate.test.name))
-    });
-    found
+    sort_candidates(found);
+    scan
+}
+
+/// Whether `caller` calls `owner` itself, under the name its own module
+/// binds the owner to: the bare name in the owner's file, or the exact
+/// `from <owner module> import <name>` binding elsewhere (#14150, #12955).
+/// Reads the caller's own scope, so a call inside a nested `def` or `lambda`
+/// body, which runs only if the caller invokes it, is not a direct call; and
+/// an `async def` owner only through a call the caller awaits.
+fn caller_directly_calls_owner(
+    caller: &PythonOwner,
+    owner: &PythonOwner,
+    owners: &[PythonOwner],
+) -> bool {
+    let name = if caller.file == owner.file {
+        Some(owner.name.as_str())
+    } else {
+        cross_module_owner_binding(caller, owner, owners)
+    };
+    name.is_some_and(|name| calls_in_own_scope_awaited(caller, Some(owner), name))
 }
 
 fn top_level_function(candidate: &PythonOwner) -> bool {
@@ -624,9 +829,18 @@ fn top_level_function(candidate: &PythonOwner) -> bool {
         && candidate.qualified_name == candidate.name
 }
 
-/// The owner is a top-level function and the only one of its name in its file.
+/// The owner is a top-level function, the only one of its name in its file,
+/// and still the binding that name resolves to there.
 fn helper_owner_is_unique_top_level_function(owner: &PythonOwner, owners: &[PythonOwner]) -> bool {
     top_level_function(owner)
+        // A later module-level binding (`is_adult = lambda ...`) replaces the
+        // definition, so a route that calls the name runs the replacement,
+        // not this function (#14150).
+        && !owner
+            .class_facts
+            .module_rebound_names
+            .iter()
+            .any(|name| name == "*" || name == &owner.name)
         && owners
             .iter()
             .filter(|other| {
@@ -640,8 +854,10 @@ fn helper_owner_is_unique_top_level_function(owner: &PythonOwner, owners: &[Pyth
 /// binding is exact (#12955): a `from M import <owner>` (aliased or not) whose
 /// `M` is the owner's module by [`import_source_module_matches_owner`], the
 /// only import in scope that binds that local name, and no top-level `def` or
-/// `class` of the caller's file of the same name. Anything else, including a
-/// plain `import M` read as `M.owner(...)` or a star import, makes no edge.
+/// `class` of the caller's file of the same name and no module-level binding
+/// that may rebind it (`is_adult = lambda ...` after the import, #14150).
+/// Anything else, including a plain `import M` read as `M.owner(...)` or a
+/// star import, makes no edge.
 fn cross_module_owner_binding<'o>(
     caller: &'o PythonOwner,
     owner: &PythonOwner,
@@ -665,6 +881,11 @@ fn cross_module_owner_binding<'o>(
         .filter(|other| other.alias == local)
         .count()
         != 1
+        || caller
+            .class_facts
+            .module_rebound_names
+            .iter()
+            .any(|name| name == "*" || name == local)
         || owners.iter().any(|other| {
             other.file == caller.file
                 && other.name == local
