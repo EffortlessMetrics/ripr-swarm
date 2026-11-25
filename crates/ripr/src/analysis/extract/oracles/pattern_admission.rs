@@ -1365,16 +1365,32 @@ mod tests {
             // #16286: an or-pattern whose alternatives all pin accepts each
             // of them, a disjunction no alternative lends an exact kind.
             ("assert!(matches!(score(2), 4 | 5))", RelationalCheck, Weak),
-            ("assert!(matches!(mode(), Mode::A | Mode::B))", RelationalCheck, Weak),
-            ("assert!(matches!(lookup(1), Some(3 | 4)))", RelationalCheck, Weak),
+            (
+                "assert!(matches!(mode(), Mode::A | Mode::B))",
+                RelationalCheck,
+                Weak,
+            ),
+            (
+                "assert!(matches!(lookup(1), Some(3 | 4)))",
+                RelationalCheck,
+                Weak,
+            ),
             (
                 "assert!(matches!(lookup(1), Some(Foo::A | Foo::None)))",
                 RelationalCheck,
                 Weak,
             ),
-            ("assert!(matches!(lookup(1), Some(3) | Some(4)))", RelationalCheck, Weak),
+            (
+                "assert!(matches!(lookup(1), Some(3) | Some(4)))",
+                RelationalCheck,
+                Weak,
+            ),
             ("assert_matches!(score(2), 4 | 5)", RelationalCheck, Weak),
-            ("assert!(matches!(score(2), x @ (4 | 5)))", RelationalCheck, Weak),
+            (
+                "assert!(matches!(score(2), x @ (4 | 5)))",
+                RelationalCheck,
+                Weak,
+            ),
             (
                 "assert!(matches!(score(2), 4 | 5 if ready))",
                 RelationalCheck,
@@ -1386,7 +1402,11 @@ mod tests {
                 BroadError,
                 Weak,
             ),
-            ("assert!(matches!(check(20), Err(E::A | E::B)))", BroadError, Weak),
+            (
+                "assert!(matches!(check(20), Err(E::A | E::B)))",
+                BroadError,
+                Weak,
+            ),
         ];
         for (text, kind, strength) in weakened {
             let actual = pattern_assertion_classification(text);
