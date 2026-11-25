@@ -15,7 +15,9 @@ use super::caplog_text::{PythonLogVerdict, python_log_evidence};
 use super::class_attr_pin;
 use super::conditional_expression;
 use super::dataclass_default::dataclass_default_credits;
-use super::discriminators::python_missing_discriminators;
+use super::discriminators::{
+    python_missing_discriminators, python_multiline_return_dict_entry_discriminator,
+};
 use super::dunder_truthiness;
 use super::exception_variant::exception_variant_credits;
 use super::guard_activation;
@@ -2380,6 +2382,15 @@ fn classify_change_for_owner_inner<'a>(
                 shape: DiscriminatorShape::Other,
                 drafted_boundary: None,
             }]
+        } else if let Some(fact) = python_multiline_return_dict_entry_discriminator(
+            line,
+            line_text,
+            no_behavior.brackets.span,
+            owner_source,
+            owner,
+            flow_sink.as_ref(),
+        ) {
+            vec![fact]
         } else {
             python_missing_discriminators(
                 &family,

@@ -73,10 +73,11 @@ pub(crate) const GAP_BOUND_PACKET_ARTIFACT: &str = "target/ripr/workflow/gap-rep
 /// consumer reads one artifact kind as the other.
 pub(crate) const GAP_BOUND_BEFORE_SNAPSHOT_ROLE: &str = "before_check_findings";
 
-/// Whether a finding is static-limited: the producer's named limitation or an
-/// unknown/no-path class. `ripr check` offers no start for one, so the before
-/// phase must not accept one either.
-pub(crate) fn finding_is_static_limited(finding: &Finding) -> bool {
+/// Whether check reads a finding as unreached or limited: the producer's named
+/// limitation, or an unknown/no-path class. This is a reading of what check
+/// knows (wording and ranking), not start eligibility: a no-path finding whose
+/// owner nothing in the workspace calls is still unreached here (#15926).
+pub(crate) fn finding_reads_unreached_or_limited(finding: &Finding) -> bool {
     finding.static_limit_kind.is_some()
         || matches!(
             finding.class,
@@ -85,6 +86,20 @@ pub(crate) fn finding_is_static_limited(finding: &Finding) -> bool {
                 | crate::domain::ExposureClass::PropagationUnknown
                 | crate::domain::ExposureClass::StaticUnknown
         )
+}
+
+/// Whether a finding is static-limited for repair starts: check reads it as
+/// unreached or limited ([`finding_reads_unreached_or_limited`]) and offers no
+/// start for it, so the before phase must not accept one either.
+///
+/// #15926: a changed owner nothing in the workspace names (RIPR-SPEC-0219) is
+/// a test-side gap, not a static limit: check knows no test reaches it, and
+/// the work is writing that test. The human triage already reads it so
+/// (#14919); the repair route and the repair screen now agree, so check,
+/// bare repair, pilot and the card offer the same start. Wording and ranking
+/// that speak to reachability read [`finding_reads_unreached_or_limited`].
+pub(crate) fn finding_is_static_limited(finding: &Finding) -> bool {
+    !finding.is_unreferenced_no_static_path() && finding_reads_unreached_or_limited(finding)
 }
 
 /// The validated GapRecord of a finding that may start a gap-bound repair, or
@@ -483,6 +498,40 @@ mod tests {
             GapStartLookup::NotReady { .. } => Ok(()),
             _ => Err("a static-limited finding must resolve NotReady".to_string()),
         }
+    }
+
+    /// #15926: a no-path finding whose owner nothing in the workspace names
+    /// is a test-side gap, not a static limit; dropping the marker or adding
+    /// a named limitation keeps it limited.
+    #[test]
+    fn an_unreferenced_no_path_owner_is_not_static_limited() -> Result<(), String> {
+        let unreferenced = || {
+            let mut finding = complete_finding();
+            finding.class = crate::domain::ExposureClass::NoStaticPath;
+            finding.ripr.reach.state = StageState::No;
+            finding.ripr.reach.summary = format!(
+                "no caller of the owner {}",
+                crate::domain::UNREFERENCED_IN_WORKSPACE
+            );
+            finding
+        };
+        if !unreferenced().is_unreferenced_no_static_path() {
+            return Err("fixture: the finding must read as unreferenced".to_string());
+        }
+        if finding_is_static_limited(&unreferenced()) {
+            return Err("an unreferenced no-path owner must not be static-limited".to_string());
+        }
+        let mut referenced = unreferenced();
+        referenced.ripr.reach.summary = "no caller of the owner".to_string();
+        if !finding_is_static_limited(&referenced) {
+            return Err("a referenced no-path finding stays static-limited".to_string());
+        }
+        let mut named = unreferenced();
+        named.static_limit_kind = Some(crate::domain::StaticLimitKind::ProofHarnessNotEvaluated);
+        if !finding_is_static_limited(&named) {
+            return Err("a named limitation stays static-limited".to_string());
+        }
+        Ok(())
     }
 
     const PY_GAP: &str =

@@ -2767,6 +2767,24 @@ fn run_agent_repair_phase(
                 &before_config,
                 "agent before phase",
             )?;
+            if let Some(reason) = app::task_first::changed_seam_no_path_start_refusal(
+                &before_input.root,
+                base.as_deref(),
+                &before_config,
+                &seam_id,
+                &before_report.classified,
+            ) {
+                let code = app::task_first::RepairRefusalCode::SeamNotRepairEligible;
+                let message = format!(
+                    "seam `{seam_id}` is not repair-eligible: {reason}. No repair attempt was started."
+                );
+                refusal.typed = true;
+                refusal.code = Some(code);
+                if facade_start {
+                    crate::cli::usage_refusal::note_typed_refusal(code, &message);
+                }
+                return Err(message);
+            }
             let packet = render_agent_packet_for_seam_with_report(
                 &root,
                 &seam_id,
