@@ -199,6 +199,30 @@ fn entry_that_does_not_call_the_method_directly_gets_no_edge() {
             "export function serialize(input: any): string {\n  setTimeout(() => new Serializer().write(input));\n  return \"\";\n}",
         ),
         (
+            "default of an arrow never called",
+            "export function serialize(input: any): string {\n  const never = (x = new Serializer().write(input)) => x;\n  return \"\";\n}",
+        ),
+        (
+            "default of a typed arrow never called",
+            "export function serialize(input: any): string {\n  const never = (x = new Serializer().write(input)): string => x;\n  return \"\";\n}",
+        ),
+        (
+            "default of a qualified-type arrow never called",
+            "export function serialize(input: any): string {\n  const never = (x = new Serializer().write(input)): ns.T<string> => x;\n  return \"\";\n}",
+        ),
+        (
+            "default of a function-typed arrow never called",
+            "export function serialize(input: any): string {\n  const never = (x = new Serializer().write(input)): (() => void) => () => {};\n  return \"\";\n}",
+        ),
+        (
+            "async synchronous callback",
+            "export function serialize(input: any): string {\n  [0].map(async (x) => {\n    await x;\n    return new Serializer().write(input);\n  });\n  return \"\";\n}",
+        ),
+        (
+            "typed synchronous callback",
+            "export function serialize(input: any): string {\n  [0].map(async (x): Promise<string> => {\n    await x;\n    return new Serializer().write(input);\n  });\n  return \"\";\n}",
+        ),
+        (
             "expression arrow returning a closure",
             "export const serialize = (input: any) =>\n  input ? () => {\n    return new Serializer().write(input);\n  } : null;",
         ),
@@ -553,6 +577,43 @@ fn class_whose_quoted_constructor_returns_is_not_followed() {
         for owner in ["write", "order", "compareKeys"] {
             assert!(entry_hops(&source, owner).is_empty(), "{quote}: {owner}");
         }
+    }
+}
+
+#[test]
+fn default_of_a_synchronous_callback_runs_with_the_entry() {
+    // `.map` calls its unannotated callback, defaults included, before it
+    // returns; the same default on a stored arrow runs only if it is called.
+    let entry = "export function serialize(input: any): string {\n  return new Serializer().write(input);\n}";
+    let source = SRC.replacen(
+        entry,
+        "export function serialize(input: any): string {\n  [undefined].map((x = new Serializer().write(input)) => x);\n  return \"\";\n}",
+        1,
+    );
+    assert_ne!(source, SRC);
+    assert_eq!(entry_hops(&source, "write"), [("serialize".to_string(), 1)]);
+}
+
+#[test]
+fn default_of_a_stored_arrow_in_a_method_adds_no_edge() {
+    for (label, line) in [
+        (
+            "untyped",
+            "    const later = (k = this.order(Object.keys(record))) => k;\n    return \"\";",
+        ),
+        (
+            "typed",
+            "    const later = (k = this.order(Object.keys(record))): string[] => k;\n    return \"\";",
+        ),
+    ] {
+        let source = SRC.replacen(
+            "    return this.order(Object.keys(record)).join(\",\");",
+            line,
+            1,
+        );
+        assert_ne!(source, SRC, "{label}: fixture not rewritten");
+        assert!(entry_hops(&source, "order").is_empty(), "{label}");
+        assert!(entry_hops(&source, "compareKeys").is_empty(), "{label}");
     }
 }
 

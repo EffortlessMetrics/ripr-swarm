@@ -227,7 +227,9 @@ pub(super) fn executed_this_source(source: &str) -> Option<String> {
     if contains_word(&code, "class") || has_method_shorthand(&code, body_start) {
         return None;
     }
-    blank_unexecuted_arrows(&mut code);
+    if !blank_unexecuted_arrows(&mut code) {
+        return None;
+    }
     Some(code)
 }
 
@@ -368,11 +370,13 @@ fn matching_open_paren(code: &str, close: usize) -> Option<usize> {
     None
 }
 
-/// Blank the body of every arrow function that is not an argument of a call.
-/// Creating such an arrow (`const later = () => this.helper()`) does not run
-/// it; an arrow in argument position (`items.forEach((x) => ...)`) is read as
-/// invoked.
-fn blank_unexecuted_arrows(code: &mut String) {
+/// Blank every arrow function, parameters and body, that is not an
+/// unannotated, non-async synchronous array callback. Creating such an arrow
+/// (`const later = (x = this.helper()) => 0`) runs neither its parameter
+/// defaults nor its body; an unannotated arrow passed to a synchronous array
+/// method (`items.forEach((x) => ...)`) is read as invoked. Returns `false`
+/// when an arrow's return type annotation cannot be bounded.
+fn blank_unexecuted_arrows(code: &mut String) -> bool {
     let mut ranges: Vec<std::ops::Range<usize>> = Vec::new();
     for (arrow, _) in code.match_indices("=>") {
         let before = code[..arrow].trim_end();
@@ -389,15 +393,26 @@ fn blank_unexecuted_arrows(code: &mut String) {
                 .last()
                 .map_or(before.len(), |(index, _)| index)
         };
-        let mut head = code[..params_start].trim_end();
-        if let Some(rest) = head.strip_suffix("async")
-            && !rest.ends_with(is_javascript_identifier_char)
+        let head = code[..params_start].trim_end();
+        // An async callback runs only up to its first `await` before the
+        // array method returns; what follows runs later, so it is never read
+        // as a synchronous callback.
+        let is_async = head
+            .strip_suffix("async")
+            .is_some_and(|rest| !rest.ends_with(is_javascript_identifier_char));
+        let Some(annotated_params) = return_annotation_params(before) else {
+            return false;
+        };
+        // An annotated arrow is never credited as a synchronous callback, so
+        // the annotation cannot widen what runs.
+        if !is_async
+            && annotated_params.is_none()
+            && head.ends_with('(')
+            && callback_runs_synchronously(head)
         {
-            head = rest.trim_end();
-        }
-        if head.ends_with('(') && callback_runs_synchronously(head) {
             continue;
         }
+        let start = annotated_params.unwrap_or(params_start);
         let after = arrow + 2;
         let body = code[after..].trim_start();
         let body_start = code.len() - body.len();
@@ -406,9 +421,51 @@ fn blank_unexecuted_arrows(code: &mut String) {
         } else {
             expression_end(code, body_start)
         };
-        ranges.push(after..end);
+        ranges.push(start..end);
     }
     blank_ranges(code, ranges);
+    true
+}
+
+/// For the text `before` an arrow's `=>`, `Some(Some(open))` with the `(` of
+/// the parameter list when a return type annotation (`(x = d): T =>`) sits
+/// between them, `Some(None)` when there is none, and `None` when the scan
+/// cannot place the annotation: a nested `=>` (a function type), a `?` after
+/// a `:` (a conditional type or a ternary), or an unmatched `)`. Reading a
+/// ternary branch or an object key that follows `)` as an annotation only
+/// blanks more code.
+fn return_annotation_params(before: &str) -> Option<Option<usize>> {
+    let bytes = before.as_bytes();
+    let mut depth = 0usize;
+    let mut seen_colon = false;
+    let mut index = bytes.len();
+    while index > 0 {
+        index -= 1;
+        match bytes[index] {
+            b'>' if index > 0 && bytes[index - 1] == b'=' => {
+                if depth == 0 {
+                    return None;
+                }
+                index -= 1;
+            }
+            b')' | b']' | b'}' | b'>' => depth += 1,
+            b'(' | b'[' | b'{' | b'<' => match depth.checked_sub(1) {
+                Some(next) => depth = next,
+                None => return Some(None),
+            },
+            b':' if depth == 0 => {
+                let head = before[..index].trim_end();
+                if head.ends_with(')') {
+                    return matching_open_paren(head, head.len() - 1).map(Some);
+                }
+                seen_colon = true;
+            }
+            b'?' if depth == 0 && seen_colon => return None,
+            b';' | b',' | b'=' | b'?' if depth == 0 => return Some(None),
+            _ => {}
+        }
+    }
+    Some(None)
 }
 
 /// Methods that call a callback argument before they return.

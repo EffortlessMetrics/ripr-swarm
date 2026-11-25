@@ -949,11 +949,17 @@ Candidates come from the first non-empty tier:
    strings, templates and comments do not count), a name defined twice in the
    class, a name some method assigns, deletes or defines on `this`, a name an
    instance field of the class defines (a computed field defines any name),
-   an arrow body that is not the first argument of a synchronous array method
+   an arrow, parameter defaults included, that is not an unannotated,
+   non-async first argument of a synchronous array method
    (`forEach`, `map`, `filter`, `reduce`, `some`, `every`, `find`, `sort` and
-   their kin; `map`'s `thisArg` is a stored value; `const later = () => this.helper()`, an array element, a logical
+   their kin; `map`'s `thisArg` is a stored value; `const later = () => this.helper()`,
+   `const later = (k = this.helper()) => k`, an array element, a logical
    operand, a stored callback, and a deferred callee such as `setTimeout`,
-   an event listener, `subscribe` or `then` are created or run later), the body
+   an event listener, `subscribe` or `then` are created or run later; an
+   async callback runs past its first `await` later, and an arrow with a
+   return type annotation is never read as a synchronous callback; an
+   annotation the scan cannot bound, a function or conditional type, drops
+   the caller), the body
    of a nested `function`, parameter defaults included (a call the method makes
    outside it still counts; a
    function whose parameters are followed by a return type annotation, or a
@@ -1062,8 +1068,10 @@ Candidates come from the first non-empty tier:
    `X.method`, in the same graph under the same hop bound. A function or
    method reaches `X.method` by `new X(...).method(` written as one
    expression in code that runs when it runs (not inside a nested function,
-   or an arrow other than a synchronous array callback, such as
-   `const later = () => new X().m()` or `setTimeout(() => ...)`; a function
+   or an arrow, parameter defaults included, other than an unannotated,
+   non-async synchronous array callback, such as
+   `const later = () => new X().m()`, `const later = (v = new X().m()) => v`
+   or `setTimeout(() => ...)`; a function
    whose header is not `(params) [: Type] [=>] {` gives no construction
    edge, except an arrow `(params) [: Type] => expression` whose
    expression holds no nested function, class or block, which runs it
@@ -2894,7 +2902,9 @@ keys); do not take the next number.
   local-class, stored-instance, method-reference, namespace and string
   refusals, the replaced, aliased, typed, re-exported and subclassed class,
   the field, accessor, constructor and member-assignment refusals, the
-  deferred `this` call, the returning constructor, and the `static_unknown`
+  deferred `this` call, the parameter default of an arrow never called (typed
+  or not) against the default of a synchronous callback, the async and
+  annotated callbacks, the returning constructor, and the `static_unknown`
   and `no_static_path` readings;
   `fixtures/typescript_plain_class_entry_reach` pins the rendered check.
 

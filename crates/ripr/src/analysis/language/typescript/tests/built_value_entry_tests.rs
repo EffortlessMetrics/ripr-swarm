@@ -168,6 +168,14 @@ fn construction_the_entry_does_not_run_gets_no_edge() {
             "expression-bodied entry",
             "export const serialize = (input: any): string =>\n  String(() => new Serializer().serialize(input));",
         ),
+        (
+            "default of an arrow never called",
+            "export function serialize(input: any): string {\n  const later = (x = new Serializer().serialize(input)) => x;\n  return String(input);\n}",
+        ),
+        (
+            "default of a typed arrow never called",
+            "export function serialize(input: any): string {\n  const later = (x = new Serializer().serialize(input)): string => x;\n  return String(input);\n}",
+        ),
     ] {
         let source = SRC.replacen(
             "export function serialize(input: any): string {\n  return new Serializer().serialize(input);\n}",
