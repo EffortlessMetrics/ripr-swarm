@@ -20127,6 +20127,11 @@ id = "RIPR-SPEC-0243"
 name = "TypeScript oracle and reach rules"
 spec = "docs/specs/RIPR-SPEC-0243-typescript-oracle-and-reach-rules.md"
 tests = [
+  "crates/ripr/src/analysis/language/typescript/tests/commonjs_inline_class_tests.rs::a_changed_method_of_the_inline_class_is_reported_and_related",
+  "crates/ripr/src/analysis/language/typescript/tests/commonjs_inline_class_tests.rs::a_whole_module_require_of_the_inline_class_relates_under_any_local_name",
+  "crates/ripr/src/analysis/language/typescript/tests/commonjs_inline_class_tests.rs::a_named_export_beside_the_inline_class_unmarks_it_and_drops_its_name",
+  "crates/ripr/src/analysis/language/typescript/tests/commonjs_inline_class_tests.rs::a_static_method_relates_through_the_whole_module_require_only",
+  "crates/ripr/src/analysis/language/typescript/tests/commonjs_inline_class_tests.rs::an_instance_field_shadows_the_prototype_method_a_sibling_calls",
   "crates/ripr/tests/typescript_push_argument_observation.rs::jest_only_literal_timeout_distinguishes_value_from_cardinality",
   "crates/ripr/tests/typescript_push_argument_observation.rs::jest_only_timeout_witness_rejects_dynamic_and_extra_arguments",
   "fixtures/typescript_jest_only_literal_timeout_push_argument_length",
