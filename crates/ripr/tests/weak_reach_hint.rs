@@ -233,15 +233,22 @@ fn exercise_summary_suppression(
         "{unsuppressed}"
     );
 
-    let policy = Path::new(env!("CARGO_TARGET_TMPDIR"))
-        .join(format!("weak_reach_hint_15295_{profile}_policy.toml"));
-    std::fs::write(
-        &policy,
-        format!(
-            "schema_version = 1\n\n[[suppressions]]\nkind = \"exposure_gap\"\npath = \"{suppressed_path}\"\nreason = \"accepted fixture debt\"\nowner = \"test-fixture\"\n"
-        ),
-    )
-    .map_err(|error| error.to_string())?;
+    let policy_for = |label: &str, path: &str| -> Result<std::path::PathBuf, String> {
+        let policy = Path::new(env!("CARGO_TARGET_TMPDIR"))
+            .join(format!("weak_reach_hint_15295_{profile}_{label}.toml"));
+        std::fs::write(
+            &policy,
+            format!(
+                "schema_version = 1\n\n[[suppressions]]\nkind = \"exposure_gap\"\npath = \"{path}\"\nreason = \"accepted fixture debt\"\nowner = \"test-fixture\"\n"
+            ),
+        )
+        .map_err(|error| error.to_string())?;
+        Ok(policy)
+    };
+
+    // The finding without established reach is suppressed: it leaves its
+    // Summary bucket, and the unconfirmed-link note leaves with it.
+    let policy = policy_for("policy", suppressed_path)?;
     let suppressed = summary_of(Some(&policy))?;
     assert!(
         suppressed.contains("1 partly noticed, 0 reached but not noticed, "),
@@ -251,6 +258,22 @@ fn exercise_summary_suppression(
     assert!(
         suppressed.contains("1 suppressed by your settings"),
         "{suppressed}"
+    );
+
+    // The other way round: the finding with established reach is suppressed
+    // (`src/lib.rs` in each fixture) and the other stays, so the note stays.
+    // Under the first policy alone, a Summary that dropped the note whenever
+    // anything is suppressed would read alike.
+    let policy = policy_for("reaching", "src/lib.rs")?;
+    let other_suppressed = summary_of(Some(&policy))?;
+    assert!(
+        other_suppressed
+            .contains("1 partly noticed (1 through a test link ripr could not confirm), "),
+        "{other_suppressed}"
+    );
+    assert!(
+        other_suppressed.contains("1 suppressed by your settings"),
+        "{other_suppressed}"
     );
     Ok(())
 }
