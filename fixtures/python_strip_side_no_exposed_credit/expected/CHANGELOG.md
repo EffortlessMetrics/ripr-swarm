@@ -25,3 +25,16 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — python_strip_side_no_exposed_credit (3)
+
+Reason:
+RIPR-SPEC-0028: the call-variant gate's messages say only that no related call is seen to pass the separating input
+
+Command:
+`cargo xtask goldens bless python_strip_side_no_exposed_credit --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
