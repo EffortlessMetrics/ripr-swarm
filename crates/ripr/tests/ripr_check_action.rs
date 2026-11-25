@@ -3,6 +3,7 @@
 //! The Action's `run:` blocks are extracted from the YAML and executed under
 //! bash with stand-in `curl`, `ripr` and `git` remotes, so install routing and
 //! base derivation are exercised without the network or a real release.
+//! The first-run archive workflow uses the same shell replay harness.
 #![cfg(unix)]
 
 use std::error::Error;
@@ -17,8 +18,8 @@ type TestResult<T = ()> = Result<T, Box<dyn Error>>;
 const ACTION: &str = include_str!("../../../.github/actions/ripr-check/action.yml");
 
 /// The body of a step's `run: |` block (de-indented), found by step name.
-fn run_block(step: &str) -> TestResult<String> {
-    let lines: Vec<&str> = ACTION.lines().collect();
+fn run_block(workflow: &str, step: &str) -> TestResult<String> {
+    let lines: Vec<&str> = workflow.lines().collect();
     let header = format!("- name: {step}");
     let start = lines
         .iter()
@@ -60,15 +61,24 @@ fn stand_in(dir: &Path, name: &str, script: &str) -> TestResult<()> {
     Ok(())
 }
 
+fn stand_in_download(dir: &Path, script: &str) -> TestResult {
+    stand_in(dir, "curl", script)
+}
+
 /// Passes the host tools the blocks need through, but never `cargo`.
 fn tool_dir(root: &Path) -> TestResult<PathBuf> {
     let bin = root.join("bin");
     fs::create_dir_all(&bin)?;
     for tool in [
         "mkdir",
+        "bash",
+        "tee",
+        "touch",
+        "uname",
         "mktemp",
         "awk",
         "tar",
+        "gzip",
         "git",
         "sha256sum",
         "shasum",
@@ -134,7 +144,7 @@ fn bash(script: &str, dir: &Path, path: &Path, env: &[(&str, &str)]) -> TestResu
 
 fn install(version: &str, os: &str, arch: &str, root: &Path, bin: &Path) -> TestResult<Run> {
     bash(
-        &run_block("Install ripr")?,
+        &run_block(ACTION, "Install ripr")?,
         root,
         bin,
         &[
@@ -196,9 +206,8 @@ fn a_checksum_mismatch_fails_before_extraction() -> TestResult {
     let root = scratch("checksum")?;
     let bin = tool_dir(&root)?;
     // Writes an archive and a .sha256 that does not match it.
-    stand_in(
+    stand_in_download(
         &bin,
-        "curl",
         "for last; do :; done; f=${last##*/}; case \"$last\" in *.sha256) echo 0000 > \"$f\";; *) echo not-a-tarball > \"$f\";; esac",
     )?;
     let run = install("0.10.0", "Linux", "X64", &root, &bin)?;
@@ -441,7 +450,7 @@ mod zip_route {
         fn run(&self, os: &str, arch: &str) -> TestResult<Run> {
             let systemroot = self.root.join("winroot");
             bash(
-                &run_block("Install ripr")?,
+                &run_block(ACTION, "Install ripr")?,
                 &self.root,
                 &self.bin,
                 &[
@@ -829,7 +838,7 @@ fn check_steps(work: &Path, bin: &Path, env: &[(&str, &str)]) -> TestResult<Run>
         .collect();
     base_env.push(("GITHUB_OUTPUT", &picked_env));
     let first = bash(
-        &run_block("Pick the ripr check base")?,
+        &run_block(ACTION, "Pick the ripr check base")?,
         work,
         bin,
         &base_env,
@@ -846,7 +855,7 @@ fn check_steps(work: &Path, bin: &Path, env: &[(&str, &str)]) -> TestResult<Run>
         .to_string();
     let mut check_env: Vec<(&str, &str)> = env.to_vec();
     check_env.push(("RIPR_BASE", &base));
-    let second = bash(&run_block("Run ripr check")?, work, bin, &check_env)?;
+    let second = bash(&run_block(ACTION, "Run ripr check")?, work, bin, &check_env)?;
     let mut output = second.output;
     let mut stdout = first.output.stdout;
     stdout.extend_from_slice(&output.stdout);
@@ -1230,7 +1239,7 @@ fn replayed_report_text_cannot_issue_workflow_commands() -> TestResult {
         "printf '::warning file=src/lib.rs,line=3::gap'\necho '::add-mask::quoted stderr' >&2",
     )?;
     let run = bash(
-        &run_block("Run ripr check")?,
+        &run_block(ACTION, "Run ripr check")?,
         &work,
         &bin,
         &[
@@ -1546,4 +1555,172 @@ fn the_action_silences_progress_without_a_flag_a_pinned_release_may_lack() -> Te
     assert!(ACTION.contains("RIPR_QUIET: '1'"));
     assert!(ACTION.contains("'Analysis mode: instant, draft, fast, deep, or ready'"));
     Ok(())
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+mod first_run_archive {
+    use super::*;
+
+    const WORKFLOW: &str = include_str!("../../../.github/workflows/first-run-archive.yml");
+    const QUICKSTART: &str = include_str!("../../../docs/QUICKSTART.md");
+    const README: &str = include_str!("../../../README.md");
+
+    fn archive_fixture(case: &str) -> TestResult<(PathBuf, PathBuf)> {
+        let root = scratch(case)?;
+        let bin = tool_dir(&root)?;
+        let served = root.join("served");
+        fs::create_dir(&served)?;
+        // Both commands report the same version. Separate markers identify which ran.
+        stand_in(
+            &served,
+            "ripr",
+            "touch \"$HOME/archive.called\"; echo 'ripr 0.10.0'",
+        )?;
+        stand_in(
+            &bin,
+            "ripr",
+            "touch \"$HOME/ambient.called\"; echo 'ripr 0.10.0'",
+        )?;
+        stand_in_download(
+            &bin,
+            "case \"$2\" in
+               *.sha256) [ \"$CASE\" != checksum-download-failed ] || exit 22
+                         cp \"$HOME/served/checksum\" \"$(basename \"$2\")\" ;;
+               *) cp \"$HOME/served/archive\" \"$(basename \"$2\")\" ;;
+             esac",
+        )?;
+        fs::write(served.join("README-server.txt"), "archive fixture\n")?;
+        let member = if case == "executable-missing" {
+            "README-server.txt"
+        } else {
+            "ripr"
+        };
+        let prepare = bash(
+            "tar -czf served/archive -C served \"$ARCHIVE_MEMBER\"
+             shasum -a 256 served/archive | awk '{print $1}' > served/checksum",
+            &root,
+            &bin,
+            &[("ARCHIVE_MEMBER", member)],
+        )?;
+        assert!(prepare.ok(), "{}", prepare.text());
+        if case == "checksum-mismatch" {
+            fs::write(served.join("checksum"), format!("{:064}\n", 0))?;
+        }
+        Ok((root, bin))
+    }
+
+    #[test]
+    fn unix_receipt_requires_a_successful_archive_install() -> TestResult {
+        for case in [
+            "valid",
+            "checksum-mismatch",
+            "checksum-download-failed",
+            "executable-missing",
+        ] {
+            let (root, bin) = archive_fixture(case)?;
+            fs::create_dir(root.join("docs"))?;
+            fs::write(root.join("docs/QUICKSTART.md"), QUICKSTART)?;
+            let extract = bash(
+                &run_block(WORKFLOW, "Extract the documented snippets")?,
+                &root,
+                &bin,
+                &[],
+            )?;
+            assert!(extract.ok(), "{}", extract.text());
+            let install = bash(
+                &run_block(
+                    WORKFLOW,
+                    "Install with the documented snippet (Linux and macOS)",
+                )?,
+                &root,
+                &bin,
+                &[
+                    ("CASE", case),
+                    ("VERSION", "0.10.0"),
+                    ("GITHUB_OUTPUT", "output"),
+                ],
+            )?;
+            let timing = if install.ok() {
+                fs::read_to_string(root.join("bin-test/output"))?
+            } else {
+                String::new()
+            };
+            let (_, seconds) = timing.trim().split_once('=').unwrap_or(("", ""));
+            let receipt = bash(
+                &run_block(WORKFLOW, "Record the archive cell for the install receipt")?,
+                &root,
+                &bin,
+                &[
+                    ("OS_LABEL", "test-host"),
+                    ("OUTCOME", if install.ok() { "success" } else { "failure" }),
+                    ("SECONDS_TO_INSTALL", seconds),
+                    ("VERSION", "0.10.0"),
+                ],
+            )?;
+            assert!(receipt.ok(), "{}", receipt.text());
+            let cell = fs::read_to_string(root.join("runner-temp/cell/cell.json"))?;
+            let valid = case == "valid";
+            let expected = if valid { "works" } else { "failed" };
+            assert!(
+                cell.contains(&format!("\"status\":\"{expected}\"")),
+                "{case}: {cell}\n{}",
+                install.text()
+            );
+            assert_eq!(install.ok(), valid, "{case}: {}", install.text());
+            assert_eq!(root.join("archive.called").exists(), valid, "{case}");
+            assert!(
+                !root.join("ambient.called").exists(),
+                "{case} ran ambient ripr"
+            );
+            assert_eq!(
+                root.join("bin-test/ripr-bin/ripr").is_file(),
+                valid,
+                "{case}"
+            );
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn readme_does_not_analyze_with_a_stale_or_ambient_install() -> TestResult {
+        let (_, section) = README
+            .split_once("\n## The first useful run\n")
+            .ok_or("README is missing its first useful run")?;
+        let fence = "\x60\x60\x60";
+        let (_, snippet) = section
+            .split_once(&format!("\n{fence}bash\n"))
+            .ok_or("README is missing its archive install snippet")?;
+        let (snippet, _) = snippet
+            .split_once(&format!("\n{fence}"))
+            .ok_or("README archive install snippet is not closed")?;
+        for case in [
+            "valid",
+            "checksum-mismatch",
+            "checksum-download-failed",
+            "executable-missing",
+        ] {
+            let (root, bin) = archive_fixture(case)?;
+            if case == "checksum-download-failed" {
+                fs::copy(
+                    root.join("served/checksum"),
+                    root.join("ripr-server-v0.10.0-x86_64-unknown-linux-gnu.tar.gz.sha256"),
+                )?;
+            }
+            let install = bash(
+                &format!("set +e\n{snippet}"),
+                &root,
+                &bin,
+                &[("CASE", case)],
+            )?;
+            let valid = case == "valid";
+            assert_eq!(install.ok(), valid, "{case}: {}", install.text());
+            assert_eq!(root.join("archive.called").exists(), valid, "{case}");
+            assert!(
+                !root.join("ambient.called").exists(),
+                "{case} ran ambient ripr"
+            );
+            assert_eq!(root.join("ripr-bin/ripr").is_file(), valid, "{case}");
+        }
+        Ok(())
+    }
 }

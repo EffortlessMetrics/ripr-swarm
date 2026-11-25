@@ -32,8 +32,8 @@ v=0.10.0; case "$(uname -s)-$(uname -m)" in
   *) echo "no prebuilt archive for this platform; install with cargo install ripr or build from source" >&2; exit 1;; esac
 f=ripr-server-v$v-$t.tar.gz
 b=https://github.com/EffortlessMetrics/ripr/releases/download/v$v
-curl -fsSLO $b/$f && curl -fsSLO $b/$f.sha256
-echo "$(cat $f.sha256)  $f" | { sha256sum -c - || shasum -a 256 -c -; } \
+curl -fsSLO "$b/$f" && curl -fsSLO "$b/$f.sha256" && \
+  echo "$(cat $f.sha256)  $f" | { sha256sum -c - || shasum -a 256 -c -; } \
   && mkdir ripr-bin && tar xzf $f -C ripr-bin \
   && export PATH="$PWD/ripr-bin:$PATH"   # ripr-bin/ripr is now first on PATH for this shell
 ```
