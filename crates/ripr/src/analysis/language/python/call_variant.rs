@@ -413,11 +413,16 @@ const MAX_ROUND_SPELLING: usize = 48;
 
 /// Whether `round(value, old)` and `round(value, new)` return the same
 /// number, read as exact decimal half-to-even rounding of a plain decimal
-/// spelling. Python rounds a float by its binary value, which can break a
-/// decimal tie the other way; the read stays inside [`MAX_ROUND_DIGITS`],
-/// where the two roundings the spelling decides cannot silently coincide, and
-/// refuses anything else. A scientific spelling is not a plain decimal, so
-/// it is refused; the argument reader passes plain decimals only.
+/// spelling, within [`MAX_ROUND_DIGITS`], a spelling of
+/// [`MAX_ROUND_SPELLING`] digits and counts within [`MAX_ROUND_COUNT`].
+/// Python rounds a float by the double it names. A spelling that is not on
+/// an exact decimal tie rounds alike under both, inside those digits; on a
+/// tie the double may sit on either side (`round(1.05, 1)` is `1.1`, where
+/// half-to-even on the spelling gives `1.0`), so a float spelling that sits
+/// on an exact tie at either count is not read. An int spelling is exact
+/// and Python rounds it as this read does. Anything beyond the bounds is
+/// refused. A scientific spelling is not a plain decimal, so it is refused;
+/// the argument reader passes plain decimals only.
 fn round_agrees(value: &str, old: i32, new: i32) -> Option<bool> {
     if old.unsigned_abs() > MAX_ROUND_COUNT as u32 || new.unsigned_abs() > MAX_ROUND_COUNT as u32 {
         return None;
@@ -446,11 +451,29 @@ fn round_agrees(value: &str, old: i32, new: i32) -> Option<bool> {
     if digits.len() > MAX_ROUND_DIGITS {
         return None;
     }
+    if !fraction.is_empty()
+        && [old, new]
+            .iter()
+            .any(|&keep| rounds_an_exact_tie(&digits, fraction.len(), keep))
+    {
+        return None;
+    }
     // `round` treats both signs alike, so the magnitudes decide.
     Some(
         round_half_even(&digits, fraction.len(), old)
             == round_half_even(&digits, fraction.len(), new),
     )
+}
+
+/// Whether `round(<digits> * 10^-scale, keep)` drops an exact tie: the
+/// first dropped digit is 5 and nothing but zeros follows it.
+fn rounds_an_exact_tie(digits: &[u8], scale: usize, keep: i32) -> bool {
+    let cut = digits.len() as i64 - scale as i64 + keep as i64;
+    if cut < 0 || cut >= digits.len() as i64 {
+        return false;
+    }
+    let cut = usize::try_from(cut).unwrap_or(0);
+    digits[cut] == 5 && digits[cut + 1..].iter().all(|&digit| digit == 0)
 }
 
 /// One exact `round(<digits> * 10^-scale, keep)` as `(digits, exponent)`:
@@ -464,7 +487,11 @@ pub(super) fn round_half_even(digits: &[u8], scale: usize, keep: i32) -> (Vec<u8
     if cut >= digits.len() as i64 {
         return normalize_rounded(digits.to_vec(), -(scale as i64));
     }
-    let cut = usize::try_from(cut.max(0)).unwrap_or(usize::MAX);
+    if cut < 0 {
+        // Less than one digit of the quantum (`round(60, -3)`): zero.
+        return (vec![0], 0);
+    }
+    let cut = usize::try_from(cut).unwrap_or(0);
     let mut kept = digits[..cut].to_vec();
     let dropped = digits.get(cut).copied().unwrap_or(0);
     // The digits after the dropped one decide a tie that is not exact.
@@ -495,6 +522,10 @@ pub(super) fn round_half_even(digits: &[u8], scale: usize, keep: i32) -> (Vec<u8
         if index == 0 && (kept.is_empty() || kept.first() == Some(&0)) {
             kept.insert(0, 1);
         }
+    }
+    if kept.is_empty() {
+        // Nothing kept and no rounding up (`round(500, -3)`): zero.
+        return (vec![0], 0);
     }
     normalize_rounded(kept, int_len - cut as i64)
 }

@@ -2203,11 +2203,15 @@ on a parameter with no arguments, or another literal digit count in
 flips the literal `reverse` flag alone on one `sorted(<parameter>)` or
 `<parameter>.sort()` call with no other argument (#16203), changes the result
 only for a string with whitespace on a side one version keeps, a number the
-two counts round differently (read as exact decimal half-to-even rounding
-of a plain decimal spelling, within 15 significant digits, a spelling of
-48 digits and counts within ±20; the binary rounding of a `float` is not
-simulated, and a number beyond those bounds, or in scientific notation,
-is not read, so the gate does not apply to it), or a collection holding
+two counts round differently (an int spelling is read by exact decimal
+half-to-even rounding, a plain decimal float spelling likewise, except that
+Python rounds a float by the double it names, which can lie on either side of
+a decimal tie, so a float spelling on an exact tie at either count is not
+read; a count whose place lies past the value's leading digit rounds the value
+to zero; the reading stays within 15 significant digits, a spelling of 48
+digits and counts within ±20, and a number beyond those bounds, or in
+scientific notation, is not read, so the gate does not apply to it), or a
+collection holding
 two different elements,
 where two scalars agree only as Python compares them: an int spelling is the
 exact number and a float spelling is the nearest representable double, so
@@ -2227,8 +2231,9 @@ only a display the call itself spells is read, not a parametrize case
 value the test may change in place. When every
 strong related call binds the parameter to a plain literal the rule
 evaluates (a quoted string without escapes, an int or decimal float within
-the bounds above, or a list, tuple or set display of such scalars that the
-call itself spells) and both
+the bounds above, or a list, tuple or set display of scalars that the call
+itself spells, where a string element with an escape is compared as spelled,
+so two spellings of one text are two elements) and both
 versions give the same result, the edit reads `weakly_exposed` and the
 missing discriminator names the separating input; the messages say only that
 no related call is seen to pass it, not that the versions agree on every
@@ -2263,7 +2268,10 @@ Tests: `call_variant_tests.rs::inputs_without_trailing_whitespace_do_not_expose_
 `call_variant_tests.rs::a_call_shaped_line_inside_a_multiline_string_is_not_read_as_a_call`,
 `call_variant_tests.rs::a_prior_use_spelled_with_a_normalized_identifier_keeps_the_sort_exposed`,
 `call_variant_tests.rs::an_exact_tie_rounds_to_the_even_digit`,
-`boundary.rs::an_int_spelling_its_float_spelling_above_two_to_the_53rd`.
+`call_variant_tests.rs::a_count_past_the_leading_digit_keeps_a_round_change_exposed`,
+`call_variant_tests.rs::a_float_on_a_decimal_tie_keeps_a_round_change_exposed`,
+`boundary.rs::an_int_spelling_its_float_spelling_above_two_to_the_53rd`,
+`boundary.rs::a_float_spelling_is_the_nearest_double_not_its_digits`.
 
 ## Changed Range Header Amendment (#12948)
 

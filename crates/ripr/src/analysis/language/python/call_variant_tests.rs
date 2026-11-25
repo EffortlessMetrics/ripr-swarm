@@ -195,6 +195,37 @@ fn a_negative_count_off_grid_input_keeps_a_round_change_exposed() -> Result<(), 
 }
 
 #[test]
+fn a_count_past_the_leading_digit_keeps_a_round_change_exposed() -> Result<(), String> {
+    // `round(60, -2)` is `100` and `round(60, -3)` is `0`.
+    let source = "def money(x):\n    return round(x, -2)\n";
+    let finding = classify_source(
+        source,
+        2,
+        "    return round(x, -2)",
+        "    return round(x, -3)",
+        "from src.text import money\n\n\ndef test_money():\n    assert money(60) == 0\n",
+    )?;
+    assert_eq!(finding.class, ExposureClass::Exposed);
+    Ok(())
+}
+
+#[test]
+fn a_float_on_a_decimal_tie_keeps_a_round_change_exposed() -> Result<(), String> {
+    // Python rounds `1.05` by its binary value: `round(1.05, 1)` is `1.1`,
+    // where half-to-even on the spelling gives `1.0`.
+    let source = "def money(x):\n    return round(x, 0)\n";
+    let finding = classify_source(
+        source,
+        2,
+        "    return round(x, 0)",
+        "    return round(x, 1)",
+        "from src.text import money\n\n\ndef test_money():\n    assert money(1.05) == 1.1\n",
+    )?;
+    assert_eq!(finding.class, ExposureClass::Exposed);
+    Ok(())
+}
+
+#[test]
 fn a_recursive_owner_keeps_the_entry_rows_from_reading_agreement() -> Result<(), String> {
     // The recursive call hands `clean` an argument no test passes, so the
     // entry rows do not cover what the versions see (#16221).
@@ -319,13 +350,21 @@ fn agreement_follows_python_strip_and_round() {
     // `round(1.0001, 2)` and `round(1.0001, 3)` both return `1.0`: digits
     // beyond both counts can round away under either.
     assert_eq!(variant_agrees(&round, "1.0001"), Some(true));
-    assert_eq!(variant_agrees(&round, "1.255"), Some(false));
+    // A float spelling on an exact decimal tie is not read: Python rounds
+    // the double it names, which may sit on either side of the tie.
+    assert_eq!(variant_agrees(&round, "1.255"), None);
     let coarse = CallVariant::Round {
         param: "x".to_string(),
         old: 0,
         new: 1,
     };
-    assert_eq!(variant_agrees(&coarse, "2.5"), Some(false));
+    assert_eq!(variant_agrees(&coarse, "2.5"), None);
+    assert_eq!(variant_agrees(&coarse, "1.05"), None);
+    assert_eq!(variant_agrees(&coarse, "0.45"), None);
+    assert_eq!(variant_agrees(&coarse, "1.06"), Some(false));
+    assert_eq!(variant_agrees(&coarse, "1.004"), Some(true));
+    // An int spelling is exact: `round(3, 0)` and `round(3, 1)` are both `3`.
+    assert_eq!(variant_agrees(&coarse, "3"), Some(true));
     // A negative count rounds to tens and hundreds.
     let negative = CallVariant::Round {
         param: "x".to_string(),
@@ -335,8 +374,46 @@ fn agreement_follows_python_strip_and_round() {
     assert_eq!(variant_agrees(&negative, "100"), Some(true));
     assert_eq!(variant_agrees(&negative, "120"), Some(false));
     assert_eq!(variant_agrees(&negative, "-140"), Some(false));
+    // An int spelling's exact tie rounds half to even: `round(250, -2)` is
+    // `200`.
+    assert_eq!(variant_agrees(&negative, "250"), Some(false));
+    assert_eq!(variant_agrees(&negative, "1200"), Some(true));
+    // A count past the value's leading digit rounds to zero.
+    let past_leading = CallVariant::Round {
+        param: "x".to_string(),
+        old: -2,
+        new: -3,
+    };
+    assert_eq!(variant_agrees(&past_leading, "60"), Some(false));
+    assert_eq!(variant_agrees(&past_leading, "600"), Some(false));
+    assert_eq!(variant_agrees(&past_leading, "20"), Some(true));
+    let coarser = CallVariant::Round {
+        param: "x".to_string(),
+        old: -3,
+        new: -4,
+    };
+    assert_eq!(variant_agrees(&coarser, "60"), Some(true));
+    assert_eq!(variant_agrees(&coarser, "600"), Some(false));
+    // An int spelling's exact tie with nothing kept rounds to zero, to even.
+    assert_eq!(variant_agrees(&coarser, "500"), Some(true));
+    assert_eq!(variant_agrees(&coarser, "1500"), Some(false));
+    let to_zero = CallVariant::Round {
+        param: "x".to_string(),
+        old: 0,
+        new: -1,
+    };
+    assert_eq!(variant_agrees(&to_zero, "0.6"), Some(false));
     // Beyond the read's bounds the rule refuses rather than claim agreement.
     assert_eq!(variant_agrees(&round, "123456789012345678901"), None);
+    // A spelling of more than 48 digits is not read, leading zeros counted.
+    assert_eq!(
+        variant_agrees(&round, &format!("0.{}1", "0".repeat(47))),
+        None
+    );
+    assert_eq!(
+        variant_agrees(&round, &format!("0.{}1", "0".repeat(46))),
+        Some(true)
+    );
     let unreachable = CallVariant::Round {
         param: "x".to_string(),
         old: 21,
@@ -361,6 +438,13 @@ fn an_exact_tie_rounds_to_the_even_digit() {
     assert_eq!(round_half_even(&[1, 2, 5], 3, 2), (vec![1, 2], -2));
     assert_eq!(round_half_even(&[3, 7, 5], 3, 2), (vec![3, 8], -2));
     assert_eq!(round_half_even(&[2, 5, 1], 2, 0), (vec![3], 0));
+    // A count past the leading digit rounds to zero, and so does an exact
+    // tie with nothing kept (`round(500, -3)`); with a digit kept, the tie
+    // rounds up (`round(1500, -3)` is `2000`).
+    assert_eq!(round_half_even(&[6, 0], 0, -3), (vec![0], 0));
+    assert_eq!(round_half_even(&[6], 1, -1), (vec![0], 0));
+    assert_eq!(round_half_even(&[5, 0, 0], 0, -3), (vec![0], 0));
+    assert_eq!(round_half_even(&[1, 5, 0, 0], 0, -3), (vec![2], 3));
 }
 
 #[test]
@@ -617,8 +701,15 @@ fn sorting_agrees_only_without_two_different_elements() {
     assert_eq!(elements_agree(&list(&["\"a\"", "'a'"])), Some(true));
     assert_eq!(elements_agree(&list(&["4", "1"])), Some(false));
     assert_eq!(elements_agree(&list(&["\"a\"", "\"b\""])), Some(false));
-    // Two strings with one decoded text are one element, escapes included.
+    // Two strings whose bodies are spelled alike are one element, whatever
+    // quotes hold them. An escape is compared as spelled, not decoded: two
+    // spellings of one text (`"a\n"` and `"a\x0a"`) read as two elements,
+    // which keeps the finding rather than downgrading it.
     assert_eq!(elements_agree(&list(&["\"a\\n\"", "'a\\n'"])), Some(true));
+    assert_eq!(
+        elements_agree(&list(&["\"a\\n\"", "\"a\\x0a\""])),
+        Some(false)
+    );
 }
 
 #[test]
