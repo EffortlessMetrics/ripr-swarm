@@ -7514,6 +7514,12 @@ fn file_module_case() {
                 "parent may bring in macros through a cfg_attr macro_use",
             ),
             (
+                format!("#[r#macro_use]\nmod macros;\n{LIB}"),
+                "src/tests.rs",
+                false,
+                "a raw macro_use spelling is the same attribute",
+            ),
+            (
                 format!("mod sibling {{ use crate::helpers::*; }}\n{LIB}"),
                 "src/tests.rs",
                 true,

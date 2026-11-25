@@ -63,6 +63,15 @@ pub(crate) fn enclosing_module_files(
             // file instead, and is followed like any other.
             return Some(enclosing);
         }
+        // A candidate that declares the child with a `#[path]` (or a
+        // `cfg_attr` that may add one) may load this very file as well, so
+        // a plain declarer elsewhere does not settle the parent.
+        if candidates
+            .iter()
+            .any(|(_, tree)| moves_module_at_top_level(tree, &child))
+        {
+            return None;
+        }
         let mut declaring: Vec<(PathBuf, ast::SourceFile)> = candidates
             .into_iter()
             .filter(|(_, tree)| declares_at_top_level(tree, &child))
@@ -201,6 +210,21 @@ fn declares_at_top_level(tree: &ast::SourceFile, name: &str) -> bool {
     })
 }
 
+/// Whether the file's own top level declares an out-of-line `mod name;`
+/// whose attributes may move it to another path.
+fn moves_module_at_top_level(tree: &ast::SourceFile, name: &str) -> bool {
+    tree.items().any(|item| {
+        let ast::Item::Module(module) = item else {
+            return false;
+        };
+        module.item_list().is_none()
+            && module
+                .name()
+                .is_some_and(|ident| ident.text().trim_start_matches("r#") == name)
+            && module.attrs().any(|attr| may_move_module(&attr))
+    })
+}
+
 /// A `#[path]` attribute, or a `cfg_attr` that spells `path` among the
 /// attributes it may add. Other attributes (`cfg`, `doc`, lints) leave
 /// default resolution in place.
@@ -214,13 +238,16 @@ fn may_move_module(attr: &ast::Attr) -> bool {
 
 /// The leading path of an attribute (`cfg` for `#[cfg(test)]`), read from
 /// its text: `ast::Attr::path` has no path for the dedicated `cfg` and
-/// `cfg_attr` meta nodes. Empty when the attribute spells none.
+/// `cfg_attr` meta nodes. Empty when the attribute spells none. A raw
+/// spelling (`#[r#macro_use]`) names the same attribute.
 pub(super) fn attribute_name(attr: &ast::Attr) -> String {
     let text = attr
         .meta()
         .map(|meta| meta.syntax().text().to_string())
         .unwrap_or_default();
-    text.trim_start()
+    let text = text.trim_start();
+    text.strip_prefix("r#")
+        .unwrap_or(text)
         .chars()
         .take_while(|c| c.is_alphanumeric() || matches!(c, '_' | ':'))
         .collect()
@@ -323,6 +350,60 @@ mod tests {
             chain(&[("src/lib.rs", lib), ("src/tests.rs", "")], "src/tests.rs"),
             Some(vec![lib.to_string()])
         );
+    }
+
+    // `#[path = "tests.rs"] mod tests;` in `src/lib.rs` may load the same
+    // `src/tests.rs` that `src/main.rs` declares plainly, so `src/main.rs`
+    // alone does not settle the parent; a single plain declarer still does.
+    #[test]
+    fn a_path_moved_declaration_beside_a_plain_declarer_ends_the_chain() {
+        let main = "mod tests;\n";
+        for moved in [
+            "#[path = \"tests.rs\"]\nmod tests;\n",
+            "#[cfg_attr(test, path = \"tests.rs\")]\nmod tests;\n",
+        ] {
+            assert_eq!(
+                chain(
+                    &[
+                        ("src/lib.rs", moved),
+                        ("src/main.rs", main),
+                        ("src/tests.rs", "")
+                    ],
+                    "src/tests.rs"
+                ),
+                None,
+                "{moved}"
+            );
+        }
+        assert_eq!(
+            chain(
+                &[
+                    ("src/lib.rs", "pub fn f() {}\n"),
+                    ("src/main.rs", main),
+                    ("src/tests.rs", "")
+                ],
+                "src/tests.rs"
+            ),
+            Some(vec![main.to_string()])
+        );
+    }
+
+    #[test]
+    fn a_raw_attribute_spelling_names_the_same_attribute() {
+        let tree = ast::SourceFile::parse(
+            "#[r#macro_use]\nmod a;\n#[macro_use]\nmod b;\n#[r#path = \"x.rs\"]\nmod c;\n",
+            ra_ap_syntax::Edition::CURRENT,
+        )
+        .tree();
+        let names: Vec<String> = tree
+            .items()
+            .filter_map(|item| match item {
+                ast::Item::Module(module) => module.attrs().next(),
+                _ => None,
+            })
+            .map(|attr| attribute_name(&attr))
+            .collect();
+        assert_eq!(names, ["macro_use", "macro_use", "path"]);
     }
 
     #[test]
