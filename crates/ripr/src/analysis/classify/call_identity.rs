@@ -3829,6 +3829,36 @@ fn renamed_path_places_another_function(
     })
 }
 
+/// Whether the package manifest confirms that `root`, which the module
+/// chain's path shape already admits, is a Cargo target root: `src/lib.rs`
+/// or `src/main.rs` as a default target root, a binary target root, or a
+/// file directly under `tests/`, `benches/` or `examples/` of a package
+/// directory. A synthetic index without manifest authority keeps the path
+/// shape alone, as the other crate-identity checks do (#7097).
+fn manifest_confirms_crate_root(index: &RustIndex, root: &Path) -> bool {
+    let members = &index.member_crates;
+    if !members.has_manifest_root() {
+        return true;
+    }
+    let in_src = root
+        .parent()
+        .and_then(Path::file_name)
+        .is_some_and(|name| name == "src");
+    if in_src && members.is_default_target_root(root) {
+        return true;
+    }
+    members.is_binary_target_root(root)
+        || root
+            .parent()
+            .filter(|directory| {
+                directory
+                    .file_name()
+                    .is_some_and(|name| name == "tests" || name == "benches" || name == "examples")
+            })
+            .and_then(Path::parent)
+            .is_some_and(|package| members.is_package_directory(package))
+}
+
 /// Whether any indexed file defines a `#[macro_export]` macro under a std
 /// macro's name. Such a macro sits at its crate root, where a `super` glob
 /// can import it from a file the module chain does not read, so the chain
@@ -3886,8 +3916,10 @@ fn bare_name_renamed_in_nested_blocks(
         return false;
     };
     let tree_of = |path: &std::path::Path| index.source_syntax.get(index, path)?.tree();
-    let ancestors = crate::analysis::syntax::enclosing_module_files(&test.file, tree_of)
-        .filter(|_| !crate_may_export_a_std_macro(index));
+    let ancestors = crate::analysis::syntax::enclosing_module_files(&test.file, tree_of, |root| {
+        manifest_confirms_crate_root(index, root)
+    })
+    .filter(|_| !crate_may_export_a_std_macro(index));
     let Some(paths) = index
         .source_syntax
         .get(index, &test.file)

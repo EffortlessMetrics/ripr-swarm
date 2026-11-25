@@ -24,10 +24,14 @@ const MAX_ENCLOSING_FILES: usize = 8;
 /// declares as a module is not one);
 /// empty for a crate root itself, and `None`
 /// when the chain does not reach one. `tree_of` returns the parsed tree of an
-/// indexed file, `None` for any other path.
+/// indexed file, `None` for any other path. `confirms_root` must also accept
+/// a root the path shape admits, so the package manifest, not a file or
+/// directory name alone, settles target identity (`tests/src/lib.rs` beside
+/// `tests/it.rs` is a module file).
 pub(crate) fn enclosing_module_files(
     file: &Path,
     mut tree_of: impl FnMut(&Path) -> Option<ast::SourceFile>,
+    confirms_root: impl Fn(&Path) -> bool,
 ) -> Option<Vec<ast::SourceFile>> {
     let mut enclosing = Vec::new();
     let mut current = file.to_path_buf();
@@ -46,6 +50,9 @@ pub(crate) fn enclosing_module_files(
                 .iter()
                 .any(|(_, tree)| names_module_at_top_level(tree, &child))
         {
+            if !confirms_root(&current) {
+                return None;
+            }
             // A crate root: every step below it is confirmed. A `lib.rs`
             // that a neighbouring file declares as `mod lib;` is a module
             // file instead, and is followed like any other.
@@ -58,7 +65,7 @@ pub(crate) fn enclosing_module_files(
         if declaring.is_empty() && is_cargo_target_root(&current) {
             // `tests/it.rs`, `benches/b.rs`, `examples/e.rs` or
             // `src/bin/tool.rs`: Cargo compiles it as its own crate root.
-            return Some(enclosing);
+            return confirms_root(&current).then_some(enclosing);
         }
         if declaring.len() != 1 {
             break;
@@ -191,6 +198,14 @@ mod tests {
     use std::collections::BTreeMap;
 
     fn chain(files: &[(&str, &str)], start: &str) -> Option<Vec<String>> {
+        chain_confirmed(files, start, |_| true)
+    }
+
+    fn chain_confirmed(
+        files: &[(&str, &str)],
+        start: &str,
+        confirms_root: impl Fn(&Path) -> bool,
+    ) -> Option<Vec<String>> {
         let trees: BTreeMap<PathBuf, ast::SourceFile> = files
             .iter()
             .map(|(path, text)| {
@@ -198,7 +213,12 @@ mod tests {
                 (PathBuf::from(path), parse.tree())
             })
             .collect();
-        enclosing_module_files(Path::new(start), |path| trees.get(path).cloned()).map(|files| {
+        enclosing_module_files(
+            Path::new(start),
+            |path| trees.get(path).cloned(),
+            confirms_root,
+        )
+        .map(|files| {
             files
                 .iter()
                 .map(|tree| tree.syntax().text().to_string())
@@ -372,6 +392,24 @@ mod tests {
             ),
             None
         );
+        // A root the manifest does not confirm is not one: `tests/src/lib.rs`
+        // declared from an inline `mod src { mod lib; }` in `tests/it.rs`
+        // has the shape of a crate root but no package of its own.
+        let inline_src = [
+            ("tests/it.rs", "mod src { mod lib; }\n"),
+            ("tests/src/lib.rs", "mod tests;\n"),
+            ("tests/src/lib/tests.rs", ""),
+        ];
+        let package_roots = |path: &Path| path == Path::new("tests/it.rs");
+        assert_eq!(
+            chain_confirmed(&inline_src, "tests/src/lib/tests.rs", package_roots),
+            None
+        );
+        assert_eq!(
+            chain_confirmed(&[], "tests/it.rs", package_roots),
+            Some(Vec::new())
+        );
+        assert_eq!(chain_confirmed(&[], "src/lib.rs", package_roots), None);
         // A crate root has no enclosing files, and its chain is known.
         assert_eq!(chain(&[], "src/lib.rs"), Some(Vec::new()));
         assert_eq!(chain(&[], "tests/it.rs"), Some(Vec::new()));

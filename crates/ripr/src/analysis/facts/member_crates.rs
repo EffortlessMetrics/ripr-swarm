@@ -375,6 +375,21 @@ impl MemberCrates {
         self.default_target_root_with_flags(crate_root, &["autolib", "autobins"])
     }
 
+    /// Whether `directory` (root-relative) holds the manifest of the package
+    /// nearest it, as the directory above an auto-discovered `tests/`,
+    /// `benches/` or `examples/` target must. A `tests/src/` module
+    /// directory has none of its own. Without manifest authority, or with an
+    /// unreadable or virtual manifest, the answer is no.
+    pub(crate) fn is_package_directory(&self, directory: &Path) -> bool {
+        let Some(root) = &self.root else {
+            return false;
+        };
+        let root = lexical(root);
+        let directory = lexical(&root.join(directory));
+        nearest_package(&root, &directory)
+            .is_some_and(|(package, _)| package.directory == directory)
+    }
+
     /// Whether `crate_root`, a root-relative file, is the library root its
     /// package's manifest names through `[lib] path` (RIPR-SPEC-0171 example
     /// 5). Default `src/lib.rs` roots stay with
