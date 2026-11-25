@@ -18,7 +18,7 @@ use super::ra::LineIndex;
 use crate::analysis::facts::MacroGeneratedOrigin;
 use ra_ap_syntax::{
     AstNode, SyntaxNode, TextRange, TextSize,
-    ast::{self, HasGenericArgs, HasGenericParams, HasModuleItem, HasName},
+    ast::{self, HasAttrs, HasGenericArgs, HasGenericParams, HasModuleItem, HasName},
 };
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::sync::Arc;
@@ -505,7 +505,36 @@ fn file_has_macro_use(tree: &ast::SourceFile) -> bool {
     tree.syntax()
         .descendants()
         .filter_map(ast::Attr::cast)
-        .any(|attr| super::module_ancestors::attribute_name(&attr) == "macro_use")
+        .any(|attr| attribute_may_be(&attr, "macro_use"))
+}
+
+/// Whether the attribute is `name`, or a `cfg_attr` that spells `name`
+/// among the attributes it may add (`#[cfg_attr(test, macro_use)]`).
+fn attribute_may_be(attr: &ast::Attr, name: &str) -> bool {
+    match super::module_ancestors::attribute_name(attr).as_str() {
+        "cfg_attr" => attr.syntax().text().to_string().contains(name),
+        attribute => attribute == name,
+    }
+}
+
+/// Whether the file defines a `#[macro_export]` macro under the name of a
+/// std macro the bare-name exemption trusts. Such a macro is placed at the
+/// crate root, where a `use super::*;` glob can bring it into a test file
+/// from a file the module chain never reads.
+pub(crate) fn file_exports_a_std_macro(tree: &ast::SourceFile) -> bool {
+    tree.syntax()
+        .descendants()
+        .filter_map(ast::MacroRules::cast)
+        .filter(|rules| {
+            rules.name().is_some_and(|name| {
+                NAME_FREE_STD_MACROS.contains(&name.text().trim_start_matches("r#"))
+            })
+        })
+        .any(|rules| {
+            rules
+                .attrs()
+                .any(|attr| attribute_may_be(&attr, "macro_export"))
+        })
 }
 
 /// Whether any `use` leaf in the file binds `name`, by its own leaf or a

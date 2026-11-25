@@ -3829,6 +3829,21 @@ fn renamed_path_places_another_function(
     })
 }
 
+/// Whether any indexed file defines a `#[macro_export]` macro under a std
+/// macro's name. Such a macro sits at its crate root, where a `super` glob
+/// can import it from a file the module chain does not read, so the chain
+/// is not trusted to settle which macro a test invokes.
+fn crate_may_export_a_std_macro(index: &RustIndex) -> bool {
+    index.files().iter().any(|(path, facts)| {
+        facts.source.contains("macro_export")
+            && index
+                .source_syntax
+                .get(index, path)
+                .and_then(|snapshot| snapshot.tree())
+                .is_none_or(|tree| crate::analysis::syntax::file_exports_a_std_macro(&tree))
+    })
+}
+
 /// Whether every bare mention of the owner's name in `test` sits inside a
 /// nested block whose own renaming `use` binds that name to another
 /// function of the owner's package (`{ use super::other as discount;
@@ -3871,7 +3886,8 @@ fn bare_name_renamed_in_nested_blocks(
         return false;
     };
     let tree_of = |path: &std::path::Path| index.source_syntax.get(index, path)?.tree();
-    let ancestors = crate::analysis::syntax::enclosing_module_files(&test.file, tree_of);
+    let ancestors = crate::analysis::syntax::enclosing_module_files(&test.file, tree_of)
+        .filter(|_| !crate_may_export_a_std_macro(index));
     let Some(paths) = index
         .source_syntax
         .get(index, &test.file)
@@ -7432,6 +7448,12 @@ fn file_module_case() {
                 "parent brings in macros through macro_use",
             ),
             (
+                format!("#[cfg_attr(test, macro_use)]\nmod macros;\n{LIB}"),
+                "src/tests.rs",
+                false,
+                "parent may bring in macros through a cfg_attr macro_use",
+            ),
+            (
                 format!("mod sibling {{ use crate::helpers::*; }}\n{LIB}"),
                 "src/tests.rs",
                 true,
@@ -7456,6 +7478,36 @@ fn file_module_case() {
                 test_calls_only_a_renamed_other_function(&files, owner, test),
                 refused,
                 "{label}"
+            );
+        }
+        // A `#[macro_export]` macro named like a std macro sits at the crate
+        // root, where `super::*` can import it from a file the chain does
+        // not read; an export of another name changes nothing.
+        for (macros, refused) in [
+            (
+                "#[macro_export]\nmacro_rules! assert_eq { ($a:expr, $b:expr) => {}; }\n",
+                false,
+            ),
+            (
+                "#[cfg_attr(test, macro_export)]\nmacro_rules! assert_eq { ($a:expr, $b:expr) => {}; }\n",
+                false,
+            ),
+            (
+                "#[macro_export]\nmacro_rules! check { ($a:expr) => {}; }\n",
+                true,
+            ),
+        ] {
+            let lib = format!("mod macros;\n{LIB}");
+            let files = index(&[
+                ("src/lib.rs", lib.as_str()),
+                ("src/macros.rs", macros),
+                ("src/tests.rs", TESTS),
+            ]);
+            let (owner, test) = renamed_other_parts(&files, "file_module_case")?;
+            assert_eq!(
+                bare_name_renamed_in_nested_blocks(&files, owner, test),
+                refused,
+                "{macros}"
             );
         }
         // An unknown module chain (here a `#[path]` declaration) may hide a

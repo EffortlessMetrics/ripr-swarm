@@ -19,7 +19,9 @@ const MAX_ENCLOSING_FILES: usize = 8;
 
 /// The files that enclose `file`, nearest first, each declaring the next
 /// one's module at its own top level with a plain `mod name;`, up to a crate
-/// root (`lib.rs` or `main.rs`); empty for a crate root itself, and `None`
+/// root (`lib.rs`, `main.rs`, or a Cargo target file such as `tests/it.rs`;
+/// a `lib.rs` or `main.rs` another file declares as a module is not one);
+/// empty for a crate root itself, and `None`
 /// when the chain does not reach one. `tree_of` returns the parsed tree of an
 /// indexed file, `None` for any other path.
 pub(crate) fn enclosing_module_files(
@@ -29,17 +31,34 @@ pub(crate) fn enclosing_module_files(
     let mut enclosing = Vec::new();
     let mut current = file.to_path_buf();
     while enclosing.len() < MAX_ENCLOSING_FILES {
-        let Some(child) = out_of_line_module_name(&current) else {
-            // A crate root: every step below it is confirmed.
-            return Some(enclosing);
-        };
-        let mut declaring: Vec<(PathBuf, ast::SourceFile)> = module_parent_candidates(&current)
+        let child = module_name(&current)?;
+        let candidates: Vec<(PathBuf, ast::SourceFile)> = module_parent_candidates(&current)
             .into_iter()
+            .filter(|candidate| *candidate != current)
             .filter_map(|candidate| {
                 let tree = tree_of(&candidate)?;
-                declares_at_top_level(&tree, &child).then_some((candidate, tree))
+                Some((candidate, tree))
             })
             .collect();
+        if is_crate_root_name(&current)
+            && !candidates
+                .iter()
+                .any(|(_, tree)| names_module_at_top_level(tree, &child))
+        {
+            // A crate root: every step below it is confirmed. A `lib.rs`
+            // that a neighbouring file declares as `mod lib;` is a module
+            // file instead, and is followed like any other.
+            return Some(enclosing);
+        }
+        let mut declaring: Vec<(PathBuf, ast::SourceFile)> = candidates
+            .into_iter()
+            .filter(|(_, tree)| declares_at_top_level(tree, &child))
+            .collect();
+        if declaring.is_empty() && is_cargo_target_root(&current) {
+            // `tests/it.rs`, `benches/b.rs`, `examples/e.rs` or
+            // `src/bin/tool.rs`: Cargo compiles it as its own crate root.
+            return Some(enclosing);
+        }
         if declaring.len() != 1 {
             break;
         }
@@ -56,19 +75,46 @@ pub(crate) fn enclosing_module_files(
     None
 }
 
+/// Whether Cargo's default target discovery compiles `file` as a crate root:
+/// a file directly under a `tests`, `benches`, `examples` or `bin` directory.
+/// Asked only when no file declares it as a module.
+fn is_cargo_target_root(file: &Path) -> bool {
+    file.parent()
+        .and_then(|directory| directory.file_name())
+        .and_then(|name| name.to_str())
+        .is_some_and(|name| matches!(name, "tests" | "benches" | "examples" | "bin"))
+}
+
+/// Whether the file is named as a crate root (`lib.rs` or `main.rs`).
+fn is_crate_root_name(file: &Path) -> bool {
+    file.file_name()
+        .and_then(|name| name.to_str())
+        .is_some_and(|name| matches!(name, "lib.rs" | "main.rs"))
+}
+
 /// The module name a file holds when another file declares it: the stem, or
-/// the directory name of a `mod.rs`. `None` for a crate root.
-fn out_of_line_module_name(file: &Path) -> Option<String> {
+/// the directory name of a `mod.rs`.
+fn module_name(file: &Path) -> Option<String> {
     let file_name = file.file_name()?.to_str()?;
-    if file_name == "lib.rs" || file_name == "main.rs" {
-        return None;
-    }
     let stem = if file_name == "mod.rs" {
         file.parent()?.file_name()?
     } else {
         file.file_stem()?
     };
     stem.to_str().map(str::to_string)
+}
+
+/// Whether the file's own top level declares a module of that name in any
+/// form: out of line, inline, or moved by an attribute.
+fn names_module_at_top_level(tree: &ast::SourceFile, name: &str) -> bool {
+    tree.items().any(|item| {
+        let ast::Item::Module(module) = item else {
+            return false;
+        };
+        module
+            .name()
+            .is_some_and(|ident| ident.text().trim_start_matches("r#") == name)
+    })
 }
 
 /// Whether the file's own top level declares `mod name;` with no attribute
@@ -130,6 +176,10 @@ mod tests {
                 .map(|tree| tree.syntax().text().to_string())
                 .collect()
         })
+    }
+
+    fn root_of_a() -> &'static str {
+        "mod a;\n"
     }
 
     #[test]
@@ -237,7 +287,40 @@ mod tests {
             ),
             None
         );
+        // A nested `lib.rs` declared as `mod lib;` is a module file, not a
+        // crate root, and is followed to the file that declares it.
+        let parent = "mod lib;\n";
+        assert_eq!(
+            chain(
+                &[
+                    ("src/lib.rs", root_of_a()),
+                    ("src/a.rs", parent),
+                    ("src/a/lib.rs", "mod tests;\n")
+                ],
+                "src/a/lib.rs"
+            ),
+            Some(vec![parent.to_string(), root_of_a().to_string()])
+        );
+        assert_eq!(
+            chain(
+                &[("src/a.rs", "#[path = \"x.rs\"]\nmod lib;\n")],
+                "src/a/lib.rs"
+            ),
+            None
+        );
         // A crate root has no enclosing files, and its chain is known.
         assert_eq!(chain(&[], "src/lib.rs"), Some(Vec::new()));
+        assert_eq!(chain(&[], "tests/it.rs"), Some(Vec::new()));
+        assert_eq!(chain(&[], "src/bin/tool.rs"), Some(Vec::new()));
+        // A module directory named `tests` is followed to its declarer.
+        let root = "mod tests;\n";
+        let tests_mod = "mod helpers;\n";
+        assert_eq!(
+            chain(
+                &[("src/lib.rs", root), ("src/tests/mod.rs", tests_mod)],
+                "src/tests/helpers.rs"
+            ),
+            Some(vec![tests_mod.to_string(), root.to_string()])
+        );
     }
 }
