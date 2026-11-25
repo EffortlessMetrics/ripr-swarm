@@ -1000,9 +1000,11 @@ fn nested_or_reading(alternatives: &[&str], decls: &LocalDecls) -> Reading {
         .collect::<Vec<_>>();
     if weaker.is_empty() {
         // Every alternative pins, so the pattern accepts several values and
-        // pins none of them (#16286); an enclosing `Err(..)` makes it a
-        // broad error.
-        Reading::PinsNothing { err: false }
+        // pins none of them (#16286). Alternatives that are all `Err(..)`
+        // pins (`e @ (Err(1) | Err(2))`) stay a broad error; an enclosing
+        // constructor still decides its own side.
+        let err = sides.len() == alternatives.len() && sides.iter().all(|side| *side == Side::Err);
+        Reading::PinsNothing { err }
     } else if let [Reading::SideOnly(side), rest @ ..] = weaker.as_slice()
         && rest
             .iter()
@@ -1405,6 +1407,23 @@ mod tests {
             (
                 "assert!(matches!(check(20), Err(E::A | E::B)))",
                 BroadError,
+                Weak,
+            ),
+            // A grouped or-pattern keeps its error side through a binding;
+            // an enclosing `Ok` decides its own side.
+            (
+                "assert!(matches!(check(20), e @ (Err(1) | Err(2)) if ready))",
+                BroadError,
+                Weak,
+            ),
+            (
+                "assert!(matches!(check(20), r @ (Ok(1) | Err(2)) if ready))",
+                RelationalCheck,
+                Weak,
+            ),
+            (
+                "assert!(matches!(nested(), Ok(Err(1) | Err(2))))",
+                RelationalCheck,
                 Weak,
             ),
         ];

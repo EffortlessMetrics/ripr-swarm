@@ -27,11 +27,16 @@ impl Drop for Fixture {
 /// `tests/pin.rs` has `body`.
 fn class_with(body: &str) -> Result<ExposureClass, String> {
     static SEQUENCE: AtomicU64 = AtomicU64::new(0);
-    let fixture = Fixture(std::env::temp_dir().join(format!(
+    let root = std::env::temp_dir().join(format!(
         "ripr-matches-or-pattern-{}-{}",
         std::process::id(),
         SEQUENCE.fetch_add(1, Ordering::Relaxed)
-    )));
+    ));
+    // `create_dir` refuses a path that already exists, a symlink included,
+    // so the fixture never writes through a directory it did not create.
+    std::fs::create_dir(&root)
+        .map_err(|error| format!("create fixture root {}: {error}", root.display()))?;
+    let fixture = Fixture(root);
     let test = format!("#[test]\nfn discount_boundary() {{\n    {body}\n}}\n");
     for (relative, text) in [
         ("Cargo.toml", MANIFEST),
