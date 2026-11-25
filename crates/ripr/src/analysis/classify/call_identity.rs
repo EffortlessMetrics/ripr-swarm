@@ -3833,7 +3833,7 @@ fn renamed_path_places_another_function(
 /// chain's path shape already admits, is a Cargo target root: `src/lib.rs`
 /// or `src/main.rs` as a default target root, a binary target root, or a
 /// file directly under `tests/`, `benches/` or `examples/` that automatic
-/// target discovery alone makes a root. A synthetic index without manifest authority keeps the path
+/// target discovery alone makes a root and no sibling root mounts. A synthetic index without manifest authority keeps the path
 /// shape alone, as the other crate-identity checks do (#7097).
 fn manifest_confirms_crate_root(index: &RustIndex, root: &Path) -> bool {
     let members = &index.member_crates;
@@ -3847,7 +3847,30 @@ fn manifest_confirms_crate_root(index: &RustIndex, root: &Path) -> bool {
     if in_src && members.is_default_target_root(root) {
         return true;
     }
-    members.is_binary_target_root(root) || members.auto_discovers_target_root(root)
+    members.is_binary_target_root(root)
+        || (members.auto_discovers_target_root(root) && !sibling_mounts_as_module(index, root))
+}
+
+/// Whether another indexed file in the root's directory may declare it as a
+/// module: every file directly under `tests/` is a root of its own, and
+/// `mod it;` in `tests/all.rs` mounts `tests/it.rs` beneath it, with any
+/// textual macro `tests/all.rs` defines. An unparsed sibling that spells the
+/// name counts too.
+fn sibling_mounts_as_module(index: &RustIndex, root: &Path) -> bool {
+    let (Some(directory), Some(stem)) = (root.parent(), root.file_stem().and_then(|s| s.to_str()))
+    else {
+        return true;
+    };
+    index.files().iter().any(|(path, facts)| {
+        path != root
+            && path.parent() == Some(directory)
+            && facts.source.contains(stem.trim_start_matches("r#"))
+            && index
+                .source_syntax
+                .get(index, path)
+                .and_then(|snapshot| snapshot.tree())
+                .is_none_or(|tree| crate::analysis::syntax::declares_module_named(&tree, stem))
+    })
 }
 
 /// Whether any indexed file defines a `#[macro_export]` macro under a std

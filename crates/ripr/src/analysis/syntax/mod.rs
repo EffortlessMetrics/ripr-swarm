@@ -26,7 +26,7 @@ pub(crate) mod run_memo;
 mod source_snapshot;
 pub(crate) use constant_return::returns_only_a_literal;
 pub(crate) use fn_cfg_gates::unestablished_cfg_gates_of_fn;
-pub(crate) use module_ancestors::enclosing_module_files;
+pub(crate) use module_ancestors::{declares_module_named, enclosing_module_files};
 pub(crate) use mut_parameter::mut_parameter_unwritten_at;
 #[cfg(test)]
 pub(crate) use owner_pin::COMPARISON_NESTED_MACROS;

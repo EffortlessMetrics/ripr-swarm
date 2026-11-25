@@ -139,6 +139,20 @@ fn module_name(file: &Path) -> Option<String> {
     stem.to_str().map(str::to_string)
 }
 
+/// Whether the file declares a module of that name anywhere, in any form:
+/// a sibling target root such as `tests/all.rs` with `mod it;` mounts
+/// `tests/it.rs` as its module, so that file is not only its own root.
+pub(crate) fn declares_module_named(tree: &ast::SourceFile, name: &str) -> bool {
+    tree.syntax()
+        .descendants()
+        .filter_map(ast::Module::cast)
+        .any(|module| {
+            module
+                .name()
+                .is_some_and(|ident| ident.text().trim_start_matches("r#") == name)
+        })
+}
+
 /// Whether the file's own top level declares a module of that name in any
 /// form: out of line, inline, or moved by an attribute.
 fn names_module_at_top_level(tree: &ast::SourceFile, name: &str) -> bool {
@@ -410,6 +424,14 @@ mod tests {
             Some(Vec::new())
         );
         assert_eq!(chain_confirmed(&[], "src/lib.rs", package_roots), None);
+        // A sibling target root that mounts the file as a module is seen.
+        let all = ast::SourceFile::parse("mod it;\n", ra_ap_syntax::Edition::CURRENT).tree();
+        assert!(declares_module_named(&all, "it"));
+        let nested =
+            ast::SourceFile::parse("mod a { mod r#it {} }\n", ra_ap_syntax::Edition::CURRENT)
+                .tree();
+        assert!(declares_module_named(&nested, "it"));
+        assert!(!declares_module_named(&all, "cases"));
         // A crate root has no enclosing files, and its chain is known.
         assert_eq!(chain(&[], "src/lib.rs"), Some(Vec::new()));
         assert_eq!(chain(&[], "tests/it.rs"), Some(Vec::new()));
