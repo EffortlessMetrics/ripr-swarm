@@ -77,36 +77,47 @@ pub(crate) fn enclosing_module_files(
 }
 
 /// Whether Cargo's default target discovery compiles `file` as a crate root:
-/// a file directly under a `tests`, `benches`, `examples` or `bin` directory.
-/// Asked only when no file declares it as a module.
+/// a file directly under `tests`, `benches` or `examples` with no `src`
+/// directory above it, or directly under `src/bin`. Asked only when no file
+/// declares it as a module.
 fn is_cargo_target_root(file: &Path) -> bool {
-    file.parent()
-        .and_then(|directory| directory.file_name())
-        .and_then(|name| name.to_str())
-        .is_some_and(|name| matches!(name, "tests" | "benches" | "examples" | "bin"))
+    let names = path_names(file);
+    match names.as_slice() {
+        [.., directory, _] if matches!(directory.as_str(), "tests" | "benches" | "examples") => {
+            src_components(&names) == 0
+        }
+        [.., src, bin, _] => src == "src" && bin == "bin" && src_components(&names) == 1,
+        _ => false,
+    }
 }
 
 /// Whether the file sits where Cargo's default target discovery places a
-/// crate root: `src/lib.rs`, `src/main.rs` or `src/bin/<name>/main.rs`. A
-/// `lib.rs` elsewhere may be a module file declared from an inline module
+/// crate root: `src/lib.rs`, `src/main.rs` or `src/bin/<name>/main.rs`, with
+/// no other `src` directory on the path. A `lib.rs` elsewhere (`src/a/lib.rs`
+/// or `src/src/lib.rs`) may be a module file declared from an inline module
 /// (`mod a { mod lib; }`), so its file name alone does not settle it.
 fn is_crate_root_name(file: &Path) -> bool {
-    let name_of = |path: Option<&Path>| {
-        path.and_then(|path| path.file_name())
-            .and_then(|name| name.to_str())
-            .map(str::to_string)
-    };
-    let file_name = name_of(Some(file));
-    let directory = file.parent();
-    let directory_name = name_of(directory);
-    let grandparent_name = name_of(directory.and_then(Path::parent));
-    match file_name.as_deref() {
-        Some("lib.rs") => directory_name.as_deref() == Some("src"),
-        Some("main.rs") => {
-            directory_name.as_deref() == Some("src") || grandparent_name.as_deref() == Some("bin")
-        }
+    let names = path_names(file);
+    let placed = match names.as_slice() {
+        [.., src, file] => src == "src" && matches!(file.as_str(), "lib.rs" | "main.rs"),
         _ => false,
-    }
+    } || matches!(
+        names.as_slice(),
+        [.., src, bin, _, main] if src == "src" && bin == "bin" && main == "main.rs"
+    );
+    placed && src_components(&names) == 1
+}
+
+/// The path's components as text, lossily.
+fn path_names(file: &Path) -> Vec<String> {
+    file.components()
+        .map(|component| component.as_os_str().to_string_lossy().into_owned())
+        .collect()
+}
+
+/// How many components of the path are named `src`.
+fn src_components(names: &[String]) -> usize {
+    names.iter().filter(|name| *name == "src").count()
 }
 
 /// The module name a file holds when another file declares it: the stem, or
@@ -335,6 +346,29 @@ mod tests {
                     ("src/a/lib/tests.rs", "")
                 ],
                 "src/a/lib/tests.rs"
+            ),
+            None
+        );
+        // Nor is a `lib.rs` under a nested `src` directory, or an
+        // undeclared file under a `tests` module directory inside `src`.
+        assert_eq!(
+            chain(
+                &[
+                    ("src/lib.rs", "mod src { mod lib; }\n"),
+                    ("src/src/lib.rs", "mod tests;\n"),
+                    ("src/src/lib/tests.rs", "")
+                ],
+                "src/src/lib/tests.rs"
+            ),
+            None
+        );
+        assert_eq!(
+            chain(
+                &[
+                    ("src/lib.rs", "mod tests { mod x; }\n"),
+                    ("src/tests/x.rs", "")
+                ],
+                "src/tests/x.rs"
             ),
             None
         );
