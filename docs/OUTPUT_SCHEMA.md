@@ -324,8 +324,10 @@ Guarantees and limits, stated precisely:
 - No finding is dropped; no verdict changes. Finding `id`,
   `classification`, `severity`, `confidence` and `probe` move verbatim, as
   does every `ripr` stage `state` and `confidence`; a `ripr` stage `summary`
-  may be a legend code. Identity/verdict fields are exempt from alias
-  removal even when values coincide.
+  may be a legend code. Those identity/verdict fields are never dropped as
+  aliases even when values coincide; the one identity alias the terse form
+  may omit is `canonical_gap_id`, which only restates `canonical_gap.id`
+  (restored as below).
 - Expanding every code through `evidence_legend` reconstructs the exact
   original strings in the original order, so the prose is recoverable from
   the terse document alone. Restore an omitted `suggested_next_action` from
@@ -4470,8 +4472,12 @@ rows in Evidence-block order (`reach`, `infect`, `propagate`, `observe`,
   row-distinct attribution is #13453; consumers read `related_tests` and
   `assertion_texts` for the test-side facts.
 
-`json-terse` codes nothing in this field, and the `stages=` agent line
-(see the agent grammars above) is the compact projection of the same rows.
+`json-terse` codes nothing in this field. It omits the whole array when the
+rows are exactly the five basis-free rows the finding's `ripr` stages yield,
+and lists `evidence_stages` in `dropped_aliases`; a consumer restores the rows
+from `ripr` (see the json-terse alias table above), not from the legend. The
+`stages=` agent line (see the agent grammars above) is the compact projection
+of the same rows.
 The rows are a pure projection: no classification, ranking or decision, and
 the human rendering stays prose.
 
