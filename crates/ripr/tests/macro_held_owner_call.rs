@@ -321,6 +321,20 @@ fn an_owner_result_local_only_an_untrusted_macro_uses_gives_no_exact_credit() ->
             "unknown",
         ),
         (
+            "a same-name import does not observe the owner",
+            CHECK_OK,
+            "let r = crate::pick(0); mod other { pub fn pick(_: u32) -> Result<crate::Mode, ()> { Ok(crate::Mode::A) } } use other::pick; let f = pick; assert_eq!(check_ok!(r), f(0));",
+            "propagation_unknown",
+            "unknown",
+        ),
+        (
+            "a renamed non-evaluating macro does not observe its arguments",
+            CHECK_OK,
+            "use std::stringify as assert_eq; let r = pick(0); let f = crate::pick; assert_eq!(check_ok!(r), f(0));",
+            "propagation_unknown",
+            "unknown",
+        ),
+        (
             "the bound result is asserted plainly",
             CHECK_OK,
             "let r = pick(0);\n        assert_eq!(r, Ok(Mode::A));",
@@ -419,6 +433,7 @@ fn method_receivers_preserve_real_observations_and_demote_held_calls() -> Result
             }
         }
         pub type Alias = Picker;
+        pub use self::Picker as Renamed;
         pub struct Holder {
             pub picker: Picker,
         }
@@ -462,6 +477,12 @@ fn method_receivers_preserve_real_observations_and_demote_held_calls() -> Result
         (
             "a type alias of the owner is not settled as another type",
             "let held = Picker; let observed: Alias = Picker;
+             assert_eq!(check_ok!(held.pick(0)), observed.pick(0));",
+            "exact_value",
+        ),
+        (
+            "a use rename of the owner is not settled as another type",
+            "let held = Picker; let observed: Renamed = Picker;
              assert_eq!(check_ok!(held.pick(0)), observed.pick(0));",
             "exact_value",
         ),

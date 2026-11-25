@@ -323,6 +323,11 @@ fn function_item_alias(
     };
     let path = path.path()?;
     let segment = path.segment()?.name_ref()?;
+    // An unqualified name the test imports (`use other::pick;`) or defines
+    // (`fn pick(..)`) may not be the owner.
+    if path.qualifier().is_none() && test_rebinds_name(function, owner.name) {
+        return None;
+    }
     if segment.text() != owner.name
         || path.qualifier().is_some_and(|qualifier| {
             qualifier
@@ -341,8 +346,33 @@ fn function_item_alias(
     })
 }
 
-/// Names declared as `type` aliases in the test's file. A binding annotated
-/// with one may still be the owner's type, so it is not settled as another.
+/// Whether the test body imports or defines an item called `name`.
+fn test_rebinds_name(function: &ast::Fn, name: &str) -> bool {
+    let Some(body) = function.body() else {
+        return false;
+    };
+    body.syntax().descendants().any(|node| {
+        if let Some(tree) = ast::UseTree::cast(node.clone()) {
+            if tree.use_tree_list().is_some() || tree.star_token().is_some() {
+                return false;
+            }
+            return match tree.rename() {
+                Some(rename) => rename.name().is_some_and(|bound| bound.text() == name),
+                None => tree
+                    .path()
+                    .and_then(|path| path.segment())
+                    .and_then(|segment| segment.name_ref())
+                    .is_some_and(|bound| bound.text() == name),
+            };
+        }
+        ast::Fn::cast(node)
+            .is_some_and(|item| item.name().is_some_and(|bound| bound.text() == name))
+    })
+}
+
+/// Names declared as `type` aliases or `use .. as` renames in the test's file.
+/// A binding annotated with one may still be the owner's type, so it is not
+/// settled as another.
 fn file_type_aliases(file_source: Option<&str>) -> BTreeSet<String> {
     file_source
         .and_then(crate::analysis::syntax::parse_clean_source_file_memoized)
@@ -353,6 +383,14 @@ fn file_type_aliases(file_source: Option<&str>) -> BTreeSet<String> {
                 .descendants()
                 .filter_map(ast::TypeAlias::cast)
                 .filter_map(|alias| alias.name())
+                .chain(
+                    parse
+                        .tree()
+                        .syntax()
+                        .descendants()
+                        .filter_map(ast::Rename::cast)
+                        .filter_map(|rename| rename.name()),
+                )
                 .map(|name| name.text().to_string())
                 .collect()
         })
@@ -705,6 +743,18 @@ fn owner_use_only_inside_untrusted_macro(
         free: 0,
         local_held: vec![0; locals.len()],
     };
+    // #16220: when the file shadows the outer assertion's own name
+    // (`use std::stringify as assert_eq;`), nothing in it is known to be
+    // evaluated, so every owner use in it is held.
+    let outer_untrusted = outer
+        .path()
+        .and_then(|path| path.segment())
+        .and_then(|segment| segment.name_ref())
+        .is_some_and(|name| {
+            shadowed
+                .get_or_init(|| file_source.map(local_macro_rules_names).unwrap_or_default())
+                .contains(name.text())
+        });
     // #16220: receiver names whose type the test body settles. `true` is a
     // receiver of the owner's type (a plain binding of it, or a receiver a
     // held call uses); `false` is a binding of a definitely different type.
@@ -721,7 +771,7 @@ fn owner_use_only_inside_untrusted_macro(
         owner,
         locals,
         &owner_receivers,
-        false,
+        outer_untrusted,
         &trusted,
         &mut counts,
     );
@@ -1146,13 +1196,21 @@ fn local_macro_rules_names(source: &str) -> BTreeSet<String> {
     let Some(parse) = crate::analysis::syntax::parse_clean_source_file_memoized(source) else {
         return BTreeSet::new();
     };
-    parse
-        .tree()
+    let tree = parse.tree();
+    // #16220: a `use .. as name` rename (`use std::stringify as assert_eq;`)
+    // shadows a standard macro name just as a local `macro_rules!` does.
+    let renamed = tree
         .syntax()
+        .descendants()
+        .filter_map(ast::Rename::cast)
+        .filter_map(|rename| rename.name())
+        .map(|name| name.text().to_string());
+    tree.syntax()
         .descendants()
         .filter_map(ast::MacroRules::cast)
         .filter_map(|rules| rules.name())
         .map(|name| name.text().to_string())
+        .chain(renamed)
         .collect()
 }
 
