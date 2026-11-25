@@ -7153,6 +7153,18 @@ mod nested_block_rename {
     }
 
     #[test]
+    fn nested_block_rename_beside_module_alias_case() {
+        {
+            use super::pricing as discount;
+            discount::unrelated();
+        }
+        {
+            use super::other as discount;
+            assert_eq!(discount(100), 10);
+        }
+    }
+
+    #[test]
     fn deeper_nested_block_rename_case() {
         let total = {
             use super::other as discount;
@@ -7217,8 +7229,9 @@ fn integration_rename_case() {
 }
 ";
 
-    const RENAMED_CASES: [&str; 9] = [
+    const RENAMED_CASES: [&str; 10] = [
         "nested_block_rename_case",
+        "nested_block_rename_beside_module_alias_case",
         "deeper_nested_block_rename_case",
         "commented_rename_case",
         "line_commented_rename_case",

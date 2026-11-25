@@ -233,8 +233,9 @@ pub(super) fn name_scopes_in_tree(
 /// mention of `name` in its body sits inside a nested block whose own `use`
 /// items bind `name` only by renaming another path (`{ use super::other as
 /// discount; discount(1); }`, #14069), the renamed paths those blocks spell,
-/// one per binding. The innermost block that binds `name` decides each
-/// mention; the function body's own items are the body scope's question, not
+/// one per binding. A path prefix (`name::item`), a method call and a field
+/// access are not mentions. The innermost block that binds `name` decides
+/// each mention; the function body's own items are the body scope's question, not
 /// this one.
 ///
 /// `None` (the caller keeps its prior reading) when no mention exists, when
@@ -295,6 +296,15 @@ pub(crate) fn nested_block_renames_in_tree(
             Some(ra_ap_syntax::T![.]) => continue,
             Some(ra_ap_syntax::T![::]) => return None,
             _ => {}
+        }
+        // A path prefix (`name::item`) names a module or type, never the
+        // function; a turbofish (`name::<T>(..)`) still calls it.
+        let mut following = std::iter::successors(token.next_token(), |token| token.next_token())
+            .filter(|token| !token.kind().is_trivia());
+        if following.next().map(|token| token.kind()) == Some(ra_ap_syntax::T![::])
+            && following.next().map(|token| token.kind()) != Some(ra_ap_syntax::T![<])
+        {
+            continue;
         }
         mentions += 1;
         // A `mod` declared inside the body opens a fresh item scope that
