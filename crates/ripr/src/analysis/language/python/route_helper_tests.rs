@@ -963,6 +963,69 @@ fn a_same_module_route_whose_only_helper_reference_is_deferred_relates_no_test()
     Ok(())
 }
 
+/// The relation lines that name a test, for a finding of one changed helper
+/// line in the issue's workspace, where the handler imports the helper from
+/// another module.
+fn cross_module_relations(handler: &str, tests: &str) -> Result<Vec<String>, String> {
+    let (owners, tests) = super::fixtures_tests::workspace(&[
+        ("routepkg/rules.py", RULES),
+        ("routepkg/ages.py", handler),
+        ("tests/conftest.py", CONFTEST),
+        ("tests/test_ages.py", tests),
+    ]);
+    let finding = classify_change_with_old(
+        Path::new("routepkg/rules.py"),
+        2,
+        "    return age >= 21",
+        Some("    return age >= 18"),
+        &owners,
+        &tests,
+    )
+    .ok_or_else(|| "expected a finding".to_string())?;
+    Ok(finding
+        .evidence
+        .iter()
+        .filter(|line| line.starts_with("related_test_relation:"))
+        .cloned()
+        .collect())
+}
+
+/// The same rule across a module boundary: a routed handler that imports the
+/// helper and references it only inside a definition it never invokes is no
+/// caller of the helper for the generic caller relations either. Where the
+/// handler calls it, the route test is reach-only and a test that calls the
+/// handler itself keeps its relation (#15882 review).
+#[test]
+fn a_cross_module_route_whose_only_helper_reference_is_deferred_relates_no_test()
+-> Result<(), String> {
+    let direct_test = "from routepkg.ages import age\n\ndef test_age_directly():\n    assert age() == {\"adult\": True}\n";
+    let tests = format!("{ROUTE_TEST}{direct_test}");
+    let deferred = "from routepkg.rules import is_adult\n\napp = object()\n\n@app.get(\"/age/30\")\ndef age():\n    def unused(value):\n        return is_adult(value)\n    return {\"adult\": True}\n";
+    let relations = cross_module_relations(deferred, &tests)?;
+    assert!(
+        relations.is_empty(),
+        "a route whose only helper reference is deferred relates no test: {relations:?}"
+    );
+
+    let calling = "from routepkg.rules import is_adult\n\napp = object()\n\n@app.get(\"/age/30\")\ndef age():\n    return {\"adult\": is_adult(30)}\n";
+    let relations = cross_module_relations(calling, &tests)?;
+    assert!(
+        relations
+            .iter()
+            .any(|line| line == "related_test_relation: route_helper_call (test_age_route)"),
+        "the route test is reach-only: {relations:?}"
+    );
+    // Across a module the chain through the handler carries its own label.
+    assert!(
+        relations
+            .iter()
+            .any(|line| line
+                == "related_test_relation: cross_module_caller_call (test_age_directly)"),
+        "the test that calls the handler itself keeps its relation: {relations:?}"
+    );
+    Ok(())
+}
+
 /// The same rule on the chain through same-module callers: a routed handler
 /// that only constructs an `async def` helper's coroutine is no caller of the
 /// helper, for the route relation as for a test that calls the handler
