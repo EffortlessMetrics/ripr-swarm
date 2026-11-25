@@ -1592,6 +1592,8 @@ tests = [
   "crates/ripr/src/output/sarif.rs::tests::finding_message_carries_no_analyzer_route",
   "crates/ripr/src/output/sarif.rs::tests::seam_message_is_one_bounded_line",
   "crates/ripr/src/output/sarif.rs::tests::alert_next_step_keeps_literal_spacing_and_joins_lines",
+  "crates/ripr/src/output/sarif.rs::tests::sarif_marks_results_matched_by_a_path_glob_entry",
+  "crates/ripr/tests/cli_smoke.rs::check_sarif_suppression_policy_marks_path_glob_results",
   "crates/ripr/src/output/sarif.rs::tests::sarif_column_contract_ascii",
   "crates/ripr/src/output/sarif.rs::tests::sarif_column_contract_bmp",
   "crates/ripr/src/output/sarif.rs::tests::sarif_column_contract_non_bmp",
