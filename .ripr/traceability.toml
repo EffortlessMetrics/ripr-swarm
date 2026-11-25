@@ -1588,6 +1588,10 @@ id = "RIPR-SPEC-0008"
 name = "SARIF and CI policy"
 spec = "docs/specs/RIPR-SPEC-0008-sarif-ci-policy.md"
 tests = [
+  "crates/ripr/src/output/sarif.rs::tests::finding_message_is_one_plain_line_without_jargon_or_doubled_cut",
+  "crates/ripr/src/output/sarif.rs::tests::finding_message_carries_no_analyzer_route",
+  "crates/ripr/src/output/sarif.rs::tests::seam_message_is_one_bounded_line",
+  "crates/ripr/src/output/sarif.rs::tests::alert_next_step_keeps_literal_spacing_and_joins_lines",
   "crates/ripr/src/output/sarif.rs::tests::sarif_column_contract_ascii",
   "crates/ripr/src/output/sarif.rs::tests::sarif_column_contract_bmp",
   "crates/ripr/src/output/sarif.rs::tests::sarif_column_contract_non_bmp",

@@ -694,3 +694,14 @@ Command:
 
 Updated:
 - `expected/human.txt`
+
+## Pending — all_no_path_disclosure (41)
+
+Reason:
+RIPR-SPEC-0008: SARIF alert messages are one plain line (#15374)
+
+Command:
+`cargo xtask goldens bless all_no_path_disclosure --reason "..."`
+
+Updated:
+- `expected/sarif.json`
