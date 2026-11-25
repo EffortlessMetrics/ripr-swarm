@@ -89,6 +89,17 @@ fn ts_project(label: &str) -> Result<Scratch, String> {
     Ok(dir)
 }
 
+/// A TypeScript project with one commit on `main`.
+fn committed_project(label: &str, message: &str) -> Result<Scratch, String> {
+    let dir = ts_project(label)?;
+    git(&dir.0, &["init", "-q", "-b", "main"])?;
+    git(&dir.0, &["config", "user.email", "ripr@example.invalid"])?;
+    git(&dir.0, &["config", "user.name", "ripr tests"])?;
+    git(&dir.0, &["add", "."])?;
+    git(&dir.0, &["commit", "-q", "-m", message])?;
+    Ok(dir)
+}
+
 fn ripr(root: &Path, args: &[&str]) -> Result<Output, String> {
     without_repository_env(Command::new(env!("CARGO_BIN_EXE_ripr")))
         .current_dir(root)
@@ -323,12 +334,7 @@ fn shell_word(value: &str) -> String {
 /// space. The caller stands in an unrelated repository and gains no work tree.
 #[test]
 fn the_printed_work_tree_route_runs_through_the_host_shell_on_spaced_paths() -> Result<(), String> {
-    let seed = ts_project("shell route seed")?;
-    git(&seed.0, &["init", "-q", "-b", "main"])?;
-    git(&seed.0, &["config", "user.email", "ripr@example.invalid"])?;
-    git(&seed.0, &["config", "user.name", "ripr tests"])?;
-    git(&seed.0, &["add", "."])?;
-    git(&seed.0, &["commit", "-q", "-m", "base"])?;
+    let seed = committed_project("shell route seed", "base")?;
     let bare = scratch("shell route bare")?;
     let bare_name = bare
         .0
@@ -347,15 +353,7 @@ fn the_printed_work_tree_route_runs_through_the_host_shell_on_spaced_paths() -> 
         bare_root.display()
     );
 
-    let unrelated = ts_project("shell route unrelated")?;
-    git(&unrelated.0, &["init", "-q", "-b", "main"])?;
-    git(
-        &unrelated.0,
-        &["config", "user.email", "ripr@example.invalid"],
-    )?;
-    git(&unrelated.0, &["config", "user.name", "ripr tests"])?;
-    git(&unrelated.0, &["add", "."])?;
-    git(&unrelated.0, &["commit", "-q", "-m", "unrelated"])?;
+    let unrelated = committed_project("shell route unrelated", "unrelated")?;
 
     let doctor = text(&ripr(
         &unrelated.0,
@@ -415,6 +413,102 @@ fn the_printed_work_tree_route_runs_through_the_host_shell_on_spaced_paths() -> 
     Ok(())
 }
 
+/// #15548 review: Git prints a ref's name as the bytes it holds, and a name
+/// need not be UTF-8. The route cannot spell such a name, so it names the
+/// commit's full ID and the work tree is detached there. The printed command
+/// is run by the host's shell from an unrelated repository, which gains no
+/// work tree.
+#[cfg(unix)]
+#[test]
+fn a_ref_name_that_is_not_utf8_gives_a_detached_work_tree_at_its_commit() -> Result<(), String> {
+    use std::os::unix::ffi::OsStrExt;
+
+    let seed = committed_project("opaque-ref seed", "base")?;
+    let bare = scratch("opaque-ref bare")?;
+    // The scratch roots are siblings, as in the route test above.
+    let bare_name = bare
+        .0
+        .file_name()
+        .ok_or("the bare scratch directory has no name")?
+        .to_string_lossy()
+        .into_owned();
+    git(&bare.0, &["init", "--bare", "-q", "-b", "main", "."])?;
+    // A tree tag sorts first and is passed over; the commit sits under a
+    // branch whose name holds a byte that is not UTF-8.
+    git(
+        &seed.0,
+        &[
+            "push",
+            "-q",
+            &format!("../{bare_name}"),
+            "main^{tree}:refs/tags/a-tree",
+        ],
+    )?;
+    let pushed = without_repository_env(Command::new("git"))
+        .current_dir(&seed.0)
+        .args(["push", "-q", &format!("../{bare_name}")])
+        .arg(std::ffi::OsStr::from_bytes(b"main:refs/heads/opaque-\xff"))
+        .status()
+        .map_err(|error| format!("spawn git push: {error}"))?;
+    assert!(
+        pushed.success(),
+        "git push to the ref name that is not UTF-8 failed"
+    );
+    let commit = git_text(&seed.0, &["rev-parse", "HEAD"])?;
+    let bare_root = native_absolute(&bare.0)?;
+
+    let unrelated = committed_project("opaque-ref unrelated", "unrelated")?;
+    let doctor = text(&ripr(
+        &unrelated.0,
+        &["doctor", "--root", &bare_root.display().to_string()],
+    )?);
+    assert!(doctor.contains("bare Git repository"), "{doctor}");
+    assert!(
+        !doctor.contains('\u{fffd}'),
+        "the route holds no replacement character:\n{doctor}"
+    );
+    let command = doctor
+        .split('`')
+        .find(|span| span.starts_with("git --git-dir="))
+        .ok_or_else(|| format!("no bound work-tree command in the doctor output:\n{doctor}"))?;
+    assert!(
+        command.ends_with(&format!(" worktree add --detach <path> {commit}")),
+        "the route names the commit's full ID, detached: {command}"
+    );
+
+    let before = worktree_list(&unrelated.0)?;
+    let work_tree = scratch("opaque-ref work tree")?;
+    let work_tree_root = native_absolute(&work_tree.0)?.join("checkout");
+    let pasted = command.replace("<path>", &shell_word(&work_tree_root.display().to_string()));
+    let output = run_in_host_shell(&unrelated.0, &pasted)?;
+    assert!(
+        output.status.success(),
+        "the pasted route did not run: {pasted}\n{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(
+        work_tree_root.join(".git").is_file() && work_tree_root.join("pricing.ts").is_file(),
+        "the pasted route did not create the work tree at <path>: {}\n{pasted}",
+        work_tree_root.display()
+    );
+    assert_eq!(
+        git_text(&work_tree_root, &["rev-parse", "HEAD"])?,
+        commit,
+        "the work tree is at the ref's commit: {command}"
+    );
+    assert_eq!(
+        git_text(&work_tree_root, &["rev-parse", "--abbrev-ref", "HEAD"])?,
+        "HEAD",
+        "the work tree is on no branch: {command}"
+    );
+    assert_eq!(
+        worktree_list(&unrelated.0)?,
+        before,
+        "the caller's repository gained a work tree"
+    );
+    Ok(())
+}
+
 /// #15297 review: the route for a bare repository names the repository's own
 /// path, so it works from a directory that is not that repository, and the
 /// printed command really creates the work tree where it says. The caller's
@@ -424,12 +518,7 @@ fn the_printed_work_tree_route_runs_through_the_host_shell_on_spaced_paths() -> 
 fn bare_repository_route_is_bound_to_the_repository_and_runs_from_an_unrelated_directory()
 -> Result<(), String> {
     // A populated bare repository: one commit in a seed work tree, cloned bare.
-    let seed = ts_project("bare-route-seed")?;
-    git(&seed.0, &["init", "-q", "-b", "main"])?;
-    git(&seed.0, &["config", "user.email", "ripr@example.invalid"])?;
-    git(&seed.0, &["config", "user.name", "ripr tests"])?;
-    git(&seed.0, &["add", "."])?;
-    git(&seed.0, &["commit", "-q", "-m", "base"])?;
+    let seed = committed_project("bare-route-seed", "base")?;
     let bare = scratch("bare-route-bare")?;
     // The scratch roots are siblings. A relative target names the directory
     // `scratch` made, which `git clone` accepts because it is empty.
@@ -446,15 +535,7 @@ fn bare_repository_route_is_bound_to_the_repository_and_runs_from_an_unrelated_d
     let bare_root = native_absolute(&bare.0)?;
 
     // The caller stands in another repository entirely.
-    let unrelated = ts_project("bare-route-unrelated")?;
-    git(&unrelated.0, &["init", "-q", "-b", "main"])?;
-    git(
-        &unrelated.0,
-        &["config", "user.email", "ripr@example.invalid"],
-    )?;
-    git(&unrelated.0, &["config", "user.name", "ripr tests"])?;
-    git(&unrelated.0, &["add", "."])?;
-    git(&unrelated.0, &["commit", "-q", "-m", "unrelated"])?;
+    let unrelated = committed_project("bare-route-unrelated", "unrelated")?;
 
     let (work_tree, command) =
         run_printed_work_tree_route(&unrelated.0, &bare_root, "bare-route-work-tree")?;

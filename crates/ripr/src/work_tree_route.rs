@@ -37,6 +37,11 @@ pub(crate) enum BareHead {
     /// because a work tree cannot check it out. The string is the name the
     /// route gives `git worktree add` for that ref ([`checkout_name`]).
     Headless(String),
+    /// As [`BareHead::Headless`], for the ref whose name holds bytes that are
+    /// not UTF-8. No command this output can hold spells that name, so the
+    /// work tree is detached at the commit. The string is the full ID of the
+    /// commit the same Git listing reports beside the ref.
+    Detached(String),
     /// Git did not answer, or no ref it lists peels to a commit while the
     /// listing was cut short, so none of the above can be claimed.
     Unconfirmed,
@@ -64,48 +69,85 @@ fn bare_head(root: &Path) -> BareHead {
     // `HEAD` still names the branch it was created with, and it can hold its
     // commit under a tag or a remote-tracking ref alone. A ref can also hold
     // a blob or a tree, so each is read with the type of the object it names
-    // and, for a tag, of the object it peels to.
+    // and, for a tag, of the object it peels to, and with the ID of the
+    // commit, for a ref whose name this output cannot spell.
     let count = format!("--count={MAX_ROUTE_REFS}");
     let refs = run_git_output_with_deadline(
         root,
         &[
             "for-each-ref",
             count.as_str(),
-            "--format=%(refname) %(objecttype) %(*objecttype)",
+            "--format=%(refname) %(objecttype) %(*objecttype) %(objectname) %(*objectname)",
         ],
         Some(ROUTE_TOOL_TIMEOUT),
     );
-    let output = match refs {
-        Ok(output) if output.status.success() => output,
-        Ok(_) | Err(_) => return BareHead::Unconfirmed,
-    };
-    let listed = String::from_utf8_lossy(&output.stdout);
-    let lines: Vec<&str> = listed.lines().collect();
-    if let Some(reference) = lines.iter().copied().find_map(commit_ref) {
-        return BareHead::Headless(checkout_name(&reference));
+    match refs {
+        Ok(output) if output.status.success() => listed_head(&output.stdout),
+        Ok(_) | Err(_) => BareHead::Unconfirmed,
     }
-    if lines.len() >= MAX_ROUTE_REFS {
-        // Cut short with no commit seen: a later ref may hold one.
-        return BareHead::Unconfirmed;
-    }
-    BareHead::Empty
 }
 
-/// The full name of the ref one `for-each-ref` line describes, when the
-/// object it names, or the object a tag peels to, is a commit. The line is
-/// the ref's full name, the type of the object it names and the type of the
-/// object a tag peels to, which is empty for anything that is not a tag.
-fn commit_ref(line: &str) -> Option<String> {
-    let mut fields = line.split(' ');
+/// What a `for-each-ref` listing holds for a repository whose `HEAD` names
+/// nothing, read as bytes: Git prints a ref's name as the bytes it holds, and
+/// a name need not be UTF-8 (#15548 review). A ref name cannot hold a space,
+/// a tab or a line end, so one line is one ref and a space ends a field.
+fn listed_head(listing: &[u8]) -> BareHead {
+    // Git ends its listing with a line feed; a line without it is read too.
+    let lines = listing.strip_suffix(b"\n").unwrap_or(listing);
+    if lines.is_empty() {
+        return BareHead::Empty;
+    }
+    let mut listed = 0;
+    for line in lines.split(|byte| *byte == b'\n') {
+        listed += 1;
+        let line = line.strip_suffix(b"\r").unwrap_or(line);
+        if let Some(head) = commit_ref(line) {
+            return head;
+        }
+    }
+    if listed >= MAX_ROUTE_REFS {
+        // Cut short with no commit seen: a later ref may hold one.
+        BareHead::Unconfirmed
+    } else {
+        BareHead::Empty
+    }
+}
+
+/// What one `for-each-ref` line holds for a work tree: nothing, unless the
+/// object the ref names, or the object a tag peels to, is a commit. The line
+/// is the ref's full name, the type of the object it names, the type of the
+/// object a tag peels to (empty for anything else), the ID of the object it
+/// names and the ID of the object a tag peels to (empty for anything else).
+fn commit_ref(line: &[u8]) -> Option<BareHead> {
+    let mut fields = line.split(|byte| *byte == b' ');
     let reference = fields.next()?;
-    let named = fields.next();
-    let peeled = fields.next();
-    let holds_commit = match named {
-        Some("commit") => true,
-        Some("tag") => peeled == Some("commit"),
-        _ => false,
+    let named = fields.next()?;
+    let peeled = fields.next()?;
+    let named_id = fields.next()?;
+    let peeled_id = fields.next();
+    // A tag's own ID names the tag: the commit is the one it peels to.
+    let commit_id = if named == b"commit" {
+        named_id
+    } else if named == b"tag" && peeled == b"commit" {
+        peeled_id?
+    } else {
+        return None;
     };
-    (holds_commit && reference.starts_with("refs/")).then(|| reference.to_string())
+    if !reference.starts_with(b"refs/") {
+        return None;
+    }
+    Some(match std::str::from_utf8(reference) {
+        Ok(reference) => BareHead::Headless(checkout_name(reference)),
+        Err(_) => BareHead::Detached(commit_id_text(commit_id)?),
+    })
+}
+
+/// An object ID as Git prints it: 40 hexadecimal digits under SHA-1, 64 under
+/// SHA-256. Anything else is not an ID a work tree can be placed at.
+fn commit_id_text(id: &[u8]) -> Option<String> {
+    let text = std::str::from_utf8(id).ok()?;
+    let id_length = matches!(text.len(), 40 | 64);
+    (id_length && text.bytes().all(|byte| byte.is_ascii_hexdigit())).then(|| text.to_owned())
 }
 
 /// The name the route gives `git worktree add <path> <name>` for a ref the
@@ -150,6 +192,14 @@ pub(crate) fn bare_root_work_tree_route(root: &Path) -> Result<String, String> {
              check out until it does: check out a commit that exists with `{add} {}` (`<path>` \
              is the new work-tree directory; the command works from any directory)",
             shell_arg(&reference)
+        )),
+        BareHead::Detached(commit) => Ok(format!(
+            "This bare repository's `HEAD` names no commit, so a new work tree has nothing to \
+             check out until it does: check out a commit that exists with `git \
+             --git-dir={repository} worktree add --detach <path> {commit}` (the commit's full ID \
+             stands in for a ref whose name cannot be written in this output, so the new work \
+             tree is on no branch; `<path>` is the new work-tree directory; the command works \
+             from any directory)"
         )),
         BareHead::Unconfirmed => Ok(format!(
             "Check out a work tree from it with `{add}` (`<path>` is the new work-tree \
@@ -542,5 +592,118 @@ mod tests {
             let _ = std::fs::remove_dir_all(&dir);
         }
         Ok(())
+    }
+
+    /// #15548 review: Git prints a ref's name as the bytes it holds, and a
+    /// name need not be UTF-8. The route cannot spell such a name, so the work
+    /// tree is detached at the commit Git lists beside it. Every other ref is
+    /// named as before, and such a line is counted like any other.
+    #[test]
+    fn a_ref_whose_name_is_not_utf8_detaches_the_work_tree_at_its_commit() {
+        const COMMIT: &str = "56c29f99cbea8e0493607147d218e496b99ec9ad";
+        const TAG: &[u8] = b"463a7b4bfd0406868f2d58591c82aa1aaf101031";
+        const TREE: &[u8] = b"4b825dc642cb6eb9a060e54bf8d69288fbee4904";
+        // One `for-each-ref` line without its line end, as Git prints it: five
+        // fields, empty where Git has nothing to print.
+        let listed =
+            |name: &[u8], named: &[u8], peeled: &[u8], named_id: &[u8], peeled_id: &[u8]| {
+                [
+                    name, b" ", named, b" ", peeled, b" ", named_id, b" ", peeled_id,
+                ]
+                .concat()
+            };
+        let commit = |name: &[u8], id: &[u8]| listed(name, b"commit", b"", id, b"");
+        let tree = |index: usize| {
+            listed(
+                format!("refs/tags/t-{index:04}").as_bytes(),
+                b"tree",
+                b"",
+                TREE,
+                b"",
+            )
+        };
+        // A listing: the lines, each closed by `end`.
+        let listing = |lines: Vec<Vec<u8>>, end: &[u8]| {
+            let mut listing = lines.join(end);
+            listing.extend_from_slice(end);
+            listing
+        };
+        let detached = BareHead::Detached(COMMIT.to_owned());
+        let opaque_commit = commit(b"refs/heads/opaque-\xff", COMMIT.as_bytes());
+        let feature = commit(b"refs/heads/feature", COMMIT.as_bytes());
+        let opaque_tag = || {
+            listed(
+                b"refs/tags/opaque-\xfe",
+                b"tag",
+                b"commit",
+                TAG,
+                COMMIT.as_bytes(),
+            )
+        };
+
+        // A branch whose name holds a byte that is not UTF-8, behind a tree
+        // tag that a work tree cannot check out.
+        assert_eq!(
+            listed_head(&listing(vec![tree(0), opaque_commit.clone()], b"\n")),
+            detached
+        );
+        // An annotated tag: the commit it peels to, not the tag's own ID.
+        assert_eq!(listed_head(&listing(vec![opaque_tag()], b"\n")), detached);
+        // Beside a name that cannot be spelled, Git did not print an ID: the
+        // ref is passed over, as one that holds no commit is.
+        let opaque_without_id = commit(b"refs/heads/opaque-\xff", b"not-an-id");
+        assert_eq!(
+            listed_head(&listing(vec![opaque_without_id.clone()], b"\n")),
+            BareHead::Empty
+        );
+        assert_eq!(
+            listed_head(&listing(vec![opaque_without_id, feature.clone()], b"\n")),
+            BareHead::Headless("feature".to_owned())
+        );
+        // Every other ref is named as before.
+        assert_eq!(
+            listed_head(&listing(vec![feature], b"\n")),
+            BareHead::Headless("feature".to_owned())
+        );
+        assert_eq!(
+            listed_head(&listing(
+                vec![listed(
+                    b"refs/tags/v1",
+                    b"tag",
+                    b"commit",
+                    TAG,
+                    COMMIT.as_bytes()
+                )],
+                b"\n"
+            )),
+            BareHead::Headless("refs/tags/v1".to_owned())
+        );
+        assert_eq!(listed_head(b""), BareHead::Empty);
+        // Git ends its listing with a line feed; without it the line is read.
+        assert_eq!(
+            listed_head(&commit(b"refs/heads/feature", COMMIT.as_bytes())),
+            BareHead::Headless("feature".to_owned())
+        );
+        // A carriage return before the line feed is no part of the last field,
+        // which for a tag is the commit it peels to: left on it, the tag would
+        // read as having no ID. The reader this one replaces dropped it; Git
+        // prints none on either host this was measured on.
+        assert_eq!(
+            listed_head(&listing(vec![tree(0), opaque_tag()], b"\r\n")),
+            detached
+        );
+
+        // The listing is cut at the last line it printed, which holds no ID:
+        // a later ref may hold a commit, so nothing is claimed.
+        let mut trees = (0..63).map(tree).collect::<Vec<_>>();
+        let mut cut_short = trees.clone();
+        cut_short.push(commit(b"refs/heads/opaque-\xff", b"not-an-id"));
+        assert_eq!(
+            listed_head(&listing(cut_short, b"\n")),
+            BareHead::Unconfirmed
+        );
+        // The commit on the last line printed is still found.
+        trees.push(commit(b"refs/heads/opaque-\xff", COMMIT.as_bytes()));
+        assert_eq!(listed_head(&listing(trees, b"\n")), detached);
     }
 }
