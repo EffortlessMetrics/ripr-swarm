@@ -945,7 +945,8 @@ fn walk(
                 if called && wrapped_alias {
                     if inside_untrusted {
                         counts.held += 1;
-                    } else {
+                    } else if !discarded_call(&children, position) {
+                        // #16258: `let _ = (f)(0);` discards like `f(0);`.
                         counts.free += 1;
                     }
                 } else {

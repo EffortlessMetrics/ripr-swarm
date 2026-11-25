@@ -251,6 +251,22 @@ fn an_owner_call_only_an_untrusted_macro_holds_gives_no_exact_credit() -> Result
             "unknown",
         ),
         (
+            "a discarded parenthesized alias call observes nothing (#16258)",
+            CHECK_OK,
+            "let f = crate::pick;
+             assert_eq!(check_ok!(pick(0)), { let _ = (f)(0); Ok::<Mode, ()>(Mode::A) });",
+            "propagation_unknown",
+            "unknown",
+        ),
+        (
+            "a parenthesized alias call as the block tail is the compared value (#16258)",
+            CHECK_OK,
+            "let f = crate::pick;
+             assert_eq!(check_ok!(pick(0)), { (f)(0) });",
+            "strongly_gripped",
+            "whole_object_equality",
+        ),
+        (
             "an outside call as the block tail is the compared value (#16258)",
             CHECK_OK,
             "assert_eq!(check_ok!(pick(0)), { pick(0) });",
