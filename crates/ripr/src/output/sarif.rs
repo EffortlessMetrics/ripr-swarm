@@ -1514,9 +1514,10 @@ fn finding_message(finding: &Finding) -> String {
 /// The two classes whose plain name claims a reaching test ("partly
 /// noticed", "reached") claim it only when reach is `yes` and not callee-only,
 /// the same guard the human hint and Summary apply (#7003, #7330, #15295).
-/// When tests call the owner but infection is `no` (a skipped branch, a
-/// default every call overrides), the message says the change is not
-/// exercised instead of reached.
+/// Owner reach alone does not reach the changed expression: when tests call
+/// the owner but infection is `no` (a skipped branch, a default every call
+/// overrides) or `unknown`, the message stays at the owner level instead of
+/// saying the change is reached.
 fn finding_class_message_predicate(finding: &Finding) -> &'static str {
     let reach_established = finding.ripr.reach.state == StageState::Yes
         && !finding
@@ -1533,6 +1534,9 @@ fn finding_class_message_predicate(finding: &Finding) -> &'static str {
         }
         ExposureClass::ReachableUnrevealed if finding.ripr.infect.state == StageState::No => {
             "is in code tests call, but no test input appears to exercise it"
+        }
+        ExposureClass::ReachableUnrevealed if finding.ripr.infect.state == StageState::Unknown => {
+            "is in code tests call, but whether a test input exercises it is not established"
         }
         ExposureClass::Exposed => "appears noticed by tests",
         ExposureClass::WeaklyExposed => "is only partly noticed by tests",
@@ -3839,6 +3843,16 @@ weakly_gripped = "note"
         assert!(!message.contains("is reached by tests"), "{message}");
         assert!(
             message.contains("is in code tests call, but no test input appears to exercise it."),
+            "{message}"
+        );
+
+        // Uncertain infection also stays at the owner level.
+        let mut uncertain = reached.clone();
+        uncertain.ripr.infect = stage(StageState::Unknown, "input not modelled");
+        let message = finding_message(&uncertain);
+        assert!(!message.contains("is reached by tests"), "{message}");
+        assert!(
+            message.contains("whether a test input exercises it is not established."),
             "{message}"
         );
 
