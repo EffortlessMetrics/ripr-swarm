@@ -256,7 +256,16 @@ fn owner_result_locals(
                 // #16220: a field label (`r: ..`) or a member (`.r`) names a
                 // field, not a read of the local, so it does not make the
                 // alias carry the owner's result.
-                if locals.iter().any(|local| local.name == token.text()) {
+                if let Some(local) = locals.iter().find(|local| local.name == token.text()) {
+                    // A function-item alias carries the owner's result only
+                    // through a call (`f(0)`), not a bare read (`let _ = f;`).
+                    if local.callable
+                        && tokens
+                            .get(at + 1)
+                            .is_none_or(|next| next.kind() != SyntaxKind::L_PAREN)
+                    {
+                        return false;
+                    }
                     return reads_local(&tokens, at, token.text());
                 }
                 if owner.name.is_empty() || token.text() != owner.name {
@@ -743,18 +752,6 @@ fn owner_use_only_inside_untrusted_macro(
         free: 0,
         local_held: vec![0; locals.len()],
     };
-    // #16220: when the file shadows the outer assertion's own name
-    // (`use std::stringify as assert_eq;`), nothing in it is known to be
-    // evaluated, so every owner use in it is held.
-    let outer_untrusted = outer
-        .path()
-        .and_then(|path| path.segment())
-        .and_then(|segment| segment.name_ref())
-        .is_some_and(|name| {
-            shadowed
-                .get_or_init(|| file_source.map(local_macro_rules_names).unwrap_or_default())
-                .contains(name.text())
-        });
     // #16220: receiver names whose type the test body settles. `true` is a
     // receiver of the owner's type (a plain binding of it, or a receiver a
     // held call uses); `false` is a binding of a definitely different type.
@@ -771,7 +768,7 @@ fn owner_use_only_inside_untrusted_macro(
         owner,
         locals,
         &owner_receivers,
-        outer_untrusted,
+        false,
         &trusted,
         &mut counts,
     );
@@ -908,7 +905,7 @@ fn walk(
                 // string is evaluated; inside an untrusted macro it counts
                 // as held, like any other use there.
                 for (at, local) in locals.iter().enumerate() {
-                    if captures_local(token.text(), &local.name) {
+                    if !local.callable && captures_local(token.text(), &local.name) {
                         if inside_untrusted {
                             counts.local_held[at] += 1;
                         } else {
@@ -918,15 +915,49 @@ fn walk(
                 }
             }
             NodeOrToken::Node(group) if group.kind() == SyntaxKind::TOKEN_TREE => {
-                walk(
-                    group,
-                    owner,
-                    locals,
-                    owner_receivers,
-                    inside_untrusted,
-                    trusted,
-                    counts,
+                // #16220: `(f)(0)` calls a function-item alias through
+                // parentheses, like `f(0)`.
+                let called = matches!(
+                    children.get(position + 1),
+                    Some(NodeOrToken::Node(next))
+                        if next.kind() == SyntaxKind::TOKEN_TREE
+                            && next
+                                .first_token()
+                                .is_some_and(|open| open.kind() == SyntaxKind::L_PAREN)
                 );
+                let parts: Vec<_> = group
+                    .children_with_tokens()
+                    .filter(|part| !part.kind().is_trivia())
+                    .collect();
+                let wrapped_alias = match parts.as_slice() {
+                    [open, NodeOrToken::Token(inner), close]
+                        if open.kind() == SyntaxKind::L_PAREN
+                            && close.kind() == SyntaxKind::R_PAREN
+                            && inner.kind() == SyntaxKind::IDENT =>
+                    {
+                        locals
+                            .iter()
+                            .any(|local| local.callable && local.name == inner.text())
+                    }
+                    _ => false,
+                };
+                if called && wrapped_alias {
+                    if inside_untrusted {
+                        counts.held += 1;
+                    } else {
+                        counts.free += 1;
+                    }
+                } else {
+                    walk(
+                        group,
+                        owner,
+                        locals,
+                        owner_receivers,
+                        inside_untrusted,
+                        trusted,
+                        counts,
+                    );
+                }
             }
             _ => {}
         }

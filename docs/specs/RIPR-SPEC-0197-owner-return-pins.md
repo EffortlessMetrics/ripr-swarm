@@ -2904,13 +2904,15 @@ with a `type` alias declared in the file is not settled as another type. A
 local initialized by a call on a receiver of a definitely different type
 (`let actual = &other.pick(0);`) does not carry the owner's result. A call of a
 function-item alias (`let f = pick;`, then `f(0)`) is a use of the owner: held
-inside the macro, free outside it; a bare read of the alias is not, and a
+inside the macro, free outside it, also through parentheses (`(f)(0)`); a
+bare read of the alias is not, and does not make another local carry the
+owner's result, and a
 shadowed or `mut` (reassignable) alias, or one whose unqualified path names
 an item the test imports or defines (`use other::pick;`), is not tracked. A
 `use .. as` rename in the file counts like a `type` alias for a receiver
-annotation, and like a local `macro_rules!` for a macro name: when it shadows
-the outer assertion's own name (`use std::stringify as assert_eq;`), every
-owner use inside that assertion is held. An owner
+annotation, and like a local `macro_rules!` for an inner macro name. A rename
+that shadows the outer assertion's own name (`use std::stringify as
+assert_eq;`) is an assertion-admission question outside this reading. An owner
 call inside a pass-through method's argument (`pick(0).unwrap_or({ seen =
 pick(0).unwrap(); .. })`) is a known boundary: it is not counted, which only
 withholds credit. A read
