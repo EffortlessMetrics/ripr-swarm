@@ -20,7 +20,7 @@ Shared evidence and guidance
   E5 [findings 1, 2]: discriminator weak: Discriminator unconfirmed: no assertion in a test that calls or otherwise reaches this function names the changed error variant; a test that only shares its file or module pins that variant on another function's result
   E6 [findings 1, 2]: local flow reaches error variant: Result::Err(PayError::Limit) (line 17)
   E7 [findings 1, 2]: related test src/lib.rs:31 a_small_deposit_is_accepted uses strong exact value oracle: assert_eq!(deposit_cap(100), Ok(100)); unconfirmed: ripr could not confirm that this assertion observes the changed behavior
-  E8 [findings 1, 2]: related test src/lib.rs:26 a_large_refund_hits_the_limit uses strong exact error variant oracle: assert!(matches!(refund(20_000), Err(PayError::Limit))); unconfirmed: ripr could not confirm that this assertion observes the changed behavior
+  E8 [findings 1, 2]: related test src/lib.rs:26 a_large_refund_hits_the_limit uses strong exact error variant oracle: assert!(matches!(refund(20_000), Err(PayError::Limit))); misses: no established call path to the changed code; linked by file location only
   E9 [findings 1, 2]: source assertion argument value 20_000 at line 27
   E10 [findings 1, 2]: source enum variant value PayError::Limit at line 27
   E11 [findings 1, 2]: source assertion argument value 100 at line 32

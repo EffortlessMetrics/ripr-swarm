@@ -17,7 +17,7 @@ Shared evidence and guidance
   E2 [findings 1, 2]: infection yes: Reachable tests can plausibly activate this changed behavior
   E3 [findings 1, 2]: observation yes: A related test observes a value or effect near the changed behavior
   E4 [findings 1, 2]: discriminator weak: Discriminator unconfirmed: no assertion text references the changed expression
-  E5 [findings 1, 2]: related test src/lib.rs:20 foreign_helper uses strong exact value oracle: assert_eq!(read_as_object(), Some(7)); unconfirmed: ripr could not confirm that this assertion observes the changed behavior
+  E5 [findings 1, 2]: related test src/lib.rs:20 foreign_helper uses strong exact value oracle: assert_eq!(read_as_object(), Some(7)); misses: no established call path to the changed code; linked by file location only
   E6 [findings 1, 2]: source assertion argument value 7 at line 20
   N1 [findings 1, 2]: Tests cannot close this static-analysis limitation: ripr cannot trace entry `read_as_object` -> owner `as_object` through a transitive Rust helper path. Inspect the named path and existing assertions through the public API; add a test only for an independently confirmed gap. This limitation does not establish a missing test
 

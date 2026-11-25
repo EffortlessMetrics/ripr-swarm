@@ -215,3 +215,16 @@ Command:
 
 Updated:
 - `expected/human.txt`
+
+## Pending — module_reach_super_import_in_file_wrong_module (18)
+
+Reason:
+RIPR-SPEC-0224: a proximity-only matched row on a weakly_exposed or reachable_unrevealed finding carries no_call_path, not an assertion-level miss (#16213)
+
+Command:
+`cargo xtask goldens bless module_reach_super_import_in_file_wrong_module --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`

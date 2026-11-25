@@ -90,3 +90,15 @@ Command:
 
 Updated:
 - `expected/check.json`
+
+## Pending — match_arm_proximity_other_function_not_credited (9)
+
+Reason:
+RIPR-SPEC-0224: a proximity-only matched row on a weakly_exposed or reachable_unrevealed finding carries no_call_path, not an assertion-level miss (#16213)
+
+Command:
+`cargo xtask goldens bless match_arm_proximity_other_function_not_credited --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

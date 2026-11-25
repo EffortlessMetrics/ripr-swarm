@@ -202,3 +202,16 @@ Command:
 
 Updated:
 - `expected/human.txt`
+
+## Pending — owner_self_body_same_name_with_caller_control (17)
+
+Reason:
+RIPR-SPEC-0224: a proximity-only matched row on a weakly_exposed or reachable_unrevealed finding carries no_call_path, not an assertion-level miss (#16213)
+
+Command:
+`cargo xtask goldens bless owner_self_body_same_name_with_caller_control --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`

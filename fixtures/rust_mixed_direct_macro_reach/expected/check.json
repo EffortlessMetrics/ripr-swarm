@@ -109,13 +109,13 @@
           "oracle": "assert_eq!(outer(4), 12);",
           "relation_reason": "same_test_file",
           "relation_confidence": "medium",
-          "miss": "observation_unconfirmed",
-          "why": "ripr could not confirm that this assertion observes the changed behavior"
+          "miss": "no_call_path",
+          "why": "no established call path to the changed code; linked by file location only"
         }
       ],
       "stop_reasons": ["macro_reach_unresolved"],
-      "oracle_kind": "exact_value",
-      "oracle_strength": "strong",
+      "oracle_kind": "relational_check",
+      "oracle_strength": "weak",
       "recommended_next_step": "Check whether `outer_triples`, which may reach `inner` through `outer`, asserts on the changed behavior; ripr does not trace that path, so this limitation does not establish a missing test.",
       "suggested_next_action": "Check whether `outer_triples`, which may reach `inner` through `outer`, asserts on the changed behavior; ripr does not trace that path, so this limitation does not establish a missing test.",
       "language": "rust",

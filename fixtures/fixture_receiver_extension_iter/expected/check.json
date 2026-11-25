@@ -110,8 +110,8 @@
           "oracle": "assert!(result.is_err());",
           "relation_reason": "same_test_file",
           "relation_confidence": "medium",
-          "miss": "weak_assertion",
-          "why": "assertion too weak to tell the old behavior from the new"
+          "miss": "no_call_path",
+          "why": "no established call path to the changed code; linked by file location only"
         },
         {
           "name": "longest_of_nothing",
@@ -122,8 +122,8 @@
           "oracle": "assert_eq!(longest(&[]), None);",
           "relation_reason": "same_test_file",
           "relation_confidence": "medium",
-          "miss": "observation_unconfirmed",
-          "why": "ripr could not confirm that this assertion observes the changed behavior"
+          "miss": "no_call_path",
+          "why": "no established call path to the changed code; linked by file location only"
         },
         {
           "name": "longest_of_nothing",
@@ -134,8 +134,8 @@
           "oracle": "assert!(longest(&[\"a\"]).is_some());",
           "relation_reason": "same_test_file",
           "relation_confidence": "medium",
-          "miss": "weak_assertion",
-          "why": "assertion too weak to tell the old behavior from the new"
+          "miss": "no_call_path",
+          "why": "no established call path to the changed code; linked by file location only"
         },
         {
           "name": "pops_the_first",

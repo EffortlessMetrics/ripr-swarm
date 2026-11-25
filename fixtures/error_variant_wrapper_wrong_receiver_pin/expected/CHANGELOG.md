@@ -553,3 +553,15 @@ Command:
 
 Updated:
 - `expected/human.txt`
+
+## Pending — error_variant_wrapper_wrong_receiver_pin (43)
+
+Reason:
+RIPR-SPEC-0224: a proximity-only matched row on a weakly_exposed or reachable_unrevealed finding carries no_call_path, not an assertion-level miss (#16213)
+
+Command:
+`cargo xtask goldens bless error_variant_wrapper_wrong_receiver_pin --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

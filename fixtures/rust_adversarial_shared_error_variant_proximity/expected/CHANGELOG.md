@@ -381,3 +381,15 @@ Command:
 
 Updated:
 - `expected/human.txt`
+
+## Pending — rust_adversarial_shared_error_variant_proximity (29)
+
+Reason:
+RIPR-SPEC-0224: a proximity-only matched row on a weakly_exposed or reachable_unrevealed finding carries no_call_path, not an assertion-level miss (#16213)
+
+Command:
+`cargo xtask goldens bless rust_adversarial_shared_error_variant_proximity --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human-full.txt`

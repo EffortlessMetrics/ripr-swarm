@@ -282,8 +282,8 @@
           "oracle": "assert_eq!(discount(total), want, \"total {total}\");",
           "relation_reason": "same_test_file",
           "relation_confidence": "medium",
-          "miss": "missing_input",
-          "why": "no test input reaches `samples.len() == 0`"
+          "miss": "no_call_path",
+          "why": "no established call path to the changed code; linked by file location only"
         },
         {
           "name": "mean_lies_between_min_and_max",
@@ -299,8 +299,8 @@
         }
       ],
       "stop_reasons": [],
-      "oracle_kind": "exact_value",
-      "oracle_strength": "strong",
+      "oracle_kind": "unknown",
+      "oracle_strength": "none",
       "recommended_next_step": "Add boundary tests for below, equal, and above the changed threshold with exact assertions.",
       "suggested_next_action": "Add boundary tests for below, equal, and above the changed threshold with exact assertions.",
       "language": "rust",

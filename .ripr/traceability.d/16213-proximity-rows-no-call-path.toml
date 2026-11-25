@@ -1,0 +1,7 @@
+# Registers the no_call_path miss for proximity-only rows on gap findings
+# (#16213) under RIPR-SPEC-0224.
+[[extend]]
+id = "RIPR-SPEC-0224"
+tests = [
+  "crates/ripr/src/analysis/classifier/finding.rs::tests::gap_classes_mark_proximity_only_oracle_rows_as_no_call_path",
+]

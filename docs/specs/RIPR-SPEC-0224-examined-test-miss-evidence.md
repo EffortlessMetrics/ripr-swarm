@@ -145,6 +145,12 @@ field, error variant, effect, call deletion or match arm.
 In the Rust slice-table boundary fixture (#14808), the assertion-free direct
 caller carries `no_assertion`. Its neighbor, linked only by file proximity,
 carries `no_call_path`. Known implicit dispatch also establishes row reach.
+On `weakly_exposed` and `reachable_unrevealed` findings (#16213), a matched
+row with a recorded relation that does not establish reach (same file, same
+module, owner-named test, seam-callee call) carries `no_call_path` before any
+assertion-level miss: `missing_input`, `missing_exact_assertion`,
+`weak_assertion` and `observation_unconfirmed` each presuppose a path to the
+owner. A reaching row keeps its assertion-level miss.
 
 ### Adapter capability table
 

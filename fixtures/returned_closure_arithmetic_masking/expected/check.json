@@ -294,8 +294,8 @@
           "oracle": "assert_eq!(captured, 5);",
           "relation_reason": "same_test_file",
           "relation_confidence": "medium",
-          "miss": "observation_unconfirmed",
-          "why": "ripr could not confirm that this assertion observes the changed behavior"
+          "miss": "no_call_path",
+          "why": "no established call path to the changed code; linked by file location only"
         },
         {
           "name": "qualified_rival_pin",
@@ -318,8 +318,8 @@
           "oracle": "assert_eq!(captured(3), 5);",
           "relation_reason": "same_test_file",
           "relation_confidence": "medium",
-          "miss": "observation_unconfirmed",
-          "why": "ripr could not confirm that this assertion observes the changed behavior"
+          "miss": "no_call_path",
+          "why": "no established call path to the changed code; linked by file location only"
         },
         {
           "name": "shadowed_pin",
@@ -330,8 +330,8 @@
           "oracle": "assert_eq!(captured, 5);",
           "relation_reason": "same_test_file",
           "relation_confidence": "medium",
-          "miss": "observation_unconfirmed",
-          "why": "ripr could not confirm that this assertion observes the changed behavior"
+          "miss": "no_call_path",
+          "why": "no established call path to the changed code; linked by file location only"
         },
         {
           "name": "token_unit_pin",
@@ -638,8 +638,8 @@
           "oracle": "assert_eq!(captured, 5);",
           "relation_reason": "same_test_file",
           "relation_confidence": "medium",
-          "miss": "observation_unconfirmed",
-          "why": "ripr could not confirm that this assertion observes the changed behavior"
+          "miss": "no_call_path",
+          "why": "no established call path to the changed code; linked by file location only"
         },
         {
           "name": "qualified_rival_pin",
@@ -662,8 +662,8 @@
           "oracle": "assert_eq!(captured(3), 5);",
           "relation_reason": "same_test_file",
           "relation_confidence": "medium",
-          "miss": "observation_unconfirmed",
-          "why": "ripr could not confirm that this assertion observes the changed behavior"
+          "miss": "no_call_path",
+          "why": "no established call path to the changed code; linked by file location only"
         },
         {
           "name": "shadowed_pin",
@@ -674,8 +674,8 @@
           "oracle": "assert_eq!(captured, 5);",
           "relation_reason": "same_test_file",
           "relation_confidence": "medium",
-          "miss": "observation_unconfirmed",
-          "why": "ripr could not confirm that this assertion observes the changed behavior"
+          "miss": "no_call_path",
+          "why": "no established call path to the changed code; linked by file location only"
         }
       ],
       "stop_reasons": ["gap_evidence_unresolved"],
@@ -989,8 +989,8 @@
           "oracle": "assert_eq!(captured, 5);",
           "relation_reason": "same_test_file",
           "relation_confidence": "medium",
-          "miss": "observation_unconfirmed",
-          "why": "ripr could not confirm that this assertion observes the changed behavior"
+          "miss": "no_call_path",
+          "why": "no established call path to the changed code; linked by file location only"
         },
         {
           "name": "qualified_rival_pin",
@@ -1013,8 +1013,8 @@
           "oracle": "assert_eq!(captured(3), 5);",
           "relation_reason": "same_test_file",
           "relation_confidence": "medium",
-          "miss": "observation_unconfirmed",
-          "why": "ripr could not confirm that this assertion observes the changed behavior"
+          "miss": "no_call_path",
+          "why": "no established call path to the changed code; linked by file location only"
         },
         {
           "name": "shadowed_pin",
@@ -1025,8 +1025,8 @@
           "oracle": "assert_eq!(captured, 5);",
           "relation_reason": "same_test_file",
           "relation_confidence": "medium",
-          "miss": "observation_unconfirmed",
-          "why": "ripr could not confirm that this assertion observes the changed behavior"
+          "miss": "no_call_path",
+          "why": "no established call path to the changed code; linked by file location only"
         },
         {
           "name": "token_unit_pin",
@@ -1354,8 +1354,8 @@
           "oracle": "assert_eq!(captured, 5);",
           "relation_reason": "same_test_file",
           "relation_confidence": "medium",
-          "miss": "observation_unconfirmed",
-          "why": "ripr could not confirm that this assertion observes the changed behavior"
+          "miss": "no_call_path",
+          "why": "no established call path to the changed code; linked by file location only"
         },
         {
           "name": "qualified_rival_pin",
@@ -1378,8 +1378,8 @@
           "oracle": "assert_eq!(captured(3), 5);",
           "relation_reason": "same_test_file",
           "relation_confidence": "medium",
-          "miss": "observation_unconfirmed",
-          "why": "ripr could not confirm that this assertion observes the changed behavior"
+          "miss": "no_call_path",
+          "why": "no established call path to the changed code; linked by file location only"
         },
         {
           "name": "shadowed_pin",
@@ -1390,8 +1390,8 @@
           "oracle": "assert_eq!(captured, 5);",
           "relation_reason": "same_test_file",
           "relation_confidence": "medium",
-          "miss": "observation_unconfirmed",
-          "why": "ripr could not confirm that this assertion observes the changed behavior"
+          "miss": "no_call_path",
+          "why": "no established call path to the changed code; linked by file location only"
         }
       ],
       "stop_reasons": ["gap_evidence_unresolved"],
@@ -1695,8 +1695,8 @@
           "oracle": "assert_eq!(captured, 5);",
           "relation_reason": "same_test_file",
           "relation_confidence": "medium",
-          "miss": "observation_unconfirmed",
-          "why": "ripr could not confirm that this assertion observes the changed behavior"
+          "miss": "no_call_path",
+          "why": "no established call path to the changed code; linked by file location only"
         },
         {
           "name": "qualified_rival_pin",
@@ -1719,8 +1719,8 @@
           "oracle": "assert_eq!(captured(3), 5);",
           "relation_reason": "same_test_file",
           "relation_confidence": "medium",
-          "miss": "observation_unconfirmed",
-          "why": "ripr could not confirm that this assertion observes the changed behavior"
+          "miss": "no_call_path",
+          "why": "no established call path to the changed code; linked by file location only"
         },
         {
           "name": "shadowed_pin",
@@ -1731,8 +1731,8 @@
           "oracle": "assert_eq!(captured, 5);",
           "relation_reason": "same_test_file",
           "relation_confidence": "medium",
-          "miss": "observation_unconfirmed",
-          "why": "ripr could not confirm that this assertion observes the changed behavior"
+          "miss": "no_call_path",
+          "why": "no established call path to the changed code; linked by file location only"
         }
       ],
       "stop_reasons": ["gap_evidence_unresolved"],
@@ -2070,8 +2070,8 @@
           "oracle": "assert_eq!(captured, 5);",
           "relation_reason": "same_test_file",
           "relation_confidence": "medium",
-          "miss": "observation_unconfirmed",
-          "why": "ripr could not confirm that this assertion observes the changed behavior"
+          "miss": "no_call_path",
+          "why": "no established call path to the changed code; linked by file location only"
         },
         {
           "name": "qualified_rival_pin",
@@ -2094,8 +2094,8 @@
           "oracle": "assert_eq!(captured(3), 5);",
           "relation_reason": "same_test_file",
           "relation_confidence": "medium",
-          "miss": "observation_unconfirmed",
-          "why": "ripr could not confirm that this assertion observes the changed behavior"
+          "miss": "no_call_path",
+          "why": "no established call path to the changed code; linked by file location only"
         },
         {
           "name": "shadowed_pin",
@@ -2106,8 +2106,8 @@
           "oracle": "assert_eq!(captured, 5);",
           "relation_reason": "same_test_file",
           "relation_confidence": "medium",
-          "miss": "observation_unconfirmed",
-          "why": "ripr could not confirm that this assertion observes the changed behavior"
+          "miss": "no_call_path",
+          "why": "no established call path to the changed code; linked by file location only"
         }
       ],
       "stop_reasons": [],
@@ -2449,8 +2449,8 @@
           "oracle": "assert_eq!(captured(3), 5);",
           "relation_reason": "same_test_file",
           "relation_confidence": "medium",
-          "miss": "observation_unconfirmed",
-          "why": "ripr could not confirm that this assertion observes the changed behavior"
+          "miss": "no_call_path",
+          "why": "no established call path to the changed code; linked by file location only"
         },
         {
           "name": "shadowed_pin",
@@ -2461,8 +2461,8 @@
           "oracle": "assert_eq!(captured, 5);",
           "relation_reason": "same_test_file",
           "relation_confidence": "medium",
-          "miss": "observation_unconfirmed",
-          "why": "ripr could not confirm that this assertion observes the changed behavior"
+          "miss": "no_call_path",
+          "why": "no established call path to the changed code; linked by file location only"
         },
         {
           "name": "token_unit_pin",
@@ -2804,8 +2804,8 @@
           "oracle": "assert_eq!(captured, 5);",
           "relation_reason": "same_test_file",
           "relation_confidence": "medium",
-          "miss": "observation_unconfirmed",
-          "why": "ripr could not confirm that this assertion observes the changed behavior"
+          "miss": "no_call_path",
+          "why": "no established call path to the changed code; linked by file location only"
         },
         {
           "name": "qualified_rival_pin",
@@ -2828,8 +2828,8 @@
           "oracle": "assert_eq!(captured(3), 5);",
           "relation_reason": "same_test_file",
           "relation_confidence": "medium",
-          "miss": "observation_unconfirmed",
-          "why": "ripr could not confirm that this assertion observes the changed behavior"
+          "miss": "no_call_path",
+          "why": "no established call path to the changed code; linked by file location only"
         },
         {
           "name": "token_unit_pin",
@@ -3171,8 +3171,8 @@
           "oracle": "assert_eq!(captured, 5);",
           "relation_reason": "same_test_file",
           "relation_confidence": "medium",
-          "miss": "observation_unconfirmed",
-          "why": "ripr could not confirm that this assertion observes the changed behavior"
+          "miss": "no_call_path",
+          "why": "no established call path to the changed code; linked by file location only"
         },
         {
           "name": "qualified_rival_pin",
@@ -3195,8 +3195,8 @@
           "oracle": "assert_eq!(captured, 5);",
           "relation_reason": "same_test_file",
           "relation_confidence": "medium",
-          "miss": "observation_unconfirmed",
-          "why": "ripr could not confirm that this assertion observes the changed behavior"
+          "miss": "no_call_path",
+          "why": "no established call path to the changed code; linked by file location only"
         },
         {
           "name": "token_unit_pin",
@@ -3505,8 +3505,8 @@
           "oracle": "assert_eq!(captured, 5);",
           "relation_reason": "same_test_file",
           "relation_confidence": "medium",
-          "miss": "observation_unconfirmed",
-          "why": "ripr could not confirm that this assertion observes the changed behavior"
+          "miss": "no_call_path",
+          "why": "no established call path to the changed code; linked by file location only"
         },
         {
           "name": "replaced_pin",
@@ -3517,8 +3517,8 @@
           "oracle": "assert_eq!(captured(3), 5);",
           "relation_reason": "same_test_file",
           "relation_confidence": "medium",
-          "miss": "observation_unconfirmed",
-          "why": "ripr could not confirm that this assertion observes the changed behavior"
+          "miss": "no_call_path",
+          "why": "no established call path to the changed code; linked by file location only"
         },
         {
           "name": "shadowed_pin",
@@ -3529,8 +3529,8 @@
           "oracle": "assert_eq!(captured, 5);",
           "relation_reason": "same_test_file",
           "relation_confidence": "medium",
-          "miss": "observation_unconfirmed",
-          "why": "ripr could not confirm that this assertion observes the changed behavior"
+          "miss": "no_call_path",
+          "why": "no established call path to the changed code; linked by file location only"
         },
         {
           "name": "token_unit_pin",
@@ -3815,8 +3815,8 @@
           "oracle": "assert_eq!(captured, 5);",
           "relation_reason": "same_test_file",
           "relation_confidence": "medium",
-          "miss": "observation_unconfirmed",
-          "why": "ripr could not confirm that this assertion observes the changed behavior"
+          "miss": "no_call_path",
+          "why": "no established call path to the changed code; linked by file location only"
         },
         {
           "name": "qualified_rival_pin",
@@ -3839,8 +3839,8 @@
           "oracle": "assert_eq!(captured(3), 5);",
           "relation_reason": "same_test_file",
           "relation_confidence": "medium",
-          "miss": "observation_unconfirmed",
-          "why": "ripr could not confirm that this assertion observes the changed behavior"
+          "miss": "no_call_path",
+          "why": "no established call path to the changed code; linked by file location only"
         },
         {
           "name": "shadowed_pin",
@@ -3851,8 +3851,8 @@
           "oracle": "assert_eq!(captured, 5);",
           "relation_reason": "same_test_file",
           "relation_confidence": "medium",
-          "miss": "observation_unconfirmed",
-          "why": "ripr could not confirm that this assertion observes the changed behavior"
+          "miss": "no_call_path",
+          "why": "no established call path to the changed code; linked by file location only"
         },
         {
           "name": "token_unit_pin",

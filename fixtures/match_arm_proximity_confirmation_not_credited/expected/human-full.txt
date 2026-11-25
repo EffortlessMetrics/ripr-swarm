@@ -38,7 +38,7 @@ Evidence
   - discriminator weak: Discriminator unconfirmed: no assertion in a test that calls or otherwise reaches this function names the changed arm; a test that only shares its file or module, and calls nothing that reaches the function, cannot confirm the arm
   - local flow reaches match arm result: 1_209_600 (line 23)
   - related test src/lib.rs:32 seconds_total uses strong exact value oracle: assert_eq!(total, 1_814_400); unconfirmed: ripr could not confirm that this assertion observes the changed behavior
-  - related test src/lib.rs:41 from_str_fortnight uses strong exact value oracle: assert!(matches!(Unit::from_str("fortnight"), Ok(Unit::Fortnight))); unconfirmed: ripr could not confirm that this assertion observes the changed behavior
+  - related test src/lib.rs:41 from_str_fortnight uses strong exact value oracle: assert!(matches!(Unit::from_str("fortnight"), Ok(Unit::Fortnight))); misses: no established call path to the changed code; linked by file location only
   - source assertion argument value 1_814_400 at line 37
   - source assertion argument value "fortnight" at line 42
   - source enum variant value Unit::Fortnight at line 42

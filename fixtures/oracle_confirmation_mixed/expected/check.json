@@ -100,8 +100,8 @@
           "oracle": "assert_eq!(store, expected);",
           "relation_reason": "same_test_file",
           "relation_confidence": "medium",
-          "miss": "observation_unconfirmed",
-          "why": "ripr could not confirm that this assertion observes the changed behavior"
+          "miss": "no_call_path",
+          "why": "no established call path to the changed code; linked by file location only"
         },
         {
           "name": "unrelated_exact_oracle",
@@ -112,13 +112,13 @@
           "oracle": "assert!(label.contains(\"record_effect\"));",
           "relation_reason": "same_test_file",
           "relation_confidence": "medium",
-          "miss": "weak_assertion",
-          "why": "assertion too weak to tell the old behavior from the new"
+          "miss": "no_call_path",
+          "why": "no established call path to the changed code; linked by file location only"
         }
       ],
       "stop_reasons": [],
-      "oracle_kind": "exact_value",
-      "oracle_strength": "strong",
+      "oracle_kind": "unknown",
+      "oracle_strength": "none",
       "recommended_next_step": "Strengthen the related assertion so it discriminates the changed behavior.",
       "suggested_next_action": "Strengthen the related assertion so it discriminates the changed behavior.",
       "language": "rust",

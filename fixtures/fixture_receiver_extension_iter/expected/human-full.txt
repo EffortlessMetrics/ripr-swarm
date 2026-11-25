@@ -36,9 +36,9 @@ Evidence
   - discriminator weak: Discriminator unconfirmed: no assertion text references the changed expression
   - local flow reaches returned value: self.items.iter().map(|(_, price)| price).sum() (line 16)
   - related test src/lib.rs:52 fixture_total uses strong exact value oracle: assert_eq!(fixture().total(), 0); unconfirmed: ripr could not confirm that this assertion observes the changed behavior
-  - related test src/lib.rs:37 empty_pop_panics uses weak broad error oracle: assert!(result.is_err()); misses: assertion too weak to tell the old behavior from the new
-  - related test src/lib.rs:31 longest_of_nothing uses strong exact value oracle: assert_eq!(longest(&[]), None); unconfirmed: ripr could not confirm that this assertion observes the changed behavior
-  - related test src/lib.rs:31 longest_of_nothing uses smoke only oracle: assert!(longest(&["a"]).is_some()); misses: assertion too weak to tell the old behavior from the new
+  - related test src/lib.rs:37 empty_pop_panics uses weak broad error oracle: assert!(result.is_err()); misses: no established call path to the changed code; linked by file location only
+  - related test src/lib.rs:31 longest_of_nothing uses strong exact value oracle: assert_eq!(longest(&[]), None); misses: no established call path to the changed code; linked by file location only
+  - related test src/lib.rs:31 longest_of_nothing uses smoke only oracle: assert!(longest(&["a"]).is_some()); misses
   - related test src/lib.rs:46 pops_the_first uses strong exact value oracle: assert_eq!(pop_front(&mut values), 4); misses: no established call path to the changed code; linked by file location only
   - source assertion argument value "a" at line 33
   - source assertion argument value 4 at line 48

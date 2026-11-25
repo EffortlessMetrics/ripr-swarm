@@ -98,8 +98,8 @@
           "oracle": "assert_eq!(parsed.map(|n| n), Ok(3));",
           "relation_reason": "seam_callee_call",
           "relation_confidence": "medium",
-          "miss": "observation_unconfirmed",
-          "why": "ripr could not confirm that this assertion observes the changed behavior"
+          "miss": "no_call_path",
+          "why": "no established call path to the changed code"
         },
         {
           "name": "calls_callee_before_shadow_binding",
@@ -115,8 +115,8 @@
         }
       ],
       "stop_reasons": [],
-      "oracle_kind": "exact_value",
-      "oracle_strength": "strong",
+      "oracle_kind": "unknown",
+      "oracle_strength": "none",
       "recommended_next_step": "Typed static limitation (wrapper_error_binding_unresolved): ripr cannot statically establish that this boxed wrapper conversion carries the callee's error variant, so an existing exact downcast witness is not statically creditable. Verify via real mutation testing or deeper conversion modeling.",
       "suggested_next_action": "Typed static limitation (wrapper_error_binding_unresolved): ripr cannot statically establish that this boxed wrapper conversion carries the callee's error variant, so an existing exact downcast witness is not statically creditable. Verify via real mutation testing or deeper conversion modeling.",
       "language": "rust",
@@ -219,8 +219,8 @@
           "oracle": "assert_eq!(parsed.map(|n| n), Ok(3));",
           "relation_reason": "seam_callee_call",
           "relation_confidence": "medium",
-          "miss": "observation_unconfirmed",
-          "why": "ripr could not confirm that this assertion observes the changed behavior"
+          "miss": "no_call_path",
+          "why": "no established call path to the changed code"
         },
         {
           "name": "calls_callee_before_shadow_binding",
@@ -231,8 +231,8 @@
           "oracle": "assert_eq!(ignored, Ok(5));",
           "relation_reason": "seam_callee_call",
           "relation_confidence": "medium",
-          "miss": "observation_unconfirmed",
-          "why": "ripr could not confirm that this assertion observes the changed behavior"
+          "miss": "no_call_path",
+          "why": "no established call path to the changed code"
         },
         {
           "name": "observes_callee_outcome",
@@ -243,8 +243,8 @@
           "oracle": "assert_eq!(parsed.map(|n| n), Ok(3));",
           "relation_reason": "seam_callee_call",
           "relation_confidence": "medium",
-          "miss": "observation_unconfirmed",
-          "why": "ripr could not confirm that this assertion observes the changed behavior"
+          "miss": "no_call_path",
+          "why": "no established call path to the changed code"
         }
       ],
       "stop_reasons": [],

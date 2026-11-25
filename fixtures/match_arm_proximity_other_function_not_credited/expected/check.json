@@ -154,8 +154,8 @@
           "oracle": "assert_eq!(reduce(tokens, 10), Reduction::Over(Duration::from_millis(5)));",
           "relation_reason": "same_test_file",
           "relation_confidence": "medium",
-          "miss": "observation_unconfirmed",
-          "why": "ripr could not confirm that this assertion observes the changed behavior"
+          "miss": "no_call_path",
+          "why": "no established call path to the changed code; linked by file location only"
         }
       ],
       "stop_reasons": [],

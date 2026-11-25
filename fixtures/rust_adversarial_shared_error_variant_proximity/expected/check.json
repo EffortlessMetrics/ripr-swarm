@@ -131,12 +131,12 @@
           "oracle": "assert!(matches!(refund(20_000), Err(PayError::Limit)));",
           "relation_reason": "same_test_file",
           "relation_confidence": "medium",
-          "miss": "observation_unconfirmed",
-          "why": "ripr could not confirm that this assertion observes the changed behavior"
+          "miss": "no_call_path",
+          "why": "no established call path to the changed code; linked by file location only"
         }
       ],
       "stop_reasons": [],
-      "oracle_kind": "exact_error_variant",
+      "oracle_kind": "exact_value",
       "oracle_strength": "strong",
       "recommended_next_step": "Assert the exact error variant or payload instead of only is_err().",
       "suggested_next_action": "Assert the exact error variant or payload instead of only is_err().",
@@ -265,12 +265,12 @@
           "oracle": "assert!(matches!(refund(20_000), Err(PayError::Limit)));",
           "relation_reason": "same_test_file",
           "relation_confidence": "medium",
-          "miss": "observation_unconfirmed",
-          "why": "ripr could not confirm that this assertion observes the changed behavior"
+          "miss": "no_call_path",
+          "why": "no established call path to the changed code; linked by file location only"
         }
       ],
       "stop_reasons": [],
-      "oracle_kind": "exact_error_variant",
+      "oracle_kind": "exact_value",
       "oracle_strength": "strong",
       "recommended_next_step": "Add a test input that reaches the changed error path and assert the exact error variant it returns.",
       "suggested_next_action": "Add a test input that reaches the changed error path and assert the exact error variant it returns.",
