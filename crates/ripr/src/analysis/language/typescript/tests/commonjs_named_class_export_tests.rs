@@ -303,6 +303,17 @@ fn a_whole_module_function_and_a_same_named_class_property_keep_their_owners() -
             "expected the function and the class method {owners:?}"
         ));
     }
+    // A same-named function property is a property of the live function too.
+    let functions = "module.exports = function total(n) {\n  return n;\n};\nmodule.exports.total = function (n) {\n  return n * 2;\n};\n";
+    let owners = extract_owners(Path::new("src/cart.js"), functions);
+    let lines: Vec<usize> = owners
+        .iter()
+        .filter(|owner| owner.name == "total")
+        .map(|owner| owner.start_line)
+        .collect();
+    if lines != [1, 4] {
+        return Err(format!("expected both `total` owners, got {owners:?}"));
+    }
     Ok(())
 }
 
