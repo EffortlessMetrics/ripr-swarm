@@ -400,7 +400,9 @@ pub(crate) fn nested_block_renames_in_tree(
 
 /// Whether a glob import in the file may bring in a macro this scan cannot
 /// see, which would shadow a std expression macro of the same name. A glob of
-/// `std`, `core` or `alloc` brings std's own macros; a glob of only `super`
+/// `std` brings std's own macros when the file does not rebind that root
+/// (`core` and `alloc` are refused, as for `STD_CRATE_ROOT`: a renamed Cargo
+/// dependency can stand in for either); a glob of only `super`
 /// segments that stays within the file's inline modules reaches items this
 /// file declares, which `file_rebinds_a_std_macro` and `file_imports_name`
 /// read. Any other glob, or one the scan cannot read, may.
@@ -420,9 +422,8 @@ fn file_glob_may_import_macros(tree: &ast::SourceFile) -> bool {
                 let Some(path) = glob else {
                     return true;
                 };
-                let std_root = path
-                    .first()
-                    .is_some_and(|root| ["std", "core", "alloc"].contains(&root.as_str()));
+                let std_root = path.first().is_some_and(|root| root == STD_CRATE_ROOT)
+                    && !file_may_bind_name(tree, STD_CRATE_ROOT);
                 let in_file_super = !path.is_empty()
                     && path.iter().all(|segment| segment == "super")
                     && path.len() <= depth;

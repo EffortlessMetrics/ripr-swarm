@@ -7337,12 +7337,27 @@ mod tests {
     }
 }
 ";
-        let index = index(&[("src/lib.rs", SRC)]);
-        let (owner, test) = renamed_other_parts(&index, "foreign_glob_case")?;
-        assert!(!bare_name_renamed_in_nested_blocks(&index, owner, test));
+        let foreign = index(&[("src/lib.rs", SRC)]);
+        let (owner, test) = renamed_other_parts(&foreign, "foreign_glob_case")?;
+        assert!(!bare_name_renamed_in_nested_blocks(&foreign, owner, test));
         assert!(!test_calls_only_a_renamed_other_function(
-            &index, owner, test
+            &foreign, owner, test
         ));
+        // `core` may be a renamed Cargo dependency, so its glob is not
+        // trusted either; a `std` glob is.
+        for (glob, refused) in [
+            ("core::prelude::v1::*", false),
+            ("std::prelude::v1::*", true),
+        ] {
+            let src = SRC.replace("crate::helpers::*", glob);
+            let globbed = index(&[("src/lib.rs", src.as_str())]);
+            let (owner, test) = renamed_other_parts(&globbed, "foreign_glob_case")?;
+            assert_eq!(
+                bare_name_renamed_in_nested_blocks(&globbed, owner, test),
+                refused,
+                "{glob}"
+            );
+        }
         Ok(())
     }
 
