@@ -197,16 +197,27 @@ fn suppression_policy_keeps_native_backslash_file_distinct()
             ..CheckInput::default()
         })?)
     };
-    // finding id -> (JSON suppressed, SARIF suppressed, SARIF uri)
-    type Disposition = std::collections::BTreeMap<String, (bool, bool, String)>;
-    let disposition = |output: &CheckOutput| -> Result<Disposition, Box<dyn std::error::Error>> {
+    // Each renderer is read independently: finding id -> (suppressed, the
+    // path it emits). JSON carries `probe.file`; SARIF carries the URI, and a
+    // same-line alert folds other probes into `properties.folded_results`
+    // (#11219), which share the kept result's URI and suppression marking.
+    type Emitted = std::collections::BTreeMap<String, (bool, String)>;
+    let json_of = |output: &CheckOutput| -> Result<Emitted, Box<dyn std::error::Error>> {
         let json: Value = serde_json::from_str(&render_check(output, &OutputFormat::Json)?)?;
-        let sarif: Value = serde_json::from_str(&render_check(output, &OutputFormat::Sarif)?)?;
-        let mut by_id = Disposition::new();
+        let mut emitted = Emitted::new();
         for finding in json["findings"].as_array().ok_or("missing findings")? {
             let id = finding["id"].as_str().ok_or("missing id")?.to_owned();
-            by_id.insert(id, (finding["suppressed"] == true, false, String::new()));
+            let file = finding["probe"]["file"]
+                .as_str()
+                .ok_or("missing probe.file")?;
+            let previous = emitted.insert(id, (finding["suppressed"] == true, file.to_owned()));
+            assert!(previous.is_none(), "duplicate JSON finding id");
         }
+        Ok(emitted)
+    };
+    let sarif_of = |output: &CheckOutput| -> Result<Emitted, Box<dyn std::error::Error>> {
+        let sarif: Value = serde_json::from_str(&render_check(output, &OutputFormat::Sarif)?)?;
+        let mut emitted = Emitted::new();
         for result in sarif["runs"][0]["results"]
             .as_array()
             .ok_or("missing results")?
@@ -217,23 +228,18 @@ fn suppression_policy_keeps_native_backslash_file_distinct()
             let uri = result["locations"][0]["physicalLocation"]["artifactLocation"]["uri"]
                 .as_str()
                 .ok_or("missing URI")?;
-            // Same-line probes fold into one alert (#11219) that names the
-            // others; folding keeps suppression metadata apart, so a folded
-            // finding shares its kept result's disposition and URI.
+            let suppressed = result.get("suppressions").is_some();
             let folded = result["properties"]["folded_results"]
                 .as_array()
                 .into_iter()
                 .flatten()
                 .filter_map(|folded| folded["finding_id"].as_str());
             for member in std::iter::once(id).chain(folded) {
-                let entry = by_id
-                    .get_mut(member)
-                    .ok_or("SARIF result without a JSON finding")?;
-                entry.1 = result.get("suppressions").is_some();
-                entry.2 = uri.to_owned();
+                let previous = emitted.insert(member.to_owned(), (suppressed, uri.to_owned()));
+                assert!(previous.is_none(), "duplicate SARIF finding id {member}");
             }
         }
-        Ok(by_id)
+        Ok(emitted)
     };
     let ids_in = |output: &CheckOutput, wanted: &str| -> Result<Vec<String>, String> {
         let ids: Vec<String> = output
@@ -252,50 +258,66 @@ fn suppression_policy_keeps_native_backslash_file_distinct()
     let baseline = run(None)?;
     let nested_ids = ids_in(&baseline, nested)?;
     let literal_ids = ids_in(&baseline, literal)?;
-    let before = disposition(&baseline)?;
     assert_eq!(
-        before.len(),
-        nested_ids.len() + literal_ids.len(),
-        "{before:?}"
+        baseline.findings.len(),
+        nested_ids.len() + literal_ids.len()
     );
-    for id in &nested_ids {
-        assert_eq!(before[id], (false, false, "src/a/b.rs".to_owned()), "{id}");
-    }
-    for id in &literal_ids {
-        assert_eq!(
-            before[id],
-            (false, false, "src/a%5Cb.rs".to_owned()),
-            "{id}"
-        );
-    }
+    // Every phase: both renderers emit exactly the baseline ids, each at its
+    // own file, and only `suppressed(id)` ids carry the policy marking.
+    let check_phase = |label: &str,
+                       output: &CheckOutput,
+                       suppressed: &dyn Fn(&str) -> bool|
+     -> Result<(), Box<dyn std::error::Error>> {
+        let json = json_of(output)?;
+        let sarif = sarif_of(output)?;
+        for (renderer, emitted) in [("json", &json), ("sarif", &sarif)] {
+            let ids: Vec<&String> = emitted.keys().collect();
+            let mut expected: Vec<&String> = nested_ids.iter().chain(&literal_ids).collect();
+            expected.sort();
+            assert_eq!(
+                ids, expected,
+                "{label}: {renderer} must emit every baseline finding"
+            );
+        }
+        for (ids, json_path, uri) in [
+            // JSON percent-encodes the literal backslash in `probe.file`.
+            (&nested_ids, "/src/a/b.rs", "src/a/b.rs"),
+            (&literal_ids, "/src/a%5Cb.rs", "src/a%5Cb.rs"),
+        ] {
+            for id in ids {
+                let want = suppressed(id);
+                assert_eq!(json[id].0, want, "{label}: JSON suppressed for {id}");
+                assert!(
+                    json[id].1.ends_with(json_path),
+                    "{label}: JSON file for {id}: {}",
+                    json[id].1
+                );
+                assert_eq!(sarif[id], (want, uri.to_owned()), "{label}: SARIF for {id}");
+            }
+        }
+        Ok(())
+    };
+    check_phase("no policy", &baseline, &|_| false)?;
 
     let entry = |selector: &str| {
         format!(
             "schema_version = 1\n\n[[suppressions]]\nkind = \"exposure_gap\"\n{selector}\nreason = \"paired native filename proof\"\nowner = \"repo-owner\"\n"
         )
     };
-    // The glob selects every nested finding and no literal one, in both outputs.
-    let glob = disposition(&run(Some(&entry("path = \"src/a/**\"")))?)?;
-    for id in &nested_ids {
-        assert_eq!(
-            (glob[id].0, glob[id].1),
-            (true, true),
-            "nested {id}: {glob:?}"
-        );
-    }
-    for id in &literal_ids {
-        assert_eq!(
-            (glob[id].0, glob[id].1),
-            (false, false),
-            "literal {id}: {glob:?}"
-        );
-    }
-    // The complementary selection: one literal finding by id, nothing else.
-    let chosen = &literal_ids[0];
-    let by_id = disposition(&run(Some(&entry(&format!("finding_id = \"{chosen}\""))))?)?;
-    for (id, (json, sarif, _)) in &by_id {
-        let expected = id == chosen;
-        assert_eq!((*json, *sarif), (expected, expected), "{id}: {by_id:?}");
-    }
+    // The glob selects every nested finding and no literal one.
+    let glob = run(Some(&entry("path = \"src/a/**\"")))?;
+    check_phase("glob", &glob, &|id| {
+        nested_ids.iter().any(|nested| nested == id)
+    })?;
+    // The complementary selection: exactly one chosen literal finding by id.
+    let chosen = literal_ids[0].clone();
+    let by_id = run(Some(&entry(&format!("finding_id = \"{chosen}\""))))?;
+    let chosen_marked = json_of(&by_id)?.get(&chosen).map(|entry| entry.0);
+    assert_eq!(
+        chosen_marked,
+        Some(true),
+        "the chosen id must be present and suppressed"
+    );
+    check_phase("finding_id", &by_id, &|id| id == chosen)?;
     Ok(())
 }
