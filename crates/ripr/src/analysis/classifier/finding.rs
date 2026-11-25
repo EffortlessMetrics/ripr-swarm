@@ -504,6 +504,14 @@ fn annotate_related_test_misses(
             ExposureClass::WeaklyExposed | ExposureClass::ReachableUnrevealed => {
                 if test.oracle.is_none() {
                     None
+                } else if test.relation_reason.is_some() && !reaches(test) {
+                    // #16213: a row related only by proximity (same file,
+                    // owner-named test) never invokes the owner, so its
+                    // assertion is about other code. Name the missing call,
+                    // as #7642 does on the other classes, rather than an
+                    // assertion-level miss that suggests the row was meant
+                    // to pin the changed value.
+                    Some(RelatedTestMiss::NoCallPath)
                 } else if matches!(
                     test.oracle_strength,
                     OracleStrength::Weak | OracleStrength::Smoke
@@ -1871,6 +1879,113 @@ mod tests {
         let none = run(&ProbeFamily::Predicate, Vec::new());
         assert!(none.iter().all(|row| row.miss_support.is_none()));
         assert_eq!(none[0].miss, None);
+    }
+
+    /// #16213: on `weakly_exposed` and `reachable_unrevealed`, a matched
+    /// row related only by proximity names the missing call; a reaching row
+    /// keeps `missing_exact_assertion`, and a row without a recorded
+    /// relation reason keeps the assertion-level miss it had.
+    #[test]
+    fn gap_classes_mark_proximity_only_oracle_rows_as_no_call_path() {
+        use crate::domain::{DiscriminatorShape, MissingDiscriminatorFact, RelatedTestMiss};
+        let row =
+            |name: &str, strength: OracleStrength, reason: Option<RelationReason>| RelatedTest {
+                relation_reason: reason,
+                ..matched_row(name, strength)
+            };
+        let activation = ActivationEvidence {
+            missing_discriminators: vec![MissingDiscriminatorFact {
+                value: "CalcError::TooLarge".to_string(),
+                reason: "no related test pins the variant".to_string(),
+                flow_sink: None,
+                shape: DiscriminatorShape::Boundary,
+                drafted_boundary: None,
+            }],
+            ..ActivationEvidence::default()
+        };
+        for class in [
+            crate::domain::ExposureClass::WeaklyExposed,
+            crate::domain::ExposureClass::ReachableUnrevealed,
+        ] {
+            let mut rows = vec![
+                row(
+                    "reaches_owner",
+                    OracleStrength::Strong,
+                    Some(RelationReason::DirectOwnerCall),
+                ),
+                row(
+                    "file_neighbour",
+                    OracleStrength::Strong,
+                    Some(RelationReason::SameTestFile),
+                ),
+                row(
+                    "weak_file_neighbour",
+                    OracleStrength::Weak,
+                    Some(RelationReason::SameTestFile),
+                ),
+                row(
+                    "named_after_owner",
+                    OracleStrength::Strong,
+                    Some(RelationReason::OwnerNamedTest),
+                ),
+                row("no_relation_recorded", OracleStrength::Strong, None),
+                RelatedTest {
+                    oracle: None,
+                    ..row(
+                        "unmatched_neighbour",
+                        OracleStrength::Strong,
+                        Some(RelationReason::SameTestFile),
+                    )
+                },
+            ];
+            annotate_related_test_misses(
+                &mut rows,
+                &class,
+                true,
+                &ProbeFamily::ErrorPath,
+                &activation,
+                Unconfirmed::Confirmed,
+                &Default::default(),
+            );
+            assert_eq!(
+                rows.iter().map(|row| row.miss).collect::<Vec<_>>(),
+                vec![
+                    Some(RelatedTestMiss::MissingExactAssertion),
+                    Some(RelatedTestMiss::NoCallPath),
+                    Some(RelatedTestMiss::NoCallPath),
+                    Some(RelatedTestMiss::NoCallPath),
+                    Some(RelatedTestMiss::MissingExactAssertion),
+                    None,
+                ],
+                "{class:?}"
+            );
+            // The missing-call rows carry no assertion-level support.
+            assert!(rows[1..4].iter().all(|row| row.miss_support.is_none()));
+            assert!(rows[0].miss_support.is_some());
+        }
+        // Reach by known implicit dispatch is established for a
+        // proximity-only row, so it keeps the assertion-level miss.
+        let mut dispatched = vec![row(
+            "dispatched_neighbour",
+            OracleStrength::Strong,
+            Some(RelationReason::SameTestFile),
+        )];
+        let implicit = [(dispatched[0].file.clone(), dispatched[0].name.clone())]
+            .into_iter()
+            .collect();
+        annotate_related_test_misses(
+            &mut dispatched,
+            &crate::domain::ExposureClass::ReachableUnrevealed,
+            true,
+            &ProbeFamily::ErrorPath,
+            &activation,
+            Unconfirmed::Confirmed,
+            &implicit,
+        );
+        assert_eq!(
+            dispatched[0].miss,
+            Some(RelatedTestMiss::MissingExactAssertion)
+        );
     }
 
     #[test]
