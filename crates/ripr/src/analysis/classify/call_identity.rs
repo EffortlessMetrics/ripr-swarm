@@ -7217,6 +7217,30 @@ mod nested_block_rename_beside_owner {
             inner::check();
         }
     }
+
+    macro_rules! scoped_check {
+        ($e:expr) => {{
+            use super::*;
+            assert_eq!($e, 10);
+        }};
+    }
+
+    #[test]
+    fn nested_block_macro_scope_case() {
+        {
+            use super::other as discount;
+            scoped_check!(discount(100));
+        }
+    }
+
+    #[test]
+    fn nested_block_cfg_rename_case() {
+        {
+            #[cfg(not(test))]
+            use super::other as discount;
+            assert_eq!(discount(100), 10);
+        }
+    }
 }
 ";
 
@@ -7312,11 +7336,23 @@ fn integration_rename_case() {
         }
         // A `mod` inside the renaming block does not see the block's `use`;
         // its glob reaches the owner, so the block cannot decide that call.
-        let (owner, inner) = renamed_other_parts(&index, "nested_block_inner_module_case")?;
-        assert!(!bare_name_renamed_in_nested_blocks(&index, owner, inner));
-        assert!(!test_calls_only_a_renamed_other_function(
-            &index, owner, inner
-        ));
+        // So may a non-std macro around the call (its expansion can add a
+        // glob), and a `cfg`-gated rename may be absent from the build.
+        for name in [
+            "nested_block_inner_module_case",
+            "nested_block_macro_scope_case",
+            "nested_block_cfg_rename_case",
+        ] {
+            let (owner, test) = renamed_other_parts(&index, name)?;
+            assert!(
+                !bare_name_renamed_in_nested_blocks(&index, owner, test),
+                "{name}: the block cannot decide the call"
+            );
+            assert!(
+                !test_calls_only_a_renamed_other_function(&index, owner, test),
+                "{name}: the owner may still be called"
+            );
+        }
         // A qualified owner call beside the rename keeps the test related,
         // but the renamed bare call beside it still names the other function.
         let (owner, mixed) = renamed_other_parts(&index, "qualified_and_bare_case")?;

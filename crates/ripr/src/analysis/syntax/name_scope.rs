@@ -245,7 +245,10 @@ pub(super) fn name_scopes_in_tree(
 /// when the name is itself an imported leaf or a declared name anywhere in
 /// the body (`use super::name as alias;`, a nested `fn name`); and for a
 /// mention inside a `mod` declared in the body, which does not see the
-/// blocks around it.
+/// blocks around it; for a mention inside any macro other than a bare std
+/// expression macro (its expansion may add imports), or inside such a macro
+/// when the file redefines or imports its name; and for a block whose item
+/// under `cfg`/`cfg_attr` may bind the name.
 pub(crate) fn nested_block_renames_in_tree(
     tree: &ast::SourceFile,
     line_index: &LineIndex,
@@ -266,6 +269,7 @@ pub(crate) fn nested_block_renames_in_tree(
     let body = function.body()?;
     let mut paths: Vec<Vec<String>> = Vec::new();
     let mut mentions = 0usize;
+    let mut std_macros_rebound: Option<bool> = None;
     for token in body
         .syntax()
         .descendants_with_tokens()
@@ -308,11 +312,27 @@ pub(crate) fn nested_block_renames_in_tree(
         }
         mentions += 1;
         // A `mod` declared inside the body opens a fresh item scope that
-        // does not see the blocks around it.
-        if parent
-            .ancestors()
-            .take_while(|node| node != body.syntax())
-            .any(|node| ast::Module::can_cast(node.kind()))
+        // does not see the blocks around it. A macro other than a bare std
+        // expression macro may wrap its input in a block with its own
+        // imports, so only those std macros keep the written scopes; a
+        // `macro_rules!` or import reusing such a name in the file voids that.
+        let mut macro_names = Vec::new();
+        for node in parent.ancestors().take_while(|node| node != body.syntax()) {
+            if ast::Module::can_cast(node.kind()) || opaque_macro_call(&node) {
+                return None;
+            }
+            if let Some(name) = ast::MacroCall::cast(node)
+                .and_then(|call| call.path())
+                .and_then(|path| path.segment())
+            {
+                macro_names.push(name.to_string());
+            }
+        }
+        if !macro_names.is_empty()
+            && (*std_macros_rebound.get_or_insert_with(|| file_rebinds_a_std_macro(tree))
+                || macro_names
+                    .iter()
+                    .any(|macro_name| file_imports_name(tree, macro_name)))
         {
             return None;
         }
@@ -333,6 +353,19 @@ pub(crate) fn nested_block_renames_in_tree(
                 .collect();
             if items.is_empty() {
                 continue;
+            }
+            // An item under `cfg` or `cfg_attr` may be absent from the
+            // compiled block, so a binding it may supply is not settled.
+            if items.iter().any(|item| {
+                super::source_snapshot::has_cfg_attr(item) && {
+                    let gated = name_scope_for_items(std::slice::from_ref(item));
+                    gated.imports_of(name).next().is_some()
+                        || gated.defines.contains(name)
+                        || gated.child_modules.contains(name)
+                        || !gated.globs.is_empty()
+                }
+            }) {
+                return None;
             }
             let scope = name_scope_for_items(&items);
             let imports: Vec<&UseBinding> = scope.imports_of(name).collect();
@@ -361,6 +394,18 @@ pub(crate) fn nested_block_renames_in_tree(
         }
     }
     (mentions > 0).then_some(paths)
+}
+
+/// Whether any `use` leaf in the file binds `name`, by its own leaf or a
+/// rename. Read conservatively: an import of std's own item counts too.
+fn file_imports_name(tree: &ast::SourceFile, name: &str) -> bool {
+    tree.syntax()
+        .descendants()
+        .filter_map(ast::Use::cast)
+        .any(|item| {
+            let scope = name_scope_for_items(&[ast::Item::Use(item)]);
+            scope.imports_of(name).next().is_some()
+        })
 }
 
 /// The module or file scope `node` opens, read from its items; `None` for any
