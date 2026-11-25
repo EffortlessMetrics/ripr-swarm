@@ -1,5 +1,16 @@
 # Golden Output Changes
 
+## Pending — corpus cache generation 1.198 for discarded owner calls (#16258)
+
+An owner call outside an untrusted inner macro whose statement discards the
+result (`let _ = pick(0);`, `pick(0);`) no longer counts as a free
+observation beside a macro-held call of the owner, which bumps the analyzer
+cache schema to 1.198. Move the portable unchanged-attempt snapshots to 1.198,
+recompute the `raw_json_placeholder_v1` artifact content commitment, then the
+dependent verify commitments and receipt byte hashes. Weak grip, unchanged
+movement, historical currentness, incomplete receipt status and fail-closed
+first-action routing remain the same. No other fixture output is regenerated.
+
 ## Pending — corpus cache generation 1.197 for chained owner-result locals (#16219)
 
 A local bound to an unwrapped or chained owner call whose only uses sit inside

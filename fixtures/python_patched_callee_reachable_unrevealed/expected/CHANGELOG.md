@@ -22,3 +22,15 @@ Command:
 
 Updated:
 - `expected/human.txt`
+
+## Pending — python_patched_callee_reachable_unrevealed (3)
+
+Reason:
+RIPR-SPEC-0008: add SARIF and GitHub annotation goldens for the Python class covered by the cross-surface conformance test (#12925)
+
+Command:
+`cargo xtask goldens bless python_patched_callee_reachable_unrevealed --reason "..."`
+
+Updated:
+- `expected/sarif.json`
+- `expected/github.txt`

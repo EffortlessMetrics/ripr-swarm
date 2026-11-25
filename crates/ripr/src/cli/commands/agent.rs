@@ -8314,7 +8314,7 @@ mod before_phase_stdout_tests {
         );
         assert!(
             summary.contains(
-                "    (replace each /* ... */ comment with a real value from your test before using it)"
+                "    (replace each /* ... */ comment with a real value from your test before using it; the expected value is what the changed code produces now)"
             ),
             "{summary}"
         );

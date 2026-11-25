@@ -19038,6 +19038,23 @@ Field contract:
 - `working_set.source` — `"diff"`, `"base"`, `"files"`, or `"seam_id"`.
 - `limits.default` — always `3`.
 - `limits.hard_cap` — always `10`.
+- `value_basis` — optional top-level note, present only when `top_seams` is
+  non-empty. While a changed line reaches every named seam (each
+  `why_now.reason` is `changed_line_intersects_seam`), it says `expression`
+  and `arm_result` are read from the changed code, so a new test asserts what
+  that code does now (an input whose behavior did not change keeps its
+  value), and that `candidate_values` are inputs or values to assert, not
+  all of one kind (#15361). For any other named seam (a seam asked for by
+  its ID, a repository fallback after a comment-only or an unrelated change,
+  a seam chosen for its owner, its test or its file), it says the values are
+  the current source's behavior, that a seam counts as changed code there
+  only where its `why_now.reason` is `changed_line_intersects_seam`, and the
+  same about `candidate_values` (#15361 review). The published
+  schema does not declare this property: its
+  root object accepts extra properties, and a newly declared property with a
+  constraint counts as a breaking change under the schema-compatibility
+  check unless the schema version is bumped. Declaring it belongs with that
+  bump, not with the note.
 - `top_seams[]` — ranked seam summaries, intentionally smaller than full agent
   seam packets.
 - `top_seams[].why_now.reason` — one of
@@ -21118,7 +21135,7 @@ top-level `source_subject`:
 
 - `digest_algorithm`: always `"sha256"`.
 - `corpus` (additive, full Rust inventory only): the analysis-owned
-  `{ "scope": "rust_workspace", "cache_schema_version": "1.197",
+  `{ "scope": "rust_workspace", "cache_schema_version": "1.198",
   "files_content_hash": "<16 lowercase hex digits>" }` from the actual
   classified inventory cache key, including both production and test Rust
   files after the existing generated-file exclusions. Repo-exposure producers
@@ -21922,7 +21939,7 @@ targeted-rerun receipt shape:
     "recomputation_reasons": ["selected_test_scope_recomputed"],
     "invalidation_status": "not_available",
     "input_fingerprint": {
-      "schema_version": "1.197",
+      "schema_version": "1.198",
       "analyzer_version": "0.11.0+0123456789abcdef0123456789abcdef01234567+languages:rust=1,typescript=1,python=1,perl=0",
       "workspace_root_hash": "…",
       "files_content_hash": "…",
