@@ -56,7 +56,7 @@ mod tests {
 
 #[test]
 fn a_named_field_snapshot_limit_alone_withholds_pilot_brief_and_repair() -> Result<(), String> {
-    let limited = field_snapshot()?;
+    let mut limited = field_snapshot()?;
     assert_eq!(limited.class, SeamGripClass::WeaklyGripped);
     assert!(limited.evidence.names_static_limit(LIMIT));
     for (stage, state) in [
@@ -68,8 +68,8 @@ fn a_named_field_snapshot_limit_alone_withholds_pilot_brief_and_repair() -> Resu
     ] {
         assert_eq!(stage.state, state, "{stage:?}");
     }
-    let mut ordinary = limited.clone();
-    ordinary.evidence.discriminate.summary = ordinary
+    assert_eq!(limited.evidence.discriminate.static_limit_kind, Some(LIMIT));
+    limited.evidence.discriminate.summary = limited
         .evidence
         .discriminate
         .summary
@@ -77,6 +77,9 @@ fn a_named_field_snapshot_limit_alone_withholds_pilot_brief_and_repair() -> Resu
         .map(|(_, original)| original)
         .ok_or("missing original discrimination summary")?
         .to_string();
+    let mut ordinary = limited.clone();
+    ordinary.evidence.discriminate.static_limit_kind = None;
+    assert!(limited.evidence.names_static_limit(LIMIT));
     assert!(!ordinary.evidence.names_static_limit(LIMIT));
     assert_eq!(ordinary.class, limited.class);
     assert_eq!(
@@ -168,6 +171,7 @@ fn a_named_field_snapshot_limit_alone_withholds_pilot_brief_and_repair() -> Resu
 #[test]
 fn source_mentions_in_other_stages_do_not_create_framework_limitations() -> Result<(), String> {
     let mut ordinary = field_snapshot()?;
+    ordinary.evidence.discriminate.static_limit_kind = None;
     ordinary.evidence.discriminate.summary = "a weak assertion".to_string();
     for summary in [
         LIMIT.as_str().to_string(),

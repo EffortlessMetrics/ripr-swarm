@@ -1,0 +1,27 @@
+{
+  "id": "rust_repo_exposure_matches_or_pattern_single_value_control",
+  "language": "rust",
+  "tier": "pure",
+  "source_report": "fixtures/evidence-promotion-honesty-corpus/reports/rust-repo-exposure-matches-or-pattern-single-value-control.json",
+  "report_subject": "fixtures/evidence-promotion-honesty-corpus/repo-exposure-subjects/matches-or-pattern-single-value-control",
+  "vector": "matches_single_pinned_value_keeps_exact_oracle_credit",
+  "assertions": [
+    {
+      "type": "expected_repo_seam_grip",
+      "owner": "src/lib.rs::discount",
+      "expression": "amount >= 100",
+      "grip_class": "strongly_gripped",
+      "reach": "yes"
+    },
+    {
+      "type": "expected_repo_seam_related_test",
+      "owner": "src/lib.rs::discount",
+      "expression": "amount >= 100",
+      "test": "pins_new",
+      "file": "src/lib.rs",
+      "line": 10,
+      "oracle_strength": "strong",
+      "relation_reason": "direct_owner_call"
+    }
+  ]
+}

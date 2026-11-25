@@ -141,13 +141,24 @@ fn run_full(
     let canonical_text = std::fs::canonicalize(&root)
         .map(|p| p.display().to_string())
         .unwrap_or_else(|_| root_text.clone());
+    // `{:?}` escapes `\` as `\\`, so mask the Debug-escaped spelling too.
+    let debug_escaped = |text: &str| {
+        let quoted = format!("{text:?}");
+        quoted.trim_matches('"').to_string()
+    };
+    let masks = [
+        canonical_text.clone(),
+        debug_escaped(&canonical_text),
+        root_text.clone(),
+        debug_escaped(&root_text),
+    ];
     let mut full: Vec<String> = output
         .findings
         .iter()
         .map(|f| {
-            format!("{f:?}")
-                .replace(&canonical_text, "<root>")
-                .replace(&root_text, "<root>")
+            masks
+                .iter()
+                .fold(format!("{f:?}"), |text, mask| text.replace(mask, "<root>"))
         })
         .collect();
     full.sort();

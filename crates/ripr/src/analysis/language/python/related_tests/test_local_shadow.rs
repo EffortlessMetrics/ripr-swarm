@@ -159,6 +159,14 @@ impl TestLocalShadowIndex {
                         .ambiguous_src_modules
                         .iter()
                         .map(|ambiguous| ambiguous.module.clone()),
+                )
+                // The modules the owner imports from: a test-local package of
+                // the same root answers a test's identical import too (#15356).
+                .chain(
+                    owner
+                        .imports
+                        .iter()
+                        .map(|import| import.source_module.clone()),
                 );
             for module in modules {
                 if let Some(root) = module.split('.').next().filter(|root| !root.is_empty()) {

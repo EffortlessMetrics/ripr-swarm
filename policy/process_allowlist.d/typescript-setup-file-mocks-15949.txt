@@ -1,0 +1,1 @@
+crates/ripr/tests/typescript_setup_file_mocks.rs|Command::new|1|typescript-preview|#15949: integration test runs the worktree-built ripr binary against isolated temp TypeScript workspaces to prove an owner module mocked from a runner setup file is not credited and unrelated setup files stay exposed; no shell, network, or user-repository mutation.

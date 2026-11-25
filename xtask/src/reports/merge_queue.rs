@@ -5,6 +5,8 @@
 //! gatecheck#11 consumption. It does not evaluate a future queue design
 //! and it never mutates GitHub or repository settings.
 
+mod conflicts;
+
 use crate::run::capture_output;
 use serde_json::{Map, Value, json};
 use sha2::{Digest, Sha256};
@@ -77,8 +79,14 @@ struct CaptureSnapshot {
 }
 
 pub(crate) fn merge_queue(args: &[String]) -> Result<(), String> {
+    if args.first().is_some_and(|arg| arg == "conflict-notice") {
+        return conflicts::notice::run(&args[1..]);
+    }
+    if args.first().is_some_and(|arg| arg == "conflicts") {
+        return conflicts::run(&args[1..]);
+    }
     if args.iter().any(|arg| arg == "--help" || arg == "-h") {
-        println!("{USAGE}");
+        println!("{USAGE}\n{}", conflicts::USAGE);
         return Ok(());
     }
     let options = parse_options(args)?;

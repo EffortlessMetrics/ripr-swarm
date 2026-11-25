@@ -142,6 +142,15 @@ impl AnalysisOutcomeKind {
     /// inferred: the server does not silently widen the base.
     pub(crate) const EMPTY_SCOPE_MCP_LAST_COMMIT_RETRY_ROUTE: &str = "if the change under review is the last commit, retry ripr_refresh with {\"source\": \"committed\", \"base\": \"HEAD~1\"}; the server does not infer this base";
 
+    /// #13096 worktree leg: a saved worktree diff with changed lines but no
+    /// behavior candidate is most often a tests-only edit made after the
+    /// production change was committed onto the base. The route names the
+    /// base retry and keeps `source: "worktree"`: with `source` omitted, a
+    /// checkout with no tracked edits would select committed input and
+    /// change what the snapshot's repair cards are bound to. The server
+    /// never infers the base.
+    pub(crate) const EMPTY_SCOPE_MCP_WORKTREE_BASE_RETRY_ROUTE: &str = "if the base already includes the production change (for example only tests changed after it), retry ripr_refresh with the same worktree source and `base` set to a commit before that change, for example {\"source\": \"worktree\", \"base\": \"HEAD~1\"}; the server does not infer this base";
+
     /// #13096: the default-base-resolved-to-analyzed-commit causes exclude
     /// `no_behavioral_candidates`, whose diff was non-empty.
     pub(crate) const fn is_no_behavioral_candidates(self) -> bool {
@@ -451,6 +460,14 @@ impl AnalysisRecovery {
     }
 }
 
+/// Limitation detail for a well-formed diff with only binary or file-mode
+/// changes. The schema token stays `malformed_diff`; this detail is what
+/// tells the plain-word label that the diff was parsed (#15862).
+pub(crate) const NON_TEXT_ONLY_DETAIL: &str = "The diff is well formed but contains only binary or file-mode changes, so no text hunk was analyzed.";
+
+/// Plain words for a well-formed diff with only binary or mode changes.
+pub(crate) const NON_TEXT_ONLY_LABEL: &str = "the diff has only binary or file-mode changes";
+
 #[derive(Clone, Debug, Deserialize, Eq, Ord, PartialEq, PartialOrd, Serialize)]
 pub(crate) struct AnalysisLimitation {
     pub(crate) kind: AnalysisLimitationKind,
@@ -478,6 +495,23 @@ impl AnalysisLimitation {
             bounded_detail: None,
             recovery,
         }
+    }
+
+    /// Plain words for human surfaces. A well-formed binary- or mode-only
+    /// diff keeps the `malformed_diff` token for schema stability but must
+    /// not read "the diff could not be parsed" (#15862).
+    pub(crate) fn plain_label(&self) -> &'static str {
+        if self.is_non_text_only() {
+            return NON_TEXT_ONLY_LABEL;
+        }
+        self.kind.plain_label()
+    }
+
+    /// The one classification of a well-formed binary- or mode-only diff:
+    /// the stderr zero-findings hedge and the plain-word label both key on it.
+    pub(crate) fn is_non_text_only(&self) -> bool {
+        self.kind == AnalysisLimitationKind::MalformedDiff
+            && self.bounded_detail.as_deref() == Some(NON_TEXT_ONLY_DETAIL)
     }
 
     pub(crate) fn with_path(mut self, path: impl AsRef<str>) -> Result<Self, String> {
@@ -539,10 +573,13 @@ pub(crate) struct AnalysisOutcome {
 /// Which new-side lines the analyzed diff added or modified, per changed
 /// file (#15039). Built by the diff pipeline from the same parsed diff the
 /// counts come from, so a consumer never re-derives it from Git. A file the
-/// diff only removed lines from is present with no lines.
+/// diff only removed lines from is present with no lines. It also names the
+/// changed files the operator's own configuration left out of analysis, with
+/// the setting that matched (#16250).
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub(crate) struct ChangedLineIndex {
     files: std::collections::BTreeMap<String, std::collections::BTreeSet<usize>>,
+    configured_exclusions: std::collections::BTreeMap<String, String>,
 }
 
 impl ChangedLineIndex {
@@ -555,6 +592,18 @@ impl ChangedLineIndex {
     /// not touch that file.
     pub(crate) fn lines_of(&self, path: &str) -> Option<&std::collections::BTreeSet<usize>> {
         self.files.get(path)
+    }
+
+    /// Record that `setting` in the operator's configuration left the
+    /// changed file `path` out of this run's analysis.
+    pub(crate) fn record_configured_exclusion(&mut self, path: String, setting: String) {
+        self.configured_exclusions.insert(path, setting);
+    }
+
+    /// The configuration setting that left `path` out of this run's
+    /// analysis, or `None` when no configured exclusion matched it.
+    pub(crate) fn configured_exclusion_of(&self, path: &str) -> Option<&str> {
+        self.configured_exclusions.get(path).map(String::as_str)
     }
 }
 
@@ -673,7 +722,7 @@ impl AnalysisOutcome {
         for limitation in scoping.iter().take(MAX_INCOMPLETE_SENTENCE_LIMITATIONS) {
             sentence.push_str(&format!(
                 " Limitation: {} during {}",
-                limitation.kind.plain_label(),
+                limitation.plain_label(),
                 limitation.producer_stage.plain_label()
             ));
             if let Some(path) = &limitation.path {
@@ -960,6 +1009,10 @@ mod tests {
         assert_eq!(
             AnalysisOutcomeKind::EMPTY_SCOPE_MCP_BASE_RETRY_ROUTE,
             "retry ripr_refresh with `base` set to the revision your change branches from, for example {\"source\": \"committed\", \"base\": \"origin/main\"}"
+        );
+        assert_eq!(
+            AnalysisOutcomeKind::EMPTY_SCOPE_MCP_WORKTREE_BASE_RETRY_ROUTE,
+            "if the base already includes the production change (for example only tests changed after it), retry ripr_refresh with the same worktree source and `base` set to a commit before that change, for example {\"source\": \"worktree\", \"base\": \"HEAD~1\"}; the server does not infer this base"
         );
         assert_eq!(
             AnalysisOutcomeKind::EMPTY_SCOPE_MCP_SOURCE_RETRY_ROUTE,

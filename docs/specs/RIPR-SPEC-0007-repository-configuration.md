@@ -56,6 +56,13 @@ The configuration layer should:
   `ripr doctor`;
 - provide `ripr config validate [--root PATH]` for isolated ancestor-aware TOML
   validation without workspace tool probes;
+- have `ripr config validate` check the suppressions manifest the config
+  selects (#15308): a configured `[suppressions] path` that names no file, or
+  a manifest path that is a dangling link, fails; a present manifest at the
+  default or configured path is parsed with the same parser `check` uses and
+  its violations fail validation; an absent default
+  `.ripr/suppressions.toml` stays silent; a valid manifest is named on its
+  own line with its entry count;
 - keep output schemas stable unless a later scoped PR explicitly adds config
   metadata.
 
@@ -149,6 +156,19 @@ and a usable output location adds no check. While any `!` check blocks, the
 verbose start-here block gives that recovery instead of packet refresh advice,
 as the compact screen already does.
 
+Without `--root`, doctor diagnoses the root `ripr check` would analyze from the
+invocation directory (#15304): the enclosing Cargo workspace, package,
+JavaScript or Python workspace, or Git top level. It uses the same shared
+resolver and stderr disclosure as check. Language detection, the `enabled`
+tip and `Root:` therefore describe the tree check analyzes, and a run from a
+Python subdirectory of a Rust workspace is not told to replace `rust` with
+`python`. `--root .` diagnoses the invocation directory alone. If that resolver
+fails, doctor says so on stderr and diagnoses the invocation directory.
+The tip's replacement list drops `rust` only when it is the built-in default and
+no Rust marker is found (#7648). A `rust` written in `[languages].enabled` is the
+user's selection and stays in the list; a `[languages]` table without `enabled`,
+or no `ripr.toml`, leaves the default.
+
 ### Doctor blocking and advisory marks (#9033)
 
 Doctor's human output marks a blocking failure with `!` and an advisory with
@@ -207,6 +227,20 @@ Supported bare keys, double-quoted entry string values, and the integer schema
 header retain their existing syntax. Single-quoted string values and quoted
 keys remain unsupported. This repair adds no broader TOML or calendar support.
 
+### Repository-controlled suppression path stays inside the repository (#14310)
+
+The implicit loader for the repository-controlled `suppressions.path` resolves
+every path component before reading. `..`, absolute and prefixed paths, a link
+or link chain whose target leaves the analyzed root, a dangling or looping link,
+and a final entry that is not a regular file all stop with one fixed refusal
+that names the entry and the repair, before any target bytes are read and
+without printing the resolved path. A link whose target stays inside the root
+still loads. A missing ordinary path, or an analyzed root that no longer exists,
+means no accepted debt. The explicit `--suppression-policy` path is an operator
+choice and is not confined. The check is not atomic against a concurrent
+writer replacing checkout entries during the run; ripr does not execute
+repository code, so that requires a separate local process.
+
 ### Unused default suppression disclosure (#7759)
 
 After successful analysis, `ripr check` in human, human-full, JSON or GitHub
@@ -241,6 +275,20 @@ changes it; the function selector ignores `finding_id` and keeps matching. It
 is exact and fails closed: another file, another function in the same file, a
 missing owner, or an owner the producer disambiguated with a `#L<line>` suffix
 (duplicate owners) never matches. Expired entries still do not apply.
+
+**Stale id warning and suppression health (#14129).** An unmatched
+`finding_id` entry that is not a known ripr 0.10 id keeps its "did not match
+any current finding" warning and adds that finding ids hash the parsed
+expression and that `path` + `function` selects the owning function across
+edits, which covers every finding in that function and cannot select a
+changed `const` or `static`; `ripr review-comments` reports only expired
+entries, not unmatched ones. An unmatched path-glob or `path` + `function` entry keeps the plain
+warning. `ripr policy suppression-health` names a `path` + `function` entry
+`<path>::<function>`, the label the check matcher reports for it, and reports
+a rejected `function` entry as a `config_error` finding. A finding with no
+function owner (a changed `const` or `static`), a same-named function in
+another file, and a same-named function in a nested module of the same file
+are not matched by the selector.
 
 **Review-comments.** `ripr review-comments --suppression-policy PATH` loads
 the same file with the same loader as `ripr check` (relative paths resolve
@@ -458,6 +506,17 @@ values; an unrelated value such as `mode = "slow"` gets no suggestion, a
 keeps the same span, rejected value and accepted-value list.
 ```
 
+A rejected value that equals an accepted one once `_` or a space is read as
+`-` names that accepted value before edit distance is consulted (#15481):
+
+```text
+Given ripr.toml sets [perl] producer = "perl_lsp", one edit from both
+`perllsp` and `perl-lsp`,
+when ripr loads the config,
+then the error ends with `(did you mean `perl-lsp`?)`; `producer = "perlsp"`,
+with no separator typed, still ends with `(did you mean `perllsp`?)`.
+```
+
 ### Per-crate overrides (#2671)
 
 ```text
@@ -580,30 +639,37 @@ then the configuration loads as a regular file would.
 ### Doctor checks the pytest the Python verify route runs (#13617)
 
 ```text
-Given a Python root that is not unittest-only,
+Given a Python root that is not unittest-only and has no project `.venv` or
+`venv`,
 when ripr doctor runs,
 then doctor checks that PATH `python` (the interpreter of the printed
 `python -m pytest` verify command) imports pytest, from a fresh private
 empty directory with PYTHONSAFEPATH=1 and PYTHONPATH unset, without
 starting pytest, so no checkout or temp-directory code is executed;
 
-Given PATH `python` cannot import pytest,
-when doctor reports the probe,
-then the result is an advisory warning that never changes the exit code;
+Given a project `.venv` or `venv` that statically lists pytest in
+site-packages,
+when ripr doctor runs,
+then doctor reports a pass for that venv interpreter (the one the printed
+verify command names) and does not probe PATH `python`;
 
-Given a project `.venv` or `venv` whose site-packages statically lists
-pytest while PATH `python` lacks it,
-when doctor reports the failure,
-then the warning names that venv's activate script, joined to the selected
-root and shell-quoted so it pastes from the caller's directory; a venv
-without pytest gives no activation advice, and an unreadable venv layout is
-reported as not verified, never as a pass.
+Given a project venv whose site-packages statically lacks pytest,
+when doctor reports the probe,
+then it is a non-required failure that never changes the exit code and names
+one install command for the venv interpreter, joined to the selected root and
+shell-quoted: `uv pip install --python <venv python> pytest` when `uv.lock`
+exists, otherwise `<venv python> -m pip install pytest`; the generic static
+hint is suppressed so only one message is shown;
+
+Given a project venv whose layout is not statically readable,
+when doctor reports the probe,
+then it is reported as not verified (a failure, never a pass).
 ```
 
 The virtualenv is read statically and never executed. The printed verify
-command itself names the project venv interpreter when one exists
-(RIPR-SPEC-0028, #13801); doctor still probes only PATH `python`, so it never
-executes an interpreter from the checkout.
+command names the project venv interpreter when one exists (RIPR-SPEC-0028,
+#13801), and doctor now follows that same interpreter via static facts, so it
+never executes an interpreter from the checkout.
 
 ### Doctor exit codes distinguish findings, usage errors, and clean runs (#5102)
 
@@ -644,6 +710,15 @@ keeps exit 0 when the other checks pass, and recommends
 `ripr check --base REF` bound to the diagnosed root instead of a bare
 `ripr check`. The probe runs only after `HEAD` resolved, so an unanswered Git
 never produces the advisory, and a failed prerequisite still outranks it.
+
+When the repository is mid-merge, mid-rebase or mid-cherry-pick (Git's
+operation marker exists), doctor records an advisory `git_operation` check
+naming the operation and its finish and abort commands, and keeps exit 0 when
+the other checks pass. While conflict markers remain, `ripr check` quarantines
+their regions, including regions a zero-context diff splits across hunks,
+records the `unresolved_conflict_markers` limitation and exits 2 instead of
+listing findings from rival source states. An unanswered Git probe never
+produces the advisory.
 
 With a resolved default base, doctor reports `git_base` and names the ref.
 A shared ancestor with HEAD passes. If none is available, a shallow clone gets

@@ -2,9 +2,12 @@
 [[extend]]
 id = "RIPR-SPEC-0238"
 tests = [
+  "crates/ripr/src/analysis/language/python/repo_module_identity_tests.rs::capped_source_identity_withholds_short_import_credit",
   "crates/ripr/src/analysis/language/python/repo_module_identity_tests.rs::given_same_named_function_in_unimported_module_when_repo_mode_then_no_relation",
   "crates/ripr/src/analysis/language/python/repo_module_identity_tests.rs::given_src_short_name_shadowed_by_plain_module_when_repo_mode_then_not_exposed",
 ]
 code = [
+  "crates/ripr/src/analysis/language/python/repo/discovery.rs",
+  "crates/ripr/src/analysis/language/python/repo/mod.rs",
   "crates/ripr/src/analysis/language/python/repo/evidence.rs",
 ]
