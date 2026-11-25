@@ -375,6 +375,13 @@ impl MemberCrates {
         self.default_target_root_with_flags(crate_root, &["autolib", "autobins"])
     }
 
+    /// [`Self::is_default_target_root`] read from the selected source epoch:
+    /// the committed-source overlay when one is active, so a dirty manifest
+    /// cannot confirm a root that the analyzed revision moved (#16277).
+    pub(crate) fn is_default_target_root_in_selected_epoch(&self, crate_root: &Path) -> bool {
+        self.default_target_root_with_flags_snapshot(crate_root, &["autolib", "autobins"], true)
+    }
+
     /// Whether Cargo's automatic target discovery alone makes `file`
     /// (root-relative, directly under `tests/`, `benches/` or `examples/`) a
     /// crate root, with no other root able to declare it as a module: the
@@ -382,8 +389,10 @@ impl MemberCrates {
     /// matching `autotests`/`autobenches`/`autoexamples` on and places no
     /// target `path` directly in the package directory or in that target
     /// directory (a `[lib] path = "lib.rs"` could declare
-    /// `mod tests { mod it; }`). Without manifest authority, or with an
-    /// unreadable or virtual manifest, the answer is no.
+    /// `mod tests { mod it; }`). The manifest is read from the selected
+    /// source epoch, the committed-source overlay when one is active.
+    /// Without manifest authority, or with an unreadable or virtual
+    /// manifest, the answer is no.
     pub(crate) fn auto_discovers_target_root(&self, file: &Path) -> bool {
         let Some(root) = &self.root else {
             return false;
@@ -400,9 +409,11 @@ impl MemberCrates {
         let Some(package_directory) = directory.parent() else {
             return false;
         };
-        let root = lexical(root);
+        let Some(root) = snapshot_root(root) else {
+            return false;
+        };
         let package_directory = lexical(&root.join(package_directory));
-        let Some((package, _)) = nearest_package(&root, &package_directory) else {
+        let Some((package, _)) = nearest_package_snapshot(&root, &package_directory, true) else {
             return false;
         };
         if package.directory != package_directory {
@@ -2269,6 +2280,40 @@ mod tests {
             assert_eq!(observed, expected, "{file}: {manifest}");
         }
         assert!(!MemberCrates::default().auto_discovers_target_root(Path::new("tests/it.rs")));
+        Ok(())
+    }
+
+    // #16277: the root checks that admit a test file's module chain read the
+    // manifest of the selected source epoch, so a dirty manifest cannot
+    // confirm a root that the committed revision moved, nor refuse one it
+    // keeps.
+    #[test]
+    fn module_chain_root_checks_read_the_selected_manifest_epoch() -> Result<(), String> {
+        use crate::analysis::committed_source::{CommittedSourceOverlay, with_overlay};
+        const MOVED: &str =
+            "[package]\nname = \"pricing\"\nversion = \"0.1.0\"\n[lib]\npath = \"lib.rs\"\n";
+        for (worktree, committed, expected) in [
+            (PRICING, MOVED, false),
+            (MOVED, PRICING, true),
+            (PRICING, PRICING, true),
+        ] {
+            let root = temp_workspace("chain-root-epoch", &[("Cargo.toml", worktree)])?;
+            let overlay = CommittedSourceOverlay::from_entries(
+                &root,
+                [("Cargo.toml", Some(committed.as_bytes()))],
+            );
+            let members = MemberCrates::new(&root);
+            let (default_root, auto_root) =
+                with_overlay(Some(std::sync::Arc::new(overlay)), || {
+                    (
+                        members.is_default_target_root_in_selected_epoch(Path::new("src/lib.rs")),
+                        members.auto_discovers_target_root(Path::new("tests/it.rs")),
+                    )
+                });
+            let _ = std::fs::remove_dir_all(&root);
+            assert_eq!(default_root, expected, "src/lib.rs: {committed}");
+            assert_eq!(auto_root, expected, "tests/it.rs: {committed}");
+        }
         Ok(())
     }
 

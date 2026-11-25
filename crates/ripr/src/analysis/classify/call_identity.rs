@@ -173,6 +173,13 @@ pub(crate) struct CallIdentityMemos {
     /// Test-only scaling probe: repeated probes must not rescan.
     #[cfg(test)]
     rebound_scans: std::sync::atomic::AtomicUsize,
+    /// #16277: whether any indexed file exports a macro under a std macro's
+    /// name, read once per index rather than once per renamed-call query.
+    std_macro_export: std::sync::OnceLock<bool>,
+    /// #16277: how many workspace `macro_export` inventory scans ran on this
+    /// index. Test-only: repeated queries must reuse the first scan.
+    #[cfg(test)]
+    std_macro_export_scans: std::sync::atomic::AtomicUsize,
     /// #8917: whether a type name carries a unique workspace `Default` derive.
     pub(in crate::analysis) type_derives_default: Mutex<BTreeMap<String, bool>>,
     /// Exact-source, requested-name binding scans used by the closed assertion
@@ -3844,7 +3851,7 @@ fn manifest_confirms_crate_root(index: &RustIndex, root: &Path) -> bool {
         .parent()
         .and_then(Path::file_name)
         .is_some_and(|name| name == "src");
-    if in_src && members.is_default_target_root(root) {
+    if in_src && members.is_default_target_root_in_selected_epoch(root) {
         return true;
     }
     members.is_binary_target_root(root)
@@ -3878,13 +3885,20 @@ fn sibling_mounts_as_module(index: &RustIndex, root: &Path) -> bool {
 /// can import it from a file the module chain does not read, so the chain
 /// is not trusted to settle which macro a test invokes.
 fn crate_may_export_a_std_macro(index: &RustIndex) -> bool {
-    index.files().iter().any(|(path, facts)| {
-        facts.source.contains("macro_export")
-            && index
-                .source_syntax
-                .get(index, path)
-                .and_then(|snapshot| snapshot.tree())
-                .is_none_or(|tree| crate::analysis::syntax::file_exports_a_std_macro(&tree))
+    let memos = &index.call_identity_memos;
+    *memos.std_macro_export.get_or_init(|| {
+        #[cfg(test)]
+        memos
+            .std_macro_export_scans
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        index.files().iter().any(|(path, facts)| {
+            facts.source.contains("macro_export")
+                && index
+                    .source_syntax
+                    .get(index, path)
+                    .and_then(|snapshot| snapshot.tree())
+                    .is_none_or(|tree| crate::analysis::syntax::file_exports_a_std_macro(&tree))
+        })
     })
 }
 
@@ -7553,6 +7567,21 @@ fn file_module_case() {
             assert_eq!(
                 bare_name_renamed_in_nested_blocks(&files, owner, test),
                 refused,
+                "{macros}"
+            );
+            // Repeated queries on one index reuse the first inventory scan,
+            // whichever way it answered.
+            assert_eq!(
+                bare_name_renamed_in_nested_blocks(&files, owner, test),
+                refused,
+                "{macros}"
+            );
+            assert_eq!(
+                files
+                    .call_identity_memos
+                    .std_macro_export_scans
+                    .load(std::sync::atomic::Ordering::Relaxed),
+                1,
                 "{macros}"
             );
         }
