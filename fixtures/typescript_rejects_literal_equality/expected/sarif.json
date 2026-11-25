@@ -201,7 +201,7 @@
             }
           ],
           "message": {
-            "text": "Changed code `return \"ready\";` may be reached by tests, but their inputs are not visible to static analysis. Next step: TypeScript preview advisory: infection is not established for this edit shape, so no assertion is requested and no repair packet is emitted; show a test input that changes the behavior first."
+            "text": "Changed code `return \"ready\";` may be reached by tests, but static analysis cannot tell whether their inputs exercise it. Next step: TypeScript preview advisory: infection is not established for this edit shape, so no assertion is requested and no repair packet is emitted; show a test input that changes the behavior first."
           },
           "partialFingerprints": {
             "riprFingerprintV1": "ripr.finding.infection_unknown|probe:src_load.ts:typescript_preview:2209cfc8|probe:src_load.ts:typescript_preview:2209cfc8|fixtures/typescript_rejects_literal_equality/input/src/load.ts"

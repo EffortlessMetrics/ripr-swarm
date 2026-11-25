@@ -52,7 +52,7 @@
             }
           ],
           "message": {
-            "text": "Changed code `return b;` is reached by tests, but no assertion appears to notice a change. Next step: TypeScript preview advisory: no related test call enters the changed branch; add a test input that enters it before strengthening any assertion. No repair packet is emitted."
+            "text": "Changed code `return b;` is in code tests call, but no test input appears to exercise it. Next step: TypeScript preview advisory: no related test call enters the changed branch; add a test input that enters it before strengthening any assertion. No repair packet is emitted."
           },
           "partialFingerprints": {
             "riprFingerprintV1": "ripr.finding.reachable_unrevealed|probe:src_guard.ts:typescript_preview:0e63c99e|probe:src_guard.ts:typescript_preview:0e63c99e|fixtures/typescript_infection_shapes/input/src/guard.ts"
@@ -368,7 +368,7 @@
             }
           ],
           "message": {
-            "text": "Changed code `return 6;` may be reached by tests, but their inputs are not visible to static analysis. Next step: TypeScript preview advisory: infection is not established for this edit shape, so no assertion is requested and no repair packet is emitted; show a test input that changes the behavior first."
+            "text": "Changed code `return 6;` may be reached by tests, but static analysis cannot tell whether their inputs exercise it. Next step: TypeScript preview advisory: infection is not established for this edit shape, so no assertion is requested and no repair packet is emitted; show a test input that changes the behavior first."
           },
           "partialFingerprints": {
             "riprFingerprintV1": "ripr.finding.infection_unknown|probe:src_pricing.ts:typescript_preview:b7b2112c|probe:src_pricing.ts:typescript_preview:b7b2112c|fixtures/typescript_infection_shapes/input/src/pricing.ts"
@@ -675,7 +675,7 @@
             }
           ],
           "message": {
-            "text": "Changed code `return opts?.max ?? 20;` may be reached by tests, but their inputs are not visible to static analysis. Next step: TypeScript preview advisory: infection is not established for this edit shape, so no assertion is requested and no repair packet is emitted; show a test input that changes the behavior first."
+            "text": "Changed code `return opts?.max ?? 20;` may be reached by tests, but static analysis cannot tell whether their inputs exercise it. Next step: TypeScript preview advisory: infection is not established for this edit shape, so no assertion is requested and no repair packet is emitted; show a test input that changes the behavior first."
           },
           "partialFingerprints": {
             "riprFingerprintV1": "ripr.finding.infection_unknown|probe:src_pricing.ts:typescript_preview:1ba7ffcf|probe:src_pricing.ts:typescript_preview:1ba7ffcf|fixtures/typescript_infection_shapes/input/src/pricing.ts"
@@ -833,7 +833,7 @@
             }
           ],
           "message": {
-            "text": "Changed code `export function say(msg: string, loud = true): string {` is reached by tests, but no assertion appears to notice a change. Next step: TypeScript preview advisory: every related call passes the argument whose default changed, so the default never applies; add a test call that omits it before strengthening any assertion. No repair packet is emitted."
+            "text": "Changed code `export function say(msg: string, loud = true): string {` is in code tests call, but no test input appears to exercise it. Next step: TypeScript preview advisory: every related call passes the argument whose default changed, so the default never applies; add a test call that omits it before strengthening any assertion. No repair packet is emitted."
           },
           "partialFingerprints": {
             "riprFingerprintV1": "ripr.finding.reachable_unrevealed|probe:src_pricing.ts:typescript_preview:7d52efbc|probe:src_pricing.ts:typescript_preview:7d52efbc|fixtures/typescript_infection_shapes/input/src/pricing.ts"
