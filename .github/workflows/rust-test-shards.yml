@@ -45,6 +45,13 @@ jobs:
       matrix:
         shard: [1, 2]
     steps:
+      - name: Isolate hosted Rust toolchain
+        # The cache action hashes the home path. Keep it stable across images.
+        run: |
+          rustup_home="${RUNNER_TEMP:?}/ripr-rustup"
+          mkdir -- "$rustup_home"
+          printf 'RUSTUP_HOME=%s\n' "$rustup_home" >> "$GITHUB_ENV"
+
       # Full history, like the unsharded step: base-resolving tests refuse on a
       # shallow clone (#10344).
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
@@ -56,6 +63,12 @@ jobs:
         with:
           toolchain: 1.95.0
           components: llvm-tools-preview
+        id: rust_toolchain
+
+      - name: Verify hosted Rust toolchain
+        uses: ./.github/actions/verify-hosted-rustup
+        with:
+          toolchain: ${{ steps.rust_toolchain.outputs.name }}
 
       - name: Install CI tools
         uses: taiki-e/install-action@cfdb7ed4ccc7c7dce37759eae89dc5674b469b39 # v2.90.3
