@@ -244,12 +244,6 @@ pub(super) fn python_call_variant_evidence(
         // spells.
         return None;
     }
-    // A recursive call can hand the owner an argument no related test
-    // passes (`clean(s.replace(" ", ""))`), so the entry rows do not cover
-    // what the versions see; the boundary rule refuses the same inference.
-    if owner.term_facts.calls_own_name() {
-        return None;
-    }
     let variant = call_variant(old_line, new_line)?;
     // A bare `round` or `sorted` is the builtin only when nothing in the
     // owner's file rebinds the name.
@@ -350,28 +344,11 @@ pub(super) fn elements_agree(elements: &[String]) -> Option<bool> {
         return Some(true);
     };
     for element in elements {
-        if !same_element(first, element)? {
+        if !literals_equal(first, element)? {
             return Some(false);
         }
     }
     Some(true)
-}
-
-/// Whether two element literals hold the same value: the same spelling, two
-/// plain strings with the same text, or two ints with the same value. Mixed
-/// or float spellings are not read: an int and a float that print alike can
-/// differ once the float is rounded to binary (`2**53 + 1` and its float).
-fn same_element(left: &str, right: &str) -> Option<bool> {
-    let (left, right) = (left.trim(), right.trim());
-    if left == right {
-        return Some(true);
-    }
-    let plain = |text: &str| text.starts_with(['"', '\'']) && !text.contains('\\');
-    if plain(left) && plain(right) {
-        return Some(python_string_literal_value(left)? == python_string_literal_value(right)?);
-    }
-    let int = |text: &str| text.replace('_', "").parse::<i128>().ok();
-    Some(int(left)? == int(right)?)
 }
 
 /// Whether both versions of the call give the same result for one literal

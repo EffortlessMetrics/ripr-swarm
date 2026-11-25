@@ -207,7 +207,7 @@ pub(super) fn term_facts(
                     break;
                 }
             }
-            None
+            first
         })
         .collect();
     PythonTermFacts {

@@ -617,12 +617,13 @@ fn sorting_agrees_only_without_two_different_elements() {
     assert_eq!(elements_agree(&list(&["4"])), Some(true));
     assert_eq!(elements_agree(&list(&["2", "2"])), Some(true));
     assert_eq!(elements_agree(&list(&["1_000", "1000"])), Some(true));
-    // An int and a float are not read: `2**53 + 1` and its float differ.
+    // An int and a float compare as Python compares them (#16221): `2**53 + 1`
+    // is not its float spelling, which names `2**53`, and `2 == 2.0`.
     assert_eq!(
         elements_agree(&list(&["9007199254740993", "9007199254740993.0"])),
-        None
+        Some(false)
     );
-    assert_eq!(elements_agree(&list(&["2", "2.0"])), None);
+    assert_eq!(elements_agree(&list(&["2", "2.0"])), Some(true));
     assert_eq!(elements_agree(&list(&["\"a\"", "'a'"])), Some(true));
     assert_eq!(elements_agree(&list(&["4", "1"])), Some(false));
     assert_eq!(elements_agree(&list(&["\"a\"", "\"b\""])), Some(false));
