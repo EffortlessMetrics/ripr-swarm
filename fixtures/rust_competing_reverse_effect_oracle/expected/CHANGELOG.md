@@ -306,3 +306,15 @@ Command:
 
 Updated:
 - `expected/human-full.txt`
+
+## Pending — rust_competing_reverse_effect_oracle (24)
+
+Reason:
+RIPR-SPEC-0224: a proximity-only row that reveal marked observation_unconfirmed on a gap finding carries no_call_path, so its unrelated oracle no longer leads the finding's oracle summary (#16213)
+
+Command:
+`cargo xtask goldens bless rust_competing_reverse_effect_oracle --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human-full.txt`

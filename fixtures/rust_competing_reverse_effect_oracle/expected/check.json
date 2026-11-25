@@ -123,8 +123,8 @@
           "oracle": "assert_eq!(parse_note(&format!(\"{input}\")), expected);",
           "relation_reason": "same_test_file",
           "relation_confidence": "medium",
-          "miss": "observation_unconfirmed",
-          "why": "ripr could not confirm that this assertion observes the changed behavior"
+          "miss": "no_call_path",
+          "why": "no established call path to the changed code; linked by file location only"
         }
       ],
       "stop_reasons": [],
@@ -249,8 +249,8 @@
           "oracle": "assert_eq!(parse_note(&format!(\"{input}\")), expected);",
           "relation_reason": "same_test_file",
           "relation_confidence": "medium",
-          "miss": "observation_unconfirmed",
-          "why": "ripr could not confirm that this assertion observes the changed behavior"
+          "miss": "no_call_path",
+          "why": "no established call path to the changed code; linked by file location only"
         }
       ],
       "stop_reasons": [],

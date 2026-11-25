@@ -20,7 +20,7 @@ Shared evidence and guidance
   E5 [findings 1, 2]: discriminator weak: Discriminator unconfirmed: no assertion text references the changed expression
   E6 [findings 1, 2]: local flow reaches state write: output.borrow_mut().push(1) (line 4)
   E7 [findings 1, 2]: related test src/lib.rs:17 direct_smoke uses no oracle; misses: has no assertion
-  E8 [findings 1, 2]: related test src/lib.rs:23 parser_only uses strong whole object equality oracle: assert_eq!(parse_note(&format!("{input}")), expected); unconfirmed: ripr could not confirm that this assertion observes the changed behavior
+  E8 [findings 1, 2]: related test src/lib.rs:23 parser_only uses strong whole object equality oracle: assert_eq!(parse_note(&format!("{input}")), expected); misses: no established call path to the changed code; linked by file location only
   E9 [findings 1, 2]: source assertion argument value "{input}" at line 26
 
 Finding 1: WARNING ./src/lib.rs:4

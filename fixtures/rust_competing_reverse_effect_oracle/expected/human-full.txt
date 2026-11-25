@@ -21,7 +21,7 @@ Shared evidence and guidance
   E6 [findings 1, 2]: local flow reaches state write: output.borrow_mut().push(1) (line 4)
   E7 [findings 1, 2]: related test src/lib.rs:19 direct_smoke uses no oracle; misses: has no assertion
   E8 [findings 1, 2]: related test src/lib.rs:32 implicit_observer uses strong whole object equality oracle: assert_eq!(Observation { sink }, Observation { sink:Rc::new(RefCell::new(vec![1])) }); unconfirmed: ripr could not confirm that this assertion observes the changed behavior
-  E9 [findings 1, 2]: related test src/lib.rs:25 parser_only uses strong whole object equality oracle: assert_eq!(parse_note(&format!("{input}")), expected); unconfirmed: ripr could not confirm that this assertion observes the changed behavior
+  E9 [findings 1, 2]: related test src/lib.rs:25 parser_only uses strong whole object equality oracle: assert_eq!(parse_note(&format!("{input}")), expected); misses: no established call path to the changed code; linked by file location only
   E10 [findings 1, 2]: source assertion argument value "{input}" at line 28
   E11 [findings 1, 2]: source assertion argument value 1 at line 36
 
