@@ -20,7 +20,7 @@ use super::arguments::{
 };
 use super::classify::OracleClassification;
 use super::patterns::{
-    PatternPolarity, pattern_comparison_polarity, pattern_operand_negations, unwrap_parentheses,
+    PatternPolarity, pattern_comparison_polarity, pattern_operand_negations, transparent_operand,
 };
 
 /// The `Option` and `Result` constructors, which only say which side a value
@@ -355,7 +355,7 @@ fn asserted_pattern(line: &str) -> Option<(String, String)> {
             .into_iter()
             .find(|operand| pattern_operand_negations(operand) == Some(0))?;
         return pair(complete_macro_arguments(
-            unwrap_parentheses(operand.trim()),
+            transparent_operand(&operand),
             "matches!",
         )?);
     }
@@ -1475,6 +1475,23 @@ mod tests {
                 BroadError,
                 Weak,
             ),
+            // Comments, groups and a block holding only the operand are
+            // transparent to the compared pattern.
+            (
+                "assert_eq!((matches!(score(2), 4 | 5)) /* either */, true)",
+                RelationalCheck,
+                Weak,
+            ),
+            (
+                "assert_eq!({ matches!(score(2), 4 | 5) }, true)",
+                RelationalCheck,
+                Weak,
+            ),
+            (
+                "assert_eq!(true, /* note */ { (matches!(value, _)) })",
+                RelationalCheck,
+                Weak,
+            ),
         ];
         for (text, kind, strength) in weakened {
             let actual = pattern_assertion_classification(text);
@@ -1531,6 +1548,9 @@ mod tests {
             "assert_eq!(matches!(check(5), Ok(_)), false)",
             "assert_ne!(matches!(check(5), Ok(_)), true)",
             "assert_eq!(matches!(check(5), Ok(_)), flag)",
+            "assert_eq!({ matches!(check(5), Ok(_)) } /* no */, false)",
+            // A block with a statement before its tail is not transparent.
+            "assert_eq!({ let _ = 1; matches!(value, _) }, true)",
         ] {
             let actual = pattern_assertion_classification(text);
             if actual.is_some() {

@@ -83,6 +83,7 @@ fn a_matches_compared_with_true_is_only_as_strong_as_its_pattern() -> Result<(),
         "assert!(matches!(demo::discount(100), 90));",
         "assert_eq!(matches!(demo::discount(100), 90), true);",
         "assert_eq!(true, matches!(demo::discount(100), 90));",
+        "assert_eq!({ matches!(demo::discount(100), 90) } /* pinned */, true);",
     ] {
         assert_eq!(class_with(body)?, ExposureClass::Exposed, "{body}");
     }
@@ -98,6 +99,13 @@ fn a_matches_compared_with_true_is_only_as_strong_as_its_pattern() -> Result<(),
         "assert_eq!(true, matches!(demo::discount(100), 90 | 100));",
         "assert_eq!((matches!(demo::discount(100), _)), (true));",
         "assert_ne!(matches!(demo::discount(100), _), false);",
+        // Comments, groups and a block holding only the operand are
+        // transparent.
+        "assert_eq!((matches!(demo::discount(100), 90 | 100)) /* either */, true);",
+        "assert_eq!({ matches!(demo::discount(100), 90 | 100) }, true);",
+        // `assert_ne!` stays an inequality macro whatever the literal, so
+        // even a pinned pattern is capped there (rule 1).
+        "assert_ne!(matches!(demo::discount(100), 90), false);",
         // A comparison that excludes the pattern stays capped (rule 1).
         "assert_eq!(matches!(demo::discount(100), 90), false);",
     ] {
