@@ -1029,6 +1029,14 @@ mod own_scope_tests {
         ] {
             assert_eq!(own_scope_calls(source), OwnScopeCalls::default(), "{label}");
         }
+        // The scope's own call of a name is not awaited because a generator
+        // expression in it awaits another call of that name: that one runs
+        // only when the generator is iterated.
+        let mixed = own_scope_calls(
+            "async def age():\n    rows = (await is_adult(value) for value in values)\n    return is_adult(30)\n",
+        );
+        assert_eq!(mixed.callees, ["is_adult"]);
+        assert!(mixed.awaited.is_empty());
         // A list display runs where it is written: its awaited call is the
         // handler's own.
         let display = own_scope_calls(
