@@ -1071,7 +1071,9 @@ Candidates come from the first non-empty tier:
    or an arrow, parameter defaults included, other than an unannotated,
    non-async synchronous array callback, such as
    `const later = () => new X().m()`, `const later = (v = new X().m()) => v`
-   or `setTimeout(() => ...)`; a function
+   or `setTimeout(() => ...)`; a generator function or method, whose body
+   runs only when its iterator is advanced, reaches no class or built value
+   (#16249); a function
    whose header is not `(params) [: Type] [=>] {` gives no construction
    edge, except an arrow `(params) [: Type] => expression` whose
    expression holds no nested function, class or block, which runs it

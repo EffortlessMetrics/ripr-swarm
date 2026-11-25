@@ -215,6 +215,18 @@ fn entry_that_does_not_call_the_method_directly_gets_no_edge() {
             "export function serialize(input: any): string {\n  const never = (x = new Serializer().write(input)): (() => void) => () => {};\n  return \"\";\n}",
         ),
         (
+            "generator body",
+            "export function* serialize(input: any) {\n  yield new Serializer().write(input);\n}",
+        ),
+        (
+            "async generator body",
+            "export async function* serialize(input: any) {\n  yield new Serializer().write(input);\n}",
+        ),
+        (
+            "generator default",
+            "export function* serialize(input: any = new Serializer().write({})) {\n  yield input;\n}",
+        ),
+        (
             "async synchronous callback",
             "export function serialize(input: any): string {\n  [0].map(async (x) => {\n    await x;\n    return new Serializer().write(input);\n  });\n  return \"\";\n}",
         ),

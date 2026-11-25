@@ -169,6 +169,10 @@ fn construction_the_entry_does_not_run_gets_no_edge() {
             "export const serialize = (input: any): string =>\n  String(() => new Serializer().serialize(input));",
         ),
         (
+            "generator body",
+            "export function* serialize(input: any) {\n  yield new Serializer().serialize(input);\n}",
+        ),
+        (
             "default of an arrow never called",
             "export function serialize(input: any): string {\n  const later = (x = new Serializer().serialize(input)) => x;\n  return String(input);\n}",
         ),

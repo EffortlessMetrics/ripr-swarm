@@ -596,6 +596,11 @@ fn every_construction_calls_a_method(
 pub(super) fn executed_body(text: &str) -> Option<String> {
     let code = super::tests_extract::byte_preserving_code_mask(text)?;
     if let Some(brace) = body_brace(&code) {
+        // A generator's body runs only when its iterator is advanced, so
+        // calling it runs none of the body.
+        if is_generator_header(&code[..brace]) {
+            return None;
+        }
         return executed_this_source(&format!("body(){}", text.get(brace..)?));
     }
     // `(params) [: Type] => expression` with no nested function, class or
@@ -610,6 +615,21 @@ pub(super) fn executed_body(text: &str) -> Option<String> {
                 .any(|(idx, _)| bounded(expression, idx, word))
         });
     plain.then(|| expression.to_string())
+}
+
+/// `true` when a function header holds `*` outside its parameter list and
+/// brackets: `function* name(`, `async *name(` or `*[key](`.
+fn is_generator_header(header: &str) -> bool {
+    let mut depth = 0usize;
+    header.chars().any(|ch| {
+        match ch {
+            '(' | '[' | '<' => depth += 1,
+            ')' | ']' | '>' => depth = depth.saturating_sub(1),
+            '*' => return depth == 0,
+            _ => {}
+        }
+        false
+    })
 }
 
 /// Offset of the expression body of an arrow `code` starts with:
