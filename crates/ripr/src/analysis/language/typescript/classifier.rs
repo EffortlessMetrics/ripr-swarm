@@ -3000,6 +3000,39 @@ fn ts_input_class_literal_unreadable(argument: &str, target: &TsInputClassTarget
     let Some(entries) = balanced_call_arguments(&format!("{inner})")) else {
         return true;
     };
+    // For a field, every entry must be a plain `key: value` with an
+    // identifier, quoted or numeric key: a shorthand (`{ name }`) or a method
+    // (`name() {}`) defines a key whose value the readers do not see, and
+    // may override an earlier entry.
+    let plain_key_value = |entry: &str| {
+        entry.split_once(':').is_some_and(|(head, _)| {
+            let head = head.trim();
+            !head.is_empty()
+                && (head
+                    .chars()
+                    .all(|ch| ch.is_alphanumeric() || matches!(ch, '_' | '$'))
+                    || (head.len() >= 2
+                        && ((head.starts_with('"') && head.ends_with('"'))
+                            || (head.starts_with('\'') && head.ends_with('\'')))))
+        })
+    };
+    if target.field.is_some() {
+        let original = argument.trim();
+        let Some(inner) = original
+            .strip_prefix('{')
+            .and_then(|rest| rest.strip_suffix('}'))
+        else {
+            return false;
+        };
+        if !inner.trim().is_empty() {
+            let Some(original_entries) = balanced_call_arguments(&format!("{inner})")) else {
+                return true;
+            };
+            if !original_entries.iter().all(|entry| plain_key_value(entry)) {
+                return true;
+            }
+        }
+    }
     entries.iter().any(|entry| {
         let entry = entry.trim();
         entry.starts_with("...")
@@ -3363,13 +3396,21 @@ fn ts_added_fallback_change(
     // first `=>` is the owner's own arrow head.
     let owner_arrow_head = owner.source_text.as_deref().and_then(|source| {
         let first = source.lines().next()?;
-        let arrow = ts_mask_literals_and_comments(first).find("=>")?;
-        let head = first.get(..arrow + 2)?.trim();
+        // The mask keeps the char count, not the byte length: find the
+        // arrow by char index and cut the original text at that char.
+        let masked: Vec<char> = ts_mask_literals_and_comments(first).chars().collect();
+        let arrow = masked.windows(2).position(|pair| pair == ['=', '>'])?;
+        let cut = first
+            .char_indices()
+            .nth(arrow + 2)
+            .map_or(first.len(), |(at, _)| at);
+        let head = first.get(..cut)?.trim();
         // Only an arrow owner's text opens with its own parameter list
         // (`(a) =>`, `<T>(a: T) =>`, `async (a) =>`, `a =>`); a function or
         // method owner's first `=>` belongs to a nested callback.
         let params = head.strip_prefix("async").map_or(head, str::trim_start);
-        let bare_param = params[..params.len() - 2]
+        let bare_param = params
+            .strip_suffix("=>")?
             .trim_end()
             .chars()
             .all(|ch| ch.is_alphanumeric() || matches!(ch, '_' | '$'));
@@ -3461,10 +3502,11 @@ fn ts_added_fallback_change(
                 // The argument is the operand's value only while the owner
                 // never rebinds it (`name = name.trim()`); without the owner
                 // source that cannot be checked.
+                let base = &operand[..base_end];
                 let unreassigned = owner
                     .source_text
                     .as_deref()
-                    .is_some_and(|source| !ts_binding_reassigned(source, &operand[..base_end]));
+                    .is_some_and(|source| !ts_operand_binding_unstable(source, base));
                 let mut target = (simple && static_subscript)
                     .then(|| ts_input_class_target(&operand, owner))
                     .flatten()
@@ -3473,7 +3515,19 @@ fn ts_added_fallback_change(
                         field: None,
                         position: None,
                     });
-                if !unreassigned {
+                // With no recorded parameters the target reader guesses a
+                // destructured first-argument field named like the operand;
+                // keep it only when the pattern binds that field as itself.
+                let guessed_field = owner.params.is_empty()
+                    && target.field.as_deref() == Some(base)
+                    && accesses == 0;
+                if !unreassigned
+                    || (guessed_field
+                        && !owner
+                            .source_text
+                            .as_deref()
+                            .is_some_and(|source| ts_destructures_field_as_itself(source, base)))
+                {
                     target.index = None;
                 }
                 return Some(TsInputClassChange {
@@ -3491,34 +3545,89 @@ fn ts_added_fallback_change(
     None
 }
 
-/// Whether `source` (an owner's text) assigns `name` after its parameter
-/// list: `name = ...`, a compound assignment, `++` / `--`, or a redeclaring
-/// `let name = ...`. A default in the parameter list is not a reassignment.
-fn ts_binding_reassigned(source: &str, name: &str) -> bool {
+/// Where an owner's body starts in its masked text: after `=>` for an arrow
+/// owner with a bare parameter (`name => ...`), else after the first
+/// balanced `( ... )`, which is the parameter list. `None` when neither is
+/// found.
+fn ts_owner_body_start(masked: &[char]) -> Option<usize> {
+    let arrow = masked.windows(2).position(|pair| pair == ['=', '>']);
+    if let Some(arrow) = arrow {
+        let head: String = masked[..arrow].iter().collect();
+        let head = head.trim();
+        let head = head
+            .strip_prefix("async")
+            .filter(|rest| rest.starts_with(char::is_whitespace))
+            .map_or(head, str::trim_start);
+        if !head.is_empty()
+            && head
+                .chars()
+                .all(|ch| ch.is_alphanumeric() || matches!(ch, '_' | '$'))
+        {
+            return Some(arrow + 2);
+        }
+    }
+    let open = masked.iter().position(|ch| *ch == '(')?;
+    ts_matching_close(masked, open).map(|close| close + 1)
+}
+
+/// The index of the bracket closing the one at `open`, by depth over all
+/// bracket kinds.
+fn ts_matching_close(masked: &[char], open: usize) -> Option<usize> {
+    let mut depth = 0usize;
+    for (index, ch) in masked.iter().enumerate().skip(open) {
+        match ch {
+            '(' | '[' | '{' => depth += 1,
+            ')' | ']' | '}' => {
+                depth = depth.checked_sub(1)?;
+                if depth == 0 {
+                    return Some(index);
+                }
+            }
+            _ => {}
+        }
+    }
+    None
+}
+
+/// Whether the owner's body may give `name` a value other than the
+/// argument before a fallback reads it, so the argument cannot witness the
+/// operand. Fails closed: any of these counts, and an unreadable owner text
+/// (no parameter list found) does too.
+///
+/// - a plain or compound assignment, `++` / `--`, or `for (name of ...)`;
+/// - a write through a member (`name.field = ...`, `name[0]++`), `delete`,
+///   or `Object.assign(name, ...)`-style mutation;
+/// - a destructuring assignment target (`[name] = ...`, `({ name } = ...)`);
+/// - a shadowing declaration: `let` / `const` / `var` / `function` /
+///   `class`, a bare arrow parameter (`name => ...`), or a parameter of a
+///   nested function, arrow, method or `catch` (`(name) => ...`).
+fn ts_operand_binding_unstable(source: &str, name: &str) -> bool {
     if name.is_empty() {
         return true;
     }
     let masked: Vec<char> = ts_mask_literals_and_comments(source).chars().collect();
-    // Skip the parameter list: the first balanced `( ... )`.
-    let mut from = 0usize;
-    if let Some(open) = masked.iter().position(|ch| *ch == '(') {
-        let mut depth = 0usize;
-        for (index, ch) in masked.iter().enumerate().skip(open) {
-            match ch {
-                '(' => depth += 1,
-                ')' => {
-                    depth = depth.saturating_sub(1);
-                    if depth == 0 {
-                        from = index + 1;
-                        break;
-                    }
-                }
-                _ => {}
-            }
-        }
-    }
+    let Some(from) = ts_owner_body_start(&masked) else {
+        return true;
+    };
     let name: Vec<char> = name.chars().collect();
     let ident = |ch: &char| ch.is_alphanumeric() || matches!(ch, '_' | '$');
+    let next_text = |at: usize, take: usize| -> String {
+        masked[at.min(masked.len())..]
+            .iter()
+            .skip_while(|ch| ch.is_whitespace())
+            .take(take)
+            .collect()
+    };
+    let writes = |after: &str| {
+        const COMPOUND: [&str; 15] = [
+            "+=", "-=", "*=", "/=", "%=", "&=", "|=", "^=", "**=", "<<=", ">>=", ">>>=", "&&=",
+            "||=", "??=",
+        ];
+        (after.starts_with('=') && !after[1..].starts_with(['=', '>']))
+            || after.starts_with("++")
+            || after.starts_with("--")
+            || COMPOUND.iter().any(|op| after.starts_with(op))
+    };
     let mut at = from;
     while at + name.len() <= masked.len() {
         if masked[at..at + name.len()] != name[..]
@@ -3531,34 +3640,152 @@ fn ts_binding_reassigned(source: &str, name: &str) -> bool {
             at += 1;
             continue;
         }
-        let after: String = masked[at + name.len()..]
-            .iter()
-            .skip_while(|ch| ch.is_whitespace())
-            .take(4)
-            .collect();
+        let end = at + name.len();
+        let after = next_text(end, 4);
         let before: String = masked[..at]
             .iter()
             .rev()
             .skip_while(|ch| ch.is_whitespace())
-            .take(2)
+            .take(16)
+            .collect::<Vec<_>>()
+            .into_iter()
+            .rev()
             .collect();
-        let compound = [
-            "+=", "-=", "*=", "/=", "%=", "&=", "|=", "^=", "**=", "<<=", ">>=", ">>>=", "&&=",
-            "||=", "??=",
-        ];
-        let plain = after.starts_with('=') && !after[1..].starts_with(['=', '>']);
-        if plain
-            || after.starts_with("++")
-            || after.starts_with("--")
-            || before == "++"
-            || before == "--"
-            || compound.iter().any(|op| after.starts_with(op))
+        let previous_word: String = before
+            .chars()
+            .rev()
+            .take_while(|ch| ch.is_alphanumeric())
+            .collect::<Vec<_>>()
+            .into_iter()
+            .rev()
+            .collect();
+        if writes(&after)
+            || after.starts_with("=>")
+            || before.ends_with("++")
+            || before.ends_with("--")
+            || ["let", "const", "var", "function", "class", "delete"]
+                .contains(&previous_word.as_str())
+            || ["of", "in"].iter().any(|word| {
+                after
+                    .strip_prefix(word)
+                    .is_some_and(|rest| rest.starts_with(char::is_whitespace))
+            })
+            || [
+                "assign(",
+                "defineProperty(",
+                "defineProperties(",
+                "setPrototypeOf(",
+            ]
+            .iter()
+            .any(|call| before.ends_with(call))
         {
             return true;
         }
-        at += name.len();
+        // A member chain ending in a write (`name.field = ...`).
+        let mut cursor = end;
+        loop {
+            while masked.get(cursor).is_some_and(|ch| ch.is_whitespace()) {
+                cursor += 1;
+            }
+            match masked.get(cursor) {
+                Some('.') => {
+                    cursor += 1;
+                    while masked.get(cursor).is_some_and(ident) {
+                        cursor += 1;
+                    }
+                }
+                Some('?') if masked.get(cursor + 1) == Some(&'.') => cursor += 2,
+                Some('[') => match ts_matching_close(&masked, cursor) {
+                    Some(close) => cursor = close + 1,
+                    None => return true,
+                },
+                _ => break,
+            }
+        }
+        if cursor > end && writes(&next_text(cursor, 4)) {
+            return true;
+        }
+        // The innermost enclosing brackets: a destructuring pattern that is
+        // assigned to, or a parameter list of a nested function.
+        let mut depth = 0usize;
+        let mut pattern_checked = false;
+        for open in (from..at).rev() {
+            match masked[open] {
+                ')' | ']' | '}' => depth += 1,
+                '(' | '[' | '{' if depth > 0 => depth -= 1,
+                opener @ ('(' | '[' | '{') => {
+                    let Some(close) = ts_matching_close(&masked, open) else {
+                        return true;
+                    };
+                    let following = next_text(close + 1, 2);
+                    if opener != '(' {
+                        if !pattern_checked
+                            && following.starts_with('=')
+                            && !following[1..].starts_with(['=', '>'])
+                        {
+                            return true;
+                        }
+                        pattern_checked = true;
+                        continue;
+                    }
+                    let keyword: String = masked[from..open]
+                        .iter()
+                        .rev()
+                        .skip_while(|ch| ch.is_whitespace())
+                        .take_while(|ch| ch.is_alphanumeric())
+                        .collect::<Vec<_>>()
+                        .into_iter()
+                        .rev()
+                        .collect();
+                    let control =
+                        ["if", "while", "switch", "with", "return"].contains(&keyword.as_str());
+                    if !control
+                        && (following.starts_with("=>") || following.starts_with(['{', ':']))
+                    {
+                        return true;
+                    }
+                    break;
+                }
+                _ => {}
+            }
+        }
+        at = end;
     }
     false
+}
+
+/// Whether the owner's first parameter destructures `name` as itself
+/// (`({ name }) =>`, `({ name = 'x' }: Opts)`), so a bare `name` operand
+/// reads the first argument's `name` field. A renamed binding
+/// (`{ input: name }`) or anything unreadable is not.
+fn ts_destructures_field_as_itself(source: &str, name: &str) -> bool {
+    let masked: Vec<char> = ts_mask_literals_and_comments(source).chars().collect();
+    let Some(open) = masked.iter().position(|ch| *ch == '(') else {
+        return false;
+    };
+    let Some(close) = ts_matching_close(&masked, open) else {
+        return false;
+    };
+    let params: String = masked[open + 1..close].iter().collect();
+    let params = params.trim_start();
+    let Some(pattern_close) = params
+        .starts_with('{')
+        .then(|| ts_matching_close(&params.chars().collect::<Vec<_>>(), 0))
+        .flatten()
+    else {
+        return false;
+    };
+    let pattern: String = params.chars().skip(1).take(pattern_close - 1).collect();
+    let Some(entries) = balanced_call_arguments(&format!("{pattern})")) else {
+        return false;
+    };
+    entries.iter().any(|entry| {
+        let head = entry
+            .split_once('=')
+            .map_or(entry.as_str(), |(head, _)| head)
+            .trim();
+        head == name
+    })
 }
 
 /// The operand a fallback guards: the tail of `before` after the last

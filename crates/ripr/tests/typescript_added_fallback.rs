@@ -625,3 +625,139 @@ fn spreads_computed_keys_and_accessors_are_unreadable_literals() -> Result<(), S
         )],
     )
 }
+
+#[test]
+fn a_later_shorthand_or_method_overrides_the_field() -> Result<(), String> {
+    let title = "export function title(opts: { name?: unknown }): unknown {\n  return opts.name || 'untitled';\n}\n";
+    assert_rows(
+        "title",
+        title,
+        (2, "  return opts.name;"),
+        "opts.name",
+        &[
+            (
+                "own-null",
+                "expect(title({ name: null })).toBe('untitled');",
+                "exposed",
+            ),
+            // The later method wins, so both versions return it and this
+            // assertion fails on both: it cannot tell them apart.
+            (
+                "method-override",
+                "expect(title({ name: null, name() {} })).toBe('untitled');",
+                "weakly_exposed",
+            ),
+            (
+                "shorthand-override",
+                "expect(title({ name: null, name })).toBe(name);",
+                "weakly_exposed",
+            ),
+        ],
+    )
+}
+
+#[test]
+fn a_non_ascii_arrow_default_is_read_without_panicking() -> Result<(), String> {
+    for (label, default) in [("utf8-default", "éééé"), ("ascii-default", "eeee")] {
+        assert_rows(
+            "label",
+            &format!("export const label = (name = \"{default}\") => name || 'anon';\n"),
+            (
+                1,
+                &format!("export const label = (name = \"{default}\") => name;"),
+            ),
+            "name",
+            &[(label, "expect(label(null)).toBe('anon');", "exposed")],
+        )?;
+    }
+    Ok(())
+}
+
+#[test]
+fn a_member_or_destructuring_write_unbinds_the_argument() -> Result<(), String> {
+    let member = "export function title(opts: { name?: string }): string {\n  opts.name = 'Bob';\n  return opts.name || 'untitled';\n}\n";
+    assert_rows(
+        "title",
+        member,
+        (3, "  return opts.name;"),
+        "opts.name",
+        &[(
+            "member-write",
+            "expect(title({})).toBe('Bob');",
+            "weakly_exposed",
+        )],
+    )?;
+    for (label, write) in [
+        ("array-pattern-write", "  [name] = ['Bob'];"),
+        ("object-pattern-write", "  ({ name } = { name: 'Bob' });"),
+        ("grouped-write", "  (name = 'Bob');"),
+    ] {
+        let owner = format!(
+            "export function label(name: string | null): string {{\n{write}\n  return name || 'anon';\n}}\n"
+        );
+        assert_rows(
+            "label",
+            &owner,
+            (3, "  return name;"),
+            "name",
+            &[(label, "expect(label(null)).toBe('Bob');", "weakly_exposed")],
+        )?;
+    }
+    Ok(())
+}
+
+#[test]
+fn a_bare_arrow_parameter_is_read_and_its_body_writes_are_seen() -> Result<(), String> {
+    assert_rows(
+        "label",
+        "export const label = name => name || 'anon';\n",
+        (1, "export const label = name => name;"),
+        "name",
+        &[(
+            "bare-arrow-null",
+            "expect(label(null)).toBe('anon');",
+            "exposed",
+        )],
+    )?;
+    let written =
+        "export const label = name => {\n  (name = 'Bob');\n  return name || 'anon';\n};\n";
+    assert_rows(
+        "label",
+        written,
+        (3, "  return name;"),
+        "name",
+        &[(
+            "bare-arrow-grouped-write",
+            "expect(label(null)).toBe('Bob');",
+            "weakly_exposed",
+        )],
+    )
+}
+
+#[test]
+fn a_renamed_destructured_field_or_block_callback_is_not_the_argument() -> Result<(), String> {
+    let renamed = "export function label({ input: name }: { input: string | null }): string {\n  return name || 'anon';\n}\n";
+    assert_rows(
+        "label",
+        renamed,
+        (2, "  return name;"),
+        "name",
+        &[(
+            "renamed-destructure",
+            "expect(label({ input: 'Bob', name: null })).toBe('Bob');",
+            "weakly_exposed",
+        )],
+    )?;
+    let callback = "export function label(name: string | null, xs: string[]): string[] {\n  return xs.map((name) => { return name || 'anon'; });\n}\n";
+    assert_rows(
+        "label",
+        callback,
+        (2, "  return xs.map((name) => { return name; });"),
+        "name",
+        &[(
+            "block-callback-shadow",
+            "expect(label(null, ['Bob'])).toEqual(['Bob']);",
+            "weakly_exposed",
+        )],
+    )
+}
