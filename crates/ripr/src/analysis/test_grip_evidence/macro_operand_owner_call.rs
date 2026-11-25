@@ -104,6 +104,9 @@ pub(super) struct OwnerResultLocal {
     name: String,
     uses: usize,
     evidence: bool,
+    /// #16220: a function-item alias of the owner (`let f = pick;`). Only a
+    /// call of it (`f(0)`) is an owner use; a bare read holds the function.
+    callable: bool,
 }
 
 /// Whether `tokens[at]` names `owner` as a call or path, not as a member
@@ -111,7 +114,12 @@ pub(super) struct OwnerResultLocal {
 /// #16220: the local-carrying fallback must use the resolved owner, not the
 /// bare identifier spelling, or an unrelated method's name token reads as a
 /// free observation of the owner.
-fn token_names_owner(tokens: &[SyntaxToken], at: usize, owner: &OwnerName<'_>) -> bool {
+fn token_names_owner(
+    tokens: &[SyntaxToken],
+    at: usize,
+    owner: &OwnerName<'_>,
+    foreign: &BTreeSet<String>,
+) -> bool {
     let token = &tokens[at];
     if token.kind() != SyntaxKind::IDENT || token.text() != owner.name {
         return false;
@@ -136,6 +144,17 @@ fn token_names_owner(tokens: &[SyntaxToken], at: usize, owner: &OwnerName<'_>) -
     if after_dot && !owner.is_method() {
         return false;
     }
+    // #16220: a receiver the test binds to a definitely different type
+    // (`let other = Other;`) makes `other.pick(..)` an unrelated method.
+    if after_dot
+        && before(2).is_some_and(|receiver| {
+            receiver.kind() == SyntaxKind::IDENT
+                && before(3).is_none_or(|dot| dot.kind() != SyntaxKind::DOT)
+                && foreign.contains(receiver.text())
+        })
+    {
+        return false;
+    }
     let qualifier = match before(1).map(|token| token.kind()) {
         Some(SyntaxKind::COLON2) => before(2)
             .filter(|token| token.kind() == SyntaxKind::IDENT)
@@ -157,9 +176,22 @@ fn token_names_owner(tokens: &[SyntaxToken], at: usize, owner: &OwnerName<'_>) -
 /// identifier pattern, the initializer one call of the owner, possibly
 /// unwrapped or chained: `pick(0).unwrap()`, `pick(0)?`). A body that does
 /// not parse cleanly yields none, which keeps the parsed reading.
-fn owner_result_locals(body: &str, owner: &OwnerName<'_>) -> Vec<OwnerResultLocal> {
+fn owner_result_locals(
+    body: &str,
+    owner: &OwnerName<'_>,
+    file_source: Option<&str>,
+) -> Vec<OwnerResultLocal> {
     let Some(parse) = crate::analysis::syntax::parse_clean_source_file_memoized(body) else {
         return Vec::new();
+    };
+    let foreign: BTreeSet<String> = if owner.is_method() {
+        typed_receiver_bindings(body, owner, &file_type_aliases(file_source))
+            .into_iter()
+            .filter(|(_, is_owner)| !is_owner)
+            .map(|(name, _)| name)
+            .collect()
+    } else {
+        BTreeSet::new()
     };
     let Some(function) = parse.tree().syntax().descendants().find_map(ast::Fn::cast) else {
         return Vec::new();
@@ -201,6 +233,10 @@ fn owner_result_locals(body: &str, owner: &OwnerName<'_>) -> Vec<OwnerResultLoca
             locals.push(local);
             continue;
         }
+        if let Some(alias) = function_item_alias(&statement, &initializer, owner) {
+            locals.push(alias);
+            continue;
+        }
         // Locals are visited in source order, so a chain of bindings
         // (`let s = &r; let t = s;`) is followed forward.
         let carries = initializer
@@ -226,7 +262,7 @@ fn owner_result_locals(body: &str, owner: &OwnerName<'_>) -> Vec<OwnerResultLoca
                 if owner.name.is_empty() || token.text() != owner.name {
                     return false;
                 }
-                token_names_owner(&tokens, at, owner)
+                token_names_owner(&tokens, at, owner, &foreign)
             });
         if !carries {
             continue;
@@ -246,10 +282,68 @@ fn owner_result_locals(body: &str, owner: &OwnerName<'_>) -> Vec<OwnerResultLoca
                 name,
                 uses: 0,
                 evidence: false,
+                callable: false,
             });
         }
     }
     locals
+}
+
+/// A function-item alias of a free-function owner: `let f = pick;` binding a
+/// plain identifier once to an unqualified or admitted path naming the owner.
+fn function_item_alias(
+    statement: &ast::LetStmt,
+    initializer: &ast::Expr,
+    owner: &OwnerName<'_>,
+) -> Option<OwnerResultLocal> {
+    if owner.is_method() || owner.name.is_empty() {
+        return None;
+    }
+    let ast::Pat::IdentPat(pattern) = statement.pat()? else {
+        return None;
+    };
+    if pattern.ref_token().is_some() || pattern.pat().is_some() {
+        return None;
+    }
+    let ast::Expr::PathExpr(path) = initializer else {
+        return None;
+    };
+    let path = path.path()?;
+    let segment = path.segment()?.name_ref()?;
+    if segment.text() != owner.name
+        || path.qualifier().is_some_and(|qualifier| {
+            qualifier
+                .segment()
+                .and_then(|segment| segment.name_ref())
+                .is_none_or(|name| !owner.admits_qualifier(name.text()))
+        })
+    {
+        return None;
+    }
+    Some(OwnerResultLocal {
+        name: pattern.name()?.text().to_string(),
+        uses: 0,
+        evidence: false,
+        callable: true,
+    })
+}
+
+/// Names declared as `type` aliases in the test's file. A binding annotated
+/// with one may still be the owner's type, so it is not settled as another.
+fn file_type_aliases(file_source: Option<&str>) -> BTreeSet<String> {
+    file_source
+        .and_then(crate::analysis::syntax::parse_clean_source_file_memoized)
+        .map(|parse| {
+            parse
+                .tree()
+                .syntax()
+                .descendants()
+                .filter_map(ast::TypeAlias::cast)
+                .filter_map(|alias| alias.name())
+                .map(|name| name.text().to_string())
+                .collect()
+        })
+        .unwrap_or_default()
 }
 
 /// The evidence local `statement` declares, when it binds a plain or `mut`
@@ -300,6 +394,7 @@ fn evidence_local(
         name,
         uses,
         evidence: true,
+        callable: false,
     })
 }
 
@@ -602,7 +697,7 @@ fn owner_use_only_inside_untrusted_macro(
     // held call uses); `false` is a binding of a definitely different type.
     let mut owner_receivers = BTreeMap::new();
     if owner.is_method() {
-        let typed = typed_receiver_bindings(test_body, owner);
+        let typed = typed_receiver_bindings(test_body, owner, &file_type_aliases(file_source));
         let mut held = BTreeSet::new();
         collect_held_receivers(tree.syntax(), owner, false, &trusted, &mut held);
         owner_receivers.extend(held.into_iter().map(|name| (name, true)));
@@ -693,7 +788,22 @@ fn walk(
                 if unqualified && label {
                     // A struct field label (`Holder { r: .. }`) reads nothing.
                 } else if let (true, Some(at)) = (unqualified, local) {
-                    if inside_untrusted {
+                    if locals[at].callable {
+                        // A function-item alias is an owner use only when called.
+                        let called = matches!(
+                            next,
+                            Some(NodeOrToken::Node(group))
+                                if group.kind() == SyntaxKind::TOKEN_TREE
+                                    && group
+                                        .first_token()
+                                        .is_some_and(|open| open.kind() == SyntaxKind::L_PAREN)
+                        );
+                        if called && inside_untrusted {
+                            counts.held += 1;
+                        } else if called {
+                            counts.free += 1;
+                        }
+                    } else if inside_untrusted {
                         counts.local_held[at] += 1;
                     } else {
                         counts.free += 1;
@@ -770,6 +880,15 @@ fn receiver_name(
 ) -> Option<String> {
     let receiver_at = method_at.checked_sub(2)?;
     let receiver = children.get(receiver_at)?;
+    // A field receiver (`holder.picker.pick(..)`) names a field, not a binding.
+    if matches!(receiver, NodeOrToken::Token(_))
+        && receiver_at
+            .checked_sub(1)
+            .and_then(|at| children.get(at))
+            .is_some_and(|before| before.kind() == SyntaxKind::DOT)
+    {
+        return None;
+    }
     if matches!(receiver, NodeOrToken::Node(_))
         && receiver_at
             .checked_sub(1)
@@ -823,7 +942,11 @@ fn receiver_name(
 /// paired with whether that type is the owner's type. A binding made any other
 /// way (`Picker::new()`, `make_picker()`) is left out, so its receiver stays
 /// unresolved rather than being read as unrelated.
-fn typed_receiver_bindings(body: &str, owner: &OwnerName<'_>) -> Vec<(String, bool)> {
+fn typed_receiver_bindings(
+    body: &str,
+    owner: &OwnerName<'_>,
+    aliases: &BTreeSet<String>,
+) -> Vec<(String, bool)> {
     let Some(parse) = crate::analysis::syntax::parse_clean_source_file_memoized(body) else {
         return Vec::new();
     };
@@ -865,6 +988,9 @@ fn typed_receiver_bindings(body: &str, owner: &OwnerName<'_>) -> Vec<(String, bo
                 return None;
             }
             let ty = path.segment()?.name_ref()?;
+            if aliases.contains(ty.text()) {
+                return None;
+            }
             let declarations = block
                 .syntax()
                 .descendants()
@@ -1028,7 +1154,7 @@ pub(super) fn test_has_macro_held_owner_call(
         .files()
         .get(&test.file)
         .map(|facts| facts.data().source.as_ref());
-    let locals = test_locals(test, owner);
+    let locals = test_locals(test, owner, source);
     test.assertions.iter().any(|oracle| {
         owner_use_only_inside_untrusted_macro(
             &oracle.text,
@@ -1042,7 +1168,11 @@ pub(super) fn test_has_macro_held_owner_call(
 
 /// The owner-result locals of `test`, read only when an assertion holds an
 /// inner macro and the body names the owner at all.
-fn test_locals(test: &TestSummary, owner: &OwnerName<'_>) -> Vec<OwnerResultLocal> {
+fn test_locals(
+    test: &TestSummary,
+    owner: &OwnerName<'_>,
+    file_source: Option<&str>,
+) -> Vec<OwnerResultLocal> {
     let nested = test
         .assertions
         .iter()
@@ -1050,7 +1180,7 @@ fn test_locals(test: &TestSummary, owner: &OwnerName<'_>) -> Vec<OwnerResultLoca
     if !nested || owner.name.is_empty() || !test.body.as_str().contains(owner.name) {
         return Vec::new();
     }
-    owner_result_locals(test.body.as_str(), owner)
+    owner_result_locals(test.body.as_str(), owner, file_source)
 }
 
 /// The test's view with every assertion an untrusted inner macro holds the
@@ -1060,7 +1190,7 @@ pub(super) fn demoted_view(
     owner: &OwnerName<'_>,
     file_source: Option<&str>,
 ) -> Option<Vec<OracleFact>> {
-    let locals = test_locals(test, owner);
+    let locals = test_locals(test, owner, file_source);
     let first = test.assertions.iter().position(|oracle| {
         owner_use_only_inside_untrusted_macro(
             &oracle.text,
@@ -1175,6 +1305,8 @@ mod tests {
             ("assert_eq!(mystery!(w.clone().new()), Mode::A)", false),
             ("assert_eq!(mystery!(w.clone().new()), other.new())", false),
             ("assert_eq!(mystery!((w).new()), Mode::A)", true),
+            // A field receiver is unresolved, so its call stays a free use.
+            ("assert_eq!(mystery!(w.new()), holder.w.new())", false),
         ];
         for (text, expected) in cases {
             assert_eq!(
@@ -1205,6 +1337,17 @@ mod tests {
             ),
             ("let r = pick(0);", "assert_eq!(r, Mode::A)", false),
             ("let r = pick(0);", "assert_eq!(check_ok!(r), r)", false),
+            // #16220: a call of a function-item alias observes the owner.
+            (
+                "let r = pick(0); let f = pick;",
+                "assert_eq!(check_ok!(r), f(0))",
+                false,
+            ),
+            (
+                "let f = pick;",
+                "assert_eq!(check_ok!(f(0)), Mode::A)",
+                true,
+            ),
             (
                 "let r = pick(0); let f = pick;",
                 "assert_eq!(check_ok!(r), f)",
@@ -1423,7 +1566,7 @@ mod tests {
         ];
         for (setup, assertion, expected) in cases {
             let body = format!("fn t() {{ {setup} {assertion}; }}");
-            let locals = owner_result_locals(&body, &pick);
+            let locals = owner_result_locals(&body, &pick, Some(local));
             assert_eq!(
                 owner_use_only_inside_untrusted_macro(
                     assertion,
@@ -1479,7 +1622,7 @@ mod tests {
         ];
         for (setup, assertion, expected) in cases {
             let body = format!("fn t() {{ {setup} {assertion}; }}");
-            let locals = owner_result_locals(&body, &pick);
+            let locals = owner_result_locals(&body, &pick, Some(local));
             assert_eq!(
                 owner_use_only_inside_untrusted_macro(
                     assertion,
@@ -1523,7 +1666,7 @@ mod tests {
         ];
         for (setup, assertion, expected) in cases {
             let body = format!("fn t() {{ {setup} {assertion}; }}");
-            let locals = owner_result_locals(&body, &pick);
+            let locals = owner_result_locals(&body, &pick, Some(local));
             assert_eq!(
                 owner_use_only_inside_untrusted_macro(
                     assertion,
@@ -1568,7 +1711,7 @@ mod tests {
         ];
         for (setup, assertion, expected) in cases {
             let body = format!("fn t() {{ {setup} {assertion}; }}");
-            let locals = owner_result_locals(&body, &pick);
+            let locals = owner_result_locals(&body, &pick, Some(local));
             assert_eq!(
                 owner_use_only_inside_untrusted_macro(
                     assertion,

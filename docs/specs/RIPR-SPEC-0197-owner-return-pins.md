@@ -2898,7 +2898,16 @@ A call on a binding of a definitely different type (`let other = Other;`,
 name (`w.clone().new()`) or a binding the body does not type
 (`let w = Widget::default();`). An unresolved call outside the macro counts as
 a free use and inside it does not count as held, so an unresolved receiver
-never supplies the demotion. A read
+never supplies the demotion. A field receiver (`holder.picker.pick(0)`) is
+unresolved, even when a local shares the field's name, and a binding annotated
+with a `type` alias declared in the file is not settled as another type. A
+local initialized by a call on a receiver of a definitely different type
+(`let actual = &other.pick(0);`) does not carry the owner's result. A call of a
+function-item alias (`let f = pick;`, then `f(0)`) is a use of the owner: held
+inside the macro, free outside it; a bare read of the alias is not. An owner
+call inside a pass-through method's argument (`pick(0).unwrap_or({ seen =
+pick(0).unwrap(); .. })`) is a known boundary: it is not counted, which only
+withholds credit. A read
 outside the untrusted macro of any other local whose initializer names a call
 of the owner or such a local (`let actual = &pick(0);`, then `*actual`)
 observes the result, so the assertion keeps its parsed reading. A bare path to

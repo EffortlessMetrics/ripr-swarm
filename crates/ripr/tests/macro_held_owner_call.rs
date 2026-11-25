@@ -355,6 +355,13 @@ fn an_owner_result_local_only_an_untrusted_macro_uses_gives_no_exact_credit() ->
             "strongly_gripped",
             "exact_value",
         ),
+        (
+            "a call of a function-item alias observes the owner outside the macro",
+            CHECK_OK,
+            "let r = pick(0);\n        let f = pick;\n        assert_eq!(check_ok!(r), f(0));",
+            "strongly_gripped",
+            "exact_value",
+        ),
     ];
     // Every case runs, so one report names each wrong reading.
     let mut wrong = Vec::new();
@@ -389,6 +396,10 @@ fn method_receivers_preserve_real_observations_and_demote_held_calls() -> Result
                 if n > 10 { return Err(()); }
                 Ok(Mode::A)
             }
+        }
+        pub type Alias = Picker;
+        pub struct Holder {
+            pub picker: Picker,
         }
         struct Other;
         impl Other {
@@ -427,11 +438,40 @@ fn method_receivers_preserve_real_observations_and_demote_held_calls() -> Result
              assert_eq!(check_ok!(picker.pick(0)), picker.clone().pick(0));",
             "exact_value",
         ),
+        (
+            "a type alias of the owner is not settled as another type",
+            "let held = Picker; let observed: Alias = Picker;
+             assert_eq!(check_ok!(held.pick(0)), observed.pick(0));",
+            "exact_value",
+        ),
+        (
+            "a field receiver does not resolve through a same-named local",
+            "let held = Picker; let picker = Other;
+             let holder = Holder { picker: Picker };
+             assert_eq!(check_ok!(held.pick(0)), holder.picker.pick(0));
+             let _ = picker.pick(0);",
+            "exact_value",
+        ),
+        (
+            "an alias of a call on another type does not observe the owner",
+            "let picker = Picker; let other = Other;
+             let r = picker.pick(0); let actual = &other.pick(0);
+             assert_eq!(check_ok!(r), *actual);",
+            "unknown",
+        ),
     ];
+    // Every case runs, so one report names each wrong reading.
+    let mut wrong = Vec::new();
     for (label, assertion, expected) in cases {
         let workspace = Workspace::create_with_owner(macros, assertion, declaration)?;
         let (_, oracle, _) = workspace.ok_seam_for("src/lib.rs::impl Picker::pick")?;
-        assert_eq!(oracle, expected, "{label}");
+        if oracle != expected {
+            wrong.push(format!("{label}: expected {expected}, got {oracle}"));
+        }
     }
-    Ok(())
+    if wrong.is_empty() {
+        Ok(())
+    } else {
+        Err(wrong.join("\n"))
+    }
 }
