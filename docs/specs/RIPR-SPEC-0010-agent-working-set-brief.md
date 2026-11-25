@@ -525,6 +525,19 @@ focused next action without reading the full repo report:
   same-line rule (#14683). It is omitted when not read; `expression` stays
   the head;
 - `why_now` reason and confidence;
+- when any seam is named, one top-level `value_basis` note, in one of two
+  wordings. While a changed line reaches every named seam, it says
+  `expression` and `arm_result` are read from the changed code, so a new test
+  asserts what that code does now; that an input whose behavior did not
+  change keeps its value; and that `candidate_values` are inputs or values to
+  assert, not all of one kind (#15361). For any other named seam (a seam
+  asked for by its ID, a repository fallback after a comment-only or an
+  unrelated change, a seam chosen for its owner, its test or its file), it
+  says the values are the current source's behavior, that a seam counts as
+  changed code there only where its `why_now.reason` is
+  `changed_line_intersects_seam`, and the same two things about what to
+  assert (#15361 review). Each note says no more: it is spent against the
+  brief's byte ceiling;
 - RIPR stage evidence summary;
 - recommended test placement when available;
 - nearest strong test to imitate when available;
@@ -666,6 +679,7 @@ Planned tests:
 - `match_arm_seam_result_reads_the_heads_line` (#14683 head-only arm result)
 - `brief_names_a_head_only_arm_seam_result` (#14683)
 - `agent_brief_renders_arm_result_only_when_read` (#14683)
+- `agent_brief_names_seam_values_as_changed_behavior_to_pin` (#12078)
 
 ## Implementation Mapping
 
