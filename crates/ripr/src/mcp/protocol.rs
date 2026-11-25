@@ -2236,9 +2236,15 @@ fn receipt_status_output_schema() -> Value {
                         "type": "object",
                         "description": "Present only for a finished attempt whose issued receipt records that ripr ran no test: the same object `ripr agent status --attempt <id> --json` emits. `not_recorded` when the caller reported no run; `caller_reported` with file, ran, passed, failed and next_step when the finish retained one. ripr ran nothing either way, and it never changes `status`.",
                         "properties": {
-                            "status": { "type": "string", "enum": ["not_recorded", "caller_reported"] }
+                            "status": { "type": "string", "enum": ["not_recorded", "caller_reported"] },
+                            "test_changed": { "type": ["string", "null"] },
+                            "next_step": { "type": "string" },
+                            "file": { "type": "string" },
+                            "ran": { "type": "integer", "minimum": 0 },
+                            "passed": { "type": "integer", "minimum": 0 },
+                            "failed": { "type": "integer", "minimum": 0 }
                         },
-                        "required": ["status"]
+                        "required": ["status", "test_changed", "next_step"]
                     },
                     "limitations": { "type": "array", "items": { "type": "string" } },
                     "non_claims": { "type": "array", "items": { "type": "string" } },
