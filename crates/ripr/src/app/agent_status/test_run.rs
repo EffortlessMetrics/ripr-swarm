@@ -20,6 +20,18 @@ pub(super) fn issued_reading(
     reading
 }
 
+/// The `test_run` object for the receipt issued to `manifest`'s attempt, for
+/// a transport that projects one attempt (#16251). It is the object `ripr agent
+/// status --attempt` emits, built from the same retained record, and is `None`
+/// when the receipt does not record that ripr ran no test.
+pub(crate) fn issued_test_run_json(
+    manifest: &RepairAttemptManifest,
+    value: &Value,
+) -> Option<Value> {
+    let reading = issued_reading(manifest, value);
+    reading.test_not_run().then(|| test_run_json(&reading))
+}
+
 /// The counts of a caller-reported run, in the words the finish printed.
 pub(crate) fn reported_test_run_counts(run: &ReportedTestRun) -> String {
     format!(

@@ -916,6 +916,13 @@ an otherwise actionable status to `stale`; unknown HEAD weakens it to `limited`.
 Existing invalid, stale or limited producer states retain their refusal.
 RIPR performs no verification and issues no receipt: the external client owns
 the edit, the verification execution, and the receipt under its own authority.
+A finished durable attempt whose issued receipt records `verification_not_run`
+also carries an optional `test_run` object (#16251): the same object `ripr
+agent status --attempt <id> --json` emits, read from the same retained record.
+It is `not_recorded` when the caller reported no focused run and
+`caller_reported` (with `file`, `ran`, `passed`, `failed` and `next_step`) when
+the finish retained one; a reported failure is named in `next_step`. It never
+changes `status`, and session transactions omit it.
 
 The `ripr://snapshot/{snapshot_id}` resource returns bounded snapshot
 evidence: the snapshot identity, the typed `AnalysisOutcome`, the full

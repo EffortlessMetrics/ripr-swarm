@@ -556,6 +556,7 @@ pub(super) fn durable_receipt_document(
     let current_head = crate::agent::artifact::current_git_head(root).ok();
     let head_reading = repair_attempt_head_reading(root, manifest, current_head.as_deref());
     let baseline = repair_attempt_baseline_reading(root, manifest);
+    let mut test_run = None;
     let (status, receipt) = match &manifest.state {
         RepairAttemptState::Prepared | RepairAttemptState::AwaitingEdit
             if !baseline.permits_continuation() =>
@@ -619,6 +620,9 @@ pub(super) fn durable_receipt_document(
             AttemptTerminalReceipt::Issued { path, value } => {
                 // Preserve the presence lifecycle and original producer
                 // document, while the shared reading owns semantic strength.
+                // #16251: the caller-reported run reads back as CLI status does.
+                test_run =
+                    crate::app::agent_status::test_run::issued_test_run_json(manifest, &value);
                 let lifecycle_state = receipt_lifecycle_state_from_receipt_value(&value);
                 let status = terminal_receipt_status(&value);
                 let binding = find_terminal_artifact_by_role(
@@ -708,6 +712,9 @@ pub(super) fn durable_receipt_document(
             "repair_attempt": format!("ripr://repair-attempt/{attempt_id}"),
         },
     });
+    if let (Some(test_run), Some(document)) = (test_run, projected.as_object_mut()) {
+        document.insert("test_run".to_string(), test_run);
+    }
     // The embedded CLI receipt keeps host-absolute paths on disk; the MCP
     // projection never returns them (ADR 0022).
     project_root_relative(&mut projected, root);
