@@ -646,10 +646,13 @@ fn owner_from_function(
     // `module_callees` keeps its over-approximation for the relations that
     // already read it. The route-helper relation claims the handler calls the
     // helper itself, so it reads the handler's own scope only (#14150 review).
-    let route_scope_callees = if routed_handler {
-        super::module_callees::own_scope_callees(context.source, body, &parameters)
+    // The calls it awaits are kept beside the calls: a coroutine function's
+    // body runs only through an awaited call (#15882 review).
+    let (route_scope_callees, route_scope_awaited_callees) = if routed_handler {
+        let calls = super::module_callees::own_scope_callees(context.source, body, &parameters);
+        (calls.callees, calls.awaited)
     } else {
-        Vec::new()
+        (Vec::new(), Vec::new())
     };
     PythonOwner {
         name: name.to_string(),
@@ -683,6 +686,7 @@ fn owner_from_function(
         same_class_callees,
         module_callees,
         route_scope_callees,
+        route_scope_awaited_callees,
         class_path: context.class_context.unwrap_or_default().to_string(),
         term_facts,
         class_facts: super::related_tests::PythonClassFacts {
@@ -829,6 +833,7 @@ fn owner_from_class(
         same_class_callees: Vec::new(),
         module_callees: Vec::new(),
         route_scope_callees: Vec::new(),
+        route_scope_awaited_callees: Vec::new(),
         class_path: String::new(),
         term_facts: Default::default(),
         class_facts: Default::default(),
@@ -877,6 +882,7 @@ pub(super) fn module_owner(
         same_class_callees: Vec::new(),
         module_callees: Vec::new(),
         route_scope_callees: Vec::new(),
+        route_scope_awaited_callees: Vec::new(),
         class_path: String::new(),
         term_facts: Default::default(),
         class_facts: Default::default(),

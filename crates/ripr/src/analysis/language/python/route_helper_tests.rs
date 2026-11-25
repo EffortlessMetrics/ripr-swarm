@@ -9,6 +9,9 @@ use super::*;
 use std::path::Path;
 
 const RULES: &str = "def is_adult(age):\n    return age >= 18\n";
+/// The helper as a coroutine function: its body runs only through an awaited
+/// call, or through one handed to something that awaits it.
+const ASYNC_RULES: &str = "async def is_adult(age):\n    return age >= 18\n";
 const AGES: &str = "from routepkg.rules import is_adult\n\napp = object()\n\n@app.get(\"/age/30\")\ndef age():\n    return {\"adult\": is_adult(30)}\n";
 const CONFTEST: &str = "import pytest\nfrom starlette.testclient import TestClient\nfrom routepkg.ages import app\n\n@pytest.fixture\ndef client():\n    return TestClient(app)\n";
 const ROUTE_TEST: &str =
@@ -32,6 +35,18 @@ fn classify_files(files: &[(&str, &str)]) -> Result<Finding, String> {
         &tests,
     )
     .ok_or_else(|| "expected a finding for the changed helper line".to_string())
+}
+
+/// [`classify_files`] over the issue's four files, with the helper's module
+/// given: the handler's module, the client's fixture and the route test are
+/// the issue's own.
+fn classify_files_of(rules: &str, handler: &str) -> Result<Finding, String> {
+    classify_files(&[
+        ("routepkg/rules.py", rules),
+        ("routepkg/ages.py", handler),
+        ("tests/conftest.py", CONFTEST),
+        ("tests/test_ages.py", ROUTE_TEST),
+    ])
 }
 
 fn assert_reach_only(finding: &Finding, label: &str) {
@@ -364,8 +379,13 @@ fn given_a_handler_default_that_calls_the_helper_then_no_route_reach() -> Result
 }
 
 fn assert_no_route_reach(handler: &str, label: &str) -> Result<(), String> {
+    assert_no_route_reach_of(RULES, handler, label)
+}
+
+/// [`assert_no_route_reach`] with the helper's module given.
+fn assert_no_route_reach_of(rules: &str, handler: &str, label: &str) -> Result<(), String> {
     let files = [
-        ("routepkg/rules.py", RULES),
+        ("routepkg/rules.py", rules),
         ("routepkg/ages.py", handler),
         ("tests/conftest.py", CONFTEST),
         ("tests/test_ages.py", ROUTE_TEST),
@@ -714,6 +734,65 @@ fn the_handlers_own_call_is_read_however_its_body_is_spelled() -> Result<(), Str
     Ok(())
 }
 
+/// The body of an `async def` helper runs only through a call that is
+/// awaited. A handler that only constructs the coroutine (`pending =
+/// is_adult(30)`) does not reach the helper, where the reader credited it
+/// (#15882 review); one that awaits the call does.
+#[test]
+fn given_an_async_helper_that_the_handler_does_not_await_then_no_route_reach() -> Result<(), String>
+{
+    let module = "from routepkg.rules import is_adult\n\napp = object()\n\n@app.get(\"/age/30\")\n";
+    let constructed = format!(
+        "{module}async def age():\n    pending = is_adult(30)\n    pending.close()\n    return {{\"adult\": True}}\n"
+    );
+    assert_no_route_reach_of(
+        ASYNC_RULES,
+        &constructed,
+        "an async helper's coroutine constructed and closed",
+    )?;
+    // A handler that cannot await anything.
+    let called = format!("{module}def age():\n    return {{\"adult\": is_adult(30)}}\n");
+    assert_no_route_reach_of(ASYNC_RULES, &called, "an async helper called, not awaited")?;
+    // A comment that ends with the keyword, on the line above the call.
+    let commented = format!(
+        "{module}async def age():\n    # TODO await\n    return {{\"adult\": is_adult(30)}}\n"
+    );
+    assert_no_route_reach_of(
+        ASYNC_RULES,
+        &commented,
+        "a comment above ends with the keyword",
+    )?;
+    // Handed to a call that awaits it: not read.
+    let handed_over =
+        format!("{module}async def age():\n    return {{\"adult\": await gather(is_adult(30))}}\n");
+    assert_no_route_reach_of(
+        ASYNC_RULES,
+        &handed_over,
+        "an async helper handed to a call that awaits it",
+    )?;
+
+    // Awaited: the helper's body runs.
+    for (label, body) in [
+        (
+            "an awaited call",
+            "    return {\"adult\": await is_adult(30)}\n",
+        ),
+        (
+            "an awaited call in parentheses",
+            "    return {\"adult\": await (is_adult(30))}\n",
+        ),
+    ] {
+        let handler = format!("{module}async def age():\n{body}");
+        assert_reach_only(&classify_files_of(ASYNC_RULES, &handler)?, label);
+    }
+    // A helper that is not a coroutine function is reached through any call.
+    assert_reach_only(
+        &classify_files_of(RULES, &called)?,
+        "a plain helper called, not awaited",
+    );
+    Ok(())
+}
+
 /// A generator expression's element, like a lambda's body, runs only when
 /// something iterates it. The handler does not, so the helper is not called.
 #[test]
@@ -815,7 +894,16 @@ fn given_a_helper_shadowed_by_a_comprehension_target_then_no_route_reach() -> Re
 /// The relation lines that name a test, for a finding of one changed helper
 /// line in a workspace where the helper and its handler share a module.
 fn same_module_relations(handler: &str, tests: &str) -> Result<Vec<String>, String> {
-    let module = format!("app = object()\n\ndef is_adult(age):\n    return age >= 18\n\n{handler}");
+    same_module_relations_of("def is_adult(age):\n    return age >= 18", handler, tests)
+}
+
+/// [`same_module_relations`] with the helper's definition given.
+fn same_module_relations_of(
+    helper: &str,
+    handler: &str,
+    tests: &str,
+) -> Result<Vec<String>, String> {
+    let module = format!("app = object()\n\n{helper}\n\n{handler}");
     let conftest = "import pytest\nfrom starlette.testclient import TestClient\nfrom routepkg.rules import app\n\n@pytest.fixture\ndef client():\n    return TestClient(app)\n";
     let (owners, tests) = super::fixtures_tests::workspace(&[
         ("routepkg/rules.py", module.as_str()),
@@ -860,6 +948,40 @@ fn a_same_module_route_whose_only_helper_reference_is_deferred_relates_no_test()
 
     let calling = "@app.get(\"/age/30\")\ndef age():\n    return {\"adult\": is_adult(30)}\n";
     let relations = same_module_relations(calling, &tests)?;
+    assert!(
+        relations
+            .iter()
+            .any(|line| line == "related_test_relation: route_helper_call (test_age_route)"),
+        "the route test is reach-only: {relations:?}"
+    );
+    assert!(
+        relations
+            .iter()
+            .any(|line| line.contains("test_age_directly") && line.contains("helper_owner_call")),
+        "the test that calls the handler itself keeps its relation: {relations:?}"
+    );
+    Ok(())
+}
+
+/// The same rule on the chain through same-module callers: a routed handler
+/// that only constructs an `async def` helper's coroutine is no caller of the
+/// helper, for the route relation as for a test that calls the handler
+/// itself (#15882 review).
+#[test]
+fn a_same_module_route_that_does_not_await_the_async_helper_relates_no_test() -> Result<(), String>
+{
+    let direct_test = "from routepkg.rules import age\n\nasync def test_age_directly():\n    assert await age() == {\"adult\": True}\n";
+    let tests = format!("{ROUTE_TEST}{direct_test}");
+    let constructed = "@app.get(\"/age/30\")\nasync def age():\n    pending = is_adult(30)\n    return {\"adult\": True}\n";
+    let relations = same_module_relations_of(ASYNC_RULES, constructed, &tests)?;
+    assert!(
+        relations.is_empty(),
+        "a route that does not await the async helper relates no test: {relations:?}"
+    );
+
+    let awaiting =
+        "@app.get(\"/age/30\")\nasync def age():\n    return {\"adult\": await is_adult(30)}\n";
+    let relations = same_module_relations_of(ASYNC_RULES, awaiting, &tests)?;
     assert!(
         relations
             .iter()

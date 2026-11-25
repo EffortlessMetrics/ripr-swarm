@@ -494,10 +494,11 @@ fn sort_candidates(found: &mut [HelperOwnerCallCandidate<'_>]) {
 /// from the caller's textual list of callees, which counts a call anywhere
 /// in its span, with one exception: a routed handler is followed only
 /// through a call its own scope makes, as the route relation reads it
-/// (#14150 review). A helper the handler only mentions inside a nested
-/// definition it never invokes is not called by it, for these relations as
-/// for the route relation; a test that calls the handler itself keeps its
-/// relation where the handler does call the helper.
+/// (#14150 review), and a callee defined `async def` only through a call
+/// the caller awaits (#15882 review). A helper the handler only mentions
+/// inside a nested definition it never invokes is not called by it, for
+/// these relations as for the route relation; a test that calls the handler
+/// itself keeps its relation where the handler does call the helper.
 fn module_function_callers<'o>(
     owner: &PythonOwner,
     owners: &'o [PythonOwner],
@@ -531,7 +532,17 @@ fn module_function_callers<'o>(
                     caller.file.as_path() == *file
                         && caller.name != *name
                         && caller.module_callees.iter().any(|callee| callee == name)
-                        && calls_in_own_scope(caller, name)
+                        && calls_in_own_scope(
+                            caller,
+                            // A bare name reaches a top-level function of that
+                            // file, not a method that spells the same.
+                            owners.iter().find(|bound| {
+                                top_level_function(bound)
+                                    && bound.file.as_path() == *file
+                                    && bound.name == *name
+                            }),
+                            name,
+                        )
                 })
                 .map(|(_, _, crossed)| *crossed)
                 .min();
@@ -579,15 +590,43 @@ fn module_function_callers<'o>(
 
 /// Whether `caller` may be followed through the bare call of `name` that its
 /// textual list shows. A routed handler is followed only when its own scope
-/// makes that call, a reading that can only withhold. Any other owner keeps
-/// the textual list, which over-approximates: a call that owner makes only
-/// in a nested scope is followed still.
-fn calls_in_own_scope(caller: &PythonOwner, name: &str) -> bool {
-    caller.route_paths.is_empty()
-        || caller
-            .route_scope_callees
-            .iter()
-            .any(|callee| callee == name)
+/// makes that call, and awaits it where the callee is a coroutine function, a
+/// reading that can only withhold. Any other owner keeps the textual list,
+/// which over-approximates: a call that owner makes only in a nested scope is
+/// followed still.
+fn calls_in_own_scope(caller: &PythonOwner, callee: Option<&PythonOwner>, name: &str) -> bool {
+    caller.route_paths.is_empty() || calls_in_own_scope_awaited(caller, callee, name)
+}
+
+/// Whether the routed handler `caller` calls `name` in its own scope, and
+/// awaits that call where `callee` is defined `async def`: the body of a
+/// coroutine function runs only through an awaited call, and a call the
+/// handler does not await only constructs the coroutine (#15882 review).
+fn calls_in_own_scope_awaited(
+    caller: &PythonOwner,
+    callee: Option<&PythonOwner>,
+    name: &str,
+) -> bool {
+    caller
+        .route_scope_callees
+        .iter()
+        .any(|callee_name| callee_name == name)
+        && callee.is_none_or(|callee| {
+            !is_coroutine_function(callee)
+                || caller
+                    .route_scope_awaited_callees
+                    .iter()
+                    .any(|awaited| awaited == name)
+        })
+}
+
+/// Whether `owner` is defined `async def`, so that a call of it runs its body
+/// only once awaited.
+fn is_coroutine_function(owner: &PythonOwner) -> bool {
+    owner
+        .decorators
+        .iter()
+        .any(|decorator| decorator == "async_def")
 }
 
 /// [`calls_in_own_scope`] for a caller in another module, which names the
@@ -769,21 +808,19 @@ fn push_candidates_from_callers<'a>(
 /// binds the owner to: the bare name in the owner's file, or the exact
 /// `from <owner module> import <name>` binding elsewhere (#14150, #12955).
 /// Reads the caller's own scope, so a call inside a nested `def` or `lambda`
-/// body, which runs only if the caller invokes it, is not a direct call.
+/// body, which runs only if the caller invokes it, is not a direct call; and
+/// an `async def` owner only through a call the caller awaits.
 fn caller_directly_calls_owner(
     caller: &PythonOwner,
     owner: &PythonOwner,
     owners: &[PythonOwner],
 ) -> bool {
-    if caller.file == owner.file {
-        return caller.route_scope_callees.contains(&owner.name);
-    }
-    cross_module_owner_binding(caller, owner, owners).is_some_and(|local| {
-        caller
-            .route_scope_callees
-            .iter()
-            .any(|callee| callee == local)
-    })
+    let name = if caller.file == owner.file {
+        Some(owner.name.as_str())
+    } else {
+        cross_module_owner_binding(caller, owner, owners)
+    };
+    name.is_some_and(|name| calls_in_own_scope_awaited(caller, Some(owner), name))
 }
 
 fn top_level_function(candidate: &PythonOwner) -> bool {

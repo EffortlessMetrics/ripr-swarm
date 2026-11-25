@@ -714,6 +714,13 @@ struct PythonOwner {
     /// handler calls the helper itself, so a call that runs only if the
     /// handler invokes a nested scope does not count. Empty for other owners.
     route_scope_callees: Vec<String>,
+    /// The names among `route_scope_callees` that the handler awaits a call
+    /// of: an `await` of a call of that bare name in the handler's own code.
+    /// The body of a coroutine function runs through such a call, and through
+    /// others that are not read, so the route-helper relation follows an
+    /// `async def` helper only through an awaited one (#15882 review). Empty
+    /// for other owners.
+    route_scope_awaited_callees: Vec<String>,
     /// Dotted path of the enclosing classes of a method owner, outermost
     /// first (`Outer.Inner` for `Outer.Inner.__init__`). Empty for other
     /// owners. `qualified_name` keeps only the innermost class.

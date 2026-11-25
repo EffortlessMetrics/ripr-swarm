@@ -15,7 +15,9 @@
 //! [`own_scope_callees`] instead: the same call-site reading over the
 //! handler's own scope, with the scopes it runs only by calling or iterating
 //! them removed by the extents of the parse the adapter already made, and with
-//! the names that scope binds read from the same parse.
+//! the names that scope binds read from the same parse. The calls the scope
+//! awaits are kept beside the calls, because the body of a coroutine function
+//! runs only through an awaited call (#15882 review).
 
 use rustpython_parser::ast::{Comprehension, Expr, Ranged, Stmt};
 use rustpython_parser::text_size::{TextRange, TextSize};
@@ -38,6 +40,19 @@ pub(super) fn bare_callees(owner_text: &str, parameters: &[PythonParameter]) -> 
     bare_callees_in(owner_text, parameters, &mut |name| {
         text_binds_name(owner_text, name)
     })
+}
+
+/// The bare `name(` calls of a routed handler's own scope, and among them
+/// the ones it awaits.
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub(super) struct OwnScopeCalls {
+    /// Sorted, de-duplicated names the scope calls.
+    pub(super) callees: Vec<String>,
+    /// Sorted, de-duplicated names the scope awaits a call of: an `await` of
+    /// a call of a bare name in the scope's own code. The body of a coroutine
+    /// function runs through such a call, and through others that are not
+    /// read: a coroutine the handler hands to something that awaits it.
+    pub(super) awaited: Vec<String>,
 }
 
 /// [`bare_callees`] with the call sites read from `call_text` and `bound`
@@ -63,11 +78,13 @@ fn bare_callees_in(
         let name = &prefix[start..];
         if name.chars().next().is_none_or(|ch| ch.is_ascii_digit())
             || NON_CALL_KEYWORDS.contains(&name)
-            || callees.iter().any(|existing| existing == name)
             || parameters.iter().any(|parameter| parameter.name == name)
             || !is_bare_call_site(call_text, start)
             || bound(name)
         {
+            continue;
+        }
+        if callees.iter().any(|existing| existing == name) {
             continue;
         }
         callees.push(name.to_string());
@@ -104,23 +121,28 @@ fn bare_callees_in(
 /// same parse ([`own_scope_binds`]): a nested `def is_adult` shadows an
 /// imported `is_adult`, and the handler's own `is_adult(30)` then calls that
 /// one. The call site itself is read by the shared reader, [`bare_callees`],
-/// so a name and its parenthesis must be adjacent.
+/// so a name and its parenthesis must be adjacent. A call the scope awaits is
+/// also named ([`OwnScopeCalls::awaited`]).
 pub(super) fn own_scope_callees(
     source: &str,
     body: &[Stmt],
     parameters: &[PythonParameter],
-) -> Vec<String> {
+) -> OwnScopeCalls {
     let Some(span) = span_of(body) else {
-        return Vec::new();
+        return OwnScopeCalls::default();
     };
     let start = usize::from(read_start(span, body));
     let Some(text) = source.get(start..usize::from(span.end())) else {
-        return Vec::new();
+        return OwnScopeCalls::default();
     };
     let mut bytes = text.as_bytes().to_vec();
     // Spaces for the scope's own bytes; line ends stay, so the call-site
-    // reader still finds the handler's lines where they were.
-    let blank = |bytes: &mut Vec<u8>, range: TextRange| {
+    // reader still finds the handler's lines where they are.
+    // Every extent blanked is kept: an awaited call inside one is not the
+    // scope's own.
+    let mut blanked: Vec<TextRange> = Vec::new();
+    let blank = |bytes: &mut Vec<u8>, blanked: &mut Vec<TextRange>, range: TextRange| {
+        blanked.push(range);
         let from = usize::from(range.start()).saturating_sub(start);
         let to = usize::from(range.end()).saturating_sub(start);
         if let Some(scope) = bytes.get_mut(from..to) {
@@ -132,6 +154,7 @@ pub(super) fn own_scope_callees(
         }
     };
     let blank_local_calls = |bytes: &mut Vec<u8>,
+                             blanked: &mut Vec<TextRange>,
                              parts: Vec<TextRange>,
                              generators: &[Comprehension]| {
         let mut names: Vec<String> = Vec::new();
@@ -145,6 +168,7 @@ pub(super) fn own_scope_callees(
             for (from, to) in calls_of_names(text, &names) {
                 blank(
                     bytes,
+                    blanked,
                     TextRange::new(
                         part.start() + TextSize::from(from as u32),
                         part.start() + TextSize::from(to as u32),
@@ -154,33 +178,36 @@ pub(super) fn own_scope_callees(
         }
     };
     own_scope_expressions(body, &mut |expr| match expr {
-        Expr::Lambda(lambda) => blank(&mut bytes, lambda.body.range()),
+        Expr::Lambda(lambda) => blank(&mut bytes, &mut blanked, lambda.body.range()),
         Expr::GeneratorExp(expression) => {
-            blank(&mut bytes, expression.elt.range());
+            blank(&mut bytes, &mut blanked, expression.elt.range());
             for (index, generator) in expression.generators.iter().enumerate() {
-                blank(&mut bytes, generator.target.range());
+                blank(&mut bytes, &mut blanked, generator.target.range());
                 for condition in &generator.ifs {
-                    blank(&mut bytes, condition.range());
+                    blank(&mut bytes, &mut blanked, condition.range());
                 }
                 // Python evaluates the first iterable where the expression
                 // is written, and the others when the generator runs.
                 if index > 0 {
-                    blank(&mut bytes, generator.iter.range());
+                    blank(&mut bytes, &mut blanked, generator.iter.range());
                 }
             }
         }
         Expr::ListComp(list) => blank_local_calls(
             &mut bytes,
+            &mut blanked,
             comprehension_parts(&list.elt, None, &list.generators),
             &list.generators,
         ),
         Expr::SetComp(set) => blank_local_calls(
             &mut bytes,
+            &mut blanked,
             comprehension_parts(&set.elt, None, &set.generators),
             &set.generators,
         ),
         Expr::DictComp(dict) => blank_local_calls(
             &mut bytes,
+            &mut blanked,
             comprehension_parts(&dict.key, Some(&dict.value), &dict.generators),
             &dict.generators,
         ),
@@ -191,21 +218,55 @@ pub(super) fn own_scope_callees(
     // The block is blanked from its first statement's first decorator: a
     // decorated definition there has an extent that starts at `def`, and
     // its decorators run only when the block runs.
-    let blank_block = |bytes: &mut Vec<u8>, block: &[Stmt]| {
+    let blank_block = |bytes: &mut Vec<u8>, blanked: &mut Vec<TextRange>, block: &[Stmt]| {
         if let Some(span) = span_of(block) {
-            blank(bytes, TextRange::new(read_start(span, block), span.end()));
+            blank(
+                bytes,
+                blanked,
+                TextRange::new(read_start(span, block), span.end()),
+            );
         }
     };
     super::module_constants::visit_statements(body, &mut |stmt| match stmt {
-        Stmt::FunctionDef(function) => blank_block(&mut bytes, &function.body),
-        Stmt::AsyncFunctionDef(function) => blank_block(&mut bytes, &function.body),
-        Stmt::ClassDef(class) => blank(&mut bytes, class.range()),
+        Stmt::FunctionDef(function) => blank_block(&mut bytes, &mut blanked, &function.body),
+        Stmt::AsyncFunctionDef(function) => blank_block(&mut bytes, &mut blanked, &function.body),
+        Stmt::ClassDef(class) => blank(&mut bytes, &mut blanked, class.range()),
         _ => {}
     });
     let Some(own) = String::from_utf8(bytes).ok() else {
-        return Vec::new();
+        return OwnScopeCalls::default();
     };
-    bare_callees_in(&own, parameters, &mut |name| own_scope_binds(body, name))
+    let callees = bare_callees_in(&own, parameters, &mut |name| own_scope_binds(body, name));
+    // The calls the scope awaits, read from the same parse: an `await` of a
+    // call of a bare name, outside the extents blanked above. Read from the
+    // parse, a comment or a string that ends with the keyword deceives it no
+    // more than a line above the call.
+    let mut awaited: Vec<String> = Vec::new();
+    own_scope_expressions(body, &mut |expr| {
+        let Expr::Await(awaited_call) = expr else {
+            return;
+        };
+        let Expr::Call(call) = &*awaited_call.value else {
+            return;
+        };
+        let Expr::Name(name) = &*call.func else {
+            return;
+        };
+        if !blanked
+            .iter()
+            .any(|range| range.contains_range(expr.range()))
+        {
+            awaited.push(name.id.to_string());
+        }
+    });
+    OwnScopeCalls {
+        awaited: callees
+            .iter()
+            .filter(|callee| awaited.contains(callee))
+            .cloned()
+            .collect(),
+        callees,
+    }
 }
 
 /// The extent of a statement list, from its first statement to its last.
@@ -683,13 +744,28 @@ mod own_scope_tests {
     /// The callees of the handler's own scope: `source` ends with the
     /// handler's definition.
     fn own_scope(source: &str) -> Vec<String> {
+        own_scope_calls(source).callees
+    }
+
+    /// The calls of the handler's own scope that its scope awaits.
+    fn own_scope_calls(source: &str) -> OwnScopeCalls {
         let Ok(Mod::Module(module)) = parse(source, Mode::Module, "<own-scope-test>") else {
-            return vec!["<did not parse>".to_owned()];
+            return OwnScopeCalls {
+                callees: vec!["<did not parse>".to_owned()],
+                awaited: Vec::new(),
+            };
         };
-        let Some(Stmt::FunctionDef(handler)) = module.body.last() else {
-            return vec!["<no handler>".to_owned()];
+        let body = match module.body.last() {
+            Some(Stmt::FunctionDef(handler)) => &handler.body,
+            Some(Stmt::AsyncFunctionDef(handler)) => &handler.body,
+            _ => {
+                return OwnScopeCalls {
+                    callees: vec!["<no handler>".to_owned()],
+                    awaited: Vec::new(),
+                };
+            }
         };
-        own_scope_callees(source, &handler.body, &[])
+        own_scope_callees(source, body, &[])
     }
 
     #[test]
@@ -878,5 +954,86 @@ mod own_scope_tests {
                 "{label}"
             );
         }
+    }
+
+    #[test]
+    fn a_call_is_awaited_only_where_the_parse_shows_an_await() {
+        // The body of a coroutine function runs only through an awaited call.
+        let awaited = own_scope_calls("def age():\n    return await is_adult(30)\n");
+        assert_eq!(awaited.callees, ["is_adult"]);
+        assert_eq!(awaited.awaited, ["is_adult"]);
+
+        // Parentheses and whitespace between the keyword and the name.
+        for (label, body) in [
+            ("parentheses", "    return await (is_adult(30))\n"),
+            (
+                "nested parentheses",
+                "    return await (( is_adult(30) ))\n",
+            ),
+            (
+                "a line break after the keyword",
+                "    return await (\n        is_adult(30)\n    )\n",
+            ),
+        ] {
+            assert_eq!(
+                own_scope_calls(&format!("def age():\n{body}")).awaited,
+                ["is_adult"],
+                "{label}"
+            );
+        }
+
+        // Constructed and awaited under another name: the call itself is not
+        // awaited, and nothing is read of what the handler hands it to.
+        let constructed =
+            own_scope_calls("def age():\n    pending = is_adult(30)\n    return await pending\n");
+        assert_eq!(constructed.callees, ["is_adult"]);
+        assert!(constructed.awaited.is_empty());
+        let gathered = own_scope_calls("def age():\n    return gather(is_adult(30))\n");
+        assert_eq!(gathered.callees, ["gather", "is_adult"]);
+        assert!(gathered.awaited.is_empty());
+
+        // Text that ends with the keyword is not the keyword: a name, a
+        // comment on the line above the call, a string beside it.
+        for (label, source) in [
+            ("a name", "def age():\n    return xawait (is_adult(30))\n"),
+            (
+                "a comment above",
+                "def age():\n    # TODO await\n    return is_adult(30)\n",
+            ),
+            (
+                "a string beside",
+                "def age():\n    return \"await\" ((is_adult(30)))\n",
+            ),
+        ] {
+            let calls = own_scope_calls(source);
+            assert_eq!(calls.callees, ["is_adult"], "{label}");
+            assert_eq!(calls.awaited, Vec::<String>::new(), "{label}");
+        }
+
+        // An awaited call inside a nested block is not the handler's call, nor
+        // one inside a generator expression: each runs later. (A `lambda`
+        // cannot hold an `await`: CPython refuses to compile it.)
+        for (label, source) in [
+            (
+                "a nested function",
+                "def age():\n    def unused():\n        return await is_adult(30)\n    return {}\n",
+            ),
+            (
+                "a generator expression",
+                "async def age():\n    rows = (await is_adult(value) for value in values)\n    return rows\n",
+            ),
+            (
+                "an async nested function",
+                "async def age():\n    async def later():\n        return await is_adult(30)\n    return later\n",
+            ),
+        ] {
+            assert_eq!(own_scope_calls(source), OwnScopeCalls::default(), "{label}");
+        }
+        // A list display runs where it is written: its awaited call is the
+        // handler's own.
+        let display = own_scope_calls(
+            "async def age():\n    return [await is_adult(value) for value in values]\n",
+        );
+        assert_eq!(display.awaited, ["is_adult"]);
     }
 }
