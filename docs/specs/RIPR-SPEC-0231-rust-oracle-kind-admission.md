@@ -465,7 +465,11 @@ Two pattern terms are used below.
    `broad_error` / weak when every alternative is an `Err(..)` pin
    (`Err(E::A) | Err(E::B)`, `Err(E::A | E::B)`) (#16286); a guard that pins
    a value still decides first (decision 7). Any other or-pattern reads as
-   its weakest alternative. Any other pattern
+   its weakest alternative. A whole `matches!` that an equality macro
+   compares with a boolean literal at positive polarity (rule 1:
+   `assert_eq!(matches!(..), true)` in either operand order,
+   `assert_ne!(matches!(..), false)`) asserts the pattern, so it takes this
+   rule's reading exactly as the whole condition of `assert!` does (#16290). Any other pattern
    stays `exact_value` only when it pins a value: it contains a literal
    outside a range, a constant, or a variant of an enum shown to have more
    than one variant (the `Option` and `Result` constructors are read as
