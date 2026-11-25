@@ -1,0 +1,2 @@
+<!-- section: Fixed -->
+- With several finished repair attempts, `ripr status` and `ripr agent status` no longer print one attempt's `Test run:` line for all of them: the Markdown form prints one `Test run (attempt `<id>`): ...` line per attempt, a caller-reported failure first, and the JSON `test_run` object reports the most telling reading with its `attempt_id`, so another attempt's `none recorded` never hides a reported failure (#14146).

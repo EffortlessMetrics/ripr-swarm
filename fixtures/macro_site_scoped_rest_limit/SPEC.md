@@ -10,8 +10,10 @@ An `alloc::vec::*` glob makes assertion bindings uncertain under the current
 manifest contract: #8388 trusts std/core roots but keeps alloc foreign. The
 fixture uses the built-in alloc crate, with an explicit extern declaration,
 so the foreign witness compiles without a new Cargo dependency. An unrelated
-inline module in the integration-test file defines `assert_eq`, outside the real assertion's
-scope. The likely-file pass saturates on the glob and defers that definition.
+inline module in the integration-test file defines `vec`, outside the real `vec!` call's
+scope. The glob cannot rebind `assert_eq!` (rustc E0659, #16060), so the
+test's `vec!` call carries the uncertainty, and the scoped definition must not
+become the refusal.
 
 ## When
 

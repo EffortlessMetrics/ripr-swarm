@@ -1,0 +1,9 @@
+# Bounded Windows retry of a per-fixture cache clear; genuine failures stay reported (#15018).
+[[extend]]
+id = "RIPR-SPEC-0002"
+tests = [
+  "xtask/src/reports/fixtures.rs::tests::clear_fixture_cache_retries_a_transient_failure_then_succeeds",
+  "xtask/src/reports/fixtures.rs::tests::clear_fixture_cache_reports_a_persistent_or_non_transient_failure",
+  "xtask/src/reports/fixtures.rs::tests::transient_removal_classification_is_windows_only",
+  "xtask/src/reports/fixtures.rs::tests::concurrent_clears_of_distinct_fixture_caches_all_recover",
+]

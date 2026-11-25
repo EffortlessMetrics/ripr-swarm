@@ -24,6 +24,7 @@ zip = { version = "9", default-features = false, features = ["deflate"], optiona
 roxmltree = { version = "0.21", optional = true }
 
 [dev-dependencies]
+yaml-rust2 = { version = "0.10.4", default-features = false }
 proptest = "1"
 
 [features]

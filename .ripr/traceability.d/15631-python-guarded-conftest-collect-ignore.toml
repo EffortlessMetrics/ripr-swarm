@@ -1,0 +1,13 @@
+# Registers the guarded conftest collect_ignore union reading (#15631) under RIPR-SPEC-0238.
+[[extend]]
+id = "RIPR-SPEC-0238"
+tests = [
+  "crates/ripr/src/analysis/language/python/collection_config_tests.rs::guarded_collect_ignore_withholds_only_the_paths_it_could_ignore",
+  "crates/ripr/src/analysis/language/python/collection_config_tests.rs::guarded_collect_ignore_keeps_the_union_across_branches",
+  "crates/ripr/tests/python_conftest_guarded_collect_ignore.rs::test_outside_the_guarded_ignore_keeps_credit",
+  "crates/ripr/tests/python_conftest_guarded_collect_ignore.rs::test_in_the_possibly_ignored_file_is_not_credited",
+]
+code = [
+  "crates/ripr/src/analysis/language/python/collection_config.rs",
+  "crates/ripr/src/analysis/language/python/static_limits.rs",
+]

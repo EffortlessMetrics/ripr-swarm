@@ -187,7 +187,10 @@ pub(in crate::analysis::language::python) fn apply_project_module_names_with(
                 shadowed: false,
             });
         }
-        record_project_reexport_names(owner, &owner_root, index, &mut is_present);
+        record_project_reexport_names(owner, &owner_root, index, &mut is_present, false);
+        // A method's class exporters get the same project-relative names
+        // under the same gate (#15967).
+        record_project_reexport_names(owner, &owner_root, index, &mut is_present, true);
     }
 }
 
@@ -199,15 +202,23 @@ pub(in crate::analysis::language::python) fn apply_project_module_names_with(
 /// the owner's own names: the package must sit in the owner's project root, the
 /// name goes through the ambiguity record (so only a test under that root may
 /// use it) and a same-project twin (`pkg.py` beside `pkg/__init__.py`) leaves
-/// the name identifying neither. Runs after the reexport pass.
+/// the name identifying neither. Runs after the reexport pass. With
+/// `class_exporters` it names the packages that re-export a method's class.
 fn record_project_reexport_names(
     owner: &mut PythonOwner,
     owner_root: &Path,
     index: &mut ProjectNameIndex,
     is_present: &mut impl FnMut(&Path) -> bool,
+    class_exporters: bool,
 ) {
-    let exporters = owner
-        .reexport_modules
+    let modules_of = |owner: &PythonOwner| -> Vec<String> {
+        if class_exporters {
+            owner.class_reexport_modules.clone()
+        } else {
+            owner.reexport_modules.clone()
+        }
+    };
+    let exporters = modules_of(owner)
         .iter()
         .filter_map(|module| index.init_files.get(module))
         .flatten()
@@ -222,7 +233,7 @@ fn record_project_reexport_names(
         let known = owner_module_paths(&init);
         for module in project_relative_module_names(&init, owner_root) {
             if known.contains(&module)
-                || owner.reexport_modules.contains(&module)
+                || modules_of(owner).contains(&module)
                 || owner
                     .ambiguous_src_modules
                     .iter()
@@ -243,7 +254,11 @@ fn record_project_reexport_names(
                 rival_roots,
                 shadowed: false,
             });
-            owner.reexport_modules.push(module);
+            if class_exporters {
+                owner.class_reexport_modules.push(module);
+            } else {
+                owner.reexport_modules.push(module);
+            }
         }
     }
 }

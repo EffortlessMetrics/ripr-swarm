@@ -1,0 +1,12 @@
+# Independent no-promotion control for the removed literal-collection member case (#15632).
+[[extend]]
+id = "RIPR-SPEC-0238"
+fixtures = [
+  "fixtures/python_membership_removed_member",
+]
+
+[[extend]]
+id = "RIPR-SPEC-0108"
+fixtures = [
+  "fixtures/python_membership_removed_member",
+]

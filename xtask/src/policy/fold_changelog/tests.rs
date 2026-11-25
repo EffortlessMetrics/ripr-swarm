@@ -1,4 +1,8 @@
-use super::{FoldOptions, fold_in, fold_text, parse_args};
+use super::{
+    ADMISSION_FILE_CAP, FoldOptions, fold_changelog_in, fold_checked, fold_in, fold_text,
+    oversize_release_cut_warning, parse_args,
+};
+use crate::policy::changelog_fragments::changelog_fragment_violations;
 use std::fs;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -142,7 +146,188 @@ fn already_folded_entry_is_refused_not_duplicated() -> Result<(), String> {
     let err = fold_in(&root, &opts(true, None))
         .err()
         .ok_or("expected refusal")?;
-    assert!(err.contains("a-one.md") && err.contains("already"), "{err}");
+    assert!(
+        err.contains("a-one.md") && err.contains("duplicates an entry in CHANGELOG.md Unreleased"),
+        "{err}"
+    );
+    Ok(())
+}
+
+#[test]
+fn mixed_already_folded_and_new_entries_are_refused_before_writing() -> Result<(), String> {
+    let name = "b-mixed.md";
+    let mixed = frag(
+        "Changed",
+        "- Old  fix (#2). continued here.\n- Genuinely new (#12).\n",
+    );
+    let fresh = frag("Fixed", "- Another new fix (#11).\n");
+    let fragments = [("a-first.md", fresh), (name, mixed)];
+
+    for flags in [
+        &["--write", "--limit", "150"][..],
+        &["--write", "--release-cut"],
+    ] {
+        let root = root_with(&fragments)?;
+        let result = fold_in(&root, &parse_args(&args(flags))?);
+        let changelog = fs::read(root.join("CHANGELOG.md"));
+        let fragment_bytes: Vec<_> = fragments
+            .iter()
+            .map(|(name, _)| fs::read(root.join("changelog.d").join(name)))
+            .collect();
+
+        let err = result
+            .err()
+            .ok_or("expected mixed fragment to be refused")?;
+        assert!(
+            err.contains("changelog.d/b-mixed.md")
+                && err.contains("- Old fix (#2). continued here.")
+                && err.contains("duplicates an entry in CHANGELOG.md Unreleased"),
+            "{flags:?}: {err}"
+        );
+        assert_eq!(changelog.map_err(|e| e.to_string())?, CHANGELOG.as_bytes());
+        for (actual, (_, original)) in fragment_bytes.into_iter().zip(&fragments) {
+            assert_eq!(actual.map_err(|e| e.to_string())?, original.as_bytes());
+        }
+        fs::remove_dir_all(root).map_err(|e| e.to_string())?;
+    }
+    Ok(())
+}
+
+/// A fixture root the whole `check-changelog-fragments` check can read: the
+/// repository's own policy doc beside the fixture changelog and fragments.
+fn checked_root(changelog: &str, fragments: &[(&str, String)]) -> Result<PathBuf, String> {
+    let repo_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .ok_or("xtask manifest has no repo parent")?
+        .to_path_buf();
+    let policy_doc = fs::read_to_string(repo_root.join("docs/CHANGELOG_POLICY.md"))
+        .map_err(|e| e.to_string())?;
+    let root = root_with(fragments)?;
+    fs::create_dir_all(root.join("docs")).map_err(|e| e.to_string())?;
+    fs::write(root.join("docs/CHANGELOG_POLICY.md"), policy_doc).map_err(|e| e.to_string())?;
+    fs::write(root.join("CHANGELOG.md"), changelog).map_err(|e| e.to_string())?;
+    Ok(root)
+}
+
+#[test]
+fn a_tree_the_check_refuses_is_refused_before_any_write() -> Result<(), String> {
+    // The fold itself has nothing to say about an Unreleased bullet with no
+    // reference; only the whole check does, and before #15606 it ran after
+    // the write on `--release-cut` and not at all on `--limit`.
+    let untraceable = CHANGELOG.replace("- Old change (#1).", "- Old change.");
+    assert_ne!(untraceable, CHANGELOG);
+    let fragments = [("a-new.md", frag("Fixed", "- A new fix (#11).\n"))];
+
+    for flags in [
+        &["--write", "--limit", "149"][..],
+        &["--write", "--release-cut"],
+        &["--release-cut"],
+        &[],
+    ] {
+        let root = checked_root(&untraceable, &fragments)?;
+        let err = fold_checked(&root, &parse_args(&args(flags))?)
+            .err()
+            .ok_or_else(|| format!("{flags:?}: expected the fold to be refused"))?;
+        assert!(
+            err.starts_with("refusing to fold: check-changelog-fragments fails")
+                && err.contains("nothing written")
+                && err.contains("CHANGELOG.md: Unreleased entry `- Old change.` names no issue"),
+            "{flags:?}: {err}"
+        );
+        assert_eq!(
+            fs::read_to_string(root.join("CHANGELOG.md")).map_err(|e| e.to_string())?,
+            untraceable,
+            "{flags:?}"
+        );
+        assert_eq!(
+            fs::read_to_string(root.join("changelog.d/a-new.md")).map_err(|e| e.to_string())?,
+            fragments[0].1,
+            "{flags:?}"
+        );
+        fs::remove_dir_all(root).map_err(|e| e.to_string())?;
+    }
+
+    // The unchecked fold accepts the same tree, so the refusal above is the
+    // check's and not a side effect of the fixture.
+    let root = checked_root(&untraceable, &fragments)?;
+    let unchecked = fold_in(&root, &opts(true, None))?;
+    assert_eq!(unchecked.folded.len(), 1);
+    assert!(!root.join("changelog.d/a-new.md").exists());
+    fs::remove_dir_all(root).map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+#[test]
+fn the_command_itself_refuses_before_any_write_and_folds_a_clean_tree() -> Result<(), String> {
+    // The command entry point, not only `fold_checked`: a command that
+    // called the unchecked fold would write the first tree.
+    let untraceable = CHANGELOG.replace("- Old change (#1).", "- Old change.");
+    let fragment = frag("Fixed", "- A new fix (#11).\n");
+    for flags in [
+        &["--write", "--limit", "149"][..],
+        &["--write", "--release-cut"],
+    ] {
+        let root = checked_root(&untraceable, &[("a-new.md", fragment.clone())])?;
+        let err = fold_changelog_in(&root, &args(flags))
+            .err()
+            .ok_or_else(|| format!("{flags:?}: expected the command to refuse"))?;
+        assert!(err.contains("nothing written"), "{flags:?}: {err}");
+        assert_eq!(
+            fs::read_to_string(root.join("CHANGELOG.md")).map_err(|e| e.to_string())?,
+            untraceable,
+            "{flags:?}"
+        );
+        assert_eq!(
+            fs::read_to_string(root.join("changelog.d/a-new.md")).map_err(|e| e.to_string())?,
+            fragment,
+            "{flags:?}"
+        );
+        fs::remove_dir_all(root).map_err(|e| e.to_string())?;
+
+        let root = checked_root(CHANGELOG, &[("a-new.md", fragment.clone())])?;
+        fold_changelog_in(&root, &args(flags))?;
+        assert!(!root.join("changelog.d/a-new.md").exists(), "{flags:?}");
+        assert!(
+            fs::read_to_string(root.join("CHANGELOG.md"))
+                .map_err(|e| e.to_string())?
+                .contains("- A new fix (#11)."),
+            "{flags:?}"
+        );
+        fs::remove_dir_all(root).map_err(|e| e.to_string())?;
+    }
+    Ok(())
+}
+
+#[test]
+fn a_tree_the_check_accepts_still_folds_on_both_write_routes() -> Result<(), String> {
+    for flags in [
+        &["--write", "--limit", "149"][..],
+        &["--write", "--release-cut"],
+    ] {
+        let root = checked_root(
+            CHANGELOG,
+            &[("a-new.md", frag("Fixed", "- A new fix (#11).\n"))],
+        )?;
+        let report = fold_checked(&root, &parse_args(&args(flags))?)?;
+        assert_eq!(
+            report.folded,
+            vec![("a-new.md".to_string(), "Fixed".to_string(), 1)],
+            "{flags:?}"
+        );
+        let written = fs::read_to_string(root.join("CHANGELOG.md")).map_err(|e| e.to_string())?;
+        assert_eq!(written, report.changelog, "{flags:?}");
+        assert!(
+            written.contains("  continued here.\n- A new fix (#11).\n"),
+            "{written}"
+        );
+        assert!(!root.join("changelog.d/a-new.md").exists(), "{flags:?}");
+        assert_eq!(
+            changelog_fragment_violations(&root, true)?,
+            Vec::<String>::new(),
+            "{flags:?}"
+        );
+        fs::remove_dir_all(root).map_err(|e| e.to_string())?;
+    }
     Ok(())
 }
 
@@ -263,5 +448,115 @@ fn release_cut_fold_leaves_no_fragment_for_the_cut_check() -> Result<(), String>
         .map(|e| e.file_name().to_string_lossy().into_owned())
         .collect();
     assert_eq!(left, vec!["README.md".to_string()]);
+    Ok(())
+}
+
+#[test]
+fn oversize_release_cut_warning_advises_fold_and_delete_batches_not_keep_fragments()
+-> Result<(), String> {
+    assert_eq!(oversize_release_cut_warning(ADMISSION_FILE_CAP - 1), None);
+    let warning = oversize_release_cut_warning(ADMISSION_FILE_CAP)
+        .ok_or("expected oversize warning when folded fragments + CHANGELOG.md exceed cap")?;
+    assert!(warning.contains("161 changed files"), "{warning}");
+    assert!(warning.contains("--write --limit 149"), "{warning}");
+    assert!(warning.contains("changelog.d/README.md"), "{warning}");
+    assert!(!warning.contains("--keep-fragments"), "{warning}");
+    assert!(!warning.contains("snapshot"), "{warning}");
+    Ok(())
+}
+
+#[test]
+fn kept_fragments_fail_ordinary_validation_while_fold_and_delete_batch_passes() -> Result<(), String>
+{
+    let repo_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .ok_or("xtask manifest has no repo parent")?
+        .to_path_buf();
+    let policy_doc = fs::read_to_string(repo_root.join("docs/CHANGELOG_POLICY.md"))
+        .map_err(|e| e.to_string())?;
+
+    let kept_root = root_with(&[("a-one.md", frag("Fixed", "- One (#1).\n"))])?;
+    fs::create_dir_all(kept_root.join("docs")).map_err(|e| e.to_string())?;
+    fs::write(kept_root.join("docs/CHANGELOG_POLICY.md"), &policy_doc)
+        .map_err(|e| e.to_string())?;
+    let keep = FoldOptions {
+        write: true,
+        limit: None,
+        keep_fragments: true,
+        release_cut: false,
+    };
+    fold_in(&kept_root, &keep)?;
+    let kept_violations = changelog_fragment_violations(&kept_root, false)?;
+    assert!(
+        kept_violations.iter().any(|v| v.contains("a-one.md")
+            && v.contains("duplicates an entry in CHANGELOG.md Unreleased")),
+        "expected duplicate-entry violation for kept fragment, got {kept_violations:?}"
+    );
+    let _ = fs::remove_dir_all(&kept_root);
+
+    let batch_root = root_with(&[
+        ("a-one.md", frag("Fixed", "- One (#1).\n")),
+        ("b-two.md", frag("Fixed", "- Two (#2).\n")),
+    ])?;
+    fs::create_dir_all(batch_root.join("docs")).map_err(|e| e.to_string())?;
+    fs::write(batch_root.join("docs/CHANGELOG_POLICY.md"), &policy_doc)
+        .map_err(|e| e.to_string())?;
+    let report = fold_in(&batch_root, &opts(true, Some(1)))?;
+    assert_eq!(report.folded.len(), 1);
+    assert_eq!(report.remaining, 1);
+    let batch_violations = changelog_fragment_violations(&batch_root, false)?;
+    assert!(
+        batch_violations.is_empty(),
+        "expected fold-and-delete batch to pass check-changelog-fragments, got {batch_violations:?}"
+    );
+    let _ = fs::remove_dir_all(&batch_root);
+    Ok(())
+}
+
+#[test]
+fn fold_changelog_help_and_readme_align_on_batched_fold_and_delete() -> Result<(), String> {
+    let catalog = crate::command::command_catalog();
+    let entry = catalog
+        .iter()
+        .find(|entry| entry.command.starts_with("fold-changelog "))
+        .ok_or("fold-changelog missing from command_catalog")?;
+    assert!(
+        entry.notes.contains("local inspection only"),
+        "help notes should restrict --keep-fragments to local inspection: {}",
+        entry.notes
+    );
+    assert!(
+        entry.notes.contains("149 fragments"),
+        "help notes should document the 149-fragment batch limit: {}",
+        entry.notes
+    );
+    assert!(
+        !entry.notes.contains("snapshot"),
+        "help notes must not advise a kept-fragment snapshot: {}",
+        entry.notes
+    );
+
+    let repo_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .ok_or("xtask manifest has no repo parent")?
+        .to_path_buf();
+    let readme =
+        fs::read_to_string(repo_root.join("changelog.d/README.md")).map_err(|e| e.to_string())?;
+    assert!(
+        readme.contains("--write --limit 149"),
+        "changelog.d/README.md should document --write --limit 149"
+    );
+    assert!(
+        readme.contains("local inspection only"),
+        "changelog.d/README.md should restrict --keep-fragments to local inspection"
+    );
+    assert!(
+        !readme.contains("deletion-only batch PRs"),
+        "changelog.d/README.md must not advise kept-fragment deletion-only batch PRs"
+    );
+    assert!(
+        !readme.contains("fold a snapshot ahead of the cut"),
+        "changelog.d/README.md must not advise folding a snapshot ahead of the cut"
+    );
     Ok(())
 }

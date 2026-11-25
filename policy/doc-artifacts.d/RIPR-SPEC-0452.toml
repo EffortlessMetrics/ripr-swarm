@@ -1,0 +1,7 @@
+[[artifact]]
+id = "RIPR-SPEC-0452"
+kind = "spec"
+path = "docs/specs/RIPR-SPEC-0452-release-milestone-fixture-parity.md"
+status = "proposed"
+owner = "release-automation"
+standalone_reason = "Issue #4781 adds a local fixture comparator with page continuity and row coverage requirements against the existing offline release graph."

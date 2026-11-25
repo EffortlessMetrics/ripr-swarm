@@ -1,0 +1,53 @@
+{
+  "id": "ts_tap_registration",
+  "language": "javascript",
+  "tier": "pure",
+  "source_fixture": "fixtures/javascript_tap_registration",
+  "vector": "tap_named_test_registration",
+  "control": "must_stay_exposed",
+  "assertions": [
+    {
+      "type": "must_promote"
+    },
+    {
+      "type": "must_disclose_scope"
+    },
+    {
+      "type": "must_not_emit_repair_packet"
+    },
+    {
+      "type": "must_not_have_receipt_command"
+    },
+    {
+      "type": "expected_finding_count",
+      "count": 1
+    },
+    {
+      "type": "expected_class",
+      "class": "exposed"
+    },
+    {
+      "type": "expected_oracle",
+      "kind": "exact_value",
+      "strength": "strong"
+    },
+    {
+      "type": "expected_related_test",
+      "name": "plain",
+      "file": "tests/lib.test.js",
+      "line": 3,
+      "kind": "exact_value",
+      "strength": "strong",
+      "relation_reason": "direct_owner_call"
+    },
+    {
+      "type": "expected_related_test",
+      "name": "opts",
+      "file": "tests/lib.test.js",
+      "line": 7,
+      "kind": "exact_value",
+      "strength": "strong",
+      "relation_reason": "direct_owner_call"
+    }
+  ]
+}

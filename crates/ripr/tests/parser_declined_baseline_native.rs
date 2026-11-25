@@ -242,6 +242,49 @@ fn calibrated_gate_blocks_a_changed_file_that_was_not_parsed() -> Result<(), Str
     let markdown =
         std::fs::read_to_string(root.join("declined-gate.md")).map_err(|e| e.to_string())?;
     assert!(markdown.contains("Decision: blocked"), "{markdown}");
+    // Replay both producer documents against the same candidate source and baseline.
+    write(&root, "records.json", "[]")?;
+    run(
+        &root,
+        &[
+            "reports",
+            "gap-ledger",
+            "--records",
+            "records.json",
+            "--out",
+            "ledger.json",
+        ],
+    )?;
+    let mut malformed = read(&root, "declined-review.json")?;
+    malformed["analysis_scope"]["parser_declined_files"] = serde_json::Value::Null;
+    write(&root, "malformed-review.json", &malformed.to_string())?;
+    for (review, code, status) in [
+        ("parsed-review.json", 0, "pass"),
+        ("declined-review.json", 3, "blocked"),
+        ("malformed-review.json", 3, "blocked"),
+    ] {
+        let mut args = gate_args(review, "combined.json", "combined.md");
+        args.extend(["--gap-ledger".to_owned(), "ledger.json".to_owned()]);
+        let result = run_status(&root, &args.iter().map(String::as_str).collect::<Vec<_>>())?;
+        let report = read(&root, "combined.json")?;
+        assert_eq!(result.status.code(), Some(code), "{report}");
+        assert_eq!(report["status"], status, "{report}");
+        assert_eq!(report["analysis_scope"]["scope"], "gap_ledger_artifact");
+        assert_eq!(report["summary"]["evaluated"], 0);
+        if code == 3 {
+            assert_eq!(
+                report["analysis_scope"].get("parser_declined_files"),
+                read(&root, review)?["analysis_scope"].get("parser_declined_files")
+            );
+            assert!(
+                report["warnings"]
+                    .to_string()
+                    .contains("parser_declined_files")
+            );
+        } else {
+            assert_eq!(report["warnings"], serde_json::json!([]));
+        }
+    }
     Ok(())
 }
 

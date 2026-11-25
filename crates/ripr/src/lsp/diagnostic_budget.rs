@@ -218,8 +218,12 @@ impl BudgetCursor {
                 overflow: DiagnosticOverflowReason::WorkspaceItemLimit,
             };
         }
-        let byte_overflow =
-            self.selected_bytes.saturating_add(payload_bytes) > budget.max_serialized_bytes;
+        // Overflow of the machine sum is above every admitted byte limit,
+        // including usize::MAX. Saturation would hide that refusal boundary.
+        let byte_overflow = self
+            .selected_bytes
+            .checked_add(payload_bytes)
+            .is_none_or(|total| total > budget.max_serialized_bytes);
         if byte_overflow && self.selected_len != 0 {
             return BudgetDecision::Omit {
                 reason: OmittedDiagnosticReason::SerializedByteLimit,
@@ -670,7 +674,9 @@ pub fn build_budget_items_from_diagnostics(
                 continue;
             }
             let payload = serde_json::to_vec(diagnostic)?;
-            let payload_bytes = payload.len();
+            let payload_bytes = payload
+                .len()
+                .saturating_sub(session_evidence_identity_bytes(diagnostic)?);
             let canonical_id = diagnostic_canonical_id(diagnostic, &document, &payload);
             items.push(DiagnosticBudgetItem {
                 canonical_id,
@@ -684,13 +690,73 @@ pub fn build_budget_items_from_diagnostics(
                 },
                 selection_key: DiagnosticSelectionKey {
                     repair_route_rank: 128,
-                    causal_rank: 128,
+                    causal_rank: diagnostic_causal_rank(diagnostic),
                     evidence_rank: 128,
                 },
             });
         }
     }
     Ok(items)
+}
+
+/// Causal rank of a finding the analyzed change produced.
+const CHANGE_CAUSED_CAUSAL_RANK: u8 = 0;
+/// Causal rank of everything else: repository seam inventory rows and gap
+/// ledger rows, which exist whether or not the change touched them.
+const INVENTORY_CAUSAL_RANK: u8 = 128;
+
+/// Producer-owned causal rank for the delivery order.
+///
+/// A diff finding carries the `finding_id` of a probe on a changed line and
+/// no `seam_id`. It is the answer to the question the user asked, so it is
+/// selected before the repository-wide seam inventory. With one rank for
+/// every diagnostic the order fell through to the canonical id, where a seam's
+/// hex id sorts before `probe:`: on a repository with more seam rows than the
+/// byte limit holds, a full refresh delivered inventory rows and omitted the
+/// finding on the line just changed, while the interactive refresh of the
+/// same workspace, which defers the inventory, delivered it.
+fn diagnostic_causal_rank(diagnostic: &tower_lsp_server::ls_types::Diagnostic) -> u8 {
+    let Some(data) = diagnostic.data.as_ref() else {
+        return INVENTORY_CAUSAL_RANK;
+    };
+    let names = |key: &str| data.get(key).and_then(|value| value.as_str()).is_some();
+    let from_gap_ledger =
+        data.get("source").and_then(|value| value.as_str()) == Some("gap_decision_ledger");
+    if names("finding_id") && !names("seam_id") && !from_gap_ledger {
+        CHANGE_CAUSED_CAUSAL_RANK
+    } else {
+        INVENTORY_CAUSAL_RANK
+    }
+}
+
+/// Serialized bytes the session-scoped `data.evidence_identity` member adds
+/// to one diagnostic.
+///
+/// That member names the refresh attempt that produced the snapshot
+/// (`snapshot:<generation>`), so its width grows with the age of the server
+/// session: `snapshot:9` becomes `snapshot:10` on the next refresh. It is not
+/// evidence. Counting it would let the same workspace state deliver a
+/// different diagnostic set from a long-lived session than from a fresh one,
+/// because one extra byte per diagnostic moves the serialized-byte cutoff. The
+/// budget therefore measures the payload without it.
+///
+/// The member is only ever inserted next to an existing `seam_id`, so removing
+/// it removes exactly one separating comma as well.
+fn session_evidence_identity_bytes(
+    diagnostic: &tower_lsp_server::ls_types::Diagnostic,
+) -> Result<usize, serde_json::Error> {
+    const KEY: &str = "evidence_identity";
+    let Some(data) = diagnostic.data.as_ref().and_then(|data| data.as_object()) else {
+        return Ok(0);
+    };
+    let Some(identity) = data.get(KEY) else {
+        return Ok(0);
+    };
+    let key_bytes = serde_json::to_vec(KEY)?.len();
+    let value_bytes = serde_json::to_vec(identity)?.len();
+    let separator_bytes = usize::from(data.len() > 1);
+    // key, colon, value, and the comma that separated it from a sibling.
+    Ok(key_bytes + 1 + value_bytes + separator_bytes)
 }
 
 pub(crate) fn diagnostic_canonical_id(
@@ -784,6 +850,9 @@ fn diagnostic_is_actionable(diagnostic: &tower_lsp_server::ls_types::Diagnostic)
 mod kani_proofs;
 
 #[cfg(test)]
+mod budget_composition_tests;
+
+#[cfg(test)]
 mod tests {
     use super::*;
 
@@ -851,6 +920,269 @@ mod tests {
         }
         if items[1].eligibility != DiagnosticBudgetEligibility::Actionable {
             return Err("actionable canonical gap was profile-filtered".to_string());
+        }
+        Ok(())
+    }
+
+    fn seam_diagnostic_at_generation(
+        seam_id: &str,
+        generation: Option<u64>,
+    ) -> tower_lsp_server::ls_types::Diagnostic {
+        let mut data = serde_json::json!({
+            "diagnostic_id": format!("seam:{seam_id}"),
+            "seam_id": seam_id,
+            "grip_class": "ungripped",
+            "headline_eligible": true,
+        });
+        if let (Some(generation), Some(object)) = (generation, data.as_object_mut()) {
+            object.insert(
+                "evidence_identity".to_string(),
+                serde_json::json!({ "snapshot_id": format!("snapshot:{generation}") }),
+            );
+        }
+        tower_lsp_server::ls_types::Diagnostic {
+            message: "No test path detected for this".to_string(),
+            data: Some(data),
+            ..Default::default()
+        }
+    }
+
+    /// The seam diagnostics of one document as a refresh at `generation`
+    /// stamps them, selected under a byte limit that fits exactly `fits`
+    /// of them when the session identity is not counted.
+    fn selected_seams_at_generation(
+        generation: u64,
+        fits: usize,
+    ) -> Result<(Vec<String>, usize), String> {
+        let uri = "file:///workspace/src/lib.rs"
+            .parse::<tower_lsp_server::ls_types::Uri>()
+            .map_err(|err| format!("parse test URI: {err}"))?;
+        let seams = ["a1", "b2", "c3", "d4"];
+        let unstamped = serde_json::to_vec(&seam_diagnostic_at_generation("a1", None))
+            .map_err(|err| format!("serialize unstamped diagnostic: {err}"))?
+            .len();
+        let diagnostics = std::collections::BTreeMap::from([(
+            uri,
+            seams
+                .iter()
+                .map(|seam| seam_diagnostic_at_generation(seam, Some(generation)))
+                .collect::<Vec<_>>(),
+        )]);
+        let budget = DiagnosticBudget {
+            max_serialized_bytes: unstamped * fits,
+            ..DiagnosticBudget::default()
+        };
+        let selection = DiagnosticDeliverySelection::evaluate(
+            &diagnostics,
+            &budget,
+            "profile",
+            "complete-evidence",
+        );
+        match &selection.outcome {
+            DiagnosticDeliveryOutcome::Applied { result, .. } => Ok((
+                result.selected_ids().map(str::to_string).collect(),
+                result.complete_bytes,
+            )),
+            DiagnosticDeliveryOutcome::Unavailable { detail, .. } => {
+                Err(format!("budget selection unavailable: {detail}"))
+            }
+        }
+    }
+
+    fn diff_finding_diagnostic(finding_id: &str) -> tower_lsp_server::ls_types::Diagnostic {
+        tower_lsp_server::ls_types::Diagnostic {
+            message: "Tests only loosely check this".to_string(),
+            data: Some(serde_json::json!({
+                "diagnostic_id": finding_id,
+                "finding_id": finding_id,
+                "probe_id": finding_id,
+                "delivery_eligible": true,
+            })),
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn change_caused_finding_is_selected_before_seam_inventory_rows() -> Result<(), String> {
+        let uri = "file:///workspace/src/lib.rs"
+            .parse::<tower_lsp_server::ls_types::Uri>()
+            .map_err(|err| format!("parse test URI: {err}"))?;
+        // Seam ids are hex and sort before `probe:`; the finding is last in
+        // both document order and canonical-id order.
+        let finding_id = "probe:src_lib.rs:static_unknown:bb102fd7";
+        let diagnostics = std::collections::BTreeMap::from([(
+            uri,
+            vec![
+                seam_diagnostic_at_generation("00b48d58", Some(2)),
+                seam_diagnostic_at_generation("01812133", Some(2)),
+                seam_diagnostic_at_generation("0188c9a0", Some(2)),
+                diff_finding_diagnostic(finding_id),
+            ],
+        )]);
+        let items = build_budget_items_from_diagnostics(&diagnostics)
+            .map_err(|err| format!("build budget items: {err}"))?;
+        if items.len() != 4
+            || items
+                .iter()
+                .any(|item| item.eligibility != DiagnosticBudgetEligibility::Actionable)
+        {
+            return Err(format!(
+                "fixture: four actionable items expected, got {items:?}"
+            ));
+        }
+        let finding_bytes = items
+            .iter()
+            .find(|item| item.canonical_id == finding_id)
+            .map(|item| item.payload_bytes)
+            .ok_or_else(|| format!("fixture: finding item missing from {items:?}"))?;
+        let seam_bytes = items
+            .iter()
+            .filter(|item| item.canonical_id != finding_id)
+            .map(|item| item.payload_bytes)
+            .max()
+            .unwrap_or(0);
+        // Room for the finding and one seam row, not for all four.
+        let budget = DiagnosticBudget {
+            max_serialized_bytes: finding_bytes + seam_bytes,
+            ..DiagnosticBudget::default()
+        };
+        let result = evaluate_diagnostic_budget(items, &budget, "profile", "complete-evidence")
+            .map_err(|err| format!("evaluate budget: {err}"))?;
+        let selected = result.selected_ids().collect::<Vec<_>>();
+        if selected.first().copied() != Some(finding_id) {
+            return Err(format!(
+                "the finding on the changed line must be selected first, selected {selected:?}"
+            ));
+        }
+        let omitted = result.omitted_ids().collect::<Vec<_>>();
+        if omitted.len() != 2 || omitted.contains(&finding_id) {
+            return Err(format!(
+                "the limit must omit two seam rows and never the finding, omitted {omitted:?}"
+            ));
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn only_a_diff_finding_gets_the_change_caused_rank() -> Result<(), String> {
+        let rank = |data: serde_json::Value| {
+            diagnostic_causal_rank(&tower_lsp_server::ls_types::Diagnostic {
+                data: Some(data),
+                ..Default::default()
+            })
+        };
+        let cases = [
+            (
+                serde_json::json!({"finding_id": "probe:a"}),
+                CHANGE_CAUSED_CAUSAL_RANK,
+            ),
+            (
+                serde_json::json!({"seam_id": "00b4"}),
+                INVENTORY_CAUSAL_RANK,
+            ),
+            (
+                serde_json::json!({"finding_id": "probe:a", "seam_id": "00b4"}),
+                INVENTORY_CAUSAL_RANK,
+            ),
+            (
+                serde_json::json!({"finding_id": "probe:a", "source": "gap_decision_ledger"}),
+                INVENTORY_CAUSAL_RANK,
+            ),
+            (serde_json::json!({"finding_id": 7}), INVENTORY_CAUSAL_RANK),
+            (serde_json::json!({}), INVENTORY_CAUSAL_RANK),
+        ];
+        for (data, expected) in cases {
+            let actual = rank(data.clone());
+            if actual != expected {
+                return Err(format!("{data}: causal rank {actual}, expected {expected}"));
+            }
+        }
+        let without_data =
+            diagnostic_causal_rank(&tower_lsp_server::ls_types::Diagnostic::default());
+        if without_data != INVENTORY_CAUSAL_RANK {
+            return Err(format!("a diagnostic without data ranked {without_data}"));
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn byte_budget_measures_a_seam_diagnostic_without_its_session_identity() -> Result<(), String> {
+        let uri = "file:///workspace/src/lib.rs"
+            .parse::<tower_lsp_server::ls_types::Uri>()
+            .map_err(|err| format!("parse test URI: {err}"))?;
+        let measure = |diagnostic: tower_lsp_server::ls_types::Diagnostic| {
+            build_budget_items_from_diagnostics(&std::collections::BTreeMap::from([(
+                uri.clone(),
+                vec![diagnostic],
+            )]))
+            .map_err(|err| format!("build budget items: {err}"))
+            .and_then(|items| match items.as_slice() {
+                [item] => Ok(item.payload_bytes),
+                other => Err(format!("expected one budget item, got {other:?}")),
+            })
+        };
+        // Independent oracle: the same diagnostic serialized with the member
+        // never inserted, not the production subtraction.
+        let unstamped = serde_json::to_vec(&seam_diagnostic_at_generation("a1", None))
+            .map_err(|err| format!("serialize unstamped diagnostic: {err}"))?
+            .len();
+        for generation in [1, 9, 10, 99, 100, 123_456] {
+            let stamped = seam_diagnostic_at_generation("a1", Some(generation));
+            let serialized = serde_json::to_vec(&stamped)
+                .map_err(|err| format!("serialize stamped diagnostic: {err}"))?
+                .len();
+            if serialized <= unstamped {
+                return Err(format!(
+                    "fixture: generation {generation} must add identity bytes ({serialized} <= {unstamped})"
+                ));
+            }
+            let measured = measure(stamped)?;
+            if measured != unstamped {
+                return Err(format!(
+                    "generation {generation}: measured {measured} bytes, expected the unstamped {unstamped}"
+                ));
+            }
+        }
+        // Control: evidence bytes still count. A longer seam id is evidence.
+        let longer = measure(seam_diagnostic_at_generation("a1-longer", Some(9)))?;
+        if longer <= unstamped {
+            return Err(format!(
+                "a longer seam id must cost more bytes, got {longer} against {unstamped}"
+            ));
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn byte_budget_selection_does_not_depend_on_session_age() -> Result<(), String> {
+        // `snapshot:9` and `snapshot:10` differ by one byte per diagnostic.
+        // Counting it dropped one more diagnostic from a session ten
+        // refreshes old than from a fresh session on the same workspace.
+        let (fresh, fresh_bytes) = selected_seams_at_generation(9, 3)?;
+        if fresh.len() != 3 {
+            return Err(format!(
+                "fixture: the limit must fit three of four seams, selected {fresh:?}"
+            ));
+        }
+        for generation in [10, 100, 1_000_000] {
+            let (aged, aged_bytes) = selected_seams_at_generation(generation, 3)?;
+            if aged != fresh {
+                return Err(format!(
+                    "generation {generation} selected {aged:?}, a fresh session selected {fresh:?}"
+                ));
+            }
+            if aged_bytes != fresh_bytes {
+                return Err(format!(
+                    "generation {generation} reported {aged_bytes} complete bytes, fresh reported {fresh_bytes}"
+                ));
+            }
+        }
+        // Control: the limit is live. One diagnostic fewer fits a smaller one.
+        let (tighter, _) = selected_seams_at_generation(9, 2)?;
+        if tighter.len() != 2 {
+            return Err(format!(
+                "a two-diagnostic limit must select two seams, selected {tighter:?}"
+            ));
         }
         Ok(())
     }

@@ -1,0 +1,13 @@
+pub fn one() -> u32 {
+    1
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn pins_one_in_debug() {
+        std::debug_assert_eq!(one(), 1);
+    }
+}

@@ -73,10 +73,11 @@ pub(crate) const GAP_BOUND_PACKET_ARTIFACT: &str = "target/ripr/workflow/gap-rep
 /// consumer reads one artifact kind as the other.
 pub(crate) const GAP_BOUND_BEFORE_SNAPSHOT_ROLE: &str = "before_check_findings";
 
-/// Whether a finding is static-limited: the producer's named limitation or an
-/// unknown/no-path class. `ripr check` offers no start for one, so the before
-/// phase must not accept one either.
-pub(crate) fn finding_is_static_limited(finding: &Finding) -> bool {
+/// Whether check reads a finding as unreached or limited: the producer's named
+/// limitation, or an unknown/no-path class. This is a reading of what check
+/// knows (wording and ranking), not start eligibility: a no-path finding whose
+/// owner nothing in the workspace calls is still unreached here (#15926).
+pub(crate) fn finding_reads_unreached_or_limited(finding: &Finding) -> bool {
     finding.static_limit_kind.is_some()
         || matches!(
             finding.class,
@@ -85,6 +86,20 @@ pub(crate) fn finding_is_static_limited(finding: &Finding) -> bool {
                 | crate::domain::ExposureClass::PropagationUnknown
                 | crate::domain::ExposureClass::StaticUnknown
         )
+}
+
+/// Whether a finding is static-limited for repair starts: check reads it as
+/// unreached or limited ([`finding_reads_unreached_or_limited`]) and offers no
+/// start for it, so the before phase must not accept one either.
+///
+/// #15926: a changed owner nothing in the workspace names (RIPR-SPEC-0219) is
+/// a test-side gap, not a static limit: check knows no test reaches it, and
+/// the work is writing that test. The human triage already reads it so
+/// (#14919); the repair route and the repair screen now agree, so check,
+/// bare repair, pilot and the card offer the same start. Wording and ranking
+/// that speak to reachability read [`finding_reads_unreached_or_limited`].
+pub(crate) fn finding_is_static_limited(finding: &Finding) -> bool {
+    !finding.is_unreferenced_no_static_path() && finding_reads_unreached_or_limited(finding)
 }
 
 /// The validated GapRecord of a finding that may start a gap-bound repair, or
@@ -103,7 +118,10 @@ pub(crate) fn startable_typescript_gap_record(finding: &Finding) -> Option<GapRe
 /// `root` (the live diff source selection included; `base: None` lets the
 /// loader resolve the default base exactly as check does). The one analysis
 /// behind a gap-bound before snapshot and behind the start admission that
-/// `ripr agent status` consults (#10001), so they cannot drift.
+/// `ripr agent status` consults (#10001), so they cannot drift. With no
+/// `base` on a clean checkout of the comparison base, it rescopes to the last
+/// commit under check's own guards (#13644, #16082), as the bare human check
+/// does.
 pub(crate) fn default_check_output(
     root: &std::path::Path,
     base: Option<&str>,
@@ -131,8 +149,32 @@ pub(crate) fn default_check_output(
     } else {
         super::AnalysisProgressScope::Diff
     };
+    let rescope_input = (base.is_none() && !worktree_run).then(|| {
+        let mut retry = input.clone();
+        retry.base = Some(super::diff_source::LAST_COMMIT_BASE.to_string());
+        retry
+    });
+    let git_timeout = input.git_timeout;
     let mut output = super::check_with_progress_core(input, config, scope, None)
         .map_err(|error| error.to_string())?;
+    if let Some(retry) = rescope_input
+        && super::diff_source::last_commit_fallback_applies(&output, root, git_timeout)
+    {
+        // Check prints the retry's own stderr notes only when it replaces
+        // the shown output; this caller shows none of check's stderr, so
+        // they are dropped either way.
+        let (retried, _disclosures) = crate::analysis::capture_disclosures(|| {
+            super::check_with_progress_core(retry, config, scope, None)
+        });
+        if let Ok(retried) = retried
+            && retried
+                .analysis_outcome
+                .as_ref()
+                .is_some_and(|outcome| outcome.counts.changed_file_count > 0)
+        {
+            output = retried;
+        }
+    }
     // The same disclosure normalization `ripr check` applies: a working-tree
     // read analyzed the live files, so the committed-history flag is off.
     if worktree_run {
@@ -456,6 +498,40 @@ mod tests {
             GapStartLookup::NotReady { .. } => Ok(()),
             _ => Err("a static-limited finding must resolve NotReady".to_string()),
         }
+    }
+
+    /// #15926: a no-path finding whose owner nothing in the workspace names
+    /// is a test-side gap, not a static limit; dropping the marker or adding
+    /// a named limitation keeps it limited.
+    #[test]
+    fn an_unreferenced_no_path_owner_is_not_static_limited() -> Result<(), String> {
+        let unreferenced = || {
+            let mut finding = complete_finding();
+            finding.class = crate::domain::ExposureClass::NoStaticPath;
+            finding.ripr.reach.state = StageState::No;
+            finding.ripr.reach.summary = format!(
+                "no caller of the owner {}",
+                crate::domain::UNREFERENCED_IN_WORKSPACE
+            );
+            finding
+        };
+        if !unreferenced().is_unreferenced_no_static_path() {
+            return Err("fixture: the finding must read as unreferenced".to_string());
+        }
+        if finding_is_static_limited(&unreferenced()) {
+            return Err("an unreferenced no-path owner must not be static-limited".to_string());
+        }
+        let mut referenced = unreferenced();
+        referenced.ripr.reach.summary = "no caller of the owner".to_string();
+        if !finding_is_static_limited(&referenced) {
+            return Err("a referenced no-path finding stays static-limited".to_string());
+        }
+        let mut named = unreferenced();
+        named.static_limit_kind = Some(crate::domain::StaticLimitKind::ProofHarnessNotEvaluated);
+        if !finding_is_static_limited(&named) {
+            return Err("a named limitation stays static-limited".to_string());
+        }
+        Ok(())
     }
 
     const PY_GAP: &str =

@@ -1,11 +1,13 @@
-//! #12922: the Python adapter's classifier emits only `exposed`,
-//! `weakly_exposed`, `no_static_path` and `static_unknown`. It never assigns
-//! `reachable_unrevealed`, `infection_unknown` or `propagation_unknown`. An
-//! input built to leave a stage unknown (a test that rebinds the changed
-//! module object before asserting) must read `static_unknown`, never
-//! `exposed`, and never one of the unemitted classes. If the adapter later
-//! starts emitting one, the sweep fails and this waiver must become a Python
-//! verdict corpus `[[axis]]` with a floor.
+//! #12922: the Python adapter emits `reachable_unrevealed` when every
+//! related test patches the changed owner and `infection_unknown` for an
+//! unmodeled loop boundary behind a strong aligned oracle (both pinned by
+//! the `py-stage-*` verdict-corpus cases), but it never assigns
+//! `propagation_unknown`. An input built to leave a stage unknown (a test
+//! that rebinds the changed module object before asserting) must read
+//! `static_unknown`, never `exposed`, and never `propagation_unknown`. If
+//! the adapter later starts emitting it, the sweep fails and this waiver
+//! must become a Python verdict corpus `[[axis]]` with a floor.
+//!
 
 use super::classify::classify_change_with_old;
 use super::owners_tests::{extract_owners, extract_tests};

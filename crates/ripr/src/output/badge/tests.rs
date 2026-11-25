@@ -34,6 +34,7 @@ fn finding(class: ExposureClass, related: Vec<RelatedTest>) -> Finding {
         id: "probe:src_lib_rs:1:predicate".to_string(),
         canonical_gap: None,
         probe: Probe {
+            before_condition: None,
             id: ProbeId("probe:src_lib_rs:1:predicate".to_string()),
             family: ProbeFamily::Predicate,
             location: SourceLocation::new("src/lib.rs", 1, 1),
@@ -146,6 +147,7 @@ fn classified_seam(class: SeamGripClass) -> ClassifiedSeam {
         evidence: TestGripEvidence {
             seam_id: seam.id().clone(),
             related_tests: vec![std::sync::Arc::new(RelatedTestGrip {
+                assertion_targets_non_function: None,
                 test_name: "discounted_total_boundary".to_string(),
                 file: PathBuf::from("tests/pricing.rs"),
                 line: 8,

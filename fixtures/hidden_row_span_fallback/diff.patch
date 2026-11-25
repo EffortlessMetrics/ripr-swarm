@@ -1,0 +1,64 @@
+diff --git a/src/limits.ts b/src/limits.ts
+index 0000000..1111111 100644
+--- a/src/limits.ts
++++ b/src/limits.ts
+@@ -2,3 +2,3 @@
+     if (field === "read") {
+-        throw new Error("read limit exceeded");
++        throw new RangeError("read limit exceeded");
+     }
+@@ -5,3 +5,3 @@
+     if (field === "write") {
+-        throw new Error("write limit exceeded");
++        throw new RangeError("write limit exceeded");
+     }
+@@ -8,3 +8,3 @@
+     if (field === "connect") {
+-        throw new Error("connect limit exceeded");
++        throw new RangeError("connect limit exceeded");
+     }
+@@ -11,3 +11,3 @@
+     if (field === "idle") {
+-        throw new Error("idle limit exceeded");
++        throw new RangeError("idle limit exceeded");
+     }
+@@ -14,3 +14,3 @@
+     if (field === "retry") {
+-        throw new Error("retry limit exceeded");
++        throw new RangeError("retry limit exceeded");
+     }
+@@ -17,3 +17,3 @@
+     if (field === "burst") {
+-        throw new Error("burst limit exceeded");
++        throw new RangeError("burst limit exceeded");
+     }
+@@ -20,3 +20,3 @@
+     if (field === "flush") {
+-        throw new Error("flush limit exceeded");
++        throw new RangeError("flush limit exceeded");
+     }
+@@ -23,3 +23,3 @@
+     if (field === "sync") {
+-        throw new Error("sync limit exceeded");
++        throw new RangeError("sync limit exceeded");
+     }
+@@ -26,3 +26,3 @@
+     if (field === "open") {
+-        throw new Error("open limit exceeded");
++        throw new RangeError("open limit exceeded");
+     }
+@@ -29,3 +29,3 @@
+     if (field === "close") {
+-        throw new Error("close limit exceeded");
++        throw new RangeError("close limit exceeded");
+     }
+@@ -32,3 +32,3 @@
+     if (field === "seek") {
+-        throw new Error("seek limit exceeded");
++        throw new RangeError("seek limit exceeded");
+     }
+@@ -35,3 +35,3 @@
+     if (field === "poll") {
+-        throw new Error("poll limit exceeded");
++        throw new RangeError("poll limit exceeded");
+     }

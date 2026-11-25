@@ -1,0 +1,5 @@
+[[extend]]
+id = "RIPR-SPEC-0011"
+tests = [
+  "crates/ripr/src/app/agent_status.rs::tests::aggregate_test_run_names_each_attempt_and_never_hides_a_reported_failure",
+]

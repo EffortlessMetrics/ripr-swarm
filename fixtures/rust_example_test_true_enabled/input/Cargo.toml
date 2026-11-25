@@ -1,0 +1,10 @@
+[package]
+name = "rust_example_test_true_enabled_fixture"
+version = "0.0.0"
+edition = "2024"
+
+[workspace]
+
+[[example]]
+name = "demo"
+test = true

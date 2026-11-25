@@ -15,6 +15,34 @@ import {
 import { workspaceHasAnalyzableProject } from './workspaceHelpers';
 
 let controller: RiprClientController | undefined;
+// Live-applied settings that the initialize handshake also carries when a
+// settings layer sets them. `ripr.check.mode` is the fourth; every change to
+// it already restarts.
+const OPTIONAL_SESSION_SETTING_SECTIONS = [
+  'ripr.includeUnchangedTests',
+  'ripr.seamDiagnostics',
+  'ripr.diagnosticProfile'
+];
+
+/** Whether a settings change needs a server restart rather than the live
+ * configuration pull. `initializedSettingWasUnset` is consulted only for the
+ * optional session settings, whose value changes apply live. */
+export function configurationChangeRequiresRestart(
+  affectsConfiguration: (section: string) => boolean,
+  initializedSettingWasUnset: () => boolean
+): boolean {
+  return (
+    affectsConfiguration('ripr.enabled') ||
+    affectsConfiguration('ripr.server') ||
+    affectsConfiguration('ripr.check') ||
+    affectsConfiguration('ripr.baseRef') ||
+    // Removing a setting the session started with: the server would keep
+    // the removed value until a restart (#15897).
+    (OPTIONAL_SESSION_SETTING_SECTIONS.some((section) => affectsConfiguration(section)) &&
+      initializedSettingWasUnset())
+  );
+}
+
 let lifecycleCoordinator = new ExtensionLifecycleCoordinator();
 
 /** Test-only reset for suites that exercise activation-scoped helpers with
@@ -31,9 +59,15 @@ export async function startServerOnce(
 }
 
 export async function restartServerOnce(
-  currentController: Pick<RiprClientController, 'start' | 'stop'> | undefined,
+  currentController:
+    | (Pick<RiprClientController, 'start' | 'stop'> & Partial<Pick<RiprClientController, 'resetCrashRecoveryForExplicitRestart'>>)
+    | undefined,
   startSettleBudgetMs = DEFAULT_LIFECYCLE_SETTLE_BUDGET_MS
 ): Promise<void> {
+  // Every caller is an intentional restart (command, configuration change,
+  // root switch); crash retries re-enter through controller.start(), not here.
+  // An open crash circuit must not survive a user-driven fix.
+  currentController?.resetCrashRecoveryForExplicitRestart?.();
   await lifecycleCoordinator.restart(currentController, startSettleBudgetMs);
 }
 
@@ -45,8 +79,11 @@ export async function stopServerOnce(
 }
 
 export async function startAfterWorkspaceTrust(
-  currentController: Pick<RiprClientController, 'start'> | undefined
+  currentController:
+    | (Pick<RiprClientController, 'start'> & Partial<Pick<RiprClientController, 'resetCrashRecoveryForExplicitRestart'>>)
+    | undefined
 ): Promise<void> {
+  currentController?.resetCrashRecoveryForExplicitRestart?.();
   await startServerOnce(currentController);
 }
 
@@ -78,6 +115,47 @@ export async function pauseRemovedWorkspaceRootOnce(
     currentController.quarantineRemovedWorkspaceRoot();
     await lifecycleCoordinator.pause(currentController);
     currentController.completeWorkspaceRootRemoval();
+  }
+}
+
+/** Listener body for workspace-folder changes; exported so tests drive the production path. */
+export async function handleWorkspaceFoldersChanged(
+  currentController: RiprClientController | undefined,
+  event: Pick<vscode.WorkspaceFoldersChangeEvent, 'added' | 'removed'>,
+  output: Pick<vscode.LogOutputChannel, 'appendLine'>
+): Promise<void> {
+  if (currentController?.sessionRootRemoved(event.removed)) {
+    output.appendLine('ripr selected workspace folder was removed; pausing until explicit root recovery.');
+    try {
+      await pauseRemovedWorkspaceRootOnce(currentController, event.removed);
+    } catch (error) {
+      output.appendLine(`ripr server pause after workspace folder removal failed: ${String(error)}`);
+    }
+    return;
+  }
+  if (event.added.length === 0) {
+    // A removal can leave an ambiguous multi-root window with one folder;
+    // re-resolve so the status does not stay on "Select one workspace folder".
+    // No-op unless the controller is awaiting a root that now resolves.
+    // Gate on awaitingWorkspaceRoot so an unrelated removal never restarts a
+    // running server onto the active editor's folder.
+    if (!currentController?.awaitingWorkspaceRoot()) {
+      return;
+    }
+    try {
+      await synchronizeWorkspaceRootOnce(currentController);
+    } catch (error) {
+      output.appendLine(`ripr server start after workspace folder removal failed: ${String(error)}`);
+    }
+    return;
+  }
+  output.appendLine(
+    `ripr workspace folder added (${event.added.length}); starting the server if none is running.`
+  );
+  try {
+    await startServerOnce(currentController);
+  } catch (error) {
+    output.appendLine(`ripr server start after workspace folder change failed: ${String(error)}`);
   }
 }
 
@@ -271,26 +349,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
       controller?.markWorkspaceClosed(document);
     }),
     vscode.workspace.onDidChangeWorkspaceFolders(async (event) => {
-      if (controller?.sessionRootRemoved(event.removed)) {
-        output.appendLine('ripr selected workspace folder was removed; pausing until explicit root recovery.');
-        try {
-          await pauseRemovedWorkspaceRootOnce(controller, event.removed);
-        } catch (error) {
-          output.appendLine(`ripr server pause after workspace folder removal failed: ${String(error)}`);
-        }
-        return;
-      }
-      if (event.added.length === 0) {
-        return;
-      }
-      output.appendLine(
-        `ripr workspace folder added (${event.added.length}); starting the server if none is running.`
-      );
-      try {
-        await startServerOnce(controller);
-      } catch (error) {
-        output.appendLine(`ripr server start after workspace folder change failed: ${String(error)}`);
-      }
+      await handleWorkspaceFoldersChanged(controller, event, output);
     }),
     vscode.workspace.onDidGrantWorkspaceTrust(async () => {
       output.appendLine('ripr workspace trust granted; starting a fresh server session.');
@@ -344,10 +403,10 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     }),
     vscode.workspace.onDidChangeConfiguration(async (event) => {
       if (
-        event.affectsConfiguration('ripr.enabled') ||
-        event.affectsConfiguration('ripr.server') ||
-        event.affectsConfiguration('ripr.check') ||
-        event.affectsConfiguration('ripr.baseRef')
+        configurationChangeRequiresRestart(
+          (section) => event.affectsConfiguration(section),
+          () => controller?.initializedSettingWasUnset() === true
+        )
       ) {
         try {
           await restartServerOnce(controller);

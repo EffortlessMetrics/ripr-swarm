@@ -49,6 +49,25 @@ suite('Request event trace unit controls', () => {
     assert.strictEqual(retained.status, 'observed', 'the retained verdict must not depend on the later snapshot');
   });
 
+  test('client request retention preserves provider qualification and exposes window eviction', () => {
+    const { trace, document, range, context, client, token } = providerFixture();
+    const sink = trace.clientRequestEvents(client);
+    const observe = trace.observeProviderRequest(document, range, client);
+    trace.middleware(undefined, client)(document, range, context, token, () => {
+      sink.push({ kind: 'client_request_start', request_id: 1, request_uri: document.uri.toString(),
+        request_range: range, uri: document.uri.toString(), document: [{ version: document.version }] });
+      sink.push({ kind: 'client_request_result', request_id: 1, count: 1 });
+      return [];
+    });
+    assert.strictEqual(observe().status, 'observed');
+    const retained = observe();
+    for (let index = 0; index < MAX_REQUEST_TRACE_EVENTS; index++) {
+      sink.push({ kind: 'client_request_start', request_id: index + 2 });
+    }
+    assert.strictEqual(observe().status, 'incomplete', 'lost provider events must not qualify a command');
+    assert.strictEqual(retained.status, 'observed');
+  });
+
   for (const wrong of ['client', 'pid', 'document', 'version', 'start', 'end', 'trigger'] as const) {
     test(`does not credit an invocation with the wrong ${wrong}`, () => {
       const { trace, document, range, context, client, token } = providerFixture();

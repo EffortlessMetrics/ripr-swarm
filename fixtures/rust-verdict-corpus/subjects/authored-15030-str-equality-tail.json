@@ -1,0 +1,17 @@
+{
+  "subject_id": "authored-15030-str-equality-tail",
+  "origin": "authored",
+  "version_label": "authored 2026-11-19 for a bool owner whose tail is a string-equality chain (#15030)",
+  "license": "MIT OR Apache-2.0",
+  "shared_corpus": null,
+  "retained_files": [
+    {
+      "path": "Cargo.toml",
+      "sha256": "7357a3dc05f6e81ba569622b4babe0fa5c44d37129ce5fec640a30f98cfc7717"
+    },
+    {
+      "path": "src/lib.rs",
+      "sha256": "93c4d45555b2c9423834a50971b2dc82305734ba0738d07a8fc4b79326bb0d80"
+    }
+  ]
+}

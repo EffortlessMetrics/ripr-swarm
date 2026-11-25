@@ -26,6 +26,7 @@ pub(crate) fn unestablished_cfg_gates_of_fn(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::analysis::syntax::nesting_parse_calls;
 
     #[test]
     fn memoized_gates_match_the_direct_reading_and_parse_once_per_run() {
@@ -35,7 +36,7 @@ mod tests {
         assert!(direct_gated.as_ref().is_some_and(|gates| !gates.is_empty()));
         assert_eq!(direct_plain, Some(BTreeSet::new()));
         let _scope = super::super::run_memo::enter();
-        let before = super::super::nesting::CLEAN_PARSE_CALLS.with(std::cell::Cell::get);
+        let before = nesting_parse_calls();
         for _ in 0..3 {
             assert_eq!(
                 unestablished_cfg_gates_of_fn(source, "gated", 2),
@@ -46,7 +47,7 @@ mod tests {
                 direct_plain
             );
         }
-        let parses = super::super::nesting::CLEAN_PARSE_CALLS.with(std::cell::Cell::get) - before;
+        let parses = nesting_parse_calls() - before;
         assert_eq!(parses, 2, "one parse per distinct (name, line) in a run");
     }
 }

@@ -279,6 +279,18 @@ Updated:
 ## Pending — python_assertion_helper_field (22)
 
 Reason:
+RIPR-SPEC-0008: preview-language GitHub file= and SARIF uris anchored at the checkout top level (#15367)
+
+Command:
+`cargo xtask goldens bless python_assertion_helper_field --reason "..."`
+
+Updated:
+- `expected/sarif.json`
+- `expected/github.txt`
+
+## Pending — python_assertion_helper_field (23)
+
+Reason:
 RIPR-SPEC-0008: SARIF alert messages are one plain line (#15374)
 
 Command:

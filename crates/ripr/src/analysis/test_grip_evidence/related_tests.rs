@@ -51,12 +51,18 @@ fn find_related_tests_in<'context, 'index>(
     context: &'context CompactGripContext<'index>,
     pool: Option<RelationPool<'_>>,
 ) -> Vec<(&'context CompactTest<'index>, RelationReason)> {
+    if cancellation::checkpoint().is_err() {
+        return Vec::new();
+    }
     let owner = OwnerContext::resolve(seam, context);
     let target_tokens = assertion_target_tokens(seam);
     let prefix = owner.prefix.as_deref();
 
     let mut candidates: BTreeMap<usize, RelationReason> = BTreeMap::new();
     match_direct_owner_call(&mut candidates, context, prefix, &owner);
+    if cancellation::checkpoint().is_err() {
+        return Vec::new();
+    }
     let inaccessible_direct: BTreeSet<usize> = context
         .owner_function(seam.file(), seam.display_line())
         .map(|function| {
@@ -76,6 +82,9 @@ fn find_related_tests_in<'context, 'index>(
         })
         .unwrap_or_default();
     candidates.retain(|test_index, _| !inaccessible_direct.contains(test_index));
+    if cancellation::checkpoint().is_err() {
+        return Vec::new();
+    }
     match_helper_owner_call(&mut candidates, context, prefix, &owner);
     match_target_affinity_owner_call(
         &mut candidates,
@@ -85,6 +94,9 @@ fn find_related_tests_in<'context, 'index>(
         &owner,
         &target_tokens,
     );
+    if cancellation::checkpoint().is_err() {
+        return Vec::new();
+    }
     match_assertion_target_affinity(&mut candidates, context, prefix, &target_tokens);
     match_same_test_file(&mut candidates, context, prefix, &owner);
     match_same_module(&mut candidates, context, prefix, &owner);
@@ -96,6 +108,10 @@ fn find_related_tests_in<'context, 'index>(
         if candidates.is_empty() {
             return Vec::new();
         }
+    }
+
+    if cancellation::checkpoint().is_err() {
+        return Vec::new();
     }
 
     // An inaccessible direct call cannot regain oracle credit through a
@@ -176,6 +192,9 @@ fn find_related_tests_in<'context, 'index>(
         })
     });
 
+    if cancellation::checkpoint().is_err() {
+        return Vec::new();
+    }
     dedupe_related_candidates(candidates, context)
 }
 
@@ -206,7 +225,7 @@ pub(super) struct OwnerContext<'index> {
 }
 
 impl<'index> OwnerContext<'index> {
-    fn resolve(seam: &RepoSeam, context: &CompactGripContext<'index>) -> Self {
+    pub(super) fn resolve(seam: &RepoSeam, context: &CompactGripContext<'index>) -> Self {
         let owner_fn = context.owner_function(seam.file(), seam.display_line());
         let name = owner_fn.map(|f| f.name.as_str()).unwrap_or("").to_string();
         let name_lower = name.to_ascii_lowercase();
@@ -377,7 +396,21 @@ pub(super) fn match_direct_owner_call(
     let Some(indices) = context.tests_by_call_name.get(&owner.name) else {
         return;
     };
-    for test_index in indices {
+    // #15278: a direct call from a test in another package is credited when
+    // the owner is a free function, the only function of its name in the
+    // index, and the test's call settles on it through a crate name the
+    // test's package imports the owner's library by (`wscore::fee(..)`, or
+    // `fee(..)` under `use wscore::fee;`). A call spelled through another
+    // crate (`pricing::fee(..)`) or bound by an import from one does not
+    // settle on the owner and keeps the package guard, as does every weaker
+    // relation.
+    let cross_package_owner = owner
+        .function
+        .filter(|_| owner.free_function && owner.same_name_count == 1);
+    for (position, test_index) in indices.iter().enumerate() {
+        if position.is_multiple_of(32) && cancellation::checkpoint().is_err() {
+            return;
+        }
         let Some(indexed) = context.tests.get(*test_index) else {
             continue;
         };
@@ -427,10 +460,23 @@ pub(super) fn match_direct_owner_call(
         }) {
             continue;
         }
+        let test_prefix = match (prefix, cross_package_owner) {
+            (Some(guard), Some(function))
+                if !indexed.path_normalized.starts_with(guard)
+                    && crate::analysis::classify::test_call_settles_on_owner(
+                        context.index,
+                        function,
+                        indexed.test,
+                    ) =>
+            {
+                None
+            }
+            _ => prefix,
+        };
         insert_related_candidate(
             candidates,
             context,
-            prefix,
+            test_prefix,
             *test_index,
             RelationReason::DirectOwnerCall,
         );
@@ -860,19 +906,32 @@ pub(super) fn sort_related_tests_for_seam<'a>(
     // #12478: one reverse owner-reach walk for the whole related set. A
     // one-element slice per test rebuilt the walk (and its unbounded
     // OnceLock closure) on every related test of the seam.
-    let credited_views = ((refuse || claims_pin.is_some()) && !related.is_empty()).then(|| {
-        let related_pairs: Vec<_> = related
-            .iter()
-            .map(|&(indexed, reason)| (indexed.test, reason))
-            .collect();
-        super::credited_related_tests(
-            context,
-            owner_fn,
-            &related_pairs,
-            refuse,
-            claims_pin.as_ref(),
-        )
+    // #16188: an owner call only an untrusted inner macro holds is read
+    // through the credited view too, so the published row agrees.
+    let macro_held = owner_fn.is_some_and(|owner| {
+        let owner = super::macro_operand_owner_call::OwnerName::of(owner);
+        related.iter().any(|(indexed, _)| {
+            super::macro_operand_owner_call::test_has_macro_held_owner_call(
+                indexed.test,
+                &owner,
+                context.index,
+            )
+        })
     });
+    let credited_views = ((refuse || claims_pin.is_some() || macro_held) && !related.is_empty())
+        .then(|| {
+            let related_pairs: Vec<_> = related
+                .iter()
+                .map(|&(indexed, reason)| (indexed.test, reason))
+                .collect();
+            super::credited_related_tests(
+                context,
+                owner_fn,
+                &related_pairs,
+                refuse,
+                claims_pin.as_ref(),
+            )
+        });
     debug_assert!(
         credited_views
             .as_ref()

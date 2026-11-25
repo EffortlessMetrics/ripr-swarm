@@ -1,0 +1,9 @@
+{
+  "schema_version": "0.1",
+  "cache_dir": "/tmp/ripr-cache-export",
+  "classified_entries": 2,
+  "file_fact_entries": 1,
+  "missing_file_facts": 0,
+  "copied_files": 3,
+  "logical_file_bytes": 10748
+}

@@ -221,6 +221,22 @@ session-local locators. Consumers MUST treat the identifier as opaque:
 parse nothing out of it beyond the `gap` prefix, and compare it only as a
 whole string.
 
+The readable Rust **finding** ID (`gap:rust:{file}:{owner}:{behavior_kind}:{probe_kind}:{discriminator}`)
+and its seam-side reconstruction share a discriminator. Keep its original
+normalized bytes through 256 bytes inclusive. Above 256 bytes, encode the whole
+normalized discriminator as `sha256~` followed by the 64 lowercase hex digits
+of its SHA-256 digest. The hash input is exactly the previous discriminator,
+including the hex encoding of quoted literal bytes. The readable normalization
+cannot emit `~`, so the two spellings are disjoint. This bounds one field,
+including expressions with many literals or long nonliteral terms. File and
+owner lengths, the full ID length and other report text have separate sizes.
+
+For an existing ID with a discriminator over the limit, rerun `ripr check`
+against the same source and review the new ID before refreshing the affected
+baseline or ledger entry. Use that ID for new receipts. Old receipts retain
+their historical ID and only join artifacts with that exact spelling. There
+is no automatic alias or carry-forward of evidence across the change (#15353).
+
 ## Related-Test Ranking
 
 The record copies ranked related-test evidence from repo exposure. Ranking is
@@ -493,6 +509,8 @@ count by itself and it does not claim mutation execution.
 
 | Behavior | Test |
 | --- | --- |
+| Rust finding and seam IDs share the cutoff and digest | `bounded_discriminators_preserve_short_ids_and_name_the_exact_seam` |
+| A long Rust literal yields one ID usable by explain, repair and receipts | `long_literal_gap_round_trips_through_explain_repair_and_receipt` |
 | Record carries identity, evidence path, recommendation, actionability, and calibration placeholder | `evidence_record_carries_identity_path_guidance_and_calibration_placeholder` |
 | Unknown stages become static limitations | `evidence_record_names_static_limitations_from_unknown_stages` |
 | A producer-named panic limitation preserves its stage, state, reason, category and route without reclassifying the seam | `named_panic_limit_withholds_pilot_and_brief_without_reclassifying` |
@@ -534,6 +552,7 @@ count by itself and it does not claim mutation execution.
 
 | Surface | File |
 | --- | --- |
+| Readable Rust finding ID and seam reconstruction | `crates/ripr/src/analysis/language/rust/probe_shape.rs` |
 | Evidence record projection | `crates/ripr/src/output/evidence_record.rs` |
 | Repo exposure JSON attachment | `crates/ripr/src/output/repo_exposure.rs` |
 | Agent seam packet projection | `crates/ripr/src/output/agent_seam_packets.rs` |

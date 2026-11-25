@@ -1,0 +1,11 @@
+# Registers the return sink of a name-only comparison tail and of a tail
+# `if` with path arms (#15274) under RIPR-SPEC-0001.
+[[extend]]
+id = "RIPR-SPEC-0001"
+tests = [
+  "crates/ripr/src/analysis/classify/flow.rs::tests::name_only_comparison_tail_reaches_the_return_sink",
+  "crates/ripr/src/analysis/classify/flow.rs::tests::literal_comparison_tail_keeps_its_own_return_sink_text",
+  "crates/ripr/src/analysis/classify/flow.rs::tests::name_only_comparison_off_the_owner_tail_keeps_the_unknown_sink",
+  "crates/ripr/src/analysis/classify/flow.rs::tests::tail_if_with_path_branches_flows_to_the_returned_value",
+  "crates/ripr/src/analysis/classify/flow.rs::tests::tail_if_with_unread_or_equal_path_branches_fails_closed",
+]

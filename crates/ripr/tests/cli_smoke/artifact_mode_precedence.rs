@@ -1,5 +1,8 @@
 use super::*;
 
+#[path = "../common/published_schema.rs"]
+mod published_schema;
+
 /// #7873: artifact navigation must preserve CLI precedence even when the
 /// explicit winner equals the built-in default. Replaying the printed argv
 /// reloads repository policy, so losing Draft turns it back into Ready.
@@ -167,5 +170,201 @@ fn context_artifact_navigation_preserves_mode_precedence() -> Result<(), String>
     if !Path::new(&cache).is_dir() || fixture.0.join("target/ripr/cache").exists() {
         return Err("cache relocation must remain independent of mode precedence".to_string());
     }
+    Ok(())
+}
+
+/// The compact context option changes presentation only for live and artifact
+/// packets, structured failures and plain selector misses (#13356).
+#[test]
+fn context_compact_preserves_packets_and_refusals() -> Result<(), String> {
+    // The shared smoke helper opts into wall-clock progress heartbeats.
+    // Compare the command's ordinary piped diagnostics on both runs.
+    let run_json = |args: &[&str]| run_ripr_with_env(args, &[("RIPR_PROGRESS", "0")]);
+    let schema = published_schema::read("schemas/ripr/context-refusal.schema.json")?;
+    let unsupported = published_schema::unsupported_keywords(&schema);
+    if !unsupported.is_empty() {
+        return Err(format!(
+            "context refusal schema uses unsupported keywords: {unsupported:?}"
+        ));
+    }
+    let fixture = SampleDiffFixture::new("context-compact-雪")?;
+    let root = fixture.0.display().to_string();
+    let diff = fixture.0.join("example.diff").display().to_string();
+    let artifact = fixture.0.join("compact-check.json").display().to_string();
+    let check = run_json(&[
+        "check",
+        "--root",
+        &root,
+        "--diff",
+        &diff,
+        "--json",
+        "--write-artifact",
+        &artifact,
+    ]);
+    assert_success(&check);
+    let check_json: serde_json::Value =
+        serde_json::from_slice(&check.stdout).map_err(|error| error.to_string())?;
+    assert!(check_json["findings"].as_array().is_some_and(|findings| {
+        findings
+            .iter()
+            .any(|finding| finding["id"] == SAMPLE_DIFF_SELECTOR)
+    }));
+    for source in [["--diff", diff.as_str()], ["--from", artifact.as_str()]] {
+        let args = [
+            "context",
+            "--root",
+            &root,
+            source[0],
+            source[1],
+            "--at",
+            SAMPLE_DIFF_SELECTOR,
+        ];
+        let pretty = run_json(&args);
+        let mut explicit = args.to_vec();
+        explicit.push("--json");
+        let explicit = run_json(&explicit);
+        let mut compact_args = args.to_vec();
+        compact_args.extend(["--format", "json-compact"]);
+        let compact = run_json(&compact_args);
+        assert_success(&pretty);
+        assert_success(&explicit);
+        assert_success(&compact);
+        assert_eq!(pretty.stderr, compact.stderr);
+        assert!(String::from_utf8_lossy(&pretty.stdout).contains('雪'));
+        assert_eq!(
+            pretty.stdout, explicit.stdout,
+            "default bytes must remain stable"
+        );
+        assert_context_compaction(&pretty.stdout, &compact.stdout)?;
+        let packet = serde_json::from_slice(&compact.stdout).map_err(|error| error.to_string())?;
+        if published_schema::check(&packet, &schema, &schema, "packet").is_ok() {
+            return Err(format!(
+                "the operational refusal schema accepted a success packet from {source:?}"
+            ));
+        }
+    }
+
+    let missing_root = fixture.0.join("missing-root").display().to_string();
+    let args = [
+        "context",
+        "--root",
+        &missing_root,
+        "--at",
+        SAMPLE_DIFF_SELECTOR,
+    ];
+    let pretty = run_json(&args);
+    let mut compact_args = args.to_vec();
+    compact_args.extend(["--format", "json-compact"]);
+    let compact = run_json(&compact_args);
+    assert_eq!(pretty.status.code(), Some(2));
+    assert_eq!(compact.status.code(), pretty.status.code());
+    assert_eq!(pretty.stderr, compact.stderr);
+    assert_context_compaction(&pretty.stdout, &compact.stdout)?;
+
+    for flags in [
+        vec!["--format", "invalid"],
+        vec!["--json", "--format", "json-compact"],
+    ] {
+        let mut args = vec!["context", "--root", &root, "--at", SAMPLE_DIFF_SELECTOR];
+        args.extend(flags);
+        let refused = run_json(&args);
+        assert_eq!(refused.status.code(), Some(2));
+        assert!(refused.stdout.is_empty());
+    }
+
+    let missing = fixture
+        .0
+        .join("missing-artifact.json")
+        .display()
+        .to_string();
+    let args = [
+        "context",
+        "--root",
+        &root,
+        "--from",
+        &missing,
+        "--at",
+        SAMPLE_DIFF_SELECTOR,
+    ];
+    let pretty = run_json(&args);
+    let mut compact_args = args.to_vec();
+    compact_args.extend(["--format", "json-compact"]);
+    let compact = run_json(&compact_args);
+    assert_eq!(pretty.status.code(), Some(2));
+    assert_eq!(compact.status.code(), pretty.status.code());
+    assert_eq!(pretty.stderr, compact.stderr);
+    assert_context_compaction(&pretty.stdout, &compact.stdout)?;
+    let refusal: serde_json::Value =
+        serde_json::from_slice(&compact.stdout).map_err(|error| error.to_string())?;
+    assert_eq!(
+        refusal["run_limitations"][0]["category"],
+        "check_artifact_unusable"
+    );
+
+    let args = [
+        "context",
+        "--root",
+        &root,
+        "--diff",
+        &diff,
+        "--at",
+        "probe:missing",
+    ];
+    // Without a JSON request a selector miss is plain usage: no stdout. An
+    // explicit JSON request (either presentation) also receives the typed
+    // `selector_miss` refusal on stdout (#14980), and compaction changes only
+    // its whitespace.
+    let plain = run_json(&args);
+    assert_eq!(plain.status.code(), Some(2));
+    assert!(plain.stdout.is_empty());
+    let mut pretty_args = args.to_vec();
+    pretty_args.push("--json");
+    let pretty = run_json(&pretty_args);
+    let mut compact_args = args.to_vec();
+    compact_args.extend(["--format", "json-compact"]);
+    let compact = run_json(&compact_args);
+    assert_eq!(pretty.status.code(), Some(2));
+    assert_eq!(compact.status.code(), pretty.status.code());
+    assert_eq!(pretty.stderr, compact.stderr);
+    assert_context_compaction(&pretty.stdout, &compact.stdout)?;
+    let refusal: serde_json::Value =
+        serde_json::from_slice(&compact.stdout).map_err(|error| error.to_string())?;
+    assert_eq!(refusal["error"]["code"], "selector_miss");
+    if published_schema::check(&refusal, &schema, &schema, "selector miss").is_ok() {
+        return Err("the operational refusal schema accepted a CLI selector miss".to_string());
+    }
+    Ok(())
+}
+
+fn assert_context_compaction(pretty: &[u8], compact: &[u8]) -> Result<(), String> {
+    let pretty_value: serde_json::Value =
+        serde_json::from_slice(pretty).map_err(|error| error.to_string())?;
+    let compact_value: serde_json::Value =
+        serde_json::from_slice(compact).map_err(|error| error.to_string())?;
+    assert_eq!(pretty_value, compact_value);
+    assert!(compact.len() < pretty.len());
+    // Outside strings remove only JSON whitespace. Preserve original member
+    // order, escapes and numeric bytes, including UTF-8 inside strings.
+    let mut expected = Vec::new();
+    let (mut string, mut escaped) = (false, false);
+    for &byte in pretty {
+        if string {
+            expected.push(byte);
+            if escaped {
+                escaped = false;
+            } else if byte == b'\\' {
+                escaped = true;
+            } else if byte == b'"' {
+                string = false;
+            }
+        } else if byte == b'"' {
+            string = true;
+            expected.push(byte);
+        } else if !matches!(byte, b' ' | b'\n' | b'\r' | b'\t') {
+            expected.push(byte);
+        }
+    }
+    expected.push(b'\n');
+    assert_eq!(compact, expected);
     Ok(())
 }
