@@ -149,6 +149,7 @@ mod new_declaration_tests;
 mod nullish_chain_guard;
 mod object_rows;
 mod oracle;
+mod overwritten_methods;
 #[cfg(test)]
 mod owner_path_tests;
 mod owners;

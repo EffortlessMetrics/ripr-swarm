@@ -1674,9 +1674,10 @@ pub(crate) fn owners_from_class(
         .id
         .as_ref()
         .map(|identifier| identifier.name.as_str().to_string());
+    let overwritten = super::overwritten_methods::overwritten_method_starts(class);
     for element in &class.body.body {
         if let ClassElement::MethodDefinition(method) = element
-            && let Some(owner) = owner_from_method(
+            && let Some(mut owner) = owner_from_method(
                 method,
                 file,
                 source,
@@ -1685,6 +1686,9 @@ pub(crate) fn owners_from_class(
                 imports,
             )
         {
+            if overwritten.contains(&method.span.start) {
+                owner.method_kind = TypeScriptMethodKind::Overwritten;
+            }
             owners.push(owner);
         }
     }
@@ -1744,7 +1748,7 @@ pub(crate) fn binding_identifier_name<'a>(pattern: &'a BindingPattern<'a>) -> Op
 /// A class method's owner name: a plain identifier, or a `#private` name kept
 /// with its `#` so it can never collide with a public member of the same name
 /// and cannot match a test's `receiver.name(` needle (#10440).
-fn method_key_name(method: &MethodDefinition<'_>) -> Option<String> {
+pub(super) fn method_key_name(method: &MethodDefinition<'_>) -> Option<String> {
     if method.computed {
         return None;
     }
