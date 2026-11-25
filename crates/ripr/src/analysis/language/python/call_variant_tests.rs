@@ -2,7 +2,7 @@
 //! discriminated only by an argument the two versions treat differently.
 
 use super::call_variant::{
-    CallVariant, call_variant, elements_agree, round_half_even, variant_agrees,
+    CallVariant, call_variant, elements_agree, round_example, round_half_even, variant_agrees,
 };
 use super::classify::{PythonNoBehaviorContext, classify_change_with_context};
 use super::owners_tests::{extract_owners, extract_tests};
@@ -116,7 +116,8 @@ fn inputs_within_the_smaller_digit_count_do_not_expose_a_round_change() -> Resul
             .activation
             .missing_discriminators
             .iter()
-            .any(|fact| fact.value == "call `money` with `x` with more than 2 decimal places"),
+            .any(|fact| fact.value
+                == "call `money` with `x` with a value that `round(x, 2)` and `round(x, 3)` round differently, such as `1.234`"),
         "{:?}",
         finding.activation.missing_discriminators
     );
@@ -146,7 +147,19 @@ fn a_literal_both_counts_round_alike_does_not_expose_a_round_change() -> Result<
             .activation
             .missing_discriminators
             .iter()
-            .any(|fact| fact.value == "call `money` with `x` with more than 2 decimal places"),
+            .any(|fact| fact.value
+                == "call `money` with `x` with a value that `round(x, 2)` and `round(x, 3)` round differently, such as `1.234`"),
+        "{:?}",
+        finding.activation.missing_discriminators
+    );
+    // The literal has four decimal places and both counts round it alike, so the
+    // message cannot say that no call with more than two was seen.
+    assert!(
+        finding
+            .activation
+            .missing_discriminators
+            .iter()
+            .all(|fact| !fact.value.contains("decimal place")),
         "{:?}",
         finding.activation.missing_discriminators
     );
@@ -172,7 +185,9 @@ fn a_negative_count_agreeing_input_does_not_expose_a_round_change() -> Result<()
             .iter()
             .any(|fact| fact
                 .value
-                .contains("`x` with a value that is not a multiple of 100")),
+                .contains(
+                    "`x` with a value that `round(x, -1)` and `round(x, -2)` round differently, such as `15`",
+                )),
         "{:?}",
         finding.activation.missing_discriminators
     );
@@ -180,9 +195,10 @@ fn a_negative_count_agreeing_input_does_not_expose_a_round_change() -> Result<()
 }
 
 #[test]
-fn a_grid_too_large_for_an_integer_is_named_by_its_power() -> Result<(), String> {
-    // `round(5 * 10**17, -20)` and `round(5 * 10**17, -19)` are both 0, so
-    // "not a multiple of 10**18" would name an input that does not separate.
+fn an_example_the_reader_cannot_read_is_left_out_of_the_message() -> Result<(), String> {
+    // `round(0, -20)` and `round(0, -19)` are both 0. No input of these
+    // counts is inside what the reader evaluates, so the message names the
+    // difference and gives no example.
     let source = "def money(x):\n    return round(x, -20)\n";
     let finding = classify_source(
         source,
@@ -198,10 +214,127 @@ fn a_grid_too_large_for_an_integer_is_named_by_its_power() -> Result<(), String>
             .missing_discriminators
             .iter()
             .any(|fact| fact.value
-                == "call `money` with `x` with a value that is not a multiple of 10^20"),
+                == "call `money` with `x` with a value that `round(x, -20)` and `round(x, -19)` round differently"),
         "{:?}",
         finding.activation.missing_discriminators
     );
+    Ok(())
+}
+
+#[test]
+fn the_missing_check_names_an_input_the_counts_round_differently() {
+    // `1.0001` has more than two decimal places and both counts round it to
+    // `1.0`; `101` is no multiple of 100 and both counts round it to `100`.
+    // Each is where a difference can be, not one. The examples are inputs the
+    // reader finds the counts round apart.
+    let round = |old: i32, new: i32| CallVariant::Round {
+        param: "x".to_string(),
+        old,
+        new,
+    };
+    assert_eq!(variant_agrees(&round(2, 3), "1.0001"), Some(true));
+    assert_eq!(variant_agrees(&round(2, 3), "1.234"), Some(false));
+    assert_eq!(variant_agrees(&round(-1, -2), "101"), Some(true));
+    assert_eq!(variant_agrees(&round(-1, -2), "15"), Some(false));
+    assert_eq!(variant_agrees(&round(-1, 0), "1.23"), Some(false));
+    // The example the rule finds for each pair.
+    assert_eq!(round_example(2, 3).as_deref(), Some("1.234"));
+    assert_eq!(round_example(-1, -2).as_deref(), Some("15"));
+    assert_eq!(round_example(-1, 0).as_deref(), Some("1.6"));
+    assert_eq!(round_example(-1, 15).as_deref(), Some("1.6"));
+    assert_eq!(round_example(3, -2).as_deref(), Some("1.6"));
+    assert_eq!(round_example(14, 15).as_deref(), Some("0.0000000000000012"));
+    assert_eq!(round_example(-2, -15).as_deref(), Some("150"));
+    assert_eq!(round_example(-15, -16).as_deref(), Some("600000000000001"));
+    assert_eq!(round_example(-16, -17), None);
+    assert_eq!(round_example(-20, -19), None);
+}
+
+#[test]
+fn every_example_is_an_input_the_counts_round_differently() {
+    // Every pair of distinct counts inside the rule's bounds, in both orders.
+    // An example is given only for a pair the rule finds it separates; CPython
+    // 3.14 rounds each of these the same way.
+    let mut without = Vec::new();
+    for old in -20..=20 {
+        for new in -20..=20 {
+            if old == new {
+                continue;
+            }
+            match round_example(old, new) {
+                Some(example) => assert_eq!(
+                    variant_agrees(
+                        &CallVariant::Round {
+                            param: "x".to_string(),
+                            old,
+                            new
+                        },
+                        &example
+                    ),
+                    Some(false),
+                    "{old}, {new}: {example}"
+                ),
+                None => without.push((old, new)),
+            }
+        }
+    }
+    assert!(
+        without
+            .iter()
+            .all(|&(old, new)| old < 0 && new < 0 && old.max(new) <= -16),
+        "pairs without an example: {without:?}"
+    );
+}
+
+#[test]
+fn a_count_that_changes_its_sign_is_read_as_one_edit() -> Result<(), String> {
+    // `round(100, -1)` and `round(100, 0)` both return `100`: the `-`
+    // belongs to the count, so removing it changes the count and nothing else.
+    let source = "def money(x):\n    return round(x, -1)\n";
+    let finding = classify_source(
+        source,
+        2,
+        "    return round(x, -1)",
+        "    return round(x, 0)",
+        "from src.text import money\n\n\ndef test_money():\n    assert money(100) == 100\n",
+    )?;
+    assert_eq!(finding.class, ExposureClass::WeaklyExposed);
+    assert!(
+        finding
+            .activation
+            .missing_discriminators
+            .iter()
+            .any(|fact| fact.value
+                == "call `money` with `x` with a value that `round(x, -1)` and `round(x, 0)` round differently, such as `1.6`"),
+        "{:?}",
+        finding.activation.missing_discriminators
+    );
+    // `round(15, -1)` is `20` and `round(15, 0)` is `15`: read and apart,
+    // the gate leaves the finding exposed. The first half is what holds the
+    // reading; an unread edit would leave this one exposed as well.
+    let finding = classify_source(
+        source,
+        2,
+        "    return round(x, -1)",
+        "    return round(x, 0)",
+        "from src.text import money\n\n\ndef test_money():\n    assert money(15) == 20\n",
+    )?;
+    assert_eq!(finding.class, ExposureClass::Exposed);
+    Ok(())
+}
+
+#[test]
+fn a_sign_added_to_a_count_is_read_as_one_edit() -> Result<(), String> {
+    // `round(100, 0)` and `round(100, -1)` both return `100`.
+    let source = "def money(x):\n    return round(x, 0)\n";
+    let finding = classify_source(
+        source,
+        2,
+        "    return round(x, 0)",
+        "    return round(x, -1)",
+        "from src.text import money\n\n\ndef test_money():\n    assert money(100) == 100\n",
+    )?;
+    assert_eq!(finding.class, ExposureClass::WeaklyExposed);
     Ok(())
 }
 
@@ -302,6 +435,55 @@ fn only_a_strip_side_or_round_digits_edit_on_a_name_is_read() {
             old: -1,
             new: -2,
         })
+    );
+    // A call that begins the line has nothing before it and is bare.
+    assert_eq!(
+        call_variant("round(x, 2)", "round(x, 3)"),
+        Some(CallVariant::Round {
+            param: "x".to_string(),
+            old: 2,
+            new: 3,
+        })
+    );
+    assert_eq!(
+        call_variant("round(x, -1)", "round(x, 0)"),
+        Some(CallVariant::Round {
+            param: "x".to_string(),
+            old: -1,
+            new: 0,
+        })
+    );
+    // The sign belongs to the count: adding or removing it is still one edit.
+    assert_eq!(
+        call_variant("return round(x, -1)", "return round(x, 0)"),
+        Some(CallVariant::Round {
+            param: "x".to_string(),
+            old: -1,
+            new: 0,
+        })
+    );
+    assert_eq!(
+        call_variant("return round(x, 2)", "return round(x, -3)"),
+        Some(CallVariant::Round {
+            param: "x".to_string(),
+            old: 2,
+            new: -3,
+        })
+    );
+    // `-0` and `0` are one count.
+    assert_eq!(
+        call_variant("return round(x, -0)", "return round(x, 0)"),
+        None
+    );
+    // A count that changes with its parameter is two edits.
+    assert_eq!(
+        call_variant("return round(x, -1)", "return round(y, 0)"),
+        None
+    );
+    // A count beside a subtraction.
+    assert_eq!(
+        call_variant("return round(x, 1 - 2)", "return round(x, -2)"),
+        None
     );
     // A binary subtraction is not a signed count.
     assert_eq!(

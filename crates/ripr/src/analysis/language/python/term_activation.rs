@@ -179,10 +179,15 @@ pub(super) fn term_facts(
         _ => None,
     };
     // The statement texts once: the scan below reads each of them for every
-    // parameter.
+    // parameter. A statement the scan must refuse is found once too, since
+    // that reading costs a pass over the statement.
     let statement_texts: Vec<String> = body
         .iter()
         .map(|statement| text_for_range(source, statement.range()))
+        .collect();
+    let statement_unreadable: Vec<bool> = statement_texts
+        .iter()
+        .map(|text| code_holds_non_ascii(text) || code_reader_stops_short(text))
         .collect();
     let first_mention_lines = parameters
         .iter()
@@ -196,11 +201,13 @@ pub(super) fn term_facts(
                 return None;
             }
             let mut first = None;
-            for (statement, text) in body.iter().zip(&statement_texts) {
+            for ((statement, text), unreadable) in
+                body.iter().zip(&statement_texts).zip(&statement_unreadable)
+            {
                 // A statement the text reader stops short of hides every
                 // later mention in it: reading on would take a later line
                 // for the parameter's first mention.
-                if code_holds_non_ascii(text) || code_reader_stops_short(text) {
+                if *unreadable {
                     return None;
                 }
                 if code_mentions(text, &parameter.name) {

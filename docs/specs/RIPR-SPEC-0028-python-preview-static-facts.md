@@ -2199,7 +2199,9 @@ Tests: `connective_swap_tests.rs::agreeing_operands_do_not_expose_an_and_or_swap
 
 A one-line edit whose only change picks another `strip`, `lstrip` or `rstrip`
 on a parameter with no arguments, or another literal digit count in
-`round(<parameter>, <int>)` (a negative count rounds to tens and coarser), or
+`round(<parameter>, <int>)` (a negative count rounds to tens and coarser; the
+count's sign is read on each side, so an edit that adds or removes the `-` is
+still one edit), or
 flips the literal `reverse` flag alone on one `sorted(<parameter>)` or
 `<parameter>.sort()` call with no other argument (#16203), changes the result
 only for a string with whitespace on a side one version keeps, a number the
@@ -2238,9 +2240,13 @@ the bounds above, or a list, tuple or set display of scalars that the call
 itself spells, where a string element with an escape is compared as spelled,
 so two spellings of one text are two elements) and both
 versions give the same result, the edit reads `weakly_exposed` and the
-missing discriminator names the separating input; the messages say only that
-no related call is seen to pass it, not that the versions agree on every
-input. A call the reader cannot resolve, an unreadable literal, or no
+missing discriminator names an input the two versions treat differently; the
+messages say only that no related call is seen to pass it, not that the
+versions agree on every input. For a `round` count the message names a value
+the two counts round differently, never a wider set such as a number with
+more digits than the smaller count keeps, and it gives an example only when
+the same rule finds one the counts round differently inside the bounds
+above. A call the reader cannot resolve, an unreadable literal, or no
 resolved call at all, leaves the reading to the other rules.
 
 Tests: `call_variant_tests.rs::inputs_without_trailing_whitespace_do_not_expose_strip_to_lstrip`,
@@ -2249,7 +2255,11 @@ Tests: `call_variant_tests.rs::inputs_without_trailing_whitespace_do_not_expose_
 `call_variant_tests.rs::a_literal_both_counts_round_alike_does_not_expose_a_round_change`,
 `call_variant_tests.rs::an_input_with_more_decimals_keeps_a_round_change_exposed`,
 `call_variant_tests.rs::a_negative_count_agreeing_input_does_not_expose_a_round_change`,
-`call_variant_tests.rs::a_grid_too_large_for_an_integer_is_named_by_its_power`,
+`call_variant_tests.rs::an_example_the_reader_cannot_read_is_left_out_of_the_message`,
+`call_variant_tests.rs::the_missing_check_names_an_input_the_counts_round_differently`,
+`call_variant_tests.rs::every_example_is_an_input_the_counts_round_differently`,
+`call_variant_tests.rs::a_count_that_changes_its_sign_is_read_as_one_edit`,
+`call_variant_tests.rs::a_sign_added_to_a_count_is_read_as_one_edit`,
 `call_variant_tests.rs::a_negative_count_off_grid_input_keeps_a_round_change_exposed`,
 `call_variant_tests.rs::a_recursive_owner_keeps_the_entry_rows_from_reading_agreement`,
 `call_variant_tests.rs::a_line_inside_a_multiline_string_is_not_read_as_a_call`,

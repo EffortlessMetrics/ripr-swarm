@@ -11,7 +11,7 @@
 //!
 //! The rule reads the changed token in place: `<param>.strip()`,
 //! `.lstrip()` or `.rstrip()` with no arguments, or `round(<param>, <int>)`
-//! with a literal digit count, or one `sorted(<param>)` or `<param>.sort()`
+//! with a literal digit count, its sign included, or one `sorted(<param>)` or `<param>.sort()`
 //! whose literal `reverse` flag alone flips, where `<param>` is an owner parameter the body
 //! never rebinds. Each strong related call (`boundary.rs`) must bind that
 //! parameter to a literal the rule can evaluate both ways; any other call, or
@@ -72,6 +72,9 @@ pub(super) fn call_variant(old_line: &str, new_line: &str) -> Option<CallVariant
     if let Some(sort) = sort_variant(&old, &new) {
         return Some(sort);
     }
+    if let Some(round) = round_variant(&old, &new) {
+        return Some(round);
+    }
     if old.len() != new.len() {
         return None;
     }
@@ -101,37 +104,76 @@ pub(super) fn call_variant(old_line: &str, new_line: &str) -> Option<CallVariant
                 new: new[i].1.clone(),
             })
         }
-        (Tok::Int { .. }, Tok::Int { .. }) => {
-            // A negative count lexes as a `-` before the digits; both sides
-            // must spell the sign alike, or the edit changes more than the
-            // count and the token counts already differed above.
-            let negative = matches!(at(-1), Some((Tok::Minus, _)));
-            let (round_at, lpar_at, param_at, comma_at) = if negative {
-                (-5, -4, -3, -2)
-            } else {
-                (-4, -3, -2, -1)
-            };
-            let shape = matches!(at(round_at), Some((Tok::Name { .. }, name)) if name == "round")
-                && not_attribute(round_at - 1)
-                && matches!(at(lpar_at), Some((Tok::Lpar, _)))
-                && matches!(at(param_at), Some((Tok::Name { .. }, _)))
-                && matches!(at(comma_at), Some((Tok::Comma, _)))
-                && matches!(at(1), Some((Tok::Rpar, _)));
-            if !shape {
-                return None;
-            }
-            let count = |token: &Token| -> Option<i32> {
-                let count = token.1.parse::<i32>().ok()?;
-                Some(if negative { -count } else { count })
-            };
-            Some(CallVariant::Round {
-                param: at(param_at).map(|(_, text)| text.clone())?,
-                old: count(&old[i])?,
-                new: count(&new[i])?,
-            })
-        }
         _ => None,
     }
+}
+
+/// The `round(<param>, [-]<int>)` whose digit count alone the edit changes.
+/// The sign belongs to the count and is read on each side, so an edit that
+/// adds or removes it is still one edit; with the count's tokens left out,
+/// the two lines must be the same. `None` for anything else, a binary
+/// subtraction included: its `-` does not follow the comma.
+fn round_variant(old: &[Token], new: &[Token]) -> Option<CallVariant> {
+    let is = |tokens: &[Token], k: usize, token: &Tok| matches!(tokens.get(k), Some((found, _)) if found == token);
+    // Each count of one line: the index of its digits and its sign.
+    let counts = |tokens: &[Token]| -> Vec<(usize, bool)> {
+        // The builtin `round`, not an attribute a receiver carries; a call
+        // that begins the line has nothing before it and is bare.
+        let bare_round = |head: usize| {
+            matches!(&tokens[head].0, Tok::Name { .. } if tokens[head].1 == "round")
+                && head
+                    .checked_sub(1)
+                    .is_none_or(|before| !is(tokens, before, &Tok::Dot))
+        };
+        (0..tokens.len())
+            .filter_map(|i| {
+                [false, true]
+                    .into_iter()
+                    .find(|&negative| {
+                        let Some(head) = i.checked_sub(if negative { 5 } else { 4 }) else {
+                            return false;
+                        };
+                        matches!(tokens[i].0, Tok::Int { .. })
+                            && is(tokens, i + 1, &Tok::Rpar)
+                            && (!negative || is(tokens, i - 1, &Tok::Minus))
+                            && bare_round(head)
+                            && is(tokens, head + 1, &Tok::Lpar)
+                            && matches!(tokens[head + 2].0, Tok::Name { .. })
+                            && is(tokens, head + 3, &Tok::Comma)
+                    })
+                    .map(|negative| (i, negative))
+            })
+            .collect()
+    };
+    // The line without the count and its sign.
+    fn outside(tokens: &[Token], i: usize, negative: bool) -> impl Iterator<Item = &Token> {
+        let start = i - usize::from(negative);
+        tokens[..start].iter().chain(&tokens[i + 1..])
+    }
+    let count = |tokens: &[Token], i: usize, negative: bool| -> Option<i32> {
+        let count = tokens[i].1.parse::<i32>().ok()?;
+        Some(if negative { -count } else { count })
+    };
+    for &(old_i, old_negative) in &counts(old) {
+        for &(new_i, new_negative) in &counts(new) {
+            if !outside(old, old_i, old_negative).eq(outside(new, new_i, new_negative)) {
+                continue;
+            }
+            let param = old[old_i - if old_negative { 3 } else { 2 }].1.clone();
+            let (Some(old_count), Some(new_count)) = (
+                count(old, old_i, old_negative),
+                count(new, new_i, new_negative),
+            ) else {
+                continue;
+            };
+            return (old_count != new_count).then_some(CallVariant::Round {
+                param,
+                old: old_count,
+                new: new_count,
+            });
+        }
+    }
+    None
 }
 
 /// One `sorted(<name>[, reverse=<bool>])` or `<name>.sort([reverse=<bool>])`
@@ -307,24 +349,19 @@ pub(super) fn python_call_variant_evidence(
         CallVariant::Round { param, old, new } => PythonCallVariantEvidence {
             old_call: format!("round({param}, {old})"),
             new_call: format!("round({param}, {new})"),
-            discriminator: if old.min(new) < 0 {
-                // A negative count rounds to a multiple of `10^-count`;
-                // a value already on that grid reads the same both ways. A
-                // grid too large for an integer is named by its power, so
-                // the message never names a smaller grid than the counts'.
-                let grid_exponent = u32::try_from(-old.min(new)).unwrap_or(u32::MAX);
-                let grid = 10i64
-                    .checked_pow(grid_exponent)
-                    .map(|value| value.to_string())
-                    .unwrap_or_else(|| format!("10^{}", -old.min(new)));
-                format!("`{param}` with a value that is not a multiple of {grid}")
-            } else {
-                format!(
-                    "`{param}` with more than {} decimal place{}",
-                    old.min(new),
-                    if old.min(new) == 1 { "" } else { "s" }
-                )
-            },
+            // The message names the input that would tell the counts apart,
+            // and nothing wider. More digits than the smaller count keeps,
+            // or a value off the coarser count's grid, is where a difference
+            // can be and not one: `1.0001` rounds to `1.0` at 2 and at 3
+            // places, and `101` to `100` at -1 and at -2.
+            discriminator: format!(
+                "`{param}` with a value that `round({param}, {old})` and `round({param}, {new})` \
+                 round differently{}",
+                match round_example(old, new) {
+                    Some(example) => format!(", such as `{example}`"),
+                    None => String::new(),
+                }
+            ),
         },
         CallVariant::Sort {
             param,
@@ -412,6 +449,49 @@ fn strip_discriminator(old: &str, new: &str) -> &'static str {
 const MAX_ROUND_DIGITS: usize = 15;
 const MAX_ROUND_COUNT: i32 = 20;
 const MAX_ROUND_SPELLING: usize = 48;
+
+/// One input the two counts round differently, found by the rule that reads
+/// a related call, or None when that rule reads no candidate. The candidates
+/// are spelled in the digits 1 to 4 and 6, so never on an exact tie, and each
+/// is given only when the rule finds the counts round it differently:
+/// `1.234` for `2` and `3`, `15` for `-2` and `-1`, and `1.6` where one count
+/// is negative and the other is not, since the negative one rounds it to
+/// zero. Two counts both `-16` or coarser round every input the rule reads to
+/// zero, so they get none.
+pub(super) fn round_example(old: i32, new: i32) -> Option<String> {
+    if old.unsigned_abs() > MAX_ROUND_COUNT as u32 || new.unsigned_abs() > MAX_ROUND_COUNT as u32 {
+        return None;
+    }
+    let (coarser, finer) = (old.min(new), old.max(new));
+    let zeros = |count: u32| -> Option<String> { Some("0".repeat(usize::try_from(count).ok()?)) };
+    // The candidates, the preferred one first. Two that are both negative
+    // need a value that reaches the finer count's grid: `15` to the power
+    // below it, and, one digit shorter, `6` to that power with a `1` after
+    // it, which rounds up at a count of `-15`.
+    let mut candidates = Vec::new();
+    if finer < 0 {
+        candidates.push(format!("15{}", zeros(finer.unsigned_abs() - 1)?));
+        candidates.push(format!(
+            "6{}1",
+            zeros(finer.unsigned_abs().saturating_sub(2))?
+        ));
+    } else if coarser < 0 {
+        candidates.push("1.6".to_string());
+    } else {
+        let places = usize::try_from(finer.unsigned_abs()).ok()?;
+        let fraction: String = "234"
+            .repeat(places.div_ceil(3))
+            .chars()
+            .take(places)
+            .collect();
+        candidates.push(format!("1.{fraction}"));
+        // Two significant digits, so it fits every count the rule reads.
+        candidates.push(format!("0.{}12", zeros(coarser.unsigned_abs())?));
+    }
+    candidates
+        .into_iter()
+        .find(|candidate| round_agrees(candidate, old, new) == Some(false))
+}
 
 /// Whether `round(value, old)` and `round(value, new)` return the same
 /// number, read as exact decimal half-to-even rounding of a plain decimal
