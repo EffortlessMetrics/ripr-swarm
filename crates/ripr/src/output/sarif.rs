@@ -22,9 +22,7 @@ use crate::output::preview_actionability::{
     preview_actionability_for, preview_actionability_json_value,
 };
 use crate::output::python_repair_card::{python_repair_card, python_repair_card_json_value};
-use crate::output::suppressions::{
-    SuppressionEntry, SuppressionKind, current_iso_date, is_expired,
-};
+use crate::output::suppressions::{SuppressionEntry, current_iso_date};
 use crate::output::typescript_preview_card::{
     typescript_preview_card, typescript_preview_card_json_value,
 };
@@ -1416,39 +1414,20 @@ fn missing_discriminators(missing: &[MissingDiscriminatorFact]) -> Value {
     )
 }
 
+/// The policy entry that suppresses `finding`'s result, decided by the same
+/// rule `ripr check --suppression-policy` and the badges use (#15377), so a
+/// `path` glob or `static_class` entry marks a code-scanning alert too.
 fn active_exposure_suppression<'a>(
     root: &Path,
     finding: &Finding,
     suppressions: &'a [SuppressionEntry],
     today: &str,
 ) -> Option<&'a SuppressionEntry> {
-    // #13895: a `path` + `function` entry matches the same way it does for
-    // `ripr check` (exact root-relative file and exact owner function).
-    let file = &finding.probe.location.file;
-    let relative = crate::output::suppressions::root_relative_finding_path(root, file);
-    let owner_function = crate::output::suppressions::owner_function_of(
-        &relative,
-        file,
-        finding.probe.owner.as_ref().map(|owner| owner.0.as_str()),
-    );
-    suppressions.iter().find(|entry| {
-        if entry.kind != SuppressionKind::ExposureGap || is_expired(entry.expires.as_deref(), today)
-        {
-            return false;
-        }
-        match (&entry.finding_id, &entry.function) {
-            (Some(id), _) => id == &finding.id,
-            (None, Some(function)) => {
-                entry.path.as_deref() == Some(relative.as_str())
-                    && owner_function.as_deref() == Some(function.as_str())
-                    && entry
-                        .static_class
-                        .as_deref()
-                        .is_none_or(|class| class == finding.class.as_str())
-            }
-            (None, None) => false,
-        }
-    })
+    crate::output::suppressions::matching_exposure_entry(
+        &crate::output::suppressions::CheckSuppressionCandidate::for_finding(root, finding),
+        suppressions,
+        today,
+    )
 }
 
 fn suppression_metadata(entry: &SuppressionEntry) -> Value {
@@ -2112,6 +2091,7 @@ mod tests {
         ProbeId, RelatedTest, RevealEvidence, RiprEvidence, SourceLocation, StageEvidence,
         StageState, StaticLimitKind, StopReason, Summary, SymbolId, ValueContext,
     };
+    use crate::output::suppressions::SuppressionKind;
     use serde_json::Value;
     use std::path::PathBuf;
 
@@ -3478,6 +3458,61 @@ weakly_gripped = "note"
         assert_eq!(
             result["suppressions"][0]["properties"]["owner"],
             "team-ripr"
+        );
+        Ok(())
+    }
+
+    /// #15377: SARIF marks a result by the same rule `check
+    /// --suppression-policy` and the badges use, so a `path` glob entry
+    /// (optionally narrowed by `static_class`) suppresses the alert too. The
+    /// sample finding is `weakly_exposed` at `src/pricing.rs`.
+    #[test]
+    fn sarif_marks_results_matched_by_a_path_glob_entry() -> Result<(), String> {
+        let entry = |path: &str, static_class: Option<&str>| SuppressionEntry {
+            kind: SuppressionKind::ExposureGap,
+            finding_id: None,
+            test: None,
+            path: Some(path.to_string()),
+            function: None,
+            reason: format!("glob {path}"),
+            owner: "team-ripr".to_string(),
+            expires: Some("2099-01-01".to_string()),
+            scope: None,
+            created_at: None,
+            last_seen: None,
+            review_by: None,
+            expected_visibility: None,
+            static_class: static_class.map(str::to_string),
+            language: None,
+            language_status: None,
+            block_line: 4,
+        };
+        let marking = |entries: &[SuppressionEntry]| -> Result<Value, String> {
+            let rendered = render_findings_sarif(&sample_output(), &RiprConfig::default(), entries);
+            let sarif = parse_json(&rendered)?;
+            Ok(first_result(&sarif)?["suppressions"].clone())
+        };
+
+        let marked = marking(&[entry("src/**", None)])?;
+        assert_eq!(marked[0]["justification"], "glob src/**", "{marked}");
+        let narrowed = marking(&[entry("src/*.rs", Some("weakly_exposed"))])?;
+        assert_eq!(narrowed[0]["justification"], "glob src/*.rs", "{narrowed}");
+        // The first matching entry in manifest order supplies the marking.
+        let first = marking(&[entry("tests/**", None), entry("src/**", None)])?;
+        assert_eq!(first[0]["justification"], "glob src/**", "{first}");
+
+        for unmatched in [
+            vec![entry("tests/**", None)],
+            vec![entry("src/**", Some("exposed"))],
+        ] {
+            let marking = marking(&unmatched)?;
+            assert!(marking.is_null(), "{unmatched:?} must not mark: {marking}");
+        }
+        let mut expired = entry("src/**", None);
+        expired.expires = Some("2000-01-01".to_string());
+        assert!(
+            marking(&[expired])?.is_null(),
+            "an expired entry never marks"
         );
         Ok(())
     }

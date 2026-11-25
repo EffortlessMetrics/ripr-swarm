@@ -302,8 +302,12 @@ is `off`.
 
 For v1:
 
-- `kind = "exposure_gap"` suppressions matching a Finding ID should attach a
-  SARIF `suppressions` entry to that result.
+- `kind = "exposure_gap"` suppressions attach a SARIF `suppressions` entry to
+  each result they match. They match by the one rule `ripr check
+  --suppression-policy` and the badges use (#15377): a `finding_id`, an exact
+  `path` + `function` owner, or a `path` glob, the last two optionally
+  narrowed by `static_class`. The first live entry in manifest order supplies
+  the justification.
 - Expired or malformed suppressions must not suppress a result.
 - Seam results whose grip class is `suppressed` are omitted by default because
   `severity.seams.suppressed = "off"`. If a repository configures that class to
@@ -312,8 +316,11 @@ For v1:
 - Suppression metadata should include the configured justification when SARIF
   can represent it.
 
-The SARIF renderer must not invent suppressions. It consumes the same configured
-suppression path used by badge/report policy.
+The SARIF renderer must not invent suppressions. Without a flag it consumes the
+same configured suppression path used by badge/report policy. `ripr check
+--format sarif|sarif-compact --suppression-policy PATH` replaces that path with
+PATH for the run (#15377), fail-closed like the findings formats, so one flag
+gives the `github` annotations and the code-scanning alerts the same decision.
 
 ## CI Policy
 
