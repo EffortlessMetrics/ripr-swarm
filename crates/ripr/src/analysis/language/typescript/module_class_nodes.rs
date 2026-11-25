@@ -617,19 +617,14 @@ pub(super) fn executed_body(text: &str) -> Option<String> {
     plain.then(|| expression.to_string())
 }
 
-/// `true` when a function header holds `*` outside its parameter list and
-/// brackets: `function* name(`, `async *name(` or `*[key](`.
+/// `true` when a function header marks a generator: a `*` before its
+/// parameter list (`function* name(`, `async *name(`, `*[key](`). Nothing
+/// inside the parameters, such as a multiplied default, counts.
 fn is_generator_header(header: &str) -> bool {
-    let mut depth = 0usize;
-    header.chars().any(|ch| {
-        match ch {
-            '(' | '[' | '<' => depth += 1,
-            ')' | ']' | '>' => depth = depth.saturating_sub(1),
-            '*' => return depth == 0,
-            _ => {}
-        }
-        false
-    })
+    header
+        .split('(')
+        .next()
+        .is_some_and(|before_params| before_params.contains('*'))
 }
 
 /// Offset of the expression body of an arrow `code` starts with:

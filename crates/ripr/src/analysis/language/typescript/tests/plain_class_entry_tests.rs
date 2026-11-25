@@ -607,6 +607,28 @@ fn default_of_a_synchronous_callback_runs_with_the_entry() {
 }
 
 #[test]
+fn multiplied_or_compared_default_is_no_generator_marker() {
+    // `*` and `>` inside the parameter list say nothing about the function.
+    let entry = "export function serialize(input: any): string {\n  return new Serializer().write(input);\n}";
+    for header in [
+        "export function serialize(input: any, k = (input > 0 ? 1 : 0) * 2): string {",
+        "export function serialize(input: any, k = 2 * 3): string {",
+    ] {
+        let source = SRC.replacen(
+            entry,
+            &format!("{header}\n  return new Serializer().write(input);\n}}"),
+            1,
+        );
+        assert_ne!(source, SRC, "{header}: fixture not rewritten");
+        assert_eq!(
+            entry_hops(&source, "write"),
+            [("serialize".to_string(), 1)],
+            "{header}"
+        );
+    }
+}
+
+#[test]
 fn default_of_a_stored_arrow_in_a_method_adds_no_edge() {
     for (label, line) in [
         (
