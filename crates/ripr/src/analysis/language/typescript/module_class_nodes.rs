@@ -274,20 +274,40 @@ fn this_escapes(text: &str, members: &BTreeSet<&str>, callable: &BTreeSet<String
             if loop_target {
                 return false;
             }
-            if access.calls {
-                return callable.contains(name);
-            }
-            // A method read without a call is only an argument (`.sort(this.m)`),
-            // never a destructuring or `for (... of` target that replaces it
-            // (`[this.m] = ...`, `({ k: this.m } = ...)`, `for (this.m of ...)`).
+            // A method is only called directly (`this.m(`, `this.m?.(`,
+            // `this.m<T>(`, a tagged template) or passed as a call argument
+            // (`.sort(this.m)`). Any other spelling may be an assignment
+            // target that replaces it: `[this.m] = ...`, `({ k: this.m } =
+            // ...)`, `for (this.m of ...)`, `(this.m as T) = f`,
+            // `this.m! = f`, `(this.m) = f`.
             if callable.contains(name) {
-                return before.ends_with('(') && access.next.starts_with([')', ',']);
+                let next = access.next;
+                if next.starts_with(['(', '<', '`']) || next.starts_with("?.(") {
+                    return access.calls;
+                }
+                let argument = before.strip_suffix('(').is_some_and(|callee| {
+                    callee
+                        .trim_end()
+                        .ends_with(|ch: char| is_javascript_identifier_char(ch) || ch == ')')
+                });
+                return argument && next.starts_with([')', ',']) && !followed_by_assignment(next);
+            }
+            if access.calls {
+                return false;
             }
             name.starts_with('#')
                 || (!matches!(name, "constructor" | "__proto__" | "prototype")
                     && (members.contains(name) || assigned.contains(name)))
         })
     })
+}
+
+/// Whether the text after the `)` or `,` that ends an argument starts an
+/// assignment (`(this.m) = f`).
+fn followed_by_assignment(next: &str) -> bool {
+    let rest = next.trim_start_matches(|ch: char| ch == ')' || ch.is_whitespace());
+    rest.strip_prefix('=')
+        .is_some_and(|after| !after.starts_with(['=', '>']))
 }
 
 /// A plain member access after a `this` keyword.

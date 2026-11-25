@@ -395,6 +395,26 @@ fn a_class_whose_this_escapes_has_no_method_node() {
             "  constructor() {\n    for (this.order in { a: 1 });\n  }\n",
         ),
         (
+            "cast assignment onto a method",
+            "  constructor() {\n    (this.order as (keys: string[]) => string[]) = (keys) => keys;\n  }\n",
+        ),
+        (
+            "satisfies assignment onto a method",
+            "  constructor() {\n    (this.order satisfies unknown) = (keys: string[]) => keys;\n  }\n",
+        ),
+        (
+            "non-null assignment onto a method",
+            "  constructor() {\n    this.order! = (keys: string[]) => keys;\n  }\n",
+        ),
+        (
+            "parenthesized assignment onto a method",
+            "  constructor() {\n    (this.order) = (keys: string[]) => keys;\n  }\n",
+        ),
+        (
+            "parenthesized destructuring onto a method",
+            "  constructor() {\n    [(this.order)] = [(keys: string[]) => keys];\n  }\n",
+        ),
+        (
             "super",
             "  constructor(o?: any) {\n    Object.assign(super.valueOf(), o);\n  }\n",
         ),

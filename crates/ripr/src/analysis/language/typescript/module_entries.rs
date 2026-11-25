@@ -1146,6 +1146,26 @@ fn balanced_paren_close(text: &str) -> Option<usize> {
     None
 }
 
+/// Whether `rest`, the right side of `NAME =`, is `this[...]` or a member
+/// `this.x` the body declares (`this.valueOf` hands the instance back).
+fn bound_from_this(code: &str, rest: &str) -> bool {
+    let Some(after) = rest.trim_start().strip_prefix("this") else {
+        return false;
+    };
+    let after = after.trim_start();
+    if after.starts_with('[') {
+        return true;
+    }
+    let Some(member) = after.strip_prefix('.') else {
+        return false;
+    };
+    let member = member.trim_start();
+    let end = member
+        .find(|ch: char| !is_javascript_identifier_char(ch))
+        .unwrap_or(member.len());
+    end > 0 && declares_member_named(code, &member[..end])
+}
+
 /// Whether masked code may hand the instance on: any `this` other than
 /// `this.x`, `this?.x` or `this[...]`, a call `this.x(` of a member the body
 /// does not declare (`this.valueOf()` returns the instance), or a receiver
@@ -1195,7 +1215,7 @@ fn hands_this_out(code: &str) -> bool {
                         .trim_start()
                         .strip_prefix('=')
                         .is_some_and(|rest| {
-                            !rest.starts_with(['=', '>']) && rest.trim_start().starts_with("this")
+                            !rest.starts_with(['=', '>']) && bound_from_this(code, rest)
                         })
             })
     })

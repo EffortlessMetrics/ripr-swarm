@@ -221,6 +221,11 @@ fn building_function_that_may_hand_the_instance_out_is_not_followed() {
             "    self(): any {\n      return this.valueOf();\n    }\n    compare(a: any, b: any): number {",
         ),
         (
+            "instance handed back through an inherited method's call",
+            "      return compareStrings(a, b);",
+            "      const h = this.valueOf;\n      keep(h.call(this));\n      return compareStrings(a, b);",
+        ),
+        (
             "instance handed to an outside function's call",
             "      return compareStrings(a, b);",
             "      keep.call(this, a);\n      return compareStrings(a, b);",

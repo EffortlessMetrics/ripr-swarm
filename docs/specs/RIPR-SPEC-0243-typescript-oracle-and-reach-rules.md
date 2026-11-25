@@ -1022,7 +1022,8 @@ Candidates come from the first non-empty tier:
    `this` in the body other than `this.x`, `this?.x`, `this[...]`, a call
    `this.x(` of a member the body declares (`this.valueOf()` hands the
    instance back), or the receiver of `NAME.call(` / `NAME.apply(` where the
-   body binds `NAME` from `this` (`const h = this["$" + t]; h.call(this, v)`)
+   body binds `NAME` from `this[...]` or a member it declares
+   (`const h = this["$" + t]; h.call(this, v)`)
    (an allowlisted read such as
    `patch(X.prototype)`, a kept instance, `new X()["__proto__"]`, or a method
    that returns `this` or hands it to other code, could replace a method
@@ -1066,9 +1067,12 @@ Candidates come from the first non-empty tier:
    `extends`, no decorator (on the class, a member or a parameter: any `@`
    in the class's code, outside comments and literals, refuses it; a JSDoc
    `@param` does not), no computed member and no `return` in a constructor
-   spelled `constructor` or `"constructor"`, no method read other than as a
-   call or a call argument (`[this.m] = ...`, `({ k: this.m } = ...)` and
-   `for (this.m of ...)` replace it); its name is declared once
+   spelled `constructor` or `"constructor"`, no `this.m` of a method other
+   than a direct call (`this.m(`, `this.m?.(`, `this.m<T>(`) or an argument
+   of a call (`.sort(this.m)`), since any other spelling may be an
+   assignment target that replaces it (`[this.m] = ...`, `({ k: this.m } =
+   ...)`, `for (this.m of ...)`, `(this.m as T) = f`, `this.m! = f`,
+   `(this.m) = f`); its name is declared once
    in the file and every other mention outside the declaration is a
    construction `new X(...)` (a property of the same name `o.X`, which
    text cannot tell from the binding after `1.` and a line break, an alias,
