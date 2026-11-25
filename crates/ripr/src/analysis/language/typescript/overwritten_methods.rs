@@ -1,5 +1,5 @@
 //! Class methods a later same-key member overwrites (#16261),
-//! RIPR-SPEC-0243 rule 20.
+//! RIPR-SPEC-0243 rule 26.
 //!
 //! A class body defines its members in order, so a later member with the same
 //! key and the same placement (prototype or constructor) replaces an earlier

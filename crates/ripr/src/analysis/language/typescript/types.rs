@@ -141,7 +141,7 @@ pub(crate) enum TypeScriptMethodKind {
     /// `constructor(...)` — invoked by `new ClassName(...)`.
     Constructor,
     /// A method, getter or setter that a later member of the same class with
-    /// the same key and placement replaces (#16261, RIPR-SPEC-0243 rule 20):
+    /// the same key and placement replaces (#16261, RIPR-SPEC-0243 rule 26):
     /// its body never runs, so it relates to no test.
     Overwritten,
 }

@@ -1,5 +1,5 @@
 //! A class method that a later same-key member overwrites (#16261,
-//! RIPR-SPEC-0243 rule 20).
+//! RIPR-SPEC-0243 rule 26).
 //!
 //! `class Cart { total() {...} total() {...} }` leaves only the second
 //! `total` on the prototype, so a test calling `new Cart().total()` never runs
