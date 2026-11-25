@@ -1610,6 +1610,7 @@ tests = [
   "crates/ripr/tests/sarif_uri_identity.rs::ordinary_escaping_controls",
   "crates/ripr/tests/sarif_uri_identity.rs::native_backslash_does_not_alias_directory",
   "crates/ripr/tests/sarif_uri_identity.rs::native_windows_separators_are_slashes",
+  "crates/ripr/tests/sarif_uri_identity.rs::suppression_policy_keeps_native_backslash_file_distinct",
   "crates/ripr/src/output/sarif.rs::tests::sarif_caps_observed_values_and_discloses_the_total",
   "crates/ripr/src/output/sarif.rs::tests::sarif_omits_observed_values_total_under_the_cap",
   "crates/ripr/src/output/sarif.rs::tests::sarif_run_with_only_not_current_findings_records_omitted_property",
