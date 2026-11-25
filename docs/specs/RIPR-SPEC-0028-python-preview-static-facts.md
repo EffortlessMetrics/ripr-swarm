@@ -2220,12 +2220,15 @@ non-ASCII character in code, outside strings and comments, may spell the
 parameter under Python's NFKC normalization or a confusable, so the
 first-mention scan abstains for that parameter and the sort gate does not
 fire (#16221). The gate does not read a recursive owner (its own call can
-hand it an argument no test passes), a module that defines `round` or
-`sorted` at top level (the bare call may be that local function), or a
-changed line inside a multi-line string (its text is data). When every
+hand it an argument no test passes), an owner whose file rebinds `round`
+or `sorted` anywhere (the bare call may be that other function), or a
+changed line inside a multi-line string (its text is data). For a sort,
+only a display the call itself spells is read, not a parametrize case
+value the test may change in place. When every
 strong related call binds the parameter to a plain literal the rule
 evaluates (a quoted string without escapes, an int or decimal float within
-the bounds above, or a list, tuple or set display of such scalars) and both
+the bounds above, or a list, tuple or set display of such scalars that the
+call itself spells) and both
 versions give the same result, the edit reads `weakly_exposed` and the
 missing discriminator names the separating input; the messages say only that
 no related call is seen to pass it, not that the versions agree on every
@@ -2253,6 +2256,13 @@ Tests: `call_variant_tests.rs::inputs_without_trailing_whitespace_do_not_expose_
 `call_variant_tests.rs::a_list_the_body_changes_before_the_sort_keeps_its_reading`,
 `call_variant_tests.rs::only_a_lone_reverse_flag_flip_on_a_named_sort_is_read`,
 `call_variant_tests.rs::sorting_agrees_only_without_two_different_elements`,
+`call_variant_tests.rs::a_module_round_or_sorted_keeps_its_reading`,
+`call_variant_tests.rs::a_module_that_defines_round_is_not_read_as_the_builtin`,
+`call_variant_tests.rs::a_parametrized_list_keeps_a_sort_direction_flip_exposed`,
+`call_variant_tests.rs::a_recursive_owner_keeps_its_reading`,
+`call_variant_tests.rs::a_call_shaped_line_inside_a_multiline_string_is_not_read_as_a_call`,
+`call_variant_tests.rs::a_prior_use_spelled_with_a_normalized_identifier_keeps_the_sort_exposed`,
+`call_variant_tests.rs::an_exact_tie_rounds_to_the_even_digit`,
 `boundary.rs::an_int_spelling_its_float_spelling_above_two_to_the_53rd`.
 
 ## Changed Range Header Amendment (#12948)
