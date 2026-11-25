@@ -2925,7 +2925,12 @@ observes the result, so the assertion keeps its parsed reading. A bare path to
 the function item (`let f = pick;`) or a field access (`let m = cfg.pick;`)
 names no call, so it does not make the alias carry the owner's result. Only
 the macro-held assertion loses its reading; an `.unwrap()` in the initializer
-still runs and keeps its own smoke oracle.
+still runs and keeps its own smoke oracle. A call of the owner or of its
+function-item alias outside the macro whose statement discards the result
+(`let _ = pick(0);`, `pick(0);`, `crate::pick(0);`) is not a free use
+(#16258). A call that a statement keeps in any other way, a block tail
+(`{ pick(0) }`), a named binding (`let v = pick(0);`), a `?` or a further
+method, stays free and keeps the parsed reading.
 
 ## Required Evidence
 
