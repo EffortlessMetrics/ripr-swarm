@@ -2206,7 +2206,9 @@ version keeps, a number with more decimal places than the smaller count, or a
 collection holding two different elements. The parameter must be one the body
 never rebinds; for a sort, the changed line must also be the start of the first
 top-level body statement that names the parameter, and name it once, so the
-sort sees the collection the test passed. A bare `round` or `sorted` must name
+sort sees the collection the test passed; because Python normalizes
+identifiers, a non-ASCII parameter or statement before that line leaves the
+reading alone. A bare `round` or `sorted` must name
 the builtin (nothing in the owner's file rebinds it), the owner must not call
 itself, and a line inside a multiline string is never read as a call. When
 every strong related call binds the parameter to a plain literal the rule
@@ -2234,7 +2236,8 @@ Tests: `call_variant_tests.rs::inputs_without_trailing_whitespace_do_not_expose_
 `call_variant_tests.rs::a_module_round_or_sorted_keeps_its_reading`,
 `call_variant_tests.rs::a_parametrized_list_keeps_a_sort_direction_flip_exposed`,
 `call_variant_tests.rs::a_recursive_owner_keeps_its_reading`,
-`call_variant_tests.rs::a_call_shaped_line_inside_a_multiline_string_is_not_read_as_a_call`.
+`call_variant_tests.rs::a_call_shaped_line_inside_a_multiline_string_is_not_read_as_a_call`,
+`call_variant_tests.rs::a_prior_use_spelled_with_a_normalized_identifier_keeps_the_sort_exposed`.
 
 ## Changed Range Header Amendment (#12948)
 
