@@ -357,3 +357,14 @@ Command:
 
 Updated:
 - `expected/human.txt`
+
+## Pending — rust_array_element_drop_exit (27)
+
+Reason:
+RIPR-SPEC-0122: the repair-start note names the spots tied on the changed line instead of claiming none ties (#15157)
+
+Command:
+`cargo xtask goldens bless rust_array_element_drop_exit --reason "..."`
+
+Updated:
+- `expected/human.txt`

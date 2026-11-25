@@ -1,0 +1,9 @@
+# #14883: the unfilled-placeholder note uses the lowering's own read test.
+[[extend]]
+id = "RIPR-SPEC-0231"
+tests = [
+  "crates/ripr/tests/placeholder_note_reads.rs::a_message_word_naming_the_placeholder_earns_no_note",
+  "crates/ripr/tests/placeholder_note_reads.rs::a_helper_reading_the_placeholder_keeps_the_note",
+  "crates/ripr/tests/placeholder_note_reads.rs::an_interpolated_placeholder_keeps_the_note",
+  "crates/ripr/tests/placeholder_note_reads.rs::a_lowered_assert_eq_reading_the_placeholder_keeps_the_note",
+]

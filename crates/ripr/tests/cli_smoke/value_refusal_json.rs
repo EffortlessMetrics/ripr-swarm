@@ -154,7 +154,17 @@ fn a_malformed_timeout_env_var_keeps_the_one_check_refusal_document() -> Result<
 /// with the flag as token, and the wording stays the command's own.
 #[test]
 fn empty_values_under_json_name_the_flag_on_command_parsers() -> Result<(), String> {
-    let cases: [(&[&str], &str, &str); 8] = [
+    let cases: [(&[&str], &str, &str); 10] = [
+        (
+            &["check", "--json", "--diff", ""],
+            "--diff",
+            "ripr check --help --all",
+        ),
+        (
+            &["check", "--json", "--write-artifact", " "],
+            "--write-artifact",
+            "ripr check --help --all",
+        ),
         (
             &["receipt", "write", "--json", "--gap", ""],
             "--gap",

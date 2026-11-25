@@ -337,3 +337,25 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — python_empty_sink_unrelated_short_function (27)
+
+Reason:
+RIPR-SPEC-0122: one blank line, not two, separates the More block from a trailing Note (#14318)
+
+Command:
+`cargo xtask goldens bless python_empty_sink_unrelated_short_function --reason "..."`
+
+Updated:
+- `expected/human.txt`
+
+## Pending — python_empty_sink_unrelated_short_function (28)
+
+Reason:
+human-full: one blank line, not two, separates the last finding from a trailing Note (#14318)
+
+Command:
+`cargo xtask goldens bless python_empty_sink_unrelated_short_function --reason "..."`
+
+Updated:
+- `expected/human-full.txt`

@@ -86,5 +86,4 @@ Drill in:
   ripr explain --root <cwd>/fixtures/ts_predicate_boundary_const_result_local/input --diff <cwd>/fixtures/ts_predicate_boundary_const_result_local/diff.patch --mode fast probe:src_pricing.ts:typescript_preview:e23661f5
   ripr context --root <cwd>/fixtures/ts_predicate_boundary_const_result_local/input --diff <cwd>/fixtures/ts_predicate_boundary_const_result_local/diff.patch --mode fast --at probe:src_pricing.ts:typescript_preview:e23661f5
 
-
 Note: 1 TypeScript file analyzed under preview support — preview evidence is advisory and may be incomplete. Treat its findings as advisory, not Rust-grade.

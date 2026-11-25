@@ -228,5 +228,4 @@ Drill in:
   ripr explain --root <cwd>/fixtures/ts_predicate_boundary_optional_chaining/input --diff <cwd>/fixtures/ts_predicate_boundary_optional_chaining/diff.patch --mode fast probe:src_guards.ts:typescript_preview:31d04e16
   ripr context --root <cwd>/fixtures/ts_predicate_boundary_optional_chaining/input --diff <cwd>/fixtures/ts_predicate_boundary_optional_chaining/diff.patch --mode fast --at probe:src_guards.ts:typescript_preview:31d04e16
 
-
 Note: 1 TypeScript file analyzed under preview support — preview evidence is advisory and may be incomplete. Treat its findings as advisory, not Rust-grade.

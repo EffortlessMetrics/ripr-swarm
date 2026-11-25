@@ -277,10 +277,12 @@ exists, but this run has no finding anywhere in it
 - The second means the text is not a file path from the analyzed root. Give
   the path from that root (`src/lib.rs:12`, not `lib.rs:12`), check the
   spelling, or pass `--root`.
-- The third means the file exists and this run reported nothing in it.
-  Findings attach only to changed lines whose behavior `ripr` checks, so an
-  unchanged file has none. When the analysis was incomplete, the message says
-  so, because the file may not have been analyzed at all.
+- The third means the file exists and this run reported nothing in it. The
+  next sentence says which reason applies to the line you named: the diff
+  changes no text line of the file, the line is not one the diff changed (the
+  changed lines are listed), or the line changed and has no finding, as a
+  comment, test code or a file your configuration leaves out does. When the analysis was incomplete, the message
+  says so instead, because the file may not have been analyzed at all.
 
 ## The editor shows nothing
 

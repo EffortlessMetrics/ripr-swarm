@@ -123,7 +123,10 @@ pub fn path_identity_key(path: &Path) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{path_identity_key_on, path_identity_key_with};
+    use super::{
+        host_paths_case_insensitive, host_paths_normalization_insensitive, path_identity_key,
+        path_identity_key_on, path_identity_key_with,
+    };
     use std::path::Path;
 
     #[test]
@@ -333,5 +336,37 @@ mod tests {
         if cfg!(target_os = "linux") {
             assert!(!super::host_paths_case_insensitive());
         }
+    }
+
+    /// The host form folds case only on a case-insensitive host and never
+    /// returns an empty or placeholder key for an ordinary path.
+    #[test]
+    fn host_key_follows_the_host_case_rule() {
+        let key = path_identity_key(Path::new("Src/Lib.rs"));
+        if host_paths_case_insensitive() {
+            assert_eq!(key, "src/lib.rs");
+        } else {
+            assert_eq!(key, "Src/Lib.rs");
+        }
+    }
+
+    /// Case-insensitive keys fold canonical equivalence only on a host that
+    /// also ignores normalization (macOS); elsewhere a composed `é` keeps its
+    /// own code point and stays distinct from the decomposed spelling.
+    #[test]
+    fn case_insensitive_key_folds_normalization_only_on_a_normalizing_host() {
+        let composed = path_identity_key_on(Path::new("Caf\u{e9}.rs"), false, true);
+        let decomposed = path_identity_key_on(Path::new("Cafe\u{301}.rs"), false, true);
+        if host_paths_normalization_insensitive() {
+            assert_eq!(composed, decomposed);
+        } else {
+            assert_eq!(composed, "caf\u{e9}.rs");
+            assert_eq!(decomposed, "cafe\u{301}.rs");
+        }
+        assert_eq!(
+            path_identity_key_on(Path::new("Caf\u{e9}.rs"), false, false),
+            "Caf\u{e9}.rs",
+            "no folding at all when the caller asks for none"
+        );
     }
 }

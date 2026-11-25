@@ -108,7 +108,9 @@ to completion.
 
 An enabled preview adapter skips changed files under its excluded directories
 (for TypeScript/JavaScript: `vendor/`, `node_modules/`, `dist/`, `build/`,
-`coverage/`, `out/`, `.next/`, `.cache/`, `.direnv/`, `__generated__/`, plus `docs/` for diff and repo analysis (the workspace walk still indexes it); for
+`coverage/`, `out/`, `.next/`, `.cache/`, `.direnv/`, `__generated__/`, plus `docs/` and tool configuration scripts such as
+`jest.config.ts`, `vitest.config.*` and `.eslintrc.cjs` for diff and repo
+analysis (the workspace walk still reads them; #15947); for
 Python: the `PYTHON_EXCLUDED_DIRS` set plus `vendor/`) and generated names
 (`*.generated.*`, generated Python such as `*_pb2.py`). Those files are not
 counted in `file_count` and are never presented as analyzed. They are still
@@ -300,6 +302,19 @@ enabled adapter with a matching non-success `language_runs` entry carries
 - This spec does NOT promote TypeScript, JavaScript, or Python to a higher
   support tier.
 - This spec does NOT change the exit code or the pass/fail gate authority.
+
+Amendment (#15989): the human copy-paste `[languages] enabled` line. When the
+configuration the analysis ran under sets `[languages].enabled` itself, the
+line is that list followed by the languages to add, the same rule the
+`ripr doctor` tip uses: a list that leaves `rust` out keeps it out, and a
+preview language it enables stays when the diff has no file of that language.
+A candidate-tree check reads the candidate's list, not the checkout's. Without
+an explicit list the line keeps the marker rule: `rust` where the root or a
+crate one or two directories below it has a Cargo manifest, then the preview
+languages this diff shows enabled, then the languages to add. Tests:
+`the_snippet_starts_from_an_explicit_language_list` and
+`a_candidate_tree_snippet_starts_from_the_candidate_list` in
+`crates/ripr/tests/check_not_analyzed_note_pointer.rs`.
 
 ## Non-Goals
 

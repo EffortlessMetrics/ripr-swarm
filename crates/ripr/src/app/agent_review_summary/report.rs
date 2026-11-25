@@ -26,6 +26,19 @@ pub(crate) const NO_ANALYSIS_YET: &str = "No analysis yet. Run `ripr check` firs
 pub(crate) const FRESH_REVIEW_SUMMARY_HEADLINE: &str =
     "Review incomplete: analysis outcome and repair receipt are unavailable.";
 
+/// What remains when the receipt that supplied the movement is not advisory.
+pub(crate) const NON_ADVISORY_RECEIPT_REMAINING: &str =
+    "Reissue the receipt over a complete analysis outcome before using it in review.";
+
+/// Whether no receipt file exists at the workflow receipt path. A receipt
+/// file that is present but yields no movement (unreadable, not JSON, or no
+/// seam) is not absent, and must not be described as missing.
+fn receipt_file_absent(surfaces: &[AgentReviewSurface]) -> bool {
+    surfaces
+        .iter()
+        .any(|surface| surface.name == "agent_receipt" && surface.state == "missing")
+}
+
 pub(crate) fn review_summary_is_fresh_early_state(
     surfaces: &[AgentReviewSurface],
     analysis_outcome: Option<&crate::analysis_outcome::AnalysisOutcome>,
@@ -167,7 +180,10 @@ pub(crate) fn build_agent_review_summary_report(
         &agent_status,
         workflow.value.as_ref(),
     );
-    let static_movement = static_movement(receipt_snapshot.as_ref());
+    let static_movement = static_movement(
+        receipt_snapshot.as_ref(),
+        receipt.surface.state == "missing",
+    );
     let next_command = agent_status.next_command.clone();
     let mut surfaces = vec![agent_status_surface(&agent_status, root_argument)];
     surfaces.extend([
@@ -257,8 +273,28 @@ fn target_seam(
     })
 }
 
-fn static_movement(receipt: Option<&ReceiptSnapshot>) -> AgentReviewStaticMovement {
+/// The movement recovered from the receipt. `receipt_absent` separates "no
+/// receipt file" from "a receipt file that yields no movement" (unreadable,
+/// not JSON, or no seam): both leave the movement unavailable, but only the
+/// first may say the receipt is missing.
+fn static_movement(
+    receipt: Option<&ReceiptSnapshot>,
+    receipt_absent: bool,
+) -> AgentReviewStaticMovement {
     let Some(receipt) = receipt else {
+        let (summary, action_summary, recommended_action) = if receipt_absent {
+            (
+                "Agent receipt is missing; static movement is not available.",
+                "Agent receipt is missing.",
+                "Run the next command listed by agent status.",
+            )
+        } else {
+            (
+                "Agent receipt is unreadable or invalid; static movement is not available.",
+                "Agent receipt is unreadable or invalid.",
+                "Inspect the receipt file, then reissue it: rerun `ripr agent verify`, then `ripr agent receipt`.",
+            )
+        };
         return AgentReviewStaticMovement {
             state: "missing_artifact".to_string(),
             before_class: None,
@@ -266,11 +302,11 @@ fn static_movement(receipt: Option<&ReceiptSnapshot>) -> AgentReviewStaticMoveme
             grip_class: None,
             evidence_artifact: None,
             verify_artifact: None,
-            summary: "Agent receipt is missing; static movement is not available.".to_string(),
+            summary: summary.to_string(),
             next_action: Some(AgentReviewNextAction {
                 kind: "missing_artifact".to_string(),
-                summary: "Agent receipt is missing.".to_string(),
-                recommended_action: "Run the next command listed by agent status.".to_string(),
+                summary: action_summary.to_string(),
+                recommended_action: recommended_action.to_string(),
             }),
         };
     };
@@ -306,9 +342,11 @@ fn review_status(
         return "incomplete".to_string();
     }
     if agent_status.status() != "complete"
-        || surfaces
-            .iter()
-            .any(|surface| surface.state == "invalid_json" || surface.status == "warning")
+        || surfaces.iter().any(|surface| {
+            surface.state == "invalid_json"
+                || surface.state == "invalid"
+                || surface.status == "warning"
+        })
     {
         return "warning".to_string();
     }
@@ -341,6 +379,12 @@ fn reviewer_summary(
             "Producer analysis is {} and remains incomplete; static movement is not a clean-result claim.",
             outcome.kind.as_str()
         )
+    } else if movement.state == "missing_artifact"
+        && movement.evidence_artifact.is_none()
+        && !receipt_file_absent(surfaces)
+    {
+        "No static before/after movement is available because the agent receipt is unreadable or invalid."
+            .to_string()
     } else if movement.state == "missing_artifact" {
         "No static before/after movement is available because the agent receipt is missing."
             .to_string()
@@ -362,10 +406,17 @@ fn reviewer_summary(
             format!("Review {artifact} with {verify}.")
         })
         .unwrap_or_else(|| "Run agent receipt after verify to create review evidence.".to_string());
-    let remaining = movement
-        .next_action
-        .as_ref()
-        .map(|action| action.recommended_action.clone())
+    // A receipt that is not advisory may still carry "include this receipt in
+    // review" guidance; repeating it next to the caveat would contradict it.
+    let receipt_guidance = if non_advisory_receipt_reason(movement, surfaces).is_some() {
+        Some(NON_ADVISORY_RECEIPT_REMAINING.to_string())
+    } else {
+        movement
+            .next_action
+            .as_ref()
+            .map(|action| action.recommended_action.clone())
+    };
+    let remaining = receipt_guidance
         .or_else(|| {
             next_command
                 .as_ref()

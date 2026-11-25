@@ -1,0 +1,12 @@
+[[extend]]
+id = "RIPR-SPEC-0008"
+tests = [
+  "crates/ripr/src/output/sarif.rs::tests::anchored_sarif_uris_name_member_root_files_from_the_checkout_top_level",
+  "crates/ripr/src/output/path.rs::tests::anchored_display_path_names_the_file_from_the_checkout_top_level",
+  "crates/ripr/src/output/path.rs::tests::anchored_paths_never_climb_or_invent_a_location",
+  "crates/ripr/src/output/path.rs::tests::checkout_anchor_discovers_a_member_root_below_the_git_top_level",
+  "crates/ripr/src/output/github.rs::tests::anchored_github_file_names_a_member_root_file_from_the_checkout_top_level",
+  "crates/ripr/tests/checkout_anchored_locations.rs::member_root_rust_findings_name_files_from_the_checkout_top_level",
+  "crates/ripr/tests/checkout_anchored_locations.rs::member_root_python_findings_name_files_from_the_checkout_top_level",
+]
+code = ["crates/ripr/src/output/path.rs", "crates/ripr/src/output/render.rs"]

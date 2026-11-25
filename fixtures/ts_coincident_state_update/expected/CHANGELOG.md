@@ -168,3 +168,14 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — ts_coincident_state_update (15)
+
+Reason:
+RIPR-SPEC-0122: one blank line, not two, separates the More block from a trailing Note (#14318)
+
+Command:
+`cargo xtask goldens bless ts_coincident_state_update --reason "..."`
+
+Updated:
+- `expected/human.txt`

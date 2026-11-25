@@ -19,7 +19,8 @@ const REVIEW_COMMENTS_JSON: &str = "target/ripr/review/comments.json";
 const REVIEW_COMMENTS_MD: &str = "target/ripr/review/comments.md";
 const REVIEW_COMMENTS_RECEIPT: &str = "target/ripr/review/run-receipt.json";
 const REVIEW_COMMENTS_SCHEMA: &str = "schemas/ripr/review-comments.schema.json";
-const DEFAULT_TOOL_TIMEOUT_SECS: u64 = 120;
+/// Matches `ripr review-comments`' own 600 s default budget (#12940).
+const DEFAULT_TOOL_TIMEOUT_SECS: u64 = 600;
 const STATIC_GAP_CLASSES: [&str; 3] = ["weakly_exposed", "reachable_unrevealed", "no_static_path"];
 
 /// Named prefix of the producer error raised when a review-guidance dispatch
@@ -985,7 +986,7 @@ fn review_comments_receipt(
             "root_identity": root_identity,
             "base_sha": base_sha,
             "head_sha": head_sha,
-            "configured_timeout_ms": review_comments_timeout_ms().unwrap_or(120_000),
+            "configured_timeout_ms": review_comments_timeout_ms().unwrap_or(DEFAULT_TOOL_TIMEOUT_SECS * 1000),
             "last_completed_phase": Value::Null,
             "active_phase": "review_comments_process",
             "completed_artifacts": [],

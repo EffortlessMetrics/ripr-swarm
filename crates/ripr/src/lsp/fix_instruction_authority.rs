@@ -83,8 +83,8 @@ const REPAIR_ROUTE_NOT_READY: &str = "repair_route_not_ready";
 /// repair-packet flip (`repair_packet_eligibility`, RIPR-SPEC-0087 §8).
 ///
 /// A seam passing the flip is `fix_site_ready`: the flip is the gate the
-/// seam hover's "repair (start here)" line and `repair_start_command_for`
-/// already consume, so the code action must agree with them (#13716).
+/// seam hover and code action share (#13716). Their separate start command
+/// gate also respects a bound no-path finding (#4668).
 /// `ripr agent repair` re-checks more at start time (proposal identity, a
 /// held inline target, the dirty-tree premise, an ignored build directory)
 /// and refuses with nothing started; the editor does not claim those.
@@ -199,6 +199,7 @@ mod tests {
             probe_family: "test".to_string(),
             changed_expression: "expr".to_string(),
             before: None,
+            before_condition: None,
             after: None,
             expected_sink: None,
             missing_discriminators: Vec::new(),

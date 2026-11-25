@@ -1,0 +1,113 @@
+{
+  "schema_version": "0.2",
+  "tool": "ripr",
+  "mode": "fast",
+  "root": "fixtures/python_loop_selector_integer_pin_no_exposed_credit/input",
+  "config_path": "<cwd>/fixtures/python_loop_selector_integer_pin_no_exposed_credit/input/ripr.toml",
+  "summary": {"changed_rust_files":0,"probes":1,"findings":1,"exposed":0,"weakly_exposed":0,"reachable_unrevealed":0,"no_static_path":0,"infection_unknown":1,"propagation_unknown":0,"static_unknown":0,"changed_files_by_language":[{"language":"python","files":1}]},
+  "analysis_outcome": {
+    "analysis_complete": true,
+    "outcome": {"schema_version":"0.1","kind":"complete_with_findings","identity":{"repository_identity":null,"root_identity":null,"config_identity":"fnv1a64:22d926b58d6300e8","base_revision":null,"input_identity":"sha256:7709991c5e1c7a2d5cc37f229b289ea34d2df4455b11c576cd18fbc4a9acf3b2","snapshot_identity":null,"git_candidate_subject":null},"counts":{"changed_file_count":1,"changed_line_count":2,"candidate_line_count":1,"probe_count":1,"finding_count":1},"limitations":[],"claim_boundary":"Static analysis outcome only; no correctness, test-adequacy, runtime-execution, or merge-readiness claim."}
+  },
+  "findings": [
+    {
+      "id": "probe:src_lib.py:python_preview:6e6b81ed",
+      "canonical_gap_id": "gap:python:src/lib.py:largest:predicate_boundary:predicate:x>=best",
+      "canonical_gap_group_size": 1,
+      "canonical_gap": {
+        "id": "gap:python:src/lib.py:largest:predicate_boundary:predicate:x>=best",
+        "language": "python",
+        "file": "src/lib.py",
+        "owner": "largest",
+        "behavior_kind": "predicate_boundary",
+        "probe_kind": "predicate",
+        "normalized_discriminator": "x>=best"
+
+      },
+      "classification": "infection_unknown",
+      "severity": "warning",
+      "confidence": 0.40,
+      "confidence_basis": [
+        {"code": "preview_stages_not_modeled", "summary": "preview adapter: infection/propagation not modeled (Python)"},
+        {"code": "syntax_first_no_type_resolution", "summary": "syntax-first, no type or import resolution"},
+        {"code": "infection_not_established", "summary": "whether the changed value alters behavior is not established"}
+      ],
+      "confidence_why_capped": "Why capped: preview adapter: infection/propagation not modeled (Python); syntax-first, no type or import resolution; whether the changed value alters behavior is not established. Preview score, not on the same scale as Rust confidence.",
+      "probe": {
+        "id": "probe:src_lib.py:python_preview:6e6b81ed",
+        "family": "predicate",
+        "delta": "control",
+        "file": "src/lib.py",
+        "line": 4,
+        "expression": "        if x >= best:",
+        "owner": "python:src/lib.py::largest"
+       },
+      "ripr": {
+        "reach": {"state":"yes","confidence":"low","summary":"1 related Python test(s) found for owner `largest`"},
+        "infect": {"state":"unknown","confidence":"low","summary":"Static evidence cannot determine whether the loop comparison reached its changed equality boundary."},
+        "propagate": {"state":"weak","confidence":"low","summary":"Changed Python control flow can propagate by selecting a different branch; preview evidence does not prove the concrete downstream sink."},
+        "observe": {"state":"yes","confidence":"low","summary":"Strongest extracted Python oracle kind: `exact_value` (rank 5)"},
+        "discriminate": {"state":"unknown","confidence":"low","summary":"Related Python test uses an `exact_value` oracle, but static evidence does not establish discrimination of the changed behavior."}
+       },
+      "evidence_stages": [
+        {"stage":"reach","state":"yes","confidence":"low"},
+        {"stage":"infect","state":"unknown","confidence":"low","basis":[{"code":"infection_not_established","summary":"whether the changed value alters behavior is not established"}]},
+        {"stage":"propagate","state":"weak","confidence":"low"},
+        {"stage":"observe","state":"yes","confidence":"low"},
+        {"stage":"discriminate","state":"unknown","confidence":"low"}
+      ],
+      "evidence_path": ["reach yes: 1 related Python test(s) found for owner `largest`", "infection unknown: Static evidence cannot determine whether the loop comparison reached its changed equality boundary.", "propagation weak: Changed Python control flow can propagate by selecting a different branch; preview evidence does not prove the concrete downstream sink.", "observation yes: Strongest extracted Python oracle kind: `exact_value` (rank 5)", "discriminator unknown: Related Python test uses an `exact_value` oracle, but static evidence does not establish discrimination of the changed behavior.", "local flow reaches unknown sink: if x >= best: (line 4)", "related test tests/test_lib.py:4 test_largest uses strong exact value oracle: assert largest([1, 5, 3]) == 5"],
+      "flow_sinks": [
+        {"kind":"unknown","text":"if x >= best:","line":4}
+      ],
+      "evidence": ["owner: largest", "owner_kind: function", "test_framework: pytest (test_largest)", "test_verify_command: python -m pytest tests/test_lib.py::test_largest (test_largest)", "related_test_relation: syntactic_call (test_largest)", "test_oracle: exact_value strong (test_largest)"],
+      "missing": [],
+      "assertion_texts": {
+      },
+      "activation": {
+        "observed_values": [
+        ],
+        "missing_discriminators": [
+        ]
+      },
+      "observed_values": [
+      ],
+      "missing_discriminators": [
+      ],
+      "related_tests_total": 1,
+      "related_tests": [
+        {
+          "name": "test_largest",
+          "file": "tests/test_lib.py",
+          "line": 4,
+          "oracle_strength": "strong",
+          "oracle_kind": "exact_value",
+          "oracle": "assert largest([1, 5, 3]) == 5"
+        }
+      ],
+      "stop_reasons": ["infection_evidence_unknown"],
+      "oracle_kind": "exact_value",
+      "oracle_strength": "strong",
+      "recommended_next_step": "",
+      "suggested_next_action": "",
+      "language": "python",
+      "language_status": "preview",
+      "owner_kind": "function",
+      "changed_sink": "best",
+      "oracle_alignment": "unknown",
+      "alignment_reason": "no_strong_oracle",
+      "source_currentness": "candidate_current"
+    }
+  ],
+  "preview_languages": [
+    {
+      "language": "python",
+      "file_count": 1,
+      "sample_paths": ["src/lib.py"],
+      "enabled": true,
+      "analyzed": true,
+      "category": "preview_language_advisory",
+      "why": "preview adapter; advisory; may be incomplete; empty result is not Rust-grade clean"
+    }
+  ]
+}

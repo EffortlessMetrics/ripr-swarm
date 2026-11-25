@@ -556,8 +556,7 @@ fn owner_from_function(
                 .all(|decorator| super::cli_runner::is_click_decorator_name(decorator, &alias))
         });
     // A decorator whose name cannot be read still wraps the call.
-    let binding_only = !is_async
-        && decorator_names.len() == decorators.len()
+    let binding_only = decorator_names.len() == decorators.len()
         && decorator_names
             .iter()
             .all(|decorator| matches!(decorator.as_str(), "classmethod" | "staticmethod"));
@@ -639,6 +638,7 @@ fn owner_from_function(
         decorator_lines,
         parameters,
         reexport_modules: Vec::new(),
+        class_reexport_modules: Vec::new(),
         star_exported: false,
         ambiguous_src_modules: Vec::new(),
         test_local_shadows: Vec::new(),
@@ -787,6 +787,7 @@ fn owner_from_class(
         decorator_lines: None,
         parameters: Vec::new(),
         reexport_modules: Vec::new(),
+        class_reexport_modules: Vec::new(),
         star_exported: false,
         ambiguous_src_modules: Vec::new(),
         test_local_shadows: Vec::new(),
@@ -832,6 +833,7 @@ pub(super) fn module_owner(
         decorator_lines: None,
         parameters: Vec::new(),
         reexport_modules: Vec::new(),
+        class_reexport_modules: Vec::new(),
         star_exported: false,
         ambiguous_src_modules: Vec::new(),
         test_local_shadows: Vec::new(),
@@ -1013,7 +1015,7 @@ pub(super) fn collect_tests_from_statements(
                     .into_iter()
                     .filter(|name| !generated_inputs.contains(name))
                     .collect();
-                let assertions = test_assertions(
+                let mut assertions = test_assertions(
                     &function.body,
                     source,
                     function.range,
@@ -1026,17 +1028,28 @@ pub(super) fn collect_tests_from_statements(
                 // pytest does not parametrize unittest methods; Hypothesis
                 // `@example` rows run only when settings still include
                 // `Phase.explicit`.
-                let parametrize = (framework == PythonFramework::Pytest)
+                let pytest_cases = (framework == PythonFramework::Pytest)
                     .then(|| parametrize_cases(source, &function.decorator_list, parametrize_scope))
-                    .flatten()
-                    .or_else(|| {
-                        super::hypothesis::example_cases(
-                            source,
-                            &function.args,
-                            &function.decorator_list,
-                            &definition_imports,
-                        )
-                    });
+                    .flatten();
+                super::bool_oracle::settle_parametrized_names(
+                    &mut assertions,
+                    &function.body,
+                    &text_for_range(source, function.range),
+                    pytest_cases.as_ref(),
+                    |name| {
+                        direct_parametrized.iter().any(|direct| direct == name)
+                            && !unsettled_indirect.iter().any(|unsettled| unsettled == name)
+                            && !generated_inputs.iter().any(|generated| generated == name)
+                    },
+                );
+                let parametrize = pytest_cases.or_else(|| {
+                    super::hypothesis::example_cases(
+                        source,
+                        &function.args,
+                        &function.decorator_list,
+                        &definition_imports,
+                    )
+                });
                 let imports = test_imports(file, imports, &function.body);
                 let assertion_admission = assertion_admission(
                     &PythonTestFunction {
@@ -1098,6 +1111,7 @@ pub(super) fn collect_tests_from_statements(
                     fixtures,
                     setup_receivers: setup_receivers.clone(),
                     fixture_defs: Vec::new(),
+                    value_helpers: Vec::new(),
                     direct_parametrized,
                     unsettled_indirect,
                     parametrize_argnames,
@@ -1159,21 +1173,32 @@ pub(super) fn collect_tests_from_statements(
                     .into_iter()
                     .filter(|name| !generated_inputs.contains(name))
                     .collect();
-                let assertions = test_assertions(&function.body, source, function.range, false);
+                let mut assertions = test_assertions(&function.body, source, function.range, false);
                 // pytest does not parametrize unittest methods; Hypothesis
                 // `@example` rows run only when settings still include
                 // `Phase.explicit`.
-                let parametrize = (framework == PythonFramework::Pytest)
+                let pytest_cases = (framework == PythonFramework::Pytest)
                     .then(|| parametrize_cases(source, &function.decorator_list, parametrize_scope))
-                    .flatten()
-                    .or_else(|| {
-                        super::hypothesis::example_cases(
-                            source,
-                            &function.args,
-                            &function.decorator_list,
-                            &definition_imports,
-                        )
-                    });
+                    .flatten();
+                super::bool_oracle::settle_parametrized_names(
+                    &mut assertions,
+                    &function.body,
+                    &text_for_range(source, function.range),
+                    pytest_cases.as_ref(),
+                    |name| {
+                        direct_parametrized.iter().any(|direct| direct == name)
+                            && !unsettled_indirect.iter().any(|unsettled| unsettled == name)
+                            && !generated_inputs.iter().any(|generated| generated == name)
+                    },
+                );
+                let parametrize = pytest_cases.or_else(|| {
+                    super::hypothesis::example_cases(
+                        source,
+                        &function.args,
+                        &function.decorator_list,
+                        &definition_imports,
+                    )
+                });
                 let imports = test_imports(file, imports, &function.body);
                 let assertion_admission = assertion_admission(
                     &PythonTestFunction {
@@ -1235,6 +1260,7 @@ pub(super) fn collect_tests_from_statements(
                     fixtures,
                     setup_receivers: setup_receivers.clone(),
                     fixture_defs: Vec::new(),
+                    value_helpers: Vec::new(),
                     direct_parametrized,
                     unsettled_indirect,
                     parametrize_argnames,

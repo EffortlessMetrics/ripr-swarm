@@ -1,0 +1,11 @@
+# Repository-controlled suppressions.path confinement (#14310).
+[[extend]]
+id = "RIPR-SPEC-0007"
+tests = [
+  "crates/ripr/src/output/suppressions_confined.rs::removed_root_has_no_policy_to_read",
+  "crates/ripr/src/output/suppressions_confined.rs::direct_in_repository_policy_loads_and_missing_policy_stays_empty",
+  "crates/ripr/src/output/suppressions_confined.rs::directory_and_parent_traversal_fail_with_the_fixed_refusal",
+  "crates/ripr/src/output/suppressions_confined.rs::in_repository_symlink_to_regular_file_remains_supported",
+  "crates/ripr/src/output/suppressions_confined.rs::outside_symlink_is_refused_before_outside_bytes_are_read",
+  "crates/ripr/src/output/suppressions_confined.rs::dangling_looping_and_nested_outside_links_fail_closed",
+]

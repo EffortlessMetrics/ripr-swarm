@@ -20,9 +20,9 @@ Start here:
   Why capped: preview adapter: infection/propagation not modeled (Python); syntax-first, no type or import resolution; whether a test checks this behavior is not established. Preview score, not on the same scale as Rust confidence.
   Why unknown: test `test_apply_discount_fixture_case` takes pytest fixture `discount_case` that ripr does not read, so it cannot tell what it supplies; open the fixture to see whether it passes the changed input
   Changed behavior: if amount >= threshold:
-  Analyzer limit: Static limit `unresolved_pytest_fixture`: a related pytest test depends on
-    fixture-sourced values; syntax-first preview evidence cannot prove whether the fixture supplies
-    the changed discriminator or expected value
+  Analyzer limit: Static limit `unresolved_pytest_fixture`: a related pytest test uses a fixture,
+    and static analysis cannot tell whether it supplies an input that exercises the change or the
+    value the test expects
   Related test: tests/test_pricing.py:11 test_apply_discount_fixture_case
   Evidence: reach yes · infection unknown · propagation unknown · observation yes · assertion unknown
     Stages (static evidence): reach = test path to changed owner; infection = inputs can activate change;
@@ -48,6 +48,5 @@ Next: drill into the top finding:
 More:
   Full evidence: rerun with --format human-full
   Machine data: rerun with --format json
-
 
 Note: 1 Python file analyzed under preview support — preview evidence is advisory and may be incomplete. Treat its findings as advisory, not Rust-grade.

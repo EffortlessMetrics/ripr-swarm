@@ -504,3 +504,14 @@ Command:
 
 Updated:
 - `expected/human.txt`
+
+## Pending — rust_adversarial_same_method_other_type (40)
+
+Reason:
+RIPR-SPEC-0122: the Summary names findings whose reach is a test link ripr could not confirm (#15295)
+
+Command:
+`cargo xtask goldens bless rust_adversarial_same_method_other_type --reason "..."`
+
+Updated:
+- `expected/human.txt`

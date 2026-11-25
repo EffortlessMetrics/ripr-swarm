@@ -1,0 +1,7 @@
+diff --git a/src/fx/core.py b/src/fx/core.py
+--- a/src/fx/core.py
++++ b/src/fx/core.py
+@@ -5,2 +5,2 @@
+ class Length:
+-    message_max = "Longer than maximum length {max}."
++    message_max = "Longer than the maximum length {max}."

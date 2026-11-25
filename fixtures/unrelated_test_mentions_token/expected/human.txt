@@ -39,13 +39,14 @@ Next: drill into the top finding:
   (finding id, for explain/context)
   ripr explain --root <cwd>/fixtures/unrelated_test_mentions_token/input --diff <cwd>/fixtures/unrelated_test_mentions_token/diff.patch --mode fast probe:src_lib.rs:predicate:c80557eb
   ripr context --root <cwd>/fixtures/unrelated_test_mentions_token/input --diff <cwd>/fixtures/unrelated_test_mentions_token/diff.patch --mode fast --at probe:src_lib.rs:predicate:c80557eb
+  (spot id, for repair)
+  ripr repair 67fc764ba37d77bd --root <cwd>/fixtures/unrelated_test_mentions_token/input
 Write a test for it:
   ripr agent stub --root <cwd>/fixtures/unrelated_test_mentions_token/input --at src/lib.rs:2 --kind predicate
 
 More:
   Full evidence: rerun with --format human-full
   Machine data: rerun with --format json
-
 
 Note: ripr found no static test path for any of the 1 changed expression(s) in this diff. Scope
   analyzed: 1 changed Rust file(s), 1 changed expression(s), and 0 statically linked related

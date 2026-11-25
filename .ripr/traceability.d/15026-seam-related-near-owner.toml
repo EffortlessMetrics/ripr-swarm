@@ -1,0 +1,6 @@
+# Seam related-test ranking breaks ties toward tests that reach the owner (#15026).
+[[extend]]
+id = "RIPR-SPEC-0021"
+tests = [
+  "crates/ripr/src/analysis/test_grip_evidence/tests.rs::related_tests_name_the_owner_caller_test_before_name_order_neighbours",
+]

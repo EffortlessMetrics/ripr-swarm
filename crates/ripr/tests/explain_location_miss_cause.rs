@@ -28,6 +28,10 @@ const TEST_SRC: &str =
 const OTHER_LINE: &str = "No finding is at line";
 const NO_FILE: &str = "is not the path of a file from the analyzed root";
 const NO_FINDING_IN_FILE: &str = "exists, but this run has no finding anywhere in it";
+const NOT_IN_DIFF: &str = "This run's diff changes no text line of that file";
+const LINE_CHANGED: &str = "changed, but this run has no finding on it";
+const LINE_NOT_CHANGED: &str = "is not a line this run's diff changed";
+const ONLY_REMOVES: &str = "The diff only removes lines from that file";
 const CLAUSES: [&str; 3] = [OTHER_LINE, NO_FILE, NO_FINDING_IN_FILE];
 
 struct Repo(PathBuf);
@@ -36,6 +40,12 @@ impl Repo {
     /// One committed change: the predicate at `src/lib.rs:2` and a comment
     /// appended at `src/lib.rs:8`. `tests/t.rs` and `Cargo.toml` are unchanged.
     fn create() -> Result<Self, String> {
+        Self::create_with(&[], &[])
+    }
+
+    /// [`Self::create`] plus extra files in the base commit and extra file
+    /// contents in the change commit.
+    fn create_with(base: &[(&str, &str)], change: &[(&str, &str)]) -> Result<Self, String> {
         static SEQUENCE: AtomicU64 = AtomicU64::new(0);
         let root = std::env::temp_dir().join(format!(
             "ripr-location-miss-{}-{}",
@@ -50,6 +60,9 @@ impl Repo {
         repo.write("Cargo.toml", CARGO_TOML)?;
         repo.write("src/lib.rs", OLD_SRC)?;
         repo.write("tests/t.rs", TEST_SRC)?;
+        for (name, text) in base {
+            repo.write(name, text)?;
+        }
         repo.git(&["-c", "init.templateDir=", "init", "-q"])?;
         repo.git(&["config", "user.email", "t@example.com"])?;
         repo.git(&["config", "user.name", "t"])?;
@@ -57,6 +70,9 @@ impl Repo {
         repo.git(&["add", "-A"])?;
         repo.git(&["commit", "-q", "--no-gpg-sign", "-m", "base"])?;
         repo.write("src/lib.rs", NEW_SRC)?;
+        for (name, text) in change {
+            repo.write(name, text)?;
+        }
         repo.git(&["commit", "-q", "--no-gpg-sign", "-am", "change"])?;
         Ok(repo)
     }
@@ -143,6 +159,13 @@ fn require_miss(
         }
     }
     Ok(())
+}
+
+fn require_absent(label: &str, text: &str, needles: &[&str]) -> Result<(), String> {
+    match needles.iter().find(|needle| text.contains(**needle)) {
+        Some(needle) => Err(format!("{label}: {needle:?} must not appear in:\n{text}")),
+        None => Ok(()),
+    }
 }
 
 fn require_contains(label: &str, text: &str, needle: &str) -> Result<(), String> {
@@ -236,8 +259,10 @@ fn a_miss_on_a_path_that_is_not_a_file_names_the_analyzed_root() -> Result<(), S
     require_miss("explain", "src:1", &directory, Some(NO_FILE))
 }
 
+/// A file the diff does not touch: the miss says so instead of listing
+/// every reason a line can have no finding (#15039).
 #[test]
-fn a_miss_in_an_existing_file_without_findings_gives_the_run_counts() -> Result<(), String> {
+fn a_miss_in_a_file_outside_the_diff_says_the_file_is_not_in_it() -> Result<(), String> {
     let repo = Repo::create()?;
     // An unchanged test file and a file in no analyzed language.
     for selector in ["tests/t.rs:4", "Cargo.toml:1"] {
@@ -246,10 +271,11 @@ fn a_miss_in_an_existing_file_without_findings_gives_the_run_counts() -> Result<
             ("context", repo.context(selector)?),
         ] {
             require_miss(label, selector, &run, Some(NO_FINDING_IN_FILE))?;
-            require_contains(
+            require_contains(label, &run.1, NOT_IN_DIFF)?;
+            require_absent(
                 label,
                 &run.1,
-                "ripr reports a finding only on a changed line whose behavior it checks",
+                &[LINE_CHANGED, LINE_NOT_CHANGED, ONLY_REMOVES],
             )?;
             require_contains(
                 label,
@@ -257,6 +283,76 @@ fn a_miss_in_an_existing_file_without_findings_gives_the_run_counts() -> Result<
                 "This run read 1 changed file(s) and 3 changed line(s), 1 of them candidate line(s) ripr considers",
             )?;
         }
+    }
+    Ok(())
+}
+
+/// A file the diff does touch, with no finding in it: the miss says whether
+/// the named line is one the diff changed (#15039). `tests/t.rs` gains one
+/// comment line, and `notes.txt` only loses one.
+#[test]
+fn a_miss_in_a_changed_file_says_whether_the_named_line_changed() -> Result<(), String> {
+    let changed_test = format!("{TEST_SRC}// a note\n");
+    let added_line = changed_test.lines().count();
+    let repo = Repo::create_with(
+        &[("notes.txt", "one\ntwo\nthree\n")],
+        &[("tests/t.rs", &changed_test), ("notes.txt", "one\nthree\n")],
+    )?;
+    let changed = format!("tests/t.rs:{added_line}");
+    // The same file spelled with an interior `.` and a doubled separator:
+    // the diff names it `tests/t.rs`, and the miss must still find it.
+    let dotted = format!("tests/./t.rs:{added_line}");
+    let doubled = format!("tests//t.rs:{added_line}");
+    let cases: [(&str, String, [&str; 3]); 5] = [
+        (
+            dotted.as_str(),
+            format!("Line {added_line} changed, but this run has no finding on it"),
+            [NOT_IN_DIFF, LINE_NOT_CHANGED, ONLY_REMOVES],
+        ),
+        (
+            doubled.as_str(),
+            format!("Line {added_line} changed, but this run has no finding on it"),
+            [NOT_IN_DIFF, LINE_NOT_CHANGED, ONLY_REMOVES],
+        ),
+        // The comment line itself: changed, and not behavior ripr checks.
+        (
+            changed.as_str(),
+            format!("Line {added_line} changed, but this run has no finding on it"),
+            [NOT_IN_DIFF, LINE_NOT_CHANGED, ONLY_REMOVES],
+        ),
+        // Another line of that file: the changed line is named.
+        (
+            "tests/t.rs:1",
+            format!(
+                "Line 1 is not a line this run's diff changed (its one changed line is {added_line})"
+            ),
+            [NOT_IN_DIFF, LINE_CHANGED, ONLY_REMOVES],
+        ),
+        // A file that only lost a line has no changed line to name.
+        (
+            "notes.txt:1",
+            "The diff only removes lines from that file, so line 1 is not a changed line"
+                .to_string(),
+            [NOT_IN_DIFF, LINE_CHANGED, LINE_NOT_CHANGED],
+        ),
+    ];
+    for (selector, expected, absent) in &cases {
+        for (label, run) in [
+            ("explain", repo.explain(selector)?),
+            ("context", repo.context(selector)?),
+        ] {
+            require_miss(label, selector, &run, Some(NO_FINDING_IN_FILE))?;
+            require_contains(label, &run.1, expected)?;
+            require_absent(label, &run.1, absent)?;
+        }
+    }
+    // The one finding is still where it was, so the fixture's extra files
+    // did not change what the run analyzed.
+    let finding = repo.explain("src/lib.rs:2")?;
+    if finding.0 != Some(0) {
+        return Err(format!(
+            "the finding at src/lib.rs:2 must still explain: {finding:?}"
+        ));
     }
     Ok(())
 }

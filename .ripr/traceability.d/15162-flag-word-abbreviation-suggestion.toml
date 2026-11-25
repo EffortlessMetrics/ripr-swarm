@@ -1,0 +1,11 @@
+[[extend]]
+id = "RIPR-SPEC-0009"
+tests = [
+  "crates/ripr/src/accepted_value.rs::tests::a_flag_abbreviated_word_by_word_is_suggested",
+  "crates/ripr/src/accepted_value.rs::tests::word_by_word_abbreviation_needs_matching_words",
+  "crates/ripr/src/accepted_value.rs::tests::whole_prefix_still_beats_word_by_word_and_values_do_not_use_it",
+  "crates/ripr/src/cli/suggest.rs::tests::the_out_dir_alias_spelling_names_check_output_dir",
+]
+code = [
+  "crates/ripr/src/accepted_value.rs::closest",
+]

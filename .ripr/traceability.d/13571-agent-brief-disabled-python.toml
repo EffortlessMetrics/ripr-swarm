@@ -1,0 +1,15 @@
+# An empty `ripr agent brief` over a flat-layout Python scope whose adapter
+# is not enabled names Python, the not-analyzed disclosure and the enabling
+# `[languages]` step before the `check` route (#13571, RIPR-SPEC-0311 item 13).
+[[extend]]
+id = "RIPR-SPEC-0311"
+tests = [
+  "crates/ripr/src/app/task_first.rs::disabled_python_scope_languages_requires_all_routed_python_and_disabled",
+  "crates/ripr/tests/cli_smoke/agent_seam_preview_route.rs::python_disabled_flat_layout_brief_names_the_enable_step",
+  "crates/ripr/tests/cli_smoke/agent_seam_preview_route.rs::python_preview_scope_names_the_working_route",
+  "crates/ripr/tests/cli_smoke/agent_seam_preview_route.rs::rust_deletions_keep_a_mixed_brief_generic",
+]
+code = [
+  "crates/ripr/src/app/task_first.rs",
+  "crates/ripr/src/cli/commands/agent.rs",
+]

@@ -386,4 +386,73 @@ mod tests {
             );
         }
     }
+
+    /// The bounded digest names each class with one plain word; the three
+    /// unknown classes share `unknown` there and are told apart only by the
+    /// stage label, which every other class leaves as its plain word.
+    #[test]
+    fn plain_labels_share_unknown_and_the_stage_label_separates_it() {
+        let cases = [
+            (ExposureClass::Exposed, "exposed", "exposed"),
+            (ExposureClass::WeaklyExposed, "weak", "weak"),
+            (
+                ExposureClass::ReachableUnrevealed,
+                "unrevealed",
+                "unrevealed",
+            ),
+            (ExposureClass::NoStaticPath, "no path", "no path"),
+            (
+                ExposureClass::InfectionUnknown,
+                "unknown",
+                "unknown: infection unclear",
+            ),
+            (
+                ExposureClass::PropagationUnknown,
+                "unknown",
+                "unknown: propagation unclear",
+            ),
+            (
+                ExposureClass::StaticUnknown,
+                "unknown",
+                "unknown: static analysis limited",
+            ),
+        ];
+        for (class, plain, staged) in cases {
+            assert_eq!(class.plain_label(), plain, "{}", class.as_str());
+            assert_eq!(class.plain_label_with_stage(), staged, "{}", class.as_str());
+            assert_eq!(class.human_lead(), format!("{plain} ("));
+        }
+        let staged: HashSet<&str> = all_exposure_classes()
+            .iter()
+            .map(|class| class.plain_label_with_stage())
+            .collect();
+        assert_eq!(staged.len(), 7, "every class has a distinct staged label");
+    }
+
+    /// Glosses are prose: distinct per class, never a schema token, and the
+    /// static-unknown gloss says it is not a verdict.
+    #[test]
+    fn plain_glosses_are_distinct_prose_without_schema_tokens() {
+        let glosses: HashSet<&str> = all_exposure_classes()
+            .iter()
+            .map(|class| class.plain_gloss())
+            .collect();
+        assert_eq!(glosses.len(), 7);
+        for class in all_exposure_classes() {
+            let gloss = class.plain_gloss();
+            assert!(gloss.contains(' '), "{gloss}");
+            for other in all_exposure_classes() {
+                assert!(!gloss.contains(other.as_str()), "{gloss}");
+            }
+        }
+        assert_eq!(
+            ExposureClass::Exposed.plain_gloss(),
+            "tests appear to notice the change"
+        );
+        assert!(
+            ExposureClass::StaticUnknown
+                .plain_gloss()
+                .ends_with("(analysis limited, not a verdict)")
+        );
+    }
 }

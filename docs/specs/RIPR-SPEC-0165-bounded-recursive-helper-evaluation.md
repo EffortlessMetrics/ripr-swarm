@@ -86,7 +86,10 @@ recursion unrolls trivially on distinct inputs.
 2. Reject: `_ => label_of(kind)` (a repeated state) does not resolve
    (controls fixture).
 3. Reject: a d->c->b->a chain (four evaluations) does not resolve.
-4. Reject: a computed nested argument does not resolve.
+4. Reject: evaluating a computed nested argument; that hop is left
+   unevaluated. It forbids one route only: a test row that reaches the
+   boundary without the nested call (`classify_rc("a")` beside
+   `classify_rc("word")`) still exposes the change.
 5. Reject: a non-unique nested callee does not resolve.
 
 ## Test Mapping

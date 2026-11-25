@@ -17,7 +17,9 @@
 //! included: every workspace has weakly tested owners), and the baseline
 //! must name every changed owner, so the relation cannot pass over an empty
 //! or misparsed workspace. Formats whose documented contract stamps a
-//! per-run time (`check-findings-json`, `repo-*`) are left out.
+//! per-run time (`check-findings-json`, `repo-*`) are left out of that
+//! relation; `check-findings-json` is instead pinned under the opt-in
+//! `RIPR_GENERATED_AT` stamp, which makes its bytes repeatable too.
 
 #![cfg(any(
     feature = "lang-rust",
@@ -356,4 +358,407 @@ fn python_check_output_is_byte_identical_across_runs_workers_and_write_order() -
 fn typescript_check_output_is_byte_identical_across_runs_workers_and_write_order()
 -> Result<(), String> {
     assert_deterministic("typescript", &typescript_workspace())
+}
+
+/// One `check-findings-json` run on a freshly written tree, with
+/// `RIPR_GENERATED_AT` set to `stamp` or removed for `None`.
+#[cfg(feature = "lang-rust")]
+fn findings_artifact(
+    root: &Path,
+    files: &[(String, String)],
+    stamp: Option<&str>,
+) -> Result<std::process::Output, String> {
+    write_tree(root, files, false)?;
+    stamped_ripr(
+        root,
+        &[
+            "check",
+            "--root",
+            ".",
+            "--diff",
+            "change.diff",
+            "--format",
+            "check-findings-json",
+        ],
+        stamp,
+    )
+}
+
+/// The value of the artifact's `generated_at` member.
+#[cfg(feature = "lang-rust")]
+fn generated_at(stdout: &[u8]) -> Option<String> {
+    const KEY: &str = "\"generated_at\":\"";
+    let text = String::from_utf8_lossy(stdout);
+    let start = text.find(KEY)? + KEY.len();
+    let end = text[start..].find('"')?;
+    Some(text[start..start + end].to_string())
+}
+
+/// `RIPR_GENERATED_AT` pins the one field that made `check-findings-json`
+/// differ between runs, so the artifact and the digest covering it repeat
+/// (#14230). A different pin changes the bytes, the default still reads the
+/// clock, and a value that is not `unix_ms:<millis>` is refused instead of
+/// being replaced by the clock.
+#[cfg(feature = "lang-rust")]
+#[test]
+fn rust_check_findings_json_repeats_under_a_pinned_generated_at() -> Result<(), String> {
+    const PIN: &str = "unix_ms:1778179200000";
+    const OTHER_PIN: &str = "unix_ms:1778179200001";
+    let workspace = rust_workspace();
+    let root = std::env::temp_dir().join(format!(
+        "ripr-output-determinism-pinned-stamp-{}",
+        std::process::id()
+    ));
+    let _scratch = Scratch(root.clone());
+
+    let first = findings_artifact(&root, &workspace.files, Some(PIN))?;
+    if !matches!(first.status.code(), Some(0 | 1)) {
+        return Err(format!(
+            "pinned run exited {:?}:\n{}",
+            first.status.code(),
+            String::from_utf8_lossy(&first.stderr)
+        ));
+    }
+    let text = String::from_utf8_lossy(&first.stdout);
+    for owner in &workspace.owners {
+        if !text.contains(owner.as_str()) {
+            return Err(format!(
+                "pinned artifact does not name changed owner {owner}:\n{text}"
+            ));
+        }
+    }
+    if generated_at(&first.stdout).as_deref() != Some(PIN) {
+        return Err(format!(
+            "pinned artifact must carry generated_at {PIN}, got {:?}",
+            generated_at(&first.stdout)
+        ));
+    }
+
+    let second = findings_artifact(&root, &workspace.files, Some(PIN))?;
+    if second.stdout != first.stdout {
+        return Err(format!(
+            "two runs under the same pin differ at {}",
+            first_difference(&first.stdout, &second.stdout)
+        ));
+    }
+
+    let other = findings_artifact(&root, &workspace.files, Some(OTHER_PIN))?;
+    if other.stdout == first.stdout {
+        return Err("a different pin must change the artifact bytes".to_string());
+    }
+
+    let unpinned = findings_artifact(&root, &workspace.files, None)?;
+    let own_stamp = generated_at(&unpinned.stdout);
+    if !own_stamp
+        .as_deref()
+        .is_some_and(|stamp| stamp.starts_with("unix_ms:") && stamp != PIN)
+    {
+        return Err(format!(
+            "an unpinned run must stamp its own time, got {own_stamp:?}"
+        ));
+    }
+
+    let refused = findings_artifact(&root, &workspace.files, Some("1778179200000"))?;
+    // The refusal is the ordinary machine-readable one: exit 2, a
+    // `refused` document without an artifact envelope, and the reason on
+    // stderr.
+    let stderr = String::from_utf8_lossy(&refused.stderr);
+    let document = String::from_utf8_lossy(&refused.stdout);
+    if refused.status.code() != Some(2)
+        || !document.contains("\"status\": \"refused\"")
+        || document.contains("\"artifact\"")
+        || generated_at(&refused.stdout).is_some()
+        || !stderr.contains("RIPR_GENERATED_AT must be unix_ms:")
+    {
+        return Err(format!(
+            "a malformed pin must be refused with no artifact; exit {:?}, stdout:\n{document}\nstderr:\n{stderr}",
+            refused.status.code()
+        ));
+    }
+    Ok(())
+}
+
+/// `ripr` with `RIPR_GENERATED_AT` set to `stamp` or removed for `None`.
+fn stamped_ripr(
+    cwd: &Path,
+    args: &[&str],
+    stamp: Option<&str>,
+) -> Result<std::process::Output, String> {
+    let mut command = Command::new(env!("CARGO_BIN_EXE_ripr"));
+    command
+        .current_dir(cwd)
+        .args(args)
+        .env_remove("RIPR_LOG")
+        .env_remove("RIPR_CACHE_DIR");
+    match stamp {
+        Some(stamp) => command.env("RIPR_GENERATED_AT", stamp),
+        None => command.env_remove("RIPR_GENERATED_AT"),
+    };
+    command.output().map_err(|err| format!("spawn ripr: {err}"))
+}
+
+/// A stamped command that must exit 0 and leave `written` on disk; returns
+/// the written bytes.
+fn stamped_write(
+    cwd: &Path,
+    args: &[&str],
+    stamp: Option<&str>,
+    written: &Path,
+) -> Result<Vec<u8>, String> {
+    let _ = std::fs::remove_file(written);
+    let output = stamped_ripr(cwd, args, stamp)?;
+    if output.status.code() != Some(0) {
+        return Err(format!(
+            "ripr {args:?} under {stamp:?} exited {:?}:\n{}",
+            output.status.code(),
+            String::from_utf8_lossy(&output.stderr)
+        ));
+    }
+    std::fs::read(written).map_err(|err| format!("read {}: {err}", written.display()))
+}
+
+/// A malformed pin must stop the command before it writes `written`.
+fn assert_stamp_refused(
+    cwd: &Path,
+    args: &[&str],
+    stamp: &str,
+    written: &Path,
+    reason: &str,
+) -> Result<(), String> {
+    let _ = std::fs::remove_file(written);
+    let output = stamped_ripr(cwd, args, Some(stamp))?;
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    if output.status.code() != Some(2) || !stderr.contains(reason) || written.exists() {
+        return Err(format!(
+            "ripr {args:?} under {stamp:?} must exit 2 naming `{reason}` and write nothing; exit {:?}, wrote: {}, stderr:\n{stderr}",
+            output.status.code(),
+            written.exists()
+        ));
+    }
+    Ok(())
+}
+
+fn fixture_git(root: &Path, args: &[&str]) -> Result<(), String> {
+    let output = Command::new("git")
+        .current_dir(root)
+        .args([
+            "-c",
+            "user.name=determinism",
+            "-c",
+            "user.email=determinism@example.invalid",
+            "-c",
+            "commit.gpgsign=false",
+        ])
+        .args(args)
+        .output()
+        .map_err(|err| format!("spawn git: {err}"))?;
+    if !output.status.success() {
+        return Err(format!(
+            "git {args:?}: {}",
+            String::from_utf8_lossy(&output.stderr)
+        ));
+    }
+    Ok(())
+}
+
+/// `RIPR_GENERATED_AT` pins a receipt's `written_at`, the one field that
+/// made two writes of the same receipt differ (#14230). The pin is truncated
+/// to the receipt's whole seconds, a different second changes the bytes, the
+/// default still reads the clock, and a malformed or unspellable pin is
+/// refused with no receipt written.
+#[test]
+fn receipt_write_repeats_under_a_pinned_generated_at() -> Result<(), String> {
+    const PIN: &str = "unix_ms:1778179200999";
+    const PINNED_WRITTEN_AT: &str = "\"written_at\": \"2026-05-07T18:40:00Z\"";
+    const NEXT_SECOND: &str = "unix_ms:1778179201000";
+    let root = std::env::temp_dir().join(format!(
+        "ripr-output-determinism-receipt-stamp-{}",
+        std::process::id()
+    ));
+    let _scratch = Scratch(root.clone());
+    std::fs::create_dir_all(&root).map_err(|err| format!("create {}: {err}", root.display()))?;
+    std::fs::write(root.join("README.md"), "receipt stamp fixture\n")
+        .map_err(|err| format!("write fixture: {err}"))?;
+    fixture_git(&root, &["init", "-q", "-b", "main"])?;
+    fixture_git(&root, &["add", "-A"])?;
+    fixture_git(&root, &["commit", "-q", "-m", "base"])?;
+    let receipt = root.join("receipt.json");
+    let args = [
+        "receipt",
+        "write",
+        "--gap",
+        "gap:rust:src/lib.rs:total:predicate_boundary:predicate:a==1",
+        "--verify-command",
+        "cargo test",
+        "--status",
+        "passed",
+        "--out",
+        "receipt.json",
+    ];
+
+    let first = stamped_write(&root, &args, Some(PIN), &receipt)?;
+    let text = String::from_utf8_lossy(&first);
+    if !text.contains(PINNED_WRITTEN_AT) || !text.contains("\"verify_command\": \"cargo test\"") {
+        return Err(format!(
+            "pinned receipt must carry {PINNED_WRITTEN_AT} and the verify command:\n{text}"
+        ));
+    }
+    let second = stamped_write(&root, &args, Some(PIN), &receipt)?;
+    if second != first {
+        return Err(format!(
+            "two receipts under the same pin differ at {}",
+            first_difference(&first, &second)
+        ));
+    }
+    if stamped_write(&root, &args, Some(NEXT_SECOND), &receipt)? == first {
+        return Err("a pin in a different second must change the receipt bytes".to_string());
+    }
+    let unpinned = stamped_write(&root, &args, None, &receipt)?;
+    let unpinned_text = String::from_utf8_lossy(&unpinned);
+    if !unpinned_text.contains("\"written_at\": \"") || unpinned_text.contains(PINNED_WRITTEN_AT) {
+        return Err(format!(
+            "an unpinned receipt must stamp its own time:\n{unpinned_text}"
+        ));
+    }
+
+    assert_stamp_refused(
+        &root,
+        &args,
+        "2026-05-07T18:40:00Z",
+        &receipt,
+        "RIPR_GENERATED_AT must be unix_ms:",
+    )?;
+    // 10000-01-01T00:00:00Z: `written_at` has four year digits.
+    assert_stamp_refused(
+        &root,
+        &args,
+        "unix_ms:253402300800000",
+        &receipt,
+        "past year 9999",
+    )
+}
+
+/// The report commands stamp `generated_at` through one helper; `first-action`
+/// stands for them. Under the pin its JSON repeats byte for byte and carries
+/// the pinned stamp, the default still reads the clock, and a malformed pin
+/// is refused with no report written (#14230).
+#[test]
+fn first_action_report_repeats_under_a_pinned_generated_at() -> Result<(), String> {
+    const PIN: &str = "unix_ms:1778179200000";
+    const PINNED_GENERATED_AT: &str = "\"generated_at\": \"unix_ms:1778179200000\"";
+    let root = std::env::temp_dir().join(format!(
+        "ripr-output-determinism-report-stamp-{}",
+        std::process::id()
+    ));
+    let _scratch = Scratch(root.clone());
+    std::fs::create_dir_all(&root).map_err(|err| format!("create {}: {err}", root.display()))?;
+    let guidance = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../fixtures/boundary_gap/expected/pr-guidance/exact-line/comments.json");
+    let guidance = guidance
+        .to_str()
+        .ok_or_else(|| format!("fixture path is not UTF-8: {}", guidance.display()))?;
+    let report = root.join("first-useful-action.json");
+    let args = [
+        "first-action",
+        "--root",
+        ".",
+        "--pr-guidance",
+        guidance,
+        "--out",
+        "first-useful-action.json",
+        "--out-md",
+        "first-useful-action.md",
+    ];
+
+    let first = stamped_write(&root, &args, Some(PIN), &report)?;
+    let text = String::from_utf8_lossy(&first);
+    // The report must have read the guidance, not only written an envelope.
+    if !text.contains(PINNED_GENERATED_AT) || !text.contains("src/pricing.rs") {
+        return Err(format!(
+            "pinned report must carry {PINNED_GENERATED_AT} and the guided file:\n{text}"
+        ));
+    }
+    let markdown = root.join("first-useful-action.md");
+    let read_markdown =
+        || std::fs::read(&markdown).map_err(|err| format!("read {}: {err}", markdown.display()));
+    let first_markdown = read_markdown()?;
+    let second = stamped_write(&root, &args, Some(PIN), &report)?;
+    if second != first {
+        return Err(format!(
+            "two reports under the same pin differ at {}",
+            first_difference(&first, &second)
+        ));
+    }
+    let second_markdown = read_markdown()?;
+    if second_markdown != first_markdown {
+        return Err(format!(
+            "two Markdown reports under the same pin differ at {}",
+            first_difference(&first_markdown, &second_markdown)
+        ));
+    }
+    let unpinned = stamped_write(&root, &args, None, &report)?;
+    let unpinned_text = String::from_utf8_lossy(&unpinned);
+    if !unpinned_text.contains("\"generated_at\": \"unix_ms:")
+        || unpinned_text.contains(PINNED_GENERATED_AT)
+    {
+        return Err(format!(
+            "an unpinned report must stamp its own time:\n{unpinned_text}"
+        ));
+    }
+    std::fs::remove_file(&markdown)
+        .map_err(|err| format!("remove {}: {err}", markdown.display()))?;
+    assert_stamp_refused(
+        &root,
+        &args,
+        "1778179200000",
+        &report,
+        "RIPR_GENERATED_AT must be unix_ms:",
+    )?;
+    if markdown.exists() {
+        return Err("a refused pin must not write the Markdown report".to_string());
+    }
+    Ok(())
+}
+
+/// `ripr zero status` judges review deadlines against its own stamp, so the
+/// pin must not reach it: a pin from before a review's deadline would report
+/// an overdue review as current. The fixture review fell due 2026-08-08.
+#[test]
+fn zero_status_keeps_the_wall_clock_under_a_pinned_generated_at() -> Result<(), String> {
+    // 2026-05-07, three months before the fixture review's deadline.
+    const PIN: &str = "unix_ms:1778179200000";
+    let root = std::env::temp_dir().join(format!(
+        "ripr-output-determinism-zero-status-{}",
+        std::process::id()
+    ));
+    let _scratch = Scratch(root.clone());
+    std::fs::create_dir_all(&root).map_err(|err| format!("create {}: {err}", root.display()))?;
+    let fixture = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../fixtures/boundary_gap/expected/baseline-debt-delta/mixed");
+    let baseline = fixture.join("baseline.json");
+    let delta = fixture.join("baseline-debt-delta.json");
+    let (Some(baseline), Some(delta)) = (baseline.to_str(), delta.to_str()) else {
+        return Err(format!("fixture path is not UTF-8: {}", fixture.display()));
+    };
+    let report = root.join("zero-status.json");
+    let args = [
+        "zero",
+        "status",
+        "--baseline",
+        baseline,
+        "--delta",
+        delta,
+        "--out",
+        "zero-status.json",
+        "--out-md",
+        "zero-status.md",
+    ];
+    let pinned = stamped_write(&root, &args, Some(PIN), &report)?;
+    let text = String::from_utf8_lossy(&pinned);
+    if text.contains(PIN) || !text.contains("1 baseline entries have stale review metadata") {
+        return Err(format!(
+            "zero status under a pin must stamp the run time and keep the overdue review stale:\n{text}"
+        ));
+    }
+    Ok(())
 }

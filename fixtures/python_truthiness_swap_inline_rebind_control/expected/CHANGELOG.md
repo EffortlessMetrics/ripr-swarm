@@ -103,3 +103,25 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — python_truthiness_swap_inline_rebind_control (9)
+
+Reason:
+RIPR-SPEC-0122: one blank line, not two, separates the More block from a trailing Note (#14318)
+
+Command:
+`cargo xtask goldens bless python_truthiness_swap_inline_rebind_control --reason "..."`
+
+Updated:
+- `expected/human.txt`
+
+## Pending — python_truthiness_swap_inline_rebind_control (10)
+
+Reason:
+human-full: one blank line, not two, separates the last finding from a trailing Note (#14318)
+
+Command:
+`cargo xtask goldens bless python_truthiness_swap_inline_rebind_control --reason "..."`
+
+Updated:
+- `expected/human-full.txt`

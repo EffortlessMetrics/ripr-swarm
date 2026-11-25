@@ -1,0 +1,9 @@
+[[extend]]
+id = "RIPR-SPEC-0009"
+tests = [
+  "crates/ripr/tests/cli_smoke/init_ci_guidance.rs::init_ci_refuses_a_root_below_the_git_toplevel_and_writes_nothing",
+  "crates/ripr/tests/cli_smoke/init_ci_guidance.rs::init_ci_keeps_the_toplevel_root_and_subdir_without_ci",
+]
+code = [
+  "crates/ripr/src/cli/commands/init.rs::ci_subdirectory_root_refusal",
+]

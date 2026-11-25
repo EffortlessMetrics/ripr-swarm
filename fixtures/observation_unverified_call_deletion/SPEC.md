@@ -45,9 +45,12 @@ ripr check --root fixtures/observation_unverified_call_deletion/input \
 
 ## Then
 
-`ripr` must emit `weakly_exposed` (not `exposed`) for the `CallDeletion` probe.
-The discriminate stage must be `weak` with reason `observation_unverified`,
-and confidence must be less than 1.0.
+`ripr` must emit `reachable_unrevealed` (not `exposed`) for the `CallDeletion`
+probe. The test reaches `store_result`, but `assert!(true)` compares only a
+literal and reads no value, so it matches no probe and supplies no oracle
+(#14968). Before #14968 this fixture read `weakly_exposed` with
+`observation_unverified`; an assertion that reads a value but names no token of
+the changed call still reads that way (`observation_unverified_side_effect`).
 
 This fixture is the **before/escape-hatch proof** for the CallDeletion family
 in [RIPR-SPEC-0094](../../docs/specs/RIPR-SPEC-0094-observation-unverified-guard-generalization.md):
@@ -59,4 +62,4 @@ discriminating the specific `"result_key"` change — a false-actionable claim.
 
 - Report `exposed` when no assertion text references any token from the changed cache.insert call.
 - Use mutation-runtime outcome vocabulary.
-- Report `reachable_unrevealed` (the test IS reachable and DOES have an assertion).
+- Credit `assert!(true)` with any oracle strength: it observes nothing.

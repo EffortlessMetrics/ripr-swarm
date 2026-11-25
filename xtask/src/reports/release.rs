@@ -332,7 +332,7 @@ fn package_upload_size_check_in(
         "fail",
         true,
         command,
-        "a packaged crate is over the crates.io default upload limit; cargo publish is expected to be refused. Trim the package `include` list in the crate manifest (#14071)",
+        "a packaged crate is over the crates.io default upload limit; cargo publish is expected to be refused. Trim the package `include` list in the crate manifest or what the publish stage strips (#14071, #14198)",
         artifacts,
         details,
     )
@@ -426,7 +426,7 @@ where
 
 fn package_install_check(version: &str, crate_version: Option<&str>) -> ReleaseReadinessCheck {
     let command = format!(
-        "cargo xtask publish-dry-run (vendored packaging) && cargo install --path <external-package-root>/ripr-{version} --root {INSTALL_ROOT} --force && installed ripr doctor --root <external-fixture> --json"
+        "cargo xtask publish-dry-run (staged multi-package packaging) && cargo install --path <external-package-root>/ripr-{version} --root {INSTALL_ROOT} --force && installed ripr doctor --root <external-fixture> --json"
     );
     let Some(crate_version) = crate_version else {
         return readiness_check(
@@ -539,14 +539,14 @@ pub(crate) fn run_packaged_install(
 
     // ADR 0027 lockstep: a bare `cargo package -p ripr` resolves the exact
     // `ripr-contract` requirement against crates.io and fails pre-publish.
-    // Package through the vendored rehearsal route instead.
+    // Package both from the publish stage in one multi-package invocation.
     let scratch = Path::new("target/ripr/release-readiness/package-scratch");
     let _ = fs::remove_dir_all(scratch);
     let (contract_crate, packaged_ripr) =
-        match crate::publish_rehearsal::vendored_ripr_crate(scratch, version) {
+        match crate::publish_rehearsal::staged_crates(scratch, version) {
             Ok(pair) => pair,
             Err(err) => {
-                details.push(format!("vendored packaging failed: {err}"));
+                details.push(format!("staged packaging failed: {err}"));
                 return Ok(PackageInstallResult {
                     success: false,
                     artifacts,
@@ -554,7 +554,7 @@ pub(crate) fn run_packaged_install(
                 });
             }
         };
-    details.push("packaged ripr against vendored ripr-contract".to_string());
+    details.push("packaged ripr with ripr-contract from the publish stage".to_string());
     if let Some(parent) = archive.parent() {
         fs::create_dir_all(parent)
             .map_err(|err| format!("create package archive directory failed: {err}"))?;
@@ -1064,12 +1064,15 @@ fn full_packaged_commit_id(commit: &str) -> bool {
 /// Reload the retained archive because the install proof removes its extraction
 /// before the external journey. Never substitute the controller checkout's HEAD.
 fn packaged_archive_commit(archive: &Path, version: &str) -> Result<String, String> {
+    use std::io::Read as _;
     let file = fs::File::open(archive)
         .map_err(|err| format!("open package archive for version identity failed: {err}"))?;
     let mut tar = Archive::new(GzDecoder::new(file));
     let root = PathBuf::from(format!("ripr-{version}"));
     let identity_path = root.join(".cargo_vcs_info.json");
+    let marker_path = root.join(crate::publish_stage::PUBLISH_STAGE_MARKER);
     let mut identity = None;
+    let mut marker = None;
     for entry in tar
         .entries()
         .map_err(|err| format!("read package identity entries failed: {err}"))?
@@ -1081,6 +1084,20 @@ fn packaged_archive_commit(archive: &Path, version: &str) -> Result<String, Stri
             .map_err(|err| format!("read package identity path failed: {err}"))?
             .into_owned();
         validate_package_entry(&path, entry.header().entry_type(), &root)?;
+        if path == marker_path {
+            if marker.is_some() || !entry.header().entry_type().is_file() || entry.size() > 4096 {
+                return Err(
+                    "publish-stage marker must be one regular file of at most 4096 bytes"
+                        .to_string(),
+                );
+            }
+            let mut text = String::new();
+            entry
+                .read_to_string(&mut text)
+                .map_err(|err| format!("read publish-stage marker failed: {err}"))?;
+            marker = Some(text);
+            continue;
+        }
         if path != identity_path {
             continue;
         }
@@ -1100,15 +1117,23 @@ fn packaged_archive_commit(archive: &Path, version: &str) -> Result<String, Stri
             .and_then(Value::as_str)
             .filter(|commit| full_packaged_commit_id(commit))
             .ok_or_else(|| "package VCS identity has no full lowercase Git commit".to_string())?;
-        if git
-            .get("dirty")
-            .is_some_and(|dirty| dirty.as_bool() != Some(false))
-        {
-            return Err("package VCS identity is dirty or has an invalid dirty flag".to_string());
-        }
-        identity = Some(commit.to_string());
+        let dirty = match git.get("dirty") {
+            None => false,
+            Some(dirty) => dirty
+                .as_bool()
+                .ok_or_else(|| "package VCS identity has an invalid dirty flag".to_string())?,
+        };
+        identity = Some((commit.to_string(), dirty));
     }
-    identity.ok_or_else(|| "package archive has no VCS identity record".to_string())
+    let (commit, dirty) =
+        identity.ok_or_else(|| "package archive has no VCS identity record".to_string())?;
+    // A publish-stage package (#14198) is recorded dirty by the strip; its
+    // marker naming the same commit identifies it as that commit.
+    let staged = marker.as_deref().map(str::trim) == Some(commit.as_str());
+    if dirty && !staged {
+        return Err("package VCS identity is dirty".to_string());
+    }
+    Ok(commit)
 }
 
 pub(crate) fn validate_doctor_result(success: bool, doctor_json: &Value) -> Result<(), String> {
@@ -1854,6 +1879,16 @@ const RELEASE_LOOP_NEEDLES: &[&str] = &[
     "ripr agent receipt",
 ];
 
+/// Required needles in `ripr first-pr --help`, pinned to the shipped
+/// `FIRST_PR_HELP` constant by `repository_help_surfaces_satisfy_command_surface_needles`.
+const FIRST_PR_HELP_NEEDLES: &[&str] = &[
+    "Summarize what to fix in one PR",
+    "Usage: ripr first-pr",
+    "--gap-ledger",
+    "--receipts-dir",
+    "--output-dir",
+];
+
 fn installed_command_surface_check(binary: &Path) -> ReleaseReadinessCheck {
     let binary_path = crate::normalize_path(binary);
     let command = format!(
@@ -1983,13 +2018,7 @@ fn installed_command_surface_check(binary: &Path) -> ReleaseReadinessCheck {
     ));
     missing.extend(missing_required_needles(
         &first_pr_help.stdout,
-        &[
-            "Summarize what to fix in one PR",
-            "Usage: ripr first-pr",
-            "--gap-ledger",
-            "--receipts-dir",
-            "--out-dir",
-        ],
+        FIRST_PR_HELP_NEEDLES,
     ));
     if missing.is_empty() {
         readiness_check(
@@ -3324,8 +3353,8 @@ fn init_generator_self_pin_check(
 const CI_SUMMARY_FIRST_RUN_NEEDLES: &[&str] = &[
     "#### First-run status",
     "missing_start_here",
-    // The summary names the packet by its artifact, not a repo path (#11322).
-    "`start-here.md` in the `ripr-reports` artifact",
+    // The summary names the packet by its artifact, not a repo path (#11322, #14356).
+    "`ripr/reports/start-here.md` in the `ripr-reports` artifact",
     "Safe next action: run `ripr first-pr",
 ];
 
@@ -4183,18 +4212,19 @@ mod tests {
     #[cfg(unix)]
     use super::{CI_PACKET_STEP_NEEDLES, ci_packet_steps_missing, ci_summary_first_run_missing};
     use super::{
-        CommandResult, EditorVersion, FIRST_SCREEN_NEEDLES, PackageVersion, RELEASE_LOOP_NEEDLES,
-        ReleaseReadinessCheck, ReleaseReadinessReport, changelog_has_release_heading,
-        check_install_provenance, create_external_doctor_fixture, extension_version_check_from,
-        extract_packaged_crate, file_url_path, init_generator_self_pin_problems,
-        init_pin_version_check_from, latency_parity_contradiction, latency_readiness_from,
-        latest_released_version_in, missing_required_needles, package_version,
-        packaged_archive_commit, parse_release_readiness_args, read_crate_version, readiness_check,
-        records_ripr_bin, release_readiness_json, release_readiness_markdown,
-        release_readiness_status, repo_exposure_latency_output_parity,
-        repo_exposure_latency_status_reasons, validate_binary_identity, validate_doctor_result,
-        validate_install_provenance, validate_installed_version, validate_installed_version_result,
-        validate_package_entry, vsix_start_current_repair_command_present,
+        CommandResult, EditorVersion, FIRST_PR_HELP_NEEDLES, FIRST_SCREEN_NEEDLES, PackageVersion,
+        RELEASE_LOOP_NEEDLES, ReleaseReadinessCheck, ReleaseReadinessReport,
+        changelog_has_release_heading, check_install_provenance, create_external_doctor_fixture,
+        extension_version_check_from, extract_packaged_crate, file_url_path,
+        init_generator_self_pin_problems, init_pin_version_check_from,
+        latency_parity_contradiction, latency_readiness_from, latest_released_version_in,
+        missing_required_needles, package_version, packaged_archive_commit,
+        parse_release_readiness_args, read_crate_version, readiness_check, records_ripr_bin,
+        release_readiness_json, release_readiness_markdown, release_readiness_status,
+        repo_exposure_latency_output_parity, repo_exposure_latency_status_reasons,
+        validate_binary_identity, validate_doctor_result, validate_install_provenance,
+        validate_installed_version, validate_installed_version_result, validate_package_entry,
+        vsix_start_current_repair_command_present,
     };
     use serde_json::{Value, json};
     use std::fs;
@@ -4914,6 +4944,71 @@ mod tests {
                 .map_err(|err| format!("remove invalid identity archive: {err}"))?;
             if result.is_ok() {
                 return Err(format!("archive accepted invalid VCS identity: {record}"));
+            }
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn a_dirty_record_is_the_commit_only_with_a_publish_stage_marker_naming_it()
+    -> Result<(), String> {
+        let name = "ripr-0.11.0/.cargo_vcs_info.json";
+        let marker_name = "ripr-0.11.0/.ripr-publish-stage";
+        let dirty = format!(
+            "{{\"git\":{{\"sha1\":\"{VERSION_COMMIT}\",\"dirty\":true}},\"path_in_vcs\":\"crates/ripr\"}}"
+        );
+        let marker = format!("{VERSION_COMMIT}\n");
+        let archive = version_identity_archive(&[
+            (marker_name, &marker, tar::EntryType::Regular),
+            (name, &dirty, tar::EntryType::Regular),
+        ])?;
+        let result = packaged_archive_commit(&archive, "0.11.0");
+        fs::remove_file(&archive).map_err(|err| format!("remove staged archive: {err}"))?;
+        if result? != VERSION_COMMIT {
+            return Err("publish-stage archive did not yield its commit".to_string());
+        }
+        // The marker may follow the record: the decision is order-independent.
+        let archive = version_identity_archive(&[
+            (name, &dirty, tar::EntryType::Regular),
+            (marker_name, &marker, tar::EntryType::Regular),
+        ])?;
+        let result = packaged_archive_commit(&archive, "0.11.0");
+        fs::remove_file(&archive).map_err(|err| format!("remove reordered archive: {err}"))?;
+        if result? != VERSION_COMMIT {
+            return Err("marker after the record did not yield its commit".to_string());
+        }
+        let other = "b".repeat(40);
+        // The right commit padded past the byte budget: only the budget refuses it.
+        let oversized = format!("{VERSION_COMMIT}{}", " ".repeat(4097));
+        for (case, entries) in [
+            (
+                "another commit",
+                vec![(marker_name, other.as_str(), tar::EntryType::Regular)],
+            ),
+            ("empty", vec![(marker_name, "", tar::EntryType::Regular)]),
+            (
+                "oversized",
+                vec![(marker_name, oversized.as_str(), tar::EntryType::Regular)],
+            ),
+            (
+                "duplicate",
+                vec![
+                    (marker_name, marker.as_str(), tar::EntryType::Regular),
+                    (marker_name, marker.as_str(), tar::EntryType::Regular),
+                ],
+            ),
+            (
+                "nonregular",
+                vec![(marker_name, "", tar::EntryType::Directory)],
+            ),
+        ] {
+            let mut entries = entries;
+            entries.push((name, &dirty, tar::EntryType::Regular));
+            let archive = version_identity_archive(&entries)?;
+            let result = packaged_archive_commit(&archive, "0.11.0");
+            fs::remove_file(&archive).map_err(|err| format!("remove {case} archive: {err}"))?;
+            if result.is_ok() {
+                return Err(format!("dirty archive accepted with a {case} marker"));
             }
         }
         Ok(())
@@ -6147,6 +6242,24 @@ mod tests {
                  the release gate would fail on this help text"
             ));
         }
+
+        let first_pr_path = root.join("crates/ripr/src/output/first_pr/options.rs");
+        let first_pr_text = crate::read_text_lossy(&first_pr_path)
+            .map_err(|err| format!("read {}: {err}", first_pr_path.display()))?;
+        let first_pr_help =
+            quoted_string_const(&first_pr_text, "FIRST_PR_HELP").ok_or_else(|| {
+                format!(
+                    "could not locate FIRST_PR_HELP in {}",
+                    first_pr_path.display()
+                )
+            })?;
+        let missing_first_pr = missing_required_needles(first_pr_help, FIRST_PR_HELP_NEEDLES);
+        if !missing_first_pr.is_empty() {
+            return Err(format!(
+                "`ripr first-pr --help` no longer documents {missing_first_pr:?}; \
+                 the release gate would fail on this help text"
+            ));
+        }
         Ok(())
     }
 
@@ -6161,6 +6274,29 @@ mod tests {
         let body = rest.get(open..)?;
         let close = body.find("\"#")?;
         body.get(..close)
+    }
+
+    /// Extract the body of `const <name>: &str = "...";` from Rust source,
+    /// skipping backslash-escaped quotes inside the literal.
+    fn quoted_string_const<'a>(text: &'a str, name: &str) -> Option<&'a str> {
+        let anchor = format!("const {name}:");
+        let after_name = text.find(&anchor)? + anchor.len();
+        let rest = text.get(after_name..)?;
+        let open = rest.find('"')? + 1;
+        let body = rest.get(open..)?;
+        let bytes = body.as_bytes();
+        let mut i = 0;
+        while i < bytes.len() {
+            if bytes[i] == b'\\' {
+                i += 2;
+                continue;
+            }
+            if bytes[i] == b'"' {
+                return body.get(..i);
+            }
+            i += 1;
+        }
+        None
     }
 
     #[test]
@@ -6270,7 +6406,7 @@ mod tests {
             "good",
             "[ \"$1 $2\" = 'reports ci-summary' ] || exit 9\n\
              printf '#### First-run status\\n- Status: `missing_start_here`\\n\
-             - Open `start-here.md` in the `ripr-reports` artifact first.\\n\
+             - Open `ripr/reports/start-here.md` in the `ripr-reports` artifact first.\\n\
              - Safe next action: run `ripr first-pr --root .`.\\n'",
         )?;
         // First-run block present but the packet is no longer named.
@@ -6325,7 +6461,10 @@ mod tests {
                 "complete summary reported missing: {good_missing:?}"
             ));
         }
-        if unnamed_missing.len() != 1 || !unnamed_missing[0].contains("start-here.md") {
+        if unnamed_missing.len() != 1
+            || !unnamed_missing[0]
+                .contains("`ripr/reports/start-here.md` in the `ripr-reports` artifact")
+        {
             return Err(format!(
                 "summary that no longer names start-here: {unnamed_missing:?}"
             ));
@@ -6347,5 +6486,37 @@ mod tests {
             return Err(format!("failing binary not named: {failing_missing:?}"));
         }
         Ok(())
+    }
+
+    #[test]
+    fn ci_summary_first_run_needles_match_artifact_relative_start_here_path() {
+        let current_summary = "\
+#### First-run status
+- Status: `missing_start_here`
+- Safe next action: run `ripr first-pr --root . --base origin/main`.
+### Start here
+- Open `ripr/reports/start-here.md` in the `ripr-reports` artifact (Artifacts on this run's summary page) first when it exists.
+";
+        let missing_current =
+            super::missing_required_needles(current_summary, super::CI_SUMMARY_FIRST_RUN_NEEDLES);
+        assert!(
+            missing_current.is_empty(),
+            "current ci-summary output should satisfy all needles, missing: {missing_current:?}"
+        );
+
+        let pre_14356_summary = "\
+#### First-run status
+- Status: `missing_start_here`
+- Safe next action: run `ripr first-pr --root . --base origin/main`.
+### Start here
+- Open `start-here.md` in the `ripr-reports` artifact (Artifacts on this run's summary page) first when it exists.
+";
+        let missing_stale =
+            super::missing_required_needles(pre_14356_summary, super::CI_SUMMARY_FIRST_RUN_NEEDLES);
+        assert_eq!(
+            missing_stale,
+            vec!["`ripr/reports/start-here.md` in the `ripr-reports` artifact".to_string()],
+            "pre-#14356 path should be rejected"
+        );
     }
 }

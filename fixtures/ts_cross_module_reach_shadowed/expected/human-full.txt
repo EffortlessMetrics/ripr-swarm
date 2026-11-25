@@ -86,7 +86,6 @@ Drill in:
   ripr explain --root <cwd>/fixtures/ts_cross_module_reach_shadowed/input --diff <cwd>/fixtures/ts_cross_module_reach_shadowed/diff.patch --mode fast probe:src_a.ts:typescript_preview:0785697a
   ripr context --root <cwd>/fixtures/ts_cross_module_reach_shadowed/input --diff <cwd>/fixtures/ts_cross_module_reach_shadowed/diff.patch --mode fast --at probe:src_a.ts:typescript_preview:0785697a
 
-
 Note: ripr found no static test path for any of the 1 changed expression(s) in this diff. Scope
   analyzed: 1 changed expression(s) and 0 statically linked related test(s). This is not a coverage
   assessment. A test may already exercise these changes through macros, helper-call chains, or

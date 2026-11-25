@@ -76,6 +76,9 @@ fn field_projected_collection_public_check_pins_exact_observation() -> Result<()
                 finding.class,
                 if credited {
                     ExposureClass::Exposed
+                } else if case == "unrelated" {
+                    // #14968: `assert_eq!(11, 11)` reads no value at all.
+                    ExposureClass::ReachableUnrevealed
                 } else {
                     ExposureClass::WeaklyExposed
                 },

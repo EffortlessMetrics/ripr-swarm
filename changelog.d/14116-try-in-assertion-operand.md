@@ -1,0 +1,2 @@
+<!-- section: Fixed -->
+- A test that returns `Result` and uses `?` inside an assertion, such as `assert_eq!(parse(input)?, 91)`, now keeps credit for that assertion. Before, it was "not credited" because "an argument of `assert_eq!` contains a `return`, `?` or nested macro that may leave the test before the comparison", though an error there fails the test exactly like a `?` on its own line, which was already credited. A `?` inside a closure, an `async` block, a nested `fn` or a helper function, and a `return` in the assertion, keep the old reading (#14116).

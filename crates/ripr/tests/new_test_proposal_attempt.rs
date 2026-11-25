@@ -16,7 +16,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 #[path = "common/mod.rs"]
 mod common;
 
-use common::fixture_git::fixture_git_ok;
+use common::fixture_git::{fixture_git_ok, fixture_git_output};
 
 static COUNTER: AtomicU64 = AtomicU64::new(0);
 
@@ -267,7 +267,7 @@ fn created_proposed_file_binds_the_attempt_to_its_proposal() -> Result<(), Strin
     );
 
     write(root, PROPOSED_FILE, NEW_TEST)?;
-    let output = after(root, &attempt)?;
+    let output = after_with_result(root, &attempt)?;
     let finished = manifest(root, &attempt)?;
     assert_eq!(
         finished
@@ -292,7 +292,56 @@ fn created_proposed_file_binds_the_attempt_to_its_proposal() -> Result<(), Strin
         })
         .unwrap_or_default();
     assert_eq!(edited, [PROPOSED_FILE]);
+    assert!(output.status.success(), "{}", combined(&output));
+    assert_eq!(
+        finished.get("state").and_then(Value::as_str),
+        Some("ready_to_finish")
+    );
+    assert!(root.join(PROPOSED_FILE).is_file());
     Ok(())
+}
+
+/// A proposal attempt finishes only with the caller's focused result, so the
+/// happy path passes one bound to this attempt, HEAD and the proposed file.
+fn after_with_result(root: &Path, attempt: &Attempt) -> Result<Output, String> {
+    let head = fixture_git_output(root, &["rev-parse", "HEAD"])?
+        .trim()
+        .to_string();
+    let document = serde_json::json!({
+        "schema_version": "0.1",
+        "kind": "focused_test_result",
+        "attempt_id": attempt.id,
+        "head": head,
+        "test_file": PROPOSED_FILE,
+        "libtest_events": [
+            {"type": "test", "event": "ok", "name": "equality_boundary_discounts"}
+        ],
+    });
+    // Outside the repository so the result is not an edit.
+    let path = root.with_file_name(format!(
+        "{}-result.json",
+        root.file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or("fixture")
+    ));
+    fs::write(&path, document.to_string())
+        .map_err(|error| format!("write {}: {error}", path.display()))?;
+    run_ripr(
+        root,
+        &[
+            "agent",
+            "repair",
+            "--json",
+            "--root",
+            &attempt.root_arg,
+            "--attempt",
+            &attempt.id,
+            "--phase",
+            "after",
+            "--test-result",
+            &path.display().to_string(),
+        ],
+    )
 }
 
 /// An edit outside the proposal's cage is refused even when it is a test file.
@@ -373,7 +422,7 @@ fn a_proposal_attempt_says_no_test_exists_yet() -> Result<(), String> {
     // #13205: the disclosure is historical wording, so it must stay accurate
     // once the proposed test exists and the after phase has run.
     write(root, PROPOSED_FILE, NEW_TEST)?;
-    let output = after(root, &attempt)?;
+    let output = after_with_result(root, &attempt)?;
     let finished = manifest(root, &attempt)?;
     assert_eq!(
         finished
@@ -475,5 +524,118 @@ fn a_symlinked_tests_directory_fails_the_preflight_and_leaves_no_attempt() -> Re
     commit_all(root, "real tests")?;
     let started = begin(root)?;
     assert!(!started.id.is_empty());
+    Ok(())
+}
+
+/// #13203: a proposal whose premise turns false between analysis and the
+/// baseline capture is stale and binds nothing. A git shim on `PATH` creates
+/// the proposed file at the capture's first `rev-parse --verify HEAD`, after
+/// the before phase has chosen the proposal, so the real binary must refuse
+/// with the cage owner's stale-proposal reason and leave no attempt.
+#[cfg(unix)]
+#[test]
+fn a_proposal_made_stale_before_the_baseline_is_captured_binds_nothing() -> Result<(), String> {
+    use std::os::unix::fs::PermissionsExt;
+    let fixture = fixture("proposal-stale-at-bind")?;
+    let root = &fixture.root;
+    let root_arg = root.display().to_string();
+    let seam = seam_id(root, &root_arg)?;
+    let shim_dir = root.with_file_name(format!(
+        "{}-git-shim",
+        root.file_name()
+            .map(|name| name.to_string_lossy().into_owned())
+            .unwrap_or_default()
+    ));
+    fs::create_dir_all(&shim_dir).map_err(|error| error.to_string())?;
+    let marker = shim_dir.join("marker");
+    let shim = shim_dir.join("git");
+    fs::write(
+        &shim,
+        r#"#!/bin/sh
+case "$*" in
+  *"rev-parse --verify HEAD"*)
+    if [ ! -e "$RIPR_TEST_MARKER" ]; then
+      printf 'fn appeared() {}\n' > "$RIPR_TEST_TARGET" || exit 90
+      : > "$RIPR_TEST_MARKER"
+    fi ;;
+esac
+exec "$RIPR_TEST_REAL_GIT" "$@"
+"#,
+    )
+    .map_err(|error| error.to_string())?;
+    fs::set_permissions(&shim, fs::Permissions::from_mode(0o755))
+        .map_err(|error| error.to_string())?;
+    let original_path = std::env::var_os("PATH").ok_or("PATH is missing")?;
+    let real_git = std::env::split_paths(&original_path)
+        .map(|directory| directory.join("git"))
+        .find(|path| {
+            fs::metadata(path).is_ok_and(|metadata| {
+                metadata.is_file() && metadata.permissions().mode() & 0o111 != 0
+            })
+        })
+        .ok_or("git is missing from PATH")?
+        // Absolute, so the shim still finds it from the fixture directory.
+        .canonicalize()
+        .map_err(|error| error.to_string())?;
+    let path = std::env::join_paths(
+        std::iter::once(shim_dir.clone()).chain(std::env::split_paths(&original_path)),
+    )
+    .map_err(|error| error.to_string())?;
+    let output = Command::new(env!("CARGO_BIN_EXE_ripr"))
+        .current_dir(root)
+        .env("PATH", path)
+        .env("RIPR_TEST_REAL_GIT", real_git)
+        .env("RIPR_TEST_MARKER", &marker)
+        .env("RIPR_TEST_TARGET", root.join(PROPOSED_FILE))
+        .args([
+            "agent",
+            "repair",
+            "--json",
+            "--root",
+            &root_arg,
+            "--seam-id",
+            &seam,
+            "--phase",
+            "before",
+        ])
+        .output()
+        .map_err(|error| format!("spawn ripr: {error}"))?;
+    let text = combined(&output);
+    let interposed = marker.exists();
+    let _ = fs::remove_dir_all(&shim_dir);
+    if !interposed {
+        return Err(format!("the shim never created the proposed file: {text}"));
+    }
+    assert!(!output.status.success(), "{text}");
+    assert!(
+        text.contains("the new-test proposal is stale")
+            && text.contains(&format!("names `{PROPOSED_FILE}`"))
+            && text.contains("already exists"),
+        "{text}"
+    );
+    // An unreadable store or entry fails the test rather than passing as empty.
+    let attempts = root.join("target/ripr/repair-attempts");
+    let mut left = Vec::new();
+    match fs::read_dir(&attempts) {
+        Ok(entries) => {
+            for entry in entries {
+                let name = entry.map_err(|error| error.to_string())?.file_name();
+                if name.to_string_lossy().starts_with("repair-attempt-") {
+                    left.push(name);
+                }
+            }
+        }
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+        Err(error) => return Err(format!("read {}: {error}", attempts.display())),
+    }
+    assert!(
+        left.is_empty(),
+        "a stale proposal left attempts behind: {left:?}"
+    );
+    // The shim's file is untouched: the refusal neither credited nor removed it.
+    assert_eq!(
+        fs::read_to_string(root.join(PROPOSED_FILE)).map_err(|error| error.to_string())?,
+        "fn appeared() {}\n"
+    );
     Ok(())
 }

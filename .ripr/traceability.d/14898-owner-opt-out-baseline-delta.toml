@@ -1,0 +1,19 @@
+# An owner opt-out added after a baseline withholds that owner's baseline
+# debt instead of reading it as resolved (#14898).
+[[extend]]
+id = "RIPR-SPEC-0016"
+tests = [
+  "crates/ripr/src/output/baseline_delta.rs::tests::owner_opt_outs_withhold_matched_entries_and_keep_others_resolvable",
+  "crates/ripr/src/output/baseline_delta.rs::tests::suffixed_cfg_twins_are_disclosed_as_ambiguous_not_opted_out",
+  "crates/ripr/src/output/baseline_delta.rs::tests::legacy_entries_and_malformed_disclosures_fail_closed",
+  "crates/ripr/tests/baseline_owner_opt_out.rs::a_skip_added_after_the_baseline_is_withheld_not_resolved",
+  "crates/ripr/tests/baseline_owner_opt_out.rs::a_deleted_owner_beside_the_skip_still_reads_resolved",
+  "crates/ripr/tests/baseline_owner_opt_out.rs::a_legacy_baseline_without_changed_owner_is_not_read_as_resolved",
+]
+code = [
+  "crates/ripr/src/output/baseline_delta.rs",
+  "crates/ripr/src/output/baseline.rs",
+  "crates/ripr/src/output/baseline_update.rs",
+  "crates/ripr/src/output/gap_decision_ledger.rs",
+  "crates/ripr/src/output/gate.rs",
+]

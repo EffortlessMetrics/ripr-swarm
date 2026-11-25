@@ -3,9 +3,9 @@
 //!
 //! The Python producer reads them once to choose the interpreter and
 //! confidence of the printed pytest verify command
-//! (`analysis/language/python/verify_interpreter.rs`). Doctor probes PATH
-//! `python -m pytest` and uses them only to explain a PATH failure, for
-//! example by suggesting that the user activate a venv that has pytest.
+//! (`analysis/language/python/verify_interpreter.rs`). Doctor reads the same
+//! facts to check the venv interpreter the verify command names, and probes
+//! PATH `python -m pytest` only when no project venv exists.
 //! Detection is purely static: nothing from the checkout is executed.
 
 use std::path::Path;

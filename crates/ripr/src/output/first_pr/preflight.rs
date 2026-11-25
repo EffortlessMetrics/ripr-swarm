@@ -571,7 +571,7 @@ fn preflight_output_check(root: &Path, options: &FirstPrOptions) -> PreflightChe
                 "Output path `{}` exists but is not a directory.",
                 options.out_dir
             ),
-            Some("Choose a directory for --out-dir, then rerun first-pr.".to_string()),
+            Some("Choose a directory for --output-dir, then rerun first-pr.".to_string()),
         )
         .with_path(human_path(&out_dir));
     }

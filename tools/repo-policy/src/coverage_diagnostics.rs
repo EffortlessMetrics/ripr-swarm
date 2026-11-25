@@ -17,6 +17,9 @@ fn supported_profile_platform(platform: &str) -> bool {
 mod linux;
 
 #[cfg(target_os = "linux")]
+mod memory;
+
+#[cfg(target_os = "linux")]
 mod process;
 
 #[cfg(all(test, target_os = "linux"))]
