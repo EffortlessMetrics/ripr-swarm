@@ -241,8 +241,10 @@ pub(super) fn name_scopes_in_tree(
 /// any mention is qualified (`a::name`), reaches the body block without a
 /// binding block, or meets a deciding block that also declares the name, has
 /// only a glob that may bind it, or binds it by a plain or unreadable path;
-/// and when the name is itself an imported leaf or a declared name anywhere
-/// in the body (`use super::name as alias;`, a nested `fn name`).
+/// when the name is itself an imported leaf or a declared name anywhere in
+/// the body (`use super::name as alias;`, a nested `fn name`); and for a
+/// mention inside a `mod` declared in the body, which does not see the
+/// blocks around it.
 pub(crate) fn nested_block_renames_in_tree(
     tree: &ast::SourceFile,
     line_index: &LineIndex,
@@ -295,6 +297,15 @@ pub(crate) fn nested_block_renames_in_tree(
             _ => {}
         }
         mentions += 1;
+        // A `mod` declared inside the body opens a fresh item scope that
+        // does not see the blocks around it.
+        if parent
+            .ancestors()
+            .take_while(|node| node != body.syntax())
+            .any(|node| ast::Module::can_cast(node.kind()))
+        {
+            return None;
+        }
         let mut decided = false;
         for block in parent.ancestors().filter_map(ast::BlockExpr::cast) {
             if block.syntax() == body.syntax() {

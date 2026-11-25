@@ -7191,6 +7191,20 @@ mod nested_block_rename_beside_owner {
             assert_eq!(discount(100), 10);
         }
     }
+
+    #[test]
+    fn nested_block_inner_module_case() {
+        {
+            use super::other as discount;
+            mod inner {
+                use super::*;
+                pub fn check() {
+                    assert_eq!(discount(100), 10);
+                }
+            }
+            inner::check();
+        }
+    }
 }
 ";
 
@@ -7283,6 +7297,13 @@ fn integration_rename_case() {
                 "{name}: the owner may still be called"
             );
         }
+        // A `mod` inside the renaming block does not see the block's `use`;
+        // its glob reaches the owner, so the block cannot decide that call.
+        let (owner, inner) = renamed_other_parts(&index, "nested_block_inner_module_case")?;
+        assert!(!bare_name_renamed_in_nested_blocks(&index, owner, inner));
+        assert!(!test_calls_only_a_renamed_other_function(
+            &index, owner, inner
+        ));
         // A qualified owner call beside the rename keeps the test related,
         // but the renamed bare call beside it still names the other function.
         let (owner, mixed) = renamed_other_parts(&index, "qualified_and_bare_case")?;
