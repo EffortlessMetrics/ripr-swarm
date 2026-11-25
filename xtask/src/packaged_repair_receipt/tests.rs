@@ -247,3 +247,57 @@ fn packaged_repair_receipt_wrong_semantic_gap_fails_against_fixture() -> Result<
     assert_eq!(gate.verdict, GateVerdict::Failed);
     Ok(())
 }
+
+#[test]
+fn packaged_repair_receipt_matching_semantics_cannot_replace_artifact_identity()
+-> Result<(), String> {
+    let mut receipt = parse_receipt(&skeleton_receipt_text()?)?;
+    let inventory = vec!["synthetic-artifact-set".to_string()];
+    for channel in [
+        &mut receipt.channels.installed_cli,
+        &mut receipt.channels.packaged_vsix,
+    ] {
+        channel.artifact_identities = inventory.clone();
+        channel.semantic = Some(semantic_snapshot());
+        channel.section_state = QualificationSectionState::Qualified;
+        channel.executed_steps = vec!["journey".to_string()];
+    }
+    for section in &mut receipt.required_sections {
+        section.state = QualificationSectionState::Qualified;
+        if section.channel.is_none() {
+            receipt.negative_controls.push(super::model::NamedControl {
+                control_id: section.section_id.clone(),
+                state: QualificationSectionState::Qualified,
+            });
+        }
+    }
+    receipt.parity.verdict = ParityVerdict::Qualified;
+    let expected_fixture = expected_fixture_identity();
+    let evaluate_receipt = |receipt: &super::model::PackagedRepairParityReceipt| {
+        evaluate(&GateInput {
+            receipt,
+            expected_fixture: &expected_fixture,
+            require_full_qualification: true,
+        })
+    };
+    let positive = evaluate_receipt(&receipt);
+    assert_eq!(positive.verdict, GateVerdict::Passed, "{positive:?}");
+
+    for channel in ["installed_cli", "packaged_vsix"] {
+        for bad_inventory in [vec![], vec![" ".to_string()]] {
+            let mut missing = receipt.clone();
+            if channel == "installed_cli" {
+                missing.channels.installed_cli.artifact_identities = bad_inventory;
+            } else {
+                missing.channels.packaged_vsix.artifact_identities = bad_inventory;
+            }
+            let result = evaluate_receipt(&missing);
+            assert_eq!(result.verdict, GateVerdict::Failed, "{channel}");
+            let expected_failure = format!(
+                "channel `{channel}` cannot be qualified without nonempty artifact_identities"
+            );
+            assert!(result.failures.contains(&expected_failure), "{result:?}");
+        }
+    }
+    Ok(())
+}
