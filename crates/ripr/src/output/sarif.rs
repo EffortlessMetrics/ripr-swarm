@@ -1516,8 +1516,8 @@ fn finding_message(finding: &Finding) -> String {
 /// the same guard the human hint and Summary apply (#7003, #7330, #15295).
 /// Owner reach alone does not reach the changed expression: when tests call
 /// the owner but infection is `no` (a skipped branch, a default every call
-/// overrides) or `unknown`, the message stays at the owner level instead of
-/// saying the change is reached.
+/// overrides) or anything short of `yes`, the message stays at the owner
+/// level instead of saying the change is reached.
 fn finding_class_message_predicate(finding: &Finding) -> &'static str {
     let reach_established = finding.ripr.reach.state == StageState::Yes
         && !finding
@@ -1535,7 +1535,7 @@ fn finding_class_message_predicate(finding: &Finding) -> &'static str {
         ExposureClass::ReachableUnrevealed if finding.ripr.infect.state == StageState::No => {
             "is in code tests call, but no test input appears to exercise it"
         }
-        ExposureClass::ReachableUnrevealed if finding.ripr.infect.state == StageState::Unknown => {
+        ExposureClass::ReachableUnrevealed if finding.ripr.infect.state != StageState::Yes => {
             "is in code tests call, but whether a test input exercises it is not established"
         }
         ExposureClass::Exposed => "appears noticed by tests",
@@ -3800,6 +3800,7 @@ weakly_gripped = "note"
         let mut reached = sample_finding();
         reached.class = ExposureClass::ReachableUnrevealed;
         reached.ripr.reach = stage(StageState::Yes, "related tests call discounted_total");
+        reached.ripr.infect = stage(StageState::Yes, "a test input enters the changed code");
         let message = finding_message(&reached);
         assert!(
             message.contains("is reached by tests, but no assertion"),
@@ -3846,15 +3847,25 @@ weakly_gripped = "note"
             "{message}"
         );
 
-        // Uncertain infection also stays at the owner level.
-        let mut uncertain = reached.clone();
-        uncertain.ripr.infect = stage(StageState::Unknown, "input not modelled");
-        let message = finding_message(&uncertain);
-        assert!(!message.contains("is reached by tests"), "{message}");
-        assert!(
-            message.contains("whether a test input exercises it is not established."),
-            "{message}"
-        );
+        // Any infection short of `yes` also stays at the owner level.
+        for infect in [
+            StageState::Unknown,
+            StageState::Weak,
+            StageState::Opaque,
+            StageState::NotApplicable,
+        ] {
+            let mut uncertain = reached.clone();
+            uncertain.ripr.infect = stage(infect.clone(), "input not established");
+            let message = finding_message(&uncertain);
+            assert!(
+                !message.contains("is reached by tests"),
+                "{infect:?}: {message}"
+            );
+            assert!(
+                message.contains("whether a test input exercises it is not established."),
+                "{infect:?}: {message}"
+            );
+        }
 
         // Empty expression: a plain subject, still one sentence.
         let mut bare = sample_finding();
