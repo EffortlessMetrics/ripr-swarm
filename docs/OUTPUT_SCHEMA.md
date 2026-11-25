@@ -1165,7 +1165,7 @@ text report for coding agents. It is not JSON and carries no `schema_version`;
 its stability contract is the line grammar below. It is a pure projection of
 the same triage selector, candidate-actionable filter and scope-bound drill-in
 commands `--format human` uses, so it adds no verdict, class or ranking. It is
-diff-scoped, refuses `--suppression-policy` like SARIF and the badge formats,
+diff-scoped, refuses `--suppression-policy` like the badge formats,
 and has no legend or repeated disclaimers.
 
 ```text
@@ -5074,8 +5074,8 @@ ripr check --format repo-sarif-compact
 `sarif-compact` and `repo-sarif-compact` (#13195) render the same documents
 minified: parsed values are identical to `sarif`/`repo-sarif`, including the
 `RIPR_SARIF_RESULTS_BYTES` results bound (#13102, default 1,000,000 pretty
-bytes; `0` removes the cap; results are kept by level, errors then warnings
-then notes; an unparseable value fails the run) and its in-band disclosure (`limited_results_bound`, `document_complete: false`,
+bytes; `0` removes the cap; unsuppressed results are kept before suppressed
+ones, then by level, errors then warnings then notes; an unparseable value fails the run) and its in-band disclosure (`limited_results_bound`, `document_complete: false`,
 `results_rendered`/`results_total`/`results_omitted`). A bounded document
 stays valid SARIF 2.1.0 and is incomplete, never a clean run.
 The pretty `sarif` and `repo-sarif` bytes are unchanged.
@@ -5221,7 +5221,10 @@ Every result carries:
   authority.
 
 Suppressed exposure-gap Findings remain visible with SARIF suppression metadata
-when their configured severity is visible. Results whose configured severity is
+when their configured severity is visible. Entries match by the same rule as
+`check --suppression-policy` (`finding_id`, `path` + `function`, or a `path`
+glob, with optional `static_class`), and an explicit `--suppression-policy`
+replaces `[suppressions] path` for a SARIF run (#15377). Results whose configured severity is
 `off` are omitted. See RIPR-SPEC-0008 for the full suppression and baseline
 policy contract.
 
@@ -5261,7 +5264,7 @@ The JSON report is repo automation output with schema version `"0.1"`:
       "fingerprint": "ripr.seam.weakly_gripped|src/lib.rs|0123456789abcdef0123456789abcdef|0",
       "uri": "src/lib.rs",
       "line": 42,
-      "message": "weakly_gripped seam grip for predicate_boundary"
+      "message": "Tests only weakly grip this code: `amount >= discount_threshold`."
     }
   ]
 }
@@ -21111,7 +21114,7 @@ top-level `source_subject`:
 
 - `digest_algorithm`: always `"sha256"`.
 - `corpus` (additive, full Rust inventory only): the analysis-owned
-  `{ "scope": "rust_workspace", "cache_schema_version": "1.196",
+  `{ "scope": "rust_workspace", "cache_schema_version": "1.197",
   "files_content_hash": "<16 lowercase hex digits>" }` from the actual
   classified inventory cache key, including both production and test Rust
   files after the existing generated-file exclusions. Repo-exposure producers
@@ -21915,7 +21918,7 @@ targeted-rerun receipt shape:
     "recomputation_reasons": ["selected_test_scope_recomputed"],
     "invalidation_status": "not_available",
     "input_fingerprint": {
-      "schema_version": "1.196",
+      "schema_version": "1.197",
       "analyzer_version": "0.11.0+0123456789abcdef0123456789abcdef01234567+languages:rust=1,typescript=1,python=1,perl=0",
       "workspace_root_hash": "…",
       "files_content_hash": "…",

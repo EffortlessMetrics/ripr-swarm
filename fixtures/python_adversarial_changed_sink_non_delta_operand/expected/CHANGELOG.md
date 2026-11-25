@@ -759,3 +759,14 @@ Command:
 Updated:
 - `expected/sarif.json`
 - `expected/github.txt`
+
+## Pending — python_adversarial_changed_sink_non_delta_operand (41)
+
+Reason:
+RIPR-SPEC-0008: SARIF alert messages are one plain line (#15374)
+
+Command:
+`cargo xtask goldens bless python_adversarial_changed_sink_non_delta_operand --reason "..."`
+
+Updated:
+- `expected/sarif.json`

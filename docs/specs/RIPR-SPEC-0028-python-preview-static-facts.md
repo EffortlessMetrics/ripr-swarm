@@ -2304,6 +2304,48 @@ remain unresolved. This does not add a repair-packet producer or change the
 packet validator. The Rust range-bound producer in RIPR-SPEC-0370 remains a
 separate proposed contract.
 
+## Nested Route-Client Fixture Amendment (#14141)
+
+A route client built by a fixture over one of its parameters
+(`def client(items_app): return TestClient(items_app)`) is identified
+through the fixture that supplies that parameter, transitively, up to
+four hops. A dependency resolves from the requesting test's scope first
+(its module, then the conftest chain from there), as pytest resolves a
+fixture dependency for the test that ultimately requests it, falling back
+to the requesting fixture's file and its conftest chain. A dependency the
+test directly parametrizes is supplied by pytest rather than by its
+fixture, a parameter with a default is never injected, and pytest's fixture
+argument reader skips a positional-only parameter, so any of the three ends
+the chain. The same reader decides whether a test itself takes a fixture as a
+parameter: a positional-only or defaulted parameter of a test is not a fixture
+request, so a fixture does not resolve a limit for such a test and the
+route-client chain is not walked for it. Every `return` or `yield`
+of a supplying fixture counts under
+any spacing Python allows, including a bare exit and an exit whose value
+starts with punctuation (`return[other]`, `yield+x`) and a parenthesized yield
+(`held = (yield other)`); only a name that starts with the keyword
+(`returns = ...`) is not an exit. An exit that does not
+return the same plain name, a rebound, cyclic or over-cap link, or an
+unresolved dependency leaves the application unidentified and earns no
+oracle credit. A link's parameter is rebound by every statement that
+binds the name, a `case` capture included (`case base_app:` binds
+`base_app`), and such a link ends the chain.
+
+Tests: `route_identity_tests.rs::a_nested_fixture_client_over_the_owners_app_is_identified`,
+`route_identity_tests.rs::a_nested_fixture_client_over_a_rival_app_does_not_relate`,
+`route_identity_tests.rs::a_two_hop_nested_fixture_client_is_identified`,
+`route_identity_tests.rs::nested_fixture_chains_that_cannot_be_read_stay_unidentified`,
+`route_identity_tests.rs::a_test_module_app_override_wins_over_the_conftest_app_fixture`,
+`route_identity_tests.rs::a_directly_parametrized_app_dependency_is_not_followed_to_its_fixture`,
+`route_identity_tests.rs::a_defaulted_app_parameter_is_not_a_fixture_request`,
+`route_identity_tests.rs::a_positional_only_app_parameter_is_not_a_fixture_request`,
+`route_identity_tests.rs::a_parenthesized_yield_counts_as_an_exit`,
+`route_identity_tests.rs::a_test_parameter_pytest_does_not_inject_does_not_start_the_chain`,
+`route_identity_tests.rs::a_case_capture_that_rebinds_the_app_parameter_stops_the_chain`,
+`literal_fixture_tests.rs::a_positional_only_test_parameter_is_not_a_fixture_request`,
+`route_identity_tests.rs::an_exit_whose_value_starts_with_punctuation_fails_the_chain_closed` and
+`route_identity_tests.rs::an_exit_the_reader_cannot_use_fails_the_chain_closed`.
+
 ## Metrics
 
 In addition to the cross-language metrics in RIPR-SPEC-0026, the Python

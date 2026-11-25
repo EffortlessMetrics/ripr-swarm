@@ -24,6 +24,19 @@ impl Workspace {
     /// One package whose `pick` returns `Ok(Mode::A)` and whose test `picks_a`
     /// defines `macros` before running `assertion`.
     fn create(macros: &str, assertion: &str) -> Result<Self, String> {
+        Self::create_with_owner(
+            macros,
+            assertion,
+            "pub fn pick(n: u32) -> Result<Mode, ()> {
+    if n > 10 {
+        return Err(());
+    }
+    Ok(Mode::A)
+}",
+        )
+    }
+
+    fn create_with_owner(macros: &str, assertion: &str, declaration: &str) -> Result<Self, String> {
         static SEQUENCE: AtomicU64 = AtomicU64::new(0);
         let root = std::env::temp_dir().join(format!(
             "ripr-macro-held-owner-call-{}-{}",
@@ -48,12 +61,7 @@ impl Workspace {
                 "#[derive(Debug, PartialEq)]
 pub enum Mode {{ A, B }}
 
-pub fn pick(n: u32) -> Result<Mode, ()> {{
-    if n > 10 {{
-        return Err(());
-    }}
-    Ok(Mode::A)
-}}
+{declaration}
 
 #[cfg(test)]
 mod tests {{
@@ -73,6 +81,10 @@ mod tests {{
     /// (grip class, oracle kind of `picks_a`, its relation reason) on the
     /// `Ok(Mode::A)` return seam of `pick`.
     fn ok_seam(&self) -> Result<(String, String, String), String> {
+        self.ok_seam_for("src/lib.rs::pick")
+    }
+
+    fn ok_seam_for(&self, owner: &str) -> Result<(String, String, String), String> {
         let output = Command::new(env!("CARGO_BIN_EXE_ripr"))
             .args(["check", "--root"])
             .arg(&self.root)
@@ -102,7 +114,7 @@ mod tests {{
         let seam = seams
             .iter()
             .find(|seam| {
-                seam.pointer("/owner").and_then(Value::as_str) == Some("src/lib.rs::pick")
+                seam.pointer("/owner").and_then(Value::as_str) == Some(owner)
                     && seam.pointer("/expression").and_then(Value::as_str) == Some("Ok(Mode::A)")
             })
             .ok_or_else(|| format!("premise: no `Ok(Mode::A)` seam in {seams:?}"))?;
@@ -253,6 +265,83 @@ fn an_owner_result_local_only_an_untrusted_macro_uses_gives_no_exact_credit() ->
             "unknown",
         ),
         (
+            "an unwrapped local only the local macro uses leaves only the unwrap smoke",
+            CHECK_OK,
+            "let r = pick(0).unwrap();\n        assert_eq!(check_ok!(r), Ok(Mode::A));",
+            "weakly_gripped",
+            "smoke_only",
+        ),
+        (
+            "a callback in the chain records the result for the assertion",
+            CHECK_OK,
+            "let mut seen = Ok(Mode::B);\n        let r = pick(0).inspect(|v| { seen = Ok(v.clone()); });\n        assert_eq!(check_ok!(r), seen);",
+            "strongly_gripped",
+            "exact_value",
+        ),
+        (
+            "a borrowed owner result is compared outside the local macro",
+            CHECK_OK,
+            "let r = pick(0).unwrap();\n        let actual = &pick(0);\n        assert_eq!(check_ok!(r), *actual);",
+            "strongly_gripped",
+            "exact_value",
+        ),
+        (
+            "the unwrapped local is asserted plainly",
+            CHECK_OK,
+            "let r = pick(0).unwrap();\n        assert_eq!(r, Mode::A);",
+            "strongly_gripped",
+            "exact_value",
+        ),
+        (
+            "observed function-item alias",
+            CHECK_OK,
+            "let _held = pick(0); let f = pick; assert_eq!(check_ok!(_held), f(0));",
+            "strongly_gripped",
+            "exact_value",
+        ),
+        (
+            "discarded function-item alias",
+            CHECK_OK,
+            "let _held = pick(0); let f = pick; let _ = f(0); assert_eq!(check_ok!(_held), Ok::<Mode, ()>(Mode::A));",
+            "propagation_unknown",
+            "unknown",
+        ),
+        (
+            "shadowed function-item alias",
+            CHECK_OK,
+            "let _held = pick(0); let f = pick; let f = |_: u32| Ok::<Mode, ()>(Mode::A); assert_eq!(check_ok!(_held), f(0));",
+            "propagation_unknown",
+            "unknown",
+        ),
+        (
+            "reassigned function pointer",
+            CHECK_OK,
+            "let _held = pick(0); let mut f: fn(u32) -> Result<Mode, ()> = pick; f = |_| Ok(Mode::A); assert_eq!(check_ok!(_held), f(0));",
+            "propagation_unknown",
+            "unknown",
+        ),
+        (
+            "a parenthesized alias call observes the owner",
+            CHECK_OK,
+            "let r = pick(0); let f = pick; assert_eq!(check_ok!(r), (f)(0));",
+            "strongly_gripped",
+            "exact_value",
+        ),
+        (
+            "a bare alias read does not carry the owner result",
+            CHECK_OK,
+            "let r = pick(0); let f = pick; let expected = { let _ = f; Ok::<Mode, ()>(Mode::A) }; assert_eq!(check_ok!(r), expected);",
+            "propagation_unknown",
+            "unknown",
+        ),
+        (
+            "a same-name import does not observe the owner",
+            CHECK_OK,
+            "let r = crate::pick(0); mod other { pub fn pick(_: u32) -> Result<crate::Mode, ()> { Ok(crate::Mode::A) } } use other::pick; let f = pick; assert_eq!(check_ok!(r), f(0));",
+            "propagation_unknown",
+            "unknown",
+        ),
+        (
             "the bound result is asserted plainly",
             CHECK_OK,
             "let r = pick(0);\n        assert_eq!(r, Ok(Mode::A));",
@@ -330,6 +419,116 @@ fn an_owner_result_local_only_an_untrusted_macro_uses_gives_no_exact_credit() ->
             wrong.push(format!(
                 "{label}: expected ({grip}, {oracle}), got ({observed_grip}, {observed_oracle})"
             ));
+        }
+    }
+    if wrong.is_empty() {
+        Ok(())
+    } else {
+        Err(wrong.join("\n"))
+    }
+}
+
+#[test]
+fn method_receivers_preserve_real_observations_and_demote_held_calls() -> Result<(), String> {
+    let declaration = "
+        #[derive(Clone, Copy, Default)]
+        pub struct Picker;
+        impl Picker {
+            pub fn pick(&self, n: u32) -> Result<Mode, ()> {
+                if n > 10 { return Err(()); }
+                Ok(Mode::A)
+            }
+        }
+        pub type Alias = Picker;
+        pub use self::Picker as Renamed;
+        pub struct Holder {
+            pub picker: Picker,
+        }
+        struct Other;
+        impl Other {
+            fn pick(&self, _: u32) -> Result<Mode, ()> { Ok(Mode::A) }
+        }
+    ";
+    let macros = "macro_rules! check_ok { ($e:expr) => { Ok::<Mode, ()>(Mode::A) }; }";
+    let cases = [
+        (
+            "a second binding of the owner type is observed",
+            "let held = Picker; let observed = Picker;
+             assert_eq!(check_ok!(held.pick(0)), observed.pick(0));",
+            "exact_value",
+        ),
+        (
+            "a parenthesized receiver is held",
+            "let picker = Picker;
+             assert_eq!(check_ok!((picker).pick(0)), Ok(Mode::A));",
+            "unknown",
+        ),
+        (
+            "a same-named call on another type is unrelated",
+            "let picker = Picker; let other = Other;
+             assert_eq!(check_ok!((picker).pick(0)), other.pick(0));",
+            "unknown",
+        ),
+        (
+            "a binding the body does not type is unresolved and keeps the parsed reading",
+            "let held = Picker; let observed = Picker::default();
+             assert_eq!(check_ok!(held.pick(0)), observed.pick(0));",
+            "exact_value",
+        ),
+        (
+            "an unresolved receiver outside the macro keeps the parsed reading",
+            "let picker = Picker;
+             assert_eq!(check_ok!(picker.pick(0)), picker.clone().pick(0));",
+            "exact_value",
+        ),
+        (
+            "a type alias of the owner is not settled as another type",
+            "let held = Picker; let observed: Alias = Picker;
+             assert_eq!(check_ok!(held.pick(0)), observed.pick(0));",
+            "exact_value",
+        ),
+        (
+            "a use rename of the owner is not settled as another type",
+            "let held = Picker; let observed: Renamed = Picker;
+             assert_eq!(check_ok!(held.pick(0)), observed.pick(0));",
+            "exact_value",
+        ),
+        (
+            "a field receiver does not resolve through a same-named local",
+            "let held = Picker; let picker = Other;
+             let holder = Holder { picker: Picker };
+             assert_eq!(check_ok!(held.pick(0)), holder.picker.pick(0));
+             let _ = picker.pick(0);",
+            "exact_value",
+        ),
+        (
+            "a binding copied from another local is not settled as another type",
+            "let held = Picker; let alias = held;
+             assert_eq!(check_ok!(held.pick(0)), alias.pick(0));",
+            "exact_value",
+        ),
+        (
+            "a binding read from a constant is not settled as another type",
+            "const SHARED: Picker = Picker;
+             let held = Picker; let observed = SHARED;
+             assert_eq!(check_ok!(held.pick(0)), observed.pick(0));",
+            "exact_value",
+        ),
+        (
+            "an alias of a call on another type does not observe the owner",
+            "let picker = Picker; let other = Other;
+             let r = picker.pick(0); let actual = &other.pick(0);
+             assert_eq!(check_ok!(r), *actual);",
+            "unknown",
+        ),
+    ];
+    // Every case runs, so one report names each wrong reading.
+    let mut wrong = Vec::new();
+    for (label, assertion, expected) in cases {
+        let workspace = Workspace::create_with_owner(macros, assertion, declaration)?;
+        let (_, oracle, _) = workspace.ok_seam_for("src/lib.rs::impl Picker::pick")?;
+        if oracle != expected {
+            wrong.push(format!("{label}: expected {expected}, got {oracle}"));
         }
     }
     if wrong.is_empty() {

@@ -168,18 +168,35 @@ fn guard_refusal_does_not_override_unestablished_reach() -> Result<(), String> {
     Ok(())
 }
 
-/// A withheld finding has left its Summary bucket, so the unconfirmed-link
-/// note must leave with it. Otherwise the note lands on the bucket's remaining
-/// member, whose reach is established (#15295).
+/// A withheld finding leaves its Summary bucket, so its unconfirmed-link note
+/// must leave with it. The Rust-only fixture keeps this check in the small profile.
 #[test]
 fn a_withheld_unconfirmed_finding_is_not_counted_in_the_summary_note() -> Result<(), String> {
-    let name = "mixed_rust_typescript_preview";
-    let fixture = Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../../fixtures")
-        .join(name);
+    exercise_summary_suppression(
+        &Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/weak_reach_summary"),
+        "src/heuristic.rs",
+        "rust",
+    )
+}
+
+// Keep the real mixed-language CLI configuration and suppression-policy control.
+#[cfg(feature = "lang-typescript")]
+#[test]
+fn mixed_language_suppression_excludes_the_unconfirmed_link() -> Result<(), String> {
+    exercise_summary_suppression(
+        &Path::new(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/mixed_rust_typescript_preview"),
+        "web/discount.ts",
+        "mixed",
+    )
+}
+
+fn exercise_summary_suppression(
+    fixture: &Path,
+    suppressed_path: &str,
+    profile: &str,
+) -> Result<(), String> {
     let summary_of = |policy: Option<&Path>| -> Result<String, String> {
-        // The CLI, not the library entry point: the fixture's `ripr.toml`
-        // enables the TypeScript preview, and the binary is what reads it.
+        // Exercise the CLI's config and suppression-policy plumbing as well as rendering.
         let mut command = std::process::Command::new(env!("CARGO_BIN_EXE_ripr"));
         command
             .current_dir(fixture.join("input"))
@@ -189,6 +206,13 @@ fn a_withheld_unconfirmed_finding_is_not_counted_in_the_summary_note() -> Result
             command.arg("--suppression-policy").arg(policy);
         }
         let output = command.output().map_err(|error| error.to_string())?;
+        if !output.status.success() {
+            return Err(format!(
+                "{profile}: CLI exited {}: {}",
+                output.status,
+                String::from_utf8_lossy(&output.stderr)
+            ));
+        }
         let stdout = String::from_utf8_lossy(&output.stdout).into_owned();
         stdout
             .lines()
@@ -196,26 +220,35 @@ fn a_withheld_unconfirmed_finding_is_not_counted_in_the_summary_note() -> Result
             .map(str::to_string)
             .ok_or_else(|| {
                 format!(
-                    "{name}: no Summary line: {stdout}\n{}",
+                    "{profile}: no Summary line: {stdout}\n{}",
                     String::from_utf8_lossy(&output.stderr)
                 )
             })
     };
 
-    // Control: one Rust finding with established reach and one TypeScript
-    // finding with a heuristic link share the bucket.
+    // Control: only one of two partly noticed findings has established reach.
     let unsuppressed = summary_of(None)?;
     assert!(
         unsuppressed.contains("2 partly noticed (1 through a test link ripr could not confirm), "),
         "{unsuppressed}"
     );
 
-    let policy = Path::new(env!("CARGO_TARGET_TMPDIR")).join("weak_reach_hint_15295_policy.toml");
-    std::fs::write(
-        &policy,
-        "schema_version = 1\n\n[[suppressions]]\nkind = \"exposure_gap\"\npath = \"web/discount.ts\"\nreason = \"accepted preview debt\"\nowner = \"team-web\"\n",
-    )
-    .map_err(|error| error.to_string())?;
+    let policy_for = |label: &str, path: &str| -> Result<std::path::PathBuf, String> {
+        let policy = Path::new(env!("CARGO_TARGET_TMPDIR"))
+            .join(format!("weak_reach_hint_15295_{profile}_{label}.toml"));
+        std::fs::write(
+            &policy,
+            format!(
+                "schema_version = 1\n\n[[suppressions]]\nkind = \"exposure_gap\"\npath = \"{path}\"\nreason = \"accepted fixture debt\"\nowner = \"test-fixture\"\n"
+            ),
+        )
+        .map_err(|error| error.to_string())?;
+        Ok(policy)
+    };
+
+    // The finding without established reach is suppressed: it leaves its
+    // Summary bucket, and the unconfirmed-link note leaves with it.
+    let policy = policy_for("policy", suppressed_path)?;
     let suppressed = summary_of(Some(&policy))?;
     assert!(
         suppressed.contains("1 partly noticed, 0 reached but not noticed, "),
@@ -225,6 +258,22 @@ fn a_withheld_unconfirmed_finding_is_not_counted_in_the_summary_note() -> Result
     assert!(
         suppressed.contains("1 suppressed by your settings"),
         "{suppressed}"
+    );
+
+    // The other way round: the finding with established reach is suppressed
+    // (`src/lib.rs` in each fixture) and the other stays, so the note stays.
+    // Under the first policy alone, a Summary that dropped the note whenever
+    // anything is suppressed would read alike.
+    let policy = policy_for("reaching", "src/lib.rs")?;
+    let other_suppressed = summary_of(Some(&policy))?;
+    assert!(
+        other_suppressed
+            .contains("1 partly noticed (1 through a test link ripr could not confirm), "),
+        "{other_suppressed}"
+    );
+    assert!(
+        other_suppressed.contains("1 suppressed by your settings"),
+        "{other_suppressed}"
     );
     Ok(())
 }

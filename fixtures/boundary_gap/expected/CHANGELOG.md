@@ -1,5 +1,18 @@
 # Golden Output Changes
 
+## Pending — corpus cache generation 1.197 for chained owner-result locals (#16219)
+
+A local bound to an unwrapped or chained owner call whose only uses sit inside
+an inner macro the analyzer does not trust (`let r = pick(0).unwrap();
+assert_eq!(check_ok!(r), ..)`) now makes that assertion read as an unknown
+oracle for the owner, which bumps the analyzer cache schema to 1.197, above
+the 1.196 that #14116 already took on main. Move the
+portable unchanged-attempt snapshots to 1.197, recompute the
+`raw_json_placeholder_v1` artifact content commitment, then the dependent
+verify commitments and receipt byte hashes. Weak grip, unchanged movement,
+historical currentness, incomplete receipt status and fail-closed first-action
+routing remain unchanged. No other fixture output is regenerated.
+
 ## Pending — corpus cache generation 1.196 for propagated fallible check helpers (#14116)
 
 A test-local check helper with a `?` now lends its assertion when every eager
@@ -1736,3 +1749,14 @@ Command:
 
 Updated:
 - `expected/human.txt`
+
+## Pending — boundary_gap (39)
+
+Reason:
+RIPR-SPEC-0008: SARIF alert messages are one plain line (#15374)
+
+Command:
+`cargo xtask goldens bless boundary_gap --reason "..."`
+
+Updated:
+- `expected/sarif.json`

@@ -467,3 +467,25 @@ Command:
 Updated:
 - `expected/sarif.json`
 - `expected/github.txt`
+
+## Pending — typescript_rejects_literal_equality (36)
+
+Reason:
+RIPR-SPEC-0008: SARIF alert messages are one plain line (#15374)
+
+Command:
+`cargo xtask goldens bless typescript_rejects_literal_equality --reason "..."`
+
+Updated:
+- `expected/sarif.json`
+
+## Pending — typescript_rejects_literal_equality (37)
+
+Reason:
+RIPR-SPEC-0008: SARIF reach and exercise wording follows the stage evidence (#15374)
+
+Command:
+`cargo xtask goldens bless typescript_rejects_literal_equality --reason "..."`
+
+Updated:
+- `expected/sarif.json`
