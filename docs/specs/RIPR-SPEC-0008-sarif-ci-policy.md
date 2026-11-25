@@ -309,7 +309,10 @@ For v1:
   --suppression-policy` and the badges use (#15377): a `finding_id`, an exact
   `path` + `function` owner, or a `path` glob, the last two optionally
   narrowed by `static_class`. The first live entry in manifest order supplies
-  the justification.
+  the justification. Selectors match the finding's root-relative path with
+  only the platform separator rewritten to `/` (#16271): on Unix a literal
+  `\` stays part of a file name, so a directory glob never reaches a file
+  whose name contains one, consistent with that file's distinct SARIF URI.
 - Expired or malformed suppressions must not suppress a result.
 - Seam results whose grip class is `suppressed` are omitted by default because
   `severity.seams.suppressed = "off"`. If a repository configures that class to

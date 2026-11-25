@@ -824,18 +824,19 @@ pub struct SuppressionApplication {
 pub(crate) fn root_relative_finding_path(root: &Path, file: &Path) -> String {
     let relative = file.strip_prefix(root).unwrap_or(file);
     native_separators_to_slash(&relative.display().to_string(), std::path::MAIN_SEPARATOR)
-        .trim_start_matches("./")
-        .to_string()
 }
 
-/// `display` with `separator` rewritten to `/`; a no-op where the separator
-/// already is `/`. Split out so both platforms' rules are testable anywhere.
+/// `display` with `separator` rewritten to `/` (a no-op where the separator
+/// already is `/`), then any leading `./` dropped, so a Windows `.\src\x.rs`
+/// and a Unix `./src/x.rs` both become `src/x.rs`. Split out so both
+/// platforms' rules are testable anywhere.
 fn native_separators_to_slash(display: &str, separator: char) -> String {
-    if separator == '/' {
+    let slashed = if separator == '/' {
         display.to_string()
     } else {
         display.replace(separator, "/")
-    }
+    };
+    slashed.trim_start_matches("./").to_string()
 }
 
 /// Applies exact-ID exposure-gap suppressions against a slice of finding ids
@@ -1411,6 +1412,16 @@ mod tests {
         assert_eq!(
             native_separators_to_slash("src\\a\\b.rs", '\\'),
             "src/a/b.rs"
+        );
+        // Windows `--root .` display: the separator is rewritten before the
+        // `./` trim, so an exact `path` + `function` entry still matches.
+        assert_eq!(
+            native_separators_to_slash(".\\src\\lib.rs", '\\'),
+            "src/lib.rs"
+        );
+        assert_eq!(
+            native_separators_to_slash("./src/lib.rs", '/'),
+            "src/lib.rs"
         );
         assert_eq!(
             native_separators_to_slash("src/a\\b.rs", '/'),
