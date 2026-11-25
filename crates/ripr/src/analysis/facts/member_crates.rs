@@ -375,19 +375,67 @@ impl MemberCrates {
         self.default_target_root_with_flags(crate_root, &["autolib", "autobins"])
     }
 
-    /// Whether `directory` (root-relative) holds the manifest of the package
-    /// nearest it, as the directory above an auto-discovered `tests/`,
-    /// `benches/` or `examples/` target must. A `tests/src/` module
-    /// directory has none of its own. Without manifest authority, or with an
+    /// Whether Cargo's automatic target discovery alone makes `file`
+    /// (root-relative, directly under `tests/`, `benches/` or `examples/`) a
+    /// crate root, with no other root able to declare it as a module: the
+    /// directory above holds the nearest package manifest, which leaves the
+    /// matching `autotests`/`autobenches`/`autoexamples` on and places no
+    /// target `path` directly in the package directory or in that target
+    /// directory (a `[lib] path = "lib.rs"` could declare
+    /// `mod tests { mod it; }`). Without manifest authority, or with an
     /// unreadable or virtual manifest, the answer is no.
-    pub(crate) fn is_package_directory(&self, directory: &Path) -> bool {
+    pub(crate) fn auto_discovers_target_root(&self, file: &Path) -> bool {
         let Some(root) = &self.root else {
             return false;
         };
+        let Some(directory) = file.parent() else {
+            return false;
+        };
+        let flag = match directory.file_name().and_then(|name| name.to_str()) {
+            Some("tests") => "autotests",
+            Some("benches") => "autobenches",
+            Some("examples") => "autoexamples",
+            _ => return false,
+        };
+        let Some(package_directory) = directory.parent() else {
+            return false;
+        };
         let root = lexical(root);
-        let directory = lexical(&root.join(directory));
-        nearest_package(&root, &directory)
-            .is_some_and(|(package, _)| package.directory == directory)
+        let package_directory = lexical(&root.join(package_directory));
+        let Some((package, _)) = nearest_package(&root, &package_directory) else {
+            return false;
+        };
+        if package.directory != package_directory {
+            return false;
+        }
+        let manifest = &package.manifest;
+        let discovers = manifest
+            .get("package")
+            .and_then(|package| package.get(flag))
+            .is_none_or(|value| value.as_bool() == Some(true));
+        // A root's inline `mod tests { mod it; }` resolves next to the root
+        // file, so a target placed directly in the package directory or in
+        // this target directory may declare `file` as a module. A path that
+        // is not plain text is not trusted either.
+        let target_directory = directory.file_name().and_then(|name| name.to_str());
+        let shadows = |target: &toml::Value| {
+            target.get("path").is_some_and(|path| {
+                path.as_str().is_none_or(|text| {
+                    let parent = Path::new(text.trim_start_matches("./")).parent();
+                    parent.is_none_or(|parent| {
+                        parent.as_os_str().is_empty() || parent.to_str() == target_directory
+                    })
+                })
+            })
+        };
+        let moves_a_target = manifest.get("lib").is_some_and(shadows)
+            || ["bin", "test", "bench", "example"].iter().any(|kind| {
+                manifest
+                    .get(*kind)
+                    .and_then(toml::Value::as_array)
+                    .is_some_and(|targets| targets.iter().any(shadows))
+            });
+        discovers && !moves_a_target
     }
 
     /// Whether `crate_root`, a root-relative file, is the library root its
@@ -2176,6 +2224,51 @@ mod tests {
         )?;
         assert!(!MemberCrates::new(&root).is_binary_target_root(Path::new("fuzz/parse.rs")));
         let _ = std::fs::remove_dir_all(&root);
+        Ok(())
+    }
+
+    #[test]
+    fn auto_discovered_target_roots_require_discovery_and_no_shadowing_root() -> Result<(), String>
+    {
+        for (manifest, file, expected) in [
+            (PRICING.to_string(), "tests/it.rs", true),
+            (PRICING.to_string(), "benches/b.rs", true),
+            (PRICING.to_string(), "examples/e.rs", true),
+            (
+                format!("{PRICING}[lib]\npath = \"src/lib.rs\"\n"),
+                "tests/it.rs",
+                true,
+            ),
+            (
+                format!("{PRICING}autotests = false\n"),
+                "tests/it.rs",
+                false,
+            ),
+            (
+                format!("{PRICING}autotests = false\n"),
+                "benches/b.rs",
+                true,
+            ),
+            (
+                format!("{PRICING}[lib]\npath = \"lib.rs\"\n"),
+                "tests/it.rs",
+                false,
+            ),
+            (
+                format!("{PRICING}[[test]]\nname = \"all\"\npath = \"tests/all.rs\"\n"),
+                "tests/it.rs",
+                false,
+            ),
+            (PRICING.to_string(), "tests/src/lib.rs", false),
+            (PRICING.to_string(), "src/tests/it.rs", false),
+            ("[workspace]\n".to_string(), "tests/it.rs", false),
+        ] {
+            let root = temp_workspace("auto-target-root", &[("Cargo.toml", &manifest)])?;
+            let observed = MemberCrates::new(&root).auto_discovers_target_root(Path::new(file));
+            let _ = std::fs::remove_dir_all(&root);
+            assert_eq!(observed, expected, "{file}: {manifest}");
+        }
+        assert!(!MemberCrates::default().auto_discovers_target_root(Path::new("tests/it.rs")));
         Ok(())
     }
 

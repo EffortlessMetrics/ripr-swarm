@@ -3832,8 +3832,8 @@ fn renamed_path_places_another_function(
 /// Whether the package manifest confirms that `root`, which the module
 /// chain's path shape already admits, is a Cargo target root: `src/lib.rs`
 /// or `src/main.rs` as a default target root, a binary target root, or a
-/// file directly under `tests/`, `benches/` or `examples/` of a package
-/// directory. A synthetic index without manifest authority keeps the path
+/// file directly under `tests/`, `benches/` or `examples/` that automatic
+/// target discovery alone makes a root. A synthetic index without manifest authority keeps the path
 /// shape alone, as the other crate-identity checks do (#7097).
 fn manifest_confirms_crate_root(index: &RustIndex, root: &Path) -> bool {
     let members = &index.member_crates;
@@ -3847,16 +3847,7 @@ fn manifest_confirms_crate_root(index: &RustIndex, root: &Path) -> bool {
     if in_src && members.is_default_target_root(root) {
         return true;
     }
-    members.is_binary_target_root(root)
-        || root
-            .parent()
-            .filter(|directory| {
-                directory
-                    .file_name()
-                    .is_some_and(|name| name == "tests" || name == "benches" || name == "examples")
-            })
-            .and_then(Path::parent)
-            .is_some_and(|package| members.is_package_directory(package))
+    members.is_binary_target_root(root) || members.auto_discovers_target_root(root)
 }
 
 /// Whether any indexed file defines a `#[macro_export]` macro under a std
