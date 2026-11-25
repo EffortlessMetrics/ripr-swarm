@@ -4445,7 +4445,8 @@ unchanged and compose underneath (the budget counts already-capped payloads).
 
 ### `evidence_stages` (additive finding rows, schema 0.2, RIPR-SPEC-0429)
 
-Every finding carries an additive `evidence_stages` array — the staged
+In `json` and `json-compact`, every finding carries an additive
+`evidence_stages` array (json-terse may omit it, see below) — the staged
 evidence the human Evidence block renders as prose, in the row form machine
 consumers read instead of parsing `evidence_path` sentences. Exactly five
 rows in Evidence-block order (`reach`, `infect`, `propagate`, `observe`,
