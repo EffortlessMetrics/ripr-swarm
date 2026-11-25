@@ -1,5 +1,16 @@
 # Golden Output Changes
 
+## Pending — corpus cache generation 1.200 for file-module nested-block renames (#16277)
+
+A test in its own module file (`src/tests.rs` with `use super::*;`) whose
+renamed call sits inside `assert!` or `assert_eq!` now reads the enclosing
+module files, which bumps the analyzer cache schema to 1.200. Move the
+portable unchanged-attempt snapshots to 1.200, recompute the
+`raw_json_placeholder_v1` artifact content commitment, then the dependent
+verify commitments and receipt byte hashes. Weak grip, unchanged movement,
+historical currentness, incomplete receipt status and fail-closed first-action
+routing remain the same. No other fixture output is regenerated.
+
 ## Pending — corpus cache generation 1.199 for include-reading helper wrappers (#10357)
 
 A helper wrapper that reads `include_str!` or `include_bytes!` before calling
