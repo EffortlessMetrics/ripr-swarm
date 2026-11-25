@@ -945,9 +945,12 @@ found, so a reported failure can sit beside `improved`. The receipt-owned
 When `ripr agent repair --phase after --test-result FILE` records a caller's
 focused run and the receipt is `advisory` with movement `improved`, the
 after-phase summary's `Next:` line no longer forwards the receipt's "Run the
-focused test" step. After a reported pass it says to keep the focused test and
-include the receipt in review; after a reported failure it says to make the
-test pass before keeping it. Both say ripr did not run it. The shared
+focused test" step. After a reported pass it asks the caller to confirm that
+the run included the added or edited test before including the receipt in
+review: the finish validates the test file, not the test names. After a
+reported failure it says to make the test pass before keeping it, and that a
+fix which edits the patch leaves the receipt stale, so the gap is re-checked
+instead of submitting that receipt. Both say ripr ran nothing. The shared
 `app::agent_status::test_run` owner derives the line. The digest-bound receipt,
 its `recommended_action` and every other receipt status keep their own step
 unchanged.

@@ -1705,9 +1705,9 @@ fn six_step_agent_contract(reported: ReportedRun) -> Result<(), String> {
             // #16263: the finish's next step reads the reported run back
             // instead of asking for the run it just recorded.
             let expected_next = if reported == ReportedRun::Passed {
-                "\nNext: Keep the focused test (the caller reported it passing; ripr did not run it) and include this receipt in review."
+                "\nNext: Confirm the reported run included the test you added or edited (ripr checked the test file, not the test names, and ran nothing), then include this receipt in review.\n"
             } else {
-                "\nNext: Make the focused test pass before keeping it; ripr did not run it."
+                "\nNext: Make the focused test pass before keeping it; ripr did not run it. A fix that edits the patch leaves this receipt stale, so do not include it in review; re-check the gap with `ripr check` after the fix.\n"
             };
             assert!(finish_stdout.contains(expected_next), "{finish_stdout}");
             assert!(

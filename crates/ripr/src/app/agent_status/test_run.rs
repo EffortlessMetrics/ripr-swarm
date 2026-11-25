@@ -55,9 +55,12 @@ pub(crate) fn reported_test_run_next_step(run: &ReportedTestRun) -> String {
 /// An `advisory` receipt whose static movement is `improved` asks the caller
 /// to run the focused test; that guidance is the receipt's static-only
 /// default and stays in its digest-bound bytes. When the finish recorded a
-/// run, the step is already done (a pass) or already failed (a failure), so
-/// the summary names what is left instead. Any other receipt keeps its own
-/// step: only it decides whether it is review evidence.
+/// run, the summary names what is left instead. The finish validated the
+/// file the reported tests ran in, not that they include the added or edited
+/// test, so a pass asks the caller to confirm that rather than crediting it.
+/// A failure means the patch must change, and a changed patch leaves this
+/// receipt stale. Any other receipt keeps its own step: only it decides
+/// whether it is review evidence.
 pub(crate) fn next_step_after_reported_run(
     run: Option<&ReportedTestRun>,
     receipt_status: Option<&str>,
@@ -67,9 +70,9 @@ pub(crate) fn next_step_after_reported_run(
     match run {
         Some(run) if receipt_status == Some("advisory") && movement == Some("improved") => {
             if run.failed > 0 {
-                "Make the focused test pass before keeping it; ripr did not run it. Then include this receipt in review.".to_string()
+                "Make the focused test pass before keeping it; ripr did not run it. A fix that edits the patch leaves this receipt stale, so do not include it in review; re-check the gap with `ripr check` after the fix.".to_string()
             } else {
-                "Keep the focused test (the caller reported it passing; ripr did not run it) and include this receipt in review.".to_string()
+                "Confirm the reported run included the test you added or edited (ripr checked the test file, not the test names, and ran nothing), then include this receipt in review.".to_string()
             }
         }
         _ => receipt_step.to_string(),
@@ -172,10 +175,14 @@ mod tests {
             step
         );
         let kept = next_step_after_reported_run(Some(&passed), advisory, improved, step);
-        assert!(kept.starts_with("Keep the focused test"), "{kept}");
+        assert!(
+            kept.starts_with("Confirm the reported run included the test you added or edited"),
+            "{kept}"
+        );
         assert!(!kept.contains("Run the focused test"), "{kept}");
         let fix = next_step_after_reported_run(Some(&failed), advisory, improved, step);
         assert!(fix.starts_with("Make the focused test pass"), "{fix}");
+        assert!(fix.contains("do not include it in review"), "{fix}");
         for (status, movement) in [
             (Some("limited"), improved),
             (advisory, Some("unchanged")),
