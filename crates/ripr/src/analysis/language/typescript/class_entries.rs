@@ -671,6 +671,19 @@ pub(crate) fn repeated_class_names(program: &oxc_ast::ast::Program<'_>) -> BTree
         seen: BTreeMap::new(),
     };
     counter.visit_program(program);
+    // `exports.Cart = class { ... }` is reachable as `Cart` whatever its own
+    // id names it; counted under the property so a declared `class Cart`
+    // beside it reads as repeated.
+    for statement in &program.body {
+        if let Some((property, class)) = super::owners::commonjs_named_class_export(statement)
+            && class
+                .id
+                .as_ref()
+                .is_none_or(|id| id.name.as_str() != property)
+        {
+            *counter.seen.entry(property.to_string()).or_default() += 1;
+        }
+    }
     counter
         .seen
         .into_iter()
@@ -685,11 +698,11 @@ pub(crate) fn class_instance_field_names(
 ) -> BTreeMap<String, BTreeSet<String>> {
     use oxc_ast::ast::{Declaration, ExportDefaultDeclarationKind};
     let mut out: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
-    let mut visit = |class: &Class<'_>| {
-        let Some(name) = class.id.as_ref().map(|id| id.name.as_str().to_string()) else {
+    let mut visit_named = |name: Option<&str>, class: &Class<'_>| {
+        let Some(name) = name else {
             return;
         };
-        let fields = out.entry(name).or_default();
+        let fields = out.entry(name.to_string()).or_default();
         for element in &class.body.body {
             let (is_static, computed, key) = match element {
                 ClassElement::PropertyDefinition(field) => {
@@ -714,16 +727,24 @@ pub(crate) fn class_instance_field_names(
         }
     };
     for statement in &program.body {
+        // `exports.Cart = class { ... }`: its members are owners named by the
+        // property, so its fields shadow them under that name.
+        if let Some((property, class)) = super::owners::commonjs_named_class_export(statement) {
+            visit_named(Some(property), class);
+            continue;
+        }
         match statement {
-            Statement::ClassDeclaration(class) => visit(class),
+            Statement::ClassDeclaration(class) => {
+                visit_named(class.id.as_ref().map(|id| id.name.as_str()), class)
+            }
             Statement::ExportNamedDeclaration(export) => {
                 if let Some(Declaration::ClassDeclaration(class)) = export.declaration.as_ref() {
-                    visit(class);
+                    visit_named(class.id.as_ref().map(|id| id.name.as_str()), class);
                 }
             }
             Statement::ExportDefaultDeclaration(export) => {
                 if let ExportDefaultDeclarationKind::ClassDeclaration(class) = &export.declaration {
-                    visit(class);
+                    visit_named(class.id.as_ref().map(|id| id.name.as_str()), class);
                 }
             }
             // `module.exports = class Cart { ... }` (#16252): its methods are
@@ -734,7 +755,7 @@ pub(crate) fn class_instance_field_names(
                     && let oxc_ast::ast::Expression::ClassExpression(class) =
                         assign.right.get_inner_expression()
                 {
-                    visit(class);
+                    visit_named(class.id.as_ref().map(|id| id.name.as_str()), class);
                 }
             }
             _ => {}

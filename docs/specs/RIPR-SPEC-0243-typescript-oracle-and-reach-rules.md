@@ -39,6 +39,7 @@ Linked issues:
 - #15092 (class as a CommonJS module's whole export)
 - #16252 (inline class expression as a CommonJS module's whole export)
 - #16261 (class method overwritten by a later same-key member; rule 26)
+- #16275 (class expression as a CommonJS named export; rule 27)
 - #9435 (exact oracle ignored on five changed-line shapes)
 - #9497 (skipped or unexercised tests credited as exposed; rules 17 and 18)
 - #11196 (start rate: a conditional assertion in an unconsulted test no longer
@@ -1444,6 +1445,21 @@ setter of one key (one accessor property), a static and an instance member of
 one name (different objects), body-less TypeScript overload signatures, and a
 computed key other than a string literal (`[name]()`), which is never
 compared.
+
+**Rule 27. A class expression assigned to a CommonJS named export is a class
+named by the export property (#16275).** `exports.Cart = class { ... }` and
+`module.exports.Cart = class ... { ... }` are the inline twins of
+`class Cart {}` followed by `exports.Cart = Cart;`: their methods are owners
+whose class name is the property `Cart`, whatever the expression's own id
+says, since that id binds only inside the class body. A named `require` of
+`Cart` relates a changed method as it does for the declared class; a test that
+destructures the inner id or another export stays unrelated. The members of
+one class share the one export slot `Cart`: a later top-level assignment to the
+same slot (another class, a class with no method, or any other value) leaves the
+earlier class dead, so it yields no owner, the fail-closed rule of a reassigned
+function export (#4638), which now also counts a non-function value assigned to
+the slot. Instance fields and the repeated-class-name guard read such a class
+under the property name.
 
 ### Observation guard
 
@@ -2984,6 +3000,16 @@ keys); do not take the next number.
   that keep their relation: a getter beside its setter, an instance method
   beside a static member of the same name, and an implementation after
   TypeScript overload signatures.
+
+- #16275 (rule 27, CommonJS named-export class expression):
+  `crates/ripr/src/analysis/language/typescript/tests/commonjs_named_class_export_tests.rs`
+  pins the owner shape (class name is the property, not the inner id) for
+  `exports.Cart = class` and `module.exports.Cart = class`, and runs
+  `analyze_diff` to show a named `require` relates a changed method while an
+  inner-id import and a sibling export stay unrelated. A later assignment of the
+  slot (class, empty class, `null`) drops the earlier class, a function export
+  reassigned to `null` drops as well, and the field and repeated-name guards key
+  the class by the property.
 
 - #11196 (rule 11, object rows): `tests/object_row_tests.rs` pins the per-row
   literal assertions for the `for...of` and `test.each` object-row forms and
