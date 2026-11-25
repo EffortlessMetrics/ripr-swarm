@@ -860,7 +860,7 @@ fn walk(
                         );
                         if called && inside_untrusted {
                             counts.held += 1;
-                        } else if called {
+                        } else if called && !discarded_call(&children, position) {
                             counts.free += 1;
                         }
                     } else if inside_untrusted {
@@ -893,7 +893,8 @@ fn walk(
                     let turbofish = next.is_some_and(|next| next.kind() == SyntaxKind::COLON2)
                         || next.is_some_and(|next| next.kind() == SyntaxKind::COLON)
                             && after.is_some_and(|after| after.kind() == SyntaxKind::COLON);
-                    if !inside_untrusted && (!after_dot || paren_call || turbofish) {
+                    let discarded = paren_call && discarded_call(&children, position);
+                    if !inside_untrusted && (!after_dot || paren_call || turbofish) && !discarded {
                         counts.free += 1;
                     } else if inside_untrusted && paren_call {
                         counts.held += 1;
@@ -963,6 +964,53 @@ fn walk(
         }
         position += 1;
     }
+}
+
+/// #16258: whether the call whose callee name sits at `position` (its
+/// argument group follows) is a statement that discards its result:
+/// `let _ = pick(0);` or `pick(0);`. The callee path (a token tree spells
+/// `::` as two `:`) or simple method receiver before the name is part of
+/// the call. Any other shape, a `?`, a
+/// further method, a named binding, keeps the result observable.
+fn discarded_call(children: &[NodeOrToken<SyntaxNode, SyntaxToken>], position: usize) -> bool {
+    if children
+        .get(position + 2)
+        .is_none_or(|after| after.kind() != SyntaxKind::SEMICOLON)
+    {
+        return false;
+    }
+    let mut start = position;
+    while let Some(before) = start.checked_sub(1).and_then(|at| children.get(at)) {
+        let path_part = matches!(
+            before.kind(),
+            SyntaxKind::IDENT
+                | SyntaxKind::COLON2
+                | SyntaxKind::COLON
+                | SyntaxKind::DOT
+                | SyntaxKind::SELF_KW
+                | SyntaxKind::SELF_TYPE_KW
+                | SyntaxKind::CRATE_KW
+                | SyntaxKind::SUPER_KW
+        );
+        if !path_part {
+            break;
+        }
+        start -= 1;
+    }
+    let kind_at = |back: usize| {
+        start
+            .checked_sub(back)
+            .and_then(|at| children.get(at))
+            .map(|child| child.kind())
+    };
+    let statement_start = |kind: Option<SyntaxKind>| {
+        matches!(kind, Some(SyntaxKind::L_CURLY | SyntaxKind::SEMICOLON))
+    };
+    statement_start(kind_at(1))
+        || kind_at(1) == Some(SyntaxKind::EQ)
+            && kind_at(2) == Some(SyntaxKind::UNDERSCORE)
+            && kind_at(3) == Some(SyntaxKind::LET_KW)
+            && statement_start(kind_at(4))
 }
 
 /// Match a bare receiver name, optionally wrapped in parentheses. A group
@@ -1359,6 +1407,31 @@ mod tests {
             ),
             (
                 "assert_eq!(check_ok!(pick(0)), pick::<u8>(1))",
+                Some(local),
+                false,
+            ),
+            (
+                "assert_eq!(check_ok!(pick(0)), { let _ = pick(0); Mode::A })",
+                Some(local),
+                true,
+            ),
+            (
+                "assert_eq!(check_ok!(pick(0)), { crate::pick(0); Mode::A })",
+                Some(local),
+                true,
+            ),
+            (
+                "assert_eq!(check_ok!(pick(0)), { pick(0) })",
+                Some(local),
+                false,
+            ),
+            (
+                "assert_eq!(check_ok!(pick(0)), { pick(0)?; Mode::A })",
+                Some(local),
+                false,
+            ),
+            (
+                "assert_eq!(check_ok!(pick(0)), { let v = pick(0); v })",
                 Some(local),
                 false,
             ),
