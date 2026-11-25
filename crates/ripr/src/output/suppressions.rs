@@ -571,7 +571,7 @@ fn finalize_suppression(
                             .any(|segment| segment == "." || segment == "..")
                     {
                         violations.push(format!(
-                            "{SUPPRESSIONS_PATH}:{block_line} `function` selects by exact file, so `path` `{path}` must be a plain root-relative path without `.` or `..` segments, for example `src/retry.rs`. See the finding's `canonical_gap.file` in `ripr check --format json` and use the literal repository-relative filename if escaped"
+                            "{SUPPRESSIONS_PATH}:{block_line} `function` selects by exact file, so `path` `{path}` must be a plain root-relative path without `.` or `..` segments, for example `src/retry.rs`. See the finding's `canonical_gap.file` in `ripr check --format json` and use the literal repository-relative filename if escaped. A filename containing a literal backslash cannot use `path` + `function`, even on Unix. To suppress the finding, use its current `finding_id`."
                         ));
                         return;
                     }
@@ -1291,7 +1291,7 @@ pub fn apply_check_suppressions(
 
 /// Appended to the unmatched-`finding_id` warning (#14129): the owner
 /// selector is the edit-stable alternative to an id that hashes the expression.
-const STALE_FINDING_ID_HINT: &str = "finding ids hash the parsed expression, so an edit to the suppressed expression changes the id; to keep suppressing a finding's owning function across edits, select it with `path` + `function` instead of `finding_id`. In `ripr check --format json` on the same diff, locate the intended Rust finding in `findings[]`. If it has a canonical gap with an unambiguous function owner, copy `canonical_gap.file` into `path` (use the literal repository-relative filename if escaped) and `canonical_gap.owner` into `function`. Omit `static_class` to select every finding in the function. Keep a valid `static_class` to match only findings of that class. An unknown value ignored on the id entry is rejected here. A changed `const` or `static` has no owning function, so it needs a fresh `finding_id`";
+const STALE_FINDING_ID_HINT: &str = "finding ids hash the parsed expression, so an edit to the suppressed expression changes the id; to keep suppressing a finding's owning function across edits, select it with `path` + `function` instead of `finding_id`. In `ripr check --format json` on the same diff, locate the intended Rust finding in `findings[]`. If it has a canonical gap with an unambiguous function owner, copy `canonical_gap.file` into `path` (use the literal repository-relative filename if escaped) and `canonical_gap.owner` into `function`. A filename containing a literal backslash cannot use `path` + `function`, even on Unix. To suppress the finding, use its current `finding_id`. Omit `static_class` to select every finding in the function. Keep a valid `static_class` to match only findings of that class. An unknown value ignored on the id entry is rejected here. A changed `const` or `static` has no owning function, so it needs a fresh `finding_id`";
 
 /// The selector label reported for a `path` + `function` entry: the exact
 /// root-relative file and the owner function, joined as the owner symbol is.

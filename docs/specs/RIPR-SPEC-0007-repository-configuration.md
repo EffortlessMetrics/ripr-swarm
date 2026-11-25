@@ -283,8 +283,11 @@ expression and that `path` + `function` selects the owning function across
 edits. The warning points to the current Rust finding in `findings[]` from
 `ripr check --format json` on the same diff. When available for an unambiguous
 function, `canonical_gap.file` supplies `path` (use the literal repository-relative
-filename if escaped) and `canonical_gap.owner` supplies `function`. The refusal for
-a `./` path points back to `canonical_gap.file`. Omitting `static_class` selects every
+filename if escaped) and `canonical_gap.owner` supplies `function`.
+A filename containing a literal backslash cannot use `path` + `function`,
+even on Unix. To suppress the finding, use its current `finding_id`.
+The refusal for a `./` path points back to `canonical_gap.file`.
+Omitting `static_class` selects every
 finding in that function. Retaining a valid `static_class` limits the match to
 findings of that class. An unknown value ignored on the id entry is rejected on
 the function entry. A changed `const` or `static` has no owning function.

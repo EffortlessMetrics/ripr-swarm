@@ -1084,6 +1084,8 @@ intended function. When it has a canonical gap and an unambiguous owner,
 copy `canonical_gap.file` into `path` and `canonical_gap.owner` into
 `function`. Use the literal repository-relative filename if the report
 escapes it (for example, `src/rate%.rs` appears as `src/rate%25.rs`).
+A filename containing a literal backslash cannot use `path` + `function`,
+even on Unix. To suppress the finding, use its current `finding_id`.
 A `./`-prefixed `probe.file` is rejected. Omit `static_class` to select
 every finding in the function. Keep a valid `static_class` to match only
 findings of that class. An id selector ignores this field, but an unknown

@@ -1597,6 +1597,8 @@ fn stale_finding_id_warning_names_the_owner_selector() -> Result<(), String> {
         "ripr check --format json",
         "copy `canonical_gap.file` into `path`",
         "`canonical_gap.owner` into `function`",
+        "A filename containing a literal backslash cannot use `path` + `function`, even on Unix.",
+        "To suppress the finding, use its current `finding_id`.",
         "Omit `static_class` to select every finding in the function",
         "Keep a valid `static_class` to match only findings of that class",
     ] {
@@ -1670,10 +1672,14 @@ fn stale_finding_id_warning_names_the_owner_selector() -> Result<(), String> {
     let refusal = run_check_with_policy(root, "policy-probe.toml")
         .err()
         .ok_or("check accepted the ./-prefixed probe.file")?;
-    assert!(
-        refusal.contains(probe_path) && refusal.contains("canonical_gap.file"),
-        "{refusal}"
-    );
+    for hint in [
+        probe_path,
+        "canonical_gap.file",
+        "A filename containing a literal backslash cannot use `path` + `function`, even on Unix.",
+        "To suppress the finding, use its current `finding_id`.",
+    ] {
+        assert!(refusal.contains(hint), "missing {hint}: {refusal}");
+    }
 
     write_policy(root, "policy-gone.toml", &function_entry("removed_fn"))?;
     let run = run_check_with_policy(root, "policy-gone.toml")?;
