@@ -922,7 +922,12 @@ agent status --attempt <id> --json` emits, read from the same retained record.
 It is `not_recorded` when the caller reported no focused run and
 `caller_reported` (with `file`, `ran`, `passed`, `failed` and `next_step`) when
 the finish retained one; a reported failure is named in `next_step`. It never
-changes `status`, and session transactions omit it.
+changes `status`, and session transactions omit it. The output schema types
+every field but does not tie the counts to `status` (no `oneOf`, to keep the
+opt-in full listing small): one shared producer emits both shapes, so a
+`caller_reported` object always carries the counts and a `not_recorded` object
+never does. A consumer that validates that pairing itself should key on
+`status`.
 
 The `ripr://snapshot/{snapshot_id}` resource returns bounded snapshot
 evidence: the snapshot identity, the typed `AnalysisOutcome`, the full
