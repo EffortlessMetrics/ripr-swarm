@@ -340,11 +340,23 @@ pub(super) fn python_call_variant_evidence(
 /// element equals the first, so no order exists to reverse. None when an
 /// equality cannot be read.
 pub(super) fn elements_agree(elements: &[String]) -> Option<bool> {
+    // An int spelling may group its digits with underscores (`1_000`).
+    let ungrouped = |text: &str| -> String {
+        let grouped = !text.starts_with('_')
+            && !text.ends_with('_')
+            && text.chars().all(|ch| ch.is_ascii_digit() || ch == '_');
+        if grouped {
+            text.replace('_', "")
+        } else {
+            text.to_string()
+        }
+    };
     let Some(first) = elements.first() else {
         return Some(true);
     };
+    let first = ungrouped(first);
     for element in elements {
-        if !literals_equal(first, element)? {
+        if !literals_equal(&first, &ungrouped(element))? {
             return Some(false);
         }
     }

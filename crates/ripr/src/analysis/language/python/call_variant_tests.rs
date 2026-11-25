@@ -72,17 +72,7 @@ fn classify_source(
     new: &str,
     test_source: &str,
 ) -> Result<Finding, String> {
-    let owners = extract_owners(Path::new("src/text.py"), source);
-    let tests = extract_tests(Path::new("tests/test_text.py"), test_source);
-    classify_change_with_old(
-        Path::new("src/text.py"),
-        line,
-        new,
-        Some(old),
-        &owners,
-        &tests,
-    )
-    .ok_or_else(|| "a call change should classify".to_string())
+    classify_in(source, line, old, new, test_source)
 }
 
 #[test]
