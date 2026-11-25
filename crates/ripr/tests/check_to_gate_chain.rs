@@ -1581,11 +1581,13 @@ fn stale_finding_id_warning_names_the_owner_selector() -> Result<(), String> {
     Ok(())
 }
 
-fn run_suppression_health(root: &Path, manifest: &str) -> Result<Value, String> {
+/// Runs `policy suppression-health` and reads its JSON report. A well-formed
+/// manifest exits 0; a malformed one still writes the `config_error` report
+/// and exits 2, so the caller names the exit code it expects.
+fn run_suppression_health(root: &Path, manifest: &str, expect_code: i32) -> Result<Value, String> {
     let out = "target/ripr/reports/suppression-health.json";
-    run_ok(
+    let output = run_ripr(
         root,
-        "policy suppression-health",
         &[
             "policy",
             "suppression-health",
@@ -1599,6 +1601,9 @@ fn run_suppression_health(root: &Path, manifest: &str) -> Result<Value, String> 
             "target/ripr/reports/suppression-health.md",
         ],
     )?;
+    if output.status.code() != Some(expect_code) {
+        return Err(diagnose("policy suppression-health", &output));
+    }
     read_json(&root.join(out))
 }
 
@@ -1617,7 +1622,7 @@ fn suppression_health_reads_a_function_selector_and_reports_a_malformed_one() ->
         "health-fn.toml",
         &format!("{}{metadata}", function_entry("retry_allowed")),
     )?;
-    let report = run_suppression_health(root, "health-fn.toml")?;
+    let report = run_suppression_health(root, "health-fn.toml", 0)?;
     assert_eq!(report["status"], "healthy", "{report}");
     assert_eq!(report["summary"]["suppressions"], 1, "{report}");
     assert_eq!(report["summary"]["config_errors"], 0, "{report}");
@@ -1646,7 +1651,7 @@ fn suppression_health_reads_a_function_selector_and_reports_a_malformed_one() ->
         ),
     ] {
         write_policy(root, "health-bad.toml", &format!("{entry}{metadata}"))?;
-        let report = run_suppression_health(root, "health-bad.toml")?;
+        let report = run_suppression_health(root, "health-bad.toml", 2)?;
         assert_eq!(report["status"], "config_error", "{label}: {report}");
         assert_eq!(report["summary"]["suppressions"], 0, "{label}: {report}");
         assert_eq!(report["summary"]["config_errors"], 1, "{label}: {report}");

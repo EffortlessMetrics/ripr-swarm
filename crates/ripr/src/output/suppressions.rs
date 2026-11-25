@@ -1291,7 +1291,7 @@ pub fn apply_check_suppressions(
 
 /// Appended to the unmatched-`finding_id` warning (#14129): the owner
 /// selector is the edit-stable alternative to an id that hashes the expression.
-const STALE_FINDING_ID_HINT: &str = "finding ids hash the parsed expression, so an edit to the suppressed expression changes the id; to keep suppressing the owning function across edits, select it with `path` + `function` instead of `finding_id`";
+const STALE_FINDING_ID_HINT: &str = "finding ids hash the parsed expression, so an edit to the suppressed expression changes the id; to keep suppressing a finding's owning function across edits, select it with `path` + `function` instead of `finding_id`; that covers every finding in the function, and a changed `const` or `static` has no owning function, so it needs a fresh `finding_id`";
 
 /// The selector label reported for a `path` + `function` entry: the exact
 /// root-relative file and the owner function, joined as the owner symbol is.

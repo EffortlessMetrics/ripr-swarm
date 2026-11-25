@@ -280,7 +280,9 @@ missing owner, or an owner the producer disambiguated with a `#L<line>` suffix
 `finding_id` entry that is not a known ripr 0.10 id keeps its "did not match
 any current finding" warning and adds that finding ids hash the parsed
 expression and that `path` + `function` selects the owning function across
-edits. An unmatched path-glob or `path` + `function` entry keeps the plain
+edits, which covers every finding in that function and cannot select a
+changed `const` or `static`; `ripr review-comments` reports only expired
+entries, not unmatched ones. An unmatched path-glob or `path` + `function` entry keeps the plain
 warning. `ripr policy suppression-health` names a `path` + `function` entry
 `<path>::<function>`, the label the check matcher reports for it, and reports
 a rejected `function` entry as a `config_error` finding. A finding with no
