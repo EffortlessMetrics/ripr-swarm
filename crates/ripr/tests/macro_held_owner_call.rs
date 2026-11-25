@@ -85,6 +85,15 @@ mod tests {{
     }
 
     fn ok_seam_for(&self, owner: &str) -> Result<(String, String, String), String> {
+        let (grip, oracle, relation, _) = self.ok_seam_with_strength(owner)?;
+        Ok((grip, oracle, relation))
+    }
+
+    /// [`Self::ok_seam_for`] plus the published oracle strength of `picks_a`.
+    fn ok_seam_with_strength(
+        &self,
+        owner: &str,
+    ) -> Result<(String, String, String, String), String> {
         let output = Command::new(env!("CARGO_BIN_EXE_ripr"))
             .args(["check", "--root"])
             .arg(&self.root)
@@ -138,6 +147,7 @@ mod tests {{
             text(seam, "/grip_class")?,
             text(test, "/oracle_kind")?,
             text(test, "/relation_reason")?,
+            text(test, "/oracle_strength")?,
         ))
     }
 }
@@ -529,6 +539,77 @@ fn method_receivers_preserve_real_observations_and_demote_held_calls() -> Result
         let (_, oracle, _) = workspace.ok_seam_for("src/lib.rs::impl Picker::pick")?;
         if oracle != expected {
             wrong.push(format!("{label}: expected {expected}, got {oracle}"));
+        }
+    }
+    if wrong.is_empty() {
+        Ok(())
+    } else {
+        Err(wrong.join("\n"))
+    }
+}
+
+/// #16265: a `use .. as assert_eq` rename that points the outer assertion at
+/// a macro that evaluates nothing (`stringify!`) is a shadow, read exactly as
+/// a test-local `macro_rules! assert_eq`. The parsed equality keeps its kind
+/// but its published strength is withheld and the seam has no grip; an
+/// unrelated rename changes nothing.
+#[test]
+fn an_outer_assertion_renamed_to_a_non_assertion_gives_no_grip() -> Result<(), String> {
+    let held = "let r = pick(0); let f = crate::pick; assert_eq!(check_ok!(r), f(0));";
+    let plain = "let f = crate::pick; assert_eq!(f(0), Ok(Mode::A));";
+    let rename = format!("{CHECK_OK}\n    use std::stringify as assert_eq;");
+    let local = format!("{CHECK_OK}\n    macro_rules! assert_eq {{ ($a:expr, $b:expr) => {{}}; }}");
+    let unrelated = format!("{CHECK_OK}\n    use std::collections::HashMap as Map;");
+    // (label, test-local items, assertion, expected grip class, oracle kind,
+    // published oracle strength)
+    let cases = [
+        (
+            "a stringify rename of assert_eq over a held local and a called alias",
+            rename.as_str(),
+            held,
+            "discrimination_unknown",
+            "exact_value",
+            "unknown",
+        ),
+        (
+            "a stringify rename of assert_eq over a direct alias call",
+            "use std::stringify as assert_eq;",
+            plain,
+            "discrimination_unknown",
+            "exact_value",
+            "unknown",
+        ),
+        (
+            "a local macro_rules! assert_eq reads the same as the rename",
+            local.as_str(),
+            held,
+            "discrimination_unknown",
+            "exact_value",
+            "unknown",
+        ),
+        (
+            "an unrelated rename keeps the observation",
+            unrelated.as_str(),
+            held,
+            "strongly_gripped",
+            "exact_value",
+            "strong",
+        ),
+    ];
+    // Every case runs, so one report names each wrong reading.
+    let mut wrong = Vec::new();
+    for (label, macros, assertion, grip, oracle, strength) in cases {
+        let (actual_grip, actual_oracle, _, actual_strength) =
+            Workspace::create(macros, assertion)?.ok_seam_with_strength("src/lib.rs::pick")?;
+        let actual = (
+            actual_grip.as_str(),
+            actual_oracle.as_str(),
+            actual_strength.as_str(),
+        );
+        if actual != (grip, oracle, strength) {
+            wrong.push(format!(
+                "{label}: expected {grip}/{oracle}/{strength}, got {actual_grip}/{actual_oracle}/{actual_strength}"
+            ));
         }
     }
     if wrong.is_empty() {
