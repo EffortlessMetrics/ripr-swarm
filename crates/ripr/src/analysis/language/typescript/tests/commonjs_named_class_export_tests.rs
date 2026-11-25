@@ -211,6 +211,14 @@ fn a_function_export_reassigned_to_a_value_yields_no_owner() -> Result<(), Strin
             "control: the live function export has no owner {owners:?}"
         ));
     }
+    let default_live =
+        "module.exports = function total(n) {\n  return n;\n};\nmodule.exports.total = 1;\n";
+    let owners = extract_owners(Path::new("src/cart.js"), default_live);
+    if !owners.iter().any(|owner| owner.name == "total") {
+        return Err(format!(
+            "a property write on the default function dropped it {owners:?}"
+        ));
+    }
     let dead = format!("{live}exports.total = null;\n");
     let owners = extract_owners(Path::new("src/cart.js"), &dead);
     if owners.iter().any(|owner| owner.name == "total") {

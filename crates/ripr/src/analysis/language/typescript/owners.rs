@@ -354,14 +354,23 @@ fn without_reassigned_commonjs_exports(
             &str,
             std::collections::BTreeSet<(usize, usize)>,
         > = std::collections::HashMap::new();
-        for (_, slot, index) in &owners {
+        // Slots a named export or export-object entry owns. A bare
+        // `module.exports = function total` is the default slot, not the
+        // property `total`: a later `exports.total = 1` writes a property and
+        // leaves that function live, so the statement scan skips it.
+        let mut named_slots: std::collections::HashSet<&str> = std::collections::HashSet::new();
+        for (owner, slot, index) in &owners {
             if let Some(slot) = slot.as_deref() {
                 slot_statements.entry(slot).or_default().insert(*index);
+                if !owner.exported_as_default {
+                    named_slots.insert(slot);
+                }
             }
         }
-        if !slot_statements.is_empty() {
+        if !named_slots.is_empty() {
             for (index, stmt) in body.iter().enumerate() {
                 if let Some(property) = commonjs_named_export_property(stmt)
+                    && named_slots.contains(property)
                     && let Some(statements) = slot_statements.get_mut(property)
                 {
                     statements.insert((index, 0));
