@@ -20,7 +20,7 @@
 use super::PythonOwner;
 use super::arm_activation::builtin_names_intact;
 use super::assertion_selection::PythonAssertionFocus;
-use super::boundary::{PARAMETRIZE_ROW_MARKER, strong_owner_call_values};
+use super::boundary::{PARAMETRIZE_ROW_MARKER, literals_equal, strong_owner_call_values};
 use super::discriminators::python_string_literal_value;
 use super::related_tests::PythonRelatedCandidate;
 use super::term_activation::code_mention_count;
