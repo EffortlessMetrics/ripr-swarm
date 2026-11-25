@@ -284,9 +284,11 @@ edits. The warning points to the current Rust finding in `findings[]` from
 `ripr check --format json` on the same diff. When available for an unambiguous
 function, `canonical_gap.file` supplies `path` (use the literal repository-relative
 filename if escaped) and `canonical_gap.owner` supplies `function`. The refusal for
-a `./` path points back to `canonical_gap.file`. The selector covers every
-finding in that function and cannot select a
-changed `const` or `static`; `ripr review-comments` reports only expired
+a `./` path points back to `canonical_gap.file`. Omitting `static_class` selects every
+finding in that function. Retaining a valid `static_class` limits the match to
+findings of that class. An unknown value ignored on the id entry is rejected on
+the function entry. A changed `const` or `static` has no owning function.
+`ripr review-comments` reports only expired
 entries, not unmatched ones. An unmatched path-glob or `path` + `function` entry keeps the plain
 warning. `ripr policy suppression-health` names a `path` + `function` entry
 `<path>::<function>`, the label the check matcher reports for it, and reports
@@ -309,7 +311,7 @@ and not over the selected or capped subset; an id shared with an unselected
 sibling, an id carrying a collision ordinal (`.N`), or an id whose inventory is
 unavailable is reported and not applied. `path` globs match the seam file. A
 `static_class` entry never applies to a review seam (different vocabulary) and
-is reported as not applied rather than skipped silently. A `function` entry
+is reported as not applied rather than skipped silently. A `function` entry without `static_class`
 covers every seam of that function, including seams added later, so give it an
 `expires` date. Expired and ambiguous selectors are reported as warnings.
 Known fail-closed limitation: suppression runs after the brief cap, so

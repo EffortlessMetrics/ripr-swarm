@@ -1071,7 +1071,7 @@ expires = "2026-12-31"
 
 `owner` stays the team that owns the exception; `function` is the code
 identity. Matching is exact on file and function; a missing or ambiguous owner
-never matches. A `function` entry covers every seam in that function,
+never matches. A `function` entry without `static_class` covers every seam in that function,
 including seams added later, so set `expires` and review it when the function
 changes.
 
@@ -1084,8 +1084,10 @@ intended function. When it has a canonical gap and an unambiguous owner,
 copy `canonical_gap.file` into `path` and `canonical_gap.owner` into
 `function`. Use the literal repository-relative filename if the report
 escapes it (for example, `src/rate%.rs` appears as `src/rate%25.rs`).
-A `./`-prefixed `probe.file` is rejected. That selector covers every finding
-in the function, and a changed `const` or `static` has no owning function, so
+A `./`-prefixed `probe.file` is rejected. Omit `static_class` to select
+every finding in the function. Keep a valid `static_class` to match only
+findings of that class. An id selector ignores this field, but an unknown
+value on the new function selector makes the policy invalid. A changed `const` or `static` has no owning function, so
 it needs a fresh `finding_id`. `ripr review-comments` reports only expired
 entries, not unmatched ones. `ripr policy
 suppression-health` lists a `path` + `function` entry under the identity
@@ -1102,7 +1104,7 @@ A `path` + `function` entry must name the file exactly as the repository
 root sees it (`src/retry.rs`, not `./src/retry.rs`). Policy-suppressed
 seams still count against the brief cap, which stays disclosed.
 
-`static_class` is optional narrowing for a path-glob selector and must name a
+`static_class` is optional narrowing for both path-glob and function selectors and must name a
 known exposure class. See [the complete example](suppressions.example.toml)
 for expiry and policy-health metadata.
 
@@ -1112,7 +1114,7 @@ Supported `kind` values (closed set): `exposure_gap`, `test_efficiency`.
 | --- | --- |
 | `schema_version = 1` required | Missing or other values fail. |
 | `kind`, `owner`, `reason` required and non-blank | Missing or whitespace-only values fail. |
-| `kind = "exposure_gap"` requires `finding_id`, a `path` glob, or `path` + `function` | Rejects `test`; `function` needs an exact (non-glob) `path` and cannot combine with `finding_id`; a path-glob selector may narrow by a known `static_class`. |
+| `kind = "exposure_gap"` requires `finding_id`, a `path` glob, or `path` + `function` | Rejects `test`; `function` needs an exact (non-glob) `path` and cannot combine with `finding_id`; either path selector may narrow by a known `static_class`. |
 | `kind = "test_efficiency"` requires `test` | And rejects `finding_id`; `path` is optional for disambiguation. |
 | `path` repo-relative, slash-separated | Absolute paths and backslash paths fail at parse time. |
 | `expires` ISO `YYYY-MM-DD` if present | Other formats fail at parse time. |
