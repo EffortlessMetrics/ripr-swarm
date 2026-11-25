@@ -1,0 +1,163 @@
+{
+  "schema_version": "0.2",
+  "tool": "ripr",
+  "mode": "fast",
+  "root": "fixtures/python_strip_side_no_exposed_credit/input",
+  "config_path": "<cwd>/fixtures/python_strip_side_no_exposed_credit/input/ripr.toml",
+  "summary": {"changed_rust_files":0,"probes":1,"findings":1,"exposed":0,"weakly_exposed":1,"reachable_unrevealed":0,"no_static_path":0,"infection_unknown":0,"propagation_unknown":0,"static_unknown":0,"changed_files_by_language":[{"language":"python","files":1}]},
+  "analysis_outcome": {
+    "analysis_complete": true,
+    "outcome": {"schema_version":"0.1","kind":"complete_with_findings","identity":{"repository_identity":null,"root_identity":null,"config_identity":"fnv1a64:22d926b58d6300e8","base_revision":null,"input_identity":"sha256:9baba6ef0db7a852aadd4fac13c0292285b502018dbe3b6b591196a57fb21bbf","snapshot_identity":null,"git_candidate_subject":null},"counts":{"changed_file_count":1,"changed_line_count":2,"candidate_line_count":1,"probe_count":1,"finding_count":1},"limitations":[],"claim_boundary":"Static analysis outcome only; no correctness, test-adequacy, runtime-execution, or merge-readiness claim."}
+  },
+  "findings": [
+    {
+      "id": "probe:src_lib.py:python_preview:e2304fba",
+      "canonical_gap_id": "gap:python:src/lib.py:clean:return_value:return_value:s.lstrip",
+      "canonical_gap_group_size": 1,
+      "canonical_gap": {
+        "id": "gap:python:src/lib.py:clean:return_value:return_value:s.lstrip",
+        "language": "python",
+        "file": "src/lib.py",
+        "owner": "clean",
+        "behavior_kind": "return_value",
+        "probe_kind": "return_value",
+        "normalized_discriminator": "s.lstrip"
+
+      },
+      "classification": "weakly_exposed",
+      "severity": "warning",
+      "confidence": 0.40,
+      "confidence_basis": [
+        {"code": "preview_stages_not_modeled", "summary": "preview adapter: infection/propagation not modeled (Python)"},
+        {"code": "syntax_first_no_type_resolution", "summary": "syntax-first, no type or import resolution"},
+        {"code": "observation_not_confirmed", "summary": "the assertion is not confirmed to observe the changed value"}
+      ],
+      "confidence_why_capped": "Why capped: preview adapter: infection/propagation not modeled (Python); syntax-first, no type or import resolution; the assertion is not confirmed to observe the changed value. Preview score, not on the same scale as Rust confidence.",
+      "probe": {
+        "id": "probe:src_lib.py:python_preview:e2304fba",
+        "family": "return_value",
+        "delta": "value",
+        "file": "src/lib.py",
+        "line": 2,
+        "expression": "    return s.lstrip()",
+        "owner": "python:src/lib.py::clean"
+       },
+      "ripr": {
+        "reach": {"state":"yes","confidence":"low","summary":"1 related Python test(s) found for owner `clean`"},
+        "infect": {"state":"weak","confidence":"low","summary":"Related tests reach the changed call, but no strong related test call passes `s` with text followed by trailing whitespace, so `s.strip()` and `s.lstrip()` return the same value."},
+        "propagate": {"state":"yes","confidence":"low","summary":"Changed Python return value is already at the owner output boundary."},
+        "observe": {"state":"weak","confidence":"low","summary":"Strongest extracted Python oracle kind: `exact_value` (rank 5)"},
+        "discriminate": {"state":"weak","confidence":"low","summary":"Related Python test uses an `exact_value` oracle, but static evidence does not establish discrimination of the changed behavior."}
+       },
+      "evidence_stages": [
+        {"stage":"reach","state":"yes","confidence":"low"},
+        {"stage":"infect","state":"weak","confidence":"low"},
+        {"stage":"propagate","state":"yes","confidence":"low"},
+        {"stage":"observe","state":"weak","confidence":"low","basis":[{"code":"observation_not_confirmed","summary":"the assertion is not confirmed to observe the changed value"}]},
+        {"stage":"discriminate","state":"weak","confidence":"low"}
+      ],
+      "evidence_path": ["reach yes: 1 related Python test(s) found for owner `clean`", "infection weak: Related tests reach the changed call, but no strong related test call passes `s` with text followed by trailing whitespace, so `s.strip()` and `s.lstrip()` return the same value.", "propagation yes: Changed Python return value is already at the owner output boundary.", "observation weak: Strongest extracted Python oracle kind: `exact_value` (rank 5)", "discriminator weak: Related Python test uses an `exact_value` oracle, but static evidence does not establish discrimination of the changed behavior.", "local flow reaches returned value: return s.lstrip() (line 2)", "related test tests/test_lib.py:4 test_clean uses strong exact value oracle: assert clean(\"  a\") == \"a\"", "missing discriminator call `clean` with `s` with text followed by trailing whitespace: the change at line 2 only changes `s.strip()` to `s.lstrip()`, and no related call passes `s` with text followed by trailing whitespace"],
+      "flow_sinks": [
+        {"kind":"return_value","text":"return s.lstrip()","line":2}
+      ],
+      "evidence": ["owner: clean", "owner_kind: function", "missing_discriminator: call `clean` with `s` with text followed by trailing whitespace", "suggested_repair_action: strengthen_existing_test", "suggested_test_file: tests/test_lib.py", "suggested_test_name: test_clean", "suggested_test_node_id: tests/test_lib.py::test_clean", "suggested_verify_command: python -m pytest tests/test_lib.py::test_clean", "suggested_verify_command_confidence: high", "suggested_test_location_reason: strengthen existing weak pytest relation", "test_framework: pytest (test_clean)", "test_verify_command: python -m pytest tests/test_lib.py::test_clean (test_clean)", "related_test_relation: syntactic_call (test_clean)", "test_oracle: exact_value strong (test_clean)"],
+      "missing": ["A strong Python oracle reaches `clean`, but the edit only changes `s.strip()` to `s.lstrip()`, and no strong related call passes `s` with text followed by trailing whitespace; both versions return the same value for every related input, so static evidence cannot confirm the change is discriminated. Add a test that calls `clean` with `s` with text followed by trailing whitespace."],
+      "assertion_texts": {
+      },
+      "activation": {
+        "observed_values": [
+        ],
+        "missing_discriminators": [
+          {
+            "value": "call `clean` with `s` with text followed by trailing whitespace",
+            "reason": "the change at line 2 only changes `s.strip()` to `s.lstrip()`, and no related call passes `s` with text followed by trailing whitespace",
+            "flow_sink": {"kind":"return_value","text":"return s.lstrip()","line":2}
+          }
+        ]
+      },
+      "observed_values": [
+      ],
+      "missing_discriminators": [
+        {
+          "value": "call `clean` with `s` with text followed by trailing whitespace",
+          "reason": "the change at line 2 only changes `s.strip()` to `s.lstrip()`, and no related call passes `s` with text followed by trailing whitespace",
+          "flow_sink": {"kind":"return_value","text":"return s.lstrip()","line":2}
+        }
+      ],
+      "related_tests_total": 1,
+      "related_tests": [
+        {
+          "name": "test_clean",
+          "file": "tests/test_lib.py",
+          "line": 4,
+          "oracle_strength": "strong",
+          "oracle_kind": "exact_value",
+          "oracle": "assert clean(\"  a\") == \"a\""
+        }
+      ],
+      "repair_placement": {
+        "suggested_test_file": "tests/test_lib.py",
+        "suggested_test_name": "test_clean",
+        "suggested_test_node_id": "tests/test_lib.py::test_clean",
+        "verify_command": "python -m pytest tests/test_lib.py::test_clean",
+        "verify_command_confidence": "high"
+       },
+      "python_repair_card": {
+        "card_version": "python_repair_card.v1",
+        "source": "check_python_preview",
+        "canonical_gap_id": "gap:python:src/lib.py:clean:return_value:return_value:s.lstrip",
+        "language": "python",
+        "language_status": "preview",
+        "authority_boundary": "preview_advisory_only",
+        "repair_action": "strengthen_existing_test",
+        "changed_owner": "clean",
+        "changed_behavior": "return_value changed at src/lib.py:2: `return s.lstrip()`",
+        "current_test_evidence": "tests/test_lib.py:4 test_clean currently has oracle_strength=strong, oracle_kind=exact_value: assert clean(\"  a\") == \"a\"",
+        "missing_discriminator": "call `clean` with `s` with text followed by trailing whitespace",
+        "recommended_test_shape": "Strengthen the existing pytest exact return-value assertion for `call `clean` with `s` with text followed by trailing whitespace`.",
+        "suggested_assertion": "Assert the returned value equals the expected value for the changed inputs.",
+        "suggested_location": {
+          "test_file": "tests/test_lib.py",
+          "test_name": "test_clean",
+          "pytest_node_id": "tests/test_lib.py::test_clean"
+         },
+        "verify": {
+          "command": "python -m pytest tests/test_lib.py::test_clean",
+          "confidence": "high"
+         },
+        "receipt": {
+          "command": null,
+          "status": "unavailable_until_python_gap_ledger",
+          "guidance": "Save this `ripr check --format json` report, then run `ripr first-pr --check-output <check.json>` or `ripr reports gap-ledger --check-output <check.json>` to materialize a gap ledger with a concrete receipt command."
+         },
+        "stop_conditions": ["Stop if imports, fixtures, or test setup cannot call the changed owner.", "Stop if the expected value for the missing discriminator is ambiguous.", "Stop if adding the test appears to require a production-code edit."],
+        "limits": ["Syntax-first Python preview evidence only.", "No source edits, generated tests, mutation execution, provider calls, or gate authority.", "Verify success alone is not a gap-closure receipt."]
+       },
+      "stop_reasons": [],
+      "oracle_kind": "exact_value",
+      "oracle_strength": "strong",
+      "recommended_next_step": "Python preview: strengthen the existing related test with an exact return-value assertion for the missing check `call `clean` with `s` with text followed by trailing whitespace`.",
+      "suggested_next_action": "Python preview: strengthen the existing related test with an exact return-value assertion for the missing check `call `clean` with `s` with text followed by trailing whitespace`.",
+      "language": "python",
+      "language_status": "preview",
+      "owner_kind": "function",
+      "changed_sink": "lstrip",
+      "observed_sink": "assert clean(\"  a\") == \"a\"",
+      "oracle_alignment": "direct",
+      "alignment_reason": "strong_oracle_observes_owner_name",
+      "source_currentness": "candidate_current"
+    }
+  ],
+  "preview_languages": [
+    {
+      "language": "python",
+      "file_count": 1,
+      "sample_paths": ["src/lib.py"],
+      "enabled": true,
+      "analyzed": true,
+      "category": "preview_language_advisory",
+      "why": "preview adapter; advisory; may be incomplete; empty result is not Rust-grade clean"
+    }
+  ],
+  "source_subject": {"digest_algorithm":"sha256","files":[{"path":"src/lib.py","digest":"sha256:2001eb98c0f4700e89208aefc02cb9b339116a6c6eabfda8acaa67126f637421"},{"path":"tests/test_lib.py","digest":"sha256:10c80e1e129bd924a0c4c900158c023302353f002634991e2975ce9aa3525761"}]}
+}

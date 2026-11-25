@@ -12,7 +12,7 @@ use crate::app::CheckOutput;
 use crate::config::{ConfigSeverity, RiprConfig};
 use crate::domain::{
     ExposureClass, Finding, LanguageId, LanguageStatus, MissingDiscriminatorFact, RelatedTest,
-    StageEvidence,
+    StageEvidence, StageState,
 };
 use crate::output::next_step::reconcile_next_step;
 use crate::output::observed_values::{bounded_observed_values, elided_observed_values_total};
@@ -1465,62 +1465,154 @@ fn suppression_metadata(entry: &SuppressionEntry) -> Value {
     })
 }
 
+/// One-line alert text for GitHub code scanning, which shows `message.text`
+/// verbatim (#11219, #15374): the missing check (when the analyzer named one),
+/// what the static evidence suggests about the changed code in the same plain
+/// words the human summary uses, then the reconciled next step. Source text is
+/// whitespace-collapsed and length-bounded; the class token, probe family and
+/// the full evidence stay in `ruleId` and `properties`.
 fn finding_message(finding: &Finding) -> String {
-    let mut message = String::new();
-    // #11219: lead with the missing check when the analyzer named one, so the
-    // length bound can never cut it; the full list stays in
+    let mut parts = Vec::new();
+    // #11219: lead with the missing check when the analyzer named one, so no
+    // bound can drop it; the full list stays in
     // `properties.missing_discriminators`.
     if let Some(missing) = finding.activation.missing_discriminators.first() {
-        let reason = missing.reason.trim();
+        let reason = bounded_single_line(&missing.reason, MAX_MISSING_CHECK_CHARS);
         if !reason.is_empty() {
-            message.push_str("Missing check: ");
-            message.push_str(reason.trim_end_matches('.'));
-            message.push_str(". ");
+            parts.push(sentence(&format!("Missing check: {reason}")));
         }
     }
-    message.push_str(&format!(
-        "{} static exposure for {} probe",
-        finding.class.as_str(),
-        finding.probe.family.as_str()
+    let expression = bounded_single_line(&finding.probe.expression, MAX_EXPRESSION_CHARS);
+    let subject = if expression.is_empty() {
+        "The changed code".to_string()
+    } else {
+        format!("Changed code `{expression}`")
+    };
+    parts.push(format!(
+        "{subject} {}.",
+        finding_class_message_predicate(finding)
     ));
-    if !finding.probe.expression.is_empty() {
-        message.push_str(": ");
-        message.push_str(&finding.probe.expression);
-    }
-    // Bound the evidence head only; the reconciled next step below is
-    // appended whole so it keeps agreeing with the other surfaces.
-    let mut message = bound_message(message);
     // RIPR-SPEC-0088 §PR8: the SARIF message text is a machine-consumed surface.
     // Use the shared reconciliation fn (not the raw field) so the embedded
-    // "Next step" agrees with suggested_next_action and the other surfaces.
+    // "Next step" agrees with suggested_next_action and the other surfaces. It
+    // is never cut, so a blocked-state or complete-packet disclosure at its end
+    // survives; only whitespace and the internal analyzer-routing sentence go.
     if finding.recommended_next_step.is_some() {
-        message.push_str(". Next step: ");
-        message.push_str(&reconcile_next_step(finding));
+        let step = alert_next_step(&reconcile_next_step(finding));
+        if !step.is_empty() {
+            parts.push(format!("Next step: {step}"));
+        }
     }
-    message
+    parts.join(" ")
 }
 
-/// Longest evidence head (missing check, class, probe, expression) a finding
-/// message carries (#11219). The reconciled next step is appended whole
-/// (RIPR-SPEC-0088); the complete evidence stays in `properties`.
-const MAX_MESSAGE_CHARS: usize = 240;
-
-fn bound_message(message: String) -> String {
-    if message.chars().count() <= MAX_MESSAGE_CHARS {
-        return message;
+/// What the static evidence suggests about the changed code, completing
+/// "Changed code `x` ...". Mirrors the human summary vocabulary ("appear
+/// noticed by tests", "partly noticed", "reached but not noticed", "no test
+/// path", "unclear") and states no runtime verdict.
+///
+/// The two classes whose plain name claims a reaching test ("partly
+/// noticed", "reached") claim it only when reach is `yes` and not callee-only,
+/// the same guard the human hint and Summary apply (#7003, #7330, #15295).
+/// Owner reach alone does not reach the changed expression: when tests call
+/// the owner but infection is `no` (a skipped branch, a default every call
+/// overrides) or anything short of `yes`, the message stays at the owner
+/// level instead of saying the change is reached.
+fn finding_class_message_predicate(finding: &Finding) -> &'static str {
+    let reach_established = finding.ripr.reach.state == StageState::Yes
+        && !finding
+            .ripr
+            .reach
+            .summary
+            .starts_with(crate::domain::CALLEE_ONLY_REACH_PREFIX);
+    match &finding.class {
+        ExposureClass::ReachableUnrevealed if !reach_established => {
+            "has no assertion that appears to notice a change, and test reach to it is not established"
+        }
+        ExposureClass::WeaklyExposed if !reach_established => {
+            "has only a weak check that may notice a change, and test reach to it is not established"
+        }
+        ExposureClass::ReachableUnrevealed if finding.ripr.infect.state == StageState::No => {
+            "is in code tests call, but no test input appears to exercise it"
+        }
+        ExposureClass::ReachableUnrevealed if finding.ripr.infect.state != StageState::Yes => {
+            "is in code tests call, but whether a test input exercises it is not established"
+        }
+        ExposureClass::Exposed => "appears noticed by tests",
+        ExposureClass::WeaklyExposed => "is only partly noticed by tests",
+        ExposureClass::ReachableUnrevealed => {
+            "is reached by tests, but no assertion appears to notice a change"
+        }
+        ExposureClass::NoStaticPath => "has no test path that static analysis could find",
+        ExposureClass::InfectionUnknown => {
+            "may be reached by tests, but static analysis cannot tell whether their inputs exercise it"
+        }
+        ExposureClass::PropagationUnknown => {
+            "may be reached by tests, but static analysis cannot tell whether a wrong result reaches an assertion"
+        }
+        ExposureClass::StaticUnknown => "could not be judged by static analysis",
     }
-    let mut bounded: String = message.chars().take(MAX_MESSAGE_CHARS - 3).collect();
+}
+
+/// Longest changed-code excerpt a finding message quotes (#15374).
+const MAX_EXPRESSION_CHARS: usize = 120;
+/// Longest missing-check reason a finding message quotes (#15374).
+const MAX_MISSING_CHECK_CHARS: usize = 160;
+
+/// Collapses every whitespace run (newlines and source indentation included)
+/// to one space, trims the ends, and cuts to `max_chars` with a trailing
+/// `...` when longer. Display only: fingerprints never read this text.
+fn bounded_single_line(text: &str, max_chars: usize) -> String {
+    let collapsed = text.split_whitespace().collect::<Vec<_>>().join(" ");
+    if collapsed.chars().count() <= max_chars {
+        return collapsed;
+    }
+    let mut bounded: String = collapsed
+        .chars()
+        .take(max_chars.saturating_sub(3))
+        .collect();
+    // Drop trailing dots and joining punctuation too, so a cut after `self.`
+    // or `etc.` reads `self...`, never `self....`.
+    let kept = bounded
+        .trim_end_matches(|c: char| c.is_whitespace() || matches!(c, '.' | ',' | ':' | ';'))
+        .len();
+    bounded.truncate(kept);
     bounded.push_str("...");
     bounded
 }
 
+/// Ends `text` with exactly one sentence terminator: a text already ending in
+/// `.`, `!`, `?` or a `...` cut is kept, so a cut never reads `....`; a
+/// trailing `,`, `:` or `;` is dropped first, so it never reads `:.`.
+fn sentence(text: &str) -> String {
+    let text = text.trim_end_matches(|c: char| c.is_whitespace() || matches!(c, ',' | ':' | ';'));
+    if text.ends_with(['.', '!', '?']) {
+        text.to_string()
+    } else {
+        format!("{text}.")
+    }
+}
+
+/// The reconciled next step as alert text: one line. Only line breaks and the
+/// indentation around them become one space; spaces inside a line stay, so a
+/// quoted literal (an exact error message to assert) keeps its bytes. The
+/// internal analyzer route stays out of the next step itself (#15309).
+fn alert_next_step(step: &str) -> String {
+    step.lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty())
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
 fn seam_message(entry: &ClassifiedSeam) -> String {
-    format!(
-        "{} seam grip for {}: {}",
-        entry.class.as_str(),
-        entry.seam.kind().as_str(),
-        entry.seam.expression()
-    )
+    let title = seam_class_title(&entry.class);
+    let expression = bounded_single_line(entry.seam.expression(), MAX_EXPRESSION_CHARS);
+    if expression.is_empty() {
+        format!("{title}.")
+    } else {
+        format!("{title}: `{expression}`.")
+    }
 }
 
 /// Keep a supported native finding/probe identity across display-line moves.
@@ -3405,7 +3497,11 @@ weakly_gripped = "note"
     fn sarif_preserves_static_language() {
         let rendered = render_findings_sarif(&sample_output(), &RiprConfig::default(), &[]);
         assert!(rendered.contains("weakly_exposed"));
-        assert!(rendered.contains("static exposure"));
+        // #15374: the alert text reads in plain static wording; the class
+        // token stays in `ruleId`/`properties`, not the message.
+        assert!(rendered.contains("is only partly noticed by tests."));
+        assert!(rendered.contains("Static evidence only; no test was executed."));
+        assert!(!rendered.contains("static exposure for"));
         assert!(rendered.contains("equality boundary is absent"));
     }
 
@@ -3614,19 +3710,205 @@ weakly_gripped = "note"
         let mut long = sample_finding();
         long.recommended_next_step = Some("word ".repeat(100));
         let message = finding_message(&long);
-        assert!(message.ends_with(&reconcile_next_step(&long)), "{message}");
+        assert!(
+            message.ends_with(reconcile_next_step(&long).trim_end()),
+            "{message}"
+        );
         // A long expression is cut by the bound, never the leading missing check.
         let mut wide = sample_finding();
         wide.probe.expression = "x".repeat(2000);
         let message = finding_message(&wide);
         assert!(message.starts_with("Missing check: no related test calls the equality boundary"));
-        let head = message.split(". Next step:").next().unwrap_or_default();
-        assert_eq!(head.chars().count(), MAX_MESSAGE_CHARS);
-        assert!(head.ends_with("..."));
+        let quoted = format!("`{}...`", "x".repeat(MAX_EXPRESSION_CHARS - 3));
+        assert!(message.contains(&quoted), "{message}");
         // Control: without a missing discriminator no "Missing check" is invented.
         let mut none = sample_finding();
         none.activation.missing_discriminators.clear();
         assert!(!finding_message(&none).contains("Missing check"));
+        Ok(())
+    }
+
+    /// #15374: code scanning shows `message.text` verbatim, so it is one plain
+    /// line: source whitespace collapsed, no `....` at a cut, no class or probe
+    /// family tokens, and no internal analyzer-routing sentence.
+    #[test]
+    fn finding_message_is_one_plain_line_without_jargon_or_doubled_cut() {
+        let mut multi = sample_finding();
+        multi.probe.expression =
+            "if amount\n        >= discount_threshold\n\t&& tier.is_gold() {".to_string();
+        let message = finding_message(&multi);
+        assert!(
+            !message.contains('\n') && !message.contains('\t'),
+            "{message}"
+        );
+        assert!(
+            message.contains("Changed code `if amount >= discount_threshold && tier.is_gold() {`"),
+            "{message}"
+        );
+        assert!(
+            message.contains("is only partly noticed by tests."),
+            "{message}"
+        );
+        for jargon in [
+            "weakly_exposed",
+            "static exposure for",
+            "predicate probe",
+            "  ",
+        ] {
+            assert!(!message.contains(jargon), "{jargon:?} in {message}");
+        }
+
+        // A cut expression and a cut missing check never read `....`.
+        let mut cut = sample_finding();
+        cut.probe.expression = format!("call({})", "arg, ".repeat(60));
+        cut.activation.missing_discriminators[0].reason = "word ".repeat(80);
+        cut.recommended_next_step = Some("add an exact assertion".to_string());
+        let message = finding_message(&cut);
+        assert!(!message.contains("...."), "{message}");
+        assert!(message.contains("...` "), "{message}");
+        assert!(message.starts_with("Missing check: word"), "{message}");
+        assert!(message.contains("... Changed code"), "{message}");
+
+        // A cut landing right after a `.` (method chains, `etc.`) or a reason
+        // ending in joining punctuation still reads as one clean sentence.
+        let mut dotted = sample_finding();
+        dotted.probe.expression = "a.".repeat(100);
+        dotted.activation.missing_discriminators[0].reason = "x.".repeat(100);
+        let message = finding_message(&dotted);
+        assert!(!message.contains("...."), "{message}");
+        assert!(message.contains("a.a...`"), "{message}");
+        assert!(message.starts_with("Missing check: x.x.x"), "{message}");
+        let mut colon = sample_finding();
+        colon.activation.missing_discriminators[0].reason = "observed values:".to_string();
+        let message = finding_message(&colon);
+        assert!(
+            message.starts_with("Missing check: observed values. "),
+            "{message}"
+        );
+
+        // Every class reads in plain words; none leaks its wire token.
+        for class in all_exposure_classes() {
+            let mut finding = sample_finding();
+            finding.class = class.clone();
+            let message = finding_message(&finding);
+            assert!(!message.contains(class.as_str()), "{message}");
+            assert!(!message.contains('\n'), "{message}");
+        }
+
+        // #15374 review: reached-but-not-noticed claims a reaching test only
+        // when reach is established; weak or callee-only reach keeps the doubt.
+        let mut reached = sample_finding();
+        reached.class = ExposureClass::ReachableUnrevealed;
+        reached.ripr.reach = stage(StageState::Yes, "related tests call discounted_total");
+        reached.ripr.infect = stage(StageState::Yes, "a test input enters the changed code");
+        let message = finding_message(&reached);
+        assert!(
+            message.contains("is reached by tests, but no assertion"),
+            "{message}"
+        );
+        for reach in [
+            stage(StageState::Weak, "marker test only"),
+            stage(
+                StageState::Yes,
+                &format!(
+                    "{} discounted_total",
+                    crate::domain::CALLEE_ONLY_REACH_PREFIX
+                ),
+            ),
+        ] {
+            let mut unestablished = reached.clone();
+            unestablished.ripr.reach = reach;
+            let message = finding_message(&unestablished);
+            assert!(!message.contains("is reached by tests"), "{message}");
+            assert!(
+                message.contains("test reach to it is not established."),
+                "{message}"
+            );
+        }
+
+        // A weak finding without established reach does not claim that tests
+        // partly notice the change (#15374 review, same guard as #15295).
+        let mut weak_unreached = sample_finding();
+        weak_unreached.ripr.reach = stage(StageState::Weak, "same-file test link only");
+        let message = finding_message(&weak_unreached);
+        assert!(!message.contains("partly noticed by tests"), "{message}");
+        assert!(
+            message.contains("test reach to it is not established."),
+            "{message}"
+        );
+
+        // Tests call the owner but no input exercises the change: not "reached".
+        let mut skipped = reached.clone();
+        skipped.ripr.infect = stage(StageState::No, "no related test enters the branch");
+        let message = finding_message(&skipped);
+        assert!(!message.contains("is reached by tests"), "{message}");
+        assert!(
+            message.contains("is in code tests call, but no test input appears to exercise it."),
+            "{message}"
+        );
+
+        // Any infection short of `yes` also stays at the owner level.
+        for infect in [
+            StageState::Unknown,
+            StageState::Weak,
+            StageState::Opaque,
+            StageState::NotApplicable,
+        ] {
+            let mut uncertain = reached.clone();
+            uncertain.ripr.infect = stage(infect.clone(), "input not established");
+            let message = finding_message(&uncertain);
+            assert!(
+                !message.contains("is reached by tests"),
+                "{infect:?}: {message}"
+            );
+            assert!(
+                message.contains("whether a test input exercises it is not established."),
+                "{infect:?}: {message}"
+            );
+        }
+
+        // Empty expression: a plain subject, still one sentence.
+        let mut bare = sample_finding();
+        bare.probe.expression.clear();
+        bare.activation.missing_discriminators.clear();
+        bare.recommended_next_step = None;
+        assert_eq!(
+            finding_message(&bare),
+            "The changed code is only partly noticed by tests."
+        );
+    }
+
+    /// #15374: the analyzer route of a named unresolved edge is internal
+    /// routing and never reaches the alert; the plain guidance does.
+    #[test]
+    fn finding_message_carries_no_analyzer_route() -> Result<(), String> {
+        let mut finding = sample_finding();
+        finding.class = ExposureClass::StaticUnknown;
+        finding.activation.missing_discriminators.clear();
+        finding.static_limit_kind =
+            Some(crate::domain::StaticLimitKind::RustTransitiveReachUnresolved);
+        finding.evidence = vec![
+            "limitation_first_unresolved_edge: entry `parse` -> owner `unit`".to_string(),
+            "limitation_analyzer_route: analysis/rust-public-api-transitive-reach".to_string(),
+        ];
+        finding.recommended_next_step = Some("add a direct test".to_string());
+        let message = finding_message(&finding);
+        assert!(!message.contains("Route analyzer work"), "{message}");
+        assert!(!message.contains("analysis/rust-public-api"), "{message}");
+        assert!(
+            message.ends_with("This limitation does not establish a missing test."),
+            "{message}"
+        );
+        assert!(
+            message.contains("could not be judged by static analysis."),
+            "{message}"
+        );
+
+        let properties = finding_properties(&finding, ConfigSeverity::Note);
+        assert_eq!(
+            properties["suggested_next_action"].as_str(),
+            Some(reconcile_next_step(&finding).as_str())
+        );
         Ok(())
     }
 
@@ -4183,6 +4465,56 @@ weakly_gripped = "note"
         assert_eq!(visible.len(), 1, "default policy hides strongly_gripped");
         assert_eq!(visible[0], both[1]);
         Ok(())
+    }
+
+    /// #15374 review: seam alerts are one bounded line led by the rule title.
+    #[test]
+    fn seam_message_is_one_bounded_line() {
+        let multi = classified_seam_at(
+            SeamGripClass::WeaklyGripped,
+            "src/pricing.rs",
+            "pricing::discounted_total",
+            SeamKind::PredicateBoundary,
+            (42, 88),
+            "amount\n        >= discount_threshold",
+        );
+        let message = seam_message(&multi);
+        assert!(!message.contains('\n'), "{message}");
+        assert!(
+            message.ends_with(": `amount >= discount_threshold`."),
+            "{message}"
+        );
+        assert!(!message.contains("weakly_gripped"), "{message}");
+
+        let long = classified_seam_at(
+            SeamGripClass::WeaklyGripped,
+            "src/pricing.rs",
+            "pricing::discounted_total",
+            SeamKind::PredicateBoundary,
+            (42, 88),
+            &"x + ".repeat(80),
+        );
+        let message = seam_message(&long);
+        assert!(message.contains("...`."), "{message}");
+        assert!(!message.contains("...."), "{message}");
+        let quoted = message
+            .split('`')
+            .nth(1)
+            .map_or(0, |quote| quote.chars().count());
+        assert!(quoted <= MAX_EXPRESSION_CHARS, "{message}");
+    }
+
+    /// #15374 review: the next step keeps spaces inside a quoted literal.
+    #[test]
+    fn alert_next_step_keeps_literal_spacing_and_joins_lines() {
+        assert_eq!(
+            alert_next_step("assert the error is \"too  low\""),
+            "assert the error is \"too  low\""
+        );
+        assert_eq!(
+            alert_next_step("first line\n    second  line\n"),
+            "first line second  line"
+        );
     }
 
     fn weakly_gripped_classified() -> ClassifiedSeam {

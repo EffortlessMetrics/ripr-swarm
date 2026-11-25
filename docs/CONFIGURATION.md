@@ -750,6 +750,14 @@ Fallback, negotiated from capabilities only (never the client name):
 - `pull` — client answers `workspace/configuration`; behavior above.
 - `push_fallback` — no pull support, but the client advertises
   `workspace/didChangeConfiguration`; pushed values keep applying as today.
+  A pushed value ripr ignores (wrong type, unknown literal, a non-object
+  `ripr` section, or a payload that is not an object of ripr settings) is
+  reported in the log with the key, its accepted values and the value
+  received, and also on screen for clients without the `riprEditor`
+  integration. A rejected value falls back to its repository or default
+  value and is named once until a push repairs or clears it. A malformed
+  payload changes no setting; a malformed `ripr` section changes no setting
+  itself, while flat settings beside it still apply.
 - `initialization_only` — neither transport; only `initializationOptions`
   apply.
 
@@ -1066,6 +1074,16 @@ identity. Matching is exact on file and function; a missing or ambiguous owner
 never matches. A `function` entry covers every seam in that function,
 including seams added later, so set `expires` and review it when the function
 changes.
+
+When `ripr check --suppression-policy` finds an id-keyed entry that matches
+no current finding and is not a known ripr 0.10 id (those get the id that now
+selects the same finding instead), its warning names this `path` + `function`
+form as the selector that survives edits. That selector covers every finding
+in the function, and a changed `const` or `static` has no owning function, so
+it needs a fresh `finding_id`. `ripr review-comments` reports only expired
+entries, not unmatched ones. `ripr policy
+suppression-health` lists a `path` + `function` entry under the identity
+`<path>::<function>` (for example `src/retry.rs::retry_allowed`).
 
 In `ripr review-comments`, a `finding_id` entry applies only when the id names
 exactly one seam of the whole diff-scoped inventory; an id shared with another

@@ -15,7 +15,9 @@ use super::caplog_text::{PythonLogVerdict, python_log_evidence};
 use super::class_attr_pin;
 use super::conditional_expression;
 use super::dataclass_default::dataclass_default_credits;
-use super::discriminators::python_missing_discriminators;
+use super::discriminators::{
+    python_missing_discriminators, python_multiline_return_dict_entry_discriminator,
+};
 use super::dunder_truthiness;
 use super::exception_variant::exception_variant_credits;
 use super::guard_activation;
@@ -1182,6 +1184,23 @@ fn classify_change_for_owner_inner<'a>(
             &focus,
         )
     });
+    // A strip side, `round` digit count or sort direction edit (#16203)
+    // differs only for an argument with whitespace on the dropped side, more
+    // decimal places, or two different elements. A line inside a multiline
+    // string is data, not a call.
+    let call_variant_gap = old_line_text
+        .filter(|_| !no_behavior.new_line_in_multiline_string)
+        .and_then(|old| {
+            super::call_variant::python_call_variant_evidence(
+                old,
+                line_text,
+                line,
+                owner,
+                owner_source,
+                &related_candidates,
+                &focus,
+            )
+        });
 
     // A changed relational predicate (`qty > on_hand` -> `qty >= on_hand`) only
     // behaves differently when its operands are equal, so a strong exact-value
@@ -1281,6 +1300,7 @@ fn classify_change_for_owner_inner<'a>(
     });
     let mut boundary_downgraded = false;
     let mut connective_downgraded = false;
+    let mut call_variant_downgraded = false;
     // A removed or added additive call term changes the result only where the
     // term is nonzero (#6733). When every strong related call gives it the
     // value 0, a strong oracle passes either way.
@@ -1746,6 +1766,7 @@ fn classify_change_for_owner_inner<'a>(
         && default_keyword.is_none()
         && positional_only_gap.is_none()
         && connective_gap.is_none()
+        && call_variant_gap.is_none()
         && boundary_gap.is_none()
         && inactive_term.is_none()
         && guarded_arm_gap.is_none()
@@ -1856,6 +1877,28 @@ fn classify_change_for_owner_inner<'a>(
                 owner.name,
                 swap.left,
                 swap.right,
+            )],
+        )
+    } else if strongest_strength >= OracleStrength::Strong.rank()
+        && alignment.observes()
+        && let Some(variant) = &call_variant_gap
+    {
+        // Every strong related call passes an argument both versions of the
+        // changed call treat alike (#16203).
+        call_variant_downgraded = true;
+        (
+            ExposureClass::WeaklyExposed,
+            StageState::Yes,
+            StageState::Weak,
+            StageState::Weak,
+            vec![format!(
+                "A strong Python oracle reaches `{}`, but the edit only changes `{}` to `{}`, and no strong related call passes {}; both versions return the same value for every related input, so static evidence cannot confirm the change is discriminated. Add a test that calls `{}` with {}.",
+                owner.name,
+                variant.old_call,
+                variant.new_call,
+                variant.discriminator,
+                owner.name,
+                variant.discriminator,
             )],
         )
     } else if strongest_strength >= OracleStrength::Strong.rank()
@@ -2140,6 +2183,7 @@ fn classify_change_for_owner_inner<'a>(
             StageState::Unknown
         } else if boundary_downgraded
             || connective_downgraded
+            || call_variant_downgraded
             || term_downgraded
             || guarded_arm_downgraded
             || table_downgraded
@@ -2166,6 +2210,14 @@ fn classify_change_for_owner_inner<'a>(
             }
         } else if connective_downgraded {
             "Related tests reach the changed condition, but every strong related test call gives both operands the same truth value, where `and` and `or` agree.".to_string()
+        } else if let Some(variant) = call_variant_gap
+            .as_ref()
+            .filter(|_| call_variant_downgraded)
+        {
+            format!(
+                "Related tests reach the changed call, but no strong related test call passes {}, so `{}` and `{}` return the same value.",
+                variant.discriminator, variant.old_call, variant.new_call
+            )
         } else if guarded_arm_downgraded
             && guarded_arm_gap
                 .as_ref()
@@ -2358,6 +2410,20 @@ fn classify_change_for_owner_inner<'a>(
                 shape: DiscriminatorShape::Other,
                 drafted_boundary: None,
             }]
+        } else if let Some(variant) = call_variant_gap
+            .as_ref()
+            .filter(|_| changed_default_override.is_none())
+        {
+            vec![MissingDiscriminatorFact {
+                value: format!("call `{}` with {}", owner.name, variant.discriminator),
+                reason: format!(
+                    "the change at line {line} only changes `{}` to `{}`, and no related call passes {}",
+                    variant.old_call, variant.new_call, variant.discriminator
+                ),
+                flow_sink: flow_sink.clone(),
+                shape: DiscriminatorShape::Other,
+                drafted_boundary: None,
+            }]
         } else if let Some(params) = &changed_default_override {
             // The override downgrade names a specific, actionable missing
             // discriminator — "call the owner WITHOUT the changed-default
@@ -2380,6 +2446,15 @@ fn classify_change_for_owner_inner<'a>(
                 shape: DiscriminatorShape::Other,
                 drafted_boundary: None,
             }]
+        } else if let Some(fact) = python_multiline_return_dict_entry_discriminator(
+            line,
+            line_text,
+            no_behavior.brackets.span,
+            owner_source,
+            owner,
+            flow_sink.as_ref(),
+        ) {
+            vec![fact]
         } else {
             python_missing_discriminators(
                 &family,

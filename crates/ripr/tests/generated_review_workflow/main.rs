@@ -263,6 +263,33 @@ fn generated_workflow_replay_prints_only_runnable_next_steps() -> Result<(), Box
     );
 
     let summary = fs::read_to_string(base.join("step-summary.md"))?;
+    assert!(
+        summary.len() < 4096 && summary.lines().count() <= 32,
+        "{summary}"
+    );
+    assert_eq!(summary.matches(repair_command).count(), 1, "{summary}");
+    for name in [
+        "ripr/reports/start-here.md",
+        "ripr/reports/index.md",
+        "ripr/review/comments.json",
+    ] {
+        assert!(summary.contains(name), "{summary}");
+    }
+    assert!(
+        !summary.contains("<details") && !summary.lines().any(|line| line.starts_with("# ")),
+        "{summary}"
+    );
+    // The preview reads the event as the step does. A runner's own
+    // `GITHUB_EVENT_NAME` must not reach it: under `merge_group` the queue
+    // runs this test, and the renderer would print the non-pull-request page.
+    let preview = replay::ripr_with_env(
+        &root,
+        &["reports", "ci-summary", "--full", "--root", "."],
+        &CI_PACKET_WINDOW_ENV,
+        &[("GITHUB_EVENT_NAME", "pull_request")],
+    )?;
+    assert!(preview.status.success());
+    let summary = String::from_utf8(preview.stdout)?;
     let first_block = summary
         .split("#### First-run status\n")
         .nth(1)
@@ -395,7 +422,7 @@ fn generated_workflow_replay_prints_only_runnable_next_steps() -> Result<(), Box
             .ok_or_else(|| format!("summary has no {heading:?} block"))?;
         assert!(
             block.starts_with(&format!(
-                "- Repair start: `{repair_command}`\n- After the test edit: run the `--attempt ... --phase after` command"
+                "- Repair start: `{repair_command}`\n- After the test edit: run the after-phase command"
             )),
             "{heading:?} must lead with the repair start:\n{}",
             block.lines().take(4).collect::<Vec<_>>().join("\n")
@@ -413,7 +440,7 @@ fn generated_workflow_replay_prints_only_runnable_next_steps() -> Result<(), Box
         .ok_or("summary has no Agent review packet block")?;
     assert!(
         packet.starts_with(&format!(
-            "- Receipt: No agent receipt yet. None is expected before a repair: the `--attempt ... --phase after` command writes it after the focused test edit.\n- Start repair: `{repair_command}`\n- After the test edit: run the `--attempt ... --phase after` command"
+            "- Receipt: No agent receipt yet. None is expected before a repair: the after-phase command the before phase prints writes it after the focused test edit.\n- Start repair: `{repair_command}`\n- After the test edit: run the after-phase command"
         )),
         "the review packet must lead with the repair start:\n{packet}"
     );
@@ -3488,7 +3515,7 @@ fn generated_compact_body_lifts_code_spans_of_any_fence_length() -> Result<(), B
     ));
     fs::create_dir_all(&root)?;
     let verify_body = "### ripr gap: missing boundary assertion\n\nChanged behavior:\n``a` b``\n\nWhy this matters:\nw\n\nRepair:\nAdd one.\n\nVerify:\n`` ripr agent verify `x` ``";
-    let start_body = "### ripr gap: weak oracle\n\nWhy this matters:\nw\n\nRepair:\nAdd one.\n\nStart the repair:\n```ripr agent repair ``x`` --phase before```\n\nIt prints the `--attempt ... --phase after` command that verifies the new test.";
+    let start_body = "### ripr gap: weak oracle\n\nWhy this matters:\nw\n\nRepair:\nAdd one.\n\nStart the repair:\n```ripr agent repair ``x`` --phase before```\n\nIt prints the after-phase command that verifies the new test.";
     let plain_body = "### ripr gap: weak oracle\n\nWhy this matters:\nw\n\nRepair:\nAdd one.\n\nVerify:\n`ripr agent verify`";
     let operation = |key: &str, body: &str| {
         serde_json::json!({"operation": "create", "safe_to_publish": true, "dedupe_key": key,
@@ -3590,8 +3617,14 @@ fn generated_summary_prints_repository_relative_commands() -> Result<(), Box<dyn
         format!("- Verify after the test edit: `{verify}`\n- Receipt after verify: `{receipt}`\n"),
     )?;
 
-    // The generated step runs this command from the checkout root.
-    let run = replay::ripr(&root, &["reports", "ci-summary", "--root", "."])?;
+    // The generated step runs this command from the checkout root, on a pull
+    // request event of its own rather than the runner's.
+    let run = replay::ripr_with_env(
+        &root,
+        &["reports", "ci-summary", "--root", ".", "--full"],
+        &CI_PACKET_WINDOW_ENV,
+        &[("GITHUB_EVENT_NAME", "pull_request")],
+    )?;
     assert!(
         run.status.success(),
         "summary command failed: {}",

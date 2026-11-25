@@ -17,6 +17,7 @@ const COMMAND: &str = "reports ci-summary";
 /// the settings, and `github.base_ref || default_branch` for the base.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(super) struct CiSummaryOptions {
+    pub(super) full: bool,
     pub(super) root: PathBuf,
     pub(super) base_ref: String,
     pub(super) upload_sarif: String,
@@ -40,7 +41,7 @@ pub(super) fn ci_summary(args: &[String]) -> Result<(), String> {
         gate_mode: settings.gate_mode.clone(),
         comment_mode: options.comment_mode,
     };
-    let summary = render_ci_summary(&input);
+    let summary = render_ci_summary(&input, options.full);
     write_summary(&mut std::io::stdout().lock(), &summary)
 }
 
@@ -104,6 +105,7 @@ pub(super) fn parse_ci_summary_options_with(
         .cloned()
         .unwrap_or_default();
     let mut options = CiSummaryOptions {
+        full: false,
         root: PathBuf::from("."),
         base_ref,
         upload_sarif: workflow.upload_sarif.clone(),
@@ -116,6 +118,10 @@ pub(super) fn parse_ci_summary_options_with(
         let flag = args[i].as_str();
         i += 1;
         match flag {
+            "--full" => {
+                options.full = true;
+                continue;
+            }
             "--root" => {
                 let value = non_empty_string_arg(args, i, flag, COMMAND)?;
                 let reconciled = reconcile_root(&options.root, root_explicit, &value, COMMAND)?;

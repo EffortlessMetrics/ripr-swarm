@@ -23369,6 +23369,83 @@ fn given_integration_test_when_local_module_shadows_library_crate_then_owner_get
     Ok(())
 }
 
+/// Relation reasons of the `discounted_total` boundary seam's related tests
+/// in a crate root whose inline test module is `tests_src`, beside a
+/// differently named production `other`.
+fn relation_reasons_for_inline_boundary_seam(
+    tests_src: &str,
+) -> Result<Vec<(String, RelationReason)>, String> {
+    let prod_src = format!(
+        "pub fn discounted_total(amount: i32, threshold: i32) -> i32 {{\n    if amount >= threshold {{ amount - 10 }} else {{ amount }}\n}}\n\npub fn other(amount: i32, _threshold: i32) -> i32 {{\n    amount\n}}\n\n{tests_src}"
+    );
+    let index = index_from_files(&[(PathBuf::from("src/lib.rs"), prod_src.as_str())])?;
+    let seams = inventory_seams_from_index(&[PathBuf::from("src/lib.rs")], &index);
+    let seam = seams
+        .iter()
+        .find(|seam| {
+            seam.kind() == SeamKind::PredicateBoundary && seam.owner().ends_with("discounted_total")
+        })
+        .ok_or_else(|| "expected the discounted_total predicate boundary seam".to_string())?;
+    let evidence = evidence_for_seam(seam, &index);
+    Ok(evidence
+        .related_tests
+        .iter()
+        .map(|test| (test.test_name.clone(), test.relation_reason))
+        .collect())
+}
+
+/// #14069 (#14179): a renaming import binds the bare `discounted_total` to
+/// `other`, so the seam path must not credit a direct call of the owner, as
+/// the finding-level relation already refuses. The control calls the owner
+/// through `super::` beside the same rename and keeps the direct call.
+#[test]
+fn given_inline_tests_when_a_renaming_import_binds_the_owner_name_then_no_direct_owner_call()
+-> Result<(), String> {
+    let renamed = "#[cfg(test)]\nmod tests {\n    use super::other as discounted_total;\n\n    #[test]\n    fn renamed_other() {\n        assert_eq!(discounted_total(100, 100), 100);\n    }\n}\n";
+    let related = relation_reasons_for_inline_boundary_seam(renamed)?;
+    assert_eq!(
+        related,
+        vec![("renamed_other".to_string(), RelationReason::SameTestFile)],
+        "#14069: a renamed other function is not a direct owner call; the test keeps its proximity row"
+    );
+    let control = "#[cfg(test)]\nmod tests {\n    use super::other as discounted_total;\n\n    #[test]\n    fn qualified_owner() {\n        assert_eq!(super::discounted_total(100, 100), 90);\n    }\n}\n";
+    let related = relation_reasons_for_inline_boundary_seam(control)?;
+    assert_eq!(
+        related,
+        vec![(
+            "qualified_owner".to_string(),
+            RelationReason::DirectOwnerCall
+        )],
+        "{control}"
+    );
+    Ok(())
+}
+
+/// #14179: the rename refusal runs after the private-visibility record, so a
+/// test that cannot reach a private owner in a sibling module is not
+/// related to it through the same-file fallback either.
+#[test]
+fn given_private_owner_in_sibling_module_when_a_renaming_import_binds_its_name_then_no_related_test()
+-> Result<(), String> {
+    let source = "mod pricing {\n    fn discounted_total(amount: i32, threshold: i32) -> i32 {\n        if amount >= threshold { amount - 10 } else { amount }\n    }\n}\n\npub fn other(amount: i32, _threshold: i32) -> i32 {\n    amount\n}\n\n#[cfg(test)]\nmod tests {\n    use super::other as discounted_total;\n\n    #[test]\n    fn renamed_other() {\n        assert_eq!(discounted_total(100, 100), 100);\n    }\n}\n";
+    let index = index_from_files(&[(PathBuf::from("src/lib.rs"), source)])?;
+    let seams = inventory_seams_from_index(&[PathBuf::from("src/lib.rs")], &index);
+    let seam = seams
+        .iter()
+        .find(|seam| {
+            seam.kind() == SeamKind::PredicateBoundary && seam.owner().ends_with("discounted_total")
+        })
+        .ok_or_else(|| "expected the private discounted_total boundary seam".to_string())?;
+    let evidence = evidence_for_seam(seam, &index);
+    let related: Vec<&str> = evidence
+        .related_tests
+        .iter()
+        .map(|test| test.test_name.as_str())
+        .collect();
+    assert!(related.is_empty(), "{related:?}");
+    Ok(())
+}
+
 /// #14087: a `const`, `static` or tuple `struct` of the owner's name in the
 /// test's own file binds the bare call to itself, with or without a glob of
 /// the library that also offers the name (an item beats a glob). The owner

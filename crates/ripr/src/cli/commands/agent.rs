@@ -1227,14 +1227,19 @@ pub(super) fn classify_incomparable_pair_error(error: String) -> AgentVerifyErro
 
 /// #14021: the no-movement refusal classifies from the producer's typed
 /// `AgentVerifyMovementError`, not a substring of the rendered message. The
-/// producer carries exactly one variant, so every movement error it reports
-/// is the named refusal; the rendered text stays byte-identical to the prose
-/// the old `format!` added.
+/// producer carries exactly one variant today; the match is exhaustive so a
+/// new variant must choose its own refusal class here instead of being read
+/// as no-movement. The rendered text stays byte-identical to the prose the
+/// old `format!` added.
 pub(super) fn classify_verify_movement_error(
     error: crate::agent::artifact::AgentVerifyMovementError,
 ) -> AgentVerifyError {
+    use crate::agent::artifact::AgentVerifyMovementError;
+    let kind = match &error {
+        AgentVerifyMovementError::NoMovement { .. } => AgentVerifyRefusalKind::NoMovement,
+    };
     AgentVerifyError::Refusal {
-        kind: AgentVerifyRefusalKind::NoMovement,
+        kind,
         message: format!("agent verify {error}"),
     }
 }
@@ -2767,6 +2772,24 @@ fn run_agent_repair_phase(
                 &before_config,
                 "agent before phase",
             )?;
+            if let Some(reason) = app::task_first::changed_seam_no_path_start_refusal(
+                &before_input.root,
+                base.as_deref(),
+                &before_config,
+                &seam_id,
+                &before_report.classified,
+            ) {
+                let code = app::task_first::RepairRefusalCode::SeamNotRepairEligible;
+                let message = format!(
+                    "seam `{seam_id}` is not repair-eligible: {reason}. No repair attempt was started."
+                );
+                refusal.typed = true;
+                refusal.code = Some(code);
+                if facade_start {
+                    crate::cli::usage_refusal::note_typed_refusal(code, &message);
+                }
+                return Err(message);
+            }
             let packet = render_agent_packet_for_seam_with_report(
                 &root,
                 &seam_id,

@@ -3,6 +3,10 @@
 //! of asking the user to repeat check's choice. Real-binary tests on feature
 //! branches (so the change is scoped), with discriminating negatives.
 
+#[path = "common/repair_start_fixture.rs"]
+mod repair_start_fixture;
+
+use repair_start_fixture::{CALLED_BASE, CALLED_NEW, LOYALTY_BASE, LOYALTY_NEW, LOYALTY_TEST};
 use std::path::{Path, PathBuf};
 use std::process::Output;
 
@@ -509,6 +513,99 @@ fn a_gripped_spot_beside_a_noticed_candidate_is_already_checked() -> Result<(), 
     Ok(())
 }
 
+/// #15926: a new function no workspace code calls. `ripr check` prints its
+/// `ripr repair <id>` line, and every other surface agrees that it is a repair
+/// start: the repair card's next action runs a command, `ripr pilot` prints the
+/// same seam's start, and bare `ripr repair` starts that seam.
+#[test]
+fn an_unreferenced_new_function_starts_on_every_surface() -> Result<(), String> {
+    let repo = repo("loyalty", LOYALTY_BASE, LOYALTY_NEW, LOYALTY_TEST, true)?;
+    let root = &repo.root;
+    let id = check_start_id(root)?.ok_or("check printed no repair start")?;
+    let card = ripr(root, &["agent", "card", "--seam-id", &id, "--json"])?;
+    let card_json: serde_json::Value =
+        serde_json::from_slice(&card.stdout).map_err(|e| format!("card json: {e}"))?;
+    let action = card_json
+        .pointer("/canonical_next_action/action_class")
+        .and_then(serde_json::Value::as_str);
+    if action != Some("run_command") {
+        return Err(format!(
+            "the card must offer the route, not a limitation: {action:?}\n{}",
+            text(&card.stdout)
+        ));
+    }
+    let pilot = ripr(root, &["pilot"])?;
+    let pilot_out = text(&pilot.stdout);
+    if !pilot_out.contains(&format!("--seam-id {id} --phase before")) {
+        return Err(format!("pilot must print the same start:\n{pilot_out}"));
+    }
+    assert_starts_check_recommendation(&repo, "loyalty")
+}
+
+/// A new function that other workspace code calls, but no test reaches, stays
+/// a refusal: only a function nothing in the workspace calls is admitted. Its
+/// reason says no test reaches the code instead of "cannot tell from reading".
+#[test]
+fn a_called_but_unreached_new_function_refuses_with_the_no_path_reason() -> Result<(), String> {
+    let repo = repo(
+        "loyalty-called",
+        CALLED_BASE,
+        CALLED_NEW,
+        LOYALTY_TEST,
+        true,
+    )?;
+    let repair = ripr(&repo.root, &["repair"])?;
+    let err = text(&repair.stderr);
+    if repair.status.code() != Some(3) || !err.contains("code=no_eligible_seam") {
+        return Err(format!("the change must refuse:\n{err}"));
+    }
+    if !err.contains("  - the code at src/lib.rs:10 `member_years >= 5`: `ripr check` finds no test that reaches this changed code") {
+        return Err(format!("the called function's gap must carry the no-path reason:\n{err}"));
+    }
+    if err.contains("cannot tell from reading the code") {
+        return Err(format!("a no-path gap is not unknown:\n{err}"));
+    }
+    if attempts(&repo.root) != 0 {
+        return Err("no attempt may start".to_string());
+    }
+    Ok(())
+}
+
+#[test]
+fn an_explicit_base_is_used_by_selection_and_before_phase() -> Result<(), String> {
+    let repo = repo(
+        "loyalty-explicit-base",
+        CALLED_BASE,
+        CALLED_NEW,
+        LOYALTY_TEST,
+        true,
+    )?;
+    let root = &repo.root;
+    let refused = ripr(root, &["repair", "--base", "main"])?;
+    let reason = text(&refused.stderr);
+    assert_eq!(refused.status.code(), Some(3), "{reason}");
+    assert!(reason.contains("no test that reaches"), "{reason}");
+    assert_eq!(attempts(root), 0);
+
+    // This comparison is empty. The automatic selector can choose the
+    // unscoped candidate, and the before phase must use that same base.
+    let started = ripr(root, &["repair", "--base", "HEAD", "--json"])?;
+    assert_eq!(started.status.code(), Some(0), "{}", text(&started.stderr));
+    let packet: serde_json::Value =
+        serde_json::from_slice(&started.stdout).map_err(|error| format!("repair JSON: {error}"))?;
+    let id = packet["repair_attempt"]["attempt_id"]
+        .as_str()
+        .ok_or("missing attempt id")?;
+    let status = ripr(root, &["status", "--attempt", id, "--json"])?;
+    assert_eq!(status.status.code(), Some(0), "{}", text(&status.stderr));
+    let status: serde_json::Value =
+        serde_json::from_slice(&status.stdout).map_err(|error| format!("status JSON: {error}"))?;
+    assert_eq!(status["attempt"]["seam_id"], "b00649b71c24c956", "{status}");
+    assert_eq!(status["attempt"]["state"], "awaiting_edit", "{status}");
+    assert_eq!(attempts(root), 1);
+    Ok(())
+}
+
 /// #12867 / #13203 A0: a seam whose repair target is only a producer-owned
 /// proposed new test file now starts (bare and by id) when the producer names
 /// the workspace, while a seam the producer admits no proposal for (here a
@@ -584,10 +681,11 @@ fn a_start_whose_card_cannot_be_produced_creates_no_attempt() -> Result<(), Stri
     assert_starts_check_recommendation(&with_test, "existing test target")?;
     // Contrast 2 (#13203 A0): a public owner with no test but an established
     // `tests/` layout has a producer-owned proposed integration file, so
-    // `ripr repair <id>` starts it. The `no path` finding keeps the F3 rule
-    // (#12888): check prints no runnable repair line and names no refusal.
+    // `ripr repair <id>` starts it. #15926: the owner is a function nothing
+    // in the workspace calls, so its `no path` finding is a test-side gap and
+    // check prints that same start instead of staying silent (F3, #12888).
     let proposed = repo("proposed", BOUNDARY_BASE, BOUNDARY_NEW, "", true)?;
-    assert_check_silent_repair_starts(&proposed, "producer-owned proposal")?;
+    assert_check_prints_the_start_repair_takes(&proposed, "producer-owned proposal")?;
     Ok(())
 }
 
@@ -1390,27 +1488,28 @@ fn shell_split_reads_both_bound_root_quoting_forms() -> Result<(), String> {
 
 /// #13203 A0: the inline counterpart. A private owner whose file holds one
 /// governed `#[cfg(test)]` module (no test in it) has a producer-owned inline
-/// proposal; check stays silent (F3) and `ripr repair <id>` starts it.
+/// proposal. #15926: the owner is a function nothing in the workspace calls,
+/// so check prints the same `ripr repair <id>` start that repair takes.
 #[test]
-fn an_inline_proposal_starts_by_id_while_check_stays_silent() -> Result<(), String> {
+fn an_inline_proposal_starts_from_checks_repair_line() -> Result<(), String> {
     const MODULE: &str = "\n#[cfg(test)]\nmod tests {\n    use super::*;\n}\n";
     let base = format!("fn is_adult(age: u32) -> bool {{\n    age > 18\n}}\n{MODULE}");
     let changed = format!("fn is_adult(age: u32) -> bool {{\n    age >= 18\n}}\n{MODULE}");
     let inline = repo("inline-proposal", &base, &changed, "", true)?;
-    assert_check_silent_repair_starts(&inline, "inline proposal")
+    assert_check_prints_the_start_repair_takes(&inline, "inline proposal")
 }
 
 /// Check offers no repair line for the static-limited finding, yet the seam it
 /// would have named starts by id.
-fn assert_check_silent_repair_starts(repo: &Repo, label: &str) -> Result<(), String> {
+fn assert_check_prints_the_start_repair_takes(repo: &Repo, label: &str) -> Result<(), String> {
     let root = &repo.root;
     let screen = text(&ripr(root, &["check", "--base", "main"])?.stdout);
-    if check_start_id(root)?.is_some()
-        || screen.contains("ripr repair ")
-        || screen.contains("not complete enough to name a safe test target")
-        || !screen.contains("Why no path")
-    {
-        return Err(format!("{label}: check must stay silent (F3):\n{screen}"));
+    let id = check_start_id(root)?
+        .ok_or_else(|| format!("{label}: check must print the repair start:\n{screen}"))?;
+    if !screen.contains("Why no path") {
+        return Err(format!(
+            "{label}: the finding must stay `no path`:\n{screen}"
+        ));
     }
     let exposure = ripr(
         root,
@@ -1421,9 +1520,13 @@ fn assert_check_silent_repair_starts(repo: &Repo, label: &str) -> Result<(), Str
     let seam_id = json["seams"]
         .as_array()
         .and_then(|seams| seams.iter().find_map(|seam| seam["seam_id"].as_str()))
-        .ok_or_else(|| format!("{label}: no seam"))?
-        .to_string();
-    let started = ripr(root, &["repair", &seam_id])?;
+        .ok_or_else(|| format!("{label}: no seam"))?;
+    if seam_id != id {
+        return Err(format!(
+            "{label}: check's start {id} is not the seam {seam_id}"
+        ));
+    }
+    let started = ripr(root, &["repair", &id])?;
     let (out, err) = (text(&started.stdout), text(&started.stderr));
     if started.status.code() != Some(0) || !out.contains("Ready to repair") || attempts(root) != 1 {
         return Err(format!("{label}: repair by id must start:\n{out}\n{err}"));
