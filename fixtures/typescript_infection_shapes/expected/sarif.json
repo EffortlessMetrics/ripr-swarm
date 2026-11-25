@@ -833,7 +833,7 @@
             }
           ],
           "message": {
-            "text": "reachable_unrevealed static exposure for predicate probe: export function say(msg: string, loud = true): string {. Next step: TypeScript preview advisory: every related call passes the argument whose default changed, so the default never applies; add a test call that omits it before strengthening any assertion. No repair packet is emitted."
+            "text": "Changed code `export function say(msg: string, loud = true): string {` is reached by tests, but no assertion appears to notice a change. Next step: TypeScript preview advisory: every related call passes the argument whose default changed, so the default never applies; add a test call that omits it before strengthening any assertion. No repair packet is emitted."
           },
           "partialFingerprints": {
             "riprFingerprintV1": "ripr.finding.reachable_unrevealed|probe:src_pricing.ts:typescript_preview:7d52efbc|probe:src_pricing.ts:typescript_preview:7d52efbc|fixtures/typescript_infection_shapes/input/src/pricing.ts"

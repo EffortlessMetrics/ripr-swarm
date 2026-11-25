@@ -295,3 +295,14 @@ Command:
 
 Updated:
 - `expected/sarif.json`
+
+## Pending — typescript_infection_shapes (25)
+
+Reason:
+RIPR-SPEC-0008: SARIF one-line message for the finding main reclassified as reachable_unrevealed (#15374)
+
+Command:
+`cargo xtask goldens bless typescript_infection_shapes --reason "..."`
+
+Updated:
+- `expected/sarif.json`
