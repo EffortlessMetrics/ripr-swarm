@@ -1012,8 +1012,12 @@ Candidates come from the first non-empty tier:
    code calls. The entry reaches the value only from code that runs when it
    runs, under the same header and nesting rule as the class constructions
    below: a read inside a stored or deferred arrow (`const later = () => new
-   X().m()`, `setTimeout(() => ...)`), or an entry with an expression body,
-   is no edge. When the building function declares the binding's own name,
+   X().m()`, `setTimeout(() => ...)`) is no edge. An expression-bodied
+   arrow runs its whole expression when it is the entry itself or the
+   function a factory product returns (`export const f = (x) => new
+   X().m(x)`, `export const f = make()` where `make` returns that arrow),
+   so it keeps the edge; the factory itself, which only makes the arrow,
+   does not. When the building function declares the binding's own name,
    mentions of the name inside it are the inner binding and are left out of
    the module-wide scan; every mention outside it must be an allowlisted read
    and, when the building function's parsed body holds any block or arrow
@@ -1060,8 +1064,10 @@ Candidates come from the first non-empty tier:
    expression in code that runs when it runs (not inside a nested function,
    or an arrow other than a synchronous array callback, such as
    `const later = () => new X().m()` or `setTimeout(() => ...)`; a function
-   with an expression body or a header other than `(params) [: Type] [=>] {`
-   gives no construction edge), when every
+   whose header is not `(params) [: Type] [=>] {` gives no construction
+   edge, except an arrow `(params) [: Type] => expression` whose
+   expression holds no nested function, class or block, which runs it
+   all), when every
    mention of `X` in that function is a construction.
    `X.method` calls what its text bare-calls, the sibling methods it calls
    as `this.other(` (or hands by reference to a synchronous array callback),

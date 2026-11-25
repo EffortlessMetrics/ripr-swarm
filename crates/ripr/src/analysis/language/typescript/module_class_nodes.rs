@@ -595,8 +595,64 @@ fn every_construction_calls_a_method(
 /// body (an expression arrow) or when the blanking cannot isolate a scope.
 pub(super) fn executed_body(text: &str) -> Option<String> {
     let code = super::tests_extract::byte_preserving_code_mask(text)?;
-    let brace = body_brace(&code)?;
-    executed_this_source(&format!("body(){}", text.get(brace..)?))
+    if let Some(brace) = body_brace(&code) {
+        return executed_this_source(&format!("body(){}", text.get(brace..)?));
+    }
+    // `(params) [: Type] => expression` with no nested function, class or
+    // block in the expression: the whole expression runs when it runs.
+    let start = expression_body(&code)?;
+    let expression = code.get(start..)?;
+    let plain = !expression.contains("=>")
+        && !expression.contains(['{', '}'])
+        && !["function", "class"].iter().any(|word| {
+            expression
+                .match_indices(word)
+                .any(|(idx, _)| bounded(expression, idx, word))
+        });
+    plain.then(|| expression.to_string())
+}
+
+/// Offset of the expression body of an arrow `code` starts with:
+/// `[async] (params) [: plain Type] => expression` or `x => expression`.
+fn expression_body(code: &str) -> Option<usize> {
+    let trimmed = code.trim_start();
+    let mut rest = trimmed;
+    if let Some(after) = rest.strip_prefix("async")
+        && !after.starts_with(is_javascript_identifier_char)
+    {
+        rest = after.trim_start();
+    }
+    let tail = if rest.starts_with('(') {
+        let close = balanced_paren_end(rest)?;
+        let after_params = &rest[close..];
+        let (annotation, body) = after_params.split_once("=>")?;
+        let annotation = annotation.trim();
+        let plain_type = annotation.is_empty()
+            || annotation.strip_prefix(':').is_some_and(|ty| {
+                ty.chars().all(|ch| {
+                    is_javascript_identifier_char(ch)
+                        || ch.is_whitespace()
+                        || matches!(ch, '<' | '>' | '[' | ']' | '.' | '|' | ',')
+                })
+            });
+        if !plain_type {
+            return None;
+        }
+        body
+    } else {
+        let name_end = rest
+            .find(|ch: char| !is_javascript_identifier_char(ch))
+            .unwrap_or(rest.len());
+        if name_end == 0 {
+            return None;
+        }
+        rest[name_end..].trim_start().strip_prefix("=>")?
+    };
+    let tail = tail.trim_start();
+    if tail.is_empty() || tail.starts_with('{') {
+        return None;
+    }
+    Some(code.len() - tail.len())
 }
 
 /// Offset of the `{` that opens the body of the function `code` starts with:

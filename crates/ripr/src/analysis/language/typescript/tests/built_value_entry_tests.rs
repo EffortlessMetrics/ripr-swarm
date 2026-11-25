@@ -181,6 +181,28 @@ fn construction_the_entry_does_not_run_gets_no_edge() {
     // The direct twin keeps its reach.
     assert_eq!(entry_names(SRC, "Serializer"), ["serialize"]);
     assert_eq!(entry_names(SRC, "compareStrings"), ["serialize"]);
+    // So does an expression-bodied entry whose expression is the call.
+    let arrow = SRC.replacen(
+        "export function serialize(input: any): string {\n  return new Serializer().serialize(input);\n}",
+        "export const serialize = (input: any): string =>\n  new Serializer().serialize(input);",
+        1,
+    );
+    assert_ne!(arrow, SRC);
+    assert_eq!(entry_names(&arrow, "Serializer"), ["serialize"]);
+    assert_eq!(entry_names(&arrow, "compareStrings"), ["serialize"]);
+}
+
+#[test]
+fn factory_product_reaches_the_built_class_its_returned_arrow_constructs() {
+    // The product runs the returned arrow; the factory itself only makes it.
+    let source = SRC.replacen(
+        "export function serialize(input: any): string {\n  return new Serializer().serialize(input);\n}",
+        "export function makeSerializer() {\n  return (input: any): string => new Serializer().serialize(input);\n}\nexport const serialize = makeSerializer();",
+        1,
+    );
+    assert_ne!(source, SRC);
+    assert_eq!(entry_names(&source, "Serializer"), ["serialize"]);
+    assert_eq!(entry_names(&source, "compareStrings"), ["serialize"]);
 }
 
 #[test]

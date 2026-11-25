@@ -98,6 +98,21 @@ fn jsdoc_tag_in_the_class_is_no_decorator() {
 }
 
 #[test]
+fn expression_bodied_entry_reaches_the_method_it_calls() {
+    let source = SRC.replacen(
+        "export function serialize(input: any): string {\n  return new Serializer().write(input);\n}",
+        "export const serialize = (input: any): string => new Serializer().write(input);",
+        1,
+    );
+    assert_ne!(source, SRC);
+    assert_eq!(entry_hops(&source, "write"), [("serialize".to_string(), 1)]);
+    assert_eq!(
+        entry_hops(&source, "compareKeys"),
+        [("serialize".to_string(), 3)]
+    );
+}
+
+#[test]
 fn typed_or_spaced_construction_is_read_through() {
     for construction in ["new Serializer<string>()", "new Serializer ()"] {
         let source = SRC.replacen("new Serializer()", construction, 1);
