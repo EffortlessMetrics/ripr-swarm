@@ -82,6 +82,26 @@ fn find_related_tests_in<'context, 'index>(
         })
         .unwrap_or_default();
     candidates.retain(|test_index, _| !inaccessible_direct.contains(test_index));
+    // #14069 (#14179): a test whose every spelling of the owner's name is a
+    // bare call bound by a renaming import of another function, or only by
+    // standard-library globs, runs that other function. The finding-level
+    // relation demotes the same call to name-only, so the seam drops the
+    // direct row too. This runs after the visibility record above, so a
+    // test proven unable to reach a private owner stays refused below; the
+    // weaker matchers may still relate any other test.
+    if owner.free_function
+        && let Some(function) = owner.function
+    {
+        candidates.retain(|test_index, _| {
+            context.tests.get(*test_index).is_none_or(|indexed| {
+                !crate::analysis::classify::test_calls_only_a_renamed_other_function(
+                    context.index,
+                    function,
+                    indexed.test,
+                )
+            })
+        });
+    }
     if cancellation::checkpoint().is_err() {
         return Vec::new();
     }
@@ -458,23 +478,6 @@ pub(super) fn match_direct_owner_call(
         if owner.function.is_some_and(|function| {
             owner_call_selects_generic_sibling(indexed.test, function, context.index)
         }) {
-            continue;
-        }
-        // #14069 (#14179): a test whose every spelling of the owner's name is
-        // a bare call bound by a renaming import of another function, or
-        // only by standard-library globs, runs that other function. The
-        // finding-level relation demotes the same call to name-only, so the
-        // seam does not take it as a direct call either; a weaker relation
-        // matched below may still keep the test.
-        if owner.free_function
-            && owner.function.is_some_and(|function| {
-                crate::analysis::classify::test_calls_only_a_renamed_other_function(
-                    context.index,
-                    function,
-                    indexed.test,
-                )
-            })
-        {
             continue;
         }
         let test_prefix = match (prefix, cross_package_owner) {
