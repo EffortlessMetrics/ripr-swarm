@@ -35,6 +35,11 @@ pub(crate) fn enclosing_module_files(
 ) -> Option<Vec<ast::SourceFile>> {
     let mut enclosing = Vec::new();
     let mut current = file.to_path_buf();
+    // Whether `current` was reached as the stem-named parent of the file
+    // below it (`src/lib.rs` above `src/lib/tests.rs`). A crate root's
+    // `mod tests;` resolves beside the root (`src/tests.rs`), so such a file
+    // is a module of something else, never the crate root itself.
+    let mut reached_by_stem = false;
     while enclosing.len() < MAX_ENCLOSING_FILES {
         let child = module_name(&current)?;
         let candidates: Vec<(PathBuf, ast::SourceFile)> = module_parent_candidates(&current)
@@ -50,7 +55,7 @@ pub(crate) fn enclosing_module_files(
                 .iter()
                 .any(|(_, tree)| names_module_at_top_level(tree, &child))
         {
-            if !confirms_root(&current) {
+            if reached_by_stem || !confirms_root(&current) {
                 return None;
             }
             // A crate root: every step below it is confirmed. A `lib.rs`
@@ -76,6 +81,7 @@ pub(crate) fn enclosing_module_files(
         let Some((parent, tree)) = declaring.pop() else {
             break;
         };
+        reached_by_stem = parent.parent() != declaring_directory(&current);
         enclosing.push(tree);
         current = parent;
     }
@@ -84,6 +90,17 @@ pub(crate) fn enclosing_module_files(
     // (`mod a { mod tests; }` in `lib.rs` beside a stale `a.rs`), and an
     // unread enclosing module may define macros the child sees.
     None
+}
+
+/// The directory whose `mod.rs`, `lib.rs` or `main.rs` may declare `file`:
+/// its own directory, or the one above for a `mod.rs`.
+fn declaring_directory(file: &Path) -> Option<&Path> {
+    let directory = file.parent()?;
+    if file.file_name().is_some_and(|name| name == "mod.rs") {
+        directory.parent()
+    } else {
+        Some(directory)
+    }
 }
 
 /// Whether Cargo's default target discovery compiles `file` as a crate root:
@@ -256,6 +273,55 @@ mod tests {
                 "src/tests.rs"
             ),
             Some(vec![root.to_string()])
+        );
+    }
+
+    // A crate root declares `mod tests;` beside itself, so `src/lib/tests.rs`
+    // below a `src/lib.rs` that nothing declares has no known parent: here
+    // `src/lib.rs` is really `mod src { pub mod lib; }` of a package-level
+    // `lib.rs` (`[lib] path = "lib.rs"`), whose textual macros reach the
+    // test. A `src/lib.rs` that `src/main.rs` declares as `mod lib;` is a
+    // module file, and the chain climbs through it to the binary root.
+    #[test]
+    fn a_crate_root_name_reached_as_a_stem_parent_is_not_the_root() {
+        let lib = "mod tests;\npub fn f() {}\n";
+        assert_eq!(
+            chain(
+                &[
+                    (
+                        "lib.rs",
+                        "macro_rules! assert_eq { ($a:expr, $b:expr) => {}; }\nmod src { pub mod lib; }\n"
+                    ),
+                    ("src/lib.rs", lib),
+                    ("src/lib/tests.rs", "")
+                ],
+                "src/lib/tests.rs"
+            ),
+            None
+        );
+        assert_eq!(
+            chain(
+                &[("src/lib.rs", lib), ("src/lib/tests.rs", "")],
+                "src/lib/tests.rs"
+            ),
+            None
+        );
+        let main = "mod lib;\n";
+        assert_eq!(
+            chain(
+                &[
+                    ("src/main.rs", main),
+                    ("src/lib.rs", lib),
+                    ("src/lib/tests.rs", "")
+                ],
+                "src/lib/tests.rs"
+            ),
+            Some(vec![lib.to_string(), main.to_string()])
+        );
+        // The ordinary layout keeps its root.
+        assert_eq!(
+            chain(&[("src/lib.rs", lib), ("src/tests.rs", "")], "src/tests.rs"),
+            Some(vec![lib.to_string()])
         );
     }
 
