@@ -641,8 +641,12 @@ fn write_policy(root: &Path, relative: &str, entries: &str) -> Result<(), String
 }
 
 fn function_entry(function: &str) -> String {
+    function_entry_at("src/retry.rs", function)
+}
+
+fn function_entry_at(path: &str, function: &str) -> String {
     format!(
-        "\n[[suppressions]]\nkind = \"exposure_gap\"\npath = \"src/retry.rs\"\nfunction = \"{function}\"\nreason = \"accepted retry debt\"\nowner = \"team-retry\"\n"
+        "\n[[suppressions]]\nkind = \"exposure_gap\"\npath = \"{path}\"\nfunction = \"{function}\"\nreason = \"accepted retry debt\"\nowner = \"team-retry\"\n"
     )
 }
 
@@ -1555,6 +1559,20 @@ fn stale_finding_id_warning_names_the_owner_selector() -> Result<(), String> {
     mkdir_chain_dirs(root)?;
     let before = run_check_json(root, &root.join(CHECK_JSON))?;
     let stale_id = predicate_finding_id(&before, RETRY_LINE)?;
+    let finding = before["findings"]
+        .as_array()
+        .and_then(|rows| rows.iter().find(|row| row["id"] == stale_id))
+        .ok_or("missing original predicate finding")?;
+    let field = |pointer| {
+        finding
+            .pointer(pointer)
+            .and_then(Value::as_str)
+            .ok_or(pointer)
+    };
+    let path = field("/canonical_gap/file")?;
+    let function = field("/canonical_gap/owner")?;
+    let probe_path = field("/probe/file")?;
+    assert_eq!(probe_path, format!("./{path}"));
     edit_retry_expressions(root)?;
 
     write_policy(root, "policy-id.toml", &id_entry(&stale_id))?;
@@ -1567,6 +1585,34 @@ fn stale_finding_id_warning_names_the_owner_selector() -> Result<(), String> {
             "exposure_gap suppression for `{stale_id}` did not match any current finding"
         )) && warning.contains("select it with `path` + `function` instead of `finding_id`"),
         "the stale-id warning must name the owner selector: {warning}"
+    );
+
+    for hint in [
+        "ripr check --format json",
+        "copy `canonical_gap.file` into `path`",
+        "`canonical_gap.owner` into `function`",
+    ] {
+        assert!(warning.contains(hint), "missing {hint}: {warning}");
+    }
+
+    write_policy(root, "policy-copy.toml", &function_entry_at(path, function))?;
+    let copied = run_check_with_policy(root, "policy-copy.toml")?;
+    assert!(copied.warnings.is_empty(), "{:?}", copied.warnings);
+    assert!(has_finding(&copied.suppressed, path, RETRY_LINE));
+    assert!(!has_finding(&copied.reported, path, RETRY_LINE));
+    assert!(has_finding(&copied.reported, path, BACKOFF_LINE));
+
+    write_policy(
+        root,
+        "policy-probe.toml",
+        &function_entry_at(probe_path, function),
+    )?;
+    let refusal = run_check_with_policy(root, "policy-probe.toml")
+        .err()
+        .ok_or("check accepted the ./-prefixed probe.file")?;
+    assert!(
+        refusal.contains(probe_path) && refusal.contains("canonical_gap.file"),
+        "{refusal}"
     );
 
     write_policy(root, "policy-gone.toml", &function_entry("removed_fn"))?;

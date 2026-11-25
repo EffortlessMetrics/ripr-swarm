@@ -1078,7 +1078,13 @@ changes.
 When `ripr check --suppression-policy` finds an id-keyed entry that matches
 no current finding and is not a known ripr 0.10 id (those get the id that now
 selects the same finding instead), its warning names this `path` + `function`
-form as the selector that survives edits. That selector covers every finding
+form as the selector that survives edits. Run `ripr check --format json` on
+the same diff. In `findings[]`, locate the current Rust finding for the
+intended function. When it has a canonical gap and an unambiguous owner,
+copy `canonical_gap.file` into `path` and `canonical_gap.owner` into
+`function`. Use the literal repository-relative filename if the report
+escapes it (for example, `src/rate%.rs` appears as `src/rate%25.rs`).
+A `./`-prefixed `probe.file` is rejected. That selector covers every finding
 in the function, and a changed `const` or `static` has no owning function, so
 it needs a fresh `finding_id`. `ripr review-comments` reports only expired
 entries, not unmatched ones. `ripr policy

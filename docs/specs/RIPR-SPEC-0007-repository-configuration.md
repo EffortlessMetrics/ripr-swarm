@@ -280,7 +280,12 @@ missing owner, or an owner the producer disambiguated with a `#L<line>` suffix
 `finding_id` entry that is not a known ripr 0.10 id keeps its "did not match
 any current finding" warning and adds that finding ids hash the parsed
 expression and that `path` + `function` selects the owning function across
-edits, which covers every finding in that function and cannot select a
+edits. The warning points to the current Rust finding in `findings[]` from
+`ripr check --format json` on the same diff. When available for an unambiguous
+function, `canonical_gap.file` supplies `path` (use the literal repository-relative
+filename if escaped) and `canonical_gap.owner` supplies `function`. The refusal for
+a `./` path points back to `canonical_gap.file`. The selector covers every
+finding in that function and cannot select a
 changed `const` or `static`; `ripr review-comments` reports only expired
 entries, not unmatched ones. An unmatched path-glob or `path` + `function` entry keeps the plain
 warning. `ripr policy suppression-health` names a `path` + `function` entry
