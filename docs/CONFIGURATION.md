@@ -1075,6 +1075,16 @@ never matches. A `function` entry covers every seam in that function,
 including seams added later, so set `expires` and review it when the function
 changes.
 
+When `ripr check --suppression-policy` finds an id-keyed entry that matches
+no current finding and is not a known ripr 0.10 id (those get the id that now
+selects the same finding instead), its warning names this `path` + `function`
+form as the selector that survives edits. That selector covers every finding
+in the function, and a changed `const` or `static` has no owning function, so
+it needs a fresh `finding_id`. `ripr review-comments` reports only expired
+entries, not unmatched ones. `ripr policy
+suppression-health` lists a `path` + `function` entry under the identity
+`<path>::<function>` (for example `src/retry.rs::retry_allowed`).
+
 In `ripr review-comments`, a `finding_id` entry applies only when the id names
 exactly one seam of the whole diff-scoped inventory; an id shared with another
 seam (even one outside the brief cap), or carrying a collision ordinal, is
@@ -1406,7 +1416,7 @@ card refuse it); `review-comments` output still lists it, labelled `off`.
 
 | Key | Type | Default | Effect |
 | --- | --- | --- | --- |
-| `path` | repo-relative path | `.ripr/suppressions.toml` | `ripr check --format sarif`, `sarif-compact`, `badge-json`, `badge-shields` and the `badge-plus-*` / `repo-badge-plus-*` formats apply suppressions from this path. `repo-badge-json` and `repo-badge-shields` count canonical actionable gaps from the classified seam inventory and load no suppressions. The other findings formats leave the file unapplied unless `--suppression-policy` names a policy; human, human-full, JSON, JSON-compact, GitHub and missed-txt mention a detected `.ripr/suppressions.toml` (the default path only) on stderr, and `agent` does not. Absolute paths, `..`, and backslashes are rejected. |
+| `path` | repo-relative path | `.ripr/suppressions.toml` | `ripr check --format sarif`, `sarif-compact`, `badge-json`, `badge-shields` and the `badge-plus-*` / `repo-badge-plus-*` formats apply suppressions from this path; for `sarif` and `sarif-compact`, `--suppression-policy` replaces it for the run. `repo-badge-json` and `repo-badge-shields` count canonical actionable gaps from the classified seam inventory and load no suppressions. The other findings formats leave the file unapplied unless `--suppression-policy` names a policy; human, human-full, JSON, JSON-compact, GitHub and missed-txt mention a detected `.ripr/suppressions.toml` (the default path only) on stderr, and `agent` does not. Absolute paths, `..`, and backslashes are rejected. |
 
 ### `[languages]`
 

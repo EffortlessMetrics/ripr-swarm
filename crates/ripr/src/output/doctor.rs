@@ -32,6 +32,7 @@ use crate::output::path::{
     absolute_command_root_display as absolute_doctor_root_display, human_path,
 };
 use crate::process_owner::OwnedProcess;
+use crate::work_tree_route::{bare_root_work_tree_route_or_plain, require_single_line_command};
 use serde::Serialize;
 use std::ffi::OsStr;
 use std::path::{Path, PathBuf};
@@ -94,6 +95,19 @@ fn record_output_location_refusal(report: &mut DoctorReport, refusal: &str) {
     );
 }
 
+/// Evidence for a bare repository root (#15297): the repair is a checked-out
+/// work tree, so no `git init` and no whole-repository route is named.
+const BARE_REPOSITORY_EVIDENCE_MARK: &str = "is a bare Git repository with no work tree";
+
+fn bare_repository_evidence(root: &Path) -> String {
+    format!(
+        "{} {BARE_REPOSITORY_EVIDENCE_MARK}; ripr reads checked-out \
+         source. {}, then pass `--root <path>`.",
+        human_path(root),
+        bare_root_work_tree_route_or_plain(root)
+    )
+}
+
 /// Evidence for a root outside a Git work tree. It names the whole-repository
 /// pilot route only when the output location lets pilot run (#14114).
 fn outside_work_tree_evidence(root: &Path, output_location_refused: bool) -> String {
@@ -136,6 +150,10 @@ pub(crate) enum DoctorFirstCommand {
     /// `git_repository` failed while git itself runs: whole-repository
     /// pilot exploration is the route that can run here.
     OutsideGit,
+    /// `git_repository` failed because the root is a bare repository
+    /// (#15297): there is no checked-out source, so neither `ripr check` nor
+    /// whole-repository pilot has anything to read. Name a work tree.
+    BareRepository,
     /// `git_repository` passed but `HEAD` is unborn (#5259): the repository
     /// has no commit to diff against, so every diff-scoped first command
     /// fails; name the commit-first path and keep pilot exploration.
@@ -236,6 +254,15 @@ impl DoctorFirstCommand {
             } else {
                 Self::SavedDiff
             }
+        } else if report.checks.iter().any(|check| {
+            check.name == "git_repository"
+                && check.status == DoctorCheckStatus::Fail
+                && check
+                    .evidence
+                    .as_deref()
+                    .is_some_and(|evidence| evidence.contains(BARE_REPOSITORY_EVIDENCE_MARK))
+        }) {
+            Self::BareRepository
         } else if !passed("git_repository") {
             Self::OutsideGit
         } else if report
@@ -278,6 +305,7 @@ impl DoctorFirstCommand {
             Self::NoDefaultBase => Some(Self::NO_DEFAULT_BASE_LINE),
             Self::MissingRoot
             | Self::OutsideGit
+            | Self::BareRepository
             | Self::UnbornHead
             | Self::DamagedRefs
             | Self::InvalidConfig
@@ -338,6 +366,10 @@ impl DoctorFirstCommand {
                 "- Recommended first command: correct or restore the ref metadata and its read access using the Git check above, then rerun `ripr doctor`"
                     .to_string(),
             ],
+            Self::BareRepository => vec![format!(
+                "- Recommended first command: {}, then run `ripr doctor --root <path>`",
+                bare_root_work_tree_route_or_plain(root)
+            )],
             Self::OutsideGit => {
                 use crate::agent::loop_commands::shell_arg;
                 // Whole-repository pilot exploration is a runnable command
@@ -436,17 +468,6 @@ impl DoctorFirstCommand {
             ));
         }
         lines
-    }
-}
-
-fn require_single_line_command(line: &str) -> Result<(), String> {
-    if line.contains('\n') || line.contains('\r') {
-        Err(
-            "selected root cannot be represented as one pasteable command line; rerun doctor from a parent using a single-line alias"
-                .to_string(),
-        )
-    } else {
-        Ok(())
     }
 }
 
@@ -1474,10 +1495,12 @@ impl DoctorRootPath {
 /// the git-environment states recommend a command instead, so they bind no
 /// recovery (the selector never invents one). Pure and infallible: the
 /// canonical projection and the renderer's defensive fallback share it, so
-/// the two can never disagree on the mapping.
+/// the two can never disagree on the mapping. `root` only binds the bare
+/// repository's work-tree route to that repository (#15297 review).
 pub(crate) fn doctor_recovery_for_first_command(
     first: DoctorFirstCommand,
     report: &DoctorReport,
+    root: &Path,
 ) -> Option<NextActionDoctorRecovery> {
     let (check_name, recovery_route) = match first {
         DoctorFirstCommand::MissingRoot => (
@@ -1515,6 +1538,15 @@ pub(crate) fn doctor_recovery_for_first_command(
                 "fix the failing checks above, then rerun `ripr doctor`".to_string(),
             )
         }
+        // #15297: a bare repository has no source for any command to read,
+        // so the only next step is the work-tree recovery.
+        DoctorFirstCommand::BareRepository => (
+            "git_repository".to_string(),
+            format!(
+                "{}, then rerun `ripr doctor --root <path>`",
+                bare_root_work_tree_route_or_plain(root)
+            ),
+        ),
         DoctorFirstCommand::OutsideGit
         | DoctorFirstCommand::UnbornHead
         | DoctorFirstCommand::NoDefaultBase
@@ -1538,7 +1570,7 @@ pub(crate) fn canonical_next_action_for_doctor(
     first: DoctorFirstCommand,
     root: &Path,
 ) -> Result<Option<CanonicalNextActionV1>, String> {
-    let Some(recovery) = doctor_recovery_for_first_command(first, report) else {
+    let Some(recovery) = doctor_recovery_for_first_command(first, report, root) else {
         return Ok(None);
     };
     let root_display = absolute_doctor_root_display(root)?;
@@ -1603,7 +1635,7 @@ pub(crate) fn safe_next_action_recovery_line(
             _ => return None,
         },
         Ok(None) => return None,
-        Err(_) => doctor_recovery_for_first_command(first, report)?.check_name,
+        Err(_) => doctor_recovery_for_first_command(first, report, root)?.check_name,
     };
     Some(match check_name.as_str() {
         "root_directory" => {
@@ -1714,28 +1746,52 @@ pub(crate) enum WorkTreeProbe {
     Outside,
     /// Git refused the repository for its owner (#4530); carries the repair.
     Refused(String),
+    /// A bare repository: it is a repository, but has no checked-out source,
+    /// so its next action is a work tree, not `git init` (#15297).
+    Bare,
+    /// `git` is not on `PATH`: a different repair from a directory that is
+    /// not a repository (install Git, not `git init`) (#15297).
+    GitMissing,
 }
 
 pub(crate) fn work_tree_probe(root: &Path) -> Option<WorkTreeProbe> {
-    let output = crate::git::run_git_output_with_deadline(
+    let output = match crate::git::run_git_output_with_deadline(
         root,
         &["rev-parse", "--is-inside-work-tree"],
         Some(DOCTOR_TOOL_TIMEOUT),
-    )
-    .ok()?;
+    ) {
+        Ok(output) => output,
+        Err(error) if crate::git::is_git_not_found_on_path(&error.to_string()) => {
+            return Some(WorkTreeProbe::GitMissing);
+        }
+        Err(_) => return None,
+    };
     if !output.status.success() {
         return Some(
             crate::git::dubious_ownership_message(root, &output.stderr, "")
                 .map_or(WorkTreeProbe::Outside, WorkTreeProbe::Refused),
         );
     }
-    Some(
-        if String::from_utf8_lossy(&output.stdout).trim() == "true" {
-            WorkTreeProbe::Inside
-        } else {
-            WorkTreeProbe::Outside
-        },
+    if String::from_utf8_lossy(&output.stdout).trim() == "true" {
+        return Some(WorkTreeProbe::Inside);
+    }
+    // `--is-inside-work-tree` prints `false` for a bare repository and for
+    // the inside of a `.git` directory; only the bare answer changes the
+    // repair, so any other reply stays `Outside`.
+    let bare = crate::git::run_git_output_with_deadline(
+        root,
+        &["rev-parse", "--is-bare-repository"],
+        Some(DOCTOR_TOOL_TIMEOUT),
     )
+    .ok()
+    .is_some_and(|output| {
+        output.status.success() && String::from_utf8_lossy(&output.stdout).trim() == "true"
+    });
+    Some(if bare {
+        WorkTreeProbe::Bare
+    } else {
+        WorkTreeProbe::Outside
+    })
 }
 
 /// Evaluate the doctor core checks and also return the raw config load
@@ -2118,7 +2174,12 @@ fn evaluate_doctor_core_with_probe_for_profile(
                 DoctorStatus::Fail,
                 Some(outside_work_tree_evidence(root, output_refusal.is_some())),
             ),
-            None => report.add_check(
+            Some(WorkTreeProbe::Bare) => report.add_check(
+                "git_repository",
+                DoctorStatus::Fail,
+                Some(bare_repository_evidence(root)),
+            ),
+            Some(WorkTreeProbe::GitMissing) | None => report.add_check(
                 "git_repository",
                 DoctorStatus::Fail,
                 Some(format!(
@@ -2953,11 +3014,55 @@ mod tests {
 
         // A spaced root pins the paste-safety of the pilot command in the
         // evidence: it must be shell-quoted, not a bare `root.display()`.
+        // An unreadable gitfile, not a bare repository: since #15297 a bare
+        // repository is named as bare, with its own work-tree repair.
         let spaced = unique_test_dir("outside work tree spaced");
         std::fs::create_dir_all(&spaced).map_err(|error| format!("create fixture: {error}"))?;
-        git_in(&spaced, &["init", "--bare", "."])?;
+        std::fs::write(spaced.join(".git"), "not a gitfile\n")
+            .map_err(|error| format!("write fixture gitfile: {error}"))?;
 
-        for fixture in [&bare, &gitfile, &spaced] {
+        // #15297: the bare repository is not a work tree either, but it is
+        // a repository with no checked-out source, so its evidence names a
+        // work tree and no whole-repository pilot (there is no source).
+        let bare_report = evaluate_doctor_core_with_config(&bare, &[]).report;
+        match bare_report
+            .checks
+            .iter()
+            .find(|check| check.name == "git_repository")
+        {
+            Some(check) if check.status == DoctorStatus::Fail.into() => {
+                let evidence = check.evidence.as_deref().unwrap_or_default();
+                // #15297 review: an empty bare repository has nothing to check
+                // out, so its route is a clone and a first commit.
+                for expected in ["bare Git repository", "has no commits yet", "git clone"] {
+                    if !evidence.contains(expected) {
+                        failures.push(format!("`{evidence}` does not say `{expected}`"));
+                    }
+                }
+                if evidence.contains("worktree add") {
+                    failures.push(format!(
+                        "`{evidence}` offers a work tree from a repository with no commit"
+                    ));
+                }
+                if evidence.contains("ripr pilot") {
+                    failures.push(format!("`{evidence}` names pilot for a bare repository"));
+                }
+            }
+            other => failures.push(format!(
+                "{}: a bare repository reported {other:?}",
+                bare.display()
+            )),
+        }
+        if DoctorFirstCommand::resolve_for_report(&bare_report, || false)
+            != DoctorFirstCommand::BareRepository
+        {
+            failures.push(format!(
+                "{}: a bare repository does not resolve to the work-tree recovery",
+                bare.display()
+            ));
+        }
+
+        for fixture in [&gitfile, &spaced] {
             let inside =
                 git_in(fixture, &["rev-parse", "--is-inside-work-tree"]).unwrap_or_default();
             if inside == "true" {
@@ -7086,7 +7191,7 @@ mod tests {
             DoctorFirstCommand::NoDefaultBase,
         ] {
             assert!(canonical_next_action_for_doctor(&healthy, runnable, root)?.is_none());
-            assert!(doctor_recovery_for_first_command(runnable, &healthy).is_none());
+            assert!(doctor_recovery_for_first_command(runnable, &healthy, root).is_none());
             assert_eq!(
                 safe_next_action_recovery_line(&healthy, runnable, root),
                 None
@@ -7167,7 +7272,8 @@ mod tests {
         assert_eq!(first, DoctorFirstCommand::FailedPrerequisites);
         assert_eq!(first.command_line(), None);
         assert_eq!(
-            doctor_recovery_for_first_command(first, &refused).map(|recovery| recovery.check_name),
+            doctor_recovery_for_first_command(first, &refused, Path::new("."))
+                .map(|recovery| recovery.check_name),
             Some(OUTPUT_LOCATION_CHECK.to_string())
         );
 
@@ -7212,7 +7318,7 @@ mod tests {
             let first = DoctorFirstCommand::resolve_for_report(&report, || false);
             assert_eq!(first, DoctorFirstCommand::FailedPrerequisites, "{name}");
             assert_eq!(
-                doctor_recovery_for_first_command(first, &report)
+                doctor_recovery_for_first_command(first, &report, Path::new("."))
                     .map(|recovery| recovery.check_name),
                 Some(OUTPUT_LOCATION_CHECK.to_string()),
                 "{name}"

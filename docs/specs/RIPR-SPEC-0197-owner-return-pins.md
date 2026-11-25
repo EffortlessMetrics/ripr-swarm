@@ -2868,6 +2868,70 @@ assertion's untrusted macros. A use anywhere else (another assertion, a
 clone, a helper argument) may observe the result, so the assertion keeps its
 parsed reading.
 
+The initializer may also unwrap or chain the call (#16219): `let r =
+pick(0).unwrap();` or `let r = pick(0)?;` counts the same way when the owner
+call is the root of `?`, `.await`, parentheses and standard pass-through
+methods (`unwrap`, `expect`, `unwrap_or`, `clone`, `into` and similar), whose
+arguments are values the method selects or converts rather than invokes. A
+method that invokes a caller-supplied function item (`map(helper)`) is also
+transparent, because a function item cannot capture a test local. A function
+item that records its argument through a static is a known boundary: the
+reading then withholds credit, it never grants it. A path argument is a
+function item only when it is not a local binding in the test: a closure bound
+to a local (`let callback = |v| ..; .inspect(callback)`) is also a path at its
+call site, and it can capture and record the result, so it is not transparent.
+A method that invokes a caller-supplied closure (`inspect(|v| seen = ..)`) is
+not transparent either, because the closure can capture and record the result
+where a later assertion reads it. Any other method is not transparent. A chain
+rooted anywhere else (`other(pick(0))`, `x.pick(0)` for a free function) does
+not count either. For a method owner, `.pick` is a call only when an argument
+list follows; `Holder { pick: .. }.pick` is a field access, not a call of the
+owner. A method call outside the macro is a free use of the owner when its
+receiver is the receiver of a call the macro holds, `self`, `Self`, an owner
+type, an owner-result local, or a top-level binding whose plain type
+annotation, unit-struct initializer or struct literal names the owner's type.
+Parentheses
+around a bare receiver preserve that receiver on either side of the macro.
+A call on a binding of a definitely different type (`let other = Other;`,
+`let other: Other = ..`, `let other = Other { .. }`) is not a call of
+`Widget::new`. Any other receiver is unresolved: a receiver that is not a bare
+name (`w.clone().new()`) or a binding the body does not type
+(`let w = Widget::default();`). A bare path initializer types the binding
+only when it reads as a unit-struct name: an upper-camel name no binding in
+the body declares. A copy of another local (`let alias = held;`) or a
+constant (`let w = SHARED;`) stays unresolved. An unresolved call outside the macro counts as
+a free use and inside it does not count as held, so an unresolved receiver
+never supplies the demotion. A field receiver (`holder.picker.pick(0)`) is
+unresolved, even when a local shares the field's name, and a binding annotated
+with a `type` alias declared in the file is not settled as another type. A
+local initialized by a call on a receiver of a definitely different type
+(`let actual = &other.pick(0);`) does not carry the owner's result. A call of a
+function-item alias (`let f = pick;`, then `f(0)`) is a use of the owner: held
+inside the macro, free outside it, also through parentheses (`(f)(0)`); a
+bare read of the alias is not, and does not make another local carry the
+owner's result, and a
+shadowed or `mut` (reassignable) alias, or one whose unqualified path names
+an item the test imports or defines (`use other::pick;`), is not tracked. A
+`use .. as` rename in the file counts like a `type` alias for a receiver
+annotation, and like a local `macro_rules!` for an inner macro name. A rename
+that shadows the outer assertion's own name (`use std::stringify as
+assert_eq;`) is an assertion-admission question outside this reading. An owner
+call inside a pass-through method's argument (`pick(0).unwrap_or({ seen =
+pick(0).unwrap(); .. })`) is a known boundary: it is not counted, which only
+withholds credit. A read
+outside the untrusted macro of any other local whose initializer names a call
+of the owner or such a local (`let actual = &pick(0);`, then `*actual`)
+observes the result, so the assertion keeps its parsed reading. A bare path to
+the function item (`let f = pick;`) or a field access (`let m = cfg.pick;`)
+names no call, so it does not make the alias carry the owner's result. Only
+the macro-held assertion loses its reading; an `.unwrap()` in the initializer
+still runs and keeps its own smoke oracle. A call of the owner or of its
+function-item alias outside the macro whose statement discards the result
+(`let _ = pick(0);`, `pick(0);`, `crate::pick(0);`, `let _ = (f)(0);`) is not a free use
+(#16258). A call that a statement keeps in any other way, a block tail
+(`{ pick(0) }`), a named binding (`let v = pick(0);`), a `?` or a further
+method, stays free and keeps the parsed reading.
+
 ## Required Evidence
 
 - Rule 7 (#6482): in the RIPR-SPEC-0219 verdict corpus, `grid-arith-helper`

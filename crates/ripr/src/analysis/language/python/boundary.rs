@@ -68,6 +68,9 @@ pub(super) struct PythonOwnerCallValues {
     pub(super) line: usize,
     pub(super) text: String,
     pub(super) values: BTreeMap<String, String>,
+    /// The scalar literals of each parameter bound to a list, tuple or set
+    /// display, as [`CallRow::elements`] reads them.
+    pub(super) elements: BTreeMap<String, Vec<String>>,
 }
 
 /// The owner calls the boundary rule reads, for another activation rule
@@ -97,6 +100,7 @@ pub(super) fn strong_owner_call_values(
                 .into_iter()
                 .map(|(parameter, binding)| (parameter, binding.value))
                 .collect(),
+            elements: row.elements,
         })
         .collect();
     Some(rows)
@@ -2079,6 +2083,11 @@ pub(super) fn literal_elements(text: &str) -> Option<Vec<String>> {
         .collect()
 }
 
+/// What a parametrize case row's text carries after the call: such a row
+/// binds the decorator's values, which the test body may change in place
+/// before the call.
+pub(super) const PARAMETRIZE_ROW_MARKER: &str = " [parametrize ";
+
 /// One call row per parametrize case: each paired owner parameter binds the
 /// case's argvalue when it is a literal and stays unresolved otherwise.
 fn parametrize_case_row(
@@ -2114,7 +2123,7 @@ fn parametrize_case_row(
     CallRow {
         file: file.to_path_buf(),
         line,
-        text: format!("{text} [parametrize {}]", shown.join(", ")),
+        text: format!("{text}{PARAMETRIZE_ROW_MARKER}{}]", shown.join(", ")),
         bindings,
         elements,
     }

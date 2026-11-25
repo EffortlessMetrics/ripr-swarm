@@ -1,0 +1,1 @@
+::warning file=fixtures/python_full_list_selector_integer_pin_no_exposed_credit/input/src/lib.py,line=4,title=ripr infection_unknown::Static RIPR exposure finding Stop reason: infection_evidence_unknown Canonical gap: gap:python:src/lib.py:largest:predicate_boundary:predicate:x>=best

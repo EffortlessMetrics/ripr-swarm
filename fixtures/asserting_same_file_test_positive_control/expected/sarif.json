@@ -52,7 +52,7 @@
             }
           ],
           "message": {
-            "text": "exposed static exposure for return_value probe: { let v = self.inner.get(); v }"
+            "text": "Changed code `{ let v = self.inner.get(); v }` appears noticed by tests."
           },
           "partialFingerprints": {
             "riprFingerprintV1": "ripr.finding.exposed|probe:src_lib.rs:return_value:d2732503|probe:src_lib.rs:return_value:d2732503|fixtures/asserting_same_file_test_positive_control/input/src/lib.rs"

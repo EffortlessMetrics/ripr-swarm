@@ -539,6 +539,46 @@ Such a test does not hide the rows of tests that reach the owner through a
 same-module or cross-module caller; a test both reach keeps one row. Because a
 value-helper test reaches the owner from its own file, its row also keeps the
 reading weak where cross-module callers alone would read the edit as unresolved.
+A top-level helper function that no test calls itself is related, with the
+weak `route_helper_call` relation, to a test that requests a route whose
+handler directly calls the helper (#14150). The handler must be a top-level
+function whose every decorator is a static route decorator, the only binding
+of its name in its file, and the route must be unambiguous: another route that
+can answer the same request (same verb and a matching path, or a framework
+default path) makes no edge, because registration order is not read. The
+handler must call the helper directly, under the name its own module binds the
+helper to: the bare name in the helper's file, or an exact
+`from <helper module> import <name>` elsewhere. A call in a parameter default
+does not count, because Python evaluates it when the module is defined, not
+per request. A call inside a nested
+`def` block, `async def` block, `class` body or `lambda` body does not count
+either, nor does one in the element, targets, conditions or later iterables
+of a generator expression, because it runs only if the handler calls or
+iterates that scope. What runs while the handler runs does count, among them a
+decorator, a default or an annotation of a nested definition and the first
+iterable of a generator expression. The handler's own scope is read from the
+parse the adapter already made, with each deferred part removed by its parsed
+extent, so the spelling and the indentation of a line do not matter. A name
+the handler's own scope binds, such as a nested `def` with the helper's name,
+an annotated or tuple assignment, a `match` capture or a walrus, is not read
+as the helper; a comprehension's target and a `global` declaration bind
+nothing in that scope, so they do not hide it there. A `global` declaration
+of the helper's name still withholds the relation by the module-level
+rule, because the declaring function may rebind the name. A helper the
+handler calls
+itself is still related when a nested function sits beside the call, and
+the handler's own scope alone decides the route relation: a decorator of
+a nested definition, or a comprehension target that shares the helper's
+name, keeps the helper out of the textual list of a handler's callees
+without keeping it out of the handler's own scope, so a test that
+requests the route is related and a test that calls the handler itself
+keeps the reading of that textual list. The
+relation is uncertain, carries no oracle, and never reaches `exposed`. For a
+route that
+another route can answer as well it is withheld, and so is a generic caller
+relation that rests on that request alone, whether the handler shares the
+helper's module or not; a test that calls the handler itself keeps its
+relation.
 A top-level `click.command` or `click.group` function that no test calls is
 related, with the weak `cli_runner_invoke` relation, to a test that passes it
 as the first argument of `<runner>.invoke(` (`runner.invoke(hello, [...])`),
@@ -2197,6 +2237,48 @@ Tests: `connective_swap_tests.rs::agreeing_operands_do_not_expose_an_and_or_swap
 `connective_swap_tests.rs::an_if_condition_with_a_module_constant_reads_agreeing_calls`,
 `connective_swap_tests.rs::only_a_lone_connective_swap_between_simple_operands_is_read`.
 
+A one-line edit whose only change picks another `strip`, `lstrip` or `rstrip`
+on a parameter with no arguments, or another literal digit count in
+`round(<parameter>, <int>)`, or flips the literal `reverse` flag alone on one
+`sorted(<parameter>)` or `<parameter>.sort()` call with no other argument
+(#16203), changes the result only for a string with whitespace on a side one
+version keeps, a number with more decimal places than the smaller count, or a
+collection holding two different elements. The parameter must be one the body
+never rebinds; for a sort, the changed line must also be the start of the first
+top-level body statement that names the parameter, and name it once, so the
+sort sees the collection the test passed; because Python normalizes
+identifiers, a non-ASCII parameter or statement before that line leaves the
+reading alone. A bare `round` or `sorted` must name
+the builtin (nothing in the owner's file rebinds it), the owner must not call
+itself, and a line inside a multiline string is never read as a call. When
+every strong related call binds the parameter to a plain literal the rule
+evaluates (a quoted string without escapes, an int or decimal float, or a list,
+tuple or set display the call itself spells, not a parametrize case value the
+test may change in place) and both versions give the same result, the edit
+reads `weakly_exposed` and the missing discriminator names the separating
+input. List elements agree only when they share a spelling or are plain strings
+or ints of equal value. A call the reader cannot resolve, or no resolved call
+at all, leaves the reading to the other rules.
+
+Tests: `call_variant_tests.rs::inputs_without_trailing_whitespace_do_not_expose_strip_to_lstrip`,
+`call_variant_tests.rs::an_input_with_trailing_whitespace_keeps_strip_to_lstrip_exposed`,
+`call_variant_tests.rs::inputs_within_the_smaller_digit_count_do_not_expose_a_round_change`,
+`call_variant_tests.rs::an_input_with_more_decimals_keeps_a_round_change_exposed`,
+`call_variant_tests.rs::an_unread_argument_keeps_its_reading`,
+`call_variant_tests.rs::only_a_strip_side_or_round_digits_edit_on_a_name_is_read`,
+`call_variant_tests.rs::agreement_follows_python_strip_and_round`,
+`call_variant_tests.rs::lists_without_two_different_elements_do_not_expose_a_sort_direction_flip`,
+`call_variant_tests.rs::a_list_with_different_elements_keeps_a_sort_direction_flip_exposed`,
+`call_variant_tests.rs::an_unread_list_keeps_a_sort_direction_flip_exposed`,
+`call_variant_tests.rs::a_list_the_body_changes_before_the_sort_keeps_its_reading`,
+`call_variant_tests.rs::only_a_lone_reverse_flag_flip_on_a_named_sort_is_read`,
+`call_variant_tests.rs::sorting_agrees_only_without_two_different_elements`,
+`call_variant_tests.rs::a_module_round_or_sorted_keeps_its_reading`,
+`call_variant_tests.rs::a_parametrized_list_keeps_a_sort_direction_flip_exposed`,
+`call_variant_tests.rs::a_recursive_owner_keeps_its_reading`,
+`call_variant_tests.rs::a_call_shaped_line_inside_a_multiline_string_is_not_read_as_a_call`,
+`call_variant_tests.rs::a_prior_use_spelled_with_a_normalized_identifier_keeps_the_sort_exposed`.
+
 ## Changed Range Header Amendment (#12948)
 
 A strong exact-value assertion on an owner does not establish that a changed
@@ -2261,6 +2343,48 @@ inputs, zero steps, rebinding, other loop bodies and unavailable owner source
 remain unresolved. This does not add a repair-packet producer or change the
 packet validator. The Rust range-bound producer in RIPR-SPEC-0370 remains a
 separate proposed contract.
+
+## Nested Route-Client Fixture Amendment (#14141)
+
+A route client built by a fixture over one of its parameters
+(`def client(items_app): return TestClient(items_app)`) is identified
+through the fixture that supplies that parameter, transitively, up to
+four hops. A dependency resolves from the requesting test's scope first
+(its module, then the conftest chain from there), as pytest resolves a
+fixture dependency for the test that ultimately requests it, falling back
+to the requesting fixture's file and its conftest chain. A dependency the
+test directly parametrizes is supplied by pytest rather than by its
+fixture, a parameter with a default is never injected, and pytest's fixture
+argument reader skips a positional-only parameter, so any of the three ends
+the chain. The same reader decides whether a test itself takes a fixture as a
+parameter: a positional-only or defaulted parameter of a test is not a fixture
+request, so a fixture does not resolve a limit for such a test and the
+route-client chain is not walked for it. Every `return` or `yield`
+of a supplying fixture counts under
+any spacing Python allows, including a bare exit and an exit whose value
+starts with punctuation (`return[other]`, `yield+x`) and a parenthesized yield
+(`held = (yield other)`); only a name that starts with the keyword
+(`returns = ...`) is not an exit. An exit that does not
+return the same plain name, a rebound, cyclic or over-cap link, or an
+unresolved dependency leaves the application unidentified and earns no
+oracle credit. A link's parameter is rebound by every statement that
+binds the name, a `case` capture included (`case base_app:` binds
+`base_app`), and such a link ends the chain.
+
+Tests: `route_identity_tests.rs::a_nested_fixture_client_over_the_owners_app_is_identified`,
+`route_identity_tests.rs::a_nested_fixture_client_over_a_rival_app_does_not_relate`,
+`route_identity_tests.rs::a_two_hop_nested_fixture_client_is_identified`,
+`route_identity_tests.rs::nested_fixture_chains_that_cannot_be_read_stay_unidentified`,
+`route_identity_tests.rs::a_test_module_app_override_wins_over_the_conftest_app_fixture`,
+`route_identity_tests.rs::a_directly_parametrized_app_dependency_is_not_followed_to_its_fixture`,
+`route_identity_tests.rs::a_defaulted_app_parameter_is_not_a_fixture_request`,
+`route_identity_tests.rs::a_positional_only_app_parameter_is_not_a_fixture_request`,
+`route_identity_tests.rs::a_parenthesized_yield_counts_as_an_exit`,
+`route_identity_tests.rs::a_test_parameter_pytest_does_not_inject_does_not_start_the_chain`,
+`route_identity_tests.rs::a_case_capture_that_rebinds_the_app_parameter_stops_the_chain`,
+`literal_fixture_tests.rs::a_positional_only_test_parameter_is_not_a_fixture_request`,
+`route_identity_tests.rs::an_exit_whose_value_starts_with_punctuation_fails_the_chain_closed` and
+`route_identity_tests.rs::an_exit_the_reader_cannot_use_fails_the_chain_closed`.
 
 ## Metrics
 

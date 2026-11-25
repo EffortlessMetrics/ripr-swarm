@@ -432,6 +432,77 @@ fn env_reading_wrapper_forwards_unless_env_is_rebound() -> Result<(), String> {
 }
 
 #[test]
+fn include_reading_wrapper_forwards_unless_include_is_rebound() -> Result<(), String> {
+    for call in [
+        "let _text = include_str!(\"../Cargo.toml\");",
+        "let _bytes = include_bytes!(\"../Cargo.toml\");",
+    ] {
+        let source = bulk_source(
+            &format!("    {call}\n    if is_bulk(qty) {{ 5 }} else {{ 0 }}"),
+            BOUNDARY_TESTS,
+        );
+        for finding in [
+            predicate_finding(&source, BULK_DIFF)?,
+            family_finding(&source, BULK_DIFF, "return_value")?,
+        ] {
+            assert_eq!(finding["probe"]["line"], 2, "{call}\n{finding}");
+            assert_eq!(finding["classification"], "exposed", "{call}\n{finding}");
+        }
+    }
+    for (prelude, call) in [
+        (
+            "macro_rules! include_str { ($q:expr) => { if $q == 10 { return 5; } }; }",
+            "include_str!(qty);",
+        ),
+        (
+            "macro_rules! include_bytes { ($q:expr) => { if $q == 10 { return 5; } }; }",
+            "include_bytes!(qty);",
+        ),
+        // A foreign import of the name.
+        ("use dep::include_str;", "include_str!(qty);"),
+        // A qualified path may name any crate's macro.
+        ("", "std::include_str!(\"../Cargo.toml\");"),
+    ] {
+        let source = format!(
+            "{prelude}\n{}",
+            bulk_source(
+                &format!("    {call}\n    if is_bulk(qty) {{ 5 }} else {{ 0 }}"),
+                BOUNDARY_TESTS,
+            )
+        );
+        let first = source
+            .lines()
+            .position(|line| line.contains("10 <= qty"))
+            .ok_or("probe")?;
+        let diff = BULK_DIFF.replace("@@ -1,3 +1,3 @@", &format!("@@ -{0},3 +{0},3 @@", first));
+        for finding in [
+            predicate_finding(&source, &diff)?,
+            family_finding(&source, &diff, "return_value")?,
+        ] {
+            assert_eq!(finding["probe"]["line"], first + 1, "{call}\n{finding}");
+            assert_ne!(finding["classification"], "exposed", "{call}\n{finding}");
+        }
+    }
+    // A rebound `include_str` elsewhere cannot change a wrapper that only
+    // logs, so that wrapper keeps its credit.
+    let source = format!(
+        "{}\nmod other {{\n    macro_rules! include_str {{ () => {{ \"other\" }}; }}\n}}\n",
+        bulk_source(
+            "    println!(\"{qty}\");\n    if is_bulk(qty) { 5 } else { 0 }",
+            BOUNDARY_TESTS,
+        )
+    );
+    for finding in [
+        predicate_finding(&source, BULK_DIFF)?,
+        family_finding(&source, BULK_DIFF, "return_value")?,
+    ] {
+        assert_eq!(finding["probe"]["line"], 2, "{finding}");
+        assert_eq!(finding["classification"], "exposed", "{finding}");
+    }
+    Ok(())
+}
+
+#[test]
 fn boolean_return_twin_does_not_borrow_other_calls_or_short_circuit_gates() -> Result<(), String> {
     let split = bulk_source(FORWARDING, "        let _ = order_discount(10);");
     let split = split.replace(
