@@ -233,7 +233,7 @@ fn owner_result_locals(
             locals.push(local);
             continue;
         }
-        if let Some(alias) = function_item_alias(&statement, &initializer, owner) {
+        if let Some(alias) = function_item_alias(&function, &statement, &initializer, owner) {
             locals.push(alias);
             continue;
         }
@@ -290,8 +290,11 @@ fn owner_result_locals(
 }
 
 /// A function-item alias of a free-function owner: `let f = pick;` binding a
-/// plain identifier once to an unqualified or admitted path naming the owner.
+/// plain, immutable identifier declared once in the test to an unqualified or
+/// admitted path naming the owner. A shadowed (`let f = |_| ..;`) or `mut`
+/// (reassignable) alias is not tracked, so its call is not an owner use.
 fn function_item_alias(
+    function: &ast::Fn,
     statement: &ast::LetStmt,
     initializer: &ast::Expr,
     owner: &OwnerName<'_>,
@@ -302,7 +305,17 @@ fn function_item_alias(
     let ast::Pat::IdentPat(pattern) = statement.pat()? else {
         return None;
     };
-    if pattern.ref_token().is_some() || pattern.pat().is_some() {
+    if pattern.ref_token().is_some() || pattern.mut_token().is_some() || pattern.pat().is_some() {
+        return None;
+    }
+    let name = pattern.name()?.text().to_string();
+    let declarations = function
+        .syntax()
+        .descendants()
+        .filter_map(ast::IdentPat::cast)
+        .filter(|other| other.name().is_some_and(|other| other.text() == name))
+        .count();
+    if declarations != 1 {
         return None;
     }
     let ast::Expr::PathExpr(path) = initializer else {
@@ -321,7 +334,7 @@ fn function_item_alias(
         return None;
     }
     Some(OwnerResultLocal {
-        name: pattern.name()?.text().to_string(),
+        name,
         uses: 0,
         evidence: false,
         callable: true,

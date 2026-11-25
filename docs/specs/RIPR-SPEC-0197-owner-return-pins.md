@@ -2904,7 +2904,8 @@ with a `type` alias declared in the file is not settled as another type. A
 local initialized by a call on a receiver of a definitely different type
 (`let actual = &other.pick(0);`) does not carry the owner's result. A call of a
 function-item alias (`let f = pick;`, then `f(0)`) is a use of the owner: held
-inside the macro, free outside it; a bare read of the alias is not. An owner
+inside the macro, free outside it; a bare read of the alias is not, and a
+shadowed or `mut` (reassignable) alias is not tracked. An owner
 call inside a pass-through method's argument (`pick(0).unwrap_or({ seen =
 pick(0).unwrap(); .. })`) is a known boundary: it is not counted, which only
 withholds credit. A read
