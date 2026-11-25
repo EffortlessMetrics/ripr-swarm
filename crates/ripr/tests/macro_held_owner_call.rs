@@ -431,7 +431,7 @@ fn an_owner_result_local_only_an_untrusted_macro_uses_gives_no_exact_credit() ->
 #[test]
 fn method_receivers_preserve_real_observations_and_demote_held_calls() -> Result<(), String> {
     let declaration = "
-        #[derive(Clone, Default)]
+        #[derive(Clone, Copy, Default)]
         pub struct Picker;
         impl Picker {
             pub fn pick(&self, n: u32) -> Result<Mode, ()> {
@@ -499,6 +499,19 @@ fn method_receivers_preserve_real_observations_and_demote_held_calls() -> Result
              let holder = Holder { picker: Picker };
              assert_eq!(check_ok!(held.pick(0)), holder.picker.pick(0));
              let _ = picker.pick(0);",
+            "exact_value",
+        ),
+        (
+            "a binding copied from another local is not settled as another type",
+            "let held = Picker; let alias = held;
+             assert_eq!(check_ok!(held.pick(0)), alias.pick(0));",
+            "exact_value",
+        ),
+        (
+            "a binding read from a constant is not settled as another type",
+            "const SHARED: Picker = Picker;
+             let held = Picker; let observed = SHARED;
+             assert_eq!(check_ok!(held.pick(0)), observed.pick(0));",
             "exact_value",
         ),
         (

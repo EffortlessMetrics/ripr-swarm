@@ -1069,11 +1069,15 @@ fn typed_receiver_bindings(
                 return None;
             }
             let name = pattern.name()?.text().to_string();
+            let mut bare_path_initializer = false;
             let path = match binding.ty() {
                 Some(ast::Type::PathType(ty)) => ty.path()?,
                 Some(_) => return None,
                 None => match binding.initializer()? {
-                    ast::Expr::PathExpr(initializer) => initializer.path()?,
+                    ast::Expr::PathExpr(initializer) => {
+                        bare_path_initializer = true;
+                        initializer.path()?
+                    }
                     ast::Expr::RecordExpr(initializer) => initializer.path()?,
                     _ => return None,
                 },
@@ -1083,6 +1087,13 @@ fn typed_receiver_bindings(
             }
             let ty = path.segment()?.name_ref()?;
             if aliases.contains(ty.text()) {
+                return None;
+            }
+            // A bare path initializer is a unit-struct value only when it reads
+            // as a type name. `let alias = held;` copies a local and
+            // `let w = SHARED;` reads a constant; neither names the binding's
+            // type, so both stay unresolved.
+            if bare_path_initializer && !names_unit_struct(&block, ty.text()) {
                 return None;
             }
             let declarations = block
@@ -1098,6 +1109,20 @@ fn typed_receiver_bindings(
             })
         })
         .collect()
+}
+
+/// Whether a bare path initializer reads as a unit-struct type: an
+/// upper-camel name that no binding in the body declares. A local copy
+/// (`held`) or an all-caps constant (`SHARED`) is not a type name.
+fn names_unit_struct(block: &ast::BlockExpr, name: &str) -> bool {
+    let upper_camel =
+        name.chars().next().is_some_and(char::is_uppercase) && name.chars().any(char::is_lowercase);
+    upper_camel
+        && !block
+            .syntax()
+            .descendants()
+            .filter_map(ast::IdentPat::cast)
+            .any(|pattern| pattern.name().is_some_and(|other| other.text() == name))
 }
 
 /// A dot call reaches the owner through `self`/`Self`, an owner type, an

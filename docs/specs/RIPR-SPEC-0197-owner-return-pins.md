@@ -2896,7 +2896,10 @@ A call on a binding of a definitely different type (`let other = Other;`,
 `let other: Other = ..`, `let other = Other { .. }`) is not a call of
 `Widget::new`. Any other receiver is unresolved: a receiver that is not a bare
 name (`w.clone().new()`) or a binding the body does not type
-(`let w = Widget::default();`). An unresolved call outside the macro counts as
+(`let w = Widget::default();`). A bare path initializer types the binding
+only when it reads as a unit-struct name: an upper-camel name no binding in
+the body declares. A copy of another local (`let alias = held;`) or a
+constant (`let w = SHARED;`) stays unresolved. An unresolved call outside the macro counts as
 a free use and inside it does not count as held, so an unresolved receiver
 never supplies the demotion. A field receiver (`holder.picker.pick(0)`) is
 unresolved, even when a local shares the field's name, and a binding annotated
