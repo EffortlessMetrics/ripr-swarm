@@ -550,7 +550,7 @@ mod tests {
     fn review_comments_help_discloses_cooperative_budget_boundary() -> Result<(), String> {
         let text = super::help_text_for("review-comments").ok_or("missing review-comments help")?;
         for required in [
-            "default 120000ms",
+            "default 600000ms",
             "safe boundaries",
             "Non-preemptible operations can overrun",
             "outer orchestration wrapper for a hard process bound",
@@ -1638,8 +1638,8 @@ mod tests {
             &["parse_first_action_options"],
         ),
         ("first-pr", FIRST_PR_PARSER_RS, &["parse_options"]),
-        ("gate", GATE_PARSER_RS, &["parse_gate_options"]),
-        ("gate evaluate", GATE_PARSER_RS, &["parse_gate_options"]),
+        ("gate", GATE_PARSER_RS, &["parse_gate_options_for"]),
+        ("gate evaluate", GATE_PARSER_RS, &["parse_gate_options_for"]),
         ("gate check", GATE_PARSER_RS, &["parse_gate_check_plan"]),
         (
             "impacted-evidence",
@@ -2292,6 +2292,21 @@ fn parse_demo<'a>(xs: &'a str) {
                 "--static-json",
                 "hidden alias of --repo-exposure-json",
             ),
+            // #10543 item 4: `--output-dir` is the documented directory
+            // spelling; the old `--out-dir` stays accepted so existing
+            // scripts and workflows keep working, without listing two
+            // spellings for one option.
+            ("first-pr", "--out-dir", "hidden alias of --output-dir"),
+            (
+                "pr-comments requests",
+                "--out-dir",
+                "hidden alias of --output-dir",
+            ),
+            (
+                "pr-comments summary",
+                "--out-dir",
+                "hidden alias of --output-dir",
+            ),
             // `mcp --help --all` is rejected with a route to the documented
             // extended help (#9867); `--all` is not an accepted mcp flag, so
             // it owns no Options entry — the help body names the supported
@@ -2300,6 +2315,14 @@ fn parse_demo<'a>(xs: &'a str) {
                 "mcp",
                 "--all",
                 "rejected with --help; extended help is `ripr help --all`",
+            ),
+            // `completions --shell` is refused with the positional spelling
+            // (#15259); it is not an accepted flag, so it owns no Options
+            // entry.
+            (
+                "completions",
+                "--shell",
+                "rejected; the shell is positional (`ripr completions bash`)",
             ),
         ];
 

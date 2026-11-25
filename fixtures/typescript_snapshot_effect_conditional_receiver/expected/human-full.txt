@@ -90,5 +90,4 @@ Drill in:
   ripr explain --root <cwd>/fixtures/typescript_snapshot_effect_conditional_receiver/input --diff <cwd>/fixtures/typescript_snapshot_effect_conditional_receiver/diff.patch --mode fast probe:src_lib.ts:typescript_preview:322bd6d3
   ripr context --root <cwd>/fixtures/typescript_snapshot_effect_conditional_receiver/input --diff <cwd>/fixtures/typescript_snapshot_effect_conditional_receiver/diff.patch --mode fast --at probe:src_lib.ts:typescript_preview:322bd6d3
 
-
 Note: 1 TypeScript file analyzed under preview support — preview evidence is advisory and may be incomplete. Treat its findings as advisory, not Rust-grade.

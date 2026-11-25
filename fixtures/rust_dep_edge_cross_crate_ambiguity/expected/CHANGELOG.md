@@ -470,3 +470,25 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — rust_dep_edge_cross_crate_ambiguity (35)
+
+Reason:
+RIPR-SPEC-0122: one blank line, not two, separates the More block from a trailing Note (#14318)
+
+Command:
+`cargo xtask goldens bless rust_dep_edge_cross_crate_ambiguity --reason "..."`
+
+Updated:
+- `expected/human.txt`
+
+## Pending — rust_dep_edge_cross_crate_ambiguity (36)
+
+Reason:
+human-full: one blank line, not two, separates the last finding from a trailing Note (#14318)
+
+Command:
+`cargo xtask goldens bless rust_dep_edge_cross_crate_ambiguity --reason "..."`
+
+Updated:
+- `expected/human-full.txt`

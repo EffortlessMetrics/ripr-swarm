@@ -1,0 +1,205 @@
+{
+  "schema_version": "0.2",
+  "tool": "ripr",
+  "mode": "fast",
+  "root": "fixtures/rust_predicate_appended_str_arm_false_side_only/input",
+  "summary": {"changed_rust_files":1,"probes":2,"findings":2,"exposed":0,"weakly_exposed":2,"reachable_unrevealed":0,"no_static_path":0,"infection_unknown":0,"propagation_unknown":0,"static_unknown":0,"changed_files_by_language":[{"language":"rust","files":1}]},
+  "analysis_outcome": {
+    "analysis_complete": true,
+    "outcome": {"schema_version":"0.1","kind":"complete_with_findings","identity":{"repository_identity":null,"root_identity":null,"config_identity":null,"base_revision":null,"input_identity":"sha256:5d1fcc171bd43b778586bfa9726a6824f93e0f11d254359ab1d374cdfa218cb5","snapshot_identity":null,"git_candidate_subject":null},"counts":{"changed_file_count":1,"changed_line_count":2,"candidate_line_count":1,"probe_count":2,"finding_count":2},"limitations":[],"claim_boundary":"Static analysis outcome only; no correctness, test-adequacy, runtime-execution, or merge-readiness claim."}
+  },
+  "findings": [
+    {
+      "id": "probe:src_lib.rs:predicate:792ee49a",
+      "canonical_gap_id": "gap:rust:src/lib.rs:is_verbose:predicate_boundary:predicate:flag==lit2d76_flag==lit2d2d766572626f7365",
+      "canonical_gap_group_size": 1,
+      "canonical_gap": {
+        "id": "gap:rust:src/lib.rs:is_verbose:predicate_boundary:predicate:flag==lit2d76_flag==lit2d2d766572626f7365",
+        "language": "rust",
+        "file": "src/lib.rs",
+        "owner": "is_verbose",
+        "behavior_kind": "predicate_boundary",
+        "probe_kind": "predicate",
+        "normalized_discriminator": "flag==lit2d76_flag==lit2d2d766572626f7365"
+
+      },
+      "classification": "weakly_exposed",
+      "severity": "warning",
+      "confidence": 0.84,
+      "probe": {
+        "id": "probe:src_lib.rs:predicate:792ee49a",
+        "family": "predicate",
+        "delta": "control",
+        "file": "./src/lib.rs",
+        "line": 2,
+        "expression": "flag == \"-v\" || flag == \"--verbose\""
+       },
+      "ripr": {
+        "reach": {"state":"yes","confidence":"medium","summary":"Related tests appear to reach is_verbose: quiet_flag_is_not_verbose"},
+        "infect": {"state":"weak","confidence":"medium","summary":"Related tests contain input values, but the equality-boundary check is missing"},
+        "propagate": {"state":"yes","confidence":"medium","summary":"Changed behavior appears to influence returned value: flag ==      || flag =="},
+        "observe": {"state":"yes","confidence":"medium","summary":"A related test observes a value or effect near the changed behavior"},
+        "discriminate": {"state":"weak","confidence":"high","summary":"Only relational oracle found; it may not discriminate the changed value exactly"}
+       },
+      "evidence_stages": [
+        {"stage":"reach","state":"yes","confidence":"medium"},
+        {"stage":"infect","state":"weak","confidence":"medium"},
+        {"stage":"propagate","state":"yes","confidence":"medium"},
+        {"stage":"observe","state":"yes","confidence":"medium"},
+        {"stage":"discriminate","state":"weak","confidence":"high"}
+      ],
+      "evidence_path": ["reach yes: Related tests appear to reach is_verbose: quiet_flag_is_not_verbose", "infection weak: Related tests contain input values, but the equality-boundary check is missing", "propagation yes: Changed behavior appears to influence returned value: flag ==      || flag ==", "observation yes: A related test observes a value or effect near the changed behavior", "discriminator weak: Only relational oracle found; it may not discriminate the changed value exactly", "local flow reaches returned value: flag ==      || flag == (line 2)", "related test src/lib.rs:9 quiet_flag_is_not_verbose uses weak relational check oracle: assert!(!is_verbose(\"-q\"));", "source function argument value flag = \"-q\" at line 10", "missing discriminator flag == \"--verbose\": No related test call uses flag equal to \"--verbose\"; observed flag values: \"-q\"; target \"--verbose\" value: \"--verbose\""],
+      "flow_sinks": [
+        {"kind":"return_value","text":"flag ==      || flag ==","line":2}
+      ],
+      "evidence": ["A related test observes a value or effect near the changed behavior", "Changed behavior appears to influence returned value: flag ==      || flag ==", "Only relational oracle found; it may not discriminate the changed value exactly", "Related tests appear to reach is_verbose: quiet_flag_is_not_verbose", "Related tests contain input values, but the equality-boundary check is missing"],
+      "missing": ["Missing check value: flag == \"--verbose\"", "No strong discriminator was detected"],
+      "assertion_texts": {
+        "10": "assert!(!is_verbose(\"-q\"));"
+      },
+      "activation": {
+        "observed_values": [
+          {
+            "line": 10,
+            "value": "flag = \"-q\"",
+            "context": "function_argument"
+          }
+        ],
+        "missing_discriminators": [
+          {
+            "value": "flag == \"--verbose\"",
+            "reason": "No related test call uses flag equal to \"--verbose\"; observed flag values: \"-q\"; target \"--verbose\" value: \"--verbose\"",
+            "flow_sink": {"kind":"return_value","text":"flag ==      || flag ==","line":2}
+          }
+        ]
+      },
+      "observed_values": [
+        {
+          "line": 10,
+          "value": "flag = \"-q\"",
+          "context": "function_argument"
+        }
+      ],
+      "missing_discriminators": [
+        {
+          "value": "flag == \"--verbose\"",
+          "reason": "No related test call uses flag equal to \"--verbose\"; observed flag values: \"-q\"; target \"--verbose\" value: \"--verbose\"",
+          "flow_sink": {"kind":"return_value","text":"flag ==      || flag ==","line":2}
+        }
+      ],
+      "related_tests_total": 1,
+      "related_tests": [
+        {
+          "name": "quiet_flag_is_not_verbose",
+          "file": "src/lib.rs",
+          "line": 9,
+          "oracle_strength": "weak",
+          "oracle_kind": "relational_check",
+          "oracle": "assert!(!is_verbose(\"-q\"));",
+          "relation_reason": "direct_owner_call",
+          "relation_confidence": "high",
+          "miss": "weak_assertion",
+          "why": "assertion too weak to tell the old behavior from the new"
+        }
+      ],
+      "stop_reasons": [],
+      "oracle_kind": "relational_check",
+      "oracle_strength": "weak",
+      "recommended_next_step": "Add boundary tests for below, equal, and above the changed threshold with exact assertions.",
+      "suggested_next_action": "Add boundary tests for below, equal, and above the changed threshold with exact assertions.",
+      "language": "rust",
+      "source_currentness": "candidate_current"
+    },
+    {
+      "id": "probe:src_lib.rs:return_value:a4b89ee2",
+      "canonical_gap_id": "gap:rust:src/lib.rs:is_verbose:return_value:return_value:flag==lit2d76_flag==lit2d2d766572626f7365",
+      "canonical_gap_group_size": 1,
+      "canonical_gap": {
+        "id": "gap:rust:src/lib.rs:is_verbose:return_value:return_value:flag==lit2d76_flag==lit2d2d766572626f7365",
+        "language": "rust",
+        "file": "src/lib.rs",
+        "owner": "is_verbose",
+        "behavior_kind": "return_value",
+        "probe_kind": "return_value",
+        "normalized_discriminator": "flag==lit2d76_flag==lit2d2d766572626f7365"
+
+      },
+      "classification": "weakly_exposed",
+      "severity": "warning",
+      "confidence": 0.92,
+      "probe": {
+        "id": "probe:src_lib.rs:return_value:a4b89ee2",
+        "family": "return_value",
+        "delta": "value",
+        "file": "./src/lib.rs",
+        "line": 2,
+        "expression": "flag == \"-v\" || flag == \"--verbose\""
+       },
+      "ripr": {
+        "reach": {"state":"yes","confidence":"medium","summary":"Related tests appear to reach is_verbose: quiet_flag_is_not_verbose"},
+        "infect": {"state":"yes","confidence":"medium","summary":"Reachable tests can plausibly activate this changed behavior"},
+        "propagate": {"state":"yes","confidence":"high","summary":"Complete propagation witness reaches returned value: flag == \"-v\" || flag == \"--verbose\""},
+        "observe": {"state":"yes","confidence":"medium","summary":"A related test observes a value or effect near the changed behavior"},
+        "discriminate": {"state":"weak","confidence":"medium","summary":"Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)"}
+       },
+      "evidence_stages": [
+        {"stage":"reach","state":"yes","confidence":"medium"},
+        {"stage":"infect","state":"yes","confidence":"medium"},
+        {"stage":"propagate","state":"yes","confidence":"high"},
+        {"stage":"observe","state":"yes","confidence":"medium"},
+        {"stage":"discriminate","state":"weak","confidence":"medium"}
+      ],
+      "evidence_path": ["reach yes: Related tests appear to reach is_verbose: quiet_flag_is_not_verbose", "infection yes: Reachable tests can plausibly activate this changed behavior", "propagation yes: Complete propagation witness reaches returned value: flag == \"-v\" || flag == \"--verbose\"", "observation yes: A related test observes a value or effect near the changed behavior", "discriminator weak: Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)", "local flow reaches returned value: flag == \"-v\" || flag == \"--verbose\" (line 2)", "related test src/lib.rs:9 quiet_flag_is_not_verbose uses weak relational check oracle: assert!(!is_verbose(\"-q\"));", "source function argument value flag = \"-q\" at line 10"],
+      "flow_sinks": [
+        {"kind":"return_value","text":"flag == \"-v\" || flag == \"--verbose\"","line":2}
+      ],
+      "evidence": ["A related test observes a value or effect near the changed behavior", "Complete propagation witness reaches returned value: flag == \"-v\" || flag == \"--verbose\"", "Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)", "Reachable tests can plausibly activate this changed behavior", "Related tests appear to reach is_verbose: quiet_flag_is_not_verbose"],
+      "missing": ["No strong discriminator was detected"],
+      "assertion_texts": {
+        "10": "assert!(!is_verbose(\"-q\"));"
+      },
+      "activation": {
+        "observed_values": [
+          {
+            "line": 10,
+            "value": "flag = \"-q\"",
+            "context": "function_argument"
+          }
+        ],
+        "missing_discriminators": [
+        ]
+      },
+      "observed_values": [
+        {
+          "line": 10,
+          "value": "flag = \"-q\"",
+          "context": "function_argument"
+        }
+      ],
+      "missing_discriminators": [
+      ],
+      "related_tests_total": 1,
+      "related_tests": [
+        {
+          "name": "quiet_flag_is_not_verbose",
+          "file": "src/lib.rs",
+          "line": 9,
+          "oracle_strength": "weak",
+          "oracle_kind": "relational_check",
+          "oracle": "assert!(!is_verbose(\"-q\"));",
+          "relation_reason": "direct_owner_call",
+          "relation_confidence": "high",
+          "miss": "weak_assertion",
+          "why": "assertion too weak to tell the old behavior from the new"
+        }
+      ],
+      "stop_reasons": [],
+      "oracle_kind": "relational_check",
+      "oracle_strength": "weak",
+      "recommended_next_step": "Replace broad assertions with exact equality or a property that constrains the changed returned value.",
+      "suggested_next_action": "Replace broad assertions with exact equality or a property that constrains the changed returned value.",
+      "language": "rust",
+      "source_currentness": "candidate_current"
+    }
+  ]
+}

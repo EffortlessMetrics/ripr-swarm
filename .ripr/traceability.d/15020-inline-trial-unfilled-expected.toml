@@ -1,0 +1,8 @@
+# #15020: harness inline trials lower an unfilled expected value like ordinary tests.
+[[extend]]
+id = "RIPR-SPEC-0231"
+tests = [
+  "crates/ripr/src/analysis/facts/harness_registry/tests.rs::registered_trials_lower_an_unfilled_expected_value",
+  "crates/ripr/src/analysis/facts/harness_registry/tests.rs::sibling_trials_scope_the_unfilled_expected_value_per_trial",
+  "crates/ripr/src/analysis/facts/harness_registry/tests.rs::a_captured_filled_expected_value_is_not_lowered_by_a_nested_placeholder",
+]

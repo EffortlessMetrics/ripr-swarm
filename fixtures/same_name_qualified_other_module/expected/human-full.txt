@@ -44,7 +44,6 @@ Drill in:
   ripr explain --root <cwd>/fixtures/same_name_qualified_other_module/input --diff <cwd>/fixtures/same_name_qualified_other_module/diff.patch --mode fast probe:src_lib.rs:return_value:7a1193ba
   ripr context --root <cwd>/fixtures/same_name_qualified_other_module/input --diff <cwd>/fixtures/same_name_qualified_other_module/diff.patch --mode fast --at probe:src_lib.rs:return_value:7a1193ba
 
-
 Note: ripr found no static test path for any of the 1 changed expression(s) in this diff. Scope
   analyzed: 1 changed Rust file(s), 1 changed expression(s), and 0 statically linked related
   test(s). This is not a coverage assessment. A test may already exercise these changes through

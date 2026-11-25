@@ -1,0 +1,13 @@
+[[extend]]
+id = "RIPR-SPEC-0108"
+tests = [
+  "crates/ripr/src/analysis/classify/related_tests/generic_sibling.rs::tests::a_binary_operator_is_reached_unnamed_only_through_its_token",
+  "crates/ripr/src/analysis/classify/related_tests/generic_sibling.rs::tests::a_named_operator_call_typed_as_the_sibling_is_not_a_direct_call",
+  "crates/ripr/src/analysis/classify/related_tests/generic_sibling.rs::tests::an_operator_reachable_unnamed_or_typed_as_the_owner_keeps_the_direct_call",
+]
+fixtures = ["fixtures/rust_generic_trait_sibling_impl_named_operator"]
+outputs = [
+  "fixtures/rust_generic_trait_sibling_impl_named_operator/expected/check.json",
+  "fixtures/rust_generic_trait_sibling_impl_named_operator/expected/human.txt",
+  "fixtures/rust_generic_trait_sibling_impl_named_operator/expected/human-full.txt",
+]

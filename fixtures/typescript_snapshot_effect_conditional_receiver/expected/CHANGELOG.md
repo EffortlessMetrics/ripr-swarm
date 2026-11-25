@@ -61,3 +61,14 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human-full.txt`
+
+## Pending — typescript_snapshot_effect_conditional_receiver (6)
+
+Reason:
+human-full: one blank line, not two, separates the last finding from a trailing Note (#14318)
+
+Command:
+`cargo xtask goldens bless typescript_snapshot_effect_conditional_receiver --reason "..."`
+
+Updated:
+- `expected/human-full.txt`

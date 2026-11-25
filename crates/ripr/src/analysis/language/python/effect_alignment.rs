@@ -12,9 +12,9 @@
 
 use super::no_behavior::{call_arglists_with_offsets, split_top_level_args};
 use super::related_tests::{
-    import_source_module_matches_owner, is_python_identifier_char, owner_class_locals,
-    owner_method_bound_locals, owner_module_callees, owner_result_locals, python_text_hides_code,
-    test_rebinds_import_alias, with_entry,
+    PythonHiddenCode, import_source_module_matches_owner, is_python_identifier_char,
+    owner_class_locals, owner_method_bound_locals, owner_module_callees, owner_result_locals,
+    python_text_hides_code, test_rebinds_import_alias, with_entry,
 };
 use super::{PythonOwner, PythonTest};
 use crate::domain::OwnerKind;
@@ -907,13 +907,14 @@ fn operand_occurrences<'a>(
     text: &'a str,
     needle: &'a str,
 ) -> impl Iterator<Item = (&'a str, &'a str)> + 'a {
+    let mut hidden = PythonHiddenCode::new(text);
     text.match_indices(needle).filter_map(move |(idx, _)| {
         let end = idx + needle.len();
         let bounded_before = !text[..idx]
             .chars()
             .next_back()
             .is_some_and(|ch| ch == '.' || is_python_identifier_char(ch));
-        (bounded_before && !python_text_hides_code(text, idx)).then(|| (&text[..idx], &text[end..]))
+        (bounded_before && !hidden.hides(idx)).then(|| (&text[..idx], &text[end..]))
     })
 }
 

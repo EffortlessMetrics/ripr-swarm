@@ -137,7 +137,7 @@ escape.
    (`classify/binding_return_flow.rs`). A rebound, shadowed, partially used,
    or transformed return, a preceding early exit, a foreign same-name import
    of the owner, or a renamed binding stays unread.
-3. B, swallowed tail, must downgrade. Probe family `call_deletion`,
+3. [abstain] B, swallowed tail, must downgrade. Probe family `call_deletion`,
    expression `self.persist(amount * 9).ok();`, test
    `assert_eq!(ledger.balance(), 145);`. Before the fix: `exposed` /
    confidence 1.0. After: `propagation_unknown` / confidence 0.87.

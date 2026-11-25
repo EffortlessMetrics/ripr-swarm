@@ -83,5 +83,4 @@ Drill in:
   ripr explain --root <cwd>/fixtures/python_route_response_equivalent_number/input --diff <cwd>/fixtures/python_route_response_equivalent_number/diff.patch --mode fast probe:shop_app.py:python_preview:0bf532af
   ripr context --root <cwd>/fixtures/python_route_response_equivalent_number/input --diff <cwd>/fixtures/python_route_response_equivalent_number/diff.patch --mode fast --at probe:shop_app.py:python_preview:0bf532af
 
-
 Note: 1 Python file analyzed under preview support — preview evidence is advisory and may be incomplete. Treat its findings as advisory, not Rust-grade.

@@ -58,3 +58,14 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — python_message_pin_local_control (6)
+
+Reason:
+RIPR-SPEC-0122: one blank line, not two, separates the More block from a trailing Note (#14318)
+
+Command:
+`cargo xtask goldens bless python_message_pin_local_control --reason "..."`
+
+Updated:
+- `expected/human.txt`

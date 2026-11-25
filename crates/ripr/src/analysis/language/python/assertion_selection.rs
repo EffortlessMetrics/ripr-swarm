@@ -50,6 +50,7 @@
 //! is never credited as evidence, and the test's #5571 admission state stays
 //! the authority on whether the test asserts at all.
 
+use super::caplog_text::is_message_only_log_call_edit;
 use super::sink_alignment::{
     dict_changed_keys_and_values, oracle_is_pure_len_aggregate,
     oracle_observes_changed_dict_element, oracle_text_observes_token,
@@ -67,6 +68,10 @@ pub(super) struct PythonAssertionFocus {
     /// `ErrorPath` change there alters what the handler does — often the value
     /// it returns — so normal-value, mock and output observers apply too.
     error_handler_line: bool,
+    /// The edit only rewrites a logging call's message or level
+    /// (`caplog_text::is_message_only_log_call_edit`, #15250). A value
+    /// assertion on the owner's result cannot notice it, however exact.
+    message_only_log_call: bool,
 }
 
 /// The field a `FieldConstruction` change writes, when the changed line names
@@ -97,10 +102,12 @@ impl PythonAssertionFocus {
             .flatten();
         let error_handler_line =
             matches!(family, ProbeFamily::ErrorPath) && is_error_handler_line(line_text);
+        let message_only_log_call = is_message_only_log_call_edit(old_line_text, line_text);
         Self {
             family,
             changed_field,
             error_handler_line,
+            message_only_log_call,
         }
     }
 
@@ -110,6 +117,7 @@ impl PythonAssertionFocus {
             family,
             changed_field: None,
             error_handler_line: false,
+            message_only_log_call: false,
         }
     }
 
@@ -121,7 +129,26 @@ impl PythonAssertionFocus {
     /// filter). Static-limit suppression reads the selection built on this
     /// filter, so a wrong-family strong assertion never hides a limit.
     pub(super) fn admits(&self, assertion: &PythonAssertion) -> bool {
+        // A result pin passes on both versions of a logging-only edit, direct
+        // (`f(5) is False`) or bound (`r = f(5)`, `assert r is False`), and so
+        // does an exact compare of a captured-log alias (`msgs == [...]`), which
+        // the caplog evaluation does not read. An assertion whose text also
+        // reads `caplog` stays applicable so the caplog evaluation and its
+        // limits see it; a result-pin gate beside that read abstains
+        // (`static_limits`, #15250).
+        if self.message_only_log_call
+            && !assertion.text.contains("caplog")
+            && is_result_pin_shape(assertion.oracle_shape)
+        {
+            return false;
+        }
         self.error_handler_line || shape_matches_family(assertion.oracle_shape, &self.family)
+    }
+
+    /// Whether this change only adds or rewrites a logging call, so a pin on
+    /// the owner's result cannot observe it (#15250).
+    pub(super) fn withholds_result_pins(&self) -> bool {
+        self.message_only_log_call
     }
 
     /// Sink relevance: 0 for a sibling-field observer, 1 otherwise.
@@ -180,6 +207,17 @@ fn changed_field(line_text: &str, old_line_text: Option<&str>) -> Option<PythonC
     }
     let (keys, values) = dict_changed_keys_and_values(old_line_text, line_text)?;
     Some(PythonChangedField::DictElements { keys, values })
+}
+
+/// The shapes that pin a value or a raise rather than read emitted output.
+pub(super) fn is_result_pin_shape(shape: PythonOracleShape) -> bool {
+    matches!(
+        shape,
+        PythonOracleShape::ExactAssertion
+            | PythonOracleShape::FieldAssertion
+            | PythonOracleShape::StatusCodeAssertion
+            | PythonOracleShape::ExceptionAssertion
+    )
 }
 
 /// Whether an assertion of `shape` can observe a change of `family`.

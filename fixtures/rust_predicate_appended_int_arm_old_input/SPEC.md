@@ -29,9 +29,9 @@ arm's literal, so no input reaches the change.
 
 ## Known Limitation
 
-The golden also records a `return_value` finding at `exposed`. Inputs `1`
-and `3` do not separate the old return from the new one, so that reading is a
-false `exposed` on the return-value path. It predates #15027 and does not
-come from the predicate path. Open PR #14194 (#8361) owns it. The honesty
-corpus scopes this fixture's assertions to the predicate family for that
-reason.
+The `return_value` finding reads `weakly_exposed`. Inputs `1` and `3` do not
+separate the old return from the new one, so the guard-operand agreement rule
+withholds the strong discriminator; #14194 (#8361) resolves the false
+`exposed` this fixture used to record. The honesty corpus scopes this
+fixture's assertions to the predicate family because the return-value path
+has no deciding input here.

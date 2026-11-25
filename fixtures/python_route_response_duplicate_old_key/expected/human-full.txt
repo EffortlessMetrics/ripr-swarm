@@ -83,5 +83,4 @@ Drill in:
   ripr explain --root <cwd>/fixtures/python_route_response_duplicate_old_key/input --diff <cwd>/fixtures/python_route_response_duplicate_old_key/diff.patch --mode fast probe:shop_app.py:python_preview:9a6b94be
   ripr context --root <cwd>/fixtures/python_route_response_duplicate_old_key/input --diff <cwd>/fixtures/python_route_response_duplicate_old_key/diff.patch --mode fast --at probe:shop_app.py:python_preview:9a6b94be
 
-
 Note: 1 Python file analyzed under preview support — preview evidence is advisory and may be incomplete. Treat its findings as advisory, not Rust-grade.

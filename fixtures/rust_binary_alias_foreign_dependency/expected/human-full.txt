@@ -44,7 +44,6 @@ Drill in:
   ripr explain --root <cwd>/fixtures/rust_binary_alias_foreign_dependency/input --diff <cwd>/fixtures/rust_binary_alias_foreign_dependency/diff.patch --mode fast probe:app_src_bin_worker.rs:return_value:8445e291
   ripr context --root <cwd>/fixtures/rust_binary_alias_foreign_dependency/input --diff <cwd>/fixtures/rust_binary_alias_foreign_dependency/diff.patch --mode fast --at probe:app_src_bin_worker.rs:return_value:8445e291
 
-
 Note: ripr found no static test path for any of the 1 changed expression(s) in this diff. Scope
   analyzed: 1 changed Rust file(s), 1 changed expression(s), and 0 statically linked related
   test(s). This is not a coverage assessment. A test may already exercise these changes through

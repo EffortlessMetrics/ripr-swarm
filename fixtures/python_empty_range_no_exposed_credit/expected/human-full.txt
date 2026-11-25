@@ -59,5 +59,4 @@ Drill in:
   ripr explain --root <cwd>/fixtures/python_empty_range_no_exposed_credit/input --diff <cwd>/fixtures/python_empty_range_no_exposed_credit/diff.patch --mode fast probe:src_lib.py:python_preview:31bd0ad3
   ripr context --root <cwd>/fixtures/python_empty_range_no_exposed_credit/input --diff <cwd>/fixtures/python_empty_range_no_exposed_credit/diff.patch --mode fast --at probe:src_lib.py:python_preview:31bd0ad3
 
-
 Note: 1 Python file analyzed under preview support — preview evidence is advisory and may be incomplete. Treat its findings as advisory, not Rust-grade.

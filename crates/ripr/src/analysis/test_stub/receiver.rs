@@ -25,6 +25,7 @@
 //! developer changes it when the case needs another state.
 
 use super::StubScope;
+use super::match_inputs::unraw;
 use crate::analysis::syntax::fn_signature::local_type_derives;
 use crate::analysis::syntax::{has_test_attribute, parse_clean_source_file};
 use ra_ap_syntax::ast::{self, HasArgList, HasAttrs, HasGenericParams, HasName};
@@ -207,10 +208,6 @@ fn reused_call(
     let parse = parse_clean_source_file(scope.parse_unit)?;
     let start = TextSize::try_from(scope.range.start).ok()?;
     let end = TextSize::try_from(scope.range.end).ok()?;
-    let in_scope = |node: &ra_ap_syntax::SyntaxNode| {
-        let range = node.text_range();
-        range.start() >= start && range.end() <= end
-    };
     parse
         .tree()
         .syntax()
@@ -240,48 +237,62 @@ fn reused_call(
             constructors
                 .iter()
                 .find(|candidate| candidate.name == name && candidate.params == arguments.len())?;
-            // A call inside a closure may be one a `catch_unwind` or a lazy
-            // combinator never runs to completion; only a call in the test's
-            // own body is known to have returned.
-            if call
-                .syntax()
-                .ancestors()
-                .take_while(|node| !ast::Fn::can_cast(node.kind()))
-                .any(|node| {
-                    ast::ClosureExpr::can_cast(node.kind())
-                        || ast::BlockExpr::cast(node)
-                            .is_some_and(|block| block.async_token().is_some())
-                })
-            {
-                return None;
-            }
-            // A call under `cfg` (on the test, a statement, or a nested
-            // module) may never be compiled, so it proves nothing about the
-            // constructor's argument types (#14825 review).
-            if call
-                .syntax()
-                .ancestors()
-                .take_while(|node| in_scope(node))
-                .filter_map(ast::AnyHasAttrs::cast)
-                .any(|owner| has_cfg(owner.attrs()))
-            {
-                return None;
-            }
-            let function = call.syntax().ancestors().find_map(ast::Fn::cast)?;
-            if !has_test_attribute(&function)
-                || function
-                    .attrs()
-                    .any(|attr| attr_named(&attr, &["should_panic"]))
-                || is_ripr_stub(&function)
-            {
-                return None;
-            }
+            let test = proven_test_call(call.syntax(), start, end)?;
             Some(Reused {
                 constructor: name,
                 arguments,
-                test: function.name()?.text().to_string(),
+                test,
             })
         })
+}
+
+/// The name of the `#[test]` function whose own body runs `node` to
+/// completion: `node` lies inside `start..end`, not in a closure or an
+/// `async` block (a `catch_unwind` or a lazy combinator may never finish
+/// it), not under `cfg` (it may never be compiled, #14825 review), and the
+/// test is neither `should_panic` nor a ripr stub (#14825 review: reusing a
+/// stub's own values would change its text on the next run).
+pub(super) fn proven_test_call(
+    node: &ra_ap_syntax::SyntaxNode,
+    start: TextSize,
+    end: TextSize,
+) -> Option<String> {
+    let range = node.text_range();
+    if range.start() < start || range.end() > end {
+        return None;
+    }
+    let in_scope = |node: &ra_ap_syntax::SyntaxNode| {
+        let range = node.text_range();
+        range.start() >= start && range.end() <= end
+    };
+    if node
+        .ancestors()
+        .take_while(|node| !ast::Fn::can_cast(node.kind()))
+        .any(|node| {
+            ast::ClosureExpr::can_cast(node.kind())
+                || ast::BlockExpr::cast(node).is_some_and(|block| block.async_token().is_some())
+        })
+    {
+        return None;
+    }
+    if node
+        .ancestors()
+        .take_while(|node| in_scope(node))
+        .filter_map(ast::AnyHasAttrs::cast)
+        .any(|owner| has_cfg(owner.attrs()))
+    {
+        return None;
+    }
+    let function = node.ancestors().find_map(ast::Fn::cast)?;
+    if !has_test_attribute(&function)
+        || function
+            .attrs()
+            .any(|attr| attr_named(&attr, &["should_panic"]))
+        || is_ripr_stub(&function)
+    {
+        return None;
+    }
+    Some(function.name()?.text().to_string())
 }
 
 /// Whether the stub scope declares an item, or imports a name, that could
@@ -290,7 +301,7 @@ fn reused_call(
 /// nested module (the owner sits in that module's parent, since an owner
 /// in a nested module is refused earlier) are known to name the owner.
 /// An unparsed scope counts as shadowing.
-fn scope_shadows(scope: &StubScope<'_>, base_name: &str) -> bool {
+pub(super) fn scope_shadows(scope: &StubScope<'_>, base_name: &str) -> bool {
     if scope.range.is_empty() {
         return false;
     }
@@ -313,14 +324,16 @@ fn scope_shadows(scope: &StubScope<'_>, base_name: &str) -> bool {
         })
         .any(|node| {
             if let Some(rename) = ast::Rename::cast(node.clone()) {
-                return rename.name().is_some_and(|name| name.text() == base_name);
+                return rename
+                    .name()
+                    .is_some_and(|name| unraw(name.text()) == unraw(base_name));
             }
             if let Some(tree) = ast::UseTree::cast(node.clone()) {
                 let names_base = tree
                     .path()
                     .and_then(|path| path.segment())
                     .and_then(|segment| segment.name_ref())
-                    .is_some_and(|name| name.text() == base_name);
+                    .is_some_and(|name| unraw(name.text()) == unraw(base_name));
                 let glob = tree.star_token().is_some();
                 if tree.use_tree_list().is_some() || !(names_base || glob) {
                     return false;
@@ -348,29 +361,59 @@ fn scope_shadows(scope: &StubScope<'_>, base_name: &str) -> bool {
                     && full_use_path(&tree) == owner_path);
             }
             ast::Item::cast(node).is_some_and(|item| {
+                // An item-position macro call can emit an item of any name
+                // (its definition may sit outside the scope), and `include!`
+                // hides what it pulls in, so any one may rebind the name for
+                // existing tests. A macro in expression or statement position
+                // (`assert!`, `vec!`) is not an item here (#14982 review).
+                if let ast::Item::MacroCall(call) = &item {
+                    return call.syntax().parent().is_some_and(|parent| {
+                        matches!(
+                            parent.kind(),
+                            ra_ap_syntax::SyntaxKind::ITEM_LIST
+                                | ra_ap_syntax::SyntaxKind::SOURCE_FILE
+                        )
+                    });
+                }
+                if matches!(item, ast::Item::MacroRules(_) | ast::Item::MacroDef(_)) {
+                    return mentions_ident(item.syntax(), base_name);
+                }
                 let name = match &item {
-                    ast::Item::Module(it) => it.name(),
-                    ast::Item::Struct(it) => it.name(),
-                    ast::Item::Enum(it) => it.name(),
-                    ast::Item::Union(it) => it.name(),
-                    ast::Item::TypeAlias(it) => it.name(),
-                    ast::Item::Trait(it) => it.name(),
+                    ast::Item::ExternCrate(it) => it
+                        .name_ref()
+                        .filter(|_| it.rename().is_none())
+                        .map(|name| name.text().to_string()),
+                    ast::Item::Module(it) => it.name().map(|name| name.text().to_string()),
+                    ast::Item::Struct(it) => it.name().map(|name| name.text().to_string()),
+                    ast::Item::Enum(it) => it.name().map(|name| name.text().to_string()),
+                    ast::Item::Union(it) => it.name().map(|name| name.text().to_string()),
+                    ast::Item::TypeAlias(it) => it.name().map(|name| name.text().to_string()),
+                    ast::Item::Trait(it) => it.name().map(|name| name.text().to_string()),
                     _ => None,
                 };
-                name.is_some_and(|name| name.text() == base_name)
+                name.is_some_and(|name| unraw(&name) == unraw(base_name))
             })
+        })
+}
+
+/// Whether any identifier token under `node` is `name`.
+fn mentions_ident(node: &ra_ap_syntax::SyntaxNode, name: &str) -> bool {
+    node.descendants_with_tokens()
+        .filter_map(|element| element.into_token())
+        .any(|token| {
+            token.kind() == ra_ap_syntax::SyntaxKind::IDENT && unraw(token.text()) == unraw(name)
         })
 }
 
 /// A function ripr wrote: its body still holds a `ripr:` fill-in or the
 /// receiver comment ripr writes.
-fn is_ripr_stub(function: &ast::Fn) -> bool {
+pub(super) fn is_ripr_stub(function: &ast::Fn) -> bool {
     let text = function.syntax().text().to_string();
     text.contains("todo!(\"ripr:") || text.contains("// ripr: built ")
 }
 
 /// A literal argument (`5`, `"w"`, `true`, `-3`, `1.5`) as written.
-fn literal_argument(arg: &ast::Expr) -> Option<String> {
+pub(super) fn literal_argument(arg: &ast::Expr) -> Option<String> {
     // The copied text is printed to the terminal on the `Receiver:` line.
     if arg
         .syntax()

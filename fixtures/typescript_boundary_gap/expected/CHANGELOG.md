@@ -914,3 +914,25 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — typescript_boundary_gap (42)
+
+Reason:
+RIPR-SPEC-0122: one blank line, not two, separates the More block from a trailing Note (#14318)
+
+Command:
+`cargo xtask goldens bless typescript_boundary_gap --reason "..."`
+
+Updated:
+- `expected/human.txt`
+
+## Pending — typescript_boundary_gap (43)
+
+Reason:
+RIPR-SPEC-0122: the Summary names findings whose reach is a test link ripr could not confirm (#15295)
+
+Command:
+`cargo xtask goldens bless typescript_boundary_gap --reason "..."`
+
+Updated:
+- `expected/human.txt`

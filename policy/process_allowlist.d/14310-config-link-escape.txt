@@ -1,0 +1,2 @@
+crates/ripr/tests/config_link_escape_refusal.rs|Command::new|2|config-link-escape-14310|#14310: integration test spawns git to build a throwaway repository and the built ripr binary to observe that check, diff and pilot refuse a `ripr.toml` link that leaves the repository. No network.
+crates/ripr/src/config/tests.rs|Command::new|1|config-link-escape-14310|#14310: unit test runs `mkfifo` to create a named pipe outside a throwaway repository and prove a config link to it is refused without being opened. No network.

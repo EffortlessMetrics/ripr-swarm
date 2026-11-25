@@ -177,7 +177,9 @@ ripr agent repair --root . --seam-id <seam_id> --phase before
 ripr agent repair --root . --attempt <repair-attempt-id> --phase after
 ```
 
-The before phase prints the exact `--attempt` command; see
+The before phase prints the after-phase command for that attempt as
+`ripr continue --root <root> --attempt <repair-attempt-id>`, which runs the
+same after phase as the `--phase after` line above; see
 [Repair attempt identity](REPAIR_ATTEMPT.md). The lower-level packet, verify,
 and receipt commands below remain available for gap-ledger records and explicit
 control.
@@ -186,7 +188,7 @@ When the gap ledger selects no top gap, `ripr first-pr` reads the review cards
 (`--review-comments`, default `target/ripr/review/comments.json`) and selects
 the first card that carries `llm_guidance.repair_command`. `start-here.md`
 then shows a `Start repair` line followed by the after-phase step (run the
-`--attempt ... --phase after` command the before phase prints; it verifies
+`ripr continue ... --attempt` command the before phase prints; it verifies
 movement and writes the receipt). The lower-level verify and receipt commands
 follow as `Manual verify without a repair attempt (needs before and after snapshots taken around the test edit)` and `Manual receipt without a repair attempt (after the manual verify)`, not as peer steps: the manual verify
 compares a before snapshot taken before the test edit with an after snapshot
@@ -311,7 +313,7 @@ movement is not a replacement for the test suite.
 
 ## 7. Verify Movement
 
-If you started a repair attempt in step 5, run the `--attempt ... --phase after`
+If you started a repair attempt in step 5, run the `ripr continue ... --attempt`
 command its before phase printed. It captures the after snapshot, compares it,
 and writes the verify and receipt artifacts; steps 7 and 8 need nothing else.
 

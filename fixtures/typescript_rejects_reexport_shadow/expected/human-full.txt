@@ -151,5 +151,4 @@ Drill in:
   ripr explain --root <cwd>/fixtures/typescript_rejects_reexport_shadow/input --diff <cwd>/fixtures/typescript_rejects_reexport_shadow/diff.patch --mode fast probe:src_load.ts:typescript_preview:2209cfc8
   ripr context --root <cwd>/fixtures/typescript_rejects_reexport_shadow/input --diff <cwd>/fixtures/typescript_rejects_reexport_shadow/diff.patch --mode fast --at probe:src_load.ts:typescript_preview:2209cfc8
 
-
 Note: 1 TypeScript file analyzed under preview support — preview evidence is advisory and may be incomplete. Treat its findings as advisory, not Rust-grade.

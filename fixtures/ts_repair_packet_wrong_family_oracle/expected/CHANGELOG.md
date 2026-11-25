@@ -626,3 +626,14 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — ts_repair_packet_wrong_family_oracle (52)
+
+Reason:
+RIPR-SPEC-0122: one blank line, not two, separates the More block from a trailing Note (#14318)
+
+Command:
+`cargo xtask goldens bless ts_repair_packet_wrong_family_oracle --reason "..."`
+
+Updated:
+- `expected/human.txt`

@@ -1,0 +1,1 @@
+crates/ripr/src/git_helper_pin_tests.rs|Command::new|1|shared-git-helper|Unit test only (#14242): one raw `git` fixture spawn in an isolated temp repository. It plants a repository-defined filter driver and `gpg.program`, and runs plain git as the positive control that those programs do start without the shared helper's pins. No network.

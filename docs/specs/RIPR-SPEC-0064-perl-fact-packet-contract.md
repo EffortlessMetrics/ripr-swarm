@@ -603,7 +603,7 @@ packet and existing RIPR context:
 - `canonical_gap_id`
 - changed owner
 - RIPR evidence
-- missing discriminator
+- concrete missing discriminator from the change field or compatibility digest prefix
 - repair kind
 - target `Test::More`, `Test2`, `Test::Exception`, or `Test::Fatal` shape
 - suggested test location
@@ -679,7 +679,10 @@ The `missing_discriminator` component comes from the change fact's
 [Changes](#changes)); packets that instead use the compatibility
 `discriminator:`-prefixed `changed_text_digest` form the identical key. A
 packet that supplies neither carries only the generic behavior-hint label in
-that component, and RIPR must not present such a gap as producer-grounded.
+that component for advisory guidance. Strict actionability requires a nonblank
+discriminator from one of those channels. If both are absent or blank, RIPR
+refuses strict actionability with `MissingConcreteDiscriminator` and emits
+neither a strict repair card nor an agent packet.
 
 The key must not include line ranges, array positions, `change_id`, test IDs,
 host paths, temp paths, or timestamps. A line move or changed `change_id` for

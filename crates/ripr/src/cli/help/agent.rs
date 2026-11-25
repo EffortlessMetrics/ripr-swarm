@@ -53,7 +53,7 @@ Options:
                    walks up to the enclosing workspace or package, or the git
                    top level; `--root .` pins this directory.
   --seam-id ID     Select one visible seam by ID.
-  --out PATH       Workflow output directory (relative to --root). Defaults to target/ripr/workflow.
+  --out PATH       Workflow output directory (relative to --root; must stay inside it). Defaults to target/ripr/workflow.
   --json           Emit one machine-readable JSON document instead of the
                    `Wrote <path>` / `Next: <cmd>` prose lines:
                      {"schema_version": "0.1", "workflow": {"workflow_manifest": <path>,
@@ -73,7 +73,7 @@ with the cause on stderr.
 "#;
 pub(super) const AGENT_BRIEF_HELP: &str = r#"Write a bounded brief for a coding agent over the current diff or change.
 
-Usage: ripr agent brief [--root PATH] (--diff PATH|--base REV|--files PATHS|--seam-id ID) --json [--max-seams N]
+Usage: ripr agent brief [--root PATH] (--diff PATH|--base REV|--files PATHS|--seam-id ID) --json [--max-seams N] [--line-ranges]
 
 Options:
   --root PATH      Workspace root. Defaults to the current directory, then
@@ -89,6 +89,9 @@ Options:
   --seam-id ID     Select one visible seam by ID.
   --json           Required until a human brief surface exists.
   --max-seams N    Requested seam cap. Defaults to 3 and cannot exceed 10.
+  --line-ranges    JSON-only lossless grouped inclusive changed-line ranges.
+                   Minifies output; requires --json. May grow for many files.
+                   Does not truncate locations or change the seam cap.
 
 When --files or --base produces a working set that matches no seams, the brief
 falls back to all repo-actionable seams. This scope-widening is disclosed in
@@ -123,7 +126,9 @@ mutation testing, generate tests, edit files, change cache behavior, or touch
 LSP/MCP surfaces.
 
 A refusal (for example, an unknown seam or gap) exits `3` with the cause on
-stderr and empty stdout.
+stderr and, with `--json`, a refusal document on stdout (an
+agent-seam-packets-json envelope with no findings and the cause in
+`run_limitations`).
 "#;
 pub(super) const AGENT_CARD_HELP: &str = r#"Hand off one seam as the compact default repair card.
 
@@ -171,8 +176,10 @@ Options:
   --seam-id ID     Select one visible seam by ID.
   --at FILE:LINE   Select the gap at a `ripr check` finding location.
   --kind FAMILY    With --at: the finding's probe family (`predicate`,
-                   `return_value`, `error_path`, `match_arm`). Only seams of
-                   that kind are tried, so a line holding several changes
+                   `return_value`, `error_path`, `match_arm`,
+                   `call_deletion`, `field_construction`, `side_effect`).
+                   Only seams of that kind are tried, so a line
+                   holding several changes
                    stubs the one the finding reported; two separate seams of
                    that kind on one line are refused with their seam IDs.
                    `ripr check` prints it. Without it, --at tries only the
@@ -205,12 +212,22 @@ available: edit the test by hand, run the native test command, then refresh
 with `ripr check`. No stub is written for an unsupported language.
 
 The stub calls the changed function with its real receiver and parameters,
-fills a boundary input when the changed comparison names one, builds a method's
+fills a boundary input when the changed comparison names one (for a `&str`
+length boundary such as `s.len() > 3`, a string of that length), copies a
+free function's other inputs from the first call with all-literal arguments
+in an existing test of its inline test module, when the copied values do not
+steer the function away from the changed comparison, fills the input
+a changed match arm's own pattern names (`Event::Fail`, `2`), builds a method's
 receiver from a constructor when the impl has one (the first literal-argument
 call an existing test in that module makes, else a no-argument `new`, `empty`
 or `default`, else a derived `Default`), and stops at a labelled `todo!()` for the value
 the behavior should produce. It compiles and
-fails until that value is written; ripr never invents the expected value.
+fails until that value is written. When the written inputs decide a plain
+`if`/`match` path to a constant, the `todo!()` label names what the changed
+code returns there and, for a changed `>`, `>=`, `<` or `<=`
+comparison, what it returns with the other bound (`>` and `>=` swap, as do
+`<` and `<=`), so you keep the intended one; ripr never writes the expected
+value itself.
 `--at --kind` still selects from that one file's seams without using
 classification to pick the seam; after selection it looks up the inventory
 grip so the stub can disclose it. A strongly_gripped seam is still a
@@ -303,7 +320,7 @@ owned child is terminated.
 
 Every parsed attempt, including refusals, emits typed JSON on stdout; usage
 errors stay on stderr. Exit status is 0 when a bounded observation was committed
--- including an observed command failure -- 3 for a typed refusal, and 2 when
+-- including an observed command failure -- 3 when ripr declined the request, and 2 when
 the result could not be written. It
 records process evidence only; it does not issue receipts, run mutation testing,
 prove adequacy, or grant gate or merge authority.
@@ -416,6 +433,10 @@ Options:
                        packet, the after-phase result, or the verification
                        receipt). Without it stdout is a short summary and the
                        documents stay in their files under target/ripr/.
+  --quiet              Drop the phase's progress narration and `wrote <path>`
+                       lines from stderr, like `ripr repair --quiet` and
+                       `RIPR_QUIET`. Results, refusal prose and the warning
+                       to write output outside the repo always print.
   --seam-id ID         Select one visible seam; required for `before` and the
                        compatibility selector for `after`. For `--phase before`,
                        a seam ID, a `ripr check` finding ID (`probe:` /
@@ -476,7 +497,11 @@ Options:
                        close (every started test ends, every announced suite
                        finishes), then records the normalized result with the
                        attempt as a caller-reported claim.
-                       Optional; it does not gate finish yet. Anything else is
+                       Required to finish an attempt that follows a new-test
+                       proposal (it must count a test and fail none; for an
+                       inline proposal, a passing test must be one the file
+                       did not define when the attempt began); optional
+                       otherwise. Anything else is
                        refused and the attempt keeps waiting. Rust test files
                        only; save the file outside the checkout. A finish that
                        stops after the receipt evaluation began shows as

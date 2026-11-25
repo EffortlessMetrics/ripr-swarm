@@ -10,6 +10,7 @@ use crate::analysis::facts::model::FileFacts;
 use crate::domain::{OracleKind, OracleStrength};
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 #[test]
@@ -90,19 +91,23 @@ fn trials() -> Vec<libtest_mimic::Trial> {
 }
 
 fn registered_matcher_control_source(statement: &str, helper_callback: bool) -> String {
+    named_matcher_control_source("observes_score", statement, helper_callback)
+}
+
+fn named_matcher_control_source(name: &str, statement: &str, helper_callback: bool) -> String {
     let source = if helper_callback {
         format!(
             "fn score() -> i32 {{ 2 }}\nfn sibling() -> i32 {{ 7 }}\n\
              fn check_score() -> Result<(), libtest_mimic::Failed> {{\n\
              let value = score();\n{statement}\nOk(())\n}}\n\
              fn trials() -> Vec<libtest_mimic::Trial> {{\n\
-             vec![libtest_mimic::Trial::test(\"observes_score\", check_score)]\n}}\n"
+             vec![libtest_mimic::Trial::test(\"{name}\", check_score)]\n}}\n"
         )
     } else {
         format!(
             "fn score() -> i32 {{ 2 }}\nfn sibling() -> i32 {{ 7 }}\n\
              fn trials() -> Vec<libtest_mimic::Trial> {{\n\
-             vec![libtest_mimic::Trial::test(\"observes_score\", || {{\n\
+             vec![libtest_mimic::Trial::test(\"{name}\", || {{\n\
              let value = score();\n{statement}\nOk(())\n}})]\n}}\n"
         )
     };
@@ -113,40 +118,55 @@ fn check_registered_terminal_matcher_guard_twins(
     helper_callback: bool,
     multiline: bool,
 ) -> Result<(), Box<dyn std::error::Error>> {
+    let callback = if helper_callback { "helper" } else { "inline" };
+    let layout = if multiline {
+        "multiline"
+    } else {
+        "single_line"
+    };
     for (pattern, kind, strength) in [
         ("2", OracleKind::ExactValue, OracleStrength::Strong),
         ("_", OracleKind::RelationalCheck, OracleStrength::Weak),
     ] {
-        for (statement, inline_sibling_line) in [
+        for (form, statement, inline_sibling_line) in [
             (
+                "guard",
                 format!("if !matches!(value, {pattern}) {{ return Err(\"bad\".into()); }}"),
                 7,
             ),
-            (format!("assert!(matches!(value, {pattern}));"), 7),
+            ("assert", format!("assert!(matches!(value, {pattern}));"), 7),
             (
+                "guard",
                 format!("if !matches!(\nvalue,\n{pattern}\n) {{\nreturn Err(\"bad\".into());\n}}"),
                 12,
             ),
-            (format!("assert!(matches!(\nvalue,\n{pattern}\n));"), 10),
+            (
+                "assert",
+                format!("assert!(matches!(\nvalue,\n{pattern}\n));"),
+                10,
+            ),
         ] {
             if statement.contains('\n') != multiline {
                 continue;
             }
-            let root = temp_dir("terminal-matcher-twin")?;
+            let trial = format!("{callback}_{layout}_{form}_{pattern}");
+            let root = temp_dir(&trial)?;
             let statement = format!("{statement}\nassert_eq!(sibling(), 7);");
-            let source = registered_matcher_control_source(&statement, helper_callback);
+            let source = named_matcher_control_source(&trial, &statement, helper_callback);
             write_workspace(&root, &[("tests/matcher.rs", &source)])?;
             declare_harness_false_target(&root, "matcher", "tests/matcher.rs")?;
             let files = [PathBuf::from("tests/matcher.rs")];
             let registrations = [custom_target_registration("tests/matcher.rs")];
             let index = build_index_with_test_harnesses(&root.0, &files, &registrations)?;
             let [subject] = index.harness_subjects.as_slice() else {
-                return Err(
-                    "terminal matcher control must contain exactly one named subject".into(),
-                );
+                return Err(format!(
+                    "expected one trial named {trial}; subjects: {:?}; limitations: {:?}",
+                    index.harness_subjects, index.harness_limitations
+                )
+                .into());
             };
             assert_eq!(subject.registration_id, "mimic-suite");
-            assert_eq!(subject.name, "observes_score");
+            assert_eq!(subject.name, trial);
             assert_eq!(subject.file, PathBuf::from("tests/matcher.rs"));
             assert!(subject.start_line > 0 && subject.end_line >= subject.start_line);
             let tests = index.tests();
@@ -226,13 +246,21 @@ fn check_registered_guard_boundary(
             5,
         )
     };
-    for (statement, sibling_line) in [
-        (assertion, if literal_brace { 7 } else { 10 }),
-        (guard, guard_sibling),
+    let callback = if helper_callback { "helper" } else { "inline" };
+    let layout = if literal_brace {
+        "literal"
+    } else {
+        "later_body"
+    };
+    let mut fixtures = Vec::new();
+    for (form, statement, sibling_line) in [
+        ("assert", assertion, if literal_brace { 7 } else { 10 }),
+        ("guard", guard, guard_sibling),
     ] {
-        let root = temp_dir("terminal-guard-boundary")?;
+        let trial = format!("{callback}_{layout}_{form}");
+        let root = temp_dir(&trial)?;
         let statement = format!("{statement}\nassert_eq!(sibling(), 7);");
-        let mut source = registered_matcher_control_source(&statement, helper_callback);
+        let mut source = named_matcher_control_source(&trial, &statement, helper_callback);
         if literal_brace {
             assert_eq!(source.matches("fn score() -> i32 { 2 }").count(), 1);
             assert_eq!(source.matches("let value = score();").count(), 1);
@@ -242,14 +270,28 @@ fn check_registered_guard_boundary(
         }
         write_workspace(&root, &[("tests/matcher.rs", &source)])?;
         declare_harness_false_target(&root, "matcher", "tests/matcher.rs")?;
+        fixtures.push((root, trial, statement, sibling_line));
+    }
+    // Both sources exist before indexing either. Dropping the first fixture
+    // must leave the second one's registration and observations intact.
+    for (root, trial, statement, sibling_line) in fixtures {
         let files = [PathBuf::from("tests/matcher.rs")];
         let registrations = [custom_target_registration("tests/matcher.rs")];
         let index = build_index_with_test_harnesses(&root.0, &files, &registrations)?;
         let [subject] = index.harness_subjects.as_slice() else {
-            return Err("guard-boundary control lost its one registered subject".into());
+            return Err(format!(
+                "guard-boundary control expected one registered subject; found {}: {:?}",
+                index.harness_subjects.len(),
+                index
+                    .harness_subjects
+                    .iter()
+                    .map(|s| (&s.name, &s.file))
+                    .collect::<Vec<_>>()
+            )
+            .into());
         };
         assert_eq!(subject.registration_id, "mimic-suite");
-        assert_eq!(subject.name, "observes_score");
+        assert_eq!(subject.name, trial);
         assert_eq!(subject.file, PathBuf::from("tests/matcher.rs"));
         let tests = index.tests();
         assert_eq!(tests.len(), 1);
@@ -439,14 +481,69 @@ impl Drop for TempDir {
     }
 }
 
+static TEMP_SEQUENCE: AtomicU64 = AtomicU64::new(0);
+
 fn temp_dir(name: &str) -> Result<TempDir, Box<dyn std::error::Error>> {
     let stamp = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map(|time| time.as_nanos())
         .unwrap_or(0);
-    let root = std::env::temp_dir().join(format!("ripr-harness-{name}-{stamp}"));
-    fs::create_dir_all(&root)?;
-    Ok(TempDir(root))
+    // `.cargo/config.toml` redirects the temp parent into the checkout's
+    // `target/`, which may not exist yet; create it, then create the child
+    // exclusively (docs/agent-context/validation.md).
+    let parent = std::env::temp_dir();
+    fs::create_dir_all(&parent)?;
+    create_owned_dir(&parent, name, stamp, || {
+        TEMP_SEQUENCE.fetch_add(1, Ordering::Relaxed)
+    })
+}
+
+fn create_owned_dir(
+    parent: &Path,
+    name: &str,
+    stamp: u128,
+    mut next: impl FnMut() -> u64,
+) -> Result<TempDir, Box<dyn std::error::Error>> {
+    for _ in 0..128 {
+        let root = parent.join(format!(
+            "ripr-harness-{name}-{}-{stamp}-{}",
+            std::process::id(),
+            next()
+        ));
+        match fs::create_dir(&root) {
+            Ok(()) => return Ok(TempDir(root)),
+            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => continue,
+            Err(error) => return Err(error.into()),
+        }
+    }
+    Err("could not create an exclusive harness fixture after 128 collisions".into())
+}
+
+#[test]
+fn temp_dir_collision_never_claims_or_removes_existing_root()
+-> Result<(), Box<dyn std::error::Error>> {
+    let parent = temp_dir("collision-control")?;
+    let occupied = parent
+        .0
+        .join(format!("ripr-harness-probe-{}-7-0", std::process::id()));
+    fs::create_dir(&occupied)?;
+    fs::write(occupied.join("sentinel"), b"keep")?;
+    let mut sequence = 0;
+    let owned = create_owned_dir(&parent.0, "probe", 7, || {
+        let value = sequence;
+        sequence += 1;
+        value
+    })?;
+    assert_ne!(owned.0, occupied);
+    assert_eq!(sequence, 2);
+    let owned_path = owned.0.clone();
+    drop(owned);
+    assert!(!owned_path.exists());
+    assert_eq!(fs::read(occupied.join("sentinel"))?, b"keep");
+    let exhausted = create_owned_dir(&parent.0, "probe", 7, || 0);
+    assert!(exhausted.is_err());
+    assert_eq!(fs::read(occupied.join("sentinel"))?, b"keep");
+    Ok(())
 }
 
 fn registration(
@@ -5101,6 +5198,174 @@ fn registered_negated_blocks_keep_twins_and_failure_macros_require_authority()
                     assert_eq!(sibling.observed_tokens, ["sibling"]);
                 }
             }
+        }
+    }
+    Ok(())
+}
+
+/// #15020: a registered trial whose expected value is still an unfilled
+/// `todo!()` pins nothing, through a terminal guard or an assertion macro,
+/// on the inline-closure and helper-callback paths alike (#14810, #14882).
+/// A filled expected value keeps its reading as the control.
+#[test]
+fn registered_trials_lower_an_unfilled_expected_value() -> Result<(), Box<dyn std::error::Error>> {
+    for helper_callback in [false, true] {
+        for statement in [
+            "if value != expected { return Err(\"bad\".into()); }",
+            "if value != expected {\nreturn Err(\"bad\".into());\n}",
+            "assert!(value == expected);",
+            "assert_eq!(value, expected);",
+        ] {
+            for (binding, lowered) in [
+                ("let expected: i32 = todo!(\"x\");", true),
+                ("let expected: i32 = unimplemented!();", true),
+                ("let expected: i32 = 2;", false),
+            ] {
+                let root = temp_dir("unfilled-expected-trial")?;
+                let body = format!("{binding}\n{statement}");
+                let source = registered_matcher_control_source(&body, helper_callback);
+                write_workspace(&root, &[("tests/matcher.rs", &source)])?;
+                declare_harness_false_target(&root, "matcher", "tests/matcher.rs")?;
+                let files = [PathBuf::from("tests/matcher.rs")];
+                let registrations = [custom_target_registration("tests/matcher.rs")];
+                let index = build_index_with_test_harnesses(&root.0, &files, &registrations)?;
+                let [subject] = index.harness_subjects.as_slice() else {
+                    return Err("unfilled expected control must name one subject".into());
+                };
+                let [oracle] = subject.assertions.as_slice() else {
+                    return Err(format!(
+                        "expected one oracle (helper={helper_callback}) for {body}: {:?}",
+                        subject.assertions
+                    )
+                    .into());
+                };
+                if !oracle.observed_tokens.contains(&"expected".to_string()) {
+                    return Err(format!("premise: the oracle reads `expected`: {oracle:?}").into());
+                }
+                let unknown = oracle.kind == OracleKind::Unknown
+                    && oracle.strength == OracleStrength::Unknown;
+                if unknown != lowered {
+                    return Err(format!(
+                        "helper={helper_callback} {body}: lowered={lowered}, got {oracle:?}"
+                    )
+                    .into());
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
+/// #15020 review: the placeholder scan is per trial. A sibling trial in the
+/// same `vec![...]` that binds the same name to a real value keeps its
+/// reading, and the `todo!()` trial is still lowered.
+#[test]
+fn sibling_trials_scope_the_unfilled_expected_value_per_trial()
+-> Result<(), Box<dyn std::error::Error>> {
+    let source = with_harness_main(
+        "fn score() -> i32 { 2 }\n\
+         fn trials() -> Vec<libtest_mimic::Trial> {\n\
+         vec![\n\
+         libtest_mimic::Trial::test(\"unfilled\", || {\n\
+         let expected: i32 = todo!(\"x\");\n\
+         assert!(score() == expected);\n\
+         Ok(())\n\
+         }),\n\
+         libtest_mimic::Trial::test(\"filled\", || {\n\
+         let expected: i32 = 2;\n\
+         assert!(score() == expected);\n\
+         Ok(())\n\
+         }),\n\
+         ]\n}\n",
+        "trials()",
+    );
+    let root = temp_dir("unfilled-expected-siblings")?;
+    write_workspace(&root, &[("tests/matcher.rs", &source)])?;
+    declare_harness_false_target(&root, "matcher", "tests/matcher.rs")?;
+    let files = [PathBuf::from("tests/matcher.rs")];
+    let registrations = [custom_target_registration("tests/matcher.rs")];
+    let index = build_index_with_test_harnesses(&root.0, &files, &registrations)?;
+    for (name, lowered) in [("unfilled", true), ("filled", false)] {
+        let subject = index
+            .harness_subjects
+            .iter()
+            .find(|subject| subject.name == name)
+            .ok_or_else(|| format!("missing subject {name}: {:?}", index.harness_subjects))?;
+        let [oracle] = subject.assertions.as_slice() else {
+            return Err(format!("{name}: expected one oracle: {:?}", subject.assertions).into());
+        };
+        let unknown =
+            oracle.kind == OracleKind::Unknown && oracle.strength == OracleStrength::Unknown;
+        if unknown != lowered {
+            return Err(format!("{name}: lowered={lowered}, got {oracle:?}").into());
+        }
+    }
+    Ok(())
+}
+
+/// #15063 review: the callback captures a filled `expected` from the
+/// enclosing function (a `let`, an `if let` or a `match` arm), and an unused
+/// nested closure binds its own `expected` to `todo!()`. The assertion reads
+/// the captured value, so it keeps its reading. The control binds the
+/// placeholder in the callback itself with nothing to capture, and stays
+/// lowered.
+#[test]
+fn a_captured_filled_expected_value_is_not_lowered_by_a_nested_placeholder()
+-> Result<(), Box<dyn std::error::Error>> {
+    let nested = "let _unused = || { let expected: i32 = todo!(\"x\"); expected };\n";
+    let own = "let expected: i32 = todo!(\"x\");\n";
+    for (case, (open, close, inner, lowered)) in [
+        ("let expected: i32 = 2;\n", "", nested, false),
+        (
+            "if let Some(expected) = Some(2i32) {\n",
+            "} else { vec![] }\n",
+            nested,
+            false,
+        ),
+        (
+            "match Some(2i32) { Some(expected) => ",
+            ", None => vec![] }\n",
+            nested,
+            false,
+        ),
+        ("", "", own, true),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let source = with_harness_main(
+            &format!(
+                "fn score() -> i32 {{ 2 }}\n\
+                 fn trials() -> Vec<libtest_mimic::Trial> {{\n\
+                 {open}\
+                 vec![\n\
+                 libtest_mimic::Trial::test(\"captured\", move || {{\n\
+                 {inner}\
+                 assert!(score() == expected);\n\
+                 Ok(())\n\
+                 }}),\n\
+                 ]{close}\n}}\n"
+            ),
+            "trials()",
+        );
+        let root = temp_dir(&format!("unfilled-expected-captured-{case}"))?;
+        write_workspace(&root, &[("tests/matcher.rs", &source)])?;
+        declare_harness_false_target(&root, "matcher", "tests/matcher.rs")?;
+        let files = [PathBuf::from("tests/matcher.rs")];
+        let registrations = [custom_target_registration("tests/matcher.rs")];
+        let index = build_index_with_test_harnesses(&root.0, &files, &registrations)?;
+        let subject = index
+            .harness_subjects
+            .iter()
+            .find(|subject| subject.name == "captured")
+            .ok_or_else(|| format!("missing subject: {:?}", index.harness_subjects))?;
+        let [oracle] = subject.assertions.as_slice() else {
+            return Err(format!("expected one oracle: {:?}", subject.assertions).into());
+        };
+        let unknown =
+            oracle.kind == OracleKind::Unknown && oracle.strength == OracleStrength::Unknown;
+        if unknown != lowered {
+            return Err(format!("case {case}: lowered={lowered}, got {oracle:?}").into());
         }
     }
     Ok(())

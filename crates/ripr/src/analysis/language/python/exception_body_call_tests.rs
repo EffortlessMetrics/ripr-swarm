@@ -280,6 +280,54 @@ fn a_def_spelled_in_a_raises_body_string_defers_nothing() -> Check {
 }
 
 #[test]
+fn a_dotted_callable_relates_and_credits_like_the_with_body() -> Check {
+    // RIPR-SPEC-0238 rule 13: the callable is "a bare or dotted name".
+    expect_module_call_credit(
+        "module attribute callable",
+        "import unittest\nfrom src import levels\n\n\nclass LevelCase(unittest.TestCase):\n    def test_blank(self):\n        self.assertRaisesRegex(ValueError, \"blank level\", levels.parse, \"\")\n",
+    )?;
+    expect_module_call_credit(
+        "aliased module callable",
+        "import unittest\nimport src.levels as lv\n\n\nclass LevelCase(unittest.TestCase):\n    def test_blank(self):\n        self.assertRaisesRegex(ValueError, \"blank level\", lv.parse, \"\")\n",
+    )?;
+    expect_module_call_credit(
+        "dotted module path callable",
+        "import unittest\nimport src.levels\n\n\nclass LevelCase(unittest.TestCase):\n    def test_blank(self):\n        self.assertRaisesRegex(ValueError, \"blank level\", src.levels.parse, \"\")\n",
+    )?;
+    // An aliased name import is called through its alias the same way.
+    let finding = classify(
+        "import unittest\nfrom src.levels import parse as read\n\n\nclass LevelCase(unittest.TestCase):\n    def test_blank(self):\n        self.assertRaisesRegex(ValueError, \"blank level\", read, \"\")\n",
+    )?;
+    assert_eq!(finding.class, ExposureClass::Exposed, "{finding:?}");
+    Ok(())
+}
+
+#[test]
+fn a_dotted_callable_that_is_not_the_owner_stays_uncredited() -> Check {
+    expect_no_credit(
+        "another function of the module",
+        "import unittest\nfrom src import levels\n\n\nclass LevelCase(unittest.TestCase):\n    def test_blank(self):\n        self.assertRaisesRegex(ValueError, \"blank level\", levels.other, \"\")\n",
+    )?;
+    expect_no_credit(
+        "same-named module of another package",
+        "import unittest\nfrom vendor import levels\n\n\nclass LevelCase(unittest.TestCase):\n    def test_blank(self):\n        self.assertRaisesRegex(ValueError, \"blank level\", levels.parse, \"\")\n",
+    )?;
+    expect_no_credit(
+        "module name rebound in the test",
+        "import unittest\nfrom src import levels\n\n\nclass LevelCase(unittest.TestCase):\n    def test_blank(self):\n        levels = Fake()\n        self.assertRaisesRegex(ValueError, \"blank level\", levels.parse, \"\")\n",
+    )?;
+    expect_no_credit(
+        "class-only assertRaises",
+        "import unittest\nfrom src import levels\n\n\nclass LevelCase(unittest.TestCase):\n    def test_blank(self):\n        self.assertRaises(ValueError, levels.parse, \"\")\n",
+    )?;
+    // pytest's callable form hands `match=` to the callable (rule 13).
+    expect_no_credit(
+        "pytest callable form with match",
+        "import pytest\nfrom src import levels\n\n\ndef test_blank():\n    pytest.raises(ValueError, levels.parse, \"\", match=\"blank level\")\n",
+    )
+}
+
+#[test]
 fn a_pattern_matching_both_messages_still_pins_only_the_class() -> Check {
     // The #9185 message-pin gate reads the same assertion: `level` matches
     // the old and the new message alike.

@@ -21,6 +21,10 @@ pub(crate) fn equality_assertion_arguments(line: &str) -> Option<Vec<String>> {
 /// (or the two comparison/pattern operands) is diagnostic formatting, including
 /// non-string expressions. Unknown helpers keep their existing fallback path.
 pub(crate) fn assertion_oracle_text(line: &str) -> Option<String> {
+    assertion_oracle_text_at(line).map(|(_, text)| text)
+}
+
+pub(super) fn assertion_oracle_text_at(line: &str) -> Option<(usize, String)> {
     let masked = mask_comments_and_strings(line);
     [
         ("assert!", 1),
@@ -44,7 +48,27 @@ pub(crate) fn assertion_oracle_text(line: &str) -> Option<String> {
     // `assert!(matches!(...))` must use the outer assertion's condition;
     // a nested assertion in its diagnostic never becomes the observer.
     .min_by_key(|(offset, _)| *offset)
-    .map(|(_, text)| text)
+}
+
+/// A line-scanned helper can follow a closure introducer on the same row.
+pub(super) fn custom_assertion_call_offset(text: &str) -> Option<usize> {
+    if !super::patterns::is_custom_assertion_helper(text) {
+        return None;
+    }
+    let masked = mask_comments_and_strings(text);
+    masked.match_indices("assert_").find_map(|(offset, _)| {
+        let prefix = &masked[..offset];
+        if prefix
+            .chars()
+            .next_back()
+            .is_some_and(|ch| ch == '_' || ch.is_alphanumeric())
+        {
+            return None;
+        }
+        let tail =
+            masked[offset..].trim_start_matches(|ch: char| ch == '_' || ch.is_alphanumeric());
+        tail.trim_start().starts_with('(').then_some(offset)
+    })
 }
 
 pub(super) fn custom_assertion_arguments(line: &str) -> Option<Vec<String>> {
@@ -112,6 +136,55 @@ pub(super) fn assertion_comparison(line: &str) -> Option<AssertionComparison> {
     })
     .min_by_key(|(offset, _)| *offset)
     .map(|(_, comparison)| comparison)
+}
+
+/// #14968: whether the outermost assertion compares nothing but literals
+/// (`assert!(true)`, `assert!(false)`, `assert_eq!(1, 1)`,
+/// `assert_eq!("a", "a")`). Such an assertion reads no runtime value, so it
+/// cannot observe any changed behavior, whatever else its test calls.
+///
+/// Fail closed toward the existing credit: only a known assertion macro
+/// whose every compared operand holds numeric literals, `true`/`false`,
+/// string or character literals and operators qualifies. Any identifier
+/// (a binding, a constant, a call, a nested macro), a byte/raw string
+/// prefix, an unknown macro or an empty operand leaves the assertion as it
+/// was.
+pub(crate) fn assertion_compares_only_literals(line: &str) -> bool {
+    let operands = match assertion_comparison(line) {
+        Some(AssertionComparison::Operands { left, right, .. }) => vec![left, right],
+        Some(AssertionComparison::Condition(condition)) => vec![condition],
+        None => return false,
+    };
+    operands
+        .iter()
+        .all(|operand| operand_is_literal_only(operand))
+}
+
+/// #15476: the compared operands of the outermost equality or boolean
+/// assertion macro (`assert_eq!(a, b)` gives `[a, b]`, `assert!(c)` gives
+/// `[c]`), without its diagnostic arguments. `None` for any other macro.
+pub(crate) fn assertion_compared_operands(line: &str) -> Option<Vec<String>> {
+    match assertion_comparison(line)? {
+        AssertionComparison::Operands { left, right, .. } => Some(vec![left, right]),
+        AssertionComparison::Condition(condition) => Some(vec![condition]),
+    }
+}
+
+/// Every word of the masked operand is a numeric literal (its suffix
+/// included: `1u32`, `0x1F`) or `true`/`false`. Masking blanks string,
+/// character and comment text, so their contents never count as words.
+fn operand_is_literal_only(operand: &str) -> bool {
+    // Masking blanks a whole string literal, quotes included, so emptiness
+    // is read from the operand itself.
+    if operand.trim().is_empty() {
+        return false;
+    }
+    mask_comments_and_strings(operand)
+        .split(|ch: char| !(ch.is_alphanumeric() || ch == '_'))
+        .filter(|word| !word.is_empty())
+        .all(|word| {
+            word.starts_with(|ch: char| ch.is_ascii_digit()) || matches!(word, "true" | "false")
+        })
 }
 
 pub(super) fn ensure_assertion_arguments(line: &str) -> Option<Vec<String>> {
@@ -462,7 +535,43 @@ pub(super) fn comparable_expression(expression: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{assertion_oracle_text, equality_assertion_arguments};
+    use super::{
+        assertion_compares_only_literals, assertion_oracle_text, equality_assertion_arguments,
+    };
+
+    #[test]
+    fn literal_only_assertions_are_recognized_and_reads_are_not() {
+        for text in [
+            "assert!(true);",
+            "assert!(false);",
+            "std::assert!(true);",
+            "debug_assert!(!false, \"never {}\", value);",
+            "assert_eq!(1, 1);",
+            "assert_eq!(2 + 2, 4u32);",
+            "assert_ne!(0x1F, 1.5e3);",
+            "assert_eq!(\"a\", \"a\");",
+            "assert_eq!('x', 'x');",
+            "assert!(1 < 2 /* owner(5) */);",
+        ] {
+            assert!(assertion_compares_only_literals(text), "{text}");
+        }
+        for text in [
+            "assert!(r == 5);",
+            "assert!(f(5) > 0);",
+            "assert_eq!(f(5), 7);",
+            "assert_eq!(LIMIT, 3);",
+            "assert!(matches!(1, 1));",
+            "assert!(cfg!(test));",
+            "assert_eq!(b\"a\", b\"a\");",
+            "assert_eq!(1.max(2), 2);",
+            "assert_matches!(1, 1);",
+            "check!(true);",
+            "assert!();",
+            "let _ = f(5);",
+        ] {
+            assert!(!assertion_compares_only_literals(text), "{text}");
+        }
+    }
 
     #[test]
     fn oracle_operands_exclude_all_diagnostic_arguments() {

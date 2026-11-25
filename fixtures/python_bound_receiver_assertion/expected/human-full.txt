@@ -56,5 +56,4 @@ Drill in:
   ripr explain --root <cwd>/fixtures/python_bound_receiver_assertion/input --diff <cwd>/fixtures/python_bound_receiver_assertion/diff.patch --mode fast probe:src_cart.py:python_preview:95942161
   ripr context --root <cwd>/fixtures/python_bound_receiver_assertion/input --diff <cwd>/fixtures/python_bound_receiver_assertion/diff.patch --mode fast --at probe:src_cart.py:python_preview:95942161
 
-
 Note: 1 Python file analyzed under preview support — preview evidence is advisory and may be incomplete. Treat its findings as advisory, not Rust-grade.

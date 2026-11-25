@@ -90,6 +90,8 @@ type LocalRivalKey = (String, std::path::PathBuf, String, usize, u64);
 /// owner's id, the test's file, start line and name, and a hash of the body.
 pub(super) type ItemBindingsKey = (String, std::path::PathBuf, usize, String, u64);
 
+mod rename_spellings;
+
 /// Per-index memos for the call-identity family (#7716 residual).
 ///
 /// Every producer that classifies probes rebuilds its [`RustIndex`] per
@@ -100,6 +102,7 @@ pub(super) type ItemBindingsKey = (String, std::path::PathBuf, usize, String, u6
 /// layout scan and each probe re-parsed every candidate test: measured
 /// ~28 ms of related-test work per probe pair on a 20-package corpus where
 /// the work is identical across probes.
+
 #[derive(Default)]
 pub(crate) struct CallIdentityMemos {
     /// One workspace shape pass per index, shared by every
@@ -213,9 +216,22 @@ pub(crate) struct CallIdentityMemos {
     /// macros, built on first use by a gap that needs it.
     assertion_wrapper_visibility:
         std::sync::OnceLock<crate::analysis::facts::macro_visibility::MacroVisibility>,
+    /// #11738: per test file, the text prefilters of the bare-call binding
+    /// checks, read once per file source instead of once per (owner, test).
+    file_spellings: rename_spellings::FileSpellingsMemo,
 }
 
 impl CallIdentityMemos {
+    /// The memoized bare-call prefilter spellings of `file`, read from its
+    /// indexed `source`.
+    fn file_spellings(
+        &self,
+        file: &std::path::Path,
+        source: &std::sync::Arc<str>,
+    ) -> std::sync::Arc<rename_spellings::FileSpellings> {
+        rename_spellings::file_spellings(&self.file_spellings, file, source)
+    }
+
     /// The memoized item bindings for `key`, computed by `compute` on first
     /// use (recomputed, not cached, if the lock is poisoned).
     pub(super) fn item_bindings(
@@ -456,6 +472,15 @@ struct PackageCallIdentityShape {
     /// ([`path_attributes_stay_in_test_dir`]): that moves no module of an
     /// owner outside `tests/`, so only owners under `tests/` turn the rule off.
     remaps_test_modules: bool,
+    /// A file of the package invokes `include!`, which can compile another
+    /// file's items (a `tests/` file into the library, a `src/` file into an
+    /// integration test) into a crate its location does not show.
+    includes_source: bool,
+    /// A `#[path]` of the package may name a file outside the directory of
+    /// the file that declares it ([`path_literals_stay_below`]), so it can
+    /// mount a `tests/` file into the library or a `src/` file into an
+    /// integration test.
+    mounts_outside_directory: bool,
     layout: CrateLayout,
 }
 
@@ -471,11 +496,21 @@ fn scan_call_identity_shapes(
     // Per package: (a `#[path]` that may move any module, a `#[path]` that
     // only rearranges an integration-test crate).
     let mut remaps: BTreeMap<Option<String>, (bool, bool)> = BTreeMap::new();
+    let mut includes: BTreeSet<Option<String>> = BTreeSet::new();
+    let mut mounts: BTreeSet<Option<String>> = BTreeSet::new();
     let mut libs: BTreeMap<Option<String>, Vec<std::sync::Arc<str>>> = BTreeMap::new();
     let mut mains: BTreeMap<Option<String>, Vec<std::sync::Arc<str>>> = BTreeMap::new();
     for (path, facts) in index.files().iter() {
-        let package = package_key(path);
+        let package = package_key_in(index, path);
         remaps.entry(package.clone()).or_insert((false, false));
+        if source_includes_a_file(&facts.data().source) {
+            includes.insert(package.clone());
+        }
+        if has_path_attribute(&facts.data().source)
+            && !path_literals_stay_below(&facts.data().source)
+        {
+            mounts.insert(package.clone());
+        }
         if has_path_attribute(&facts.data().source)
             && !path_attributes_only_select_cfg_alternatives(&facts.data().source)
         {
@@ -522,6 +557,8 @@ fn scan_call_identity_shapes(
             let shape = PackageCallIdentityShape {
                 remaps_module_paths,
                 remaps_test_modules,
+                includes_source: includes.contains(&package),
+                mounts_outside_directory: mounts.contains(&package),
                 layout: CrateLayout {
                     package: package.clone(),
                     roots,
@@ -582,6 +619,8 @@ fn call_identity_shape(
             std::sync::Arc::new(PackageCallIdentityShape {
                 remaps_module_paths: false,
                 remaps_test_modules: false,
+                includes_source: false,
+                mounts_outside_directory: false,
                 layout: CrateLayout {
                     package: package.map(str::to_string),
                     roots: None,
@@ -757,7 +796,7 @@ impl OwnerCallIdentity {
             owner_crate: None,
             layout: CrateLayout::default(),
             owner_file: helper.file.clone(),
-            owner_package: package_key(&helper.file),
+            owner_package: package_key_in(index, &helper.file),
             definitions,
             memo: Mutex::new(BTreeMap::new()),
         })
@@ -820,8 +859,8 @@ impl OwnerCallIdentity {
         if owner.item.container != FunctionContainer::Free {
             return None;
         }
-        let owner_path = definition_module_path(owner)?;
-        let owner_package = package_key(&owner.file);
+        let owner_path = definition_module_path_in(index, owner)?;
+        let owner_package = package_key_in(index, &owner.file);
         let owner_absolute = super::related_tests::path_is_absolute_form(&owner.file);
         let mut rivals = Vec::new();
         for function in same_named {
@@ -836,7 +875,7 @@ impl OwnerCallIdentity {
                 // A mixed index cannot be told apart by package: rule off.
                 return None;
             }
-            if package_key(&function.file) == owner_package {
+            if package_key_in(index, &function.file) == owner_package {
                 rivals.push(function);
             }
         }
@@ -844,21 +883,21 @@ impl OwnerCallIdentity {
             return None;
         }
         let layout = CrateLayout::new(index, owner_package.as_deref());
-        let CrateClass::Crate(owner_crate) = layout.classify(&owner.file) else {
+        let CrateClass::Crate(owner_crate) = layout.classify(index, &owner.file) else {
             return None;
         };
         let mut definitions = vec![Some(owner_path)];
         for function in rivals {
             match function.item.container {
                 FunctionContainer::Free if function.item.has_body => {
-                    match layout.classify(&function.file) {
+                    match layout.classify(index, &function.file) {
                         // Only a library-shaped `src/` module is ambiguous,
                         // and it may compose into either root's crate.
                         CrateClass::Ambiguous if owner_crate == "lib" || owner_crate == "main" => {
                             return None;
                         }
                         CrateClass::Crate(class) if class == owner_crate => {
-                            definitions.push(definition_module_path(function));
+                            definitions.push(definition_module_path_in(index, function));
                         }
                         _ => {}
                     }
@@ -887,12 +926,16 @@ impl OwnerCallIdentity {
     /// Another crate's definition (an integration test's or a binary's
     /// root, an `extern` declaration without a body) is not settled here
     /// and keeps competing.
-    pub(in crate::analysis) fn settles(&self, function: &FunctionSummary) -> bool {
+    pub(in crate::analysis) fn settles(
+        &self,
+        index: &RustIndex,
+        function: &FunctionSummary,
+    ) -> bool {
         function.name == self.name
             && function.item.container == FunctionContainer::Free
             && function.item.has_body
-            && package_key(&function.file) == self.owner_package
-            && self.layout.class(&function.file) == self.owner_crate
+            && package_key_in(index, &function.file) == self.owner_package
+            && self.layout.class(index, &function.file) == self.owner_crate
     }
 
     /// What `test`'s calls of the owner's name settle on, taken together:
@@ -1024,10 +1067,10 @@ impl OwnerCallIdentity {
         // modules only from the owner's own crate: same package, same crate
         // within it.
         let same_crate = self.owner_crate.is_some()
-            && self.layout.class(&test.file) == self.owner_crate
-            && package_key(&test.file) == self.owner_package;
+            && self.layout.class(index, &test.file) == self.owner_crate
+            && package_key_in(index, &test.file) == self.owner_package;
         TestScope {
-            file_segments: file_module_segments(&test.file).filter(|_| same_crate),
+            file_segments: file_module_segments_in(index, &test.file).filter(|_| same_crate),
             scopes,
             crate_names: self.own_crate_names(test, index),
         }
@@ -1105,7 +1148,7 @@ impl OwnerCallIdentity {
                             Some((_, module)) if !module.is_empty() => {
                                 // An import does not rebind its own path prefix:
                                 // `use thr::thr` imports a value from crate `thr`.
-                                let mut import_scope = scope.clone();
+                                let mut import_scope = NameScope::clone(scope);
                                 import_scope.imports.retain(|import| {
                                     !matches!(&import.binding, UseBinding::Path(bound) if bound == path)
                                 });
@@ -1383,8 +1426,138 @@ fn package_remaps_module_paths(index: &RustIndex, package: Option<&str>) -> bool
 /// crate: any remap outside `tests/`, or a `tests/` remap when the owner
 /// itself lives under `tests/` (#12771).
 fn package_remaps_owner_module_paths(index: &RustIndex, owner: &FunctionSummary) -> bool {
-    let shape = call_identity_shape(index, package_key(&owner.file).as_deref());
+    let shape = call_identity_shape(index, package_key_in(index, &owner.file).as_deref());
     shape.remaps_module_paths || (shape.remaps_test_modules && under_tests_dir(&owner.file))
+}
+
+/// Whether `source` invokes `include!` (not `include_str!` or
+/// `include_bytes!`, which yield a value and no item). A source that
+/// mentions the word and does not parse cleanly counts.
+fn source_includes_a_file(source: &str) -> bool {
+    use ra_ap_syntax::{AstNode, ast};
+    if !source.contains("include") {
+        return false;
+    }
+    let Some(parse) = crate::analysis::syntax::parse_clean_source_file(source) else {
+        return true;
+    };
+    parse
+        .tree()
+        .syntax()
+        .descendants()
+        .filter_map(ast::MacroCall::cast)
+        .any(|call| {
+            call.path()
+                .and_then(|path| path.segment())
+                .and_then(|segment| segment.name_ref())
+                .is_none_or(|name| name.text().trim_start_matches("r#") == "include")
+        })
+}
+
+/// Whether `file`'s package compiles every file into the crate its location
+/// shows: no `#[path]` that leaves its directory and no `include!`.
+fn package_compiles_files_in_place(index: &RustIndex, file: &Path) -> bool {
+    let shape = call_identity_shape(index, package_key(file).as_deref());
+    !(shape.mounts_outside_directory || shape.includes_source)
+}
+
+/// Whether `test` is in an integration-test crate (a file under `tests/`)
+/// of a package that compiles every file in place, so it sees only what
+/// other crates export.
+pub(super) fn is_plain_integration_test(index: &RustIndex, test: &TestSummary) -> bool {
+    is_plain_integration_test_file(index, &test.file)
+}
+
+/// [`is_plain_integration_test`] for any function of the file.
+pub(super) fn is_plain_integration_test_file(index: &RustIndex, file: &Path) -> bool {
+    under_tests_dir(file) && package_compiles_files_in_place(index, file)
+}
+
+/// Whether every `path = ..` in `source` is followed by a string literal
+/// that stays below the declaring file's directory: not empty, not absolute,
+/// no drive, backslash or `..` segment. A raw scan, so a `#[path]` inside a
+/// macro body or a `cfg_attr` is read too; a `path =` with any other value
+/// fails closed, and one in a comment or string can only fail closed.
+fn path_literals_stay_below(source: &str) -> bool {
+    let mut rest = source;
+    while let Some(at) = rest.find("path") {
+        let before = &rest[..at];
+        let after = rest[at + "path".len()..].trim_start();
+        rest = &rest[at + "path".len()..];
+        if before.chars().next_back().is_some_and(is_ident_char) {
+            continue;
+        }
+        let Some(value) = after.strip_prefix('=') else {
+            continue;
+        };
+        if value.starts_with('=') {
+            continue;
+        }
+        let Some(literal) = value
+            .trim_start()
+            .strip_prefix('"')
+            .and_then(|text| text.split_once('"'))
+            .map(|(literal, _)| literal)
+        else {
+            return false;
+        };
+        if literal.is_empty()
+            || literal.starts_with('/')
+            || literal.contains(['\\', ':'])
+            || literal.split('/').any(|segment| segment == "..")
+        {
+            return false;
+        }
+    }
+    true
+}
+
+/// #15932: whether `owner` is a module-level function or inherent method
+/// that only its own crate can name. A function that is not `pub` (private,
+/// `pub(crate)`, `pub(super)`, `pub(in ..)`) cannot be re-exported, so a call
+/// of its name in an integration test ([`is_plain_integration_test`]) runs
+/// some other function (`tokio::time::sleep`, not the crate-private
+/// `runtime::jspi::sleep`).
+///
+/// Answers `false`, keeping the name-only relation, whenever the files do
+/// not settle that: the owner is not a `src/` function with one readable
+/// declaration; a `#[path]` that leaves its directory or an `include!` in
+/// its package may compile a file into a crate its location does not show;
+/// or the owner, its `impl` or a module around it carries an attribute that
+/// may export or rewrite it (`#[no_mangle]`, `#[wasm_bindgen]`), or it
+/// declares a foreign ABI.
+pub(super) fn owner_is_private_to_its_crate(index: &RustIndex, owner: &FunctionSummary) -> bool {
+    use ra_ap_syntax::{AstNode, ast, ast::HasVisibility};
+    if !matches!(
+        owner.item.container,
+        FunctionContainer::Free | FunctionContainer::Inherent { .. }
+    ) || !owner.item.has_body
+        || under_tests_dir(&owner.file)
+        || crate_class(&owner.file).is_none()
+        || !package_compiles_files_in_place(index, &owner.file)
+    {
+        return false;
+    }
+    let Some(declaration) = super::transitive_reach::indexed_declaration(index, owner) else {
+        return false;
+    };
+    // Every inert attribute is a single-segment name; `unsafe(..)` reads as
+    // the attribute it wraps and `cfg_attr(..)` as itself, so neither is
+    // inert.
+    let inert = |attribute: ast::Attr| {
+        attribute
+            .simple_name()
+            .is_some_and(|name| name == "cfg" || super::reach::owner_attribute_is_inert(&name))
+    };
+    declaration
+        .visibility()
+        .is_none_or(|visibility| visibility.syntax().text() != "pub")
+        // A foreign ABI is called from outside Rust.
+        && declaration.abi().is_none()
+        && declaration
+            .syntax()
+            .ancestors()
+            .all(|node| node.children().filter_map(ast::Attr::cast).all(inert))
 }
 
 /// Whether every `#[path]` in `source` only selects between the two files of
@@ -1626,7 +1799,196 @@ pub(super) fn definition_module_path(function: &FunctionSummary) -> Option<Vec<S
 /// path of the module that holds its `impl` block (the segments before the
 /// first `impl ` segment); otherwise an impl member has no module-level path.
 fn module_path_of(function: &FunctionSummary, through_impl: bool) -> Option<Vec<String>> {
-    let mut path = file_module_segments(&function.file)?;
+    module_path_from(
+        file_module_segments(&function.file)?,
+        function,
+        through_impl,
+    )
+}
+
+/// [`definition_module_path`] that reads a manifest-declared `[lib] path`
+/// root (#14495). The file a package's `[lib] path` names is its library's
+/// crate root, so a definition there has the empty module path plus its
+/// inline modules. A crate root owns its directory the way `src/lib.rs`
+/// owns `src/`, so a file below the root's directory takes its segments
+/// relative to that directory (`source/pricing.rs` is `pricing` under
+/// `source/entry.rs`). A package with a `#[path]` remap keeps the rule off
+/// at the callers, as for the default layout. Every other file keeps the
+/// path-shape segments.
+pub(super) fn definition_module_path_in(
+    index: &RustIndex,
+    function: &FunctionSummary,
+) -> Option<Vec<String>> {
+    match custom_lib_root_reading(index, &function.file) {
+        CustomRootReading::Placed(segments) => module_path_from(segments, function, false),
+        CustomRootReading::Unplaced => None,
+        CustomRootReading::NotBelowRoot => definition_module_path(function),
+    }
+}
+
+/// [`file_module_segments`] read the way [`definition_module_path_in`]
+/// reads definitions, so a test module's own path and the owner's path
+/// below a `[lib] path` root are compared in one reading (#14495 review).
+fn file_module_segments_in(index: &RustIndex, file: &Path) -> Option<Vec<String>> {
+    match custom_lib_root_reading(index, file) {
+        CustomRootReading::Placed(segments) => Some(segments),
+        CustomRootReading::Unplaced => None,
+        CustomRootReading::NotBelowRoot => file_module_segments(file),
+    }
+}
+
+/// How a file reads against its package's `[lib] path` root (#14495).
+enum CustomRootReading {
+    /// The package has no custom root, or the file is not below it: the
+    /// path-shape reading applies.
+    NotBelowRoot,
+    /// The file's module segments below the root.
+    Placed(Vec<String>),
+    /// The file sits below the root, but which crate composes it is not
+    /// established, so it names no module path at all (fail-closed).
+    Unplaced,
+}
+
+/// A file below a custom library root: its package key and module segments.
+struct CustomRootPlacement {
+    package: Option<String>,
+    segments: Vec<String>,
+    /// The file sits under the package's own `src/` directory.
+    under_src: bool,
+    /// The file sits beside a binary root in a symlinked `src` directory.
+    shares_binary: bool,
+}
+
+fn custom_lib_root_reading(index: &RustIndex, file: &Path) -> CustomRootReading {
+    let Some(placement) = custom_lib_root_placement(index, file) else {
+        return CustomRootReading::NotBelowRoot;
+    };
+    // With `src/main.rs` and no `src/lib.rs`, the layout gives every `src/`
+    // module to the binary, whose paths start at `src/main.rs`, while the
+    // custom root may compose the same file as a library module. Neither
+    // reading is established, so neither names the owner (#14495 review).
+    // A root whose modules sit outside `src/` shares no file with the
+    // binary, so its files stay placed.
+    if placement.shares_binary {
+        return CustomRootReading::Unplaced;
+    }
+    if placement.under_src
+        && call_identity_shape(index, placement.package.as_deref())
+            .layout
+            .main_only
+    {
+        return CustomRootReading::Unplaced;
+    }
+    CustomRootReading::Placed(placement.segments)
+}
+
+/// [`package_key`] that reads a file below a custom library root as part of
+/// the package that declares the root: `core/source/pricing.rs` under
+/// `core/Cargo.toml`'s `[lib] path = "source/entry.rs"` is package `core/`,
+/// which the path shape cannot tell without a `src/` or `tests/` component
+/// (#14495).
+fn package_key_in(index: &RustIndex, file: &Path) -> Option<String> {
+    match custom_lib_root_placement(index, file) {
+        Some(placement) => placement.package,
+        None => package_key(file),
+    }
+}
+
+/// The placement of `file` below its package's custom library root, or
+/// `None` when the package has no custom root or `file` is not under the
+/// root's module directory.
+fn custom_lib_root_placement(index: &RustIndex, file: &Path) -> Option<CustomRootPlacement> {
+    if super::related_tests::path_is_absolute_form(file) {
+        return None;
+    }
+    let custom = index.member_crates.custom_lib_path_root_of(file)?;
+    let normalized = super::related_tests::normalize_path(file);
+    let root = super::related_tests::normalize_path(&custom.crate_root);
+    let package = super::related_tests::normalize_path(&custom.package);
+    let package_prefix = if package.is_empty() {
+        String::new()
+    } else {
+        format!("{package}/")
+    };
+    let in_package = normalized.strip_prefix(&package_prefix)?;
+    let placed = |segments: Vec<String>| CustomRootPlacement {
+        package: (!package.is_empty()).then(|| package_prefix.clone()),
+        segments,
+        under_src: in_package.starts_with("src/"),
+        shares_binary: false,
+    };
+    if normalized == root {
+        return Some(placed(Vec::new()));
+    }
+    // Other targets' paths never hold the library's modules. They are fixed
+    // relative to the package directory, not to the root's directory, so a
+    // nested root keeps a `tests` or `main` module of its own (#14495 review).
+    if ["tests/", "benches/", "examples/", "src/bin/"]
+        .iter()
+        .any(|target| in_package.starts_with(target))
+        || matches!(in_package, "src/main.rs" | "build.rs")
+    {
+        return None;
+    }
+    let module_dir = super::related_tests::normalize_path(&custom.module_dir);
+    let directory = if module_dir.is_empty() {
+        String::new()
+    } else {
+        format!("{module_dir}/")
+    };
+    let body = normalized.strip_prefix(&directory)?;
+    // A symlinked `src` directory holds the binary targets too, under the
+    // name the link resolves to (#15909).
+    let linked_src = custom.module_dir != custom.package.join("src")
+        && custom.declared_root.parent() == Some(custom.package.join("src").as_path());
+    if linked_src && (body == "main.rs" || body.starts_with("bin/")) {
+        return None;
+    }
+    let mut segments: Vec<String> = body
+        .strip_suffix(".rs")?
+        .split('/')
+        .map(str::to_string)
+        .collect();
+    if segments.last().is_some_and(|last| last == "mod") {
+        segments.pop();
+    }
+    // Beside that binary root, a module file may belong to either crate. The
+    // literal `src/` layout scan cannot read the roots through the link, so
+    // read them here as `CrateLayout::classify` does: the module stays the
+    // library's only when the library root declares its first segment and
+    // the binary root readably does not (#16068). Anything else names no
+    // module path (fail-closed, #16042 review).
+    let shares_binary = linked_src
+        && index
+            .files()
+            .get(&custom.module_dir.join("main.rs"))
+            .is_some_and(|main| {
+                let declares = |source: Option<&str>, first: &str| {
+                    source
+                        .and_then(declared_first_segments)
+                        .map(|names| names.contains(first))
+                };
+                let lib = index.files().get(&custom.crate_root);
+                let first = segments.first().map(String::as_str).unwrap_or_default();
+                !matches!(
+                    (
+                        declares(lib.map(|lib| &*lib.data().source), first),
+                        declares(Some(&main.data().source), first),
+                    ),
+                    (Some(true), Some(false))
+                )
+            });
+    (!segments.is_empty()).then(|| CustomRootPlacement {
+        shares_binary,
+        ..placed(segments)
+    })
+}
+
+fn module_path_from(
+    mut path: Vec<String>,
+    function: &FunctionSummary,
+    through_impl: bool,
+) -> Option<Vec<String>> {
     let prefix = format!("{}::", crate::analysis::stable_path_text(&function.file));
     let rest = function.id.0.strip_prefix(&prefix)?;
     let mut segments: Vec<&str> = rest.split("::").collect();
@@ -1642,7 +2004,13 @@ fn module_path_of(function: &FunctionSummary, through_impl: bool) -> Option<Vec<
         }
         segments.truncate(at);
     }
-    path.extend(segments.into_iter().map(str::to_string));
+    // Scopes record plain names (`r#b` and `b` are one module), so the
+    // definition's path drops the raw prefix the parser id keeps.
+    path.extend(
+        segments
+            .into_iter()
+            .map(|segment| segment.strip_prefix("r#").unwrap_or(segment).to_string()),
+    );
     Some(path)
 }
 
@@ -1697,7 +2065,7 @@ pub(super) fn inherent_entry_type_identity(
         return None;
     }
     if !super::helper_transfer::is_identifier(self_ty)
-        || package_key(&owner.file).is_some()
+        || package_key_in(index, &owner.file).is_some()
         || package_remaps_module_paths(index, None)
         || super::owner_pin::target_root(&owner.file, index, &BTreeSet::new())?
             != Path::new("src/lib.rs")
@@ -1889,7 +2257,7 @@ impl OwnerCallIdentity {
         let Some(owner_module) = self.definitions.first().and_then(Option::as_ref) else {
             return false;
         };
-        let Some(file_module) = file_module_segments(&self.owner_file) else {
+        let Some(file_module) = file_module_segments_in(index, &self.owner_file) else {
             return false;
         };
         let data_types: BTreeSet<Vec<String>> = owner_tree
@@ -2078,8 +2446,8 @@ pub(super) fn unit_test_relative_import_names_entry(
         return false;
     }
     let normalized = super::related_tests::normalize_path(test_file);
-    if package_key(test_file).is_some()
-        || package_key(&entry.file).is_some()
+    if package_key_in(index, test_file).is_some()
+        || package_key_in(index, &entry.file).is_some()
         || super::related_tests::path_is_absolute_form(test_file)
         || under_tests_dir(test_file)
         || src_body(&normalized).is_none()
@@ -2336,7 +2704,7 @@ fn module_declaration_is_ambiguous(index: &RustIndex, segment: &str, library_onl
     use ra_ap_syntax::{AstNode, ast, ast::HasName};
     let mut declarations = 0usize;
     for (path, facts) in index.files().iter() {
-        if package_key(path).is_some() || under_tests_dir(path) {
+        if package_key_in(index, path).is_some() || under_tests_dir(path) {
             continue;
         }
         // The library-only form (an imported entry) ignores binary roots: a
@@ -2399,7 +2767,7 @@ fn module_declaration_is_ambiguous(index: &RustIndex, segment: &str, library_onl
 }
 
 /// The package a file belongs to. A relative path keeps
-/// [`super::related_tests::package_prefix`] (`crates/<name>/`, the directory
+/// [`super::related_tests::package_prefix`] (`[<dirs>/]crates/<name>/`, the directory
 /// above `src/` or `tests/`, or `None` for the root package). That leaves an
 /// absolute path outside a `crates/` layout unscoped (#3235) and drops the
 /// workspace directory from an absolute `crates/<name>/`, so two packages
@@ -2479,7 +2847,15 @@ impl CrateLayout {
         }
     }
 
-    fn classify(&self, file: &Path) -> CrateClass {
+    fn classify(&self, index: &RustIndex, file: &Path) -> CrateClass {
+        // A file a custom library root places is that library's module, even
+        // outside `src/` (#14495); one whose crate is not established names
+        // none.
+        match custom_lib_root_reading(index, file) {
+            CustomRootReading::Placed(_) => return CrateClass::Crate("lib".to_string()),
+            CustomRootReading::Unplaced => return CrateClass::Ambiguous,
+            CustomRootReading::NotBelowRoot => {}
+        }
         let Some(shape) = crate_class(file) else {
             return CrateClass::Outside;
         };
@@ -2511,8 +2887,8 @@ impl CrateLayout {
 
     /// The file's crate; `None` outside the layout or when ambiguous, so it
     /// never equals a placed owner's crate.
-    fn class(&self, file: &Path) -> Option<String> {
-        match self.classify(file) {
+    fn class(&self, index: &RustIndex, file: &Path) -> Option<String> {
+        match self.classify(index, file) {
             CrateClass::Crate(class) => Some(class),
             CrateClass::Outside | CrateClass::Ambiguous => None,
         }
@@ -2572,6 +2948,24 @@ pub(super) fn under_tests_dir(file: &Path) -> bool {
     let normalized = super::related_tests::normalize_path(file);
     !(normalized.contains("/src/") || normalized.starts_with("src/"))
         && super::super::rust_index::is_test_file(file)
+}
+
+/// An integration-test crate root: a file under `tests/` ([`under_tests_dir`]),
+/// or the entry file of a `[[test]]` target whose manifest `path` puts it
+/// outside both `tests/` and `src/` (`checks/score.rs`, #15332), declared by
+/// the analysis root's own package (the one package whose path-shape key is
+/// `None`, like the file's). Only the declared entry file itself is
+/// admitted; a module it mounts keeps the path-shape reading. Without
+/// manifest authority the answer is the path-shape one.
+pub(super) fn integration_test_root(index: &RustIndex, file: &Path) -> bool {
+    if under_tests_dir(file) {
+        return true;
+    }
+    let normalized = super::related_tests::normalize_path(file);
+    !(normalized.contains("/src/") || normalized.starts_with("src/"))
+        && index
+            .member_crates
+            .is_declared_test_target_entry(file, true)
 }
 
 /// Module segments of a file below its crate root: `src/lib.rs` and
@@ -2645,6 +3039,18 @@ fn call_qualifiers(body: &str, name: &str) -> Vec<Option<Vec<String>>> {
 /// [`call_qualifiers`] with each site's method-call flag, optionally counting
 /// method calls (`x.name(..)`, an empty qualifier) as sites.
 fn call_sites(body: &str, name: &str, with_methods: bool) -> Vec<(Option<Vec<String>>, bool)> {
+    call_site_offsets(body, name, with_methods)
+        .into_iter()
+        .map(|(qualifier, is_method, _)| (qualifier, is_method))
+        .collect()
+}
+
+/// [`call_sites`] with each site's byte offset of the name in `body`.
+fn call_site_offsets(
+    body: &str,
+    name: &str,
+    with_methods: bool,
+) -> Vec<(Option<Vec<String>>, bool, usize)> {
     let masked = mask_comments_and_strings(body);
     let mut calls = Vec::new();
     for (start, _) in masked.match_indices(name) {
@@ -2662,16 +3068,56 @@ fn call_sites(body: &str, name: &str, with_methods: bool) -> Vec<(Option<Vec<Str
         let head = masked[..start].trim_end();
         if head.ends_with('.') && !head.ends_with("..") {
             if with_methods {
-                calls.push((Some(Vec::new()), true));
+                calls.push((Some(Vec::new()), true, start));
             }
             continue;
         }
         if head_word(head) == "fn" {
             continue;
         }
-        calls.push((qualifier_before(head), false));
+        calls.push((qualifier_before(head), false, start));
     }
     calls
+}
+
+/// Byte ranges of `body` inside a `stringify!` token tree, whose tokens are
+/// never evaluated (#15278). `body` is read with comments and strings masked,
+/// so a delimiter inside either does not end the range; an unclosed tree runs
+/// to the end of `body`.
+fn stringify_ranges(body: &str) -> Vec<std::ops::Range<usize>> {
+    let masked = mask_comments_and_strings(body);
+    let bytes = masked.as_bytes();
+    let mut ranges = Vec::new();
+    for (start, _) in masked.match_indices("stringify") {
+        if ident_char_before(&masked, start) {
+            continue;
+        }
+        let rest = &masked[start + "stringify".len()..];
+        let Some(after_bang) = rest.trim_start().strip_prefix('!') else {
+            continue;
+        };
+        let open_at = masked.len() - after_bang.trim_start().len();
+        if !matches!(bytes.get(open_at), Some(b'(' | b'[' | b'{')) {
+            continue;
+        }
+        let mut depth = 0usize;
+        let mut end = masked.len();
+        for (offset, byte) in bytes.iter().enumerate().skip(open_at) {
+            match byte {
+                b'(' | b'[' | b'{' => depth += 1,
+                b')' | b']' | b'}' => {
+                    depth = depth.saturating_sub(1);
+                    if depth == 0 {
+                        end = offset + 1;
+                        break;
+                    }
+                }
+                _ => {}
+            }
+        }
+        ranges.push(open_at..end);
+    }
+    ranges
 }
 
 /// Whether a call of this name may have the function's container kind (#12234).
@@ -2703,17 +3149,17 @@ fn anchored_rest<'a>(
     test: &TestSummary,
     module: &'a [String],
 ) -> Option<&'a [String]> {
-    let owner_package = package_key(&owner.file);
+    let owner_package = package_key_in(index, &owner.file);
     let layout = CrateLayout::new(index, owner_package.as_deref());
-    let CrateClass::Crate(owner_crate) = layout.classify(&owner.file) else {
+    let CrateClass::Crate(owner_crate) = layout.classify(index, &owner.file) else {
         return None;
     };
     let (first, rest) = module.split_first()?;
     let anchored = if first == "crate" {
-        package_key(&test.file) == owner_package
+        package_key_in(index, &test.file) == owner_package
             && !under_tests_dir(&test.file)
             && !under_tests_dir(&owner.file)
-            && layout.class(&test.file).as_deref() == Some(owner_crate.as_str())
+            && layout.class(index, &test.file).as_deref() == Some(owner_crate.as_str())
     } else {
         own_crate_names_of(
             &owner.file,
@@ -2854,10 +3300,10 @@ fn own_crate_names_of(
     test: &TestSummary,
     index: &RustIndex,
 ) -> BTreeSet<String> {
-    let test_package = package_key(&test.file);
+    let test_package = package_key_in(index, &test.file);
     let same_package = test_package.as_deref() == owner_package;
     let mut names = BTreeSet::new();
-    if same_package && !under_tests_dir(&test.file) {
+    if same_package && !integration_test_root(index, &test.file) {
         return names;
     }
     // An integration test of the owner's own package names that package's
@@ -2869,8 +3315,20 @@ fn own_crate_names_of(
     if same_package && let Some(package) = owner_package {
         names.insert(package.to_string());
     }
-    let Some(owner_root) = super::owner_pin::target_root(owner_file, index, &BTreeSet::new())
-    else {
+    // A root reached through a symlink is indexed where the link lands, which
+    // no execution ancestry names; the manifests know it by the declared path
+    // (#15909).
+    let owner_root =
+        super::owner_pin::target_root(owner_file, index, &BTreeSet::new()).or_else(|| {
+            matches!(
+                custom_lib_root_reading(index, owner_file),
+                CustomRootReading::Placed(_)
+            )
+            .then(|| index.member_crates.custom_lib_path_root_of(owner_file))
+            .flatten()
+            .map(|custom| custom.declared_root)
+        });
+    let Some(owner_root) = owner_root else {
         // Without an established crate root the manifest-derived import
         // names are unavailable. Mirror the no-manifest-authority fallback
         // below so a crate-name import of the owner's own package never
@@ -3057,6 +3515,40 @@ pub(in crate::analysis) fn bare_owner_call_settles_on_owner(
     })
 }
 
+/// #15278: whether some call site of the owner's name in `test` settles on
+/// the owner alone through the solo identity: a path spelled through a
+/// crate name the test's package imports the owner's library by
+/// (`wscore::discount(..)`), or an unshadowed bare call bound by an import
+/// from it. Each site is resolved on its own: a spelling inside a comment,
+/// a string or a `stringify!` token tree is not a site, and a bare call
+/// shadowed at its line by a local binding (`let discount = |p| ..;`) is
+/// refused. A call spelled through another crate (`pricing::discount(..)`)
+/// or bound by an import from one settles elsewhere, and an unsettled
+/// reading does not count. Only a free owner has such an identity.
+pub(in crate::analysis) fn test_call_settles_on_owner(
+    index: &RustIndex,
+    owner: &FunctionSummary,
+    test: &TestSummary,
+) -> bool {
+    let Some(identity) = shared_solo_owner_call_identity(index, owner) else {
+        return false;
+    };
+    let body: &str = &test.body;
+    let quoted = stringify_ranges(body);
+    call_site_offsets(body, &owner.name, false)
+        .into_iter()
+        .filter(|(_, _, at)| !quoted.iter().any(|range| range.contains(at)))
+        .any(|(qualifier, _, at)| match qualifier {
+            None => false,
+            Some(segments) if segments.is_empty() => {
+                let line = test.start_line + body[..at].matches('\n').count();
+                !bare_call_shadowed_by_local(index, owner, test, line)
+                    && identity.resolve_call(test, index, &[]) == CallTarget::Owner
+            }
+            Some(segments) => identity.resolve_call(test, index, &segments) == CallTarget::Owner,
+        })
+}
+
 /// Whether a bare call of the owner's name may supply a boundary input.
 /// With same-named rivals the call must settle on the owner; without rivals
 /// only a settled-away (`Other`) reading declines, while an unsettled
@@ -3126,9 +3618,9 @@ pub(super) fn name_bound_outside_owner_crate(
         return false;
     };
     let scope = identity.test_scope(test, index);
-    let owner_package = package_key(&owner.file);
+    let owner_package = package_key_in(index, &owner.file);
     let layout = CrateLayout::new(index, owner_package.as_deref());
-    let owner_crate = match layout.classify(&owner.file) {
+    let owner_crate = match layout.classify(index, &owner.file) {
         CrateClass::Crate(name) => Some(name),
         _ => None,
     };
@@ -3236,10 +3728,12 @@ pub(super) fn bare_name_renames_another_function(
     // The relation asks this for every candidate test of every probe; a
     // renaming import must spell `as <name>` somewhere in the test's file,
     // so a file without that spelling is answered without reading scopes.
-    let spells_rename = index
-        .files()
-        .get(&test.file)
-        .is_some_and(|facts| source_spells_rename_to(&facts.source, name));
+    let spells_rename = index.files().get(&test.file).is_some_and(|facts| {
+        index
+            .call_identity_memos
+            .file_spellings(&test.file, &facts.source)
+            .spells_rename_to(&facts.source, name)
+    });
     if !spells_rename {
         return false;
     }
@@ -3251,7 +3745,7 @@ pub(super) fn bare_name_renames_another_function(
         return false;
     };
     let raw_name = format!("r#{name}");
-    let owner_package = package_key(&owner.file);
+    let owner_package = package_key_in(index, &owner.file);
     for scope in &scopes.scopes {
         if scope.block_binds(name) || scope.block_binds(&raw_name) {
             return false;
@@ -3289,8 +3783,8 @@ pub(super) fn bare_name_renames_another_function(
                     index.functions().iter().any(|function| {
                         function.item.container == FunctionContainer::Free
                             && function.name.trim_start_matches("r#") == target
-                            && package_key(&function.file) == owner_package
-                            && definition_module_path(function).as_ref() == Some(&placed)
+                            && package_key_in(index, &function.file) == owner_package
+                            && definition_module_path_in(index, function).as_ref() == Some(&placed)
                     })
                 });
         }
@@ -3313,6 +3807,96 @@ pub(super) fn bare_name_renames_another_function(
     }
     false
 }
+
+/// Whether the module scope a bare call of the owner's name resolves in
+/// can only bind that name through globs of the standard library (`use
+/// std::cmp::*;` around a bare `max(..)` beside a changed crate-level `max`,
+/// #14069). That module has no import or item of the name and does not glob
+/// its parent, so nothing there names the owner: the call is the standard
+/// function, or it does not compile.
+///
+/// Decided at the first module scope only, and only when a standard glob
+/// was read on the way. A function-body scope is passed through when it
+/// binds nothing by that name and holds no glob other than standard-library
+/// ones (a body-level standard glob may not export the name at all, so it
+/// never decides alone: the enclosing module must also offer no route to
+/// the owner). Fails open on any
+/// unreadable glob, a glob rooted anywhere else, a `std`/`core`/`alloc` name
+/// the scope rebinds, and an owner with no placeable call identity.
+pub(super) fn bare_name_bound_only_by_std_globs(
+    index: &RustIndex,
+    owner: &FunctionSummary,
+    test: &TestSummary,
+) -> bool {
+    if owner.item.container != FunctionContainer::Free {
+        return false;
+    }
+    // `use std::cmp::{*};` spells the glob without `::*`, so the prefilter
+    // reads a `*` and a standard root anywhere in the file.
+    let spells_std_glob = index.files().get(&test.file).is_some_and(|facts| {
+        index
+            .call_identity_memos
+            .file_spellings(&test.file, &facts.source)
+            .spells_std_glob()
+    });
+    if !spells_std_glob {
+        return false;
+    }
+    let Some(identity) = shared_solo_owner_call_identity(index, owner) else {
+        return false;
+    };
+    let test_scope = identity.test_scope(test, index);
+    let Some(scopes) = test_scope.scopes.as_deref() else {
+        return false;
+    };
+    let name = owner.name.trim_start_matches("r#");
+    let raw_name = format!("r#{name}");
+    let binds = |scope: &NameScope| {
+        scope.block_binds(name)
+            || scope.block_binds(&raw_name)
+            || scope.imports_of(name).next().is_some()
+            || scope.imports_of(&raw_name).next().is_some()
+            || scope.defines.contains(name)
+            || scope.defines.contains(&raw_name)
+            || scope.local_bindings.contains_key(name)
+            || scope.local_bindings.contains_key(&raw_name)
+    };
+    // The lexical scopes a bare name in the test body can see: the body's
+    // scopes out to, and including, the first module scope.
+    let module_at = scopes.scopes.iter().position(|scope| !scope.fn_body);
+    let Some(module_at) = module_at else {
+        return false;
+    };
+    let visible = &scopes.scopes[..=module_at];
+    // A glob's root resolves through every visible scope, so a rebinding in
+    // the enclosing module (`use crate::facade as core;`) reaches a glob
+    // written in the test body.
+    let root_rebound = |root: &String| {
+        visible.iter().any(|scope| {
+            scope.child_modules.contains(root)
+                || scope.imports_of(root).next().is_some()
+                || scope.defines.contains(root.as_str())
+        })
+    };
+    let std_globs_only = |scope: &NameScope| {
+        scope.globs.iter().all(|glob| {
+            glob.as_ref().is_some_and(|path| {
+                path.first()
+                    .is_some_and(|root| STD_ROOTS.contains(&root.as_str()) && !root_rebound(root))
+            })
+        })
+    };
+    if visible
+        .iter()
+        .any(|scope| binds(scope) || !std_globs_only(scope))
+    {
+        return false;
+    }
+    visible.iter().any(|scope| !scope.globs.is_empty())
+}
+
+/// Crate roots of the standard library, as a glob import spells them.
+const STD_ROOTS: [&str; 3] = ["std", "core", "alloc"];
 
 /// Whether `source` spells `as <name>` (or `as r#<name>`) at identifier
 /// boundaries, or the name straight after a comment: the text every renaming
@@ -3341,8 +3925,9 @@ fn source_spells_rename_to(source: &str, name: &str) -> bool {
 }
 
 /// Whether every free-call spelling of the owner's name in `test` is bare
-/// and that bare name is a renaming import of another function (#14069):
-/// the test then calls the other function and never the owner. A qualified
+/// and that bare name is a renaming import of another function, or is bound
+/// only by standard-library globs (#14069): the test then calls the other
+/// function and never the owner. A qualified
 /// spelling (`super::discount(..)`) or a value mention that may still reach
 /// the owner keeps the prior relation.
 pub(in crate::analysis) fn test_calls_only_a_renamed_other_function(
@@ -3350,9 +3935,11 @@ pub(in crate::analysis) fn test_calls_only_a_renamed_other_function(
     owner: &FunctionSummary,
     test: &TestSummary,
 ) -> bool {
-    // The rename check comes first: its text prefilter answers almost every
-    // test without masking and scanning the body.
-    if !bare_name_renames_another_function(index, owner, test) {
+    // The binding checks come first: their text prefilters answer almost
+    // every test without masking and scanning the body.
+    if !bare_name_renames_another_function(index, owner, test)
+        && !bare_name_bound_only_by_std_globs(index, owner, test)
+    {
         return false;
     }
     let qualifiers = call_qualifiers(&test.body, &owner.name);
@@ -3388,6 +3975,37 @@ pub(super) fn boundary_owner_calls_resolve(
                             || identity.resolve_call(test, index, &segments) == CallTarget::Owner
                     })
                 })
+        })
+}
+
+/// Resolve a free call in rustdoc's separate example crate, including a
+/// library-qualified call into an out-of-line module.
+pub(super) fn doctest_calls_free_owner(
+    index: &RustIndex,
+    owner: &FunctionSummary,
+    test: &TestSummary,
+    syntax: &super::owner_pin::OwnerPinSyntax,
+) -> bool {
+    let qualifiers = call_qualifiers(&test.body, &owner.name);
+    let Some(path) = super::helper_transfer::public_path(index, owner) else {
+        return false;
+    };
+    !qualifiers.is_empty()
+        && qualifiers.into_iter().all(|qualifier| match qualifier {
+            None => false,
+            Some(segments) => match segments.split_first() {
+                None => super::owner_pin::targeted_free_call_reaches_owner(
+                    test, owner, None, index, syntax,
+                ),
+                Some((root, module)) => {
+                    path.modules == module
+                        && index
+                            .member_crates
+                            .import_names(&test.file, &path.root)
+                            .contains(root)
+                        && !super::owner_pin::test_crate_binds_root(test, root, index, syntax)
+                }
+            },
         })
 }
 
@@ -3493,13 +4111,13 @@ fn module_reexports_owner(
 ) -> bool {
     use ra_ap_syntax::ast;
     use ra_ap_syntax::ast::{HasModuleItem, HasName, HasVisibility};
-    let owner_package = package_key(&owner.file);
+    let owner_package = package_key_in(index, &owner.file);
     let layout = CrateLayout::new(index, owner_package.as_deref());
     index.files().iter().any(|(file, facts)| {
-        if package_key(file) != owner_package
+        if package_key_in(index, file) != owner_package
             || under_tests_dir(file)
-            || layout.class(file).as_deref() != Some(owner_crate)
-            || file_module_segments(file).is_none_or(|segments| segments != module)
+            || layout.class(index, file).as_deref() != Some(owner_crate)
+            || file_module_segments_in(index, file).is_none_or(|segments| segments != module)
         {
             return false;
         }
@@ -3582,15 +4200,15 @@ fn qualified_call_names_owner(
     }
     // A path anchored at the owner's crate through a verified re-export
     // (`crate_name::inner` for `pub use internal::inner;`).
-    let owner_package = package_key(&owner.file);
+    let owner_package = package_key_in(index, &owner.file);
     if package_remaps_module_paths(index, owner_package.as_deref()) {
         return false;
     }
-    let Some(owner_path) = definition_module_path(owner) else {
+    let Some(owner_path) = definition_module_path_in(index, owner) else {
         return false;
     };
     let layout = CrateLayout::new(index, owner_package.as_deref());
-    let CrateClass::Crate(owner_crate) = layout.classify(&owner.file) else {
+    let CrateClass::Crate(owner_crate) = layout.classify(index, &owner.file) else {
         return false;
     };
     let names = own_crate_names_of(
@@ -3605,10 +4223,10 @@ fn qualified_call_names_owner(
         // when the test file belongs to the owner's target (a `main.rs` or
         // `src/bin` test is another crate).
         Some((first, rest)) if first == "crate" => (
-            package_key(&test.file) == owner_package
+            package_key_in(index, &test.file) == owner_package
                 && !under_tests_dir(&test.file)
                 && !under_tests_dir(&owner.file)
-                && layout.class(&test.file).as_deref() == Some(owner_crate.as_str()),
+                && layout.class(index, &test.file).as_deref() == Some(owner_crate.as_str()),
             rest,
         ),
         Some((first, rest)) => (
@@ -6591,6 +7209,7 @@ fn integration_rename_case() {
         let index = renamed_other_index();
         let (owner, _) = renamed_other_parts(&index, "real_case")?;
         let probe = Probe {
+            before_condition: None,
             id: ProbeId("probe:test".to_string()),
             location: SourceLocation::new("src/lib.rs", 2, 1),
             owner: Some(owner.id.clone()),
@@ -6624,6 +7243,482 @@ fn integration_rename_case() {
             );
         }
         for name in KEPT_CASES.into_iter().chain(["qualified_and_bare_case"]) {
+            assert_eq!(
+                reason_of(name),
+                Some(RelationReason::DirectOwnerCall),
+                "{name}: the owner call keeps its direct relation"
+            );
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn imported_macro_reusing_a_std_name_takes_no_invocation_scopes()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let root = std::env::temp_dir().join(format!(
+            "ripr-macro-shadow-{}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)?
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(root.join("src"))?;
+        std::fs::create_dir_all(root.join("tests"))?;
+        std::fs::write(
+            root.join("Cargo.toml"),
+            "[package]\nname = \"modules\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+        )?;
+        std::fs::write(
+            root.join("src/lib.rs"),
+            "pub mod a;\npub mod b;\n#[macro_export]\nmacro_rules! hostile_assertion { ($actual:expr, $expected:expr) => { use modules::b::render; ::core::assert_eq!($actual, $expected); }; }\n",
+        )?;
+        std::fs::write(
+            root.join("src/a.rs"),
+            "pub fn render(x: i32) -> i32 {\n    x + 1\n}\n",
+        )?;
+        std::fs::write(
+            root.join("src/b.rs"),
+            "pub fn render(x: i32) -> i32 {\n    x + 2\n}\npub use crate::hostile_assertion as assert_eq;\npub use crate::hostile_assertion;\n",
+        )?;
+        // The invocation scope imports a macro named `assert_eq` next to
+        // `a::render`: that import may expand to a rebinding `use`, so the
+        // generated test must not be credited to `a` from its scopes. (A
+        // local `macro_rules! assert_eq` is already refused earlier: the
+        // generated test is not indexed at all.)
+        for import in [
+            "use modules::b::assert_eq;",
+            "use modules::b::r#assert_eq;",
+            "use modules::b::hostile_assertion as r#assert_eq;",
+        ] {
+            let source = format!(
+                "macro_rules! shadowed {{\n    ($name:ident) => {{\n        #[test]\n        fn $name() {{\n            assert_eq!(render(1), 3);\n        }}\n    }};\n}}\n\nmod cases {{\n    use modules::a::render;\n    {import}\n    shadowed!(shadowed_case);\n}}\n"
+            );
+            std::fs::write(root.join("tests/gen.rs"), source)?;
+            let index = crate::analysis::facts::build_index(
+                &root,
+                &[
+                    PathBuf::from("src/lib.rs"),
+                    PathBuf::from("src/a.rs"),
+                    PathBuf::from("src/b.rs"),
+                    PathBuf::from("tests/gen.rs"),
+                ],
+            )?;
+            assert!(
+                index
+                    .tests()
+                    .iter()
+                    .any(|test| test.name == "shadowed_case"),
+                "the shadowed case must be indexed, or the assertion below is vacuous"
+            );
+            assert_ne!(
+                settle(&index, "/a.rs::render", "shadowed_case"),
+                Some(CallTarget::Owner)
+            );
+        }
+        let _ = std::fs::remove_dir_all(&root);
+        Ok(())
+    }
+
+    /// #12876: an import of std's own item under an exempt macro name
+    /// (`use std::panic;`) is not a rebinding, so the generated test keeps its
+    /// invocation scopes. When the file can make `std` mean something else,
+    /// the refusal stays. Each case below was checked with rustc 1.95: the
+    /// positive imports leave `a::render` as the callee; the three shadowed
+    /// roots, and a `no_std` file whose macro argument renames `b` to `std`,
+    /// compile and call `b::render` through the hostile macro. The glob and
+    /// macro-declared roots in a std file are refused conservatively (rustc
+    /// rejects them as ambiguous with the extern prelude). `core` is refused
+    /// because a Cargo dependency renamed `core` can stand in for that path.
+    #[test]
+    fn std_rooted_import_keeps_invocation_scopes_unless_the_root_is_shadowed()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let root = std::env::temp_dir().join(format!(
+            "ripr-std-import-{}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)?
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(root.join("src"))?;
+        std::fs::create_dir_all(root.join("tests"))?;
+        std::fs::write(
+            root.join("Cargo.toml"),
+            "[package]\nname = \"modules\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+        )?;
+        std::fs::write(
+            root.join("src/lib.rs"),
+            "pub mod a;\npub mod b;\npub mod shim { pub mod std { pub use crate::b::assert_eq; } }\n#[macro_export]\nmacro_rules! hostile_assertion { ($actual:expr, $expected:expr) => { use modules::b::render; ::core::assert_eq!($actual, $expected); }; }\n",
+        )?;
+        std::fs::write(
+            root.join("src/a.rs"),
+            "pub fn render(x: i32) -> i32 {\n    x + 1\n}\n",
+        )?;
+        std::fs::write(
+            root.join("src/b.rs"),
+            "pub fn render(x: i32) -> i32 {\n    x + 2\n}\npub use crate::hostile_assertion as assert_eq;\npub use crate::hostile_assertion;\n",
+        )?;
+        let settle_with = |prefix: &str,
+                           import: &str|
+         -> Result<Option<CallTarget>, Box<dyn std::error::Error>> {
+            let source = format!(
+                "{prefix}macro_rules! shadowed {{\n    ($name:ident) => {{\n        #[test]\n        fn $name() {{\n            assert_eq!(render(1), 3);\n        }}\n    }};\n}}\n\nmod cases {{\n    use modules::a::render;\n    {import}\n    shadowed!(shadowed_case);\n}}\n"
+            );
+            std::fs::write(root.join("tests/gen.rs"), source)?;
+            let index = crate::analysis::facts::build_index(
+                &root,
+                &[
+                    PathBuf::from("src/lib.rs"),
+                    PathBuf::from("src/a.rs"),
+                    PathBuf::from("src/b.rs"),
+                    PathBuf::from("tests/gen.rs"),
+                ],
+            )?;
+            assert!(
+                index
+                    .tests()
+                    .iter()
+                    .any(|test| test.name == "shadowed_case"),
+                "the generated case must be indexed for {import:?}, or the verdict is vacuous"
+            );
+            Ok(settle(&index, "/a.rs::render", "shadowed_case"))
+        };
+        for import in [
+            "",
+            "use std::panic;",
+            "use std::panic::{self, catch_unwind};",
+            "use std::fmt::write;",
+            "use std::assert_eq;",
+            "use std::vec;",
+        ] {
+            assert_eq!(
+                settle_with("", import)?,
+                Some(CallTarget::Owner),
+                "{import:?} imports std's own item and must keep the invocation scopes"
+            );
+        }
+        let rename = "macro_rules! rename { ($alias:ident) => { use modules::b as $alias; }; } rename!(std); use std::assert_eq;";
+        for (prefix, import) in [
+            (
+                "",
+                "mod std { pub use modules::b::assert_eq; } use std::assert_eq;",
+            ),
+            ("", "use modules::b as std; use std::assert_eq;"),
+            ("", "extern crate modules as std; use std::b::assert_eq;"),
+            ("#![no_std]\n", rename),
+            ("", rename),
+            ("#![no_std]\n", "use std::assert_eq;"),
+            ("", "use modules::shim::*; use std::assert_eq;"),
+            (
+                "",
+                "macro_rules! mk { () => { mod std { pub use modules::b::assert_eq; } } } use std::assert_eq;",
+            ),
+            ("", "use core::panic;"),
+            ("", "use other::panic;"),
+            ("", "use alloc::vec;"),
+        ] {
+            assert_ne!(
+                settle_with(prefix, import)?,
+                Some(CallTarget::Owner),
+                "{prefix:?}{import:?} may not import std's item, so the test must not borrow scopes"
+            );
+        }
+        let _ = std::fs::remove_dir_all(&root);
+        Ok(())
+    }
+
+    /// #14069 fixture: a changed crate-level `max` beside test modules that
+    /// reach a bare `max(..)` through different scopes.
+    const STD_GLOB_LIB: &str = "\
+pub fn max(a: u32, b: u32) -> u32 {
+    if a > b { a } else { b }
+}
+
+#[cfg(test)]
+mod std_glob_only {
+    use std::cmp::*;
+
+    #[test]
+    fn std_glob_only_case() {
+        assert_eq!(max(3, 3), 3);
+    }
+}
+
+#[cfg(test)]
+mod grouped_std_glob_only {
+    use std::cmp::{*};
+
+    #[test]
+    fn grouped_std_glob_only_case() {
+        assert_eq!(max(3, 3), 3);
+    }
+}
+
+#[cfg(test)]
+mod body_std_glob_only {
+    #[test]
+    fn body_std_glob_only_case() {
+        use core::cmp::*;
+        assert_eq!(max(3, 3), 3);
+    }
+}
+
+#[cfg(test)]
+mod std_and_parent_globs {
+    use super::*;
+    use std::collections::*;
+
+    #[test]
+    fn std_and_parent_globs_case() {
+        let _seen: HashSet<u32> = HashSet::new();
+        assert_eq!(max(3, 3), 3);
+    }
+}
+
+#[cfg(test)]
+mod body_std_glob_under_parent_glob {
+    use super::*;
+
+    #[test]
+    fn body_std_glob_under_parent_glob_case() {
+        use std::collections::*;
+        let _seen: HashSet<u32> = HashSet::new();
+        assert_eq!(max(3, 3), 3);
+    }
+}
+
+#[cfg(test)]
+mod explicit_import_beside_std_glob {
+    use super::max;
+    use std::collections::*;
+
+    #[test]
+    fn explicit_import_beside_std_glob_case() {
+        let _seen: HashSet<u32> = HashSet::new();
+        assert_eq!(max(3, 3), 3);
+    }
+}
+
+#[cfg(test)]
+mod rebound_std_root {
+    mod std {
+        pub mod cmp {
+            pub use crate::max;
+        }
+    }
+    use std::cmp::*;
+
+    #[test]
+    fn rebound_std_root_case() {
+        assert_eq!(max(3, 3), 3);
+    }
+}
+
+#[cfg(test)]
+mod enclosing_rebound_std_root {
+    mod facade {
+        pub mod cmp {
+            pub use crate::max;
+        }
+    }
+    use facade as core;
+
+    #[test]
+    fn enclosing_rebound_std_root_case() {
+        use core::cmp::*;
+        assert_eq!(max(3, 3), 3);
+    }
+}
+
+#[cfg(test)]
+mod qualified_beside_std_glob {
+    use std::cmp::*;
+
+    #[test]
+    fn qualified_beside_std_glob_case() {
+        assert_eq!(crate::max(3, 3), 3);
+    }
+}
+";
+
+    const STD_GLOB_INTEGRATION: &str = "\
+use std::cmp::*;
+
+#[test]
+fn integration_std_glob_case() {
+    assert_eq!(max(3, 3), 3);
+}
+";
+
+    const STD_GLOB_OWN_CRATE_INTEGRATION: &str = "\
+use modules::*;
+use std::collections::*;
+
+#[test]
+fn integration_own_crate_glob_case() {
+    let _seen: HashSet<u32> = HashSet::new();
+    assert_eq!(max(3, 3), 3);
+}
+";
+
+    const STD_GLOB_CASES: [&str; 4] = [
+        "std_glob_only_case",
+        "grouped_std_glob_only_case",
+        "body_std_glob_only_case",
+        "integration_std_glob_case",
+    ];
+
+    const STD_GLOB_KEPT_CASES: [&str; 7] = [
+        "enclosing_rebound_std_root_case",
+        "std_and_parent_globs_case",
+        "body_std_glob_under_parent_glob_case",
+        "explicit_import_beside_std_glob_case",
+        "rebound_std_root_case",
+        "qualified_beside_std_glob_case",
+        "integration_own_crate_glob_case",
+    ];
+
+    fn std_glob_index() -> RustIndex {
+        index(&[
+            ("src/lib.rs", STD_GLOB_LIB),
+            ("tests/std_glob.rs", STD_GLOB_INTEGRATION),
+            ("tests/own_glob.rs", STD_GLOB_OWN_CRATE_INTEGRATION),
+        ])
+    }
+
+    fn std_glob_parts<'a>(
+        index: &'a RustIndex,
+        test_name: &str,
+    ) -> Result<(&'a FunctionSummary, &'a TestSummary), String> {
+        let owner = index
+            .functions()
+            .iter()
+            .find(|function| function.name == "max")
+            .ok_or("owner `max` must be indexed")?;
+        let test = index
+            .tests()
+            .iter()
+            .find(|test| test.name == test_name)
+            .ok_or_else(|| format!("test `{test_name}` must be indexed"))?;
+        Ok((owner, test))
+    }
+
+    /// #14069: a module that offers the owner's bare name only through
+    /// standard-library globs calls the standard function, not the owner.
+    #[test]
+    fn a_name_bound_only_by_std_globs_is_not_a_call_of_the_owner() -> Result<(), String> {
+        let index = std_glob_index();
+        for name in STD_GLOB_CASES {
+            let (owner, test) = std_glob_parts(&index, name)?;
+            assert!(
+                bare_name_bound_only_by_std_globs(&index, owner, test),
+                "{name}: only a standard glob can bind the bare name"
+            );
+            assert!(
+                test_calls_only_a_renamed_other_function(&index, owner, test),
+                "{name}: every call is the standard function"
+            );
+        }
+        for name in STD_GLOB_KEPT_CASES {
+            let (owner, test) = std_glob_parts(&index, name)?;
+            assert!(
+                !test_calls_only_a_renamed_other_function(&index, owner, test),
+                "{name}: the owner may still be called"
+            );
+        }
+        // The scope answer alone: only a qualified owner call keeps the
+        // relation while the bare name is still standard-bound.
+        let (owner, qualified) = std_glob_parts(&index, "qualified_beside_std_glob_case")?;
+        assert!(bare_name_bound_only_by_std_globs(&index, owner, qualified));
+        for name in STD_GLOB_KEPT_CASES
+            .into_iter()
+            .filter(|name| *name != "qualified_beside_std_glob_case")
+        {
+            let (owner, test) = std_glob_parts(&index, name)?;
+            assert!(
+                !bare_name_bound_only_by_std_globs(&index, owner, test),
+                "{name}: another route may bind the bare name"
+            );
+        }
+        Ok(())
+    }
+
+    /// A raw-identifier definition in the test's own module binds the bare
+    /// name ahead of any glob, so the standard-glob rule stays out.
+    #[test]
+    fn a_raw_definition_beside_a_std_glob_is_still_the_owner() -> Result<(), String> {
+        let index = index(&[(
+            "src/lib.rs",
+            "\
+use std::cmp::*;
+
+pub fn r#max(a: u32, b: u32) -> u32 {
+    if a > b { a } else { b }
+}
+
+#[test]
+fn raw_definition_case() {
+    assert_eq!(r#max(3, 3), 3);
+}
+",
+        )]);
+        let owner = index
+            .functions()
+            .iter()
+            .find(|function| function.name.trim_start_matches("r#") == "max")
+            .ok_or("owner `r#max` must be indexed")?;
+        let test = index
+            .tests()
+            .iter()
+            .find(|test| test.name == "raw_definition_case")
+            .ok_or("test `raw_definition_case` must be indexed")?;
+        assert!(!bare_name_bound_only_by_std_globs(&index, owner, test));
+        assert!(!test_calls_only_a_renamed_other_function(
+            &index, owner, test
+        ));
+        Ok(())
+    }
+
+    /// #14069 through the related-test relation `ripr check` uses.
+    #[test]
+    fn a_std_glob_bound_call_relates_by_name_only() -> Result<(), String> {
+        use crate::domain::{
+            DeltaKind, Probe, ProbeFamily, ProbeId, RelationReason, SourceLocation,
+        };
+        let index = std_glob_index();
+        let (owner, _) = std_glob_parts(&index, "std_glob_only_case")?;
+        let probe = Probe {
+            before_condition: None,
+            id: ProbeId("probe:test".to_string()),
+            location: SourceLocation::new("src/lib.rs", 2, 1),
+            owner: Some(owner.id.clone()),
+            family: ProbeFamily::Predicate,
+            delta: DeltaKind::Control,
+            before: None,
+            after: Some("a > b".to_string()),
+            expression: "a > b".to_string(),
+            expected_sinks: Vec::new(),
+            required_oracles: Vec::new(),
+        };
+        let related = super::super::related_tests::find_related_tests(
+            &probe,
+            Some(owner),
+            &index,
+            true,
+            None,
+            None,
+        );
+        let reason_of = |name: &str| {
+            related
+                .iter()
+                .find(|(test, _)| test.name == name)
+                .map(|(_, reason)| *reason)
+        };
+        for name in STD_GLOB_CASES {
+            assert_ne!(
+                reason_of(name),
+                Some(RelationReason::DirectOwnerCall),
+                "{name}: the test calls the standard `max`, never the owner"
+            );
+        }
+        for name in STD_GLOB_KEPT_CASES {
             assert_eq!(
                 reason_of(name),
                 Some(RelationReason::DirectOwnerCall),
@@ -6852,6 +7947,7 @@ fn integration_rename_case() {
             return;
         };
         let probe = Probe {
+            before_condition: None,
             id: ProbeId("probe:render".to_string()),
             location: SourceLocation::new("src/lib.rs", 2, 1),
             owner: Some(SymbolId(owner.id.0.clone())),
@@ -6883,5 +7979,210 @@ fn integration_rename_case() {
             )],
             "{source}"
         );
+    }
+
+    /// #14087 shape B: a `use` leaf spelled as a raw identifier binds the
+    /// plain name. Read as `r#render` it bound nothing a bare `render(..)`
+    /// could find, so a glob of the other module supplied the name instead.
+    #[test]
+    fn a_raw_identifier_import_leaf_binds_the_plain_name() {
+        let source = "\
+pub mod a {
+    pub fn render(x: i32) -> i32 {
+        x + 1
+    }
+}
+
+pub mod b {
+    pub fn render(x: i32) -> i32 {
+        x * 2
+    }
+}
+
+#[cfg(test)]
+mod raw_beats_glob {
+    use crate::a::*;
+    use crate::b::r#render;
+
+    #[test]
+    fn raw_leaf_of_b_beside_a_glob_of_a() {
+        assert_eq!(render(2), 4);
+    }
+}
+
+#[cfg(test)]
+mod raw_alone {
+    use crate::a::r#render;
+
+    #[test]
+    fn raw_leaf_of_a() {
+        assert_eq!(render(1), 2);
+    }
+}
+
+#[cfg(test)]
+mod raw_group {
+    use crate::{r#b::{r#render}};
+
+    #[test]
+    fn raw_segments_in_a_group() {
+        assert_eq!(render(2), 4);
+    }
+}
+
+#[cfg(test)]
+mod raw_rename {
+    use crate::b::render as r#render;
+
+    #[test]
+    fn raw_rename_to_the_same_name() {
+        assert_eq!(render(2), 4);
+    }
+}
+
+pub mod r#c {
+    pub fn render(x: i32) -> i32 {
+        x * 3
+    }
+
+    #[cfg(test)]
+    mod inside_raw_module {
+        use super::*;
+
+        #[test]
+        fn glob_of_the_raw_declared_parent() {
+            assert_eq!(render(2), 6);
+        }
+    }
+}
+
+#[cfg(test)]
+mod raw_declared_module {
+    use crate::r#c::render;
+
+    #[test]
+    fn raw_path_to_a_raw_declared_module() {
+        assert_eq!(render(2), 6);
+    }
+}
+
+#[cfg(test)]
+mod plain_path_to_raw_module {
+    use crate::c::render;
+
+    #[test]
+    fn plain_path_to_a_raw_declared_module() {
+        assert_eq!(render(2), 6);
+    }
+}
+";
+        let index = index(&[("src/lib.rs", source)]);
+        let a = "lib.rs::a::render";
+        let b = "lib.rs::b::render";
+        // A module declared `mod r#c` is the module `c`: an import path
+        // spelled either way, and a glob of it from inside, reach its
+        // `render` and no other.
+        for test in [
+            "raw_path_to_a_raw_declared_module",
+            "plain_path_to_a_raw_declared_module",
+            "glob_of_the_raw_declared_parent",
+        ] {
+            assert_eq!(
+                settle(&index, "::r#c::render", test),
+                Some(CallTarget::Owner),
+                "{test} against c"
+            );
+            assert_eq!(
+                settle(&index, a, test),
+                Some(CallTarget::Other),
+                "{test} against a"
+            );
+        }
+        for (test, on_a, on_b) in [
+            (
+                "raw_leaf_of_b_beside_a_glob_of_a",
+                CallTarget::Other,
+                CallTarget::Owner,
+            ),
+            ("raw_leaf_of_a", CallTarget::Owner, CallTarget::Other),
+            (
+                "raw_segments_in_a_group",
+                CallTarget::Other,
+                CallTarget::Owner,
+            ),
+            (
+                "raw_rename_to_the_same_name",
+                CallTarget::Other,
+                CallTarget::Owner,
+            ),
+        ] {
+            assert_eq!(settle(&index, a, test), Some(on_a), "{test} against a");
+            assert_eq!(settle(&index, b, test), Some(on_b), "{test} against b");
+        }
+    }
+
+    /// #12857: an attribute macro on a generated test can rewrite its body,
+    /// including adding a rebinding `use`, so the test must not borrow the
+    /// invocation-site scopes. Known harness and body-preserving attributes
+    /// keep the credit.
+    #[test]
+    fn attribute_macro_on_a_generated_test_takes_no_invocation_scopes()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let root = std::env::temp_dir().join(format!(
+            "ripr-macro-attr-identity-{}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)?
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(root.join("src"))?;
+        std::fs::create_dir_all(root.join("tests"))?;
+        std::fs::write(
+            root.join("Cargo.toml"),
+            "[package]\nname = \"modules\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+        )?;
+        std::fs::write(root.join("src/lib.rs"), "pub mod a;\npub mod b;\n")?;
+        std::fs::write(
+            root.join("src/a.rs"),
+            "pub fn render(x: i32) -> i32 {\n    x + 1\n}\n",
+        )?;
+        std::fs::write(
+            root.join("src/b.rs"),
+            "pub fn render(x: i32) -> i32 {\n    x + 2\n}\n",
+        )?;
+        std::fs::write(
+            root.join("tests/gen.rs"),
+            "macro_rules! harness {\n    ($name:ident) => {\n        #[test]\n        #[ignore]\n        #[allow(unused)]\n        #[doc = \"Checks an opening ( token\"]\n        #[must_use = \"x\"]\n        #[doc = \"x\"]\n        #[deprecated = \"x\"]\n        fn $name() {\n            assert_eq!(render(1), 2);\n        }\n    };\n}\n\nmacro_rules! injected {\n    ($name:ident) => {\n        #[test]\n        #[helpers::inject]\n        fn $name() {\n            assert_eq!(render(1), 2);\n        }\n    };\n}\n\nmod cases {\n    use modules::a::render;\n    harness!(harness_case);\n    injected!(injected_case);\n}\n",
+        )?;
+        let index = crate::analysis::facts::build_index(
+            &root,
+            &[
+                PathBuf::from("src/lib.rs"),
+                PathBuf::from("src/a.rs"),
+                PathBuf::from("src/b.rs"),
+                PathBuf::from("tests/gen.rs"),
+            ],
+        );
+        let _ = std::fs::remove_dir_all(&root);
+        let index = index?;
+        // Positive control: `#[ignore]`, `#[allow]` and `#[doc]` do not rewrite
+        // a body, even when a doc string holds an unmatched `(`.
+        assert_eq!(
+            settle(&index, "/a.rs::render", "harness_case"),
+            Some(CallTarget::Owner)
+        );
+        // The unknown attribute macro must be indexed, or the negative below
+        // is vacuous.
+        assert!(
+            index
+                .tests()
+                .iter()
+                .any(|test| test.name == "injected_case"),
+            "the attribute-macro case must be indexed"
+        );
+        assert_ne!(
+            settle(&index, "/a.rs::render", "injected_case"),
+            Some(CallTarget::Owner)
+        );
+        Ok(())
     }
 }

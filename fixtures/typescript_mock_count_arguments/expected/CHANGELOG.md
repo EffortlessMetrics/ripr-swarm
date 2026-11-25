@@ -139,3 +139,14 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human-full.txt`
+
+## Pending — typescript_mock_count_arguments (12)
+
+Reason:
+human-full: one blank line, not two, separates the last finding from a trailing Note (#14318)
+
+Command:
+`cargo xtask goldens bless typescript_mock_count_arguments --reason "..."`
+
+Updated:
+- `expected/human-full.txt`

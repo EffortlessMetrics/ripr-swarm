@@ -1395,48 +1395,73 @@ mod pathed {
         extra_items: "
 #[cfg(test)]
 mod crowded {
+    // Each crowd row also calls a foreign `add`, so it ranks as near the owner
+    // by name like `zz_pathed` (#15026). Eight of them fill the window ahead
+    // of it, and the tie keeps name order.
     use super::*;
 
     #[test]
     fn a01_operator() {
         let sum = Money(1) + Money(1);
+        let one = 0i64.add(1);
         assert_eq!(sum.0, 2);
+        assert_eq!(one, 1);
     }
 
     #[test]
     fn a02_operator() {
         let sum = Money(1) + Money(1);
+        let one = 0i64.add(1);
         assert_eq!(sum.0, 2);
+        assert_eq!(one, 1);
     }
 
     #[test]
     fn a03_operator() {
         let sum = Money(1) + Money(1);
+        let one = 0i64.add(1);
         assert_eq!(sum.0, 2);
+        assert_eq!(one, 1);
     }
 
     #[test]
     fn a04_operator() {
         let sum = Money(1) + Money(1);
+        let one = 0i64.add(1);
         assert_eq!(sum.0, 2);
+        assert_eq!(one, 1);
     }
 
     #[test]
     fn a05_operator() {
         let sum = Money(1) + Money(1);
+        let one = 0i64.add(1);
         assert_eq!(sum.0, 2);
+        assert_eq!(one, 1);
     }
 
     #[test]
     fn a06_operator() {
         let sum = Money(1) + Money(1);
+        let one = 0i64.add(1);
         assert_eq!(sum.0, 2);
+        assert_eq!(one, 1);
     }
 
     #[test]
     fn a07_operator() {
         let sum = Money(1) + Money(1);
+        let one = 0i64.add(1);
         assert_eq!(sum.0, 2);
+        assert_eq!(one, 1);
+    }
+
+    #[test]
+    fn a08_operator() {
+        let sum = Money(1) + Money(1);
+        let one = 0i64.add(1);
+        assert_eq!(sum.0, 2);
+        assert_eq!(one, 1);
     }
 
     #[test]
@@ -1460,7 +1485,9 @@ mod crowded {
         !crowded_last[0]
             .related_tests
             .iter()
-            .any(|test| test.name == "zz_pathed")
+            .any(|test| test.name == "zz_pathed"),
+        "{:#?}",
+        crowded_last[0].related_tests
     );
     assert_eq!(crowded_last[0].class, ExposureClass::WeaklyExposed);
     let crowded_path_call_first = Case {

@@ -116,6 +116,7 @@ impl ChangedFile {
     /// removed line interrupts (`-a -b +x -c +y`) keeps the same-coordinate
     /// match, the first removed line recorded at each added line's own
     /// coordinate.
+    #[cfg(any(test, feature = "lang-python", feature = "lang-typescript"))]
     pub(crate) fn aligned_counterparts(&self) -> BTreeMap<usize, &ChangedLine> {
         let mut pairs = BTreeMap::new();
         let added_at: BTreeMap<usize, &ChangedLine> = self
@@ -162,6 +163,34 @@ impl ChangedFile {
             }
         }
         pairs
+    }
+
+    /// New-side lines of every contiguous added run in which each line is
+    /// `quiet`. Such a run carries no behavior, so a removed line recorded
+    /// against it was deleted rather than replaced: the adapters drop these
+    /// lines from [`Self::aligned_counterparts`] so the removed line keeps
+    /// its own base-side record.
+    #[cfg(any(test, feature = "lang-python", feature = "lang-typescript"))]
+    pub(crate) fn added_lines_in_quiet_runs(
+        &self,
+        quiet: impl Fn(&ChangedLine) -> bool,
+    ) -> BTreeSet<usize> {
+        let mut added: Vec<&ChangedLine> = self.added_lines.iter().collect();
+        added.sort_by_key(|line| line.line);
+        let mut lines = BTreeSet::new();
+        let mut start = 0;
+        while start < added.len() {
+            let mut end = start + 1;
+            while end < added.len() && added[end - 1].line.checked_add(1) == Some(added[end].line) {
+                end += 1;
+            }
+            let run = &added[start..end];
+            if run.iter().all(|line| quiet(line)) {
+                lines.extend(run.iter().map(|line| line.line));
+            }
+            start = end;
+        }
+        lines
     }
 
     /// Added lines whose trimmed text is byte-identical to one removed line of
@@ -606,13 +635,16 @@ impl ReplacementRun<'_> {
 }
 
 /// Blocks with more line pairs than this pair nothing by content.
+#[cfg(any(test, feature = "lang-python", feature = "lang-typescript"))]
 const MAX_ALIGNED_CELLS: usize = 65_536;
 
 /// Lines with more code tokens than this, such as a minified bundle line,
 /// never pair by content, which bounds the work per pair of lines.
+#[cfg(any(test, feature = "lang-python", feature = "lang-typescript"))]
 const MAX_ALIGNED_TOKENS: usize = 256;
 
 /// Similarity, in thousandths, at or above which two lines may pair.
+#[cfg(any(test, feature = "lang-python", feature = "lang-typescript"))]
 const ALIKE_THRESHOLD: u32 = 500;
 
 /// Whether two lines are similar enough to read as one line edited: the
@@ -620,10 +652,12 @@ const ALIKE_THRESHOLD: u32 = 500;
 /// tokens (identifiers, keywords and numbers). String literals and line
 /// comments are left out, so a changed message or a reworded comment does
 /// not hide that the code around it is the same.
+#[cfg(any(test, feature = "lang-python", feature = "lang-typescript"))]
 pub(crate) fn lines_look_alike(old: &str, new: &str) -> bool {
     line_similarity(old, new) >= ALIKE_THRESHOLD
 }
 
+#[cfg(any(test, feature = "lang-python", feature = "lang-typescript"))]
 fn line_similarity(old: &str, new: &str) -> u32 {
     key_similarity(
         &(old.trim(), code_tokens(old)),
@@ -632,6 +666,7 @@ fn line_similarity(old: &str, new: &str) -> u32 {
 }
 
 /// Similarity of two lines from their precomputed [`line_key`]s.
+#[cfg(any(test, feature = "lang-python", feature = "lang-typescript"))]
 fn key_similarity(old: &(&str, Option<Vec<&str>>), new: &(&str, Option<Vec<&str>>)) -> u32 {
     if old.0 == new.0 {
         return 1000;
@@ -643,6 +678,7 @@ fn key_similarity(old: &(&str, Option<Vec<&str>>), new: &(&str, Option<Vec<&str>
 }
 
 /// Dice coefficient, in thousandths, of two sorted token lists.
+#[cfg(any(test, feature = "lang-python", feature = "lang-typescript"))]
 fn token_similarity(old: &[&str], new: &[&str]) -> u32 {
     let total = old.len() + new.len();
     if old.is_empty() || new.is_empty() {
@@ -665,6 +701,7 @@ fn token_similarity(old: &[&str], new: &[&str]) -> u32 {
 
 /// The sorted word tokens of one line, outside string literals and before
 /// any `//` comment, or `None` past [`MAX_ALIGNED_TOKENS`].
+#[cfg(any(test, feature = "lang-python", feature = "lang-typescript"))]
 fn code_tokens(line: &str) -> Option<Vec<&str>> {
     let mut tokens = Vec::new();
     let mut chars = line.char_indices().peekable();
@@ -708,6 +745,7 @@ fn code_tokens(line: &str) -> Option<Vec<&str>> {
 }
 
 /// A line's trimmed text and sorted code tokens, computed once per line.
+#[cfg(any(test, feature = "lang-python", feature = "lang-typescript"))]
 fn line_key(line: &ChangedLine) -> (&str, Option<Vec<&str>>) {
     run_work!();
     (line.text.trim(), code_tokens(&line.text))
@@ -718,6 +756,7 @@ fn line_key(line: &ChangedLine) -> (&str, Option<Vec<&str>>) {
 /// among the block's lines; a tie pairs nothing, since choosing would be a
 /// guess. Pairs that would cross (a later removed line paired with an
 /// earlier added line) are dropped, because a replacement keeps order.
+#[cfg(any(test, feature = "lang-python", feature = "lang-typescript"))]
 fn align_by_content(removed: &[&ChangedLine], added: &[&ChangedLine]) -> Vec<(usize, usize)> {
     let (rows, cols) = (removed.len(), added.len());
     if rows == 0 || cols == 0 || rows.saturating_mul(cols) > MAX_ALIGNED_CELLS {
@@ -774,6 +813,24 @@ fn align_by_content(removed: &[&ChangedLine], added: &[&ChangedLine]) -> Vec<(us
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn quiet_runs_are_whole_added_runs_of_quiet_lines() {
+        let changed = ChangedFile {
+            path: PathBuf::from("a.py"),
+            added_lines: vec![
+                line(5, 5, "code"),
+                line(2, 2, "# note"),
+                line(4, 4, "# note"),
+            ],
+            removed_lines: vec![line(2, 2, "old one"), line(4, 4, "old two")],
+        };
+        let quiet = changed.added_lines_in_quiet_runs(|line| line.text.starts_with('#'));
+        // Line 2 is a run of one comment; lines 4 and 5 are a run that holds
+        // code, so its comment is not in a quiet run.
+        assert_eq!(quiet.into_iter().collect::<Vec<_>>(), vec![2]);
+        assert!(changed.added_lines_in_quiet_runs(|_| false).is_empty());
+    }
 
     #[test]
     fn model_types_are_constructible() {

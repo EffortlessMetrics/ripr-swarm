@@ -25,7 +25,8 @@ const TESTS: &str = "#[cfg(test)]\nmod tests {\n    use super::*;\n\
     #[test] fn parses() { assert!(parse(\"12\").is_ok()); }\n\
     #[test] fn gold() { assert_eq!(tier(50), \"gold\"); }\n}\n";
 
-fn workspace(label: &str) -> TestResult<(std::path::PathBuf, DeclaredHunkScratch)> {
+/// Also the subject of `check_work_budget`, so both budgets measure one diff.
+pub(super) fn workspace(label: &str) -> TestResult<(std::path::PathBuf, DeclaredHunkScratch)> {
     let project = unique_external_workspace(label)?;
     let cleanup = DeclaredHunkScratch(project.clone());
     fs::create_dir_all(project.join("src"))?;

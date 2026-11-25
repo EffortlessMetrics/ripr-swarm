@@ -184,3 +184,264 @@ fn an_or_tail_whose_changed_operand_never_runs_stays_below_exposed() -> Result<(
     }
     Ok(())
 }
+
+// #8361 (`benchmarks/stub_quality/cases/D_unsafe_const`): the edit drops or
+// adds one whole guard operand. On a pinned call whose literal argument
+// leaves that operand at its chain's identity value (`true` for `&&`), both
+// versions return the same value, so the pin cannot notice the edit.
+const POW2_SOURCE: &str = "pub fn is_pow2(n: u32) -> bool {\n    n & (n - 1) == 0\n}\n";
+const POW2_OLD: &str = "    n != 0 && n & (n - 1) == 0";
+const POW2_TAIL: &str = "n & (n - 1) == 0";
+
+const EVEN_SOURCE: &str = "pub fn is_even(n: u32) -> bool {\n    n != 0 && n % 2 == 0\n}\n";
+const EVEN_OLD: &str = "    n % 2 == 0";
+const EVEN_TAIL: &str = "n != 0 && n % 2 == 0";
+
+// The same owner with the guard dropped. The substituted-call regression
+// needs a deletion: an added guard is refused by the short-circuit run check
+// before the agreement gate, so the helper case would pass without ever
+// reading the derived call (#14194 review).
+const EVEN_DROPPED_SOURCE: &str = "pub fn is_even(n: u32) -> bool {\n    n % 2 == 0\n}\n";
+const EVEN_DROPPED_OLD: &str = "    n != 0 && n % 2 == 0";
+const EVEN_DROPPED_TAIL: &str = "n % 2 == 0";
+
+#[test]
+fn a_dropped_guard_no_pinned_call_makes_decide_stays_below_exposed() -> Result<(), String> {
+    let agreeing = direct_test(
+        "short_circuit_or_tail",
+        &["assert!(is_pow2(4));", "assert!(!is_pow2(6));"],
+    );
+    let (class, _) = return_value_class(POW2_SOURCE, POW2_OLD, POW2_TAIL, &agreeing)?;
+    assert_ne!(class, ExposureClass::Exposed, "{agreeing}");
+    let table = table_test(
+        "short_circuit_or_tail",
+        "is_pow2(n)",
+        "(4, true), (6, false), (1, true)",
+        "n",
+    );
+    let (class, _) = return_value_class(POW2_SOURCE, POW2_OLD, POW2_TAIL, &table)?;
+    assert_ne!(class, ExposureClass::Exposed, "{table}");
+    Ok(())
+}
+
+#[test]
+fn a_dropped_guard_a_pinned_call_makes_decide_keeps_its_exposure() -> Result<(), String> {
+    // `is_pow2(0)` is where the dropped `n != 0` was `false`: the old
+    // version returned `false` there, so this pin tells the versions apart.
+    for asserts in [
+        &["assert!(is_pow2(0));"][..],
+        &["assert!(is_pow2(4));", "assert!(is_pow2(0));"][..],
+    ] {
+        let test = direct_test("short_circuit_or_tail", asserts);
+        let (class, _) = return_value_class(POW2_SOURCE, POW2_OLD, POW2_TAIL, &test)?;
+        assert_eq!(class, ExposureClass::Exposed, "{test}");
+    }
+    // An argument ripr cannot read keeps today's reading: the agreement is
+    // shown, never assumed.
+    let unread = "use short_circuit_or_tail::*;\n\n#[test]\nfn direct() {\n    let n = 4;\n    assert!(is_pow2(n));\n}\n";
+    let (class, _) = return_value_class(POW2_SOURCE, POW2_OLD, POW2_TAIL, unread)?;
+    assert_eq!(class, ExposureClass::Exposed, "{unread}");
+    Ok(())
+}
+
+/// A test-local `check` helper that compares two of its own `String`
+/// parameters, so its assertion names no owner. The owner call reaches it
+/// through the two `let` bindings, and the substitution reads the rendered
+/// call from `actual`'s initializer rather than from the assertion text
+/// (#14194 review: the substituted-pin path, not a direct assertion).
+fn helper_test(call: &str, expected: &str) -> String {
+    format!(
+        "use short_circuit_or_tail::*;\n\nfn check(actual: String, expected: String) {{\n    assert_eq!(actual, expected);\n}}\n\n#[test]\nfn helper() {{\n    let actual = format!(\"{{}}\", {call});\n    let expected = String::from(\"{expected}\");\n    check(actual, expected);\n}}\n"
+    )
+}
+
+#[test]
+fn a_wrapper_pin_reaches_the_same_verdict_as_the_direct_pin() -> Result<(), String> {
+    // #14194 review: the invariant is parity between the wrapper and direct
+    // forms for the same owner edit, not the direct form alone. An agreeing
+    // input must keep credit in every form, and a deciding input must
+    // withhold it in every form. Before the derived-call-text repair the
+    // wrapper forms silently kept credit in both, and the `helper` form is
+    // the one whose assertion text names no owner at all, so it fails on the
+    // old `walk_site = call_text.unwrap_or(assertion.text)` reading even
+    // though the other three already found the call.
+    let agreeing = [
+        (
+            "direct",
+            direct_test(
+                "short_circuit_or_tail",
+                &["assert!(is_pow2(4));", "assert!(!is_pow2(6));"],
+            ),
+        ),
+        (
+            "indexed",
+            direct_test(
+                "short_circuit_or_tail",
+                &[
+                    "assert_eq!(vec![is_pow2(4)][0], true);",
+                    "assert_eq!(vec![is_pow2(6)][0], false);",
+                ],
+            ),
+        ),
+        (
+            "rendered",
+            direct_test(
+                "short_circuit_or_tail",
+                &[
+                    "assert_eq!(format!(\"{}\", is_pow2(4)), \"true\");",
+                    "assert_eq!(format!(\"{}\", is_pow2(6)), \"false\");",
+                ],
+            ),
+        ),
+        ("helper", helper_test("is_pow2(4)", "true")),
+    ];
+    let deciding = [
+        (
+            "direct",
+            direct_test("short_circuit_or_tail", &["assert!(is_pow2(0));"]),
+        ),
+        (
+            "indexed",
+            direct_test(
+                "short_circuit_or_tail",
+                &["assert_eq!(vec![is_pow2(0)][0], false);"],
+            ),
+        ),
+        (
+            "rendered",
+            direct_test(
+                "short_circuit_or_tail",
+                &["assert_eq!(format!(\"{}\", is_pow2(0)), \"false\");"],
+            ),
+        ),
+        ("helper", helper_test("is_pow2(0)", "false")),
+    ];
+    for (name, test) in agreeing {
+        let (class, _) = return_value_class(POW2_SOURCE, POW2_OLD, POW2_TAIL, &test)
+            .map_err(|error| format!("{name} agreeing: {error}"))?;
+        assert_ne!(
+            class,
+            ExposureClass::Exposed,
+            "{name} agreeing input must keep the agreement, not expose: {test}"
+        );
+    }
+    for (name, test) in deciding {
+        let (class, _) = return_value_class(POW2_SOURCE, POW2_OLD, POW2_TAIL, &test)
+            .map_err(|error| format!("{name} deciding: {error}"))?;
+        assert_eq!(
+            class,
+            ExposureClass::Exposed,
+            "{name} deciding input must withhold credit: {test}"
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn the_substituted_rendered_call_withholds_exactly_like_the_direct_pin() -> Result<(), String> {
+    // The shape the Reviewer named: the owner drops `n != 0` from
+    // `n != 0 && n % 2 == 0`, and the pin reaches it through a borrowed
+    // helper whose assertion names only its parameters
+    // (`assert_eq!(actual, expected)`), so the assertion text holds no call.
+    // A deletion, not an addition: an added guard is refused by the
+    // short-circuit run check before the agreement gate, so the helper case
+    // would pass without ever reading the derived call (#14194 review).
+    for (name, test) in [
+        ("helper", helper_test("is_even(4)", "true")),
+        (
+            "direct",
+            direct_test("short_circuit_or_tail", &["assert!(is_even(4));"]),
+        ),
+    ] {
+        let (class, _) = return_value_class(
+            EVEN_DROPPED_SOURCE,
+            EVEN_DROPPED_OLD,
+            EVEN_DROPPED_TAIL,
+            &test,
+        )
+        .map_err(|error| format!("{name}: {error}"))?;
+        assert_ne!(
+            class,
+            ExposureClass::Exposed,
+            "{name} pin must withhold the credit, not expose: {test}"
+        );
+    }
+    // The deciding helper input is the positive control: `is_even(0)` is
+    // where the dropped `n != 0` was false, so the edit changes the result.
+    for (name, test) in [
+        ("helper", helper_test("is_even(0)", "false")),
+        (
+            "direct",
+            direct_test("short_circuit_or_tail", &["assert!(!is_even(0));"]),
+        ),
+    ] {
+        let (class, _) = return_value_class(
+            EVEN_DROPPED_SOURCE,
+            EVEN_DROPPED_OLD,
+            EVEN_DROPPED_TAIL,
+            &test,
+        )
+        .map_err(|error| format!("{name} deciding: {error}"))?;
+        assert_eq!(
+            class,
+            ExposureClass::Exposed,
+            "{name} deciding input must keep the credit: {test}"
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn a_substituted_call_reads_the_tests_scope_not_a_same_named_helper_parameter() -> Result<(), String>
+{
+    // The helper's third parameter is also named `n`. The substituted call
+    // `is_even(n)` must not read the helper's `4`: with the loan withheld the
+    // test's `let n = 0` is unreadable (a plain identifier argument is read
+    // only from a constant-row `for` table), so agreement cannot be established and
+    // the pin stays exposed. Without the filter the helper's `4` is read, the
+    // dropped guard agrees, and the class drops to weakly_exposed — that is
+    // the discrimination this test pins (#14194 review).
+    let collision = "use short_circuit_or_tail::*;\n\nfn check(actual: String, expected: String, n: u32) {\n    assert_eq!(actual, expected);\n    let _ = n;\n}\n\n#[test]\nfn helper() {\n    let n = 0;\n    let actual = format!(\"{}\", is_even(n));\n    let expected = String::from(\"false\");\n    check(actual, expected, 4);\n}\n";
+    let (class, _) = return_value_class(
+        EVEN_DROPPED_SOURCE,
+        EVEN_DROPPED_OLD,
+        EVEN_DROPPED_TAIL,
+        collision,
+    )
+    .map_err(|error| format!("collision: {error}"))?;
+    assert_eq!(class, ExposureClass::Exposed, "{collision}");
+    // The literal control reads the same deciding value without the loan.
+    let literal = "use short_circuit_or_tail::*;\n\nfn check(actual: String, expected: String, n: u32) {\n    assert_eq!(actual, expected);\n    let _ = n;\n}\n\n#[test]\nfn helper() {\n    let actual = format!(\"{}\", is_even(0));\n    let expected = String::from(\"false\");\n    check(actual, expected, 4);\n}\n";
+    let (class, _) = return_value_class(
+        EVEN_DROPPED_SOURCE,
+        EVEN_DROPPED_OLD,
+        EVEN_DROPPED_TAIL,
+        literal,
+    )
+    .map_err(|error| format!("literal: {error}"))?;
+    assert_eq!(class, ExposureClass::Exposed, "{literal}");
+    Ok(())
+}
+
+#[test]
+fn an_added_guard_follows_the_same_agreement_rule() -> Result<(), String> {
+    let agreeing = direct_test(
+        "short_circuit_or_tail",
+        &["assert!(is_even(4));", "assert!(!is_even(3));"],
+    );
+    let (class, _) = return_value_class(EVEN_SOURCE, EVEN_OLD, EVEN_TAIL, &agreeing)?;
+    assert_ne!(class, ExposureClass::Exposed, "{agreeing}");
+    // A table whose `(0, false)` row makes the added `n != 0` decide keeps
+    // the credit its `(4, true)` row earns under item 2's run check: the
+    // agreement must hold on every run of the call. (A lone
+    // `assert!(!is_even(0))` stops at the guard and was never a pin.)
+    let deciding = table_test(
+        "short_circuit_or_tail",
+        "is_even(n)",
+        "(4, true), (0, false)",
+        "n",
+    );
+    let (class, _) = return_value_class(EVEN_SOURCE, EVEN_OLD, EVEN_TAIL, &deciding)?;
+    assert_eq!(class, ExposureClass::Exposed, "{deciding}");
+    Ok(())
+}

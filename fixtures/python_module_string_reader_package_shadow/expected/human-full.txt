@@ -61,7 +61,6 @@ Drill in:
   ripr explain --root <cwd>/fixtures/python_module_string_reader_package_shadow/input --diff <cwd>/fixtures/python_module_string_reader_package_shadow/diff.patch --mode fast probe:fx_core.py:python_preview:509cf8c1
   ripr context --root <cwd>/fixtures/python_module_string_reader_package_shadow/input --diff <cwd>/fixtures/python_module_string_reader_package_shadow/diff.patch --mode fast --at probe:fx_core.py:python_preview:509cf8c1
 
-
 Note: ripr could not classify any of the 1 changed expression(s) in this diff well enough to
   establish a static test path. Scope analyzed: 1 changed expression(s) and 0 statically linked
   related test(s). This is not a coverage assessment. A test may already exercise these changes
