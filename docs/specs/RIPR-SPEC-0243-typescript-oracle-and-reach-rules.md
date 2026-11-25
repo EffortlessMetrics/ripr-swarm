@@ -950,11 +950,17 @@ Candidates come from the first non-empty tier:
    strings, templates and comments do not count), a name defined twice in the
    class, a name some method assigns, deletes or defines on `this`, a name an
    instance field of the class defines (a computed field defines any name),
-   an arrow body that is not the first argument of a synchronous array method
+   an arrow, parameter defaults included, that is not an unannotated,
+   non-async first argument of a synchronous array method
    (`forEach`, `map`, `filter`, `reduce`, `some`, `every`, `find`, `sort` and
-   their kin; `map`'s `thisArg` is a stored value; `const later = () => this.helper()`, an array element, a logical
+   their kin; `map`'s `thisArg` is a stored value; `const later = () => this.helper()`,
+   `const later = (k = this.helper()) => k`, an array element, a logical
    operand, a stored callback, and a deferred callee such as `setTimeout`,
-   an event listener, `subscribe` or `then` are created or run later), the body
+   an event listener, `subscribe` or `then` are created or run later; an
+   async callback runs past its first `await` later, and an arrow with a
+   return type annotation is never read as a synchronous callback; an
+   annotation the scan cannot bound, a function or conditional type, drops
+   the caller), the body
    of a nested `function`, parameter defaults included (a call the method makes
    outside it still counts; a
    function whose parameters are followed by a return type annotation, or a
@@ -1001,6 +1007,136 @@ Candidates come from the first non-empty tier:
    bare-call edges does not extend to its own `ModuleFunction` owner.
    Module-const (`ModuleFunction` value) reach stays same-module only: it
    does not continue across an import, and an exported value is not followed.
+   **Built values and function references (#15928).** Two more forms are
+   edges of the same graph, under the same hop bound and the same limits.
+   `new X(...)` is a read of a module-level `const X`: constructing an
+   instance binds nothing to the name. A `const` built by an immediately
+   invoked function with no arguments (`const X = (function () { class X
+   { ... } return X; })()`, or the arrow form; not `async`, not a generator)
+   also calls what that function's text bare-calls, methods of a class it
+   declares included, because the owner is the whole `const`: an exported
+   entry that constructs the class reaches the module functions the class's
+   code calls. The entry reaches the value only from code that runs when it
+   runs, under the same header and nesting rule as the class constructions
+   below: a read inside a stored or deferred arrow (`const later = () => new
+   X().m()`, `setTimeout(() => ...)`) is no edge. An expression-bodied
+   arrow runs its whole expression when it is the entry itself or the
+   function a factory product returns (`export const f = (x) => new
+   X().m(x)`, `export const f = make()` where `make` returns that arrow),
+   so it keeps the edge; the factory itself, which only makes the arrow,
+   does not. When the building function declares the binding's own name,
+   mentions of the name inside it are the inner binding and are left out of
+   the module-wide scan; every mention outside it must be an allowlisted read
+   and, when the building function's parsed body holds any block or arrow
+   (a class, a method, a nested function or a block statement whose code
+   may run later), a construction that goes straight into a member call,
+   `new X(...).member(` (not `constructor`, `valueOf`, `toString`,
+   `toLocaleString` or `__proto__`), with no text outside it,
+   literals and comments included, naming `prototype`, `__proto__`,
+   `constructor`, `getPrototypeOf`, `setPrototypeOf` or `Reflect`, and no
+   `this` in the body other than `this.x`, `this?.x`, `this[...]`, a call
+   `this.x(` of a member the body declares (`this.valueOf()` hands the
+   instance back), or the receiver of `NAME.call(` / `NAME.apply(` where the
+   body binds `NAME` from `this[...]` or a member it declares
+   (`const h = this["$" + t]; h.call(this, v)`)
+   (an allowlisted read such as
+   `patch(X.prototype)`, a kept instance, `new X()["__proto__"]`, or a method
+   that returns `this` or hands it to other code, could replace a method
+   every later instance runs). A top-level name the building function also declares as
+   a member (`compare(a, b) { ... }`) is no edge, and neither is a call
+   followed by `:` (a conditional arm reads like a return type). A function
+   passed by reference as the whole first argument of a synchronous array
+   callback method (`keys.sort(compare)`, `values.reduce(add, 0)`) is a call
+   of it when the function is declared in this module, the module never
+   reassigns it, and the reference is code, not a comment or a literal; an imported binding passed by reference
+   is no edge, so cross-module reach stays bare calls only. An explicit type
+   argument list and whitespace before the argument list are read through
+   (`new Box<string>()`, `new Box ()`, `values.map<string>(format)`); `new
+   Box` with no argument list is not a construction here. Any other mention of the name in the enclosing function (stored,
+   an array element, a later argument, an argument of a bare call,
+   `setTimeout`, `then`, an event listener) leaves no call edge; the
+   closure edges below may still read it as value-passing reach. Limits: the
+   class is one node, so a method no entry calls is reached with the rest of
+   the class, and so is a function only a method the building function itself
+   replaces calls (static text reach, as for the bare-call graph); a
+   member reached through a computed `this[...]` is trusted not to hand the
+   instance back, and a prototype key built at run time
+   (`o["__pro" + "to__"]`) is not seen; every guard reads the shared
+   literal and comment mask, so text that desynchronizes it (#16244) is a limit of
+   all masked checks; the receiver of the array method is not typed.
+   **Methods of a module-private class (#15928).** A top-level `class X`
+   declaration that is not exported has one node per plain instance method,
+   `X.method`, in the same graph under the same hop bound. A function or
+   method reaches `X.method` by `new X(...).method(` written as one
+   expression in code that runs when it runs (not inside a nested function,
+   or an arrow, parameter defaults included, other than an unannotated,
+   non-async synchronous array callback, such as
+   `const later = () => new X().m()`, `const later = (v = new X().m()) => v`
+   or `setTimeout(() => ...)`; a generator function or method, whose body
+   runs only when its iterator is advanced, reaches no class or built value
+   (#16249); a function
+   whose header is not `(params) [: Type] [=>] {` gives no construction
+   edge, except an arrow `(params) [: Type] => expression` whose
+   expression holds no nested function, class or block, which runs it
+   all), when every
+   mention of `X` in that function is a construction.
+   `X.method` calls what its text bare-calls, the sibling methods it calls
+   as `this.other(` (or hands by reference to a synchronous array callback),
+   and the methods it runs on a class it constructs the same way. A method
+   owner then carries the exported entries that reach its node, and so does
+   a module function only such a method calls. Fail-closed: the class has no
+   `extends`, no decorator (on the class, a member or a parameter: any `@`
+   in the class's code, outside comments and literals, refuses it; a JSDoc
+   `@param` does not), no computed member and no `return` in a constructor
+   spelled `constructor` or `"constructor"`, no `this.m` of a method other
+   than a direct call (`this.m(`, `this.m?.(`, `this.m<T>(`) or an argument
+   of a call whose `(` follows a callee name, not a keyword or `)`
+   (`.sort(this.m)`), since any other spelling may be an assignment target
+   that replaces it (`[this.m] = ...`, `({ k: this.m } = ...)`,
+   `for (this.m of ...)`, `(this.m as T) = f`, `this.m! = f`,
+   `(this.m) = f`, `if (c) (this.m) &&= f`); its name is declared once
+   in the file and every other mention outside the declaration is a
+   construction `new X(...)` (a property of the same name `o.X`, which
+   text cannot tell from the binding after `1.` and a line break, an alias,
+   a read such as `X.prototype` even
+   when nothing writes through it, a type position, a re-export, a subclass,
+   a prototype write or any other mention refuses the whole class); the class text uses `this` only
+   as a plain access `this.name` / `this?.name` / `this.#name` to a member
+   the class body declares or a field it assigns as `this.name = ...`, calls
+   `this.name(...)` only for an instance method the class declares that no
+   field, accessor or quoted key shares the name of and that nothing in the
+   module reassigns (a field
+   or getter may hold `Object.prototype.valueOf`, which returns the
+   instance; any other member must be followed by a separator or operator
+   that cannot call it, so `(this.f)()`, `this.f!()`, `this.f<T>()` and a
+   comment before `(` refuse the class), has no static member or static
+   block (whose `this` is the class), and never uses `super` or
+   `new.target` (`Object.assign(this, o)`,
+   `this[key] = f`, `(this as any).name`, `const self = this`, an inherited
+   member such as `this.constructor`, `this.__proto__`, `this.valueOf()` or
+   `this.__defineGetter__`, a static block's `this.prototype`,
+   `super.valueOf()` or `new.target.prototype` refuses every method, since
+   any of them can replace a method on the instance the entry calls; the
+   class text is not masked, so a `this` in a comment, a string or a type
+   position is scanned like code and may refuse the class, and a member name
+   spelled with a unicode escape refuses it); every `new X(...)` in the
+   module is the direct receiver of a call to one of its methods,
+   `new X(...).method(` (a kept, passed or inspected instance, such as
+   `Object.getPrototypeOf(new X())`, refuses the class); a method is a node only when
+   no other member of the class has its name (a field, an accessor, a
+   static, or a member whose key is the same name quoted, `"write" = ...`),
+   it is not a generator, nothing in the module assigns a member of that
+   name on any receiver, and no literal bracket key of that name
+   (`["write"]`) appears anywhere in the module, even as a read. Limits: an instance kept in a
+   variable (`const s = new X(); s.method()`) refuses the whole class, and neither
+   is a class expression, a static method, an accessor or a constructor body.
+   A module whose code (outside comments and literals) names `eval` or
+   `Function` (other than `Function.prototype.toString.call(`, which only
+   reads a function's source), or holds a `\` (an identifier spelled with a unicode escape),
+   follows no module value, built value or class, since either can write one
+   under a spelling the scan cannot see; and a mention after `.` reads as
+   another binding only when the `.` does not follow a digit, which may end a
+   numeric literal before a line break (`1.\nX.prototype.m = f`).
    **Cross-module continuation (#13592).** The same chain continues across an
    import: an exported function of module X that bare-calls a binding it
    imported from module Y reaches the owner Y declares (or the owner Y's own
@@ -1056,7 +1192,9 @@ Candidates come from the first non-empty tier:
    call-built constant, callee included). As for calls, a function's directly
    returned functions are not its own code: calling a factory does not run
    them, so only a value the factory builds reaches what they reference. This covers a function passed as
-   a value (`JSON.parse(text, reviver)`, `keys.sort(compare)`), a call-built
+   a value (`JSON.parse(text, reviver)`, `setTimeout(tick)`; a synchronous
+   array callback such as `keys.sort(compare)` is a call edge above, so
+   it is no closure edge), a call-built
    constant passed or referenced as a value (`parse(input, Grammar)`), the
    callbacks of such a constant (`const Rule = match(re, (s) => upper(s))`)
    and the combinator that built it (`match`). A name the referencing code
@@ -2769,6 +2907,26 @@ keys); do not take the next number.
   pins the read-only allowlist, the shadowed, aliased, passed-along, `let`/`var`,
   assigned and module-mutated refusals, the unused and uncalled-reader controls
   (`no_static_path`), and the called-reader `static_unknown` reading.
+
+- #15928 (built values and function references): `tests/built_value_entry_tests.rs`
+  pins the constructing entry, the class's callees, the arrow form, the
+  parameter, local, passed-along and unconstructed refusals, module-level
+  writes outside the building function, the same-name member, the synchronous
+  callback methods against stored and deferred references, and the
+  `static_unknown` and `no_static_path` readings;
+  `fixtures/typescript_built_class_entry_reach` pins the rendered check.
+
+- #15928 (methods of a module-private class): `tests/plain_class_entry_tests.rs`
+  pins the constructed method, the sibling called on `this`, the function only
+  a method calls, the hop bound, the method off the call path, the parameter,
+  local-class, stored-instance, method-reference, namespace and string
+  refusals, the replaced, aliased, typed, re-exported and subclassed class,
+  the field, accessor, constructor and member-assignment refusals, the
+  deferred `this` call, the parameter default of an arrow never called (typed
+  or not) against the default of a synchronous callback, the async and
+  annotated callbacks, the returning constructor, and the `static_unknown`
+  and `no_static_path` readings;
+  `fixtures/typescript_plain_class_entry_reach` pins the rendered check.
 
 - #10314 (decorated-method reach, constructor spellings): `crates/ripr/src/analysis/language/typescript/tests/decorated_reach_tests.rs`
   pins `aliased_constructor_import_credits_the_return_edit` (a named-import alias

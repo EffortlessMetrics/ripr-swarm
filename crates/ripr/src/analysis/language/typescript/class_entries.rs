@@ -217,7 +217,7 @@ fn class_entries_for(
 /// that may rebind `this` in a way the blanking cannot isolate (a nested
 /// `class`, an object/class method shorthand such as `{ run() { ... } }`, or a
 /// function whose return type annotation hides its body).
-fn executed_this_source(source: &str) -> Option<String> {
+pub(super) fn executed_this_source(source: &str) -> Option<String> {
     let mut code = super::tests_extract::byte_preserving_code_mask(source)?;
     // The method's own `name(params) {` header is not a nested method.
     let body_start = first_top_level_brace(&code)?;
@@ -227,7 +227,9 @@ fn executed_this_source(source: &str) -> Option<String> {
     if contains_word(&code, "class") || has_method_shorthand(&code, body_start) {
         return None;
     }
-    blank_unexecuted_arrows(&mut code);
+    if !blank_unexecuted_arrows(&mut code) {
+        return None;
+    }
     Some(code)
 }
 
@@ -368,11 +370,13 @@ fn matching_open_paren(code: &str, close: usize) -> Option<usize> {
     None
 }
 
-/// Blank the body of every arrow function that is not an argument of a call.
-/// Creating such an arrow (`const later = () => this.helper()`) does not run
-/// it; an arrow in argument position (`items.forEach((x) => ...)`) is read as
-/// invoked.
-fn blank_unexecuted_arrows(code: &mut String) {
+/// Blank every arrow function, parameters and body, that is not an
+/// unannotated, non-async synchronous array callback. Creating such an arrow
+/// (`const later = (x = this.helper()) => 0`) runs neither its parameter
+/// defaults nor its body; an unannotated arrow passed to a synchronous array
+/// method (`items.forEach((x) => ...)`) is read as invoked. Returns `false`
+/// when an arrow's return type annotation cannot be bounded.
+fn blank_unexecuted_arrows(code: &mut String) -> bool {
     let mut ranges: Vec<std::ops::Range<usize>> = Vec::new();
     for (arrow, _) in code.match_indices("=>") {
         let before = code[..arrow].trim_end();
@@ -389,15 +393,26 @@ fn blank_unexecuted_arrows(code: &mut String) {
                 .last()
                 .map_or(before.len(), |(index, _)| index)
         };
-        let mut head = code[..params_start].trim_end();
-        if let Some(rest) = head.strip_suffix("async")
-            && !rest.ends_with(is_javascript_identifier_char)
+        let head = code[..params_start].trim_end();
+        // An async callback runs only up to its first `await` before the
+        // array method returns; what follows runs later, so it is never read
+        // as a synchronous callback.
+        let is_async = head
+            .strip_suffix("async")
+            .is_some_and(|rest| !rest.ends_with(is_javascript_identifier_char));
+        let Some(annotated_params) = return_annotation_params(before) else {
+            return false;
+        };
+        // An annotated arrow is never credited as a synchronous callback, so
+        // the annotation cannot widen what runs.
+        if !is_async
+            && annotated_params.is_none()
+            && head.ends_with('(')
+            && callback_runs_synchronously(head)
         {
-            head = rest.trim_end();
-        }
-        if head.ends_with('(') && callback_runs_synchronously(head) {
             continue;
         }
+        let start = annotated_params.unwrap_or(params_start);
         let after = arrow + 2;
         let body = code[after..].trim_start();
         let body_start = code.len() - body.len();
@@ -406,9 +421,51 @@ fn blank_unexecuted_arrows(code: &mut String) {
         } else {
             expression_end(code, body_start)
         };
-        ranges.push(after..end);
+        ranges.push(start..end);
     }
     blank_ranges(code, ranges);
+    true
+}
+
+/// For the text `before` an arrow's `=>`, `Some(Some(open))` with the `(` of
+/// the parameter list when a return type annotation (`(x = d): T =>`) sits
+/// between them, `Some(None)` when there is none, and `None` when the scan
+/// cannot place the annotation: a nested `=>` (a function type), a `?` after
+/// a `:` (a conditional type or a ternary), or an unmatched `)`. Reading a
+/// ternary branch or an object key that follows `)` as an annotation only
+/// blanks more code.
+fn return_annotation_params(before: &str) -> Option<Option<usize>> {
+    let bytes = before.as_bytes();
+    let mut depth = 0usize;
+    let mut seen_colon = false;
+    let mut index = bytes.len();
+    while index > 0 {
+        index -= 1;
+        match bytes[index] {
+            b'>' if index > 0 && bytes[index - 1] == b'=' => {
+                if depth == 0 {
+                    return None;
+                }
+                index -= 1;
+            }
+            b')' | b']' | b'}' | b'>' => depth += 1,
+            b'(' | b'[' | b'{' | b'<' => match depth.checked_sub(1) {
+                Some(next) => depth = next,
+                None => return Some(None),
+            },
+            b':' if depth == 0 => {
+                let head = before[..index].trim_end();
+                if head.ends_with(')') {
+                    return matching_open_paren(head, head.len() - 1).map(Some);
+                }
+                seen_colon = true;
+            }
+            b'?' if depth == 0 && seen_colon => return None,
+            b';' | b',' | b'=' | b'?' if depth == 0 => return Some(None),
+            _ => {}
+        }
+    }
+    Some(None)
 }
 
 /// Methods that call a callback argument before they return.
@@ -432,7 +489,7 @@ const SYNC_CALLBACK_METHODS: [&str; 14] = [
 /// `true` when masked method source passes a `this.callee` reference that runs
 /// synchronously: as the first argument of a synchronous array callback, or
 /// through `.call(`, `.apply(`, or an immediately invoked `.bind(this)(`.
-fn runs_this_method_reference(executed: &str, callee: &str) -> bool {
+pub(super) fn runs_this_method_reference(executed: &str, callee: &str) -> bool {
     if !is_safe_javascript_identifier(callee) {
         return false;
     }
@@ -509,7 +566,7 @@ fn sync_callback_first_method_reference(executed: &str, ref_start: usize, needle
 /// first in the argument list of a call to one of [`SYNC_CALLBACK_METHODS`] on a
 /// receiver; a later argument (`map`'s `thisArg`) is a stored value. An array element, a parenthesized operand, a stored callback and a
 /// deferred callee (`setTimeout`, `on`, `subscribe`, `then`) do not qualify.
-fn callback_runs_synchronously(head: &str) -> bool {
+pub(super) fn callback_runs_synchronously(head: &str) -> bool {
     let mut depth = 0usize;
     let mut open = None;
     for (index, ch) in head.char_indices().rev() {
@@ -527,7 +584,7 @@ fn callback_runs_synchronously(head: &str) -> bool {
     let Some(open) = open else {
         return false;
     };
-    let callee = head[..open].trim_end();
+    let callee = before_type_arguments(head[..open].trim_end());
     let name_len: usize = callee
         .chars()
         .rev()
@@ -536,6 +593,29 @@ fn callback_runs_synchronously(head: &str) -> bool {
         .sum();
     let name = &callee[callee.len() - name_len..];
     callee[..callee.len() - name_len].ends_with('.') && SYNC_CALLBACK_METHODS.contains(&name)
+}
+
+/// `callee` without a trailing explicit type argument list (`map<string>`),
+/// which is erased at runtime. An arrow (`=>`) or a comparison is left as is.
+fn before_type_arguments(callee: &str) -> &str {
+    if !callee.ends_with('>') {
+        return callee;
+    }
+    let mut depth = 0usize;
+    for (index, ch) in callee.char_indices().rev() {
+        match ch {
+            '>' => depth += 1,
+            '<' => {
+                depth = depth.saturating_sub(1);
+                if depth == 0 {
+                    return callee[..index].trim_end();
+                }
+            }
+            '(' | ')' | ';' | '{' | '}' | '=' => return callee,
+            _ => {}
+        }
+    }
+    callee
 }
 
 fn balanced_end(code: &str, start: usize, open: char, close: char) -> usize {
