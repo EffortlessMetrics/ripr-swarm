@@ -7044,7 +7044,7 @@ mod tests {
             "{cleaned}"
         );
 
-        // Receipt recommended action: the generic `ripr continue` mention
+        // Receipt recommended action: the generic `continue --attempt` mention
         // belongs to the new attempt and goes with it.
         let receipt = "This receipt is not review evidence; rerun agent verify and agent receipt; in the repair loop, start a new attempt with `ripr agent repair --seam-id <seam-id> --phase before` and run the `continue --attempt` command it prints.";
         let cleaned = without_start_recipe(receipt);
