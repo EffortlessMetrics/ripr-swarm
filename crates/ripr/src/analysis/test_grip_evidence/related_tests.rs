@@ -87,7 +87,7 @@ fn find_related_tests_in<'context, 'index>(
     // standard-library globs, runs that other function. The finding-level
     // relation demotes the same call to name-only, so the seam drops the
     // direct row too. This runs after the visibility record above, so a
-    // test proven unable to reach a private owner stays refused below; the
+    // test shown unable to reach a private owner stays refused below; the
     // weaker matchers may still relate any other test.
     if owner.free_function
         && let Some(function) = owner.function
