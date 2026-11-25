@@ -180,6 +180,32 @@ fn a_negative_count_agreeing_input_does_not_expose_a_round_change() -> Result<()
 }
 
 #[test]
+fn a_grid_too_large_for_an_integer_is_named_by_its_power() -> Result<(), String> {
+    // `round(5 * 10**17, -20)` and `round(5 * 10**17, -19)` are both 0, so
+    // "not a multiple of 10**18" would name an input that does not separate.
+    let source = "def money(x):\n    return round(x, -20)\n";
+    let finding = classify_source(
+        source,
+        2,
+        "    return round(x, -20)",
+        "    return round(x, -19)",
+        "from src.text import money\n\n\ndef test_money():\n    assert money(0) == 0\n",
+    )?;
+    assert_eq!(finding.class, ExposureClass::WeaklyExposed);
+    assert!(
+        finding
+            .activation
+            .missing_discriminators
+            .iter()
+            .any(|fact| fact.value
+                == "call `money` with `x` with a value that is not a multiple of 10^20"),
+        "{:?}",
+        finding.activation.missing_discriminators
+    );
+    Ok(())
+}
+
+#[test]
 fn a_negative_count_off_grid_input_keeps_a_round_change_exposed() -> Result<(), String> {
     // `round(120, -1)` is `120` and `round(120, -2)` is `100`.
     let source = "def money(x):\n    return round(x, -1)\n";
@@ -509,6 +535,50 @@ fn a_list_with_different_elements_keeps_a_sort_direction_flip_exposed() -> Resul
 fn an_unread_list_keeps_a_sort_direction_flip_exposed() -> Result<(), String> {
     let finding = classify_top(
         "from src.text import top\n\nNUMS = [4, 1]\n\n\ndef test_top():\n    assert top([4]) == 4\n    assert top(NUMS) == 1\n",
+    )?;
+    assert_eq!(finding.class, ExposureClass::Exposed);
+    Ok(())
+}
+
+#[test]
+fn a_list_the_body_changes_where_the_text_reader_stops_short_keeps_a_sort_direction_flip_exposed()
+-> Result<(), String> {
+    // Python 3.12 lets a comment sit inside an f-string's replacement field.
+    // The text reader cannot prove that field closed and hides the rest of
+    // the statement, so the first-mention scan would miss the append and take
+    // the sort for the list's first mention: `top([4])` sorts `[4, 9]`, where
+    // the direction decides the result.
+    let source = "def top(xs):\n    rows = f\"\"\"{\n        xs.append(9)  # note\n    }\"\"\"\n    return sorted(xs)[0]\n";
+    let test = "from src.text import top\n\n\ndef test_top():\n    assert top([4]) == 4\n";
+    let finding = classify_source(
+        source,
+        5,
+        "    return sorted(xs)[0]",
+        "    return sorted(xs, reverse=True)[0]",
+        test,
+    )?;
+    assert_eq!(finding.class, ExposureClass::Exposed);
+    // The same owner with a field the reader can follow to its end and that
+    // does not name the list: the gate reads the list and withholds, so it
+    // is live.
+    let closed_field =
+        "def top(xs):\n    rows = f\"\"\"{\n        9\n    }\"\"\"\n    return sorted(xs)[0]\n";
+    let finding = classify_source(
+        closed_field,
+        5,
+        "    return sorted(xs)[0]",
+        "    return sorted(xs, reverse=True)[0]",
+        test,
+    )?;
+    assert_eq!(finding.class, ExposureClass::WeaklyExposed);
+    // A call the reader can see in a field the parser reads is a mention.
+    let visible = "def top(xs):\n    rows = f\"{xs.append(9)}\"\n    return sorted(xs)[0]\n";
+    let finding = classify_source(
+        visible,
+        3,
+        "    return sorted(xs)[0]",
+        "    return sorted(xs, reverse=True)[0]",
+        test,
     )?;
     assert_eq!(finding.class, ExposureClass::Exposed);
     Ok(())

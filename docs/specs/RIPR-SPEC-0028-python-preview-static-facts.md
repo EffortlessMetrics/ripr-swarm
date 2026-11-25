@@ -2223,7 +2223,10 @@ sort sees the collection the test passed. A body statement holding a
 non-ASCII character in code, outside strings and comments, may spell the
 parameter under Python's NFKC normalization or a confusable, so the
 first-mention scan abstains for that parameter and the sort gate does not
-fire (#16221). The gate does not read a recursive owner (its own call can
+fire (#16221). The scan also abstains for a statement the text reader
+cannot follow to its end (a single-line f-string whose quote pairing cannot
+be followed, or a field of a triple-quoted f-string it cannot prove closed),
+because a mention of the parameter after that place would be missed. The gate does not read a recursive owner (its own call can
 hand it an argument no test passes), an owner whose file rebinds `round`
 or `sorted` anywhere (the bare call may be that other function), or a
 changed line inside a multi-line string (its text is data). For a sort,
@@ -2246,6 +2249,7 @@ Tests: `call_variant_tests.rs::inputs_without_trailing_whitespace_do_not_expose_
 `call_variant_tests.rs::a_literal_both_counts_round_alike_does_not_expose_a_round_change`,
 `call_variant_tests.rs::an_input_with_more_decimals_keeps_a_round_change_exposed`,
 `call_variant_tests.rs::a_negative_count_agreeing_input_does_not_expose_a_round_change`,
+`call_variant_tests.rs::a_grid_too_large_for_an_integer_is_named_by_its_power`,
 `call_variant_tests.rs::a_negative_count_off_grid_input_keeps_a_round_change_exposed`,
 `call_variant_tests.rs::a_recursive_owner_keeps_the_entry_rows_from_reading_agreement`,
 `call_variant_tests.rs::a_line_inside_a_multiline_string_is_not_read_as_a_call`,
@@ -2259,6 +2263,7 @@ Tests: `call_variant_tests.rs::inputs_without_trailing_whitespace_do_not_expose_
 `call_variant_tests.rs::a_list_python_compares_equal_does_not_expose_a_sort_direction_flip`,
 `call_variant_tests.rs::an_unread_list_keeps_a_sort_direction_flip_exposed`,
 `call_variant_tests.rs::a_list_the_body_changes_before_the_sort_keeps_its_reading`,
+`call_variant_tests.rs::a_list_the_body_changes_where_the_text_reader_stops_short_keeps_a_sort_direction_flip_exposed`,
 `call_variant_tests.rs::only_a_lone_reverse_flag_flip_on_a_named_sort_is_read`,
 `call_variant_tests.rs::sorting_agrees_only_without_two_different_elements`,
 `call_variant_tests.rs::a_module_round_or_sorted_keeps_its_reading`,

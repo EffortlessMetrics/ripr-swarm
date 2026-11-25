@@ -4323,6 +4323,22 @@ impl<'a> PythonHiddenCode<'a> {
         self.last = idx;
         self.line.hides(&self.text[self.line_start..idx]) || self.triple.hides(self.text, idx)
     }
+
+    /// Whether the text holds a place after which this reader hides
+    /// everything: a single-line f-string whose quote pairing cannot be
+    /// followed, or a field of a triple-quoted f-string it cannot prove
+    /// closed. A call or a name after that place is a miss. A reader that
+    /// must not miss (#16203's first-mention scan) takes such a text as not
+    /// read.
+    pub(super) fn hides_unproven_rest(&mut self) -> bool {
+        let end = self.text.len();
+        if self.last < end {
+            self.triple.hides(self.text, end);
+            // The lexer now stands at the end: an earlier offset starts over.
+            self.last = end;
+        }
+        self.triple.hides_rest || self.triple.unproven
+    }
 }
 
 /// Whether `idx` falls inside an open triple-quoted string. A small lexer:
@@ -4347,6 +4363,9 @@ struct TripleScan {
     /// The step at `cursor` is a single-line f-string whose quote pairing
     /// cannot be followed: every later offset is hidden.
     hides_rest: bool,
+    /// A field of a triple-quoted f-string at `cursor` cannot be proved
+    /// closed: the reader stays on it, so every later offset is hidden.
+    unproven: bool,
 }
 
 impl TripleScan {
@@ -4376,6 +4395,7 @@ impl TripleScan {
                     // comment, or the string's own delimiter nested inside it)
                     // hides the rest of the text: a miss, never an invented call.
                     let Some(field) = fstring_field_scan(rest, delimiter, idx - cursor, 0) else {
+                        self.unproven = true;
                         return true;
                     };
                     if field.target_hidden {

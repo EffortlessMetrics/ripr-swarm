@@ -5,8 +5,8 @@ Spec: RIPR-SPEC-0028
 ## Given
 
 `money` changes `return round(x, 0)` to `return round(x, 1)`. The only test
-calls `money(1.05)`, a float spelling that sits on an exact decimal tie at
-both counts, and asserts the exact result of the new code.
+calls `money(1.05)`, a float spelling that sits on an exact decimal tie at the
+finer count, and asserts the exact result of the new code.
 
 ## When
 

@@ -309,8 +309,10 @@ pub(super) fn python_call_variant_evidence(
             new_call: format!("round({param}, {new})"),
             discriminator: if old.min(new) < 0 {
                 // A negative count rounds to a multiple of `10^-count`;
-                // a value already on that grid reads the same both ways.
-                let grid_exponent = u32::try_from(-old.min(new)).unwrap_or(u32::MAX).min(18);
+                // a value already on that grid reads the same both ways. A
+                // grid too large for an integer is named by its power, so
+                // the message never names a smaller grid than the counts'.
+                let grid_exponent = u32::try_from(-old.min(new)).unwrap_or(u32::MAX);
                 let grid = 10i64
                     .checked_pow(grid_exponent)
                     .map(|value| value.to_string())

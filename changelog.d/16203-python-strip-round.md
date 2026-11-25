@@ -13,4 +13,5 @@
   beyond its rounding read; and compares an int spelling with a float spelling
   as Python compares them (#16221). A body statement holding non-ASCII code
   withholds the prior-use line a sort reads; non-ASCII string or comment text
-  does not.
+  does not. A statement whose text the reader cannot follow to its end (an
+  f-string field it cannot prove closed) withholds it too.

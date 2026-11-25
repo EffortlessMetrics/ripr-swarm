@@ -197,7 +197,10 @@ pub(super) fn term_facts(
             }
             let mut first = None;
             for (statement, text) in body.iter().zip(&statement_texts) {
-                if code_holds_non_ascii(text) {
+                // A statement the text reader stops short of hides every
+                // later mention in it: reading on would take a later line
+                // for the parameter's first mention.
+                if code_holds_non_ascii(text) || code_reader_stops_short(text) {
                     return None;
                 }
                 if code_mentions(text, &parameter.name) {
@@ -244,6 +247,16 @@ fn code_holds_non_ascii(text: &str) -> bool {
     let mut hidden = PythonHiddenCode::new(text);
     text.char_indices()
         .any(|(offset, ch)| !ch.is_ascii() && !hidden.hides(offset))
+}
+
+/// Whether `text` holds a single-line f-string whose quote pairing cannot be
+/// followed, or a field of a triple-quoted f-string the reader cannot prove
+/// closed: after it the reader hides the rest of the text, so a mention of
+/// the parameter there is missed. For finding calls a miss withholds; for a
+/// first mention it would let the sort gate fire on a body that reaches the
+/// list before the sorted line (#16203 review).
+fn code_reader_stops_short(text: &str) -> bool {
+    PythonHiddenCode::new(text).hides_unproven_rest()
 }
 
 /// How many times `text` holds `token` as code (see `code_mentions`).
