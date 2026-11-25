@@ -709,6 +709,19 @@ struct PythonOwner {
     /// parameters and names it rebinds. Used only to relate a test that calls
     /// a same-module caller of a changed helper (`helper_owner_call`, #4568).
     module_callees: Vec<String>,
+    /// Names a routed handler's own scope calls as bare `name(` calls: the
+    /// same reading as `module_callees`, with nested `def` blocks and
+    /// `lambda` tails removed. The route-helper relation (#14150) claims the
+    /// handler calls the helper itself, so a call that runs only if the
+    /// handler invokes a nested scope does not count. Empty for other owners.
+    route_scope_callees: Vec<String>,
+    /// The names among `route_scope_callees` that the handler awaits a call
+    /// of: an `await` of a call of that bare name in the handler's own code.
+    /// The body of a coroutine function runs through such a call, and through
+    /// others that are not read, so the route-helper relation follows an
+    /// `async def` helper only through an awaited one (#15882 review). Empty
+    /// for other owners.
+    route_scope_awaited_callees: Vec<String>,
     /// Dotted path of the enclosing classes of a method owner, outermost
     /// first (`Outer.Inner` for `Outer.Inner.__init__`). Empty for other
     /// owners. `qualified_name` keeps only the innermost class.
@@ -757,6 +770,12 @@ struct PythonOwner {
     /// `false` by default, which grants no response-read credit.
     #[serde(default)]
     route_returns_body: bool,
+    /// Whether another route can answer the same request, so the registered
+    /// handler is not established (#14150). Separate from
+    /// `route_returns_body`: a shadowed handler may return no body and still
+    /// not be the one that runs.
+    #[serde(default)]
+    route_dispatch_ambiguous: bool,
     /// The route handler's return annotation is a bare `dict` (#13869). The
     /// workspace post-pass withdraws `route_returns_body` from such an owner
     /// when any source may rebind `dict`, which would make the annotation a
@@ -2813,6 +2832,8 @@ mod reexport_tests;
 #[cfg(test)]
 mod replaced_block_tests;
 
+#[cfg(test)]
+mod route_helper_tests;
 #[cfg(test)]
 mod route_identity_tests;
 
