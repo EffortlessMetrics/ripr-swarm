@@ -20721,7 +20721,7 @@ fn dogfood_blocking_gate_report_is_self_contained() -> Result<(), String> {
         // alternative beside a carried repair start (which its after phase
         // follows), or as steps after the test edit without one.
         let (verify, receipt) = if markdown.contains("  - Start repair: `ripr agent repair ") {
-            if !markdown.contains("  - After the test edit: run the `continue --attempt`") {
+            if !markdown.contains("  - After the test edit: run the after-phase command") {
                 return Err("blocking gate Markdown lacks the repair after phase".to_string());
             }
             (

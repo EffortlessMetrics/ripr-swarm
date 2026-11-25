@@ -422,7 +422,7 @@ fn generated_workflow_replay_prints_only_runnable_next_steps() -> Result<(), Box
             .ok_or_else(|| format!("summary has no {heading:?} block"))?;
         assert!(
             block.starts_with(&format!(
-                "- Repair start: `{repair_command}`\n- After the test edit: run the `continue --attempt` command"
+                "- Repair start: `{repair_command}`\n- After the test edit: run the after-phase command"
             )),
             "{heading:?} must lead with the repair start:\n{}",
             block.lines().take(4).collect::<Vec<_>>().join("\n")
@@ -440,7 +440,7 @@ fn generated_workflow_replay_prints_only_runnable_next_steps() -> Result<(), Box
         .ok_or("summary has no Agent review packet block")?;
     assert!(
         packet.starts_with(&format!(
-            "- Receipt: No agent receipt yet. None is expected before a repair: the `continue --attempt` command writes it after the focused test edit.\n- Start repair: `{repair_command}`\n- After the test edit: run the `continue --attempt` command"
+            "- Receipt: No agent receipt yet. None is expected before a repair: the after-phase command the before phase prints writes it after the focused test edit.\n- Start repair: `{repair_command}`\n- After the test edit: run the after-phase command"
         )),
         "the review packet must lead with the repair start:\n{packet}"
     );
@@ -3515,7 +3515,7 @@ fn generated_compact_body_lifts_code_spans_of_any_fence_length() -> Result<(), B
     ));
     fs::create_dir_all(&root)?;
     let verify_body = "### ripr gap: missing boundary assertion\n\nChanged behavior:\n``a` b``\n\nWhy this matters:\nw\n\nRepair:\nAdd one.\n\nVerify:\n`` ripr agent verify `x` ``";
-    let start_body = "### ripr gap: weak oracle\n\nWhy this matters:\nw\n\nRepair:\nAdd one.\n\nStart the repair:\n```ripr agent repair ``x`` --phase before```\n\nIt prints the `continue --attempt` command that verifies the new test.";
+    let start_body = "### ripr gap: weak oracle\n\nWhy this matters:\nw\n\nRepair:\nAdd one.\n\nStart the repair:\n```ripr agent repair ``x`` --phase before```\n\nIt prints the after-phase command that verifies the new test.";
     let plain_body = "### ripr gap: weak oracle\n\nWhy this matters:\nw\n\nRepair:\nAdd one.\n\nVerify:\n`ripr agent verify`";
     let operation = |key: &str, body: &str| {
         serde_json::json!({"operation": "create", "safe_to_publish": true, "dedupe_key": key,

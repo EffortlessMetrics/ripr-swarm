@@ -149,7 +149,7 @@ const AFTER_TEST_EDIT_STEPS: &[&str] = &[
 ];
 
 /// Human note printed with a next command that belongs after the test edit.
-pub(crate) const AFTER_TEST_EDIT_NOTE: &str = "Run this after the focused test edit, not before: it needs a snapshot taken after the edit. Inside a repair transaction, the `continue --attempt` command runs this step instead.";
+pub(crate) const AFTER_TEST_EDIT_NOTE: &str = "Run this after the focused test edit, not before: it needs a snapshot taken after the edit. Inside a repair transaction, the after-phase command the before phase prints runs this step instead.";
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct AgentStatusReport {
@@ -7044,9 +7044,9 @@ mod tests {
             "{cleaned}"
         );
 
-        // Receipt recommended action: the generic `continue --attempt` mention
+        // Receipt recommended action: the generic after-phase command mention
         // belongs to the new attempt and goes with it.
-        let receipt = "This receipt is not review evidence; rerun agent verify and agent receipt; in the repair loop, start a new attempt with `ripr agent repair --seam-id <seam-id> --phase before` and run the `continue --attempt` command it prints.";
+        let receipt = "This receipt is not review evidence; rerun agent verify and agent receipt; in the repair loop, start a new attempt with `ripr agent repair --seam-id <seam-id> --phase before` and run the after-phase command it prints.";
         let cleaned = without_start_recipe(receipt);
         assert!(
             !cleaned.contains("--phase before")

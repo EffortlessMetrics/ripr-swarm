@@ -1032,9 +1032,7 @@ fn repair_card_body(
                 command.trim(),
                 CODE_FIELD_CHAR_BUDGET,
             )));
-            body.push_str(
-                "\n\nIt prints the `continue --attempt` command that verifies the new test.",
-            );
+            body.push_str("\n\nIt prints the after-phase command that verifies the new test.");
         }
     }
     // Parse in the actual block context: a field can continue the label's
@@ -1758,10 +1756,7 @@ mod tests {
             body.contains(&format!("Start the repair:\n`{command}`")),
             "{body}"
         );
-        assert!(
-            body.contains("It prints the `continue --attempt` command"),
-            "{body}"
-        );
+        assert!(body.contains("It prints the after-phase command"), "{body}");
         assert!(!body.contains("--phase after"), "{body}");
         assert!(!body.contains("Verify:"), "{body}");
 
