@@ -1009,7 +1009,11 @@ Candidates come from the first non-empty tier:
    also calls what that function's text bare-calls, methods of a class it
    declares included, because the owner is the whole `const`: an exported
    entry that constructs the class reaches the module functions the class's
-   code calls. When the building function declares the binding's own name,
+   code calls. The entry reaches the value only from code that runs when it
+   runs, under the same header and nesting rule as the class constructions
+   below: a read inside a stored or deferred arrow (`const later = () => new
+   X().m()`, `setTimeout(() => ...)`), or an entry with an expression body,
+   is no edge. When the building function declares the binding's own name,
    mentions of the name inside it are the inner binding and are left out of
    the module-wide scan; every mention outside it must be an allowlisted read
    and, when the building function's parsed body holds any block or arrow

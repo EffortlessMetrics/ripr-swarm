@@ -593,7 +593,7 @@ fn every_construction_calls_a_method(
 /// `executed_this_source` on its body alone (its own `function` keyword or
 /// arrow header would read as a nested function). `None` without a block
 /// body (an expression arrow) or when the blanking cannot isolate a scope.
-fn executed_body(text: &str) -> Option<String> {
+pub(super) fn executed_body(text: &str) -> Option<String> {
     let code = super::tests_extract::byte_preserving_code_mask(text)?;
     let brace = body_brace(&code)?;
     executed_this_source(&format!("body(){}", text.get(brace..)?))

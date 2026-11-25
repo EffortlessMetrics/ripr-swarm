@@ -361,11 +361,12 @@ pub(crate) fn module_entries_and_outbound<'a>(
     // reference to it (`keys.sort(compare)`) is no call edge, and no closure
     // edge targets it.
     let reassigned = reassigned_names(statements);
+    let built_names: BTreeSet<&str> = built.keys().copied().collect();
     let mut callees: BTreeMap<&str, BTreeSet<&str>> = BTreeMap::new();
     let mut import_callees: BTreeMap<&str, BTreeSet<&str>> = BTreeMap::new();
     for (name, node) in &nodes {
         let (top_level, imported): (BTreeSet<&str>, BTreeSet<&str>) =
-            node_callees(node, &nodes, &names, &values, &reassigned)
+            node_callees(node, &nodes, &names, &values, &reassigned, &built_names)
                 .into_iter()
                 .partition(|callee| nodes.contains_key(callee) || values.contains(callee));
         callees.insert(*name, top_level);
@@ -387,12 +388,13 @@ pub(crate) fn module_entries_and_outbound<'a>(
             }],
             ..ModuleNode::default()
         };
-        let top_level: BTreeSet<&str> = node_callees(&node, &nodes, &names, &values, &reassigned)
-            .into_iter()
-            .filter(|callee| *callee != *name)
-            .filter(|callee| nodes.contains_key(callee) || values.contains(callee))
-            .filter(|callee| !declares_member_named(value.text, callee))
-            .collect();
+        let top_level: BTreeSet<&str> =
+            node_callees(&node, &nodes, &names, &values, &reassigned, &built_names)
+                .into_iter()
+                .filter(|callee| *callee != *name)
+                .filter(|callee| nodes.contains_key(callee) || values.contains(callee))
+                .filter(|callee| !declares_member_named(value.text, callee))
+                .collect();
         callees.insert(*name, top_level);
     }
     // A method of a module-private class is a node `Class.method` (#15928):
@@ -407,11 +409,12 @@ pub(crate) fn module_entries_and_outbound<'a>(
             }],
             ..ModuleNode::default()
         };
-        let mut edges: BTreeSet<&str> = node_callees(&node, &nodes, &names, &values, &reassigned)
-            .into_iter()
-            .filter(|callee| nodes.contains_key(callee) || values.contains(callee))
-            .filter(|callee| !declares_member_named(method.text, callee))
-            .collect();
+        let mut edges: BTreeSet<&str> =
+            node_callees(&node, &nodes, &names, &values, &reassigned, &built_names)
+                .into_iter()
+                .filter(|callee| nodes.contains_key(callee) || values.contains(callee))
+                .filter(|callee| !declares_member_named(method.text, callee))
+                .collect();
         edges.extend(this_method_calls(method, &method_nodes_of_classes));
         edges.extend(constructed_method_calls(
             method.text,
@@ -1310,6 +1313,7 @@ fn node_callees<'n, 'a>(
     names: &std::collections::HashSet<&'n str>,
     values: &BTreeSet<&'n str>,
     reassigned: &std::collections::HashSet<&str>,
+    built: &BTreeSet<&str>,
 ) -> BTreeSet<&'n str> {
     let texts: Vec<&CallText<'_>> = match node.factory {
         Some(factory) => nodes
@@ -1327,6 +1331,8 @@ fn node_callees<'n, 'a>(
     for text in texts {
         // Masked at most once per function text, not once per value.
         let mut masked: Option<String> = None;
+        // The code that runs when the function runs, for built values.
+        let mut executed: Option<Option<String>> = None;
         let mut checked: std::collections::HashSet<&str> = std::collections::HashSet::new();
         for token in text
             .calls
@@ -1337,12 +1343,28 @@ fn node_callees<'n, 'a>(
                 // Comments and literals are masked only for the read-presence
                 // check; the shadow check stays on the raw scope, so a
                 // mis-masked declaration can only remove an edge.
+                // A built value (a class built in an immediately invoked
+                // function) is reached only from code that runs when the
+                // function runs: a construction inside a stored or deferred
+                // arrow (`const later = () => new X().m()`,
+                // `setTimeout(() => ...)`) is no edge.
                 if checked.insert(value)
                     && reads_unshadowed_value(
                         masked.get_or_insert_with(|| ts_mask_literals_and_comments(&text.calls)),
                         text.scope,
                         value,
                     )
+                    && (!built.contains(value)
+                        || executed
+                            .get_or_insert_with(|| {
+                                super::module_class_nodes::executed_body(&text.calls)
+                                    .map(|code| ts_mask_literals_and_comments(&code))
+                            })
+                            .as_deref()
+                            .is_some_and(|code| {
+                                code.match_indices(value)
+                                    .any(|(idx, _)| word_at(code, idx, value))
+                            }))
                 {
                     callees.insert(value);
                 }

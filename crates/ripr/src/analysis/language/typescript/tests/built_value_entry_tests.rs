@@ -152,6 +152,38 @@ fn construction_that_is_not_the_only_mention_gets_no_edge() {
 }
 
 #[test]
+fn construction_the_entry_does_not_run_gets_no_edge() {
+    // Only code that runs when the entry runs reaches the built class: the
+    // plain-class rule, applied to built values too.
+    for (label, entry) in [
+        (
+            "stored arrow never called",
+            "export function serialize(input: any): string {\n  const later = () => new Serializer().serialize(input);\n  return String(input);\n}",
+        ),
+        (
+            "deferred timer arrow",
+            "export function serialize(input: any): string {\n  setTimeout(() => new Serializer().serialize(input), 0);\n  return String(input);\n}",
+        ),
+        (
+            "expression-bodied entry",
+            "export const serialize = (input: any): string =>\n  String(() => new Serializer().serialize(input));",
+        ),
+    ] {
+        let source = SRC.replacen(
+            "export function serialize(input: any): string {\n  return new Serializer().serialize(input);\n}",
+            entry,
+            1,
+        );
+        assert_ne!(source, SRC, "{label}: fixture not rewritten");
+        assert!(entry_names(&source, "Serializer").is_empty(), "{label}");
+        assert!(entry_names(&source, "compareStrings").is_empty(), "{label}");
+    }
+    // The direct twin keeps its reach.
+    assert_eq!(entry_names(SRC, "Serializer"), ["serialize"]);
+    assert_eq!(entry_names(SRC, "compareStrings"), ["serialize"]);
+}
+
+#[test]
 fn module_level_write_to_the_built_value_disables_it() {
     // Outside the building function the name is the module binding.
     for (label, tail) in [
