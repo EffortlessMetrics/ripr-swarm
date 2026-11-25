@@ -797,7 +797,9 @@ pub(crate) struct CachedSeamLimitInfo {
 /// `pick(0);`) is not a free observation beside a macro-held call (#16258).
 /// `1.199`: a helper wrapper reading `include_str!` or `include_bytes!` forwards
 /// its helper result unless either name is rebound (#10357).
-pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.199";
+/// `1.200`: a `matches!` or-pattern whose alternatives all pin a value reads
+/// weak, not exact (#16286).
+pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.200";
 /// `0.2` → `0.3`: same semantic transition as the outer cache (#3273 /
 /// #3286) — sharded entries derive from the same facts and cannot bypass
 /// the outer generation bump.
@@ -1034,7 +1036,8 @@ pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.199";
 /// `0.199`: same chained owner-result local as full `1.197` (#16219).
 /// `0.200`: same discarded owner call as full `1.198` (#16258).
 /// `0.201`: same include-reading wrapper forwarding as full `1.199` (#10357).
-const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.201";
+/// `0.202`: same or-pattern oracle reading as full `1.200` (#16286).
+const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.202";
 
 /// Compact-classified seam cache schema. This cache stores the same
 /// `ClassifiedSeam` envelope shape as the full repo exposure cache, but
@@ -1273,7 +1276,8 @@ const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.201";
 /// `0.199`: same chained owner-result local as full `1.197` (#16219).
 /// `0.200`: same discarded owner call as full `1.198` (#16258).
 /// `0.201`: same include-reading wrapper forwarding as full `1.199` (#10357).
-pub(crate) const COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.201";
+/// `0.202`: same or-pattern oracle reading as full `1.200` (#16286).
+pub(crate) const COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.202";
 
 /// Compact class-count cache used by repo badge rendering. It keys off
 /// the same workspace state as the full fact cache, but stores only
@@ -5880,7 +5884,8 @@ mod tests {
         // 1.196 -> 1.197: chained owner-result locals only an untrusted inner macro uses read unknown (#16219).
         // 1.197 -> 1.198: a discarded owner call is not a free observation beside a macro-held call (#16258).
         // 1.198 -> 1.199: include_str!/include_bytes! wrappers forward their helper result (#10357).
-        assert_eq!(CACHE_SCHEMA_VERSION, "1.199");
+        // 1.199 -> 1.200: matches! or-patterns of values read weak (#16286).
+        assert_eq!(CACHE_SCHEMA_VERSION, "1.200");
         // 1.168 -> 1.169: plain `assert_eq!` literal withhold in the audit (#13005).
         // 0.12 -> 0.13 through 0.14 / 0.15 / 0.16 / 0.17 / 0.18: same
         // #3731 semantic transition as the outer classified-seam cache,
@@ -6057,8 +6062,9 @@ mod tests {
         // 0.198 -> 0.199: same chained owner-result local as full 1.197 (#16219).
         // 0.199 -> 0.200: same discarded owner call as full 1.198 (#16258).
         // 0.200 -> 0.201: same include-reading wrapper forwarding as full 1.199 (#10357).
-        assert_eq!(SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.201");
-        assert_eq!(COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.201");
+        // 0.201 -> 0.202: same or-pattern oracle reading as full 1.200 (#16286).
+        assert_eq!(SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.202");
+        assert_eq!(COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.202");
         // 0.170 -> 0.171: same plain `assert_eq!` literal withhold as full 1.169 (#13005).
     }
 

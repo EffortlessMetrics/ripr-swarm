@@ -458,8 +458,14 @@ Two pattern terms are used below.
    payload (`Err(1..=5)`) assigns `broad_error` / weak. At steps 0, 1 and
    5, an or-pattern that is not irrefutable but has alternatives on both
    sides (`Ok` and `Err`, or `Some` and `None`) assigns `relational_check` /
-   weak, because it does not observe the side (`Ok(_) | Err(E::X)`); any
-   other or-pattern reads as its weakest alternative. Any other pattern
+   weak, because it does not observe the side (`Ok(_) | Err(E::X)`). An
+   or-pattern whose alternatives all pin a value (`4 | 5`,
+   `Mode::A | Mode::B`, `Some(3 | 4)`) accepts each of them, so, like the
+   disjunction in rule 1, it assigns `relational_check` / weak, or
+   `broad_error` / weak when every alternative is an `Err(..)` pin
+   (`Err(E::A) | Err(E::B)`, `Err(E::A | E::B)`) (#16286); a guard that pins
+   a value still decides first (decision 7). Any other or-pattern reads as
+   its weakest alternative. Any other pattern
    stays `exact_value` only when it pins a value: it contains a literal
    outside a range, a constant, or a variant of an enum shown to have more
    than one variant (the `Option` and `Result` constructors are read as
