@@ -3916,12 +3916,25 @@ fn check_sarif_suppression_policy_marks_path_glob_results() -> sample_output::Te
             "implicit manifest: {result}"
         );
     }
-    // The explicit file replaces the default manifest for the run.
+    // The explicit file replaces the default manifest for the run: its own
+    // justification wins, and an explicit file that matches nothing leaves
+    // every result unmarked instead of falling back to the default manifest.
     for result in sarif_results(&["--suppression-policy", &policy_arg])? {
         assert_eq!(
             justification(&result),
             "sample surface accepted for this smoke test",
             "explicit flag over the default manifest: {result}"
+        );
+    }
+    let unmatched = write_suppression_policy(
+        "suppression-sarif-unmatched",
+        &POLICY.replace("crates/ripr/examples/sample/**", "nowhere/**"),
+    )?;
+    let unmatched_arg = unmatched.display().to_string();
+    for result in sarif_results(&["--suppression-policy", &unmatched_arg])? {
+        assert!(
+            result.get("suppressions").is_none(),
+            "an explicit file that matches nothing must not fall back: {result}"
         );
     }
     Ok(())

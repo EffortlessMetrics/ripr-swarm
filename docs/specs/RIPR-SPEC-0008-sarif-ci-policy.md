@@ -120,7 +120,9 @@ The SARIF layer should:
 - bound the results array by bytes: `RIPR_SARIF_RESULTS_BYTES` (default
   `1000000`, `0` removes the cap, an unparseable value fails the run) keeps
   the highest-priority results in both diff-scoped and repo-scoped runs
-  (errors, then warnings, then notes, original order as the tiebreak; kept
+  (results without `suppressions` metadata before suppressed audit rows
+  (#15377); within each group errors, then warnings, then notes, original
+  order as the tiebreak; kept
   results stay in their original order), always keeping the first admitted
   result. When the budget omits results, the run records
   `runs[].properties.results_rendered`, `results_total`, `results_omitted`,

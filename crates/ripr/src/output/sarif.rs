@@ -114,9 +114,11 @@ fn sarif_level_rank(result: &Value) -> u8 {
 
 /// Keep the highest-priority results that fit `budget` final-form bytes
 /// (plus separators), always keeping the first admitted result so a
-/// nonempty analysis never yields an empty bounded subset. Results are
-/// admitted by level rank (error, warning, note, anything else) with the
-/// original index as the tiebreak, so a cut drops notes before warnings
+/// nonempty analysis never yields an empty bounded subset. Unsuppressed
+/// results are admitted before results carrying `suppressions` metadata
+/// (#15377: a policy audit row never displaces a live alert, which CI policy
+/// readers would then never see); within each group, by level rank (error,
+/// warning, note, anything else) with the original index as the tiebreak, so a cut drops notes before warnings
 /// instead of dropping whatever happens to sit late in file order (a
 /// dropped warning would be closed as "fixed" by code scanning). Admission
 /// stops at the first result that does not fit (a strict priority prefix;
@@ -134,7 +136,13 @@ fn bound_sarif_results(
     };
     let total = results.len();
     let mut order: Vec<usize> = (0..total).collect();
-    order.sort_by_key(|&index| (sarif_level_rank(&results[index]), index));
+    order.sort_by_key(|&index| {
+        (
+            results[index].get("suppressions").is_some(),
+            sarif_level_rank(&results[index]),
+            index,
+        )
+    });
     let mut admitted: Vec<usize> = Vec::new();
     // Nonempty arrays add `[` + newline and newline + six spaces + `]`
     // around the indented results. Count that framing before admitting rows.
@@ -2238,6 +2246,29 @@ mod tests {
         // Error, then warnings by index; the note is cut. Original order kept.
         assert_eq!(bound_ids(&kept), vec![1, 2, 3]);
         assert_eq!(bound.map(|b| (b.rendered, b.total)), Some((3, 4)));
+    }
+
+    // #15377: a suppressed audit row never displaces a live alert, even a
+    // suppressed error ahead of an unsuppressed note.
+    #[test]
+    fn sarif_results_bound_admits_unsuppressed_before_suppressed() {
+        let suppressed = |level: &str, id: usize| {
+            let mut result = bound_probe(level, id);
+            result["suppressions"] = json!([{"kind": "external"}]);
+            result
+        };
+        let results = vec![
+            suppressed("error", 0),
+            suppressed("warning", 1),
+            bound_probe("warning", 2),
+            bound_probe("note", 3),
+        ];
+        let row =
+            nested_result_bytes(&serde_json::to_string_pretty(&results[0]).unwrap_or_default());
+        // Room for two rows, sized from the longest (a suppressed error).
+        let (kept, bound) = bound_sarif_results(results, Some(10 + 2 * row + 2));
+        assert_eq!(bound_ids(&kept), vec![2, 3]);
+        assert_eq!(bound.map(|b| (b.rendered, b.total)), Some((2, 4)));
     }
 
     #[test]

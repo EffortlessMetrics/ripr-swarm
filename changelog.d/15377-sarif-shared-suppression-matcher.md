@@ -1,2 +1,3 @@
 <!-- section: Fixed -->
 - SARIF output now suppresses the same findings as `ripr check --suppression-policy` and the badges: a `path` glob or `path` + `function` entry with optional `static_class` marks the code-scanning alert, where SARIF previously honored only `finding_id` and exact owner entries. `--format sarif` and `sarif-compact` accept `--suppression-policy`, which replaces `[suppressions] path` for that run, so one flag gives the GitHub annotations and the code-scanning alerts one decision (#15377).
+- When `RIPR_SARIF_RESULTS_BYTES` cuts the SARIF results array, unsuppressed alerts are kept before policy-suppressed ones, so a suppressed row never displaces a live alert (#15377).
