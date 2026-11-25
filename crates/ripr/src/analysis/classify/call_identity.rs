@@ -7304,6 +7304,48 @@ fn integration_rename_case() {
     /// #14069: a bare call bound by a renaming import of another function
     /// is not a call of the owner; every other binding keeps the prior
     /// reading.
+    /// #14069: a glob that may import a macro named like a std expression
+    /// macro (`assert_eq!`) could expand around the call with its own
+    /// imports, so the nested block cannot decide it. The shared fixture,
+    /// whose only globs are in-file `super::*`, keeps refusing its nested
+    /// cases.
+    #[test]
+    fn a_foreign_glob_voids_the_nested_block_reading_inside_a_std_macro() -> Result<(), String> {
+        const SRC: &str = "\
+pub fn discount(amount: u32) -> u32 {
+    if amount > 100 { 10 } else { 0 }
+}
+
+pub fn other(a: u32) -> u32 {
+    if a >= 100 { 10 } else { 0 }
+}
+
+pub mod helpers {
+    pub fn unrelated() {}
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::helpers::*;
+
+    #[test]
+    fn foreign_glob_case() {
+        {
+            use super::other as discount;
+            assert_eq!(discount(100), 10);
+        }
+    }
+}
+";
+        let index = index(&[("src/lib.rs", SRC)]);
+        let (owner, test) = renamed_other_parts(&index, "foreign_glob_case")?;
+        assert!(!bare_name_renamed_in_nested_blocks(&index, owner, test));
+        assert!(!test_calls_only_a_renamed_other_function(
+            &index, owner, test
+        ));
+        Ok(())
+    }
+
     #[test]
     fn a_renaming_import_of_another_function_is_not_a_call_of_the_owner() -> Result<(), String> {
         let index = renamed_other_index();

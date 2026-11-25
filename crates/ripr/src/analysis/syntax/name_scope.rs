@@ -247,7 +247,8 @@ pub(super) fn name_scopes_in_tree(
 /// mention inside a `mod` declared in the body, which does not see the
 /// blocks around it; for a mention inside any macro other than a bare std
 /// expression macro (its expansion may add imports), or inside such a macro
-/// when the file redefines or imports its name; and for a block whose item
+/// when the file redefines or imports its name or holds a glob that may
+/// bring in a same-named macro; and for a block whose item
 /// under `cfg`/`cfg_attr` may bind the name.
 pub(crate) fn nested_block_renames_in_tree(
     tree: &ast::SourceFile,
@@ -329,10 +330,11 @@ pub(crate) fn nested_block_renames_in_tree(
             }
         }
         if !macro_names.is_empty()
-            && (*std_macros_rebound.get_or_insert_with(|| file_rebinds_a_std_macro(tree))
-                || macro_names
-                    .iter()
-                    .any(|macro_name| file_imports_name(tree, macro_name)))
+            && (*std_macros_rebound.get_or_insert_with(|| {
+                file_rebinds_a_std_macro(tree) || file_glob_may_import_macros(tree)
+            }) || macro_names
+                .iter()
+                .any(|macro_name| file_imports_name(tree, macro_name)))
         {
             return None;
         }
@@ -394,6 +396,39 @@ pub(crate) fn nested_block_renames_in_tree(
         }
     }
     (mentions > 0).then_some(paths)
+}
+
+/// Whether a glob import in the file may bring in a macro this scan cannot
+/// see, which would shadow a std expression macro of the same name. A glob of
+/// `std`, `core` or `alloc` brings std's own macros; a glob of only `super`
+/// segments that stays within the file's inline modules reaches items this
+/// file declares, which `file_rebinds_a_std_macro` and `file_imports_name`
+/// read. Any other glob, or one the scan cannot read, may.
+fn file_glob_may_import_macros(tree: &ast::SourceFile) -> bool {
+    tree.syntax()
+        .descendants()
+        .filter_map(ast::Use::cast)
+        .any(|item| {
+            let depth = item
+                .syntax()
+                .ancestors()
+                .filter_map(ast::Module::cast)
+                .filter(|module| module.item_list().is_some())
+                .count();
+            let scope = name_scope_for_items(&[ast::Item::Use(item)]);
+            scope.globs.iter().any(|glob| {
+                let Some(path) = glob else {
+                    return true;
+                };
+                let std_root = path
+                    .first()
+                    .is_some_and(|root| ["std", "core", "alloc"].contains(&root.as_str()));
+                let in_file_super = !path.is_empty()
+                    && path.iter().all(|segment| segment == "super")
+                    && path.len() <= depth;
+                !(std_root || in_file_super)
+            })
+        })
 }
 
 /// Whether any `use` leaf in the file binds `name`, by its own leaf or a
