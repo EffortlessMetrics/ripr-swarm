@@ -5901,6 +5901,12 @@ fn repair_receipt_summary_lines(
     if text("/status").is_some()
         && let Some(action) = text("/summary/next_action/recommended_action")
     {
+        let action = crate::app::agent_status::test_run::next_step_after_reported_run(
+            reported_run,
+            text("/status"),
+            text("/provenance/movement"),
+            action,
+        );
         lines.push(format!("next: {action}"));
     }
     lines
