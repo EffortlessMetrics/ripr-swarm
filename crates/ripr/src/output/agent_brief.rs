@@ -990,9 +990,7 @@ mod tests {
         assert!(VALUE_BASIS_NOTE.contains("assert what it does now"));
         // A change from `>` to `>=` leaves an input below the boundary with
         // the value it had before, and a test must assert that value.
-        assert!(
-            VALUE_BASIS_NOTE.contains("an input the change left alone keeps its value")
-        );
+        assert!(VALUE_BASIS_NOTE.contains("an input the change left alone keeps its value"));
         // Candidate values mix missing-discriminator records (an expected
         // value on an error seam) with inputs observed in existing tests, and
         // the producer does not record which is which, so the note must not
