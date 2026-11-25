@@ -12,16 +12,18 @@
 
 use std::collections::BTreeSet;
 
-use oxc_ast::ast::{Class, ClassElement, MethodDefinition, MethodDefinitionKind};
+use oxc_ast::ast::{Class, ClassElement, MethodDefinition, MethodDefinitionKind, PropertyKey};
 
 /// Span starts of the methods in `class` whose key a later member overwrites.
 ///
 /// Counted as a later definition of the same key: a method, getter or setter
-/// with a body, the same `static` placement and the same non-computed key.
-/// A getter and a setter together form one accessor property and do not
-/// overwrite each other. Body-less signatures (TypeScript overloads) define
-/// nothing at runtime and are ignored on both sides; computed keys are never
-/// compared, so a `[name]()` member does not make an earlier method dead.
+/// with a body, the same `static` placement and the same property key, where
+/// `total`, `'total'`, `"total"` and `['total']` all name the key `total` and
+/// `#total` stays a distinct private key. A getter and a setter together form
+/// one accessor property and do not overwrite each other. Body-less
+/// signatures (TypeScript overloads) define nothing at runtime and are
+/// ignored on both sides; any other computed key (`[name]()`) is never
+/// compared, so it does not make an earlier method dead.
 pub(super) fn overwritten_method_starts(class: &Class<'_>) -> BTreeSet<u32> {
     let methods: Vec<(&MethodDefinition<'_>, String)> = class
         .body
@@ -32,7 +34,7 @@ pub(super) fn overwritten_method_starts(class: &Class<'_>) -> BTreeSet<u32> {
                 if method.value.body.is_some()
                     && method.kind != MethodDefinitionKind::Constructor =>
             {
-                super::owners::method_key_name(method).map(|key| (&**method, key))
+                runtime_key(method).map(|key| (&**method, key))
             }
             _ => None,
         })
@@ -49,6 +51,22 @@ pub(super) fn overwritten_method_starts(class: &Class<'_>) -> BTreeSet<u32> {
         }
     }
     dead
+}
+
+/// The property key `method` defines, when it is static text: an identifier
+/// or string-literal key (bracketed or not) by its name, a private name with
+/// its `#`.
+fn runtime_key(method: &MethodDefinition<'_>) -> Option<String> {
+    match &method.key {
+        PropertyKey::StaticIdentifier(identifier) if !method.computed => {
+            Some(identifier.name.to_string())
+        }
+        PropertyKey::PrivateIdentifier(identifier) if !method.computed => {
+            Some(format!("#{}", identifier.name))
+        }
+        PropertyKey::StringLiteral(literal) => Some(literal.value.to_string()),
+        _ => None,
+    }
 }
 
 /// `true` for a getter and a setter of one key, in either order.

@@ -1290,16 +1290,22 @@ credited. A component owner with only heuristic links is advised to render
 
 **Rule 26. A class method that a later same-key member overwrites relates
 to no test (#16261).** A class body defines its members in order, so a later
-method, getter or setter with the same non-computed key and the same `static`
-placement replaces an earlier one: in `class Cart { total() {...} total()
+method, getter or setter with the same property key (`total`, `'total'`,
+`"total"` and `['total']` are one key; `#total` is a distinct private key) and
+the same `static` placement replaces an earlier one: in `class Cart { total() {...} total()
 {...} }` only the second `total` runs. The earlier body stays an owner (a
 changed line in it is still reported) but relates to no test, by any relation
-tier, so it reads `no_static_path`; the later body keeps its relations. This
+tier, so it reads `no_static_path`, and its guidance names the later
+definition instead of suggesting a direct call (which would run the later
+body); the later body keeps its relations. Owners are chosen per changed line,
+so when both definitions share one line the line reads as the earlier,
+overwritten owner: an edit there is not credited, the fail-closed side. This
 holds for every class owner shape (declared, ES default, CommonJS whole
 export, inline `module.exports = class`). Not an overwrite: a getter and a
 setter of one key (one accessor property), a static and an instance member of
 one name (different objects), body-less TypeScript overload signatures, and a
-computed key (`[name]()`), which is never compared.
+computed key other than a string literal (`[name]()`), which is never
+compared.
 
 ### Observation guard
 
@@ -2815,8 +2821,10 @@ keys); do not take the next number.
   runs `analyze_diff` on a declared class, an ES default class and an inline
   `module.exports = class` that define `total` twice: a change to the earlier
   body relates to no test and a change to the later body keeps its relation.
-  Controls that keep their relation: a getter beside its setter, an instance
-  method beside a static member of the same name, and an implementation after
+  A later quoted or bracketed string key overwrites as well, and the finding on
+  an overwritten body names the later definition in its guidance. Controls
+  that keep their relation: a getter beside its setter, an instance method
+  beside a static member of the same name, and an implementation after
   TypeScript overload signatures.
 
 - #11196 (rule 11, object rows): `tests/object_row_tests.rs` pins the per-row

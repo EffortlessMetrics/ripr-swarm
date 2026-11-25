@@ -20132,6 +20132,10 @@ tests = [
   "crates/ripr/src/analysis/language/typescript/tests/overwritten_method_tests.rs::an_overwritten_method_of_an_inline_commonjs_class_relates_to_no_test",
   "crates/ripr/src/analysis/language/typescript/tests/overwritten_method_tests.rs::a_getter_and_setter_of_one_key_keep_the_getter_relation",
   "crates/ripr/src/analysis/language/typescript/tests/overwritten_method_tests.rs::overload_signatures_do_not_overwrite_the_implementation",
+  "crates/ripr/src/analysis/language/typescript/tests/overwritten_method_tests.rs::a_static_member_does_not_overwrite_the_instance_method",
+  "crates/ripr/src/analysis/language/typescript/tests/overwritten_method_tests.rs::an_overwritten_body_is_still_an_owner_marked_overwritten",
+  "crates/ripr/src/analysis/language/typescript/tests/overwritten_method_tests.rs::a_quoted_later_key_overwrites_the_earlier_method",
+  "crates/ripr/src/analysis/language/typescript/tests/overwritten_method_tests.rs::an_overwritten_body_points_at_the_definition_that_remains",
   "crates/ripr/src/analysis/language/typescript/tests/commonjs_inline_class_tests.rs::a_changed_method_of_the_inline_class_is_reported_and_related",
   "crates/ripr/src/analysis/language/typescript/tests/commonjs_inline_class_tests.rs::a_whole_module_require_of_the_inline_class_relates_under_any_local_name",
   "crates/ripr/src/analysis/language/typescript/tests/commonjs_inline_class_tests.rs::a_named_export_beside_the_inline_class_unmarks_it_and_drops_its_name",
@@ -20655,6 +20659,7 @@ code = [
   "crates/ripr/src/analysis/language/typescript/helper_inline.rs",
   "crates/ripr/src/analysis/language/typescript/object_rows.rs",
   "crates/ripr/src/analysis/language/typescript/module_entries.rs",
+  "crates/ripr/src/analysis/language/typescript/overwritten_methods.rs",
 ]
 outputs = [
   "docs/specs/RIPR-SPEC-0243-typescript-oracle-and-reach-rules.md",

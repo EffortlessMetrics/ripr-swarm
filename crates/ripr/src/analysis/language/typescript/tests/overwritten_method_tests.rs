@@ -9,6 +9,11 @@
 //! `module.exports = Cart;`, an ES default class and an inline
 //! `module.exports = class Cart`.
 //!
+//! A later quoted or bracketed string key (`"total"()`, `['total']()`) names
+//! the same property and overwrites too. The finding on an overwritten body
+//! says a later definition replaces it, instead of the usual advice to add a
+//! direct receiver call, which would run the later body.
+//!
 //! Controls that keep their credit: a getter and setter of one key (one
 //! accessor property), a static and an instance member of one name
 //! (different objects), and TypeScript overload signatures (no runtime
@@ -201,4 +206,55 @@ fn overload_signatures_do_not_overwrite_the_implementation() -> Result<(), Strin
         &jest_test(IMPORT, CALL),
     )?;
     expect_related("implementation after overload signatures", &finding, true)
+}
+
+#[test]
+fn a_quoted_later_key_overwrites_the_earlier_method() -> Result<(), String> {
+    // `"total"()` and `['total']()` define the same property as `total()`.
+    for (label, later_head) in [
+        ("overwritten-quoted", "  \"total\"(n) {"),
+        ("overwritten-bracketed", "  ['total'](n) {"),
+    ] {
+        let later = LATER.replacen("  total(n) {", later_head, 1);
+        let text = format!("class Cart {{\n{EARLIER}{later}}}\nmodule.exports = Cart;\n");
+        let earlier = diff_finding(
+            label,
+            "src/cart.js",
+            &text,
+            EARLIER_LINE,
+            &jest_test(REQUIRE, CALL),
+        )?;
+        expect_related(&format!("{label}: overwritten body"), &earlier, false)?;
+    }
+    Ok(())
+}
+
+#[test]
+fn an_overwritten_body_points_at_the_definition_that_remains() -> Result<(), String> {
+    let finding = diff_finding(
+        "overwritten-guidance",
+        "src/cart.js",
+        &format!("class Cart {{\n{EARLIER}{LATER}}}\nmodule.exports = Cart;\n"),
+        EARLIER_LINE,
+        &jest_test(REQUIRE, CALL),
+    )?;
+    if finding.class != ExposureClass::NoStaticPath {
+        return Err(format!("expected no_static_path, got {:?}", finding.class));
+    }
+    if !finding
+        .missing
+        .iter()
+        .any(|line| line.contains("defines `total` again and replaces this body"))
+    {
+        return Err(format!("missing names no overwrite: {:?}", finding.missing));
+    }
+    let step = finding.recommended_next_step.as_deref().unwrap_or_default();
+    if !step.contains("a later definition of `total` in the same class replaces this one")
+        || step.contains("new ClassName")
+    {
+        return Err(format!(
+            "recommendation does not name the overwrite: {step:?}"
+        ));
+    }
+    Ok(())
 }

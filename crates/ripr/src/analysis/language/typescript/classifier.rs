@@ -13048,6 +13048,12 @@ pub(crate) fn cross_module_fan_in_limit_missing(owner: &TypeScriptOwner) -> Stri
 }
 
 pub(crate) fn no_static_path_missing(owner: &TypeScriptOwner) -> String {
+    if owner.method_kind == TypeScriptMethodKind::Overwritten {
+        return format!(
+            "A later member of the same class defines `{}` again and replaces this body, so no call runs the changed code (RIPR-SPEC-0243 rule 26).",
+            owner.name
+        );
+    }
     match owner.owner_kind {
         OwnerKind::Method => format!(
             "No trusted TypeScript method receiver relation for `{}`. Direct `new ClassName(...)` receiver calls are supported, but factories, dependency injection, mocked modules, prototype aliases, and dynamic property access stay ambiguous in preview.",
@@ -13073,6 +13079,14 @@ pub(crate) fn no_static_path_missing(owner: &TypeScriptOwner) -> String {
 }
 
 pub(crate) fn no_static_path_recommendation(owner: &TypeScriptOwner) -> String {
+    if owner.method_kind == TypeScriptMethodKind::Overwritten {
+        // #16261: a direct receiver call runs the replacement, so the usual
+        // "add a direct call" advice would point at the wrong body.
+        return format!(
+            "TypeScript preview advisory: a later definition of `{}` in the same class replaces this one, so a test calling `{}` runs the later body, not the changed one. Remove or rename the earlier definition, or make the change in the definition that remains, then rerun `ripr check`.",
+            owner.name, owner.name
+        );
+    }
     match owner.owner_kind {
         OwnerKind::Method => {
             "TypeScript preview advisory: method receiver relation is missing context; use a direct `new ClassName(...)` receiver observer when safe, and keep factories, dependency injection, mocked modules, prototype aliases, and dynamic property access advisory.".to_string()
