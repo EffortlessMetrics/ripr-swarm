@@ -229,6 +229,119 @@ pub(super) fn name_scopes_in_tree(
     }))
 }
 
+/// For the authored function `fn_name` declared at `fn_line`: when every bare
+/// mention of `name` in its body sits inside a nested block whose own `use`
+/// items bind `name` only by renaming another path (`{ use super::other as
+/// discount; discount(1); }`, #14069), the renamed paths those blocks spell,
+/// one per binding. The innermost block that binds `name` decides each
+/// mention; the function body's own items are the body scope's question, not
+/// this one.
+///
+/// `None` (the caller keeps its prior reading) when no mention exists, when
+/// any mention is qualified (`a::name`), reaches the body block without a
+/// binding block, or meets a deciding block that also declares the name, has
+/// only a glob that may bind it, or binds it by a plain or unreadable path;
+/// and when the name is itself an imported leaf or a declared name anywhere
+/// in the body (`use super::name as alias;`, a nested `fn name`).
+pub(crate) fn nested_block_renames_in_tree(
+    tree: &ast::SourceFile,
+    line_index: &LineIndex,
+    fn_line: usize,
+    fn_name: &str,
+    name: &str,
+) -> Option<Vec<Vec<String>>> {
+    let mut functions = tree.syntax().descendants().filter_map(|node| {
+        let function = ast::Fn::cast(node)?;
+        let token = function.fn_token()?;
+        let named = function.name().is_some_and(|ident| ident.text() == fn_name);
+        (named && line_index.line(token.text_range().start()) == fn_line).then_some(function)
+    });
+    let function = functions.next()?;
+    if functions.next().is_some() {
+        return None;
+    }
+    let body = function.body()?;
+    let mut paths: Vec<Vec<String>> = Vec::new();
+    let mut mentions = 0usize;
+    for token in body
+        .syntax()
+        .descendants_with_tokens()
+        .filter_map(|element| element.into_token())
+    {
+        if token.kind() != ra_ap_syntax::SyntaxKind::IDENT || unraw(token.text()) != name {
+            continue;
+        }
+        let parent = token.parent()?;
+        if parent
+            .ancestors()
+            .any(|node| ast::Rename::can_cast(node.kind()))
+        {
+            // The bound name of a renaming leaf, not a mention.
+            continue;
+        }
+        if parent
+            .ancestors()
+            .any(|node| ast::Use::can_cast(node.kind()))
+            || ast::Name::can_cast(parent.kind())
+        {
+            return None;
+        }
+        let previous = std::iter::successors(token.prev_token(), |token| token.prev_token())
+            .find(|token| !token.kind().is_trivia());
+        match previous.as_ref().map(|token| token.kind()) {
+            // A method call or field access never names a free function.
+            Some(ra_ap_syntax::T![.]) => continue,
+            Some(ra_ap_syntax::T![::]) => return None,
+            _ => {}
+        }
+        mentions += 1;
+        let mut decided = false;
+        for block in parent.ancestors().filter_map(ast::BlockExpr::cast) {
+            if block.syntax() == body.syntax() {
+                break;
+            }
+            let Some(list) = block.stmt_list() else {
+                continue;
+            };
+            let items: Vec<ast::Item> = list
+                .statements()
+                .filter_map(|statement| match statement {
+                    ast::Stmt::Item(item) => Some(item),
+                    _ => None,
+                })
+                .collect();
+            if items.is_empty() {
+                continue;
+            }
+            let scope = name_scope_for_items(&items);
+            let imports: Vec<&UseBinding> = scope.imports_of(name).collect();
+            if scope.defines.contains(name) || scope.child_modules.contains(name) {
+                return None;
+            }
+            if imports.is_empty() {
+                if !scope.globs.is_empty() {
+                    return None;
+                }
+                continue;
+            }
+            for binding in imports {
+                let UseBinding::Renamed(path) = binding else {
+                    return None;
+                };
+                if !paths.contains(path) {
+                    paths.push(path.clone());
+                }
+            }
+            decided = true;
+            break;
+        }
+        if !decided {
+            return None;
+        }
+    }
+    (mentions > 0).then_some(paths)
+}
+
 /// The module or file scope `node` opens, read from its items; `None` for any
 /// other node.
 fn item_scope(node: &SyntaxNode) -> Option<NameScope> {
