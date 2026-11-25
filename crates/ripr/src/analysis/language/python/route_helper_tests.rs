@@ -758,3 +758,119 @@ fn given_a_handler_with_a_nested_function_that_also_calls_the_helper_then_reach_
     assert_reach_only(&finding, "a nested function beside the handler's own call");
     Ok(())
 }
+
+/// The extent of a decorated definition starts at `def`, so a decorator on
+/// the first statement of a nested function's block was left unblanked and
+/// read as the handler's own call. It runs only when that block runs (#15882
+/// review).
+#[test]
+fn given_a_helper_called_only_as_a_nested_blocks_decorator_then_no_route_reach()
+-> Result<(), String> {
+    let decorated = "from routepkg.rules import is_adult\n\napp = object()\n\n@app.get(\"/age/30\")\ndef age():\n    def unused():\n        @is_adult(1)\n        def inner():\n            return {}\n    return {\"adult\": True}\n";
+    assert_no_route_reach(decorated, "a decorator inside a nested function's block")?;
+
+    let in_class = "from routepkg.rules import is_adult\n\napp = object()\n\n@app.get(\"/age/30\")\ndef age():\n    def unused():\n        value = 1\n        @is_adult(1)\n        class Inner:\n            pass\n    return {\"adult\": True}\n";
+    assert_no_route_reach(in_class, "a decorator inside a nested class's block")?;
+
+    // The handler's own decorator on its own first statement runs where the
+    // handler runs, and is its call.
+    let own = "from routepkg.rules import is_adult\n\napp = object()\n\n@app.get(\"/age/30\")\ndef age():\n    @is_adult(1)\n    def inner():\n        return {}\n    return {\"adult\": True}\n";
+    let finding = classify_files(&[
+        ("routepkg/rules.py", RULES),
+        ("routepkg/ages.py", own),
+        ("tests/conftest.py", CONFTEST),
+        ("tests/test_ages.py", ROUTE_TEST),
+    ])?;
+    assert_reach_only(&finding, "the handler's own decorator");
+    Ok(())
+}
+
+/// A list, set or dict display runs at once, in a scope of its own: a call in
+/// it to a name that is one of its targets is a call of that local, not of
+/// the helper (#15882 review).
+#[test]
+fn given_a_helper_shadowed_by_a_comprehension_target_then_no_route_reach() -> Result<(), String> {
+    let shadowed = "from routepkg.rules import is_adult\n\napp = object()\n\n@app.get(\"/age/30\")\ndef age():\n    return {\"adult\": [is_adult(x) for is_adult in (bool,)] == [True]}\n";
+    assert_no_route_reach(shadowed, "a list display whose target shadows the helper")?;
+
+    let nested = "from routepkg.rules import is_adult\n\napp = object()\n\n@app.get(\"/age/30\")\ndef age():\n    return {\"adult\": list(x for x in [is_adult(y) for is_adult in (bool,)]) == [True]}\n";
+    assert_no_route_reach(
+        nested,
+        "a display inside a generator expression's first iterable",
+    )?;
+
+    // The display calls the helper by its own name: it runs while the
+    // handler runs.
+    let called = "from routepkg.rules import is_adult\n\napp = object()\n\n@app.get(\"/age/30\")\ndef age():\n    return {\"adult\": [is_adult(x) for x in (30,)] == [True]}\n";
+    let finding = classify_files(&[
+        ("routepkg/rules.py", RULES),
+        ("routepkg/ages.py", called),
+        ("tests/conftest.py", CONFTEST),
+        ("tests/test_ages.py", ROUTE_TEST),
+    ])?;
+    assert_reach_only(&finding, "a list display that calls the helper");
+    Ok(())
+}
+
+/// The relation lines that name a test, for a finding of one changed helper
+/// line in a workspace where the helper and its handler share a module.
+fn same_module_relations(handler: &str, tests: &str) -> Result<Vec<String>, String> {
+    let module = format!("app = object()\n\ndef is_adult(age):\n    return age >= 18\n\n{handler}");
+    let conftest = "import pytest\nfrom starlette.testclient import TestClient\nfrom routepkg.rules import app\n\n@pytest.fixture\ndef client():\n    return TestClient(app)\n";
+    let (owners, tests) = super::fixtures_tests::workspace(&[
+        ("routepkg/rules.py", module.as_str()),
+        ("tests/conftest.py", conftest),
+        ("tests/test_ages.py", tests),
+    ]);
+    let finding = classify_change_with_old(
+        Path::new("routepkg/rules.py"),
+        4,
+        "    return age >= 21",
+        Some("    return age >= 18"),
+        &owners,
+        &tests,
+    )
+    .ok_or_else(|| "expected a finding".to_string())?;
+    Ok(finding
+        .evidence
+        .iter()
+        .filter(|line| line.starts_with("related_test_relation:"))
+        .cloned()
+        .collect())
+}
+
+/// A routed handler in the helper's own module whose only reference to the
+/// helper sits inside a definition it never invokes is not a caller of the
+/// helper for the generic caller relations either: the textual list counted
+/// that reference and a test requesting the route fell through to
+/// `helper_owner_call` (#15882 review). Where the handler does call the
+/// helper, the route test is reach-only and a test that calls the handler
+/// itself keeps its relation.
+#[test]
+fn a_same_module_route_whose_only_helper_reference_is_deferred_relates_no_test()
+-> Result<(), String> {
+    let direct_test = "from routepkg.rules import age\n\ndef test_age_directly():\n    assert age() == {\"adult\": True}\n";
+    let tests = format!("{ROUTE_TEST}{direct_test}");
+    let deferred = "@app.get(\"/age/30\")\ndef age():\n    def unused(value):\n        return is_adult(value)\n    return {\"adult\": True}\n";
+    let relations = same_module_relations(deferred, &tests)?;
+    assert!(
+        relations.is_empty(),
+        "a route whose only helper reference is deferred relates no test: {relations:?}"
+    );
+
+    let calling = "@app.get(\"/age/30\")\ndef age():\n    return {\"adult\": is_adult(30)}\n";
+    let relations = same_module_relations(calling, &tests)?;
+    assert!(
+        relations
+            .iter()
+            .any(|line| line == "related_test_relation: route_helper_call (test_age_route)"),
+        "the route test is reach-only: {relations:?}"
+    );
+    assert!(
+        relations
+            .iter()
+            .any(|line| line.contains("test_age_directly") && line.contains("helper_owner_call")),
+        "the test that calls the handler itself keeps its relation: {relations:?}"
+    );
+    Ok(())
+}

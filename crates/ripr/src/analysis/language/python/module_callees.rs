@@ -17,7 +17,7 @@
 //! them removed by the extents of the parse the adapter already made, and with
 //! the names that scope binds read from the same parse.
 
-use rustpython_parser::ast::{Expr, Ranged, Stmt};
+use rustpython_parser::ast::{Comprehension, Expr, Ranged, Stmt};
 use rustpython_parser::text_size::{TextRange, TextSize};
 
 use super::PythonParameter;
@@ -91,7 +91,10 @@ fn bare_callees_in(
 /// defaults and annotations do run where the handler runs and are read; the
 /// body of a `lambda`; and the element, targets, conditions and later
 /// iterables of a generator expression, whose first iterable is evaluated
-/// where it is written and is read. A class is blanked whole: its block
+/// where it is written and is read. A list, set or dict display runs at
+/// once, in a scope of its own: it stays, and only each call in it to a
+/// name that is one of its targets is blanked, which is a call of that
+/// local and not of the module helper. A class is blanked whole: its block
 /// runs at once, but in a namespace of its own, which is not read. The
 /// prune withholds, never grants. The extents come from the one parse the
 /// adapter made, so the spelling of a line, its indentation and an `await`
@@ -128,6 +131,28 @@ pub(super) fn own_scope_callees(
             }
         }
     };
+    let blank_local_calls = |bytes: &mut Vec<u8>,
+                             parts: Vec<TextRange>,
+                             generators: &[Comprehension]| {
+        let mut names: Vec<String> = Vec::new();
+        for generator in generators {
+            bind_target(&generator.target, &mut |name| names.push(name.to_owned()));
+        }
+        for part in parts {
+            let Some(text) = source.get(usize::from(part.start())..usize::from(part.end())) else {
+                continue;
+            };
+            for (from, to) in calls_of_names(text, &names) {
+                blank(
+                    bytes,
+                    TextRange::new(
+                        part.start() + TextSize::from(from as u32),
+                        part.start() + TextSize::from(to as u32),
+                    ),
+                );
+            }
+        }
+    };
     own_scope_expressions(body, &mut |expr| match expr {
         Expr::Lambda(lambda) => blank(&mut bytes, lambda.body.range()),
         Expr::GeneratorExp(expression) => {
@@ -144,13 +169,31 @@ pub(super) fn own_scope_callees(
                 }
             }
         }
+        Expr::ListComp(list) => blank_local_calls(
+            &mut bytes,
+            comprehension_parts(&list.elt, None, &list.generators),
+            &list.generators,
+        ),
+        Expr::SetComp(set) => blank_local_calls(
+            &mut bytes,
+            comprehension_parts(&set.elt, None, &set.generators),
+            &set.generators,
+        ),
+        Expr::DictComp(dict) => blank_local_calls(
+            &mut bytes,
+            comprehension_parts(&dict.key, Some(&dict.value), &dict.generators),
+            &dict.generators,
+        ),
         _ => {}
     });
     // A nested function's block runs only when it is called; its
     // decorators, defaults and annotations run where the handler runs.
+    // The block is blanked from its first statement's first decorator: a
+    // decorated definition there has an extent that starts at `def`, and
+    // its decorators run only when the block runs.
     let blank_block = |bytes: &mut Vec<u8>, block: &[Stmt]| {
-        if let Some(block) = span_of(block) {
-            blank(bytes, block);
+        if let Some(span) = span_of(block) {
+            blank(bytes, TextRange::new(read_start(span, block), span.end()));
         }
     };
     super::module_constants::visit_statements(body, &mut |stmt| match stmt {
@@ -169,6 +212,49 @@ pub(super) fn own_scope_callees(
 fn span_of(statements: &[Stmt]) -> Option<TextRange> {
     let (first, last) = (statements.first()?, statements.last()?);
     Some(TextRange::new(first.range().start(), last.range().end()))
+}
+
+/// The parts of an eager comprehension that run in its own scope: its
+/// element (a key and a value for a dict display), its targets, its
+/// conditions and its later iterables. Its first iterable is evaluated
+/// where the display is written and is left out.
+fn comprehension_parts(
+    first: &Expr,
+    second: Option<&Expr>,
+    generators: &[Comprehension],
+) -> Vec<TextRange> {
+    let mut parts = vec![first.range()];
+    parts.extend(second.map(Ranged::range));
+    for (index, generator) in generators.iter().enumerate() {
+        parts.push(generator.target.range());
+        parts.extend(generator.ifs.iter().map(Ranged::range));
+        if index > 0 {
+            parts.push(generator.iter.range());
+        }
+    }
+    parts
+}
+
+/// Where `text` calls one of `names` as a bare `name(`, as `(from, to)`
+/// byte offsets of the name. A name behind a dot is an attribute, not a
+/// bare call.
+fn calls_of_names(text: &str, names: &[String]) -> Vec<(usize, usize)> {
+    let mut found = Vec::new();
+    let mut run: Option<(usize, String)> = None;
+    for (index, ch) in text.char_indices() {
+        if is_python_identifier_char(ch) {
+            run.get_or_insert((index, String::new())).1.push(ch);
+            continue;
+        }
+        if let Some((from, spelled)) = run.take()
+            && names.contains(&spelled)
+            && ch == '('
+            && !text[..from].ends_with('.')
+        {
+            found.push((from, index));
+        }
+    }
+    found
 }
 
 /// Where a statement list is read from: its first statement's first
@@ -697,5 +783,100 @@ mod own_scope_tests {
         assert_eq!(own_scope(declared), ["is_adult"]);
         let enclosed = "def age():\n    nonlocal is_adult\n    return is_adult(30)\n";
         assert!(own_scope(enclosed).is_empty());
+    }
+
+    #[test]
+    fn a_nested_blocks_first_decorator_is_not_the_handlers_call() {
+        // The inner definition's extent starts at `def`; its decorator runs
+        // only when the block around it runs.
+        let inner = "    def unused():\n        @is_adult(1)\n        def inner():\n            return 1\n    return {}\n";
+        assert!(own_scope(&format!("def age():\n{inner}")).is_empty());
+        let async_inner = "    async def unused():\n        @is_adult(1)\n        class Inner:\n            pass\n    return {}\n";
+        assert!(own_scope(&format!("def age():\n{async_inner}")).is_empty());
+        // Two levels down, and after a statement of its own.
+        let deeper = "    def outer():\n        value = 1\n        def unused():\n            @is_adult(1)\n            def inner():\n                return 1\n    return {}\n";
+        assert!(own_scope(&format!("def age():\n{deeper}")).is_empty());
+        // The handler's own decorator on its own first statement is its call.
+        let own =
+            "def age():\n    @is_adult(1)\n    def inner():\n        return 1\n    return {}\n";
+        assert_eq!(own_scope(own), ["is_adult"]);
+    }
+
+    #[test]
+    fn a_call_to_an_eager_comprehensions_target_is_not_the_helpers() {
+        // A list, set or dict display runs at once, in a scope of its own:
+        // its targets are locals there, in every generator.
+        for (label, body) in [
+            (
+                "a list display",
+                "    return [is_adult(x) for is_adult in rules]\n",
+            ),
+            (
+                "a set display",
+                "    return {is_adult(x) for is_adult in rules}\n",
+            ),
+            (
+                "a dict key",
+                "    return {is_adult(k): v for is_adult, v in rules}\n",
+            ),
+            (
+                "a dict value",
+                "    return {k: is_adult(v) for v, is_adult in rules}\n",
+            ),
+            (
+                "a later iterable",
+                "    return [y for x in xs for is_adult in [rules] for y in is_adult(x)]\n",
+            ),
+            (
+                "a condition",
+                "    return [x for x in xs for is_adult in [rules] if is_adult(x)]\n",
+            ),
+        ] {
+            assert!(
+                own_scope(&format!("def age():\n{body}")).is_empty(),
+                "{label}"
+            );
+        }
+        // Nested in a generator expression's first iterable, which is
+        // evaluated where it is written; the display's own scope stands. The
+        // handler's own call of `list` is read; the helper's is not.
+        let nested =
+            "def age():\n    return list(x for x in [is_adult(y) for is_adult in rules])\n";
+        assert_eq!(own_scope(nested), ["list"]);
+    }
+
+    #[test]
+    fn an_eager_comprehensions_call_to_another_name_is_the_helpers() {
+        // The display runs while the handler runs, and nothing local
+        // shadows the helper there.
+        for (label, body) in [
+            (
+                "a list display",
+                "    return [is_adult(x) for x in rules]\n",
+            ),
+            (
+                "a dict value",
+                "    return {k: is_adult(v) for k, v in rules}\n",
+            ),
+            (
+                "its first iterable",
+                "    return [x for x in is_adult(rules)]\n",
+            ),
+            (
+                "a later iterable",
+                "    return [x for x in xs for y in is_adult(xs)]\n",
+            ),
+            ("a condition", "    return [x for x in xs if is_adult(x)]\n"),
+            (
+                "a target named otherwise",
+                "    return [checker(x) for checker in rules]\n    return is_adult(30)\n",
+            ),
+        ] {
+            assert_eq!(
+                own_scope(&format!("def age():\n{body}")),
+                ["is_adult"],
+                "{label}"
+            );
+        }
     }
 }

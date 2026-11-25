@@ -490,7 +490,14 @@ fn sort_candidates(found: &mut [HelperOwnerCallCandidate<'_>]) {
 
 /// Callers of the owner within [`MAX_HELPER_CALLER_DEPTH`] hops, each with
 /// whether its path crossed into the owner's module from another module
-/// (#12955). Same-module callers come first, at every hop.
+/// (#12955). Same-module callers come first, at every hop. An edge is read
+/// from the caller's textual list of callees, which counts a call anywhere
+/// in its span, with one exception: a routed handler is followed only
+/// through a call its own scope makes, as the route relation reads it
+/// (#14150 review). A helper the handler only mentions inside a nested
+/// definition it never invokes is not called by it, for these relations as
+/// for the route relation; a test that calls the handler itself keeps its
+/// relation where the handler does call the helper.
 fn module_function_callers<'o>(
     owner: &PythonOwner,
     owners: &'o [PythonOwner],
@@ -524,6 +531,7 @@ fn module_function_callers<'o>(
                     caller.file.as_path() == *file
                         && caller.name != *name
                         && caller.module_callees.iter().any(|callee| callee == name)
+                        && calls_in_own_scope(caller, name)
                 })
                 .map(|(_, _, crossed)| *crossed)
                 .min();
@@ -544,6 +552,7 @@ fn module_function_callers<'o>(
                 && cross_module_entries
                     .iter()
                     .any(|entry| std::ptr::eq(*entry, caller))
+                && calls_the_imported_helper_in_own_scope(caller, owner, owners)
             {
                 crossing.push((caller, true));
             }
@@ -566,6 +575,29 @@ fn module_function_callers<'o>(
     // same-module reading (the fold credits the first caller).
     callers.sort_by_key(|(_, crossed)| *crossed);
     callers
+}
+
+/// Whether `caller` may be followed through the bare call of `name` that its
+/// textual list shows. A routed handler is followed only when its own scope
+/// makes that call, a reading that can only withhold. Any other owner keeps
+/// the textual list, which over-approximates: a call that owner makes only
+/// in a nested scope is followed still.
+fn calls_in_own_scope(caller: &PythonOwner, name: &str) -> bool {
+    caller.route_paths.is_empty()
+        || caller
+            .route_scope_callees
+            .iter()
+            .any(|callee| callee == name)
+}
+
+/// [`calls_in_own_scope`] for a caller in another module, which names the
+/// owner by the binding its own module gives it.
+fn calls_the_imported_helper_in_own_scope(
+    caller: &PythonOwner,
+    owner: &PythonOwner,
+    owners: &[PythonOwner],
+) -> bool {
+    caller.route_paths.is_empty() || caller_directly_calls_owner(caller, owner, owners)
 }
 
 fn helper_candidates_from_callers<'a>(
