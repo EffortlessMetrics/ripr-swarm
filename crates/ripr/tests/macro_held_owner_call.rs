@@ -537,3 +537,62 @@ fn method_receivers_preserve_real_observations_and_demote_held_calls() -> Result
         Err(wrong.join("\n"))
     }
 }
+
+/// #16265: a `use .. as assert_eq` rename that points the outer assertion at
+/// a macro that evaluates nothing (`stringify!`) is a shadow, read exactly as
+/// a test-local `macro_rules! assert_eq`. The parsed equality keeps its kind
+/// but gives the seam no grip; an unrelated rename changes nothing.
+#[test]
+fn an_outer_assertion_renamed_to_a_non_assertion_gives_no_grip() -> Result<(), String> {
+    let held = "let r = pick(0); let f = crate::pick; assert_eq!(check_ok!(r), f(0));";
+    let plain = "let f = crate::pick; assert_eq!(f(0), Ok(Mode::A));";
+    let rename = format!("{CHECK_OK}\n    use std::stringify as assert_eq;");
+    let local = format!("{CHECK_OK}\n    macro_rules! assert_eq {{ ($a:expr, $b:expr) => {{}}; }}");
+    let unrelated = format!("{CHECK_OK}\n    use std::collections::HashMap as Map;");
+    // (label, test-local items, assertion, expected grip class, oracle kind)
+    let cases = [
+        (
+            "a stringify rename of assert_eq over a held local and a called alias",
+            rename.as_str(),
+            held,
+            "discrimination_unknown",
+            "exact_value",
+        ),
+        (
+            "a stringify rename of assert_eq over a direct alias call",
+            "use std::stringify as assert_eq;",
+            plain,
+            "discrimination_unknown",
+            "exact_value",
+        ),
+        (
+            "a local macro_rules! assert_eq reads the same as the rename",
+            local.as_str(),
+            held,
+            "discrimination_unknown",
+            "exact_value",
+        ),
+        (
+            "an unrelated rename keeps the observation",
+            unrelated.as_str(),
+            held,
+            "strongly_gripped",
+            "exact_value",
+        ),
+    ];
+    // Every case runs, so one report names each wrong reading.
+    let mut wrong = Vec::new();
+    for (label, macros, assertion, grip, oracle) in cases {
+        let (actual_grip, actual_oracle, _) = Workspace::create(macros, assertion)?.ok_seam()?;
+        if (actual_grip.as_str(), actual_oracle.as_str()) != (grip, oracle) {
+            wrong.push(format!(
+                "{label}: expected {grip}/{oracle}, got {actual_grip}/{actual_oracle}"
+            ));
+        }
+    }
+    if wrong.is_empty() {
+        Ok(())
+    } else {
+        Err(wrong.join("\n"))
+    }
+}
