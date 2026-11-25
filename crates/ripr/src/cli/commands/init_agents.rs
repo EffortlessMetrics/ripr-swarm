@@ -51,15 +51,15 @@ Loop (max 3 rounds per gap):
 4. VERIFY  `cargo test <your_test_name>` must pass. Then run `ripr check --quiet --format agent`
            once more on the same root, base and saved source (new files need `git add -N PATH`).
            Check its exit status before reading it; do not change inputs before DONE.
-5. DONE    Use that same report; require exit 0 and its last line `verify=complete|...`.
-           `verify=refused`, a missing `verify=` line, or a cut-off report mean STOP.
-           `done=` or an empty gap list alone is never enough.
+5. DONE    Use that same report; require exit 0 and its last line `verify=complete|...` or
+           `verify=complete_with_limits|...` (only analyzer limits remain; report its `limits=`).
+           `verify=refused`, a missing `verify=` line, or a cut-off report mean STOP; `done=` or an empty gap list alone is never enough.
            If gaps remain, return to FIND; if inputs change, repeat VERIFY before DONE.
            Report tests and static result; this does not establish runtime bug detection.
 
 STOP and report instead of looping when:
 - the outcome names empty scope, no changed behavior, partial analysis, unsupported input or failed analysis;
-- the top finding says "Analyzer limit" / "Tests cannot close this static-analysis limitation";
+- verify is refused and the top finding says "Analyzer limit" / "Tests cannot close this static-analysis limitation";
 - the same gap remains after 3 exact-assert tests (it may be an equivalent change, e.g. `>` vs
   `>=` where both branches return the same value); or `ripr check` exits 2 or 3.
 
@@ -217,7 +217,8 @@ Loop (max 3 rounds per gap):
            saved source (new files need `git add -N PATH`). The new test must be in the
            analyzed source: commit it, or pass `--worktree` to both FIND and VERIFY. Check that
            run's exit status before reading it; do not change inputs before DONE.
-5. DONE    Use that same report; require exit 0 and its last line `verify=complete|...`.
+5. DONE    Use that same report; require exit 0 and its last line `verify=complete|...` or
+           `verify=complete_with_limits|...` (only analyzer limits remain; report its `limits=`).
            `verify=refused`, a missing `verify=` line, or a cut-off report mean STOP.
            `done=` or an empty gap list alone is never enough.
            If gaps remain, return to FIND; if inputs change, repeat VERIFY before DONE.
@@ -225,7 +226,7 @@ Loop (max 3 rounds per gap):
 
 STOP and report instead of looping when:
 - the outcome names empty scope, no changed behavior, partial analysis, unsupported input or failed analysis;
-- the top finding says "Analyzer limit" / "Tests cannot close this static-analysis limitation";
+- verify is refused and the top finding says "Analyzer limit" / "Tests cannot close this static-analysis limitation";
 - the same gap remains after 3 exact-assert tests (it may be an equivalent change, e.g. `>` vs
   `>=` where both branches return the same value); or `ripr check` exits 2 or 3.
 
@@ -513,6 +514,7 @@ mod tests {
             "DONE",
             "STOP and report",
             "Analyzer limit",
+            "verify is refused and the top finding says \"Analyzer limit\"",
             "exits 2 or 3",
             "ripr repair",
         ] {
@@ -544,6 +546,7 @@ mod tests {
         for condition in [
             "same report",
             "last line `verify=complete|...`",
+            "`verify=complete_with_limits|...` (only analyzer limits remain; report its `limits=`)",
             "`verify=refused`",
             "a missing `verify=` line",
             "cut-off report",
@@ -678,6 +681,7 @@ mod tests {
             "same report",
             "require exit 0",
             "last line `verify=complete|...`",
+            "`verify=complete_with_limits|...` (only analyzer limits remain; report its `limits=`)",
             "`verify=refused`",
             "a missing `verify=` line",
             "cut-off report",
@@ -790,10 +794,12 @@ mod tests {
         );
         for needle in [
             "last line `verify=complete|...`",
+            "`verify=complete_with_limits|...` (only analyzer limits remain; report its `limits=`)",
             "`verify=refused`",
             "a missing `verify=` line",
             "empty scope, no changed behavior, partial analysis",
             "Analyzer limit",
+            "verify is refused and the top finding says \"Analyzer limit\"",
             "after 3 exact-assert tests",
             "exits 2 or 3",
             "commit it, or pass `--worktree` to both FIND and VERIFY",
