@@ -100,26 +100,37 @@ pub(super) fn call_variant(old_line: &str, new_line: &str) -> Option<CallVariant
             .and_then(|index| new.get(index))
     };
     let not_attribute = |offset: isize| !matches!(at(offset), Some((Tok::Dot, _)));
+    // An f-string runs its expressions even when the key is present, so it
+    // is never an inert fallback or a readable key.
     let scalar = |tok: &Tok| {
         matches!(
             tok,
-            Tok::Int { .. }
-                | Tok::Float { .. }
-                | Tok::String { .. }
-                | Tok::None
-                | Tok::True
-                | Tok::False
-        )
+            Tok::Int { .. } | Tok::Float { .. } | Tok::None | Tok::True | Tok::False
+        ) || matches!(tok, Tok::String { kind, .. } if !kind.is_any_fstring())
     };
     let get_shape = matches!(at(-6), Some((Tok::Name { .. }, _)))
         && not_attribute(-7)
         && matches!(at(-5), Some((Tok::Dot, _)))
         && matches!(at(-4), Some((Tok::Name { .. }, text)) if text == "get")
         && matches!(at(-3), Some((Tok::Lpar, _)))
-        && matches!(at(-2), Some((Tok::String { .. } | Tok::Int { .. }, _)))
+        && at(-2).is_some_and(|(tok, _)| {
+            matches!(tok, Tok::Int { .. })
+                || matches!(tok, Tok::String { kind, .. } if !kind.is_any_fstring())
+        })
         && matches!(at(-1), Some((Tok::Comma, _)))
         && matches!(at(1), Some((Tok::Rpar, _)));
-    if get_shape && scalar(&old[i].0) && scalar(&new[i].0) {
+    // Two spellings of one value (`1000` and `1_000`) are not a fallback
+    // change a missing key could reveal. A string, a number or bool, and
+    // `None` never compare equal to one another.
+    let unseparated = |text: &str| literal_value(text).unwrap_or_else(|| text.to_string());
+    let kind = |tok: &Tok| match tok {
+        Tok::String { .. } => 0,
+        Tok::None => 1,
+        _ => 2,
+    };
+    let differ = kind(&old[i].0) != kind(&new[i].0)
+        || literals_equal(&unseparated(&old[i].1), &unseparated(&new[i].1)) == Some(false);
+    if get_shape && scalar(&old[i].0) && scalar(&new[i].0) && differ {
         return Some(CallVariant::GetFallback {
             param: at(-6).map(|(_, text)| text.clone())?,
             key: at(-2).map(|(_, text)| text.clone())?,
@@ -413,17 +424,23 @@ pub(super) fn key_present(keys: &[String], key: &str) -> Option<bool> {
     if float(key) {
         return None;
     }
+    // One definite match decides; an unreadable comparison with another key
+    // does not, whatever the order of the keys.
+    let mut unread = false;
     for candidate in keys {
         if float(candidate) {
-            return None;
+            unread = true;
+            continue;
         }
         // Digit separators are spelling only (`1_000 == 1000`).
         let unseparated = |text: &str| literal_value(text).unwrap_or_else(|| text.to_string());
-        if literals_equal(&unseparated(candidate), &unseparated(key))? {
-            return Some(true);
+        match literals_equal(&unseparated(candidate), &unseparated(key)) {
+            Some(true) => return Some(true),
+            Some(false) => {}
+            None => unread = true,
         }
     }
-    Some(false)
+    (!unread).then_some(false)
 }
 
 /// The key literals of a dict display whose every key is a scalar literal

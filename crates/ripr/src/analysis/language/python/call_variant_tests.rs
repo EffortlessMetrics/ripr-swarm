@@ -606,6 +606,27 @@ fn only_a_lone_literal_fallback_edit_on_a_named_get_is_read() {
         call_variant("return d.get(\"k\", 0, x)", "return d.get(\"k\", 5, x)"),
         None
     );
+    // An f-string fallback or key runs code even when the key is present.
+    assert_eq!(
+        call_variant(
+            "return d.get(\"k\", f'{1 / divisor}')",
+            "return d.get(\"k\", \"\")"
+        ),
+        None
+    );
+    assert_eq!(
+        call_variant("return d.get(f\"{k}\", 0)", "return d.get(f\"{k}\", 5)"),
+        None
+    );
+    // Two spellings of one value are not a fallback change.
+    assert_eq!(
+        call_variant("return d.get(\"k\", 1000)", "return d.get(\"k\", 1_000)"),
+        None
+    );
+    assert_eq!(
+        call_variant("return d.get(\"k\", 0)", "return d.get(\"k\", False)"),
+        None
+    );
 }
 
 #[test]
@@ -639,6 +660,23 @@ fn dict_keys_are_read_only_from_a_literal_display() {
     );
     assert_eq!(key_present(&keys(&["1.5"]), "2"), None);
     assert_eq!(key_present(&keys(&["1_000"]), "1000"), Some(true));
+    // A definite match decides in either key order; an unreadable comparison
+    // with no match leaves the call unread.
+    assert_eq!(key_present(&keys(&["1", "\"k\""]), "\"k\""), Some(true));
+    assert_eq!(key_present(&keys(&["\"k\"", "1"]), "\"k\""), Some(true));
+    assert_eq!(key_present(&keys(&["1.5", "\"k\""]), "\"k\""), Some(true));
+    assert_eq!(key_present(&keys(&["1", "\"j\""]), "\"k\""), None);
+}
+
+#[test]
+fn a_held_key_is_read_whatever_the_dict_key_order() -> Result<(), String> {
+    for dict in ["{1: 0, \"k\": 2}", "{\"k\": 2, 1: 0}"] {
+        let finding = classify_score(&format!(
+            "from src.text import score\n\n\ndef test_score():\n    assert score({dict}) == 3\n"
+        ))?;
+        assert_eq!(finding.class, ExposureClass::WeaklyExposed, "{dict}");
+    }
+    Ok(())
 }
 
 #[test]

@@ -2219,8 +2219,9 @@ are all such scalars, not a parametrize case value the
 test may change in place) and both versions give the same result, the edit
 reads `weakly_exposed` and the missing discriminator names the separating
 input. List elements agree only when they share a spelling or are plain strings
-or ints of equal value; a lookup key matches by Python equality, and a float key
-is not read. A call the reader cannot resolve, or no resolved call
+or ints of equal value; a lookup key matches by Python equality in any key
+order, a float key is not read, and a fallback must be a non-f-string literal
+whose value changes. A call the reader cannot resolve, or no resolved call
 at all, leaves the reading to the other rules.
 
 Tests: `call_variant_tests.rs::inputs_without_trailing_whitespace_do_not_expose_strip_to_lstrip`,
@@ -2246,6 +2247,7 @@ Tests: `call_variant_tests.rs::inputs_without_trailing_whitespace_do_not_expose_
 `call_variant_tests.rs::an_unpacked_dict_keeps_a_get_fallback_change_exposed`,
 `call_variant_tests.rs::only_a_lone_literal_fallback_edit_on_a_named_get_is_read`,
 `call_variant_tests.rs::dict_keys_are_read_only_from_a_literal_display`,
+`call_variant_tests.rs::a_held_key_is_read_whatever_the_dict_key_order`,
 `call_variant_tests.rs::a_parametrized_dict_keeps_a_get_fallback_change_exposed`.
 
 ## Changed Range Header Amendment (#12948)
