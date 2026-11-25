@@ -192,10 +192,22 @@ pub(super) fn term_facts(
     let first_mention_lines = parameters
         .iter()
         .filter_map(|parameter| {
-            let (_, line) = statements
-                .iter()
-                .find(|(text, _)| code_mentions(text, &parameter.name))?;
-            Some((parameter.name.clone(), *line))
+            // #16221: Python NFKC-normalises identifiers, so a raw spelling
+            // match can miss a prior use (`K` for `K`). Abstain on a
+            // non-ASCII parameter or a non-ASCII statement before the first
+            // use rather than reason from the original singleton.
+            if !parameter.name.is_ascii() {
+                return None;
+            }
+            for (text, line) in &statements {
+                if !text.is_ascii() {
+                    return None;
+                }
+                if code_mentions(text, &parameter.name) {
+                    return Some((parameter.name.clone(), *line));
+                }
+            }
+            None
         })
         .collect();
     PythonTermFacts {
