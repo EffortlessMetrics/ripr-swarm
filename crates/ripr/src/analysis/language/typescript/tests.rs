@@ -22814,6 +22814,7 @@ mod nullish_chain_tests;
 mod object_row_callback_comment_tests;
 mod object_row_tests;
 mod out_dir_specifier_tests;
+mod overwritten_method_tests;
 mod plain_class_entry_tests;
 mod playwright_fixture_tests;
 mod playwright_unit_tests;

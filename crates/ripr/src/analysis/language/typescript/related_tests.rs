@@ -2825,6 +2825,10 @@ pub(crate) fn related_test_candidates<'a>(
 ) -> Vec<TypeScriptRelatedCandidate<'a>> {
     #[cfg(test)]
     RELATED_CANDIDATE_SCANS.with(|count| count.set(count.get() + 1));
+    // A later same-key member replaced this body: no test can run it.
+    if owner.method_kind == TypeScriptMethodKind::Overwritten {
+        return Vec::new();
+    }
     let package_scope = workspace_root.map(|root| OwnerPackageScope::new(&owner.file, root));
     let in_owner_package = |test: &&TypeScriptTest| {
         package_scope
