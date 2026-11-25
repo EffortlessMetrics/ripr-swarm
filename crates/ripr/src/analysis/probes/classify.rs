@@ -148,9 +148,20 @@ pub(super) fn removed_type_bounds(
     }
 }
 
+/// What an unsafe boundary is for a changed line. It decides the precedence
+/// between the boundary's `static_unknown` finding and a classified probe on
+/// the same line and owner (#15348), a rule stated here and applied once, in
+/// `probes/diff.rs`.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(super) enum UnsafeBoundary {
+    /// The edit lies in the body, past an opening brace the removed line
+    /// carries unchanged. The boundary is context for the edit: a classified
+    /// probe that carries the edit replaces its finding, and the finding
+    /// stays when no probe does.
     Enclosing,
+    /// The line introduces or changes the unsafe qualifier or the brace
+    /// itself. The boundary is the edit, so its finding stays beside any
+    /// classified probe.
     EditedOpener,
 }
 
@@ -465,6 +476,12 @@ fn line_is_nested_statement(
 /// unsafe boundary shares its opening or closing line. Re-resolve the exact
 /// AST range and fail closed on those ambiguous edge lines; interior lines and
 /// edge lines wholly owned by the boundary remain eligible.
+///
+/// For an eligible line, also say which of the two jobs the boundary does:
+/// `Enclosing` when the edit lies past the body's opening brace, which the
+/// removed line must carry unchanged when the brace shares the line, and
+/// `EditedOpener` otherwise. The precedence that follows is on
+/// [`UnsafeBoundary`].
 fn unsafe_boundary_for_line(
     facts: &FileData,
     shape: &ProbeShapeFact,

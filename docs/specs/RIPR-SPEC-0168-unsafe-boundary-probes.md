@@ -34,19 +34,25 @@ The Rust fact index records parser-backed `unsafe_boundary` probe shapes for
 `unsafe fn` bodies and explicit `unsafe {}` blocks. When a changed line lies
 inside such a boundary, the diff projection can emit an explicit
 `static_unknown` probe at the changed line, tagged with the
-`unsafe_boundary` probe shape and the `static_unknown` probe family. A classified
-probe of any family but `static_unknown` takes precedence over enclosing
-boundary context when it carries the edit on the same candidate line of the
-same owner. An unchanged expression beside the edit cannot suppress the note.
-An ambiguous replacement retains it. Each boundary
-keeps at most one projection on a remaining eligible line. An independently
-introduced unsafe qualifier or block opener retains its own finding. A line shared between boundary and non-boundary code projects no
-unsafe-boundary probe: the boundary's exact AST byte range must overlap the
-changed line, and an opening or closing edge line shared with code outside the
-boundary disqualifies it. Nested boundaries resolve to the innermost boundary
+`unsafe_boundary` probe shape and the `static_unknown` probe family. A line
+shared between boundary and non-boundary code projects no unsafe-boundary
+probe: the boundary's exact AST byte range must overlap the changed line, and
+an opening or closing edge line shared with code outside the boundary
+disqualifies it. Nested boundaries resolve to the innermost boundary
 containing the changed line. The probe family is `static_unknown` by
 construction, so the classifier cannot promote reach plus an oracle into
 `exposed` for this family.
+
+A boundary is enclosing for a line whose edit lies in its body, past an
+opening brace the removed line carries unchanged, and an edited opener for a
+line that introduces or changes the unsafe qualifier or the brace itself. A
+classified probe of any family but `static_unknown` takes precedence over an
+enclosing boundary when it carries the edit on the same candidate line of the
+same owner: the line reports that classified probe alone. An unchanged
+expression beside the edit cannot suppress the boundary's probe, and an
+ambiguous replacement keeps it. An edited opener keeps its own finding beside
+any classified probe. Each boundary keeps at most one projection, on its first
+remaining eligible line.
 
 The probe's expression is the boundary label (`unsafe fn inline_len`,
 `unsafe block`), which sets its id and gap id. When the changed line is not the
@@ -54,9 +60,9 @@ boundary's opening line, the probe's changed (`after`) text is the trimmed
 changed line instead of the label (#14333), so `Changed behavior` names the
 edit and pairs with the removed line in `before`. A mid-line `unsafe {}` block
 inside an `unsafe fn` (`let repr = unsafe { .. };`) still projects the
-enclosing `unsafe fn` boundary, keeping its `unsafe_obligation`; only the
-displayed changed text moves to the edited statement. An edited opening line
-keeps the label as its changed text.
+enclosing `unsafe fn` boundary when no classified probe carries the edit,
+keeping its `unsafe_obligation`; only the displayed changed text moves to the
+edited statement. An edited opening line keeps the label as its changed text.
 
 An `unsafe fn` boundary probe, and an `unsafe {}` block whose parsed calls
 include `unreachable_unchecked` or `assert_unchecked` (probe label
@@ -67,6 +73,11 @@ cannot discharge, and its next step is to check the safety contract and each
 caller or assumption site by hand. The class stays `static_unknown`, nothing
 is credited, and no test-stub repair is offered. Detection is by parsed call
 path, so a string, comment or similarly named item does not match.
+
+That reason belongs to the boundary's own finding. When a classified probe
+carries the edit on the same line and that finding is withdrawn, the reason
+goes with it: the remaining finding names the edit and its test evidence, and
+does not repeat the safety-contract step (#15348).
 
 The call must resolve to the `std`/`core` `hint` (or `intrinsics`) function
 through the `use` bindings visible at the call (#12196): a spelled-out or
@@ -88,8 +99,12 @@ keeps the plain `unsafe block` label.
 ## Required Evidence
 
 - A golden fixture whose diff changes a line strictly inside an `unsafe {}`
-  block pins exactly one `static_unknown` unsafe-boundary probe at the changed
-  line.
+  block that carries no classified probe of its own pins exactly one
+  `static_unknown` unsafe-boundary probe at the changed line.
+- A changed line inside an unsafe boundary whose classified probe carries the
+  edit reports that probe alone: one finding for one edit. A line that
+  introduces or changes the unsafe qualifier or the block opener keeps the
+  boundary's own finding.
 - Parser and classifier unit tests cover extraction, innermost-boundary
   selection, shared-edge-line fail-closed rejection, and comment/string
   false-positive controls.
@@ -121,7 +136,7 @@ keeps the plain `unsafe block` label.
   `probe_walk_labels_unchecked_assumption_blocks_by_parsed_call_only` and
   `probe_walk_resolves_unchecked_assumption_through_use_bindings`.
 - `crates/ripr/src/analysis/classify/decision.rs` —
-  `unsafe_obligation_is_recognised_by_probe_label_only`.
+  `unsafe_obligation_requires_static_unknown_family_and_label`.
 - `crates/ripr/src/analysis/syntax/ra.rs` — parser extraction tests
   (`ra_adapter_extracts_unsafe_execution_boundaries_without_lexical_false_positives`
   family).
@@ -133,7 +148,11 @@ keeps the plain `unsafe block` label.
 - `crates/ripr/src/analysis/syntax/ra.rs` — extraction of
   `unsafe_boundary` probe-shape facts (#3516).
 - `crates/ripr/src/analysis/probes/classify.rs` — changed-line projection and
-  boundary ownership guard.
+  boundary ownership guard; `unsafe_boundary_for_line` decides eligibility and
+  whether a boundary is enclosing or an edited opener.
+- `crates/ripr/src/analysis/probes/diff.rs` — the per-file projection that
+  keeps one finding per boundary and lets a classified probe that carries the
+  edit replace an enclosing boundary's finding (#15348).
 - `crates/ripr/src/analysis/facts/model.rs` — the
   `unsafe_boundary` variant of the closed `ProbeShapeKind` vocabulary (#5415).
 
