@@ -728,6 +728,7 @@ pub(super) fn mark_isolated_fixture_defs(
             if def.literal_construction.is_none()
                 && def.inert_tool.is_none()
                 && def.literal_params.is_none()
+                && !super::route_client::simple_client_fixture(&def.body_text)
             {
                 continue;
             }

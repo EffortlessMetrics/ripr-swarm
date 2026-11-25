@@ -15,7 +15,7 @@ pub(in super::super) fn identified_route_response_names(
     if owner.route_paths.is_empty() {
         return Vec::new();
     }
-    let receivers = super::super::route_client::client_receivers(&test.body_text);
+    let receivers = super::super::route_client::test_client_receivers(test);
     let mut names = Vec::new();
     // The names bound once to a call of each receiver and verb, computed once
     // per lookup rather than once per route or assignment.

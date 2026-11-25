@@ -1,0 +1,10 @@
+[[extend]]
+id = "RIPR-SPEC-0028"
+tests = [
+  "crates/ripr/src/analysis/language/python/route_identity_tests.rs::named_fixture_relates_only_the_matching_request_to_its_app",
+]
+code = [
+  "crates/ripr/src/analysis/language/python/route_client.rs",
+  "crates/ripr/src/analysis/language/python/fixtures.rs",
+]
+fixtures = ["fixtures/python-verdict-corpus/subjects/authored-py-pytest-route-clients"]

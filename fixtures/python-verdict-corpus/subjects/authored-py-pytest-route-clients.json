@@ -34,6 +34,10 @@
       "sha256": "b33481307d5f9b396ea37d5cda2dfb00980dd499a0b120aeed0c274388e8f515"
     },
     {
+      "path": "routeclients/stock.py",
+      "sha256": "3ffc140525025b2d5a3d818b1fde9716b8386b171d5fb5f6f81f355a2aa8622e"
+    },
+    {
       "path": "tests/conftest.py",
       "sha256": "9d9ef4b6e40fa0cf7b14c58de779f795bf85348e94f880743f2ff96b9163b836"
     },
@@ -44,6 +48,14 @@
     {
       "path": "tests/invoices/test_invoices.py",
       "sha256": "cb48afdc956c688dca2d30e35d41c92d4013de32ef7c7ef1acf58edd6025df3e"
+    },
+    {
+      "path": "tests/stock/conftest.py",
+      "sha256": "951481631f710c60722702e981b3eed88a54056ea0ab0a3b2a736074e4891def"
+    },
+    {
+      "path": "tests/stock/test_stock.py",
+      "sha256": "fcd6ddeff6d8d70be34981d2f59ded824a5b49998446eac5398fb46231c4a90a"
     },
     {
       "path": "tests/test_orders.py",

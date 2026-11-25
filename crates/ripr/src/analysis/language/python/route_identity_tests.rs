@@ -309,6 +309,10 @@ fn a_different_symbol_from_the_owners_own_module_does_not_relate() -> Result<(),
 /// when the client comes from a `tests/conftest.py` fixture.
 fn fixture_relation(conftest: &str) -> Result<Option<PythonRelationKind>, String> {
     let test = "def test_items(client):\n    assert client.get(\"/items\").json() == []\n";
+    fixture_relation_for(test, conftest)
+}
+
+fn fixture_relation_for(test: &str, conftest: &str) -> Result<Option<PythonRelationKind>, String> {
     let (owners, tests) = super::fixtures_tests::workspace(&[
         ("app/a.py", OWN_APP),
         ("tests/conftest.py", conftest),
@@ -324,6 +328,54 @@ fn fixture_relation(conftest: &str) -> Result<Option<PythonRelationKind>, String
 }
 
 const CLIENT_IMPORTS: &str = "import pytest\nfrom starlette.testclient import TestClient\n";
+
+#[test]
+fn named_fixture_relates_only_the_matching_request_to_its_app() -> Result<(), String> {
+    let use_client =
+        "def test_stock(api_client):\n    assert api_client.get(\"/items\").json() == []\n";
+    let fixture = |module: &str, exit: &str| {
+        format!(
+            "{CLIENT_IMPORTS}from {module} import app\n\n@pytest.fixture\ndef api_client():\n    {exit}\n"
+        )
+    };
+    let own = fixture("app.a", "return TestClient(app)");
+    let identified = Some(PythonRelationKind::ApiClientRouteCall);
+    assert_eq!(fixture_relation_for(use_client, &own)?, identified);
+    assert_eq!(
+        fixture_relation_for(use_client, &fixture("app.a", "yield TestClient(app)"))?,
+        identified
+    );
+    for conftest in [
+        fixture("app.b", "return TestClient(app)"),
+        fixture("app.a", "return {}"),
+        fixture("app.a", "return Store()"),
+        String::new(),
+    ] {
+        assert_eq!(fixture_relation_for(use_client, &conftest)?, None);
+    }
+    for unrelated in [
+        use_client.replace("/items", "/outside"),
+        use_client.replace(".get(", ".post("),
+        "def test_stock(api_client):\n    assert all(api_client.get(\"/items\") for api_client in stores)\n".into(),
+        "def test_stock(api_client):\n    assert (lambda api_client: api_client.get(\"/items\"))(Store())\n".into(),
+        use_client.replace("    assert", "    api_client = Store()\n    assert"),
+    ] {
+        assert_eq!(fixture_relation_for(&unrelated, &own)?, None);
+    }
+    let shadowed = format!("from helpers import api_client\n\n{use_client}");
+    assert_eq!(fixture_relation_for(&shadowed, &own)?, None);
+    let nested = own.replace("def api_client()", "def api_client(app)");
+    assert_eq!(fixture_relation_for(use_client, &nested)?, None);
+    let local = format!("{own}\n{use_client}");
+    assert_eq!(fixture_relation_for(&local, "")?, identified);
+    // Preserve the pre-existing unidentified reach of a conventional client.
+    let store = fixture("app.a", "return {}").replace("def api_client", "def client");
+    assert_eq!(
+        fixture_relation(&store)?,
+        Some(PythonRelationKind::ApiClientRouteUnidentifiedApp)
+    );
+    Ok(())
+}
 
 #[test]
 fn a_conftest_client_fixture_over_the_owners_app_is_identified() -> Result<(), String> {

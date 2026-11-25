@@ -6,6 +6,7 @@
 //! statement in the body binds it.
 
 use super::related_tests::is_python_identifier_char;
+use super::{PythonFixtureDef, PythonTest};
 
 /// `text` with string contents blanked (quotes kept, newlines kept inside
 /// triple-quoted strings) and `#` comments removed, so brackets, `as`, `:=` and
@@ -474,16 +475,42 @@ fn application_argument(arguments: &str) -> Option<&str> {
         .filter(|part| keyword_argument(part).is_none())
 }
 
-/// A request client's receiver names in a test body: the conventional
-/// `client` plus each name bound exactly once, from that client, from another
-/// receiver, or from a client construction.
-pub(super) fn client_receivers(body_text: &str) -> Vec<String> {
+/// Resolve injected receivers from the fixture definitions attached to this test.
+pub(super) fn test_client_receivers(test: &PythonTest) -> Vec<String> {
+    // Class-level fixture overrides are not recorded by the module fixture lookup.
+    let defs = if test.qualified_name == test.name && !test.constant_rebinding.opaque {
+        test.fixture_defs.as_slice()
+    } else {
+        &[]
+    };
+    client_receivers(&test.body_text, defs)
+}
+
+/// The conventional receiver retains its reach-only fallback. Other fixture
+/// names require a direct client construction and an unmodified parameter.
+fn client_receivers(body_text: &str, defs: &[PythonFixtureDef]) -> Vec<String> {
     let lines = logical_lines(body_text);
     let bindings: Vec<(&str, &str)> = lines
         .iter()
         .filter_map(|line| simple_binding(line))
         .collect();
     let mut receivers = vec!["client".to_string()];
+    // A comprehension or lambda can shadow a parameter inside the request
+    // expression without rebinding it in the enclosing function.
+    let nested_expression = !defs.is_empty()
+        && lines.iter().any(|line| {
+            line.split(|ch| !is_python_identifier_char(ch))
+                .any(|word| matches!(word, "for" | "lambda"))
+        });
+    for def in defs.iter().filter(|_| !nested_expression) {
+        if def.isolated
+            && def.name != "client"
+            && is_unrebound_parameter(body_text, &def.name)
+            && simple_client_fixture(&def.body_text)
+        {
+            receivers.push(def.name.clone());
+        }
+    }
     // Repeat so a long alias chain resolves whatever order its links appear in.
     for _ in 0..=bindings.len() {
         let before = receivers.len();
@@ -502,6 +529,44 @@ pub(super) fn client_receivers(body_text: &str) -> Vec<String> {
         }
     }
     receivers
+}
+
+/// A fixture with one unconditional return or yield of a client built directly
+/// over a named application. A nested, conditional or factory-produced value
+/// does not establish a new receiver.
+pub(super) fn simple_client_fixture(body: &str) -> bool {
+    if !body.contains("TestClient") && !body.contains("AsyncClient") {
+        return false;
+    }
+    let lines = logical_lines(body);
+    let (header, exit) = match lines.as_slice() {
+        [line] => match header_colon(line) {
+            Some(at) => (&line[..=at], line[at + 1..].trim_start()),
+            None => return false,
+        },
+        [header, exit] => (header.as_str(), exit.as_str()),
+        _ => return false,
+    };
+    let no_parameters = header
+        .strip_prefix("def ")
+        .and_then(|signature| signature.split_once('('))
+        .is_some_and(|(_, rest)| rest.trim_start().starts_with(')'));
+    if !no_parameters || !header.ends_with(':') {
+        return false;
+    }
+    let Some(value) = exit
+        .strip_prefix("return ")
+        .or_else(|| exit.strip_prefix("yield "))
+    else {
+        return false;
+    };
+    let Some((callee, _)) = value.split_once('(') else {
+        return false;
+    };
+    callee.trim().split('.').all(is_plain_name)
+        && client_construction(value)
+            .and_then(application_argument)
+            .is_some_and(is_plain_name)
 }
 
 /// `(name, value)` of each statement binding a plain name, bound exactly once
