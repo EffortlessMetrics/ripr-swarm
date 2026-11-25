@@ -149,9 +149,17 @@ fn a_function_passed_as_a_value_is_a_closure_entry() {
         entries(REVIVER, "reviver"),
         [("parse".to_string(), true, 1)]
     );
-    // A sort comparator, an array callback and a stored handler alike.
+    // A sort comparator is a call edge (#15928: a synchronous array callback
+    // runs the reference), so it is a call entry, not a closure one.
     let comparator = "function compare(a: string, b: string): number {\n  return a < b ? -1 : 1;\n}\nexport function sortKeys(o: object): string[] {\n  return Object.keys(o).sort(compare);\n}\n";
-    assert_eq!(closure_entry_names(comparator, "compare"), ["sortKeys"]);
+    assert_eq!(
+        entries(comparator, "compare"),
+        [("sortKeys".to_string(), false, 1)]
+    );
+    // A timer callback stays closure reach.
+    let timer =
+        "function tick(): void {}\nexport function start(): void {\n  setTimeout(tick);\n}\n";
+    assert_eq!(closure_entry_names(timer, "tick"), ["start"]);
     let stored = "function onKey(k: string): string {\n  return k;\n}\nconst handlers = { key: onKey };\nexport function dispatch(k: string): string {\n  return handlers.key(k);\n}\n";
     // `handlers` is an object literal, not a call-built constant: it is no
     // node of the graph, so nothing reaches `onKey` through it.
