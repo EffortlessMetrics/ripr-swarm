@@ -2197,6 +2197,48 @@ Tests: `connective_swap_tests.rs::agreeing_operands_do_not_expose_an_and_or_swap
 `connective_swap_tests.rs::an_if_condition_with_a_module_constant_reads_agreeing_calls`,
 `connective_swap_tests.rs::only_a_lone_connective_swap_between_simple_operands_is_read`.
 
+A one-line edit whose only change picks another `strip`, `lstrip` or `rstrip`
+on a parameter with no arguments, or another literal digit count in
+`round(<parameter>, <int>)`, or flips the literal `reverse` flag alone on one
+`sorted(<parameter>)` or `<parameter>.sort()` call with no other argument
+(#16203), changes the result only for a string with whitespace on a side one
+version keeps, a number with more decimal places than the smaller count, or a
+collection holding two different elements. The parameter must be one the body
+never rebinds; for a sort, the changed line must also be the start of the first
+top-level body statement that names the parameter, and name it once, so the
+sort sees the collection the test passed; because Python normalizes
+identifiers, a non-ASCII parameter or statement before that line leaves the
+reading alone. A bare `round` or `sorted` must name
+the builtin (nothing in the owner's file rebinds it), the owner must not call
+itself, and a line inside a multiline string is never read as a call. When
+every strong related call binds the parameter to a plain literal the rule
+evaluates (a quoted string without escapes, an int or decimal float, or a list,
+tuple or set display the call itself spells, not a parametrize case value the
+test may change in place) and both versions give the same result, the edit
+reads `weakly_exposed` and the missing discriminator names the separating
+input. List elements agree only when they share a spelling or are plain strings
+or ints of equal value. A call the reader cannot resolve, or no resolved call
+at all, leaves the reading to the other rules.
+
+Tests: `call_variant_tests.rs::inputs_without_trailing_whitespace_do_not_expose_strip_to_lstrip`,
+`call_variant_tests.rs::an_input_with_trailing_whitespace_keeps_strip_to_lstrip_exposed`,
+`call_variant_tests.rs::inputs_within_the_smaller_digit_count_do_not_expose_a_round_change`,
+`call_variant_tests.rs::an_input_with_more_decimals_keeps_a_round_change_exposed`,
+`call_variant_tests.rs::an_unread_argument_keeps_its_reading`,
+`call_variant_tests.rs::only_a_strip_side_or_round_digits_edit_on_a_name_is_read`,
+`call_variant_tests.rs::agreement_follows_python_strip_and_round`,
+`call_variant_tests.rs::lists_without_two_different_elements_do_not_expose_a_sort_direction_flip`,
+`call_variant_tests.rs::a_list_with_different_elements_keeps_a_sort_direction_flip_exposed`,
+`call_variant_tests.rs::an_unread_list_keeps_a_sort_direction_flip_exposed`,
+`call_variant_tests.rs::a_list_the_body_changes_before_the_sort_keeps_its_reading`,
+`call_variant_tests.rs::only_a_lone_reverse_flag_flip_on_a_named_sort_is_read`,
+`call_variant_tests.rs::sorting_agrees_only_without_two_different_elements`,
+`call_variant_tests.rs::a_module_round_or_sorted_keeps_its_reading`,
+`call_variant_tests.rs::a_parametrized_list_keeps_a_sort_direction_flip_exposed`,
+`call_variant_tests.rs::a_recursive_owner_keeps_its_reading`,
+`call_variant_tests.rs::a_call_shaped_line_inside_a_multiline_string_is_not_read_as_a_call`,
+`call_variant_tests.rs::a_prior_use_spelled_with_a_normalized_identifier_keeps_the_sort_exposed`.
+
 ## Changed Range Header Amendment (#12948)
 
 A strong exact-value assertion on an owner does not establish that a changed
