@@ -297,6 +297,80 @@ fn packaged_repair_receipt_matching_semantics_cannot_replace_artifact_identity()
                 "channel `{channel}` cannot be qualified without nonempty artifact_identities"
             );
             assert!(result.failures.contains(&expected_failure), "{result:?}");
+            assert!(
+                !result
+                    .failures
+                    .iter()
+                    .any(|failure| failure.contains("lack matching semantic evidence")),
+                "{result:?}"
+            );
+        }
+    }
+    Ok(())
+}
+
+#[test]
+fn packaged_repair_receipt_each_qualification_claim_requires_artifact_identity()
+-> Result<(), String> {
+    let expected_fixture = expected_fixture_identity();
+    let evaluate_receipt = |receipt: &super::model::PackagedRepairParityReceipt| {
+        evaluate(&GateInput {
+            receipt,
+            expected_fixture: &expected_fixture,
+            require_full_qualification: false,
+        })
+    };
+
+    for channel in ["installed_cli", "packaged_vsix"] {
+        for identities in [vec![], vec![" \t\u{2003}".to_string()]] {
+            let mut degraded = parse_receipt(&skeleton_receipt_text()?)?;
+            for result in [
+                &mut degraded.channels.installed_cli,
+                &mut degraded.channels.packaged_vsix,
+            ] {
+                result.semantic = Some(semantic_snapshot());
+                result.executed_steps = vec!["journey".to_string()];
+                if result.channel == channel {
+                    result.artifact_identities = identities.clone();
+                }
+            }
+            let result = evaluate_receipt(&degraded);
+            assert_eq!(result.verdict, GateVerdict::Passed, "{result:?}");
+
+            let mut channel_claim = degraded.clone();
+            if channel == "installed_cli" {
+                channel_claim.channels.installed_cli.section_state =
+                    QualificationSectionState::Qualified;
+            } else {
+                channel_claim.channels.packaged_vsix.section_state =
+                    QualificationSectionState::Qualified;
+            }
+
+            let mut section_claim = degraded.clone();
+            let section = section_claim
+                .required_sections
+                .iter_mut()
+                .find(|section| section.channel.as_deref() == Some(channel))
+                .ok_or_else(|| format!("missing fixture section for {channel}"))?;
+            section.state = QualificationSectionState::Qualified;
+
+            let mut parity_claim = degraded;
+            parity_claim.parity.verdict = ParityVerdict::Qualified;
+            let expected_failure = format!(
+                "channel `{channel}` cannot be qualified without nonempty artifact_identities"
+            );
+            for (claim, receipt) in [
+                ("channel", channel_claim),
+                ("required section", section_claim),
+                ("parity", parity_claim),
+            ] {
+                let result = evaluate_receipt(&receipt);
+                assert_eq!(result.verdict, GateVerdict::Failed, "{claim}: {result:?}");
+                assert!(
+                    result.failures.contains(&expected_failure),
+                    "{claim}: {result:?}"
+                );
+            }
         }
     }
     Ok(())
