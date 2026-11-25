@@ -7802,3 +7802,60 @@ fn typed_facade_refusals_under_json_write_code_and_disposition() -> Result<(), S
     }
     Ok(())
 }
+
+/// #15265: a selected external test file with uncommitted changes (usually
+/// the test an earlier repair added) refuses the start up front with the same
+/// typed refusal as an uncommitted inline target: exit 3, one `cli_refusal`
+/// document under `--json`, no attempt, and a next step naming the file.
+#[test]
+fn repair_refuses_an_uncommitted_external_test_file_before_starting() -> Result<(), String> {
+    let fixture = Fixture::boundary("facade-uncommitted-external-test")?;
+    let root = &fixture.root;
+    let root_arg = root.to_string_lossy().into_owned();
+    std::fs::write(
+        root.join("tests/pricing.rs"),
+        format!("{FIXTURE_WEAK_TEST}// helper notes kept beside the tests\n"),
+    )
+    .map_err(|e| e.to_string())?;
+
+    let refused = run_ripr(root, &["repair", "--root", &root_arg, "--json"])?;
+    assert_exit(&refused, 3, "repair over an uncommitted external test file");
+    assert_refusal_code(
+        &refused,
+        "start_refused_uncommitted_target",
+        "not_started",
+        "uncommitted external test file",
+    );
+    let document: serde_json::Value = serde_json::from_str(&stdout_text(&refused))
+        .map_err(|error| format!("stdout must be one cli_refusal document: {error}"))?;
+    assert_eq!(document["status"], "refused", "{document:#}");
+    assert_eq!(
+        document["error"]["code"], "start_refused_uncommitted_target",
+        "{document:#}"
+    );
+    assert_eq!(
+        document["error"]["disposition"], "not_started",
+        "{document:#}"
+    );
+    let message = document["error"]["message"]
+        .as_str()
+        .ok_or("refusal message missing")?;
+    assert!(
+        message.contains("`tests/pricing.rs` has uncommitted changes")
+            && message.contains("commit or stash `tests/pricing.rs`"),
+        "the refusal must name the held test file:\n{message}"
+    );
+    assert!(attempt_ids(root).is_empty(), "no attempt may be created");
+
+    // Control: once the test file is committed, the same start proceeds.
+    run_git(root, &["add", "tests/pricing.rs"])?;
+    git_commit(root, "commit the test file edit")?;
+    let started = run_ripr(root, &["repair", "--root", &root_arg, "--json"])?;
+    assert_exit(&started, 0, "repair over a committed test file");
+    assert_eq!(
+        attempt_ids(root).len(),
+        1,
+        "the clean start creates one attempt"
+    );
+    Ok(())
+}

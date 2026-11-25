@@ -2998,6 +2998,53 @@ pub(crate) fn held_inline_start_file(
     held_inline_target(root, &repair_packet_eligibility(entry).readiness)
 }
 
+/// The selected external test file of `seam_id` when its tracked copy has
+/// uncommitted changes, so `ripr repair` refuses the start before writing any
+/// workflow artifact (#15265), as [`held_inline_start_file`] does for an
+/// inline target. Asks the edit cage's own predicate.
+pub(crate) fn held_external_test_start_file(
+    root: &Path,
+    seam_id: &str,
+    classified: &[crate::analysis::ClassifiedSeam],
+) -> Option<String> {
+    use crate::analysis::repair_route::RepairTargetSelection;
+    let entry = classified
+        .iter()
+        .find(|entry| entry.seam.id().as_str() == seam_id)?;
+    let readiness = repair_packet_eligibility(entry).readiness;
+    let file = match &readiness.target_selection {
+        RepairTargetSelection::Existing(target) => target.file().to_path_buf(),
+        RepairTargetSelection::Proposed(proposal) => proposal.file.clone(),
+        RepairTargetSelection::Missing => return None,
+    };
+    let relative = file.strip_prefix(root).unwrap_or(&file);
+    let relative = relative.to_string_lossy().replace('\\', "/");
+    (!Path::new(&relative).is_absolute()
+        && crate::analysis::is_test_surface(root, &relative)
+        && Path::new(&relative)
+            .extension()
+            .is_some_and(|ext| ext == "rs")
+        && crate::edit_cage::external_test_target_is_uncommitted(root, &relative))
+    .then_some(relative)
+}
+
+/// The refusal for a start held by an uncommitted external test file. After
+/// one repair the focused test file holds the new test until it is
+/// committed, so the refusal says that is the usual cause (#15265).
+pub(crate) fn uncommitted_test_start_refusal_message(
+    root: &Path,
+    seam_id: &str,
+    file: &str,
+) -> String {
+    let rerun = repair_rerun_command(root, seam_id);
+    start_refusal_with_next(
+        &format!(
+            "No repair attempt started. The test file `{file}` has uncommitted changes (after an earlier repair, usually the test it added). Commit or stash `{file}`, then run `{rerun}`. A repair adds tests to an existing test file only from its committed copy"
+        ),
+        &format!("commit or stash `{file}`, then run `{rerun}`"),
+    )
+}
+
 /// The refusal for a start held by an uncommitted production target: states
 /// that no attempt started and what to do about it (#9033).
 pub(crate) fn uncommitted_start_refusal_message(root: &Path, seam_id: &str, file: &str) -> String {
