@@ -37,6 +37,7 @@ Linked issues:
 - #14241 (class exported as default by a later statement)
 - #14088 (class imported by a named `require()`; re-declared `var` import)
 - #15092 (class as a CommonJS module's whole export)
+- #16252 (inline class expression as a CommonJS module's whole export)
 - #9435 (exact oracle ignored on five changed-line shapes)
 - #9497 (skipped or unexercised tests credited as exposed; rules 17 and 18)
 - #11196 (start rate: a conditional assertion in an unconsulted test no longer
@@ -1673,7 +1674,19 @@ require(...)`, ES `import Name from` of the CommonJS module) is refused as for
 a function export, and a `require()` of an ES default class stays a namespace
 object. A `let`/`var` local the test file writes again, a re-declared `var`,
 and a binding of the local in a `describe` body, a hook or the test body
-(including a `class Local {}` declared there) are not the class. `module.exports = class Name {}` inline is not read.
+(including a `class Local {}` declared there) are not the class.
+
+Amended 2026-11-25 (#16252): an inline `module.exports = class Name { ... }`
+is the same whole export. Its methods are owners (before, a changed method
+produced no finding at all), and while the file gate above holds and the file
+adds no named export beside the class (no `exports.` or `exports[` spelling)
+they relate through a whole-module `require` exactly as the declared form
+does. Otherwise the members stay owners but lose the class name: a class
+expression's name binds only inside its body, so no named import or same-file
+construction reaches them. An anonymous `module.exports = class { ... }` yields
+owners that stay unrelated, as `export default class {}` does. Named property
+exports of a class expression (`exports.Name = class ...`) and `const Name =
+class ...; module.exports = Name;` are not read.
 
 **Rule 21. A method decorator that passes the original result through
 lends `exposed` to the decorated method's tests (design decision, #10189).**
@@ -2766,6 +2779,14 @@ keys); do not take the next number.
   import of a default-only class, a class that is not the default, a rewritten
   class binding, and a type-only default export. A class with a named export as
   well keeps its named-import relation.
+
+- #16252 (rule 19, inline whole-export class):
+  `crates/ripr/src/analysis/language/typescript/tests/commonjs_inline_class_tests.rs`
+  pins every method of `module.exports = class Cart {...}` as an owner and a
+  whole-module `require` under any local name as related, beside the controls
+  that stay unrelated: named, default-named and ES imports, another module, a
+  named export beside the class, an ambiguous whole export, a rebound or
+  shadowed require local, and an anonymous class.
 
 - #11196 (rule 11, object rows): `tests/object_row_tests.rs` pins the per-row
   literal assertions for the `for...of` and `test.each` object-row forms and

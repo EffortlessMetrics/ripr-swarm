@@ -22763,6 +22763,7 @@ mod commonjs_class_receiver_tests;
 mod commonjs_default_class_tests;
 mod commonjs_default_function_tests;
 mod commonjs_export_tests;
+mod commonjs_inline_class_tests;
 mod comparison_edit_tests;
 mod cross_module_entry_tests;
 mod custom_matcher_tests;
