@@ -125,12 +125,9 @@ const REQUIRED_CLASSES: &[(&str, &[&str])] = &[
 ];
 
 fn language_enabled(language: &str) -> bool {
-    match language {
-        "rust" => cfg!(feature = "lang-rust"),
-        "python" => cfg!(feature = "lang-python"),
-        "typescript" => cfg!(feature = "lang-typescript"),
-        _ => false,
-    }
+    (language == "rust" && cfg!(feature = "lang-rust"))
+        || (language == "python" && cfg!(feature = "lang-python"))
+        || (language == "typescript" && cfg!(feature = "lang-typescript"))
 }
 
 fn parse(text: &str) -> Result<Value, String> {
