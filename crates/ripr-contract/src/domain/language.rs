@@ -127,9 +127,12 @@ impl LanguageId {
         }
     }
 
-    /// Whether this build compiled the adapter for this language. It reads this
-    /// crate's `lang-*` Cargo features, which `ripr` forwards; JavaScript
-    /// shares the `lang-typescript` feature.
+    /// Whether this crate's `lang-*` Cargo feature for this language is
+    /// enabled; JavaScript shares `lang-typescript`. `ripr` forwards its
+    /// adapter features here, so inside `ripr` this matches whether the adapter
+    /// is compiled. In a standalone `ripr-contract` build the features are
+    /// markers only: its defaults enable Rust, TypeScript and Python without
+    /// any adapter.
     pub fn is_available(self) -> bool {
         match self {
             LanguageId::Rust => cfg!(feature = "lang-rust"),
@@ -380,12 +383,12 @@ pub enum OwnerKind {
     /// A free function declaration. The TypeScript adapter also uses it for a
     /// function expression bound to a name.
     Function,
-    /// A method on a class. In Python, a function defined in a class body
-    /// without a `classmethod` or `staticmethod` decorator.
+    /// A method on a class. In Python, a function defined in a class body with
+    /// no decorator whose name ends in `classmethod` or `staticmethod`.
     Method,
     /// A class-level method in the adapter's syntactic classification: a
-    /// `static` method in TypeScript, or a method with a `classmethod` or
-    /// `staticmethod` decorator in Python.
+    /// `static` method in TypeScript, or, in Python, a method with a decorator
+    /// whose name ends in `classmethod` or `staticmethod`.
     ClassMethod,
     /// An arrow function owner, named by its binding or, for an anonymous
     /// default export, by the synthetic name `default`.
@@ -434,16 +437,17 @@ pub enum StaticLimitKind {
     /// an import graph.
     MissingImportGraph,
     /// A decorator, route registration or framework wrapper stands between the
-    /// tests and the changed code, or controls whether a related test runs, so
-    /// reach or activation could not be established. It does not show that the
-    /// changed code was reached.
+    /// tests and the changed code, a changed registration is not observed by
+    /// any related test, or such a wrapper controls whether a related test
+    /// runs, so reach, observation or activation could not be established. It
+    /// does not show that the changed code was reached.
     DecoratorIndirection,
     /// A related test mocks, reloads, rebinds or substitutes a module or
     /// fixture, so which object the test reads is not resolved. The mocked
     /// target need not be the changed code's module.
     MockedModule,
-    /// A related test checks the result through a helper whose assertions are
-    /// not analyzed.
+    /// A helper call whose body is not analyzed, such as a custom assertion
+    /// helper, so what it checks is unknown.
     OpaqueCustomAssertionHelper,
     /// A related test is property-based, so its inputs come from a generator.
     PropertyBasedTest,
