@@ -70,9 +70,10 @@ starts the scoreboard only if the capability probe succeeds.
 
 ```bash
 (
-  git_bin_dir=/absolute/path/to/git-bin
+  git_bin_dir="/absolute/path/to/git-bin"
+  git_bin_dir=$(CDPATH= cd -P -- "$git_bin_dir" && pwd -P) || exit
   export PATH="$git_bin_dir:$PATH"
-  test "$(command -v git)" = "$git_bin_dir/git" &&
+  test "$(command -v git)" = "${git_bin_dir%/}/git" &&
     git --version &&
     git --no-lazy-fetch status --porcelain --untracked-files=no &&
     cargo xtask dx-scoreboard --boards speed
