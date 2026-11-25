@@ -3682,16 +3682,28 @@ fn ts_operand_binding_unstable(source: &str, name: &str) -> bool {
     // A parameter default may write the operand before the body runs:
     // `(name, other = (name = 'Bob'))`. In the parameter list an occurrence
     // followed by `=` is a declaration with its own default only at paren
-    // depth zero after `(`, `,`, `{`, `[` or a rename `:`.
+    // depth zero after `(`, `,`, `{`, `[` or a rename `:`, and only for the
+    // first binding occurrence: once the operand is declared, any later write
+    // (`{ name, other = [name = 'Bob'] }`) comes from another default.
     if let Some(open) = masked[..from].iter().position(|ch| *ch == '(') {
         let mut at = open + 1;
+        let mut declared = false;
         while at + name.len() < from {
             let boundary = masked[at..at + name.len()] == name[..]
                 && !masked
                     .get(at - 1)
                     .is_some_and(|prev| ident(prev) || *prev == '.')
                 && !masked.get(at + name.len()).is_some_and(ident);
-            if boundary && writes(&next_text(at + name.len(), 4)) {
+            let after = next_text(at + name.len(), 4);
+            // A property key (`{ name: alias }`, `{ name?: T }`) binds nothing.
+            let key = after.starts_with(':') || after.starts_with("?:");
+            if boundary && !key && writes(&after) && declared {
+                return true;
+            }
+            if boundary && !key {
+                declared = true;
+            }
+            if boundary && !key && writes(&after) {
                 let depth = masked[open + 1..at]
                     .iter()
                     .fold(0i32, |depth, ch| match ch {

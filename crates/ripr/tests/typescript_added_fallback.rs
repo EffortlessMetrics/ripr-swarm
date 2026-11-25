@@ -890,6 +890,11 @@ fn parenthesized_spaced_and_parameter_default_writes_unbind_the_argument() -> Re
             "weakly_exposed",
         ),
         (
+            "array-default-writes-operand",
+            "{ name, other = [name = 'Bob'] }: { name: string | null; other?: string[] }",
+            "weakly_exposed",
+        ),
+        (
             "own-default-only",
             "name: string | null = 'x', other = 'y'",
             "exposed",
