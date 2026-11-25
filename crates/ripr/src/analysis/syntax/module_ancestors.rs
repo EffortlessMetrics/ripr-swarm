@@ -5,8 +5,9 @@
 //! reading that must know what such a glob can bring in reads those files
 //! too. Only default module resolution is followed: a declaration with a
 //! `#[path]` (or a `cfg_attr` that may add one), one nested in an inline
-//! module, or a file declared from more than one candidate ends the chain,
-//! so a glob that climbs past it stays unsettled.
+//! module, or a file declared from more than one candidate breaks the
+//! chain, and a chain that does not reach a crate root is not used at all,
+//! so a glob that leaves the file stays unsettled.
 
 use crate::analysis::workspace::module_parent_candidates;
 use ra_ap_syntax::AstNode;
@@ -17,7 +18,8 @@ use std::path::{Path, PathBuf};
 const MAX_ENCLOSING_FILES: usize = 8;
 
 /// The files that enclose `file`, nearest first, each declaring the next
-/// one's module at its own top level with a plain `mod name;`. `tree_of`
+/// one's module at its own top level with a plain `mod name;`, up to a crate
+/// root (`lib.rs` or `main.rs`); empty when the chain does not reach one. `tree_of`
 /// returns the parsed tree of an indexed file, `None` for any other path.
 pub(crate) fn enclosing_module_files(
     file: &Path,
@@ -27,7 +29,8 @@ pub(crate) fn enclosing_module_files(
     let mut current = file.to_path_buf();
     while enclosing.len() < MAX_ENCLOSING_FILES {
         let Some(child) = out_of_line_module_name(&current) else {
-            break;
+            // A crate root: every step below it is confirmed.
+            return enclosing;
         };
         let mut declaring: Vec<(PathBuf, ast::SourceFile)> = module_parent_candidates(&current)
             .into_iter()
@@ -45,7 +48,10 @@ pub(crate) fn enclosing_module_files(
         enclosing.push(tree);
         current = parent;
     }
-    enclosing
+    // The chain stopped short of a crate root, so even its first file may be
+    // an unused file beside an inline module that really declares the child
+    // (`mod a { mod tests; }` in `lib.rs` beside a stale `a.rs`).
+    Vec::new()
 }
 
 /// The module name a file holds when another file declares it: the stem, or
@@ -74,10 +80,33 @@ fn declares_at_top_level(tree: &ast::SourceFile, name: &str) -> bool {
             && module
                 .name()
                 .is_some_and(|ident| ident.text().trim_start_matches("r#") == name)
-            && !module
-                .attrs()
-                .any(|attr| attr.syntax().text().to_string().contains("path"))
+            && !module.attrs().any(|attr| may_move_module(&attr))
     })
+}
+
+/// A `#[path]` attribute, or a `cfg_attr` that spells `path` among the
+/// attributes it may add. Other attributes (`cfg`, `doc`, lints) leave
+/// default resolution in place.
+fn may_move_module(attr: &ast::Attr) -> bool {
+    match attribute_name(attr).as_str() {
+        "" | "path" => true,
+        "cfg_attr" => attr.syntax().text().to_string().contains("path"),
+        _ => false,
+    }
+}
+
+/// The leading path of an attribute (`cfg` for `#[cfg(test)]`), read from
+/// its text: `ast::Attr::path` has no path for the dedicated `cfg` and
+/// `cfg_attr` meta nodes. Empty when the attribute spells none.
+pub(super) fn attribute_name(attr: &ast::Attr) -> String {
+    let text = attr
+        .meta()
+        .map(|meta| meta.syntax().text().to_string())
+        .unwrap_or_default();
+    text.trim_start()
+        .chars()
+        .take_while(|c| c.is_alphanumeric() || matches!(c, '_' | ':'))
+        .collect()
 }
 
 #[cfg(test)]
@@ -102,6 +131,18 @@ mod tests {
     #[test]
     fn a_test_module_file_reads_the_crate_root_that_declares_it() {
         let root = "mod tests;\npub fn f() {}\n";
+        assert_eq!(
+            chain(
+                &[("src/lib.rs", root), ("src/tests.rs", "")],
+                "src/tests.rs"
+            ),
+            vec![root.to_string()]
+        );
+    }
+
+    #[test]
+    fn cfg_and_doc_attributes_keep_default_resolution() {
+        let root = "#[cfg(test)]\n#[doc = \"happy path tests\"]\nmod tests;\n";
         assert_eq!(
             chain(
                 &[("src/lib.rs", root), ("src/tests.rs", "")],
@@ -167,7 +208,30 @@ mod tests {
             none
         );
         assert_eq!(
+            chain(
+                &[(
+                    "src/lib.rs",
+                    "#[cfg_attr(unix, path = \"t.rs\")]\nmod tests;\n"
+                )],
+                "src/tests.rs"
+            ),
+            none
+        );
+        assert_eq!(
             chain(&[("src/lib.rs", "mod other;\n")], "src/tests.rs"),
+            none
+        );
+        // A stale `a.rs` beside the inline `mod a { mod tests; }` that
+        // really declares the test file is not taken as its parent.
+        assert_eq!(
+            chain(
+                &[
+                    ("src/lib.rs", "mod a { mod tests; }\n"),
+                    ("src/a.rs", "mod tests;\n"),
+                    ("src/a/tests.rs", ""),
+                ],
+                "src/a/tests.rs"
+            ),
             none
         );
         assert_eq!(chain(&[], "src/lib.rs"), none);

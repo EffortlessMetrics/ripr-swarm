@@ -253,8 +253,9 @@ pub(super) fn name_scopes_in_tree(
 ///
 /// `ancestors` are the files of the modules that enclose this file, nearest
 /// first, each declaring the next one's module at its top level (`mod
-/// tests;`). A `super` glob that leaves this file is read through them, and
-/// each one's macro definitions, imports and globs count like this file's
+/// tests;`). Their `macro_rules!` definitions and `#[macro_use]` items count
+/// like this file's; a `super` glob that leaves this file is followed into
+/// them, reading the top-level imports and globs of each file it reaches
 /// (#16277). A glob that climbs past the last known ancestor may bring in a
 /// macro.
 pub(crate) fn nested_block_renames_in_tree(
@@ -278,7 +279,7 @@ pub(crate) fn nested_block_renames_in_tree(
     let body = function.body()?;
     let mut paths: Vec<Vec<String>> = Vec::new();
     let mut mentions = 0usize;
-    let mut std_macros_rebound: Option<bool> = None;
+    let mut macro_reach: Option<Option<usize>> = None;
     for token in body
         .syntax()
         .descendants_with_tokens()
@@ -337,22 +338,17 @@ pub(crate) fn nested_block_renames_in_tree(
                 macro_names.push(name.to_string());
             }
         }
-        if !macro_names.is_empty()
-            && (*std_macros_rebound.get_or_insert_with(|| {
-                std::iter::once(tree)
-                    .chain(ancestors)
-                    .enumerate()
-                    .any(|(level, file)| {
-                        file_rebinds_a_std_macro(file)
-                            || file_glob_may_import_macros(file, ancestors.len() - level)
-                    })
-            }) || std::iter::once(tree).chain(ancestors).any(|file| {
-                macro_names
-                    .iter()
-                    .any(|macro_name| file_imports_name(file, macro_name))
-            }))
-        {
-            return None;
+        if !macro_names.is_empty() {
+            let reach = (*macro_reach.get_or_insert_with(|| macro_chain_reach(tree, ancestors)))?;
+            if macro_names.iter().any(|macro_name| {
+                file_imports_name(tree, macro_name)
+                    || ancestors
+                        .iter()
+                        .take(reach)
+                        .any(|file| top_level_imports_name(file, macro_name))
+            }) {
+                return None;
+            }
         }
         let mut decided = false;
         for block in parent.ancestors().filter_map(ast::BlockExpr::cast) {
@@ -414,40 +410,97 @@ pub(crate) fn nested_block_renames_in_tree(
     (mentions > 0).then_some(paths)
 }
 
-/// Whether a glob import in the file may bring in a macro this scan cannot
-/// see, which would shadow a std expression macro of the same name. A glob of
-/// `std` brings std's own macros when the file does not rebind that root
-/// (`core` and `alloc` are refused, as for `STD_CRATE_ROOT`: a renamed Cargo
-/// dependency can stand in for either); a glob of only `super`
-/// segments that stays within the file's inline modules reaches items this
-/// file declares, which `file_rebinds_a_std_macro` and `file_imports_name`
-/// read. `levels_above` more `super` segments are admitted when the caller
-/// reads that many enclosing module files the same way. Any other glob, or
-/// one the scan cannot read, may.
-fn file_glob_may_import_macros(tree: &ast::SourceFile, levels_above: usize) -> bool {
+/// How many enclosing module files the macro scope of `tree` reaches through
+/// glob imports, or `None` when a macro this scan cannot see may shadow a std
+/// expression macro. Any file of the chain (the test file and `ancestors`)
+/// that defines a `macro_rules!` of such a name or carries `#[macro_use]`
+/// answers `None`: textual macro scope needs no glob. Globs are then followed
+/// from the test file upward, each enclosing file read only when a glob
+/// climbs into it, and only its top-level `use` items, which are what a
+/// `super::*` of it imports (#16277).
+fn macro_chain_reach(tree: &ast::SourceFile, ancestors: &[ast::SourceFile]) -> Option<usize> {
+    if std::iter::once(tree)
+        .chain(ancestors)
+        .any(|file| file_rebinds_a_std_macro(file) || file_has_macro_use(file))
+    {
+        return None;
+    }
+    // A `std` root rebound anywhere in the chain (`use self::shim as std;`
+    // under `no_std`) can reach the test file through a `super` glob, so
+    // a `std` glob is trusted only when no chain file binds that name.
+    let std_trusted = !std::iter::once(tree)
+        .chain(ancestors)
+        .any(|file| file_may_bind_name(file, STD_CRATE_ROOT));
+    let mut reach = glob_levels_above(
+        std_trusted,
+        tree.syntax().descendants().filter_map(ast::Use::cast),
+    )?;
+    let mut level = 0;
+    while level < reach {
+        let file = ancestors.get(level)?;
+        level += 1;
+        reach = reach.max(level + glob_levels_above(std_trusted, top_level_uses(file))?);
+    }
+    Some(reach)
+}
+
+/// How many module files above their own the globs of `uses` climb, or
+/// `None` when one may bring in a macro this scan cannot see. A glob of `std`
+/// brings std's own macros when `std_trusted` (no chain file rebinds that
+/// root; `core` and
+/// `alloc` are refused, as for `STD_CRATE_ROOT`: a renamed Cargo dependency
+/// can stand in for either); a glob of only `super` segments climbs past the
+/// file's inline modules by the segments left over. Any other glob, or one
+/// the scan cannot read, answers `None`.
+fn glob_levels_above(std_trusted: bool, uses: impl Iterator<Item = ast::Use>) -> Option<usize> {
+    let mut levels = 0;
+    for item in uses {
+        let depth = item
+            .syntax()
+            .ancestors()
+            .filter_map(ast::Module::cast)
+            .filter(|module| module.item_list().is_some())
+            .count();
+        let scope = name_scope_for_items(&[ast::Item::Use(item)]);
+        for glob in &scope.globs {
+            let path = glob.as_ref()?;
+            if std_trusted && path.first().is_some_and(|root| root == STD_CRATE_ROOT) {
+                continue;
+            }
+            if path.is_empty() || !path.iter().all(|segment| segment == "super") {
+                return None;
+            }
+            levels = levels.max(path.len().saturating_sub(depth));
+        }
+    }
+    Some(levels)
+}
+
+/// The `use` items at the top level of `tree`.
+fn top_level_uses(tree: &ast::SourceFile) -> impl Iterator<Item = ast::Use> {
+    tree.items().filter_map(|item| match item {
+        ast::Item::Use(item) => Some(item),
+        _ => None,
+    })
+}
+
+/// Whether a top-level `use` of `tree` binds `name`, by its own leaf or a
+/// rename.
+fn top_level_imports_name(tree: &ast::SourceFile, name: &str) -> bool {
+    let items: Vec<ast::Item> = top_level_uses(tree).map(ast::Item::Use).collect();
+    name_scope_for_items(&items)
+        .imports_of(name)
+        .next()
+        .is_some()
+}
+
+/// Whether any item of the file carries `#[macro_use]`, which brings in
+/// macros from a module or crate this scan does not read.
+fn file_has_macro_use(tree: &ast::SourceFile) -> bool {
     tree.syntax()
         .descendants()
-        .filter_map(ast::Use::cast)
-        .any(|item| {
-            let depth = item
-                .syntax()
-                .ancestors()
-                .filter_map(ast::Module::cast)
-                .filter(|module| module.item_list().is_some())
-                .count();
-            let scope = name_scope_for_items(&[ast::Item::Use(item)]);
-            scope.globs.iter().any(|glob| {
-                let Some(path) = glob else {
-                    return true;
-                };
-                let std_root = path.first().is_some_and(|root| root == STD_CRATE_ROOT)
-                    && !file_may_bind_name(tree, STD_CRATE_ROOT);
-                let in_file_super = !path.is_empty()
-                    && path.iter().all(|segment| segment == "super")
-                    && path.len() <= depth + levels_above;
-                !(std_root || in_file_super)
-            })
-        })
+        .filter_map(ast::Attr::cast)
+        .any(|attr| super::module_ancestors::attribute_name(&attr) == "macro_use")
 }
 
 /// Whether any `use` leaf in the file binds `name`, by its own leaf or a

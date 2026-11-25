@@ -7425,6 +7425,25 @@ fn file_module_case() {
                 false,
                 "path declaration",
             ),
+            (
+                format!("#[macro_use]\nmod macros;\n{LIB}"),
+                "src/tests.rs",
+                false,
+                "parent brings in macros through macro_use",
+            ),
+            (
+                format!("mod sibling {{ use crate::helpers::*; }}\n{LIB}"),
+                "src/tests.rs",
+                true,
+                "a foreign glob inside a sibling module is not imported by super::*",
+            ),
+            (
+                format!("#[doc = \"happy path\"]\n{LIB}")
+                    .replace("mod tests;", "#[doc = \"path\"]\nmod tests;"),
+                "src/tests.rs",
+                true,
+                "a doc attribute keeps default resolution",
+            ),
         ] {
             let files = index(&[("src/lib.rs", lib.as_str()), (tests_path, TESTS)]);
             let (owner, test) = renamed_other_parts(&files, "file_module_case")?;
@@ -7435,6 +7454,54 @@ fn file_module_case() {
             );
             assert_eq!(
                 test_calls_only_a_renamed_other_function(&files, owner, test),
+                refused,
+                "{label}"
+            );
+        }
+        // Without a glob leaving the test file, the declaring file's globs
+        // are not read at all; its macro definitions still are.
+        // A `std` glob beside `super::*` is trusted only when no file of
+        // the chain rebinds `std` (`use self::shim as std;`).
+        let std_globbed = TESTS.replace("use super::*;", "use super::*;\nuse std::*;");
+        for (lib, refused, label) in [
+            (LIB.to_string(), true, "ordinary std glob"),
+            (
+                format!("pub mod shim {{}}\nuse self::shim as std;\n{LIB}"),
+                false,
+                "parent rebinds std",
+            ),
+        ] {
+            let files = index(&[
+                ("src/lib.rs", lib.as_str()),
+                ("src/tests.rs", std_globbed.as_str()),
+            ]);
+            let (owner, test) = renamed_other_parts(&files, "file_module_case")?;
+            assert_eq!(
+                bare_name_renamed_in_nested_blocks(&files, owner, test),
+                refused,
+                "{label}"
+            );
+        }
+        let named = TESTS.replace("use super::*;", "use super::discount;");
+        for (lib, refused, label) in [
+            (
+                format!("use crate::helpers::*;\n{LIB}"),
+                true,
+                "parent glob unread",
+            ),
+            (
+                format!("macro_rules! assert_eq {{ ($a:expr, $b:expr) => {{}}; }}\n{LIB}"),
+                false,
+                "parent macro_rules still read",
+            ),
+        ] {
+            let files = index(&[
+                ("src/lib.rs", lib.as_str()),
+                ("src/tests.rs", named.as_str()),
+            ]);
+            let (owner, test) = renamed_other_parts(&files, "file_module_case")?;
+            assert_eq!(
+                bare_name_renamed_in_nested_blocks(&files, owner, test),
                 refused,
                 "{label}"
             );
