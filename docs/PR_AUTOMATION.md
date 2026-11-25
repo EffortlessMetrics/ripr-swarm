@@ -496,12 +496,15 @@ reading an empty `CARGO` or `RUSTFMT` as unset, in reporting a failure as its
 own exit status, and in refusing a program path that is not UTF-8. It reads
 the metadata through the `cargo` that `CARGO` names, otherwise the first one
 on `PATH`, offline first, and a reply that parses but lacks a workspace root,
-a package's targets or an edition is asked for again as a failed reply; it
-runs `RUSTFMT` when that is set and otherwise the `rustfmt` beside the
-`cargo-fmt` that `cargo fmt` runs, which cargo finds in its home `bin`
-directory unless `PATH` already holds that directory and then along `PATH`,
-never a `rustfmt` found on `PATH` on its own and never one tied to the
-`cargo` that answered the metadata; it formats every workspace member when
+a package list, a package's manifest path, a package's targets, a target's
+path or an edition is asked for again as a failed reply; it runs `RUSTFMT`
+when that is set and otherwise the `rustfmt` beside the `cargo-fmt` that
+`cargo fmt` runs, which cargo finds in its home `bin` directory unless
+`PATH` already holds that directory and then along `PATH` (on Linux a
+`cargo-fmt` reached through a symbolic link is read beside the link's
+target, as cargo-fmt reads itself; on macOS and Windows, beside the link),
+never a `rustfmt` found on `PATH` on its own and never one
+tied to the `cargo` that answered the metadata; it formats every workspace member when
 started from the workspace root, only the member under the invocation
 directory when started inside one, the one package of a single-package
 workspace from any directory, and refuses from anywhere else in a workspace

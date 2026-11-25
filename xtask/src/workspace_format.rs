@@ -25,7 +25,10 @@
 //!   external subcommand in the `bin` directory of its home (`CARGO_HOME`)
 //!   when `PATH` does not already hold that directory, then along `PATH`;
 //!   it does not look beside `CARGO`. cargo-fmt then runs the `rustfmt` beside
-//!   its own executable. So the formatter is read apart from the `cargo` that
+//!   its own executable, the program it finds itself running as: on Linux a
+//!   `cargo-fmt` reached through a symbolic link is read beside the link's
+//!   target, and on macOS and Windows beside the link. So the formatter is
+//!   read apart from the `cargo` that
 //!   answers the metadata: with `CARGO` naming another toolchain's `cargo`,
 //!   `cargo fmt` and this step still start one formatter. With no `cargo-fmt`
 //!   there is none to run and the step says so. Never a `rustfmt` found on
@@ -209,7 +212,8 @@ fn preflight(program: &str, plan: &[RustfmtInvocation]) -> Result<(), String> {
     }
     Err(format!(
         "the formatter cannot be started on Windows: {} (CreateProcess takes at most \
-         {WINDOWS_COMMAND_LINE_LIMIT}, the terminating NUL included; a target root is too long \
+         {WINDOWS_COMMAND_LINE_LIMIT}, the terminating NUL included; a target root or the \
+         formatter's own path is too long \
          to pass to rustfmt); no batch was run",
         refused.join("; ")
     ))
@@ -384,6 +388,10 @@ pub(crate) fn checked_metadata(document: &Value) -> Result<(), String> {
         .as_array()
         .ok_or_else(|| reported("package list"))?
     {
+        package["manifest_path"]
+            .as_str()
+            .filter(|path| !path.is_empty())
+            .ok_or_else(|| reported("package manifest path"))?;
         let package_edition = package["edition"].as_str().unwrap_or_default();
         for target in package["targets"]
             .as_array()
@@ -480,6 +488,23 @@ fn cargo_fmt(path: Option<&OsStr>, home_bin: &Path) -> Option<PathBuf> {
         .into_iter()
         .map(|directory| directory.join(&name))
         .find(|candidate| is_executable(candidate))
+        // cargo-fmt runs the `rustfmt` beside the program it finds itself
+        // running as, which is not always the path it was started through.
+        .map(running_program)
+}
+
+/// The path cargo-fmt finds itself running as. On Linux the running program's
+/// path has every symbolic link resolved, so a `cargo-fmt` reached through a
+/// link is read beside the link's target; elsewhere it is the path as it was
+/// found, and a link is read beside the link.
+#[cfg(target_os = "linux")]
+fn running_program(program: PathBuf) -> PathBuf {
+    std::fs::canonicalize(&program).unwrap_or(program)
+}
+
+#[cfg(not(target_os = "linux"))]
+fn running_program(program: PathBuf) -> PathBuf {
+    program
 }
 
 /// The suffix cargo gives an external subcommand's file on this host.

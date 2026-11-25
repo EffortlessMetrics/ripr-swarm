@@ -641,6 +641,32 @@ fn the_formatter_is_rustfmt_env_else_the_rustfmt_beside_cargo_fmt() -> Result<()
         "the remedy names the override: {error}"
     );
 
+    // A `cargo-fmt` reached through a symbolic link, with no rustfmt beside
+    // the link. On Linux cargo-fmt finds itself running as the link's target
+    // and runs the rustfmt beside that.
+    #[cfg(target_os = "linux")]
+    {
+        use std::os::unix::fs::symlink;
+        let links = root.join("links");
+        std::fs::create_dir_all(&links).map_err(|err| err.to_string())?;
+        symlink(
+            toolchain.join(named("cargo-fmt")),
+            links.join(named("cargo-fmt")),
+        )
+        .map_err(|err| err.to_string())?;
+        let path = std::env::join_paths([os(&links)]).map_err(|err| err.to_string())?;
+        let real = |path: &Path| std::fs::canonicalize(path).map_err(|err| err.to_string());
+        let running = real(&toolchain.join(named("cargo-fmt")))?;
+        assert_eq!(
+            cargo_fmt(Some(path.as_os_str()), &no_home_bin),
+            Some(running)
+        );
+        assert_eq!(
+            formatter(None, Some(path.as_os_str()), &no_home_bin),
+            Ok(real(&toolchain)?.join(named("rustfmt")))
+        );
+    }
+
     // RUSTFMT names the formatter outright; an empty RUSTFMT is read as unset.
     assert_eq!(
         formatter(
@@ -785,6 +811,7 @@ fn a_run_windows_cannot_start_is_refused_before_any_batch_runs() -> Result<(), S
     assert!(
         error.contains("batch 2 of 2 takes 32768 UTF-16 code units")
             && error.contains(&format!("at most {WINDOWS_COMMAND_LINE_LIMIT}"))
+            && error.contains("a target root or the formatter's own path is too long")
             && error.contains("no batch was run"),
         "{error}"
     );
@@ -837,6 +864,7 @@ fn a_document_that_lacks_what_the_plan_reads_fails_its_question() -> Result<(), 
         "[1]",
         r#"{"workspace_root":"/repo","packages":{}}"#,
         r#"{"workspace_root":"/repo","packages":[{"manifest_path":"/repo/a/Cargo.toml"}]}"#,
+        r#"{"workspace_root":"/repo","packages":[{"edition":"2024","targets":[{"kind":["lib"],"src_path":"/repo/a/src/lib.rs"}]}]}"#,
         r#"{"workspace_root":"/repo","packages":[{"edition":"2024","manifest_path":"/repo/a/Cargo.toml","targets":[{"kind":["lib"]}]}]}"#,
         r#"{"workspace_root":"/repo","packages":[{"manifest_path":"/repo/a/Cargo.toml","targets":[{"kind":["lib"],"src_path":"/repo/a/src/lib.rs"}]}]}"#,
     ] {
