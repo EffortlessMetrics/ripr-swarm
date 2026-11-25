@@ -97,16 +97,21 @@ fn admitted_merge(
     Ok((work, head))
 }
 
-fn run_step(work: &Path, base_ref: &str) -> Result<Output, String> {
-    Command::new("bash")
-        .arg("-c")
-        .arg(run_block()?)
+fn run_bash(work: &Path, script: &str, envs: &[(&str, &str)]) -> Result<Output, String> {
+    let mut cmd = Command::new("bash");
+    cmd.arg("-c")
+        .arg(script)
         .current_dir(work)
-        .env("BASE_REF", base_ref)
         .env("GIT_CONFIG_GLOBAL", "/dev/null")
-        .env("GIT_CONFIG_SYSTEM", "/dev/null")
-        .output()
-        .map_err(|e| e.to_string())
+        .env("GIT_CONFIG_SYSTEM", "/dev/null");
+    for &(k, v) in envs {
+        cmd.env(k, v);
+    }
+    cmd.output().map_err(|e| e.to_string())
+}
+
+fn run_step(work: &Path, base_ref: &str) -> Result<Output, String> {
+    run_bash(work, &run_block()?, &[("BASE_REF", base_ref)])
 }
 
 fn stdout(out: &Output) -> String {
@@ -407,5 +412,380 @@ fn reviewed_slice_carrier_readback_and_refusals() -> Result<(), String> {
         "carrier reference changed",
     )?;
     fs::remove_dir_all(&root).map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+fn step_run_block(step_id: &str) -> Result<String, String> {
+    let (_, after_id) = WORKFLOW
+        .split_once(step_id)
+        .ok_or_else(|| format!("rust-gates.yml keeps {step_id}"))?;
+    // Read the first `run:` after the step id, then branch on its form. A
+    // separate search for `run: |` and `run: ` can match different steps:
+    // `run: |` also starts with `run: `, and a single-line step's first
+    // `run: |` may belong to a later step (#14999 review).
+    let (_, after_run) = after_id
+        .split_once("        run: ")
+        .ok_or_else(|| format!("{step_id} keeps a run block"))?;
+    if let Some(body) = after_run.strip_prefix("|\n") {
+        return Ok(body
+            .lines()
+            .take_while(|line| line.is_empty() || line.starts_with("          "))
+            .map(|line| line.strip_prefix("          ").unwrap_or(line))
+            .collect::<Vec<_>>()
+            .join("\n"));
+    }
+    Ok(after_run
+        .lines()
+        .next()
+        .unwrap_or_default()
+        .trim()
+        .to_string())
+}
+
+#[test]
+fn goldens_use_the_fresh_source_and_preserve_the_admitted_build() -> Result<(), String> {
+    for (name, explicit_build_dir) in [
+        ("goldens-configured-build-dir", true),
+        ("goldens-fallback-build-dir", false),
+    ] {
+        verify_fresh_build(name, explicit_build_dir)?;
+    }
+    Ok(())
+}
+
+fn verify_fresh_build(name: &str, explicit_build_dir: bool) -> Result<(), String> {
+    let (work, _) = admitted_merge(name, |w| {
+        commit_file(w, "other.txt", "fresh-main\n", "base moved")
+    })?;
+    if !merge_tree_supported(&work) {
+        return Ok(());
+    }
+    let root = work.parent().ok_or("test checkout needs a parent")?;
+    let scratch = root.join("leased-scratch");
+    fs::create_dir(&scratch).map_err(|e| e.to_string())?;
+    let scratch_alias = root.join("job-temp");
+    std::os::unix::fs::symlink(&scratch, &scratch_alias).map_err(|e| e.to_string())?;
+    let orig_head = git(&work, &["rev-parse", "HEAD"])?;
+    let pr_head = git(&work, &["rev-parse", "HEAD^2"])?;
+    let output = root.join("step-output");
+    let workspace = work.to_str().ok_or("non-UTF-8 test workspace")?;
+    // Hosted multicall binaries dispatch by their invocation name. Exercise the
+    // configured-wrapper path with the same contract on any Unix test runner.
+    use std::os::unix::fs::PermissionsExt;
+    let wrapper = root.join("configured-rustc-wrapper");
+    fs::write(
+        &wrapper,
+        "#!/bin/sh\n[ \"${0##*/}\" = configured-rustc-wrapper ] || exit 7\nprintf '%s\\n' \"$PWD\" >> \"$WRAPPER_LOG\" || exit 8\nexec \"$@\"\n",
+    )
+    .map_err(|e| e.to_string())?;
+    fs::set_permissions(&wrapper, fs::Permissions::from_mode(0o755)).map_err(|e| e.to_string())?;
+    let wrapper_log = root.join("wrapper-calls");
+    let wrapper_log = wrapper_log.to_str().ok_or("non-UTF-8 wrapper log")?;
+    let wrapper = wrapper.to_str().ok_or("non-UTF-8 wrapper")?;
+    let prep = step_run_block("id: goldens_fresh_merge")?;
+    let prepared = run_bash(
+        &work,
+        &prep,
+        &[
+            ("RUSTC_WORKSPACE_WRAPPER", wrapper),
+            ("WRAPPER_LOG", wrapper_log),
+            ("BASE_REF", "main"),
+            ("GITHUB_OUTPUT", output.to_str().ok_or("non-UTF-8 output")?),
+            ("TMPDIR", scratch_alias.to_str().ok_or("non-UTF-8 scratch")?),
+            ("GITHUB_WORKSPACE", workspace),
+            ("RUNNER_TEMP", root.to_str().ok_or("non-UTF-8 temp")?),
+        ],
+    )?;
+    if !prepared.status.success() {
+        return Err(String::from_utf8_lossy(&prepared.stderr).into());
+    }
+    let outputs = fs::read_to_string(output).map_err(|e| e.to_string())?;
+    let fresh = outputs
+        .lines()
+        .find_map(|line| line.strip_prefix("worktree="))
+        .ok_or("missing fresh worktree")?;
+    let fresh_dir = Path::new(fresh);
+    if fresh_dir.parent() != Some(scratch.as_path()) {
+        return Err("fresh worktree escaped the configured scratch volume".into());
+    }
+    if !outputs
+        .lines()
+        .any(|line| line == format!("orig_head={orig_head}"))
+        || git(&work, &["rev-parse", "HEAD"])? != orig_head
+        || git(fresh_dir, &["rev-parse", "HEAD^1"])? != git(&work, &["rev-parse", "origin/main"])?
+        || git(fresh_dir, &["rev-parse", "HEAD^2"])? != pr_head
+    {
+        return Err("fresh and original merge identities diverged".into());
+    }
+    // Two binaries have the same package identity and differ only in the input
+    // compiled into the executable. Sharing undifferentiated artifacts can
+    // otherwise silently run the first binary on the second tree.
+    // Supply the locked registry dependency from a directory source so the test
+    // works offline with a new Cargo home and no populated registry cache.
+    let cargo_home = root.join("cargo-home");
+    let vendor = root.join("vendor/golden-dep-1.0.0");
+    fs::create_dir_all(&cargo_home).map_err(|e| e.to_string())?;
+    fs::create_dir_all(vendor.join("src")).map_err(|e| e.to_string())?;
+    fs::write(
+        vendor.join("Cargo.toml"),
+        "[package]\nname='golden-dep'\nversion='1.0.0'\nedition='2024'\n",
+    )
+    .map_err(|e| e.to_string())?;
+    fs::write(
+        vendor.join("src/lib.rs"),
+        "pub const REPORT: &str = \"target/ripr/reports/sample\";",
+    )
+    .map_err(|e| e.to_string())?;
+    fs::write(
+        vendor.join(".cargo-checksum.json"),
+        r#"{"files":{},"package":null}"#,
+    )
+    .map_err(|e| e.to_string())?;
+    fs::write(
+        cargo_home.join("config.toml"),
+        "[source.crates-io]\nreplace-with='fixture'\n[source.fixture]\ndirectory='vendor'\n",
+    )
+    .map_err(|e| e.to_string())?;
+    let cargo_home = cargo_home.to_str().ok_or("non-UTF-8 Cargo home")?;
+    let fixture = r#"fn main() -> std::io::Result<()> {
+        std::fs::create_dir_all("target/ripr/reports")?;
+        std::fs::write(golden_dep::REPORT, include_bytes!("../other.txt"))
+    }"#;
+    for checkout in [work.as_path(), fresh_dir] {
+        fs::create_dir_all(checkout.join(".cargo")).map_err(|e| e.to_string())?;
+        fs::create_dir_all(checkout.join("src")).map_err(|e| e.to_string())?;
+        fs::write(
+            checkout.join("Cargo.toml"),
+            "[package]\nname='golden-probe'\nversion='0.1.0'\nedition='2024'\n[dependencies]\ngolden-dep='=1.0.0'\n[workspace]\n",
+        )
+        .map_err(|e| e.to_string())?;
+        fs::write(checkout.join("src/main.rs"), fixture).map_err(|e| e.to_string())?;
+        fs::write(
+            checkout.join(".cargo/config.toml"),
+            "[alias]\nxtask='run --locked --offline --message-format=json --'\n",
+        )
+        .map_err(|e| e.to_string())?;
+    }
+    let locked = run_bash(
+        &work,
+        "cargo generate-lockfile --offline",
+        &[("CARGO_HOME", cargo_home)],
+    )?;
+    if !locked.status.success() {
+        return Err(String::from_utf8_lossy(&locked.stderr).into());
+    }
+    fs::copy(work.join("Cargo.lock"), fresh_dir.join("Cargo.lock")).map_err(|e| e.to_string())?;
+    let gate = step_run_block("id: goldens_fixtures")?;
+    let target = work.join("target");
+    let binary = target.join("debug/golden-probe");
+    let configured = root.join("configured-intermediates");
+    let gate = if explicit_build_dir {
+        gate
+    } else {
+        format!("unset CARGO_BUILD_BUILD_DIR\n{gate}")
+    };
+    let probe = |tree, expect_fresh| -> Result<(), String> {
+        let result = run_bash(
+            &work,
+            &gate,
+            &[
+                ("FRESH_TREE", tree),
+                ("RUSTC_WORKSPACE_WRAPPER", wrapper),
+                ("WRAPPER_LOG", wrapper_log),
+                ("GITHUB_WORKSPACE", workspace),
+                (
+                    "CARGO_TARGET_DIR",
+                    target.to_str().ok_or("non-UTF-8 target")?,
+                ),
+                (
+                    "CARGO_BUILD_BUILD_DIR",
+                    configured.to_str().ok_or("non-UTF-8 build directory")?,
+                ),
+                ("CARGO_HOME", cargo_home),
+            ],
+        )?;
+        if !result.status.success() {
+            return Err(String::from_utf8_lossy(&result.stderr).into());
+        }
+        if !stdout(&result).lines().any(|line| {
+            line.contains("\"reason\":\"compiler-artifact\"")
+                && line.contains("\"name\":\"golden_dep\"")
+                && line.contains(&format!("\"fresh\":{expect_fresh}"))
+        }) {
+            return Err(format!(
+                "{name}: expected registry dependency fresh={expect_fresh}"
+            ));
+        }
+        Ok(())
+    };
+    probe("", false)?;
+    let bytes = fs::read(&binary).map_err(|e| e.to_string())?;
+    let report = target.join("ripr/reports/sample");
+    if fs::read_to_string(&report).map_err(|e| e.to_string())? != "x\n" {
+        return Err("admitted producer used the wrong source".into());
+    }
+    probe(fresh, true)?;
+    if !fs::read_to_string(wrapper_log)
+        .map_err(|e| e.to_string())?
+        .lines()
+        .any(|cwd| cwd == fresh)
+    {
+        return Err("fresh Cargo bypassed the configured compiler wrapper".into());
+    }
+    if fs::read_to_string(&report).map_err(|e| e.to_string())? != "fresh-main\n"
+        || fs::read(&binary).map_err(|e| e.to_string())? != bytes
+    {
+        return Err("fresh golden receipt or admitted executable crossed subjects".into());
+    }
+    if fresh_dir.join("target/debug/deps").exists() {
+        return Err("fresh goldens allocated a second intermediate build directory".into());
+    }
+    let reused = run_bash(
+        &work,
+        if explicit_build_dir {
+            "cargo build --locked --offline --message-format=json"
+        } else {
+            "unset CARGO_BUILD_BUILD_DIR\ncargo build --locked --offline --message-format=json"
+        },
+        &[
+            ("CARGO_HOME", cargo_home),
+            ("RUSTC_WORKSPACE_WRAPPER", wrapper),
+            ("WRAPPER_LOG", wrapper_log),
+            (
+                "CARGO_TARGET_DIR",
+                target.to_str().ok_or("non-UTF-8 target")?,
+            ),
+            (
+                "CARGO_BUILD_BUILD_DIR",
+                configured.to_str().ok_or("non-UTF-8 build directory")?,
+            ),
+        ],
+    )?;
+    if !reused.status.success()
+        || !stdout(&reused).lines().any(|line| {
+            line.contains("\"reason\":\"compiler-artifact\"")
+                && line.contains("\"name\":\"golden-probe\"")
+                && line.contains("\"fresh\":true")
+        })
+    {
+        return Err("Cargo rebuilt the admitted package after fresh goldens".into());
+    }
+    let cleanup = step_run_block("id: goldens_cleanup")?;
+    let removed = run_bash(
+        &work,
+        &cleanup,
+        &[("FRESH_TREE", fresh), ("ORIG_HEAD", &orig_head)],
+    )?;
+    if !removed.status.success()
+        || fresh_dir.exists()
+        || git(&work, &["rev-parse", "HEAD"])? != orig_head
+    {
+        return Err("cleanup lost the admitted checkout or left the fresh tree".into());
+    }
+    if fs::read_to_string(&report).map_err(|e| e.to_string())? != "fresh-main\n" {
+        return Err("cleanup removed the fresh producer report before its upload".into());
+    }
+    let failed_removal = root.join("nonempty");
+    fs::create_dir(&failed_removal).map_err(|e| e.to_string())?;
+    fs::write(failed_removal.join("keep"), "owned fixture").map_err(|e| e.to_string())?;
+    for (path, expected) in [
+        (
+            failed_removal.to_str().ok_or("non-UTF-8 fixture")?,
+            orig_head.as_str(),
+        ),
+        (fresh, pr_head.as_str()),
+    ] {
+        let failed = run_bash(
+            &work,
+            &cleanup,
+            &[("FRESH_TREE", path), ("ORIG_HEAD", expected)],
+        )?;
+        if failed.status.success()
+            || !stdout(&failed).contains(&format!("expected={expected} actual={orig_head}"))
+        {
+            return Err("failed cleanup must retain the admitted checkout readback".into());
+        }
+    }
+    probe("", true)?;
+    if fs::read_to_string(report).map_err(|e| e.to_string())? != "x\n" {
+        return Err("restored producer read the fresh source".into());
+    }
+    fs::remove_dir_all(root).map_err(|e| e.to_string())
+}
+
+#[test]
+fn fresh_goldens_cleanup_owns_failed_worktree_add_before_and_after_registration()
+-> Result<(), String> {
+    use std::os::unix::fs::PermissionsExt;
+    let prep = step_run_block("id: goldens_fresh_merge")?;
+    let cleanup = step_run_block("id: goldens_cleanup")?;
+    for registered in [false, true] {
+        let (work, _) = admitted_merge(&format!("goldens-failed-add-{registered}"), |w| {
+            commit_file(w, "other.txt", "new base\n", "advance base")
+        })?;
+        if !merge_tree_supported(&work) {
+            return Ok(());
+        }
+        let root = work.parent().ok_or("fixture needs a parent")?;
+        let orig = git(&work, &["rev-parse", "HEAD"])?;
+        let output = root.join("outputs");
+        if registered {
+            let hook = work.join(".git/hooks/post-checkout");
+            fs::write(&hook, "#!/bin/sh\nexit 7\n").map_err(|e| e.to_string())?;
+            fs::set_permissions(&hook, fs::Permissions::from_mode(0o755))
+                .map_err(|e| e.to_string())?;
+        } else {
+            fs::write(work.join(".git/worktrees"), "cannot register here")
+                .map_err(|e| e.to_string())?;
+        }
+        let failed = run_bash(
+            &work,
+            &prep,
+            &[
+                ("BASE_REF", "main"),
+                ("GITHUB_OUTPUT", output.to_str().ok_or("non-UTF-8 output")?),
+                (
+                    "GITHUB_WORKSPACE",
+                    work.to_str().ok_or("non-UTF-8 workspace")?,
+                ),
+                ("TMPDIR", ""),
+                ("RUNNER_TEMP", root.to_str().ok_or("non-UTF-8 temp")?),
+            ],
+        )?;
+        let ownership = fs::read_to_string(&output).map_err(|e| e.to_string())?;
+        let path = ownership
+            .lines()
+            .find_map(|line| line.strip_prefix("worktree="))
+            .ok_or("failed setup lost the allocated path")?;
+        let listing = git(&work, &["worktree", "list", "--porcelain"])?;
+        if failed.status.success()
+            || listing
+                .lines()
+                .any(|line| line == format!("worktree {path}"))
+                != registered
+            || Path::new(path).parent() != Some(root)
+        {
+            return Err(format!(
+                "wrong partial setup (registered={registered}): {listing}"
+            ));
+        }
+        let removed = run_bash(
+            &work,
+            &cleanup,
+            &[("FRESH_TREE", path), ("ORIG_HEAD", &orig)],
+        )?;
+        if !removed.status.success()
+            || Path::new(path).exists()
+            || git(&work, &["worktree", "list", "--porcelain"])?
+                .lines()
+                .any(|line| line == format!("worktree {path}"))
+        {
+            return Err(format!(
+                "cleanup failed for partial checkout {path}: {}",
+                String::from_utf8_lossy(&removed.stderr)
+            ));
+        }
+        fs::remove_dir_all(root).map_err(|e| e.to_string())?;
+    }
     Ok(())
 }

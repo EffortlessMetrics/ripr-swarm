@@ -1,0 +1,32 @@
+# Registers the class-attribute text pin tests (#15294) under RIPR-SPEC-0238.
+[[extend]]
+id = "RIPR-SPEC-0238"
+tests = [
+  "crates/ripr/src/analysis/language/python/classify/tests.rs::class_attribute_text_change_unobserved_by_related_tests_is_weakly_exposed",
+  "crates/ripr/src/analysis/language/python/classify/tests.rs::class_attribute_text_change_stays_exposed_when_an_assertion_pins_the_old_text",
+  "crates/ripr/src/analysis/language/python/classify/tests.rs::plain_method_return_change_keeps_exposed_beside_the_class_attribute_gate",
+  "crates/ripr/src/analysis/language/python/classify/tests.rs::class_attribute_text_change_ignores_wildcard_dots_and_non_operand_literals",
+  "crates/ripr/src/analysis/language/python/classify/tests.rs::class_attribute_short_text_pins_only_through_whole_equality",
+  "crates/ripr/src/analysis/language/python/classify/tests.rs::class_attribute_placeholder_only_new_text_rejects_nothing",
+  "crates/ripr/src/analysis/language/python/classify/tests.rs::class_attribute_text_change_reads_required_message_comparisons",
+  "crates/ripr/src/analysis/language/python/classify/tests.rs::class_attribute_empty_new_text_rejects_the_old_literal",
+]
+
+# The whole-statement and conjunct reading graduates into the honesty corpus (#15646).
+[[extend]]
+id = "RIPR-SPEC-0238"
+code = [
+  "crates/ripr/src/analysis/language/python/class_attr_pin.rs",
+  "crates/ripr/src/analysis/language/python/oracles.rs",
+]
+fixtures = [
+  "fixtures/python_class_attr_text_unobserved",
+  "fixtures/python_class_attr_text_control",
+]
+
+[[extend]]
+id = "RIPR-SPEC-0108"
+fixtures = [
+  "fixtures/python_class_attr_text_unobserved",
+  "fixtures/python_class_attr_text_control",
+]

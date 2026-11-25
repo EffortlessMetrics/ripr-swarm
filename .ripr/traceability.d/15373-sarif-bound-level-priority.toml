@@ -1,0 +1,8 @@
+[[extend]]
+id = "RIPR-SPEC-0008"
+tests = [
+  "crates/ripr/src/output/sarif.rs::tests::sarif_results_bound_keeps_warning_before_earlier_note",
+  "crates/ripr/src/output/sarif.rs::tests::sarif_results_bound_orders_error_warning_note_then_index",
+  "crates/ripr/src/output/sarif.rs::tests::sarif_results_bound_leaves_order_unchanged_when_everything_fits",
+]
+code = ["crates/ripr/src/output/sarif.rs"]

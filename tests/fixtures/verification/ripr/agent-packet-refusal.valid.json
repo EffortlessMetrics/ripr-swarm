@@ -1,0 +1,51 @@
+{
+  "analysis_scope": {
+    "basis": "seam_id_unknown",
+    "downstream_consumable": false,
+    "limitation": "seam_id_unknown",
+    "repair_route": "analysis/seam-inventory",
+    "run_status": "seam_id_unknown",
+    "scope": "repo"
+  },
+  "findings": [],
+  "root": ".",
+  "run_limitations": [
+    {
+      "basis": "seam_id_unknown",
+      "category": "seam_id_unknown",
+      "downstream_consumable": false,
+      "message": "agent packet seam_id abc was not found. Run `ripr pilot --root .` to list current repair IDs with their exact `ripr agent repair` commands.",
+      "remedy": {
+        "alternatives": [
+          "ripr agent repair"
+        ],
+        "command": "ripr pilot --root .",
+        "conditional": false,
+        "env": [],
+        "fill_in": [],
+        "flags": [],
+        "kind": "command",
+        "prose_has_more": false,
+        "retry_stated": null,
+        "tool": null
+      },
+      "repair_route": "analysis/seam-inventory",
+      "run_status": "seam_id_unknown"
+    }
+  ],
+  "schema_version": "0.5",
+  "summary": {
+    "changed_files_by_language": [],
+    "changed_rust_files": 0,
+    "exposed": 0,
+    "findings": 0,
+    "infection_unknown": 0,
+    "no_static_path": 0,
+    "probes": 0,
+    "propagation_unknown": 0,
+    "reachable_unrevealed": 0,
+    "static_unknown": 0,
+    "weakly_exposed": 0
+  },
+  "tool": "ripr"
+}

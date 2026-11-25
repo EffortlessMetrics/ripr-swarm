@@ -81,6 +81,13 @@ pub(super) fn seam_repair_card(
         witness: witness.as_ref(),
         finding_id: finding_id.as_deref(),
         finding_gap_id: finding_gap_id.as_deref(),
+        unreferenced_new_function:
+            crate::app::repair_card_handoff::bound_finding_is_unreferenced_new_function(
+                &snapshot.findings,
+                entry,
+                readiness.canonical_gap_id.as_deref(),
+                candidate_seams,
+            ),
         attempt: attempt.as_ref(),
         packet_json: &packet_json,
         repository_head: &repository_head,

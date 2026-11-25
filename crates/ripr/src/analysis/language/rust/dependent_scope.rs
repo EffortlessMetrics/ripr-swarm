@@ -2166,7 +2166,7 @@ mod tests {
     }
 
     #[test]
-    fn withheld_macro_bindings_saturate_on_a_foreign_glob() {
+    fn withheld_macro_bindings_saturate_only_on_an_every_name_site() {
         let packages = BTreeSet::from(["core".to_string()]);
         let mut bindings = classify::WithheldMacroBindings::default();
         // A crate root's private glob reaches only its own crate, so it is
@@ -2181,7 +2181,10 @@ mod tests {
         let path = Path::new("e/src/util.rs");
         assert!(!bindings.absorb(path, "fn plain() {}", &packages, &none));
         assert!(!bindings.absorb(path, "use core::prelude::*;", &packages, &none));
-        assert!(bindings.absorb(path, "use proptest::prelude::*;", &packages, &none));
+        // A foreign glob cannot rebind a core prelude macro (#16060), so a
+        // later file may still bind one and the fold goes on.
+        assert!(!bindings.absorb(path, "use proptest::prelude::*;", &packages, &none));
+        assert!(bindings.absorb(path, "#[macro_use]\nextern crate other;", &packages, &none));
         assert!(bindings.absorb(path, "fn plain() {}", &packages, &none));
     }
 

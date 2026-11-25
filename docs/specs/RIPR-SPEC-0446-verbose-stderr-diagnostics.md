@@ -56,11 +56,33 @@ CI job that cannot edit argv had no way to turn it on.
    at most 50 lines print, followed by an overflow line naming how many more
    exist. A run with withheld findings names how many were withheld.
 6. With diagnostics off, none of these lines is formatted or printed.
+7. The verdict line spells `<file>` with the shared human path rule
+   (`output::path::human_path_text`) applied to the stable path text. On
+   Windows that rule prints forward slashes and folds a verbatim root to its
+   plain form (`//?/<drive>:/..` prints `<drive>:/..`,
+   `//?/UNC/server/share/..` prints `//server/share/..`). On Unix the stable
+   path text prints unchanged. On every host, the printed `<file>:<line>`
+   matches its finding through `ripr explain` (a location several reported
+   findings share is refused as ambiguous, as for any `file:line` selector,
+   and the finding ID then selects one). A printed drive location is a
+   suffix of its verbatim stored path; for the UNC form, the locator matcher
+   also treats `//?/UNC/server/share/..` and `//server/share/..` as the same
+   path when they are equal after the shared verbatim fold, on either operand
+   (#15921), and only when the folded root is a complete `//server/share`
+   (nonempty server and share, server not a `?` or `.` device marker). That
+   equivalence is exact and is checked only after the
+   unchanged equality and suffix rules miss. Other `//?/` forms keep their
+   spelling and match byte for byte.
 
 ## Required Evidence
 
 - Unit tests: verdict line wording, stop reasons, the 50-line bound and
-  overflow line, hostile and long reasons; phase-timing line wording,
+  overflow line, hostile and long reasons; verdict-line path spelling
+  (forward slashes, verbatim-root fold) and a printed location selecting its
+  finding through the real `explain` matcher, including a plain UNC location
+  against a verbatim UNC stored path (the separator and verbatim-fold
+  verdict-line tests are `cfg(windows)` and run on the Windows lane only; the
+  selection and matcher tests run on every host); phase-timing line wording,
   terminal total and clock underflow; the `RIPR_VERBOSE` switch parse.
 - Built-binary tests: `RIPR_VERBOSE=1` keeps `check --format json` stdout
   byte-identical to a plain run while stderr gains timing and verdict lines
@@ -89,6 +111,8 @@ CI job that cannot edit argv had no way to turn it on.
 ## Test Mapping
 
 - `crates/ripr/src/app/verbose_trace.rs::tests`
+- `crates/ripr/src/app/selector.rs::tests::a_plain_unc_location_selects_a_finding_stored_under_a_verbatim_unc_path`
+- `crates/ripr/src/app/selector.rs::tests::the_unc_fold_leaves_the_existing_path_rules_unchanged`
 - `crates/ripr/src/app/progress.rs::tests::phase_timing_lines_name_the_previous_stage_duration_and_the_terminal_total`
 - `crates/ripr/src/cli/progress.rs::tests::verbose_env_value_enables_on_any_value_but_the_off_spellings`
 - `crates/ripr/tests/cli_progress.rs` (`ripr_verbose_env_*`)
@@ -100,6 +124,9 @@ CI job that cannot edit argv had no way to turn it on.
 - `crates/ripr/src/cli/mod.rs`, `crates/ripr/src/startup.rs`
 - `crates/ripr/src/app/progress.rs`, `crates/ripr/src/app/verbose_trace.rs`,
   `crates/ripr/src/app/check.rs`
+- `crates/ripr/src/app/selector.rs` (`locator_paths_match`),
+  `crates/ripr/src/output/path.rs` (`human_path_text`,
+  `strip_windows_verbatim_prefix`)
 - `crates/ripr/src/stderr_guard.rs` (`eprintln_best_effort!`)
 
 ## Metrics

@@ -290,6 +290,7 @@ pub(in super::super) fn unowned_change_findings(
                 id: probe_id.clone(),
                 canonical_gap: None,
                 probe: Probe {
+                    before_condition: None,
                     id: ProbeId(probe_id),
                     location: SourceLocation::new(std::path::PathBuf::from(&file.path), line, 1),
                     owner: None,
@@ -736,6 +737,7 @@ pub(in super::super) fn packet_to_findings_with_currentness(
             continue;
         };
         let probe = Probe {
+            before_condition: None,
             id: ProbeId(probe_id.clone()),
             location: match change_lines.get(&change.change_id) {
                 Some(&line) => SourceLocation::new(std::path::PathBuf::from(&file.path), line, 1),

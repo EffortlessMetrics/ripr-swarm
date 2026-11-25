@@ -1,0 +1,13 @@
+//! RIPR-SPEC-0158: owner inputs a test spells as parsed string literals.
+
+pub fn classify_tier(tier: u32) -> &'static str {
+    if tier < 10 { "low" } else { "high" }
+}
+
+pub fn classify_grade(grade: u32) -> &'static str {
+    if grade < 10 { "low" } else { "high" }
+}
+
+pub fn classify_band(band: u32) -> &'static str {
+    if band < 10 { "low" } else { "high" }
+}
