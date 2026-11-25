@@ -79,7 +79,6 @@ use crate::output::agent_seam_packets::{
     render_agent_gap_record_packet_json, suggested_assertion_for_classified_seam,
     targeted_test_brief_outline_for_classified_seam, validate_agent_gap_record_packet,
 };
-use crate::output::evidence_record::repair_start_command_for;
 use crate::output::first_useful_action::DEFAULT_FIRST_USEFUL_ACTION_OUT;
 use crate::output::gap_decision_ledger::{
     DEFAULT_GAP_DECISION_LEDGER_OUT, GapRecord, parse_gap_records_json_for_root,

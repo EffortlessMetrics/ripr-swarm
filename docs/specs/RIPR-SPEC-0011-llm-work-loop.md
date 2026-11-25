@@ -829,6 +829,43 @@ leaves the change open (and keeps the outside counts), and one that check reads
 as noticed ends on the nothing-to-do outcome with the gripped spots named
 directly and, as in the shortcut, no spot outside the change listed.
 
+## Amendment (#15926): check's open gaps lead, and no-path reads as no-path
+
+Among the rows about the change, the spots `ripr check` itself leaves open
+(it offers no start for them) come first. When check's top gap (the finding
+its human triage selects) is one of them, it leads, so the cap does not hide
+it; the others follow check's report order. A spot check reads as `no_static_path` says that no test
+reaches the changed code and points to `ripr check` for the detail and a stub
+command when it can draft one, instead of the unknown wording ("cannot tell
+from reading the code").
+
+## Amendment (#15926, decision): an unreferenced new function is a repair start
+
+A `no_static_path` finding whose owner nothing in the workspace calls
+(`Finding::is_unreferenced_no_static_path`, RIPR-SPEC-0219: reach `no`, the
+`(unreferenced in workspace)` marker, and no named static limit) is a
+test-side gap, not a static limit: ripr knows no test reaches it, and the work
+is writing that test. Check's human triage already reads it so (#14919). The
+repair route now agrees: `gap_bound_repair::finding_is_static_limited` exempts
+it, so when its seam passes the shared repair-packet flip with an admitted test
+target (an existing file or a producer-owned proposal), `ripr check` prints its
+`ripr repair <id>` line, bare `ripr repair` starts it, `ripr pilot` prints the
+same start, and the repair card's next action runs the route. The card reads
+the seam flip for this finding instead of the check witness, which names no fix
+site for a function no test calls. A no-path finding whose owner other
+workspace code calls, any unknown class, and any named static limitation stay
+no-start, with the refusal reasons above. When the current change binds such a
+no-path finding to an exact seam and the inventory independently finds no test
+path, both `ripr repair <id>` and `ripr agent repair --seam-id <id> --phase before`
+refuse before writing a workflow or attempt. The inspection card still names
+an admitted proposed test target. The facade uses the same comparison base
+for selection and Start admission. Start eligibility is separate from
+what check knows about reach: wording and ranking that speak to reach
+(`finding_reads_unreached_or_limited`) still read the unreferenced finding as
+unreached. On a seam the inventory reads as gripped, a reached gap leads it, and
+its own reason says no test reaches the code and that check prints the repair
+start when it can offer one, never that check offers none.
+
 ## Amendment (#12867): no start whose handoff card cannot be produced
 
 A start publishes an attempt and then renders the handoff card, which names the
@@ -859,10 +896,10 @@ generated or vendored, wrong package, private owner, colliding file, stale
 source, cross-language, path escape) still has no proposal and refuses as
 before; a proposal without an identity or one the evidence does not hold keeps
 the no-target text. `ripr check` and `ripr repair` read the same gate; a
-`no path` (static-limited) finding keeps the F3 rule (#12888) and prints no
-runnable repair line even where bare `ripr repair <id>` starts the
-proposal-only seam, so the F3 silence is unchanged. Starting does not create the
-proposed file, generate a test body or grant production-source permission.
+`no path` (static-limited) finding bound to an unreached seam keeps the F3 rule
+(#12888) and offers no Start even with an admitted proposal. The #15926 decision
+above allows the unreferenced case, where check prints the start. Starting does
+not create the proposed file, generate a test body or grant production-source permission.
 
 ## Amendment (#13203 A): an attempt binds the proposal it follows
 
@@ -901,7 +938,18 @@ exactly those bytes and the record is for this attempt. The two axes stay
 separate: the receipt's `verification.status` remains `verification_not_run`
 (ripr ran nothing), and static movement is whatever the static comparison
 found, so a reported failure can sit beside `improved`. The receipt-owned
-`next:` line is unchanged. MCP documents do not project the record yet.
+`next:` line is unchanged. MCP receipt status projects it since #16251.
+
+## Amendment (#16251): MCP receipt status carries the same test-run reading
+
+`ripr_get_receipt_status` and `ripr://receipt/{receipt_id}` add an optional
+`test_run` object for a finished durable attempt whose issued receipt records
+`verification_not_run`. It is the object `ripr agent status --attempt <id>
+--json` emits for the same attempt, built by the same owner from the same
+retained record: `not_recorded` when the caller reported no run,
+`caller_reported` with the counts and next step when the finish retained one.
+It is absent for session transactions and for attempts without an issued
+receipt. It never changes the document's `status`; ripr ran nothing either way.
 
 ## Amendment (#14146): the aggregate test-run reading names its attempt
 
@@ -1322,7 +1370,7 @@ is not decided here.
 - `crates/ripr/tests/repair_check_recommended_start.rs::open_spots_on_the_change_close_on_the_per_spot_reasons` (#12861)
 - `crates/ripr/tests/repair_check_recommended_start.rs::a_start_whose_card_cannot_be_produced_creates_no_attempt` (#12867)
 - `crates/ripr/tests/repair_check_recommended_start.rs::a_refused_field_seam_names_the_stub_or_why_there_is_none` (#12959)
-- `crates/ripr/tests/mcp_cli_repair_parity.rs::six_step_agent_contract_holds_through_cli_and_mcp` (#14079: gap, one unit, one test edit, re-recorded static evidence, the caller's run as a separate axis, durable read-back from a new MCP process)
+- `crates/ripr/tests/mcp_cli_repair_parity.rs::six_step_agent_contract_holds_through_cli_and_mcp` (#14079: gap, one unit, one test edit, re-recorded static evidence, the caller's run as a separate axis, durable read-back from a new MCP process; #16251: the MCP receipt `test_run` equals CLI status)
 - `crates/ripr/src/app/focused_run.rs::tests::a_retained_record_reads_back_only_for_its_own_attempt_and_kind` (#14079)
 - `crates/ripr/src/cli/commands/agent.rs::repair_summary_tests::repair_summary_reports_a_recorded_caller_run_instead_of_none_recorded` (#14079)
 - `crates/ripr/src/app/agent_status/test_run.rs::tests::a_reported_run_is_read_back_with_its_counts_and_a_failure_is_named` (#14079)

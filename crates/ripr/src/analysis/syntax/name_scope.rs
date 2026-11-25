@@ -229,6 +229,221 @@ pub(super) fn name_scopes_in_tree(
     }))
 }
 
+/// For the authored function `fn_name` declared at `fn_line`: when every bare
+/// mention of `name` in its body sits inside a nested block whose own `use`
+/// items bind `name` only by renaming another path (`{ use super::other as
+/// discount; discount(1); }`, #14069), the renamed paths those blocks spell,
+/// one per binding. A path prefix (`name::item`), a method call and a field
+/// access are not mentions. The innermost block that binds `name` decides
+/// each mention; the function body's own items are the body scope's question, not
+/// this one.
+///
+/// `None` (the caller keeps its prior reading) when no mention exists, when
+/// any mention is qualified (`a::name`), reaches the body block without a
+/// binding block, or meets a deciding block that also declares the name, has
+/// only a glob that may bind it, or binds it by a plain or unreadable path;
+/// when the name is itself an imported leaf or a declared name anywhere in
+/// the body (`use super::name as alias;`, a nested `fn name`); and for a
+/// mention inside a `mod` declared in the body, which does not see the
+/// blocks around it; for a mention inside any macro other than a bare std
+/// expression macro (its expansion may add imports), or inside such a macro
+/// when the file redefines or imports its name or holds a glob that may
+/// bring in a same-named macro; and for a block whose item
+/// under `cfg`/`cfg_attr` may bind the name.
+pub(crate) fn nested_block_renames_in_tree(
+    tree: &ast::SourceFile,
+    line_index: &LineIndex,
+    fn_line: usize,
+    fn_name: &str,
+    name: &str,
+) -> Option<Vec<Vec<String>>> {
+    let mut functions = tree.syntax().descendants().filter_map(|node| {
+        let function = ast::Fn::cast(node)?;
+        let token = function.fn_token()?;
+        let named = function.name().is_some_and(|ident| ident.text() == fn_name);
+        (named && line_index.line(token.text_range().start()) == fn_line).then_some(function)
+    });
+    let function = functions.next()?;
+    if functions.next().is_some() {
+        return None;
+    }
+    let body = function.body()?;
+    let mut paths: Vec<Vec<String>> = Vec::new();
+    let mut mentions = 0usize;
+    let mut std_macros_rebound: Option<bool> = None;
+    for token in body
+        .syntax()
+        .descendants_with_tokens()
+        .filter_map(|element| element.into_token())
+    {
+        if token.kind() != ra_ap_syntax::SyntaxKind::IDENT || unraw(token.text()) != name {
+            continue;
+        }
+        let parent = token.parent()?;
+        if parent
+            .ancestors()
+            .any(|node| ast::Rename::can_cast(node.kind()))
+        {
+            // The bound name of a renaming leaf, not a mention.
+            continue;
+        }
+        if parent
+            .ancestors()
+            .any(|node| ast::Use::can_cast(node.kind()))
+            || ast::Name::can_cast(parent.kind())
+        {
+            return None;
+        }
+        let previous = std::iter::successors(token.prev_token(), |token| token.prev_token())
+            .find(|token| !token.kind().is_trivia());
+        match previous.as_ref().map(|token| token.kind()) {
+            // A method call or field access never names a free function.
+            Some(ra_ap_syntax::T![.]) => continue,
+            Some(ra_ap_syntax::T![::]) => return None,
+            _ => {}
+        }
+        // A path prefix (`name::item`) names a module or type, never the
+        // function; a turbofish (`name::<T>(..)`) still calls it.
+        let mut following = std::iter::successors(token.next_token(), |token| token.next_token())
+            .filter(|token| !token.kind().is_trivia());
+        if following.next().map(|token| token.kind()) == Some(ra_ap_syntax::T![::])
+            && following.next().map(|token| token.kind()) != Some(ra_ap_syntax::T![<])
+        {
+            continue;
+        }
+        mentions += 1;
+        // A `mod` declared inside the body opens a fresh item scope that
+        // does not see the blocks around it. A macro other than a bare std
+        // expression macro may wrap its input in a block with its own
+        // imports, so only those std macros keep the written scopes; a
+        // `macro_rules!` or import reusing such a name in the file voids that.
+        let mut macro_names = Vec::new();
+        for node in parent.ancestors().take_while(|node| node != body.syntax()) {
+            if ast::Module::can_cast(node.kind()) || opaque_macro_call(&node) {
+                return None;
+            }
+            if let Some(name) = ast::MacroCall::cast(node)
+                .and_then(|call| call.path())
+                .and_then(|path| path.segment())
+            {
+                macro_names.push(name.to_string());
+            }
+        }
+        if !macro_names.is_empty()
+            && (*std_macros_rebound.get_or_insert_with(|| {
+                file_rebinds_a_std_macro(tree) || file_glob_may_import_macros(tree)
+            }) || macro_names
+                .iter()
+                .any(|macro_name| file_imports_name(tree, macro_name)))
+        {
+            return None;
+        }
+        let mut decided = false;
+        for block in parent.ancestors().filter_map(ast::BlockExpr::cast) {
+            if block.syntax() == body.syntax() {
+                break;
+            }
+            let Some(list) = block.stmt_list() else {
+                continue;
+            };
+            let items: Vec<ast::Item> = list
+                .statements()
+                .filter_map(|statement| match statement {
+                    ast::Stmt::Item(item) => Some(item),
+                    _ => None,
+                })
+                .collect();
+            if items.is_empty() {
+                continue;
+            }
+            // An item under `cfg` or `cfg_attr` may be absent from the
+            // compiled block, so a binding it may supply is not settled.
+            if items.iter().any(|item| {
+                super::source_snapshot::has_cfg_attr(item) && {
+                    let gated = name_scope_for_items(std::slice::from_ref(item));
+                    gated.imports_of(name).next().is_some()
+                        || gated.defines.contains(name)
+                        || gated.child_modules.contains(name)
+                        || !gated.globs.is_empty()
+                }
+            }) {
+                return None;
+            }
+            let scope = name_scope_for_items(&items);
+            let imports: Vec<&UseBinding> = scope.imports_of(name).collect();
+            if scope.defines.contains(name) || scope.child_modules.contains(name) {
+                return None;
+            }
+            if imports.is_empty() {
+                if !scope.globs.is_empty() {
+                    return None;
+                }
+                continue;
+            }
+            for binding in imports {
+                let UseBinding::Renamed(path) = binding else {
+                    return None;
+                };
+                if !paths.contains(path) {
+                    paths.push(path.clone());
+                }
+            }
+            decided = true;
+            break;
+        }
+        if !decided {
+            return None;
+        }
+    }
+    (mentions > 0).then_some(paths)
+}
+
+/// Whether a glob import in the file may bring in a macro this scan cannot
+/// see, which would shadow a std expression macro of the same name. A glob of
+/// `std` brings std's own macros when the file does not rebind that root
+/// (`core` and `alloc` are refused, as for `STD_CRATE_ROOT`: a renamed Cargo
+/// dependency can stand in for either); a glob of only `super`
+/// segments that stays within the file's inline modules reaches items this
+/// file declares, which `file_rebinds_a_std_macro` and `file_imports_name`
+/// read. Any other glob, or one the scan cannot read, may.
+fn file_glob_may_import_macros(tree: &ast::SourceFile) -> bool {
+    tree.syntax()
+        .descendants()
+        .filter_map(ast::Use::cast)
+        .any(|item| {
+            let depth = item
+                .syntax()
+                .ancestors()
+                .filter_map(ast::Module::cast)
+                .filter(|module| module.item_list().is_some())
+                .count();
+            let scope = name_scope_for_items(&[ast::Item::Use(item)]);
+            scope.globs.iter().any(|glob| {
+                let Some(path) = glob else {
+                    return true;
+                };
+                let std_root = path.first().is_some_and(|root| root == STD_CRATE_ROOT)
+                    && !file_may_bind_name(tree, STD_CRATE_ROOT);
+                let in_file_super = !path.is_empty()
+                    && path.iter().all(|segment| segment == "super")
+                    && path.len() <= depth;
+                !(std_root || in_file_super)
+            })
+        })
+}
+
+/// Whether any `use` leaf in the file binds `name`, by its own leaf or a
+/// rename. Read conservatively: an import of std's own item counts too.
+fn file_imports_name(tree: &ast::SourceFile, name: &str) -> bool {
+    tree.syntax()
+        .descendants()
+        .filter_map(ast::Use::cast)
+        .any(|item| {
+            let scope = name_scope_for_items(&[ast::Item::Use(item)]);
+            scope.imports_of(name).next().is_some()
+        })
+}
+
 /// The module or file scope `node` opens, read from its items; `None` for any
 /// other node.
 fn item_scope(node: &SyntaxNode) -> Option<NameScope> {

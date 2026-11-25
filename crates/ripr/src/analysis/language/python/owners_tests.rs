@@ -575,6 +575,9 @@ fn owner_from_function(
         .map(|class| format!("{}.{name}", innermost_class(class)))
         .unwrap_or_else(|| name.to_string());
     let route_paths = collect_static_route_paths(context.source, decorators);
+    // Counted on the decorator expressions here, before `async_def` joins
+    // the recorded decorator names below.
+    let routed_handler = !route_paths.is_empty() && decorators.len() == route_paths.len();
     let route_returns_body = !route_paths.is_empty()
         && route_returns_body(decorators, body)
         && !super::module_constants::mentions_identifier(
@@ -615,10 +618,41 @@ fn owner_from_function(
         body,
         super::same_class_callees::method_receiver_name(&parameters, &decorators),
     );
-    let module_callees = if transparent_decorators || click_command {
-        super::module_callees::bare_callees(&text_for_range(context.source, range), &parameters)
+    // A handler whose every decorator is a static route decorator is called
+    // by the framework when its route is requested, so a helper it calls is
+    // reached through the handler (#14150), like a click command through its
+    // invocation. Any other decorator may wrap or replace the call.
+    // A routed handler runs its body per request. A call in a parameter
+    // default runs when the module is defined, not per request, so the
+    // route-helper relation reads the body only (#14150).
+    let callee_text = if routed_handler {
+        body.first().zip(body.last()).map_or_else(
+            || text_for_range(context.source, range),
+            |(first, last)| {
+                text_for_range(
+                    context.source,
+                    TextRange::new(first.range().start(), last.range().end()),
+                )
+            },
+        )
+    } else {
+        text_for_range(context.source, range)
+    };
+    let module_callees = if transparent_decorators || click_command || routed_handler {
+        super::module_callees::bare_callees(&callee_text, &parameters)
     } else {
         Vec::new()
+    };
+    // `module_callees` keeps its over-approximation for the relations that
+    // already read it. The route-helper relation claims the handler calls the
+    // helper itself, so it reads the handler's own scope only (#14150 review).
+    // The calls it awaits are kept beside the calls: a coroutine function's
+    // body runs only through an awaited call (#15882 review).
+    let (route_scope_callees, route_scope_awaited_callees) = if routed_handler {
+        let calls = super::module_callees::own_scope_callees(context.source, body, &parameters);
+        (calls.callees, calls.awaited)
+    } else {
+        (Vec::new(), Vec::new())
     };
     PythonOwner {
         name: name.to_string(),
@@ -651,6 +685,8 @@ fn owner_from_function(
         ),
         same_class_callees,
         module_callees,
+        route_scope_callees,
+        route_scope_awaited_callees,
         class_path: context.class_context.unwrap_or_default().to_string(),
         term_facts,
         class_facts: super::related_tests::PythonClassFacts {
@@ -670,6 +706,7 @@ fn owner_from_function(
         nested_result_discarded: false,
         trusted_stdlib_click_alias: false,
         route_returns_body,
+        route_dispatch_ambiguous: false,
         route_dict_annotation: false,
     }
 }
@@ -795,6 +832,8 @@ fn owner_from_class(
         module_constants: Vec::new(),
         same_class_callees: Vec::new(),
         module_callees: Vec::new(),
+        route_scope_callees: Vec::new(),
+        route_scope_awaited_callees: Vec::new(),
         class_path: String::new(),
         term_facts: Default::default(),
         class_facts: Default::default(),
@@ -805,6 +844,7 @@ fn owner_from_class(
         nested_result_discarded: false,
         trusted_stdlib_click_alias: false,
         route_returns_body: false,
+        route_dispatch_ambiguous: false,
         route_dict_annotation: false,
     }
 }
@@ -841,6 +881,8 @@ pub(super) fn module_owner(
         module_constants: Vec::new(),
         same_class_callees: Vec::new(),
         module_callees: Vec::new(),
+        route_scope_callees: Vec::new(),
+        route_scope_awaited_callees: Vec::new(),
         class_path: String::new(),
         term_facts: Default::default(),
         class_facts: Default::default(),
@@ -851,6 +893,7 @@ pub(super) fn module_owner(
         nested_result_discarded: false,
         trusted_stdlib_click_alias: false,
         route_returns_body: false,
+        route_dispatch_ambiguous: false,
         route_dict_annotation: false,
     }
 }

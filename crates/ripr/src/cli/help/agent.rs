@@ -213,7 +213,10 @@ with `ripr check`. No stub is written for an unsupported language.
 
 The stub calls the changed function with its real receiver and parameters,
 fills a boundary input when the changed comparison names one (for a `&str`
-length boundary such as `s.len() > 3`, a string of that length), fills the input
+length boundary such as `s.len() > 3`, a string of that length), copies a
+free function's other inputs from the first call with all-literal arguments
+in an existing test of its inline test module, when the copied values do not
+steer the function away from the changed comparison, fills the input
 a changed match arm's own pattern names (`Event::Fail`, `2`), builds a method's
 receiver from a constructor when the impl has one (the first literal-argument
 call an existing test in that module makes, else a no-argument `new`, `empty`

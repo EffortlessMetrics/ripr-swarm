@@ -3578,6 +3578,7 @@ fn bare_owner_call_names_owner(
             CallTarget::Unsettled => {
                 !name_bound_outside_owner_crate(index, owner, test)
                     && !bare_name_renames_another_function(index, owner, test)
+                    && !bare_name_renamed_in_nested_blocks(index, owner, test)
                     && !super::helper_transfer::test_body_shadows_name(
                         index,
                         test,
@@ -3764,28 +3765,15 @@ pub(super) fn bare_name_renames_another_function(
                     let UseBinding::Renamed(path) = binding else {
                         return false;
                     };
-                    let Some((last, module)) = path.split_last() else {
-                        return false;
-                    };
-                    let target = last.trim_start_matches("r#");
-                    if target == name || module.is_empty() {
-                        return false;
-                    }
-                    // The renamed path must place a function: the module it
-                    // spells holds a module-level `fn` of the target name in
-                    // the owner's package. A same-named function elsewhere
-                    // says nothing about a path that names a module.
-                    let Some(placed) =
-                        use_target(module, base.as_deref(), scope, &test_scope.crate_names)
-                    else {
-                        return false;
-                    };
-                    index.functions().iter().any(|function| {
-                        function.item.container == FunctionContainer::Free
-                            && function.name.trim_start_matches("r#") == target
-                            && package_key_in(index, &function.file) == owner_package
-                            && definition_module_path_in(index, function).as_ref() == Some(&placed)
-                    })
+                    renamed_path_places_another_function(
+                        index,
+                        owner_package.as_deref(),
+                        name,
+                        path,
+                        base.as_deref(),
+                        scope,
+                        &test_scope.crate_names,
+                    )
                 });
         }
         if scope.defines.contains(name) {
@@ -3806,6 +3794,106 @@ pub(super) fn bare_name_renames_another_function(
         }
     }
     false
+}
+
+/// Whether `path`, imported under `name` by a renaming `use` read against
+/// `scope` in module `base`, places a module-level function of the owner's
+/// package with a different name: the module the path spells holds a free
+/// `fn` of the path's last segment. A same-named function elsewhere says
+/// nothing about a path that names a module, and a path the scope cannot
+/// place answers no.
+fn renamed_path_places_another_function(
+    index: &RustIndex,
+    owner_package: Option<&str>,
+    name: &str,
+    path: &[String],
+    base: Option<&[String]>,
+    scope: &NameScope,
+    crate_names: &BTreeSet<String>,
+) -> bool {
+    let Some((last, module)) = path.split_last() else {
+        return false;
+    };
+    let target = last.trim_start_matches("r#");
+    if target == name || module.is_empty() {
+        return false;
+    }
+    let Some(placed) = use_target(module, base, scope, crate_names) else {
+        return false;
+    };
+    index.functions().iter().any(|function| {
+        function.item.container == FunctionContainer::Free
+            && function.name.trim_start_matches("r#") == target
+            && package_key_in(index, &function.file).as_deref() == owner_package
+            && definition_module_path_in(index, function).as_ref() == Some(&placed)
+    })
+}
+
+/// Whether every bare mention of the owner's name in `test` sits inside a
+/// nested block whose own renaming `use` binds that name to another
+/// function of the owner's package (`{ use super::other as discount;
+/// assert!(discount(60)); }` beside a changed `discount`, #14069). The body
+/// scope reads such a block binding as unsettled, so
+/// `bare_name_renames_another_function` fails open there; this answers it
+/// from the block positions. Each renamed path is placed against the
+/// function-body scope and its module, as a block-level `use` resolves.
+///
+/// Fails open on a macro-generated test, an unparsed file, any mention
+/// outside such a block, and any path the scope cannot place.
+fn bare_name_renamed_in_nested_blocks(
+    index: &RustIndex,
+    owner: &FunctionSummary,
+    test: &TestSummary,
+) -> bool {
+    if owner.item.container != FunctionContainer::Free {
+        return false;
+    }
+    let name = owner.name.trim_start_matches("r#");
+    let spells_rename = index.files().get(&test.file).is_some_and(|facts| {
+        index
+            .call_identity_memos
+            .file_spellings(&test.file, &facts.source)
+            .spells_rename_to(&facts.source, name)
+    });
+    if !spells_rename {
+        return false;
+    }
+    let Some(identity) = shared_solo_owner_call_identity(index, owner) else {
+        return false;
+    };
+    let test_scope = identity.test_scope(test, index);
+    let Some(body_scope) = test_scope
+        .scopes
+        .as_deref()
+        .and_then(|scopes| scopes.scopes.first())
+        .filter(|scope| scope.fn_body)
+    else {
+        return false;
+    };
+    let Some(paths) = index
+        .source_syntax
+        .get(index, &test.file)
+        .and_then(|snapshot| snapshot.nested_block_renames(test, name))
+    else {
+        return false;
+    };
+    let base = test_scope
+        .file_segments
+        .as_deref()
+        .map(|file| join(file, &body_scope.modules));
+    let owner_package = package_key_in(index, &owner.file);
+    !paths.is_empty()
+        && paths.iter().all(|path| {
+            renamed_path_places_another_function(
+                index,
+                owner_package.as_deref(),
+                name,
+                path,
+                base.as_deref(),
+                body_scope,
+                &test_scope.crate_names,
+            )
+        })
 }
 
 /// Whether the module scope a bare call of the owner's name resolves in
@@ -3939,6 +4027,7 @@ pub(in crate::analysis) fn test_calls_only_a_renamed_other_function(
     // every test without masking and scanning the body.
     if !bare_name_renames_another_function(index, owner, test)
         && !bare_name_bound_only_by_std_globs(index, owner, test)
+        && !bare_name_renamed_in_nested_blocks(index, owner, test)
     {
         return false;
     }
@@ -7052,6 +7141,107 @@ mod sibling_without_glob {
         assert_eq!(discount(100), 0);
     }
 }
+
+#[cfg(test)]
+mod nested_block_rename {
+    #[test]
+    fn nested_block_rename_case() {
+        {
+            use super::other as discount;
+            assert_eq!(discount(100), 10);
+        }
+    }
+
+    #[test]
+    fn nested_block_rename_beside_module_alias_case() {
+        {
+            use super::pricing as discount;
+            discount::unrelated();
+        }
+        {
+            use super::other as discount;
+            assert_eq!(discount(100), 10);
+        }
+    }
+
+    #[test]
+    fn deeper_nested_block_rename_case() {
+        let total = {
+            use super::other as discount;
+            if true { discount(100) } else { discount(0) }
+        };
+        assert_eq!(total, 10);
+    }
+}
+
+#[cfg(test)]
+mod nested_block_rename_beside_owner {
+    use super::*;
+
+    #[test]
+    fn nested_block_rename_with_outer_call_case() {
+        {
+            use super::other as discount;
+            assert_eq!(discount(100), 10);
+        }
+        assert_eq!(discount(100), 10);
+    }
+
+    #[test]
+    fn nested_block_module_alias_case() {
+        {
+            use super::pricing as discount;
+            discount::unrelated();
+        }
+        assert_eq!(discount(100), 10);
+    }
+
+    #[test]
+    fn nested_block_alias_of_owner_case() {
+        {
+            use super::discount as discount;
+            assert_eq!(discount(100), 10);
+        }
+    }
+
+    #[test]
+    fn nested_block_inner_module_case() {
+        {
+            use super::other as discount;
+            mod inner {
+                use super::*;
+                pub fn check() {
+                    assert_eq!(discount(100), 10);
+                }
+            }
+            inner::check();
+        }
+    }
+
+    macro_rules! scoped_check {
+        ($e:expr) => {{
+            use super::*;
+            assert_eq!($e, 10);
+        }};
+    }
+
+    #[test]
+    fn nested_block_macro_scope_case() {
+        {
+            use super::other as discount;
+            scoped_check!(discount(100));
+        }
+    }
+
+    #[test]
+    fn nested_block_cfg_rename_case() {
+        {
+            #[cfg(not(test))]
+            use super::other as discount;
+            assert_eq!(discount(100), 10);
+        }
+    }
+}
 ";
 
     const RENAMED_OTHER_INTEGRATION: &str = "\
@@ -7063,7 +7253,10 @@ fn integration_rename_case() {
 }
 ";
 
-    const RENAMED_CASES: [&str; 7] = [
+    const RENAMED_CASES: [&str; 10] = [
+        "nested_block_rename_case",
+        "nested_block_rename_beside_module_alias_case",
+        "deeper_nested_block_rename_case",
         "commented_rename_case",
         "line_commented_rename_case",
         "module_rename_case",
@@ -7073,7 +7266,10 @@ fn integration_rename_case() {
         "integration_rename_case",
     ];
 
-    const KEPT_CASES: [&str; 5] = [
+    const KEPT_CASES: [&str; 8] = [
+        "nested_block_rename_with_outer_call_case",
+        "nested_block_module_alias_case",
+        "nested_block_alias_of_owner_case",
         "real_case",
         "self_rename_case",
         "module_alias_case",
@@ -7108,14 +7304,80 @@ fn integration_rename_case() {
     /// #14069: a bare call bound by a renaming import of another function
     /// is not a call of the owner; every other binding keeps the prior
     /// reading.
+    /// #14069: a glob that may import a macro named like a std expression
+    /// macro (`assert_eq!`) could expand around the call with its own
+    /// imports, so the nested block cannot decide it. The shared fixture,
+    /// whose only globs are in-file `super::*`, keeps refusing its nested
+    /// cases.
+    #[test]
+    fn a_foreign_glob_voids_the_nested_block_reading_inside_a_std_macro() -> Result<(), String> {
+        const SRC: &str = "\
+pub fn discount(amount: u32) -> u32 {
+    if amount > 100 { 10 } else { 0 }
+}
+
+pub fn other(a: u32) -> u32 {
+    if a >= 100 { 10 } else { 0 }
+}
+
+pub mod helpers {
+    pub fn unrelated() {}
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::helpers::*;
+
+    #[test]
+    fn foreign_glob_case() {
+        {
+            use super::other as discount;
+            assert_eq!(discount(100), 10);
+        }
+    }
+}
+";
+        let foreign = index(&[("src/lib.rs", SRC)]);
+        let (owner, test) = renamed_other_parts(&foreign, "foreign_glob_case")?;
+        assert!(!bare_name_renamed_in_nested_blocks(&foreign, owner, test));
+        assert!(!test_calls_only_a_renamed_other_function(
+            &foreign, owner, test
+        ));
+        // `core` may be a renamed Cargo dependency, so its glob is not
+        // trusted either; a `std` glob is.
+        for (glob, refused) in [
+            ("core::prelude::v1::*", false),
+            ("std::prelude::v1::*", true),
+        ] {
+            let src = SRC.replace("crate::helpers::*", glob);
+            let globbed = index(&[("src/lib.rs", src.as_str())]);
+            let (owner, test) = renamed_other_parts(&globbed, "foreign_glob_case")?;
+            assert_eq!(
+                bare_name_renamed_in_nested_blocks(&globbed, owner, test),
+                refused,
+                "{glob}"
+            );
+        }
+        Ok(())
+    }
+
     #[test]
     fn a_renaming_import_of_another_function_is_not_a_call_of_the_owner() -> Result<(), String> {
         let index = renamed_other_index();
         for name in RENAMED_CASES {
             let (owner, test) = renamed_other_parts(&index, name)?;
-            assert!(
+            // A nested block's rename is read from the block positions; the
+            // body scope alone leaves it unsettled.
+            let nested = name.contains("nested_block");
+            assert_eq!(
                 bare_name_renames_another_function(&index, owner, test),
-                "{name}: the bare name is `other` under a rename"
+                !nested,
+                "{name}: the body scope decides only a rename it binds itself"
+            );
+            assert_eq!(
+                bare_name_renamed_in_nested_blocks(&index, owner, test),
+                nested,
+                "{name}: only a nested block's rename is answered by position"
             );
             assert!(
                 test_calls_only_a_renamed_other_function(&index, owner, test),
@@ -7124,6 +7386,25 @@ fn integration_rename_case() {
         }
         for name in KEPT_CASES {
             let (owner, test) = renamed_other_parts(&index, name)?;
+            assert!(
+                !test_calls_only_a_renamed_other_function(&index, owner, test),
+                "{name}: the owner may still be called"
+            );
+        }
+        // A `mod` inside the renaming block does not see the block's `use`;
+        // its glob reaches the owner, so the block cannot decide that call.
+        // So may a non-std macro around the call (its expansion can add a
+        // glob), and a `cfg`-gated rename may be absent from the build.
+        for name in [
+            "nested_block_inner_module_case",
+            "nested_block_macro_scope_case",
+            "nested_block_cfg_rename_case",
+        ] {
+            let (owner, test) = renamed_other_parts(&index, name)?;
+            assert!(
+                !bare_name_renamed_in_nested_blocks(&index, owner, test),
+                "{name}: the block cannot decide the call"
+            );
             assert!(
                 !test_calls_only_a_renamed_other_function(&index, owner, test),
                 "{name}: the owner may still be called"

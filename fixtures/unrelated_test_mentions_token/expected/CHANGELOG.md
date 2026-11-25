@@ -699,3 +699,14 @@ Command:
 
 Updated:
 - `expected/human.txt`
+
+## Pending — unrelated_test_mentions_token (34)
+
+Reason:
+RIPR-SPEC-0011: an unreferenced new function's no-path gap prints check's repair start (#15926)
+
+Command:
+`cargo xtask goldens bless unrelated_test_mentions_token --reason "..."`
+
+Updated:
+- `expected/human.txt`

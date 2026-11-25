@@ -24,7 +24,7 @@ use crate::app::agent_brief::AgentBriefPolicy;
 use crate::app::task_first::{
     RefusalKind, RefusalRoot, RepairSubjectOutcome, resolve_repair_subject_in,
 };
-use crate::domain::Finding;
+use crate::domain::{ExposureClass, Finding};
 use std::collections::HashMap;
 
 /// Typed reason: the shared gate names the seam and its existing tests
@@ -302,7 +302,7 @@ impl SeamAdmission {
                                     crate::app::task_first::held_inline_reason(&file)
                                 ),
                             },
-                            None => verdict_for(outcome, candidate_seams, &finding.id),
+                            None => verdict_for(outcome, candidate_seams, findings, finding),
                         }
                     }
                 };
@@ -391,10 +391,34 @@ pub(crate) fn inline_verdict(seam_id: &str, candidate_seams: &[ClassifiedSeam]) 
 fn verdict_for(
     outcome: RepairSubjectOutcome,
     candidate_seams: &[ClassifiedSeam],
-    item: &str,
+    findings: &[Finding],
+    item: &Finding,
 ) -> SeamVerdict {
     match outcome {
-        RepairSubjectOutcome::Seam(seam_id) => inline_verdict(&seam_id, candidate_seams),
+        RepairSubjectOutcome::Seam(seam_id) => {
+            // The seam's target can build a packet while this changed
+            // occurrence has no established start. Refuse before projecting
+            // readiness into list, detail and the prepare transaction.
+            if item.class == ExposureClass::NoStaticPath
+                && let Some(entry) = candidate_seams
+                    .iter()
+                    .find(|entry| entry.seam.id().as_str() == seam_id)
+                && crate::app::repair_card_handoff::bound_no_path_start_refusal(
+                    findings,
+                    entry,
+                    candidate_seams,
+                )
+                .is_some_and(|bound| std::ptr::eq(bound, item))
+            {
+                return SeamVerdict::Refused {
+                    code: SEAM_GATE_REFUSED,
+                    detail: format!(
+                        "the changed code at seam `{seam_id}` has no static test path, and the analysis did not establish that its owner is unreferenced in the workspace"
+                    ),
+                };
+            }
+            inline_verdict(&seam_id, candidate_seams)
+        }
         RepairSubjectOutcome::Ineligible {
             seam_id,
             reason,
@@ -423,7 +447,7 @@ fn verdict_for(
             code: SEAM_NOT_FOUND,
             detail: format!(
                 "the shared repair gate (`ripr repair`) refuses this item: {}",
-                crate::app::task_first::unknown_repair_item_reason(None, item)
+                crate::app::task_first::unknown_repair_item_reason(None, &item.id)
             ),
         },
     }

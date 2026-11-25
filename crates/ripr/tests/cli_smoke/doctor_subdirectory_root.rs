@@ -118,8 +118,10 @@ fn doctor_from_a_subdirectory_diagnoses_the_root_check_analyzes() -> Result<(), 
                 "doctor from py/ must suggest the workspace list with Rust kept: {tip}"
             ));
         }
+        // #15548: a detected language the config does not enable is marked
+        // `[not enabled]` on this line.
         if detected_line(&from_subdir)
-            != Some("- Detected languages: rust (stable), python (preview)")
+            != Some("- Detected languages: rust (stable), python (preview) [not enabled]")
         {
             return Err(format!(
                 "doctor from py/ must detect both languages at the resolved root:\n{from_subdir}"
@@ -137,7 +139,7 @@ fn doctor_from_a_subdirectory_diagnoses_the_root_check_analyzes() -> Result<(), 
         if !pinned.lines().any(|line| line == "Root: .") {
             return Err(format!("`--root .` must diagnose py/ itself:\n{pinned}"));
         }
-        if detected_line(&pinned) != Some("- Detected languages: python (preview)") {
+        if detected_line(&pinned) != Some("- Detected languages: python (preview) [not enabled]") {
             return Err(format!(
                 "control: py/ alone detects Python only, unlike the root:\n{pinned}"
             ));

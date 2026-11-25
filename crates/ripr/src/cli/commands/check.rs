@@ -602,7 +602,7 @@ fn select_output_format(
 /// badge, or repo formats" wording left out.
 fn suppression_policy_format_refusal(format: OutputFormat) -> String {
     format!(
-        "--suppression-policy applies to the findings-based check formats (human, human-full, json, json-compact, github, missed-txt); \
+        "--suppression-policy applies to the findings-based check formats (human, human-full, json, json-compact, github, missed-txt) and to sarif and sarif-compact; \
          --format {} does not apply it. Drop the flag, or pick one of those formats",
         format.primary_cli_name()
     )
@@ -1115,9 +1115,9 @@ fn check_inner(
         return Err("--output-dir requires a named --diff file and cannot be combined with --format/--json, --worktree/--committed, --candidate-tree/--candidate-base, --gap-ledger, --write-artifact or --suppression-policy; pass a named `--diff <file>` and drop the other flags".into());
     }
     // #1441: --suppression-policy applies to the findings-based check
-    // surfaces only. SARIF keeps its existing `.ripr/suppressions.toml`
-    // channel, and badge/repo formats have their own suppression
-    // projections — silently ignoring the flag there would misreport policy
+    // surfaces and, since #15377, to SARIF, where the explicit file replaces
+    // the implicit `[suppressions] path` manifest. Badge/repo formats have
+    // their own suppression projections — silently ignoring the flag there would misreport policy
     // application, so fail closed. #15377: this is a usage error decided by
     // argv alone, so it is refused here, before the refusal-envelope
     // snapshot: an agent or json-terse record would label it
@@ -1131,6 +1131,8 @@ fn check_inner(
                 | OutputFormat::JsonCompact
                 | OutputFormat::Github
                 | OutputFormat::MissedTxt
+                | OutputFormat::Sarif
+                | OutputFormat::SarifCompact
         )
     {
         return Err(suppression_policy_format_refusal(input.format));
