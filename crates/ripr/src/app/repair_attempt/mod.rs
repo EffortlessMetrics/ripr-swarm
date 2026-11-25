@@ -5878,17 +5878,30 @@ pub(crate) fn seam_dirty_premise_refusal(
     facade_start: bool,
     violations: &[String],
 ) -> String {
+    let restart = seam_start_command(seam_id, root, store, facade_start);
+    dirty_premise_refusal(&restart, violations)
+}
+
+/// The command a not-started seam refusal tells the user to rerun: the
+/// `ripr repair <item>` façade keeps its short spelling, and an advanced
+/// start or one with an explicit `--store` keeps that store, so the retried
+/// attempt lands where the original command would have put it (#15265).
+pub(crate) fn seam_start_command(
+    seam_id: &str,
+    root: &Path,
+    store: Option<&Path>,
+    facade_start: bool,
+) -> String {
     let root_arg = shell_arg(&bound_root(&root.to_string_lossy()));
     let seam_arg = shell_arg(seam_id);
     let store_flag = quoted_store_flag(store);
-    let restart = if facade_start && store.is_none() {
+    if facade_start && store.is_none() {
         format!("ripr repair {seam_arg} --root {root_arg}")
     } else {
         format!(
             "ripr agent repair --root {root_arg}{store_flag} --seam-id {seam_arg} --phase before"
         )
-    };
-    dirty_premise_refusal(&restart, violations)
+    }
 }
 
 /// [`seam_dirty_premise_refusal`] for any start spelling: the seam and

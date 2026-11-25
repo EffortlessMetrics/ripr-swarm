@@ -7846,6 +7846,44 @@ fn repair_refuses_an_uncommitted_external_test_file_before_starting() -> Result<
         "the refusal must name the held test file:\n{message}"
     );
     assert!(attempt_ids(root).is_empty(), "no attempt may be created");
+    assert!(
+        !root.join("target/ripr/workflow/workflow.json").exists(),
+        "a refused start writes no workflow artifact"
+    );
+    assert!(
+        message.contains(&format!("ripr repair {FIXTURE_SEAM} --root ")),
+        "the facade start reruns the facade:\n{message}"
+    );
+
+    // The advanced start with an explicit store reruns that same spelling,
+    // so the retried attempt lands in the store the caller chose.
+    let store = root.join("chosen-store");
+    let store_arg = store.to_string_lossy().into_owned();
+    let advanced = run_ripr(
+        root,
+        &[
+            "agent",
+            "repair",
+            "--root",
+            &root_arg,
+            "--store",
+            &store_arg,
+            "--seam-id",
+            FIXTURE_SEAM,
+            "--phase",
+            "before",
+        ],
+    )?;
+    let advanced_err = stderr_text(&advanced);
+    assert!(
+        advanced_err.contains("ripr agent repair --root ")
+            && advanced_err.contains(" --store ")
+            && advanced_err.contains("chosen-store")
+            && advanced_err.contains("--phase before")
+            && advanced_err.contains("has uncommitted changes"),
+        "the advanced refusal must rerun the advanced start with its store:\n{advanced_err}"
+    );
+    assert!(attempt_ids(root).is_empty(), "no attempt may be created");
 
     // Control: once the test file is committed, the same start proceeds.
     run_git(root, &["add", "tests/pricing.rs"])?;

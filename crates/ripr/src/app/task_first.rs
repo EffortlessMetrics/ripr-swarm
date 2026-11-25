@@ -3031,12 +3031,7 @@ pub(crate) fn held_external_test_start_file(
 /// The refusal for a start held by an uncommitted external test file. After
 /// one repair the focused test file holds the new test until it is
 /// committed, so the refusal says that is the usual cause (#15265).
-pub(crate) fn uncommitted_test_start_refusal_message(
-    root: &Path,
-    seam_id: &str,
-    file: &str,
-) -> String {
-    let rerun = repair_rerun_command(root, seam_id);
+pub(crate) fn uncommitted_test_start_refusal_message(rerun: &str, file: &str) -> String {
     start_refusal_with_next(
         &format!(
             "No repair attempt started. The test file `{file}` has uncommitted changes (after an earlier repair, usually the test it added). Commit or stash `{file}`, then run `{rerun}`. A repair adds tests to an existing test file only from its committed copy"
@@ -3047,8 +3042,9 @@ pub(crate) fn uncommitted_test_start_refusal_message(
 
 /// The refusal for a start held by an uncommitted production target: states
 /// that no attempt started and what to do about it (#9033).
-pub(crate) fn uncommitted_start_refusal_message(root: &Path, seam_id: &str, file: &str) -> String {
-    let rerun = repair_rerun_command(root, seam_id);
+/// `rerun` is the start command to repeat, from
+/// [`crate::app::repair_attempt::seam_start_command`].
+pub(crate) fn uncommitted_start_refusal_message(rerun: &str, file: &str) -> String {
     start_refusal_with_next(
         &format!(
             "No repair attempt started. Commit or stash `{file}`, then run `{rerun}`. A repair confined to its inline `#[cfg(test)]` module starts only from the committed file"

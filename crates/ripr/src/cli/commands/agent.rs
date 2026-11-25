@@ -2829,7 +2829,13 @@ fn run_agent_repair_phase(
                 refusal.code =
                     Some(crate::app::task_first::RepairRefusalCode::StartRefusedUncommittedTarget);
                 return Err(crate::app::task_first::uncommitted_start_refusal_message(
-                    &root, &seam_id, &file,
+                    &crate::app::repair_attempt::seam_start_command(
+                        &seam_id,
+                        &root,
+                        store_ref,
+                        facade_start,
+                    ),
+                    &file,
                 ));
             }
             // #15265: the same hold for a selected external test file, so the
@@ -2845,7 +2851,13 @@ fn run_agent_repair_phase(
                     Some(crate::app::task_first::RepairRefusalCode::StartRefusedUncommittedTarget);
                 return Err(
                     crate::app::task_first::uncommitted_test_start_refusal_message(
-                        &root, &seam_id, &file,
+                        &crate::app::repair_attempt::seam_start_command(
+                            &seam_id,
+                            &root,
+                            store_ref,
+                            facade_start,
+                        ),
+                        &file,
                     ),
                 );
             }
