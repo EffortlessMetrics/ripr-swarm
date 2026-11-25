@@ -704,6 +704,148 @@ fn the_formatter_is_rustfmt_env_else_the_rustfmt_beside_cargo_fmt() -> Result<()
     Ok(())
 }
 
+/// rustup installs its proxies as its own image, by a link or a copy, and a
+/// proxy named `cargo-fmt` runs the toolchain's own rustfmt, whatever sits
+/// beside it. So the `rustfmt` beside a proxy counts only where it is the
+/// same proxy, which rustup installs beside `cargo-fmt`; beside another
+/// program, or nothing, the step refuses and names the override. The pair
+/// counts the same in another directory, where `cargo fmt` runs that copy.
+/// A `cargo-fmt` that is not the image is another toolchain's and is read
+/// beside itself.
+#[test]
+fn the_rustfmt_beside_a_rustup_proxy_counts_only_as_the_same_proxy() -> Result<(), String> {
+    fn named(name: &str) -> String {
+        if cfg!(windows) {
+            format!("{name}.exe")
+        } else {
+            name.to_owned()
+        }
+    }
+    let root: PathBuf = std::env::temp_dir().join(format!(
+        "ripr-workspace-format-proxy-{}-{}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_err(|err| err.to_string())?
+            .as_nanos()
+    ));
+    let home_bin = root.join("cargo-home").join("bin");
+    let copied = root.join("copied");
+    let beside_other = root.join("beside-another-program");
+    let alone = root.join("alone");
+    let elsewhere = root.join("other-toolchain");
+    for directory in [&home_bin, &copied, &beside_other, &alone, &elsewhere] {
+        std::fs::create_dir_all(directory).map_err(|err| err.to_string())?;
+    }
+    let write = |file: &Path, contents: &[u8]| -> Result<(), String> {
+        std::fs::write(file, contents).map_err(|err| err.to_string())?;
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(file, std::fs::Permissions::from_mode(0o755))
+                .map_err(|err| err.to_string())?;
+        }
+        Ok(())
+    };
+    // rustup's image, and the proxies it installs as that same image.
+    let image = b"rustup image";
+    for proxy in ["rustup", "cargo-fmt", "rustfmt"] {
+        write(&home_bin.join(named(proxy)), image)?;
+    }
+    // The pair copied into another directory.
+    write(&copied.join(named("cargo-fmt")), image)?;
+    write(&copied.join(named("rustfmt")), image)?;
+    // The proxy beside another program named rustfmt, and beside nothing.
+    write(&beside_other.join(named("cargo-fmt")), image)?;
+    write(&beside_other.join(named("rustfmt")), b"another program")?;
+    write(&alone.join(named("cargo-fmt")), image)?;
+    // Another toolchain's cargo-fmt: not the image.
+    write(&elsewhere.join(named("cargo-fmt")), b"another toolchain")?;
+    write(&elsewhere.join(named("rustfmt")), b"another formatter")?;
+    let os = |path: &Path| path.to_string_lossy().into_owned();
+    let joined = |directories: &[&Path]| -> Result<std::ffi::OsString, String> {
+        std::env::join_paths(directories.iter().map(|directory| os(directory)))
+            .map_err(|err| err.to_string())
+    };
+    let run = |directories: &[&Path]| formatter(None, Some(&joined(directories)?), &home_bin);
+
+    // The proxies in the cargo home's bin directory, as rustup installs them.
+    assert_eq!(run(&[&home_bin]), Ok(home_bin.join(named("rustfmt"))));
+    // The pair copied into another directory comes first on PATH: cargo runs
+    // that copy, and the rustfmt beside it is the same proxy.
+    assert_eq!(
+        run(&[&copied, &home_bin]),
+        Ok(copied.join(named("rustfmt")))
+    );
+    // With the home bin directory not on PATH, cargo finds the proxies there
+    // first, wherever the copy sits.
+    assert_eq!(run(&[&beside_other]), Ok(home_bin.join(named("rustfmt"))));
+    // A proxy beside another program named rustfmt: `cargo fmt` runs the
+    // toolchain's own rustfmt, so this step runs none, and the refusal names
+    // the proxy and the remedy.
+    let Err(error) = run(&[&beside_other, &home_bin]) else {
+        return Err("a proxy beside another program must be refused".to_owned());
+    };
+    assert!(
+        error.contains("is the rustup proxy and the rustfmt beside it")
+            && error.contains(&os(&beside_other.join(named("cargo-fmt"))))
+            && error.contains("set RUSTFMT to the formatter to run"),
+        "{error}"
+    );
+    // A proxy with nothing beside it is refused the same way.
+    let Err(error) = run(&[&alone, &home_bin]) else {
+        return Err("a proxy beside nothing must be refused".to_owned());
+    };
+    assert!(
+        error.contains(&os(&alone.join(named("cargo-fmt"))))
+            && error.contains("set RUSTFMT to the formatter to run"),
+        "{error}"
+    );
+    // Another toolchain's cargo-fmt comes first on PATH and is read beside
+    // itself: it is not the proxy.
+    assert_eq!(
+        run(&[&elsewhere, &home_bin]),
+        Ok(elsewhere.join(named("rustfmt")))
+    );
+    // An explicit RUSTFMT is the override and is not second-guessed.
+    let path = joined(&[&beside_other, &home_bin])?;
+    assert_eq!(
+        formatter(
+            Some(std::ffi::OsStr::new("rustfmt-of-my-choice")),
+            Some(path.as_os_str()),
+            &home_bin
+        ),
+        Ok(PathBuf::from("rustfmt-of-my-choice"))
+    );
+    // On Linux rustup installs each proxy as a link to the rustup beside it.
+    // cargo-fmt then finds itself running as that rustup, and the rustfmt
+    // beside it is the link beside the link: the same proxy.
+    #[cfg(target_os = "linux")]
+    {
+        use std::os::unix::fs::symlink;
+        let linked = root.join("linked");
+        std::fs::create_dir_all(&linked).map_err(|err| err.to_string())?;
+        symlink(
+            home_bin.join(named("rustup")),
+            linked.join(named("cargo-fmt")),
+        )
+        .map_err(|err| err.to_string())?;
+        symlink(
+            home_bin.join(named("rustup")),
+            linked.join(named("rustfmt")),
+        )
+        .map_err(|err| err.to_string())?;
+        let home = std::fs::canonicalize(&home_bin).map_err(|err| err.to_string())?;
+        assert_eq!(
+            cargo_fmt(Some(joined(&[&linked, &home_bin])?.as_os_str()), &home_bin),
+            Some(home.join(named("rustup")))
+        );
+        assert_eq!(run(&[&linked, &home_bin]), Ok(home.join(named("rustfmt"))));
+    }
+    let _ = std::fs::remove_dir_all(&root);
+    Ok(())
+}
+
 /// The command line the runner's `Command` hands Windows, by the standard
 /// library's rules: the program in quotes, an argument in quotes when it is
 /// empty or holds a space or a tab, a backslash run before a quote doubled

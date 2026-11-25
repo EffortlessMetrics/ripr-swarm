@@ -30,10 +30,14 @@
 //!   target, and on macOS and Windows beside the link. So the formatter is
 //!   read apart from the `cargo` that
 //!   answers the metadata: with `CARGO` naming another toolchain's `cargo`,
-//!   `cargo fmt` and this step still start one formatter. With no `cargo-fmt`
-//!   there is none to run and the step says so. Never a `rustfmt` found on
-//!   `PATH` on its own. cargo-fmt would try to run an empty `RUSTFMT` and
-//!   fail; this step reads an empty value as unset.
+//!   `cargo fmt` and this step still start one formatter. A `cargo-fmt` that
+//!   is the rustup proxy runs the toolchain's own rustfmt, whatever sits
+//!   beside it, so the `rustfmt` beside a proxy is run only where it is the
+//!   same proxy, as rustup installs it; beside any other, or none, the step
+//!   refuses and names `RUSTFMT`. With no `cargo-fmt` there is none to run
+//!   and the step says so. Never a `rustfmt` found on `PATH` on its own.
+//!   cargo-fmt would try to run an empty `RUSTFMT` and fail; this step reads
+//!   an empty value as unset.
 //! - Which packages: `cargo metadata --no-deps`, read from the invocation
 //!   directory. Every member when that is the workspace root, otherwise the
 //!   member whose manifest is the invocation directory's `Cargo.toml`. In a
@@ -461,6 +465,23 @@ pub(crate) fn formatter(
         ));
     };
     let sibling = cargo_fmt.with_file_name(format!("rustfmt{}", exe_suffix()));
+    // A rustup proxy named `cargo-fmt` runs the toolchain's own rustfmt, not
+    // the `rustfmt` beside it. That one is the formatter `cargo fmt` runs
+    // only where it is the same proxy, which rustup installs beside
+    // `cargo-fmt` and which runs that toolchain's rustfmt under its own name.
+    if let Ok(image) = std::fs::read(home_bin.join(format!("rustup{}", exe_suffix()))) {
+        let is_proxy = |program: &Path| std::fs::read(program).is_ok_and(|bytes| bytes == image);
+        if is_proxy(&cargo_fmt) && !is_proxy(&sibling) {
+            return Err(format!(
+                "the cargo-fmt that `cargo fmt` runs ({}) is the rustup proxy and the rustfmt \
+                 beside it ({}) is not: `cargo fmt` runs the toolchain's own rustfmt there, which \
+                 this step does not read, so it runs no formatter; set RUSTFMT to the formatter \
+                 to run",
+                cargo_fmt.display(),
+                sibling.display()
+            ));
+        }
+    }
     if is_executable(&sibling) {
         Ok(sibling)
     } else {

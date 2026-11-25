@@ -504,7 +504,10 @@ when that is set and otherwise the `rustfmt` beside the `cargo-fmt` that
 `cargo-fmt` reached through a symbolic link is read beside the link's
 target, as cargo-fmt reads itself; on macOS and Windows, beside the link),
 never a `rustfmt` found on `PATH` on its own and never one
-tied to the `cargo` that answered the metadata; it formats every workspace member when
+tied to the `cargo` that answered the metadata; beside a `cargo-fmt` that is
+the rustup proxy only the same proxy counts as that `rustfmt`, because
+`cargo fmt` runs the toolchain's own rustfmt there, and any other, or none,
+is refused with `RUSTFMT` named; it formats every workspace member when
 started from the workspace root, only the member under the invocation
 directory when started inside one, the one package of a single-package
 workspace from any directory, and refuses from anywhere else in a workspace
