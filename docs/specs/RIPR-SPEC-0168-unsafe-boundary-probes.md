@@ -34,9 +34,9 @@ The Rust fact index records parser-backed `unsafe_boundary` probe shapes for
 `unsafe fn` bodies and explicit `unsafe {}` blocks. When a changed line lies
 inside such a boundary, the diff projection can emit an explicit
 `static_unknown` probe at the changed line, tagged with the
-`unsafe_boundary` probe shape and the `static_unknown` probe family. Ordinary
-predicate, call, value, and effect probes take precedence over enclosing
-boundary context when they carry the edit on the same candidate line of the
+`unsafe_boundary` probe shape and the `static_unknown` probe family. A classified
+probe of any family but `static_unknown` takes precedence over enclosing
+boundary context when it carries the edit on the same candidate line of the
 same owner. An unchanged expression beside the edit cannot suppress the note.
 An ambiguous replacement retains it. Each boundary
 keeps at most one projection on a remaining eligible line. An independently
