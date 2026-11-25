@@ -1597,7 +1597,7 @@ mod first_run_archive {
         };
         let prepare = bash(
             "tar -czf served/archive -C served \"$ARCHIVE_MEMBER\"
-             shasum -a 256 served/archive | awk '{print $1}' > served/checksum",
+             { sha256sum served/archive || shasum -a 256 served/archive; } | awk '{print $1}' > served/checksum",
             &root,
             &bin,
             &[("ARCHIVE_MEMBER", member)],
@@ -1605,6 +1605,17 @@ mod first_run_archive {
         assert!(prepare.ok(), "{}", prepare.text());
         if case == "checksum-mismatch" {
             fs::write(served.join("checksum"), format!("{:064}\n", 0))?;
+        }
+        if case == "partial-extraction" {
+            // Extract real bytes, then simulate tar reporting a late error.
+            fs::rename(bin.join("tar"), bin.join("fixture-tar"))?;
+            stand_in(
+                &bin,
+                "tar",
+                "fixture-tar \"$@\" || exit $?
+                 echo 'fixture: extraction failed after writing files' >&2
+                 exit 2",
+            )?;
         }
         Ok((root, bin))
     }
@@ -1616,6 +1627,7 @@ mod first_run_archive {
             "checksum-mismatch",
             "checksum-download-failed",
             "executable-missing",
+            "partial-extraction",
         ] {
             let (root, bin) = archive_fixture(case)?;
             fs::create_dir(root.join("docs"))?;
@@ -1674,9 +1686,18 @@ mod first_run_archive {
             );
             assert_eq!(
                 root.join("bin-test/ripr-bin/ripr").is_file(),
-                valid,
+                valid || case == "partial-extraction",
                 "{case}"
             );
+            if case == "partial-extraction" {
+                assert!(
+                    install
+                        .text()
+                        .contains("extraction failed after writing files"),
+                    "{}",
+                    install.text()
+                );
+            }
         }
         Ok(())
     }
@@ -1698,6 +1719,7 @@ mod first_run_archive {
             "checksum-mismatch",
             "checksum-download-failed",
             "executable-missing",
+            "partial-extraction",
         ] {
             let (root, bin) = archive_fixture(case)?;
             if case == "checksum-download-failed" {
@@ -1719,7 +1741,20 @@ mod first_run_archive {
                 !root.join("ambient.called").exists(),
                 "{case} ran ambient ripr"
             );
-            assert_eq!(root.join("ripr-bin/ripr").is_file(), valid, "{case}");
+            assert_eq!(
+                root.join("ripr-bin/ripr").is_file(),
+                valid || case == "partial-extraction",
+                "{case}"
+            );
+            if case == "partial-extraction" {
+                assert!(
+                    install
+                        .text()
+                        .contains("extraction failed after writing files"),
+                    "{}",
+                    install.text()
+                );
+            }
         }
         Ok(())
     }
