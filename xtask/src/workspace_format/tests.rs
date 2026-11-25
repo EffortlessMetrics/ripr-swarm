@@ -6,9 +6,9 @@ use serde_json::{Value, json};
 use super::{
     COMMAND_LINE_BUDGET, RustfmtInvocation, WINDOWS_COMMAND_LINE_LIMIT, argument_length, batch,
     canonical_or_keep, cargo_fmt, cargo_home_bin, checked_metadata, command_line_length, formatter,
-    invocations, metadata_arguments, metadata_document, preflight, prepare, read_document,
-    read_metadata, read_metadata_through, run_all, run_plan, serving_cargo, utf8_program,
-    windows_command_line, windows_command_line_units,
+    home_bin_for, invocations, metadata_arguments, metadata_document, preflight, prepare,
+    read_document, read_metadata, read_metadata_through, run_all, run_plan, serving_cargo,
+    utf8_program, windows_command_line, windows_command_line_units,
 };
 
 /// The `cargo` a test asks for metadata, found as the step finds it.
@@ -354,7 +354,7 @@ fn a_path_two_targets_name_runs_once_under_the_first_targets_edition() -> Result
 /// one `--check` run shows every diff. A failed batch hides no later batch.
 #[test]
 fn every_batch_runs_before_the_first_failure_is_reported() -> Result<(), String> {
-    // `cargo` and `rustfmt` start in the process working directory, which
+    // `cargo` and `rustfmt` run with the process working directory, which
     // other tests in this process move.
     let _cwd_guard = crate::acquire_test_cwd_read_guard();
     fn batch_of(argument: &str) -> RustfmtInvocation {
@@ -846,6 +846,86 @@ fn the_rustfmt_beside_a_rustup_proxy_counts_only_as_the_same_proxy() -> Result<(
     Ok(())
 }
 
+/// An empty `PATH` entry is skipped, as the real cargo 1.95.0 skips it when
+/// it looks for a subcommand: with `PATH` = ['', D] and a `cargo-riprprobe`
+/// in the working directory it ran D's, and with `PATH` = [''] it ran
+/// nothing.
+#[test]
+fn an_empty_path_entry_does_not_name_a_cargo_fmt_in_the_working_directory() -> Result<(), String> {
+    let _cwd_guard = crate::acquire_test_cwd_write_guard();
+    fn named(name: &str) -> String {
+        if cfg!(windows) {
+            format!("{name}.exe")
+        } else {
+            name.to_owned()
+        }
+    }
+    let root: PathBuf = std::env::temp_dir().join(format!(
+        "ripr-workspace-format-empty-path-{}-{}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_err(|err| err.to_string())?
+            .as_nanos()
+    ));
+    let working = root.join("working");
+    let toolchain = root.join("toolchain");
+    for directory in [&working, &toolchain] {
+        std::fs::create_dir_all(directory).map_err(|err| err.to_string())?;
+    }
+    let write = |file: &Path| -> Result<(), String> {
+        std::fs::write(file, "not a program this test runs").map_err(|err| err.to_string())?;
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(file, std::fs::Permissions::from_mode(0o755))
+                .map_err(|err| err.to_string())?;
+        }
+        Ok(())
+    };
+    write(&working.join(named("cargo-fmt")))?;
+    write(&toolchain.join(named("cargo-fmt")))?;
+    write(&toolchain.join(named("rustfmt")))?;
+    let real = |path: &Path| std::fs::canonicalize(path).map_err(|err| err.to_string());
+    let expected = real(&toolchain.join(named("cargo-fmt")))?;
+    let before = std::env::current_dir().map_err(|err| err.to_string())?;
+    std::env::set_current_dir(&working).map_err(|err| err.to_string())?;
+    // Read while the working directory is the one the empty entry would name.
+    let outcome = (|| {
+        let toolchain = toolchain.to_string_lossy().into_owned();
+        let empty = std::env::join_paths(["", &toolchain]).map_err(|err| err.to_string())?;
+        let no_home_bin = root.join("no-home-bin");
+        Ok::<Option<PathBuf>, String>(
+            cargo_fmt(Some(&empty), &no_home_bin).and_then(|found| real(&found).ok()),
+        )
+    })();
+    std::env::set_current_dir(&before).map_err(|err| err.to_string())?;
+    let _ = std::fs::remove_dir_all(&root);
+    let found = outcome?;
+    assert_eq!(
+        found,
+        Some(expected),
+        "an empty PATH entry must not name a cargo-fmt in the working directory"
+    );
+    Ok(())
+}
+
+/// The cargo home is read for the default formatter only, so an explicit
+/// `RUSTFMT` is not refused by a home that cannot be read.
+#[test]
+fn the_cargo_home_is_read_only_for_the_default_formatter() {
+    assert_eq!(
+        home_bin_for(Some(std::ffi::OsStr::new("/opt/other/rustfmt"))),
+        Ok(PathBuf::new())
+    );
+    assert_eq!(home_bin_for(None), cargo_home_bin());
+    // An empty RUSTFMT is read as unset, so the home is read for it.
+    assert_eq!(
+        home_bin_for(Some(std::ffi::OsStr::new(""))),
+        cargo_home_bin()
+    );
+}
+
 /// The command line the runner's `Command` hands Windows, by the standard
 /// library's rules: the program in quotes, an argument in quotes when it is
 /// empty or holds a space or a tab, a backslash run before a quote doubled
@@ -1196,7 +1276,7 @@ fn metadata_is_asked_for_offline_first_and_retried_without_it() -> Result<(), St
 /// cargo-fmt stops there: no later batch is started against it.
 #[test]
 fn a_formatter_that_cannot_start_stops_the_step() -> Result<(), String> {
-    // `cargo` and `rustfmt` start in the process working directory, which
+    // `cargo` and `rustfmt` run with the process working directory, which
     // other tests in this process move.
     let _cwd_guard = crate::acquire_test_cwd_read_guard();
     fn invocation(argument: &str) -> RustfmtInvocation {

@@ -500,7 +500,8 @@ a package list, a package's manifest path, a package's targets, a target's
 path or an edition is asked for again as a failed reply; it runs `RUSTFMT`
 when that is set and otherwise the `rustfmt` beside the `cargo-fmt` that
 `cargo fmt` runs, which cargo finds in its home `bin` directory unless
-`PATH` already holds that directory and then along `PATH` (on Linux a
+`PATH` already holds that directory and then along `PATH`, skipping an empty
+`PATH` entry as cargo does (on Linux a
 `cargo-fmt` reached through a symbolic link is read beside the link's
 target, as cargo-fmt reads itself; on macOS and Windows, beside the link),
 never a `rustfmt` found on `PATH` on its own and never one

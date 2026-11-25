@@ -23,8 +23,9 @@
 //! - Which formatter: `RUSTFMT` when it is set and not empty, else the
 //!   `rustfmt` beside the `cargo-fmt` that `cargo fmt` runs. Cargo finds an
 //!   external subcommand in the `bin` directory of its home (`CARGO_HOME`)
-//!   when `PATH` does not already hold that directory, then along `PATH`;
-//!   it does not look beside `CARGO`. cargo-fmt then runs the `rustfmt` beside
+//!   when `PATH` does not already hold that directory, then along `PATH`,
+//!   skipping an empty `PATH` entry as cargo does; it does not look beside
+//!   `CARGO`. cargo-fmt then runs the `rustfmt` beside
 //!   its own executable, the program it finds itself running as: on Linux a
 //!   `cargo-fmt` reached through a symbolic link is read beside the link's
 //!   target, and on macOS and Windows beside the link. So the formatter is
@@ -35,9 +36,10 @@
 //!   beside it, so the `rustfmt` beside a proxy is run only where it is the
 //!   same proxy, as rustup installs it; beside any other, or none, the step
 //!   refuses and names `RUSTFMT`. With no `cargo-fmt` there is none to run
-//!   and the step says so. Never a `rustfmt` found on `PATH` on its own.
-//!   cargo-fmt would try to run an empty `RUSTFMT` and fail; this step reads
-//!   an empty value as unset.
+//!   and the step says so. Never a `rustfmt` found on `PATH` on its own, and
+//!   never one named by an empty `PATH` entry, which cargo skips. cargo-fmt
+//!   would try to run an empty `RUSTFMT` and fail; this step reads an empty
+//!   value as unset, and reads the cargo home only for the default formatter.
 //! - Which packages: `cargo metadata --no-deps`, read from the invocation
 //!   directory. Every member when that is the workspace root, otherwise the
 //!   member whose manifest is the invocation directory's `Cargo.toml`. In a
@@ -129,20 +131,14 @@ pub(crate) fn run(step: FormatStep<'_>) -> Result<(), String> {
     let path = path.as_deref();
     let cargo = serving_cargo(std::env::var_os("CARGO").as_deref(), path);
     let cargo = cargo.as_deref().unwrap_or(Path::new("cargo")).as_os_str();
-    let home_bin = cargo_home_bin()?;
+    let rustfmt = std::env::var_os("RUSTFMT");
+    let home_bin = home_bin_for(rustfmt.as_deref())?;
     let FormatStep {
         check,
         envs,
         diagnostics,
     } = step;
-    let (program, plan) = prepare(
-        check,
-        envs,
-        cargo,
-        std::env::var_os("RUSTFMT").as_deref(),
-        path,
-        &home_bin,
-    )?;
+    let (program, plan) = prepare(check, envs, cargo, rustfmt.as_deref(), path, &home_bin)?;
     run_plan(&program, &plan, envs, diagnostics)
 }
 
@@ -152,6 +148,17 @@ fn cargo_home_bin() -> Result<PathBuf, String> {
     home::cargo_home()
         .map(|home| home.join("bin"))
         .map_err(|err| format!("the cargo home cannot be read (CARGO_HOME, HOME): {err}"))
+}
+
+/// The directory [`cargo_fmt`] looks in first: the cargo home's `bin`, read
+/// only when the default formatter is needed. An explicit `RUSTFMT` decides
+/// without it, so a home that cannot be read refuses no override; the empty
+/// path stands in for it and is never looked in.
+fn home_bin_for(rustfmt: Option<&OsStr>) -> Result<PathBuf, String> {
+    if rustfmt.filter(|value| !value.is_empty()).is_some() {
+        return Ok(PathBuf::new());
+    }
+    cargo_home_bin()
 }
 
 /// The formatter to run and the runs it is given. The metadata is read
@@ -472,13 +479,19 @@ pub(crate) fn formatter(
     if let Ok(image) = std::fs::read(home_bin.join(format!("rustup{}", exe_suffix()))) {
         let is_proxy = |program: &Path| std::fs::read(program).is_ok_and(|bytes| bytes == image);
         if is_proxy(&cargo_fmt) && !is_proxy(&sibling) {
+            let beside = if sibling.exists() {
+                format!(
+                    "the rustfmt beside it ({}) is not the same proxy",
+                    sibling.display()
+                )
+            } else {
+                "there is no rustfmt beside it".to_owned()
+            };
             return Err(format!(
-                "the cargo-fmt that `cargo fmt` runs ({}) is the rustup proxy and the rustfmt \
-                 beside it ({}) is not: `cargo fmt` runs the toolchain's own rustfmt there, which \
-                 this step does not read, so it runs no formatter; set RUSTFMT to the formatter \
-                 to run",
-                cargo_fmt.display(),
-                sibling.display()
+                "the cargo-fmt that `cargo fmt` runs ({}) is the rustup proxy and {beside}: \
+                 `cargo fmt` runs the toolchain's own rustfmt there, which this step does not \
+                 read, so it runs no formatter; set RUSTFMT to the formatter to run",
+                cargo_fmt.display()
             ));
         }
     }
@@ -494,13 +507,17 @@ pub(crate) fn formatter(
 }
 
 /// The `cargo-fmt` that `cargo fmt` runs, found as cargo finds an external
-/// subcommand (`src/bin/cargo/main.rs`, `search_directories`): in the `bin`
+/// subcommand (`src/bin/cargo/main.rs`, `find_external_subcommand`): in the `bin`
 /// directory of its home when `PATH` does not already hold that directory,
-/// then along `PATH`; the first executable one. `None` when there is none.
+/// then along `PATH`; the first executable one. An empty `PATH` entry is
+/// skipped, as cargo skips it: read against the working directory it would
+/// name a program there that `cargo fmt` never runs. `None` when there is
+/// none.
 fn cargo_fmt(path: Option<&OsStr>, home_bin: &Path) -> Option<PathBuf> {
     let mut directories: Vec<PathBuf> = path
         .map(|path| std::env::split_paths(path).collect())
         .unwrap_or_default();
+    directories.retain(|directory| !directory.as_os_str().is_empty());
     if !directories.iter().any(|directory| directory == home_bin) {
         directories.insert(0, home_bin.to_path_buf());
     }
