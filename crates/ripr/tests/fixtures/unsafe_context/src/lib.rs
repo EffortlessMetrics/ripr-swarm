@@ -26,3 +26,15 @@ pub fn choose(enabled: bool) -> i32 {
     };
     value
 }
+
+pub fn span(value: i32) -> i32 {
+    unsafe {
+        let low: i32 = 2;
+        let high: i32 = 6;
+        low + high + value
+    }
+}
+
+pub fn exact(value: i32) -> i32 {
+    unsafe { value + 16 }
+}

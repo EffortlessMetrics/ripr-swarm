@@ -45,14 +45,15 @@ construction, so the classifier cannot promote reach plus an oracle into
 
 A boundary is enclosing for a line whose edit lies in its body, past an
 opening brace the removed line carries unchanged, and an edited opener for a
-line that introduces or changes the unsafe qualifier or the brace itself. A
-classified probe of any family but `static_unknown` takes precedence over an
-enclosing boundary when it carries the edit on the same candidate line of the
-same owner: the line reports that classified probe alone. An unchanged
-expression beside the edit cannot suppress the boundary's probe, and an
-ambiguous replacement keeps it. An edited opener keeps its own finding beside
-any classified probe. Each boundary keeps at most one projection, on its first
-remaining eligible line.
+line that carries the opening brace with tokens up to it that differ from the
+removed line's, or that has no removed line: the unsafe qualifier, the
+signature or the brace changed. A classified probe of any family but
+`static_unknown` takes precedence over an enclosing boundary when it carries
+the edit on the same candidate line of the same owner: the line reports that
+classified probe alone. An unchanged expression beside the edit cannot
+suppress the boundary's probe, and an ambiguous replacement keeps it. An
+edited opener keeps its own finding beside any classified probe. Each boundary
+keeps at most one projection, on its first remaining eligible line.
 
 The probe's expression is the boundary label (`unsafe fn inline_len`,
 `unsafe block`), which sets its id and gap id. When the changed line is not the
@@ -102,9 +103,9 @@ keeps the plain `unsafe block` label.
   block that carries no classified probe of its own pins exactly one
   `static_unknown` unsafe-boundary probe at the changed line.
 - A changed line inside an unsafe boundary whose classified probe carries the
-  edit reports that probe alone: one finding for one edit. A line that
-  introduces or changes the unsafe qualifier or the block opener keeps the
-  boundary's own finding.
+  edit reports that probe alone: one finding for one edit. An edited opener
+  keeps the boundary's own finding, so an edit to an `unsafe fn` signature
+  keeps it too.
 - Parser and classifier unit tests cover extraction, innermost-boundary
   selection, shared-edge-line fail-closed rejection, and comment/string
   false-positive controls.
@@ -115,8 +116,10 @@ keeps the plain `unsafe block` label.
 
 ## Outputs
 
-- A classified change, or the innermost boundary’s `static_unknown` fallback
-  where the context is the only evidence.
+- A classified change alone where it carries the edit inside an enclosing
+  boundary; otherwise the innermost boundary's `static_unknown` finding, which
+  also stays beside a classified probe that does not carry the edit and on an
+  edited opener.
 
 ## Acceptance Examples
 

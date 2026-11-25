@@ -159,9 +159,10 @@ pub(super) enum UnsafeBoundary {
     /// probe that carries the edit replaces its finding, and the finding
     /// stays when no probe does.
     Enclosing,
-    /// The line introduces or changes the unsafe qualifier or the brace
-    /// itself. The boundary is the edit, so its finding stays beside any
-    /// classified probe.
+    /// The line carries the opening brace, and the tokens up to it differ from
+    /// the removed line's or there is no removed line: the qualifier, the
+    /// signature or the brace changed. The boundary is that edit, so its
+    /// finding stays beside any classified probe.
     EditedOpener,
 }
 
