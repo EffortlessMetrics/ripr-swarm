@@ -39,7 +39,7 @@ const CHANGED: &str = "    if (n > 50) {";
 const OTHER_BODY: &str = "{\n  total(n) {\n    return n - 5;\n  }\n}";
 
 const NAMED_REQUIRE: &str = "const { Cart } = require('../src/cart');";
-const CALL: &str = "    expect(new Cart().total(50)).toBe(45);\n";
+const CALL: &str = "    expect(new Cart().total(100)).toBe(95);\n";
 
 /// The findings `analyze_diff` reports on the line of `src/cart.js` that
 /// reads `CHANGED`, with `test` as `tests/cart.test.js`.
@@ -142,7 +142,7 @@ fn the_inner_class_id_and_a_sibling_export_stay_unrelated() -> Result<(), String
         &format!("exports.Cart = class Basket {BODY};\n"),
         &jest_test(
             "const { Basket } = require('../src/cart');",
-            "    expect(new Basket().total(50)).toBe(45);\n",
+            "    expect(new Basket().total(100)).toBe(95);\n",
         ),
     )?;
     expect_related("inner id import", &inner, false)?;
@@ -151,7 +151,7 @@ fn the_inner_class_id_and_a_sibling_export_stay_unrelated() -> Result<(), String
         &format!("exports.Cart = class {BODY};\nexports.Other = class {OTHER_BODY};\n"),
         &jest_test(
             "const { Other } = require('../src/cart');",
-            "    expect(new Other().total(50)).toBe(45);\n",
+            "    expect(new Other().total(100)).toBe(95);\n",
         ),
     )?;
     expect_related("sibling export", &sibling, false)
@@ -253,6 +253,54 @@ fn an_earlier_hoisted_export_initializer_does_not_drop_the_definition() -> Resul
     if !owners.iter().any(|owner| owner.name == "total") {
         return Err(format!(
             "a hoisted initializer dropped the function {owners:?}"
+        ));
+    }
+    Ok(())
+}
+
+#[test]
+fn a_changed_private_method_of_a_commonjs_class_is_reported_and_related() -> Result<(), String> {
+    // `#sum` is reached only through the public `total`; a changed line in
+    // it must still reach owner lookup for both CommonJS class shapes.
+    let private = "{\n  total(n) {\n    return this.#sum(n);\n  }\n  #sum(n) {\n    if (n > 50) {\n      return n - 5;\n    }\n    return n;\n  }\n}";
+    for (label, source, preamble) in [
+        (
+            "private-named-export",
+            format!("exports.Cart = class {private};\n"),
+            NAMED_REQUIRE,
+        ),
+        (
+            "private-whole-export",
+            format!("module.exports = class Cart {private};\n"),
+            "const Cart = require('../src/cart');",
+        ),
+    ] {
+        let findings = diff_findings(label, &source, &jest_test(preamble, CALL))?;
+        if findings.is_empty() {
+            return Err(format!(
+                "{label}: the changed private body yields no finding"
+            ));
+        }
+    }
+    Ok(())
+}
+
+#[test]
+fn a_whole_module_function_and_a_same_named_class_property_keep_their_owners() -> Result<(), String>
+{
+    let source = format!(
+        "module.exports = function Cart() {{\n  return 10;\n}};\nmodule.exports.Cart = class {BODY};\n"
+    );
+    let owners = extract_owners(Path::new("src/cart.js"), &source);
+    let function = owners
+        .iter()
+        .any(|owner| owner.name == "Cart" && owner.class_name.is_none());
+    let method = owners
+        .iter()
+        .any(|owner| owner.name == "total" && owner.class_name.as_deref() == Some("Cart"));
+    if !function || !method {
+        return Err(format!(
+            "expected the function and the class method {owners:?}"
         ));
     }
     Ok(())

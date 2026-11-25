@@ -35,6 +35,10 @@ pub(crate) fn extract_owners(file: &Path, source: &str) -> Vec<TypeScriptOwner> 
 /// line index from `source`; behavior is identical to the dedicated
 /// extraction. The second value is the module's outbound imported-binding
 /// calls (#13592), derived from the same module graph as the entries.
+/// The export slot of a bare `module.exports = <function>` owner; no
+/// property name can spell it.
+const WHOLE_MODULE_SLOT: &str = "\0module.exports";
+
 pub(crate) fn owners_from_program(
     program: &oxc_ast::ast::Program<'_>,
     file: &Path,
@@ -64,6 +68,15 @@ pub(crate) fn owners_from_program(
                 .map(|(position, owner)| {
                     let slot = match named_class {
                         Some(property) => Some(property.to_string()),
+                        // A bare `module.exports = function NAME` is the
+                        // whole-module slot, never the property `NAME`: a
+                        // property written on it (`module.exports.NAME = ...`)
+                        // leaves it live. `\0` keeps it apart from any
+                        // property name; `bare_default_count` handles a
+                        // repeated whole-module assignment.
+                        None if commonjs && owner.exported_as_default => {
+                            Some(WHOLE_MODULE_SLOT.to_string())
+                        }
                         None if commonjs && !owner.class_default_export => Some(owner.name.clone()),
                         None => None,
                     };
@@ -394,7 +407,7 @@ fn without_reassigned_commonjs_exports(
                 return true;
             };
             if owner.exported_as_default {
-                return bare_default_count <= 1 && !duplicated.contains(slot);
+                return bare_default_count <= 1;
             }
             !duplicated.contains(slot)
                 && last_named_write
@@ -445,6 +458,29 @@ pub(crate) fn commonjs_named_class_export<'a>(
     let (property, assign) = commonjs_named_export_assignment(stmt)?;
     match assign.right.get_inner_expression() {
         Expression::ClassExpression(class) => Some((property, class)),
+        _ => None,
+    }
+}
+
+/// The class of a top-level `module.exports = class ...` statement.
+fn commonjs_whole_class_export<'a>(stmt: &'a Statement<'a>) -> Option<&'a Class<'a>> {
+    let Statement::ExpressionStatement(expression) = stmt else {
+        return None;
+    };
+    let Expression::AssignmentExpression(assign) = &expression.expression else {
+        return None;
+    };
+    if assign.operator != AssignmentOperator::Assign {
+        return None;
+    }
+    let AssignmentTarget::StaticMemberExpression(target) = &assign.left else {
+        return None;
+    };
+    if !is_module_exports(target) {
+        return None;
+    }
+    match &assign.right {
+        Expression::ClassExpression(class) => Some(class),
         _ => None,
     }
 }
@@ -2697,6 +2733,12 @@ fn collect_private_member_boundaries(
                 ExportDefaultDeclarationKind::ClassDeclaration(class) => Some(class.as_ref()),
                 _ => None,
             },
+            // The CommonJS class expressions whose members are owners:
+            // `exports.Cart = class ...` / `module.exports.Cart = class ...`
+            // (#16275) and `module.exports = class ...` (#16252).
+            Statement::ExpressionStatement(_) => commonjs_named_class_export(statement)
+                .map(|(_, class)| class)
+                .or_else(|| commonjs_whole_class_export(statement)),
             _ => None,
         };
         if let Some(class) = class {

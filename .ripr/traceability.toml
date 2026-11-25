@@ -20137,6 +20137,8 @@ tests = [
   "crates/ripr/src/analysis/language/typescript/tests/commonjs_named_class_export_tests.rs::a_function_export_reassigned_to_a_value_yields_no_owner",
   "crates/ripr/src/analysis/language/typescript/tests/commonjs_named_class_export_tests.rs::a_named_export_class_reads_under_its_property_for_fields_and_repeats",
   "crates/ripr/src/analysis/language/typescript/tests/commonjs_named_class_export_tests.rs::a_duplicated_key_in_one_export_object_still_reads_as_reassigned",
+  "crates/ripr/src/analysis/language/typescript/tests/commonjs_named_class_export_tests.rs::a_changed_private_method_of_a_commonjs_class_is_reported_and_related",
+  "crates/ripr/src/analysis/language/typescript/tests/commonjs_named_class_export_tests.rs::a_whole_module_function_and_a_same_named_class_property_keep_their_owners",
   "crates/ripr/src/analysis/language/typescript/tests/commonjs_named_class_export_tests.rs::an_earlier_hoisted_export_initializer_does_not_drop_the_definition",
   "crates/ripr/src/analysis/language/typescript/tests/overwritten_method_tests.rs::an_overwritten_method_of_a_declared_class_relates_to_no_test",
   "crates/ripr/src/analysis/language/typescript/tests/overwritten_method_tests.rs::an_overwritten_method_of_an_es_default_class_relates_to_no_test",

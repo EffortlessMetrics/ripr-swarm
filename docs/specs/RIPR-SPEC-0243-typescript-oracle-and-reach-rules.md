@@ -1460,10 +1460,13 @@ earlier class dead, so it yields no owner, the fail-closed rule of a reassigned
 function export (#4638), which now also counts a non-function value assigned to
 the slot after the definition. An earlier one, such as the hoisted
 `exports.Cart = void 0;` of compiled TypeScript and Babel output, is overwritten
-by the definition and does not drop it; a property write on a whole-module
-`module.exports = function` is not a named-slot write. Instance fields and the
-repeated-class-name guard read such a class under the property name, not its
-inner id.
+by the definition and does not drop it. A whole-module
+`module.exports = function NAME` has its own slot, apart from every property:
+a property write on it (`module.exports.NAME = ...`, a function or a class)
+leaves both live. Instance fields and the repeated-class-name guard read such a
+class under the property name, not its inner id, and its `#private` methods
+(like those of `module.exports = class`) are owners whose changed lines reach
+owner lookup, as for a declared class.
 
 ### Observation guard
 
@@ -3012,8 +3015,11 @@ keys); do not take the next number.
   `analyze_diff` to show a named `require` relates a changed method while an
   inner-id import and a sibling export stay unrelated. A later assignment of the
   slot (class, empty class, `null`) drops the earlier class, a function export
-  reassigned to `null` drops as well, and the field and repeated-name guards key
-  the class by the property.
+  reassigned to `null` drops as well, an earlier hoisted `exports.Cart = void 0;`
+  does not, a whole-module function keeps its owner beside a same-named class
+  property, a changed `#private` method of either CommonJS class shape yields a
+  finding, and the field and repeated-name guards key the class by the
+  property.
 
 - #11196 (rule 11, object rows): `tests/object_row_tests.rs` pins the per-row
   literal assertions for the `for...of` and `test.each` object-row forms and
