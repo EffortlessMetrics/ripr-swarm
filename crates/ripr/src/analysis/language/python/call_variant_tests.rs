@@ -617,7 +617,8 @@ fn sorting_agrees_only_without_two_different_elements() {
     assert_eq!(elements_agree(&list(&["\"a\"", "'a'"])), Some(true));
     assert_eq!(elements_agree(&list(&["4", "1"])), Some(false));
     assert_eq!(elements_agree(&list(&["\"a\"", "\"b\""])), Some(false));
-    assert_eq!(elements_agree(&list(&["\"a\\n\"", "'a\\n'"])), None);
+    // Two strings with one decoded text are one element, escapes included.
+    assert_eq!(elements_agree(&list(&["\"a\\n\"", "'a\\n'"])), Some(true));
 }
 
 #[test]
