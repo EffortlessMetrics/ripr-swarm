@@ -382,7 +382,7 @@ fn an_owner_result_local_only_an_untrusted_macro_uses_gives_no_exact_credit() ->
 #[test]
 fn method_receivers_preserve_real_observations_and_demote_held_calls() -> Result<(), String> {
     let declaration = "
-        #[derive(Clone)]
+        #[derive(Clone, Default)]
         pub struct Picker;
         impl Picker {
             pub fn pick(&self, n: u32) -> Result<Mode, ()> {
@@ -414,6 +414,12 @@ fn method_receivers_preserve_real_observations_and_demote_held_calls() -> Result
             "let picker = Picker; let other = Other;
              assert_eq!(check_ok!((picker).pick(0)), other.pick(0));",
             "unknown",
+        ),
+        (
+            "a binding the body does not type is unresolved and keeps the parsed reading",
+            "let held = Picker; let observed = Picker::default();
+             assert_eq!(check_ok!(held.pick(0)), observed.pick(0));",
+            "exact_value",
         ),
         (
             "an unresolved receiver outside the macro keeps the parsed reading",

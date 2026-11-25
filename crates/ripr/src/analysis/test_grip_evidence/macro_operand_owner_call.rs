@@ -28,7 +28,7 @@
 //! assertion, a clone, a helper argument) may observe the result, so the
 //! assertion keeps its parsed reading.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 
 use ra_ap_syntax::{
     AstNode, NodeOrToken, SyntaxKind, SyntaxNode, SyntaxToken,
@@ -597,10 +597,16 @@ fn owner_use_only_inside_untrusted_macro(
         free: 0,
         local_held: vec![0; locals.len()],
     };
-    let mut owner_receivers = BTreeSet::new();
+    // #16220: receiver names whose type the test body settles. `true` is a
+    // receiver of the owner's type (a plain binding of it, or a receiver a
+    // held call uses); `false` is a binding of a definitely different type.
+    let mut owner_receivers = BTreeMap::new();
     if owner.is_method() {
-        collect_held_receivers(tree.syntax(), owner, false, &trusted, &mut owner_receivers);
-        owner_receivers.extend(owner_receiver_bindings(test_body, owner));
+        let typed = typed_receiver_bindings(test_body, owner);
+        let mut held = BTreeSet::new();
+        collect_held_receivers(tree.syntax(), owner, false, &trusted, &mut held);
+        owner_receivers.extend(held.into_iter().map(|name| (name, true)));
+        owner_receivers.extend(typed);
     }
     walk(
         tree.syntax(),
@@ -640,7 +646,7 @@ fn walk(
     tree: &SyntaxNode,
     owner: &OwnerName<'_>,
     locals: &[OwnerResultLocal],
-    owner_receivers: &BTreeSet<String>,
+    owner_receivers: &BTreeMap<String, bool>,
     inside_untrusted: bool,
     trusted: &dyn Fn(&str) -> bool,
     counts: &mut UseCounts,
@@ -811,10 +817,13 @@ fn receiver_name(
     }
 }
 
-/// Find unshadowed top-level bindings with a plain owner type annotation or a
-/// unit-struct initializer such as `let second = Picker`. This lets a second
-/// receiver of the owner type count without counting an unrelated `Other`.
-fn owner_receiver_bindings(body: &str, owner: &OwnerName<'_>) -> Vec<String> {
+/// Unshadowed top-level bindings whose type the body states: a plain type
+/// annotation (`let w: Picker = ..`), a unit-struct initializer
+/// (`let w = Picker`) or a struct literal (`let w = Picker { .. }`). Each is
+/// paired with whether that type is the owner's type. A binding made any other
+/// way (`Picker::new()`, `make_picker()`) is left out, so its receiver stays
+/// unresolved rather than being read as unrelated.
+fn typed_receiver_bindings(body: &str, owner: &OwnerName<'_>) -> Vec<(String, bool)> {
     let Some(parse) = crate::analysis::syntax::parse_clean_source_file_memoized(body) else {
         return Vec::new();
     };
@@ -848,17 +857,14 @@ fn owner_receiver_bindings(body: &str, owner: &OwnerName<'_>) -> Vec<String> {
                 Some(_) => return None,
                 None => match binding.initializer()? {
                     ast::Expr::PathExpr(initializer) => initializer.path()?,
+                    ast::Expr::RecordExpr(initializer) => initializer.path()?,
                     _ => return None,
                 },
             };
-            if path.qualifier().is_some()
-                || path
-                    .segment()
-                    .and_then(|segment| segment.name_ref())
-                    .is_none_or(|ty| owner.types.first().is_none_or(|known| known != ty.text()))
-            {
+            if path.qualifier().is_some() {
                 return None;
             }
+            let ty = path.segment()?.name_ref()?;
             let declarations = block
                 .syntax()
                 .descendants()
@@ -866,17 +872,22 @@ fn owner_receiver_bindings(body: &str, owner: &OwnerName<'_>) -> Vec<String> {
                 .filter(|pattern| pattern.name().is_some_and(|other| other.text() == name))
                 .take(2)
                 .count();
-            (declarations == 1).then_some(name)
+            (declarations == 1).then(|| {
+                let is_owner = owner.types.iter().any(|known| known == ty.text());
+                (name, is_owner)
+            })
         })
         .collect()
 }
 
-/// A dot call can reach the owner through a known type, an owner-result
-/// local, a matching binding, or a receiver named in a held call. A receiver
-/// that is not a bare name (`w.clone().new()`, `make(w).new()`) is not
-/// resolved, and the unresolved call settles toward keeping the parsed
-/// reading: outside the macro it counts as a free use, inside it does not
-/// count as held, so it never supplies the demotion. #16220.
+/// A dot call reaches the owner through `self`/`Self`, an owner type, an
+/// owner-result local, a binding of the owner's type, or a receiver named in
+/// a held call. It is unrelated only when its receiver is a binding of a
+/// definitely different type (`let other = Other;`). Any other receiver
+/// (`w.clone().new()`, or `w` bound by `Picker::new()`) is unresolved, and the
+/// unresolved call settles toward keeping the parsed reading: outside the
+/// macro it counts as a free use, inside it does not count as held, so it
+/// never supplies the demotion. #16220.
 fn receiver_is_owner(
     children: &[NodeOrToken<SyntaxNode, SyntaxToken>],
     position: usize,
@@ -884,7 +895,7 @@ fn receiver_is_owner(
     inside_untrusted: bool,
     owner: &OwnerName<'_>,
     locals: &[OwnerResultLocal],
-    owner_receivers: &BTreeSet<String>,
+    owner_receivers: &BTreeMap<String, bool>,
 ) -> bool {
     if !after_dot {
         return true;
@@ -892,13 +903,19 @@ fn receiver_is_owner(
     let Some(receiver) = receiver_name(children, position) else {
         return !inside_untrusted;
     };
-    receiver == "self"
+    if receiver == "self"
         || receiver == "Self"
         || owner.types.contains(&receiver)
         || locals
             .iter()
             .any(|local| local.evidence && local.name == receiver)
-        || owner_receivers.contains(&receiver)
+    {
+        return true;
+    }
+    match owner_receivers.get(&receiver) {
+        Some(is_owner) => *is_owner,
+        None => !inside_untrusted,
+    }
 }
 
 fn collect_held_receivers(
@@ -1148,7 +1165,10 @@ mod tests {
             ("assert_eq!(mystery!(Other::new()), Widget::new())", false),
             ("assert_eq!(mystery!(Widget::new()), Other::new())", true),
             ("assert_eq!(mystery!(w.new()), w)", true),
-            ("assert_eq!(mystery!(w.new()), other.new())", true),
+            // Without a binding that states its type, `other` is unresolved,
+            // so its call keeps the parsed reading; the typed `let other =
+            // Other;` case is pinned end to end.
+            ("assert_eq!(mystery!(w.new()), other.new())", false),
             ("assert_eq!(mystery!(w.new()), w.new())", false),
             // An unresolved receiver keeps the parsed reading on either side.
             ("assert_eq!(mystery!(w.new()), w.clone().new())", false),

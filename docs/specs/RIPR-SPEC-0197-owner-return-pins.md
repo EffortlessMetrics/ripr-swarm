@@ -2886,15 +2886,19 @@ where a later assertion reads it. Any other method is not transparent. A chain
 rooted anywhere else (`other(pick(0))`, `x.pick(0)` for a free function) does
 not count either. For a method owner, `.pick` is a call only when an argument
 list follows; `Holder { pick: .. }.pick` is a field access, not a call of the
-owner. A method call outside the macro is a free use of the owner only when
-its receiver is the receiver of a call the macro holds, `self`, `Self`, an
-owner type, an owner-result local, or a top-level binding whose plain type
-annotation or unit-struct initializer names the owner's type. Parentheses
+owner. A method call outside the macro is a free use of the owner when its
+receiver is the receiver of a call the macro holds, `self`, `Self`, an owner
+type, an owner-result local, or a top-level binding whose plain type
+annotation, unit-struct initializer or struct literal names the owner's type.
+Parentheses
 around a bare receiver preserve that receiver on either side of the macro.
-An unrelated `other.new()` is not a call of `Widget::new`. A receiver that is
-not a bare name (`w.clone().new()`) is not resolved; such a call outside the
-macro counts as a free use and inside it does not count as held, so an
-unresolved receiver never supplies the demotion. A read
+A call on a binding of a definitely different type (`let other = Other;`,
+`let other: Other = ..`, `let other = Other { .. }`) is not a call of
+`Widget::new`. Any other receiver is unresolved: a receiver that is not a bare
+name (`w.clone().new()`) or a binding the body does not type
+(`let w = Widget::default();`). An unresolved call outside the macro counts as
+a free use and inside it does not count as held, so an unresolved receiver
+never supplies the demotion. A read
 outside the untrusted macro of any other local whose initializer names a call
 of the owner or such a local (`let actual = &pick(0);`, then `*actual`)
 observes the result, so the assertion keeps its parsed reading. A bare path to
