@@ -37759,6 +37759,14 @@ fn review_guidance_windows_preserve_output_and_bound_retained_payloads()
             &[("RIPR_REVIEW_EVIDENCE_WINDOW_SIZE", "0")],
         )?;
         assert!(!refused.status.success());
+        // The refusal names the repair the widths above just exercised.
+        let stderr = String::from_utf8_lossy(&refused.stderr);
+        assert!(
+            stderr.contains(
+                "RIPR_REVIEW_EVIDENCE_WINDOW_SIZE must be between 1 and 256; set it to a whole number in that range, or unset it to use the default of 32"
+            ),
+            "{stderr}"
+        );
         let receipt: serde_json::Value =
             serde_json::from_slice(&std::fs::read(root.join("target/window/run-receipt.json"))?)?;
         assert_eq!(receipt["status"], "failed");
