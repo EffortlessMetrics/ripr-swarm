@@ -21,9 +21,9 @@ Start here:
   Why weak: a related test reaches this change but does not observe the exact changed value
   Changed behavior: return opts.name || 'untitled';
   Missing check (1 of 2): The change to `title` only differs when `opts.name` is missing or falsy
-    (undefined, null, "", 0, or false), and no related test is seen to call `title` with an input
-    that makes it so; an exact assertion on the tested inputs passes on both versions. Add a call
-    whose input leaves `opts.name` missing, empty, 0, or false
+    (undefined, null, "", 0, or false), but `title` writes or rebinds `opts.name` before the
+    fallback reads it, so ripr cannot read which call input reaches it, and the related assertion is
+    not established to tell the versions apart
   Related test: tests/title.test.ts:6 titles an empty options object
   Next step — TypeScript preview advisory: add or strengthen a focused assertion for the missing
     check `return value == opts.name || 'untitled'`; no actionable repair packet is emitted until

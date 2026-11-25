@@ -2829,6 +2829,12 @@ enum TsInputClassKind {
         nullish_only: bool,
         operand: String,
         accessed: bool,
+        /// The fallback's own text (`d`), so the advice does not name an
+        /// input whose value equals it.
+        fallback: String,
+        /// The owner writes or rebinds the operand's base before the read,
+        /// so no call argument is read as reaching it.
+        rebound: bool,
     },
 }
 
@@ -2871,18 +2877,44 @@ impl TsInputClassChange {
             TsInputClassKind::AddedFallback {
                 nullish_only,
                 operand,
+                fallback,
+                rebound,
                 ..
             } => {
-                let (class, example) = if *nullish_only {
-                    ("null or undefined", "null or undefined")
+                let class = if *nullish_only {
+                    "null or undefined"
                 } else {
-                    (
-                        "missing or falsy (undefined, null, \"\", 0, or false)",
-                        "missing, empty, 0, or false",
-                    )
+                    "missing or falsy (undefined, null, \"\", 0, or false)"
+                };
+                if *rebound {
+                    return format!(
+                        "The change to `{owner_name}` only differs when `{operand}` is {class}, but `{owner_name}` writes or rebinds `{operand}` before the fallback reads it, so ripr cannot read which call input reaches it, and the related assertion is not established to tell the versions apart."
+                    );
+                }
+                let example = if *nullish_only {
+                    "null or undefined".to_string()
+                } else {
+                    // An input equal to the fallback (`kv[1] || ''` with an
+                    // empty `kv[1]`) gives the same result on both versions.
+                    let fallback = fallback.trim();
+                    let classes: Vec<&str> = [
+                        ("missing", false),
+                        ("empty", matches!(fallback, "''" | "\"\"" | "``")),
+                        ("0", fallback == "0"),
+                        ("false", fallback == "false"),
+                    ]
+                    .iter()
+                    .filter(|(_, same)| !same)
+                    .map(|(class, _)| *class)
+                    .collect();
+                    match classes.as_slice() {
+                        [] => String::new(),
+                        [only] => (*only).to_string(),
+                        [rest @ .., last] => format!("{}, or {last}", rest.join(", ")),
+                    }
                 };
                 return format!(
-                    "The change to `{owner_name}` only differs when `{operand}` is {class}, and no related test is seen to call `{owner_name}` with an input that makes it so; an exact assertion on the tested inputs passes on both versions. Add a call whose input leaves `{operand}` {example}."
+                    "The change to `{owner_name}` only differs when `{operand}` is {class}, and ripr does not see a related test call `{owner_name}` with an input that makes it so; the related assertion is not established to tell the versions apart. Add a call whose input leaves `{operand}` {example}."
                 );
             }
         };
@@ -2942,6 +2974,9 @@ impl TsInputClassChange {
                     // but a bare binding may carry a default that absorbs
                     // it, exactly like an omitted argument.
                     "undefined" | "void 0" => *accessed,
+                    // `NaN` is a global a test may shadow; `null` and the
+                    // literals below cannot be.
+                    "NaN" => false,
                     _ => !nullish_only && ts_is_falsy_non_nullish_literal(&value),
                 },
                 None => *accessed && ts_input_class_slot_absent(argument, &self.target),
@@ -2982,6 +3017,11 @@ fn ts_input_class_literal_unreadable(argument: &str, target: &TsInputClassTarget
     // text, so any backslash makes the keys unreadable too. A comment
     // (`{ /* note */ name: 'Bob' }`) stays in the raw key head the readers
     // compare, so any comment opener makes them unreadable as well.
+    // A template literal can nest another (`${`a, b`}`), whose commas the
+    // raw entry splitter reads as separators, so entries are unreadable.
+    if argument.contains('`') {
+        return true;
+    }
     if target.field.is_some()
         && ["__proto__", "\\", "/*", "//"]
             .iter()
@@ -3007,7 +3047,13 @@ fn ts_input_class_literal_unreadable(argument: &str, target: &TsInputClassTarget
     let plain_key_value = |entry: &str| {
         entry.split_once(':').is_some_and(|(head, _)| {
             let head = head.trim();
+            // A numeric key must already be the property name it defines:
+            // `0x10`, `1e1` or `010` name `16`, `10` and `8`.
+            let canonical_number = !head.starts_with(|ch: char| ch.is_ascii_digit())
+                || (head.chars().all(|ch| ch.is_ascii_digit())
+                    && (head == "0" || !head.starts_with('0')));
             !head.is_empty()
+                && canonical_number
                 && (head
                     .chars()
                     .all(|ch| ch.is_alphanumeric() || matches!(ch, '_' | '$'))
@@ -3518,6 +3564,9 @@ fn ts_added_fallback_change(
                 // With no recorded parameters the target reader guesses a
                 // destructured first-argument field named like the operand;
                 // keep it only when the pattern binds that field as itself.
+                // Only an operand read from a parameter is "rebound"; a body
+                // local such as `kv` was never an argument.
+                let rebound = !unreassigned && target.index.is_some();
                 let guessed_field = owner.params.is_empty()
                     && target.field.as_deref() == Some(base)
                     && accesses == 0;
@@ -3535,6 +3584,8 @@ fn ts_added_fallback_change(
                         nullish_only: operator == "??",
                         operand,
                         accessed: accesses == 1,
+                        fallback: default.trim().to_string(),
+                        rebound,
                     },
                     target,
                     optional_trim: false,
@@ -3628,6 +3679,34 @@ fn ts_operand_binding_unstable(source: &str, name: &str) -> bool {
             || after.starts_with("--")
             || COMPOUND.iter().any(|op| after.starts_with(op))
     };
+    // A parameter default may write the operand before the body runs:
+    // `(name, other = (name = 'Bob'))`. In the parameter list an occurrence
+    // followed by `=` is a declaration with its own default only at paren
+    // depth zero after `(`, `,`, `{`, `[` or a rename `:`.
+    if let Some(open) = masked[..from].iter().position(|ch| *ch == '(') {
+        let mut at = open + 1;
+        while at + name.len() < from {
+            let boundary = masked[at..at + name.len()] == name[..]
+                && !masked
+                    .get(at - 1)
+                    .is_some_and(|prev| ident(prev) || *prev == '.')
+                && !masked.get(at + name.len()).is_some_and(ident);
+            if boundary && writes(&next_text(at + name.len(), 4)) {
+                let depth = masked[open + 1..at]
+                    .iter()
+                    .fold(0i32, |depth, ch| match ch {
+                        '(' => depth + 1,
+                        ')' => depth - 1,
+                        _ => depth,
+                    });
+                let previous = masked[open..at].iter().rev().find(|ch| !ch.is_whitespace());
+                if depth != 0 || !matches!(previous, Some('(' | ',' | '{' | '[' | ':')) {
+                    return true;
+                }
+            }
+            at += 1;
+        }
+    }
     let mut at = from;
     while at + name.len() <= masked.len() {
         if masked[at..at + name.len()] != name[..]
@@ -3690,6 +3769,10 @@ fn ts_operand_binding_unstable(source: &str, name: &str) -> bool {
             match masked.get(cursor) {
                 Some('.') => {
                     cursor += 1;
+                    // `opts. name` and `opts./* c */name` (comment masked).
+                    while masked.get(cursor).is_some_and(|ch| ch.is_whitespace()) {
+                        cursor += 1;
+                    }
                     while masked.get(cursor).is_some_and(ident) {
                         cursor += 1;
                     }
@@ -3718,10 +3801,12 @@ fn ts_operand_binding_unstable(source: &str, name: &str) -> bool {
                         return true;
                     };
                     let following = next_text(close + 1, 2);
+                    // An assigned pattern or parenthesized target:
+                    // `[[name]] = ...`, `(name) = ...`.
+                    if following.starts_with('=') && !following[1..].starts_with(['=', '>']) {
+                        return true;
+                    }
                     if opener != '(' {
-                        if following.starts_with('=') && !following[1..].starts_with(['=', '>']) {
-                            return true;
-                        }
                         continue;
                     }
                     let keyword: String = masked[from..open]

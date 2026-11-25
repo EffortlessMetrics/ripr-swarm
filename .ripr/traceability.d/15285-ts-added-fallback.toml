@@ -20,6 +20,9 @@ tests = [
   "crates/ripr/tests/typescript_added_fallback.rs::a_member_or_destructuring_write_unbinds_the_argument",
   "crates/ripr/tests/typescript_added_fallback.rs::a_bare_arrow_parameter_is_read_and_its_body_writes_are_seen",
   "crates/ripr/tests/typescript_added_fallback.rs::a_renamed_destructured_field_or_block_callback_is_not_the_argument",
+  "crates/ripr/tests/typescript_added_fallback.rs::template_literals_numeric_key_spellings_and_nan_are_not_read_as_witnesses",
+  "crates/ripr/tests/typescript_added_fallback.rs::parenthesized_spaced_and_parameter_default_writes_unbind_the_argument",
+  "crates/ripr/tests/typescript_added_fallback.rs::the_advice_names_only_inputs_that_change_the_result",
 ]
 fixtures = [
   "fixtures/typescript_added_fallback_populated_input",

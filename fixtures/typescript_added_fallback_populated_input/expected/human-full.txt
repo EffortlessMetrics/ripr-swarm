@@ -56,7 +56,7 @@ Evidence
   - related test tests/parse.test.ts:6 parses populated pairs uses strong exact value oracle: expect(...).toEqual(...)
 
 Weakness
-  - The change to `parse` only differs when `kv[1]` is missing or falsy (undefined, null, "", 0, or false), and no related test is seen to call `parse` with an input that makes it so; an exact assertion on the tested inputs passes on both versions. Add a call whose input leaves `kv[1]` missing, empty, 0, or false
+  - The change to `parse` only differs when `kv[1]` is missing or falsy (undefined, null, "", 0, or false), and ripr does not see a related test call `parse` with an input that makes it so; the related assertion is not established to tell the versions apart. Add a call whose input leaves `kv[1]` missing, 0, or false
 
 TypeScript preview card (advisory)
   card version: typescript_preview_card.v1

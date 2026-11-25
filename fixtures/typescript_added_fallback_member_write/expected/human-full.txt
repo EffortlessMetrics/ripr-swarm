@@ -57,7 +57,7 @@ Evidence
   - related test tests/title.test.ts:6 titles an empty options object uses strong exact value oracle: expect(...).toBe(...)
 
 Weakness
-  - The change to `title` only differs when `opts.name` is missing or falsy (undefined, null, "", 0, or false), and no related test is seen to call `title` with an input that makes it so; an exact assertion on the tested inputs passes on both versions. Add a call whose input leaves `opts.name` missing, empty, 0, or false
+  - The change to `title` only differs when `opts.name` is missing or falsy (undefined, null, "", 0, or false), but `title` writes or rebinds `opts.name` before the fallback reads it, so ripr cannot read which call input reaches it, and the related assertion is not established to tell the versions apart
   - missing discriminator return value == opts.name || 'untitled': changed TypeScript returned-value at line 3 lacks a concrete preview discriminator
 
 TypeScript preview card (advisory)

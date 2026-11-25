@@ -767,3 +767,186 @@ fn a_renamed_destructured_field_or_block_callback_is_not_the_argument() -> Resul
         )],
     )
 }
+
+#[test]
+fn template_literals_numeric_key_spellings_and_nan_are_not_read_as_witnesses() -> Result<(), String>
+{
+    // A nested template's commas would split into fake entries.
+    assert_rows(
+        "pick",
+        "export function pick(parts: (string | null)[]): string {\n  return parts[1] || 'none';\n}\n",
+        (2, "  return parts[1];"),
+        "parts[1]",
+        &[
+            (
+                "nested-template-entry",
+                "expect(pick([`${`a, null, b`}`, 'Bob'])).toBe('Bob');",
+                "weakly_exposed",
+            ),
+            (
+                "position-null",
+                "expect(pick(['A', null])).toBe('none');",
+                "exposed",
+            ),
+        ],
+    )?;
+    // `0x10` defines the key `16`, so the field is present, not absent.
+    assert_rows(
+        "pick",
+        "export function pick(opts: Record<string, string | null>): string {\n  return opts['16'] || 'none';\n}\n",
+        (2, "  return opts['16'];"),
+        "opts['16']",
+        &[
+            (
+                "hex-key",
+                "expect(pick({ 0x10: 'Bob' })).toBe('Bob');",
+                "weakly_exposed",
+            ),
+            (
+                "quoted-key-null",
+                "expect(pick({ '16': null })).toBe('none');",
+                "exposed",
+            ),
+            (
+                "key-absent",
+                "expect(pick({ a: 'x' })).toBe('none');",
+                "exposed",
+            ),
+        ],
+    )?;
+    // A test may shadow the `NaN` global; a literal zero cannot be.
+    assert_rows(
+        "value",
+        "export function value(opts: { n?: number }): number {\n  return opts.n || 99;\n}\n",
+        (2, "  return opts.n;"),
+        "opts.n",
+        &[
+            (
+                "nan-field",
+                "expect(value({ n: NaN })).toBe(99);",
+                "weakly_exposed",
+            ),
+            ("zero-field", "expect(value({ n: 0 })).toBe(99);", "exposed"),
+        ],
+    )
+}
+
+#[test]
+fn parenthesized_spaced_and_parameter_default_writes_unbind_the_argument() -> Result<(), String> {
+    for (label, write) in [
+        ("parenthesized-target", "  (name) = 'Bob';"),
+        ("read-only-group", "  (name);"),
+    ] {
+        let expected = if label == "read-only-group" {
+            "exposed"
+        } else {
+            "weakly_exposed"
+        };
+        let owner = format!(
+            "export function label(name: string | null): string {{\n{write}\n  return name || 'anon';\n}}\n"
+        );
+        assert_rows(
+            "label",
+            &owner,
+            (3, "  return name;"),
+            "name",
+            &[(label, "expect(label(null)).toBe('anon');", expected)],
+        )?;
+    }
+    for (label, write) in [
+        ("spaced-member-write", "  opts. name = 'Bob';"),
+        ("commented-member-write", "  opts./* note */name = 'Bob';"),
+    ] {
+        let owner = format!(
+            "export function title(opts: {{ name?: string }}): string {{\n{write}\n  return opts.name || 'untitled';\n}}\n"
+        );
+        assert_rows(
+            "title",
+            &owner,
+            (3, "  return opts.name;"),
+            "opts.name",
+            &[(label, "expect(title({})).toBe('Bob');", "weakly_exposed")],
+        )?;
+    }
+    for (label, signature, expected) in [
+        (
+            "default-writes-operand",
+            "name: string | null, other = (name = 'Bob')",
+            "weakly_exposed",
+        ),
+        (
+            "default-chain-writes-operand",
+            "{ name, other = name = 'Bob' }: { name: string | null; other?: string }",
+            "weakly_exposed",
+        ),
+        (
+            "own-default-only",
+            "name: string | null = 'x', other = 'y'",
+            "exposed",
+        ),
+    ] {
+        let owner = format!(
+            "export function label({signature}): string {{\n  return name || 'anon';\n}}\n"
+        );
+        let call = if signature.starts_with('{') {
+            "expect(label({ name: null })).toBe('anon');"
+        } else {
+            "expect(label(null)).toBe('anon');"
+        };
+        assert_rows(
+            "label",
+            &owner,
+            (2, "  return name;"),
+            "name",
+            &[(label, call, expected)],
+        )?;
+    }
+    Ok(())
+}
+
+#[test]
+fn the_advice_names_only_inputs_that_change_the_result() -> Result<(), String> {
+    // `kv[1] || ''`: an empty `kv[1]` stores '' on both versions, so the
+    // advice does not suggest one, and it does not claim the tested
+    // assertion passes on both versions.
+    let parse = finding(
+        "advice-parse",
+        "parse",
+        PARSE,
+        PARSE_OLD,
+        "expect(parse('a=1&b=2')).toEqual({ a: '1', b: '2' });",
+    )?;
+    let mut misses = Vec::new();
+    for needle in ["leaves `kv[1]` missing, 0, or false", "not established"] {
+        if !parse.text.contains(needle) {
+            misses.push(format!("parse advice lacks `{needle}`"));
+        }
+    }
+    for needle in ["passes on both versions", "missing, empty"] {
+        if parse.text.contains(needle) {
+            misses.push(format!("parse advice still has `{needle}`"));
+        }
+    }
+    // An owner that overwrites the field gets no input advice at all.
+    let rebound = finding(
+        "advice-rebound",
+        "title",
+        "export function title(opts: { name?: string }): string {\n  opts.name = 'Bob';\n  return opts.name || 'untitled';\n}\n",
+        (3, "  return opts.name;"),
+        "expect(title({})).toBe('Bob');",
+    )?;
+    if !rebound
+        .text
+        .contains("writes or rebinds `opts.name` before the fallback reads it")
+    {
+        misses.push("rebound advice does not name the write".to_string());
+    }
+    if rebound.text.contains("Add a call") {
+        misses.push("rebound advice still suggests a call".to_string());
+    }
+    if misses.is_empty() {
+        Ok(())
+    } else {
+        Err(misses.join("; "))
+    }
+}

@@ -27,7 +27,8 @@ ripr check \
 The finding reads `weakly_exposed`. The missing field would be a witness for
 the fallback, but `ts_operand_binding_unstable` sees the member write to
 `opts` before the read, so the argument is not credited. Both versions return
-`'Bob'`. The finding names the input-class limitation and
+`'Bob'`. The finding names the input-class limitation, says that `title`
+writes `opts.name` before the fallback reads it, and suggests no input;
 `repair_packet_ready` stays `false`.
 
 Before this guard the missing field was credited and the finding read
