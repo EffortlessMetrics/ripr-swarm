@@ -5269,6 +5269,7 @@ fn a_caplog_that_is_not_the_builtin_fixture_keeps_abstaining() -> Result<(), Str
                 literal_params: None,
                 isolated: false,
                 scope_imports: Vec::new(),
+                client_fixture_chain: Vec::new(),
             });
         }
         tests
@@ -12240,6 +12241,7 @@ fn name_prefilter_keeps_a_fixture_only_mention() {
             literal_params: None,
             isolated: false,
             scope_imports: Vec::new(),
+            client_fixture_chain: Vec::new(),
         });
     }
     assert_eq!(owners[0].name, "make_order");
