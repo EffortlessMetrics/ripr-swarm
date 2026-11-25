@@ -19,18 +19,19 @@ const MAX_ENCLOSING_FILES: usize = 8;
 
 /// The files that enclose `file`, nearest first, each declaring the next
 /// one's module at its own top level with a plain `mod name;`, up to a crate
-/// root (`lib.rs` or `main.rs`); empty when the chain does not reach one. `tree_of`
-/// returns the parsed tree of an indexed file, `None` for any other path.
+/// root (`lib.rs` or `main.rs`); empty for a crate root itself, and `None`
+/// when the chain does not reach one. `tree_of` returns the parsed tree of an
+/// indexed file, `None` for any other path.
 pub(crate) fn enclosing_module_files(
     file: &Path,
     mut tree_of: impl FnMut(&Path) -> Option<ast::SourceFile>,
-) -> Vec<ast::SourceFile> {
+) -> Option<Vec<ast::SourceFile>> {
     let mut enclosing = Vec::new();
     let mut current = file.to_path_buf();
     while enclosing.len() < MAX_ENCLOSING_FILES {
         let Some(child) = out_of_line_module_name(&current) else {
             // A crate root: every step below it is confirmed.
-            return enclosing;
+            return Some(enclosing);
         };
         let mut declaring: Vec<(PathBuf, ast::SourceFile)> = module_parent_candidates(&current)
             .into_iter()
@@ -50,8 +51,9 @@ pub(crate) fn enclosing_module_files(
     }
     // The chain stopped short of a crate root, so even its first file may be
     // an unused file beside an inline module that really declares the child
-    // (`mod a { mod tests; }` in `lib.rs` beside a stale `a.rs`).
-    Vec::new()
+    // (`mod a { mod tests; }` in `lib.rs` beside a stale `a.rs`), and an
+    // unread enclosing module may define macros the child sees.
+    None
 }
 
 /// The module name a file holds when another file declares it: the stem, or
@@ -114,7 +116,7 @@ mod tests {
     use super::*;
     use std::collections::BTreeMap;
 
-    fn chain(files: &[(&str, &str)], start: &str) -> Vec<String> {
+    fn chain(files: &[(&str, &str)], start: &str) -> Option<Vec<String>> {
         let trees: BTreeMap<PathBuf, ast::SourceFile> = files
             .iter()
             .map(|(path, text)| {
@@ -122,10 +124,12 @@ mod tests {
                 (PathBuf::from(path), parse.tree())
             })
             .collect();
-        enclosing_module_files(Path::new(start), |path| trees.get(path).cloned())
-            .iter()
-            .map(|tree| tree.syntax().text().to_string())
-            .collect()
+        enclosing_module_files(Path::new(start), |path| trees.get(path).cloned()).map(|files| {
+            files
+                .iter()
+                .map(|tree| tree.syntax().text().to_string())
+                .collect()
+        })
     }
 
     #[test]
@@ -136,7 +140,7 @@ mod tests {
                 &[("src/lib.rs", root), ("src/tests.rs", "")],
                 "src/tests.rs"
             ),
-            vec![root.to_string()]
+            Some(vec![root.to_string()])
         );
     }
 
@@ -148,7 +152,7 @@ mod tests {
                 &[("src/lib.rs", root), ("src/tests.rs", "")],
                 "src/tests.rs"
             ),
-            vec![root.to_string()]
+            Some(vec![root.to_string()])
         );
     }
 
@@ -165,7 +169,7 @@ mod tests {
                 ],
                 "src/a/tests.rs"
             ),
-            vec![a.to_string(), root.to_string()]
+            Some(vec![a.to_string(), root.to_string()])
         );
         assert_eq!(
             chain(
@@ -176,26 +180,25 @@ mod tests {
                 ],
                 "src/a/tests/mod.rs"
             ),
-            vec![a.to_string(), root.to_string()]
+            Some(vec![a.to_string(), root.to_string()])
         );
     }
 
     #[test]
     fn a_path_attribute_an_inline_declaration_or_two_declarers_end_the_chain() {
-        let none: Vec<String> = Vec::new();
         assert_eq!(
             chain(
                 &[("src/lib.rs", "#[path = \"tests.rs\"]\nmod tests;\n")],
                 "src/tests.rs"
             ),
-            none
+            None
         );
         assert_eq!(
             chain(
                 &[("src/lib.rs", "mod outer { mod tests; }\n")],
                 "src/tests.rs"
             ),
-            none
+            None
         );
         assert_eq!(
             chain(
@@ -205,7 +208,7 @@ mod tests {
                 ],
                 "src/tests.rs"
             ),
-            none
+            None
         );
         assert_eq!(
             chain(
@@ -215,11 +218,11 @@ mod tests {
                 )],
                 "src/tests.rs"
             ),
-            none
+            None
         );
         assert_eq!(
             chain(&[("src/lib.rs", "mod other;\n")], "src/tests.rs"),
-            none
+            None
         );
         // A stale `a.rs` beside the inline `mod a { mod tests; }` that
         // really declares the test file is not taken as its parent.
@@ -232,8 +235,9 @@ mod tests {
                 ],
                 "src/a/tests.rs"
             ),
-            none
+            None
         );
-        assert_eq!(chain(&[], "src/lib.rs"), none);
+        // A crate root has no enclosing files, and its chain is known.
+        assert_eq!(chain(&[], "src/lib.rs"), Some(Vec::new()));
     }
 }

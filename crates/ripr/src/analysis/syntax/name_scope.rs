@@ -256,11 +256,13 @@ pub(super) fn name_scopes_in_tree(
 /// tests;`). Their `macro_rules!` definitions and `#[macro_use]` items count
 /// like this file's; a `super` glob that leaves this file is followed into
 /// them, reading the top-level imports and globs of each file it reaches
-/// (#16277). A glob that climbs past the last known ancestor may bring in a
-/// macro.
+/// (#16277). A glob that climbs past the last ancestor may bring in a macro.
+/// `None` when the module chain up to the crate root is not known: a macro
+/// defined in an unread enclosing module may then reach the mention, so a
+/// mention inside any macro keeps the prior reading.
 pub(crate) fn nested_block_renames_in_tree(
     tree: &ast::SourceFile,
-    ancestors: &[ast::SourceFile],
+    ancestors: Option<&[ast::SourceFile]>,
     line_index: &LineIndex,
     fn_line: usize,
     fn_name: &str,
@@ -339,11 +341,14 @@ pub(crate) fn nested_block_renames_in_tree(
             }
         }
         if !macro_names.is_empty() {
-            let reach = (*macro_reach.get_or_insert_with(|| macro_chain_reach(tree, ancestors)))?;
+            let reach = (*macro_reach.get_or_insert_with(|| {
+                ancestors.and_then(|ancestors| macro_chain_reach(tree, ancestors))
+            }))?;
             if macro_names.iter().any(|macro_name| {
                 file_imports_name(tree, macro_name)
                     || ancestors
-                        .iter()
+                        .into_iter()
+                        .flatten()
                         .take(reach)
                         .any(|file| top_level_imports_name(file, macro_name))
             }) {

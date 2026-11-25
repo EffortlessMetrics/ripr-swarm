@@ -3875,7 +3875,7 @@ fn bare_name_renamed_in_nested_blocks(
     let Some(paths) = index
         .source_syntax
         .get(index, &test.file)
-        .and_then(|snapshot| snapshot.nested_block_renames(test, &ancestors, name))
+        .and_then(|snapshot| snapshot.nested_block_renames(test, ancestors.as_deref(), name))
     else {
         return false;
     };
@@ -7458,8 +7458,24 @@ fn file_module_case() {
                 "{label}"
             );
         }
-        // Without a glob leaving the test file, the declaring file's globs
-        // are not read at all; its macro definitions still are.
+        // An unknown module chain (here a `#[path]` declaration) may hide a
+        // textual macro in an unread enclosing module, so even a test file
+        // with no glob keeps the prior reading inside a macro.
+        let moved = index(&[
+            (
+                "src/lib.rs",
+                LIB.replace("mod tests;", "#[path = \"t.rs\"]\nmod tests;")
+                    .as_str(),
+            ),
+            (
+                "src/t.rs",
+                TESTS
+                    .replace("use super::*;", "use super::discount;")
+                    .as_str(),
+            ),
+        ]);
+        let (owner, test) = renamed_other_parts(&moved, "file_module_case")?;
+        assert!(!bare_name_renamed_in_nested_blocks(&moved, owner, test));
         // A `std` glob beside `super::*` is trusted only when no file of
         // the chain rebinds `std` (`use self::shim as std;`).
         let std_globbed = TESTS.replace("use super::*;", "use super::*;\nuse std::*;");
@@ -7482,6 +7498,8 @@ fn file_module_case() {
                 "{label}"
             );
         }
+        // Without a glob leaving the test file, the declaring file's globs
+        // are not read at all; its macro definitions still are.
         let named = TESTS.replace("use super::*;", "use super::discount;");
         for (lib, refused, label) in [
             (
