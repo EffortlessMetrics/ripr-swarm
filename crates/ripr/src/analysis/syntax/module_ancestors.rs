@@ -65,7 +65,10 @@ pub(crate) fn enclosing_module_files(
         if declaring.is_empty() && is_cargo_target_root(&current) {
             // `tests/it.rs`, `benches/b.rs`, `examples/e.rs` or
             // `src/bin/tool.rs`: Cargo compiles it as its own crate root.
-            return confirms_root(&current).then_some(enclosing);
+            // Such a root resolves `mod cases;` to `tests/cases.rs`, so a
+            // `tests/it/cases.rs` that reached it is only the module of a
+            // mounted `it` (`mod it;` in a sibling root), not of this root.
+            return (enclosing.is_empty() && confirms_root(&current)).then_some(enclosing);
         }
         if declaring.len() != 1 {
             break;
@@ -432,6 +435,15 @@ mod tests {
                 .tree();
         assert!(declares_module_named(&nested, "it"));
         assert!(!declares_module_named(&all, "cases"));
+        // A target root named after its stem resolves its own `mod cases;`
+        // beside itself, so `tests/it/cases.rs` is not its module.
+        assert_eq!(
+            chain(
+                &[("tests/it.rs", "mod cases;\n"), ("tests/it/cases.rs", "")],
+                "tests/it/cases.rs"
+            ),
+            None
+        );
         // A crate root has no enclosing files, and its chain is known.
         assert_eq!(chain(&[], "src/lib.rs"), Some(Vec::new()));
         assert_eq!(chain(&[], "tests/it.rs"), Some(Vec::new()));
