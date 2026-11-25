@@ -19,8 +19,9 @@ const MAX_ENCLOSING_FILES: usize = 8;
 
 /// The files that enclose `file`, nearest first, each declaring the next
 /// one's module at its own top level with a plain `mod name;`, up to a crate
-/// root (`lib.rs`, `main.rs`, or a Cargo target file such as `tests/it.rs`;
-/// a `lib.rs` or `main.rs` another file declares as a module is not one);
+/// root (`src/lib.rs`, `src/main.rs`, `src/bin/<name>/main.rs`, or a Cargo
+/// target file such as `tests/it.rs`; a `lib.rs` or `main.rs` another file
+/// declares as a module is not one);
 /// empty for a crate root itself, and `None`
 /// when the chain does not reach one. `tree_of` returns the parsed tree of an
 /// indexed file, `None` for any other path.
@@ -85,11 +86,27 @@ fn is_cargo_target_root(file: &Path) -> bool {
         .is_some_and(|name| matches!(name, "tests" | "benches" | "examples" | "bin"))
 }
 
-/// Whether the file is named as a crate root (`lib.rs` or `main.rs`).
+/// Whether the file sits where Cargo's default target discovery places a
+/// crate root: `src/lib.rs`, `src/main.rs` or `src/bin/<name>/main.rs`. A
+/// `lib.rs` elsewhere may be a module file declared from an inline module
+/// (`mod a { mod lib; }`), so its file name alone does not settle it.
 fn is_crate_root_name(file: &Path) -> bool {
-    file.file_name()
-        .and_then(|name| name.to_str())
-        .is_some_and(|name| matches!(name, "lib.rs" | "main.rs"))
+    let name_of = |path: Option<&Path>| {
+        path.and_then(|path| path.file_name())
+            .and_then(|name| name.to_str())
+            .map(str::to_string)
+    };
+    let file_name = name_of(Some(file));
+    let directory = file.parent();
+    let directory_name = name_of(directory);
+    let grandparent_name = name_of(directory.and_then(Path::parent));
+    match file_name.as_deref() {
+        Some("lib.rs") => directory_name.as_deref() == Some("src"),
+        Some("main.rs") => {
+            directory_name.as_deref() == Some("src") || grandparent_name.as_deref() == Some("bin")
+        }
+        _ => false,
+    }
 }
 
 /// The module name a file holds when another file declares it: the stem, or
@@ -308,10 +325,25 @@ mod tests {
             ),
             None
         );
+        // A `lib.rs` outside `src/` declared from an inline module is not a
+        // crate root either, so the chain through it is unknown.
+        assert_eq!(
+            chain(
+                &[
+                    ("src/lib.rs", "mod a { mod lib; }\n"),
+                    ("src/a/lib.rs", "mod tests;\n"),
+                    ("src/a/lib/tests.rs", "")
+                ],
+                "src/a/lib/tests.rs"
+            ),
+            None
+        );
         // A crate root has no enclosing files, and its chain is known.
         assert_eq!(chain(&[], "src/lib.rs"), Some(Vec::new()));
         assert_eq!(chain(&[], "tests/it.rs"), Some(Vec::new()));
         assert_eq!(chain(&[], "src/bin/tool.rs"), Some(Vec::new()));
+        assert_eq!(chain(&[], "src/bin/tool/main.rs"), Some(Vec::new()));
+        assert_eq!(chain(&[], "crates/x/src/main.rs"), Some(Vec::new()));
         // A module directory named `tests` is followed to its declarer.
         let root = "mod tests;\n";
         let tests_mod = "mod helpers;\n";
