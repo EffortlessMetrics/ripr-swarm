@@ -285,10 +285,40 @@ fn this_escapes(text: &str, members: &BTreeSet<&str>, callable: &BTreeSet<String
                 if next.starts_with(['(', '<', '`']) || next.starts_with("?.(") {
                     return access.calls;
                 }
+                // The `(` opens a call's argument list: it follows a callee
+                // name, never a keyword (`if (c) (this.m) &&= f`) or a `)`.
                 let argument = before.strip_suffix('(').is_some_and(|callee| {
-                    callee
-                        .trim_end()
-                        .ends_with(|ch: char| is_javascript_identifier_char(ch) || ch == ')')
+                    let callee = callee.trim_end();
+                    let start = callee
+                        .rfind(|ch: char| !is_javascript_identifier_char(ch))
+                        .map_or(0, |offset| offset + 1);
+                    let word = &callee[start..];
+                    !word.is_empty()
+                        && !word.starts_with(|ch: char| ch.is_ascii_digit())
+                        && !matches!(
+                            word,
+                            "if" | "while"
+                                | "for"
+                                | "switch"
+                                | "catch"
+                                | "with"
+                                | "return"
+                                | "throw"
+                                | "typeof"
+                                | "void"
+                                | "delete"
+                                | "await"
+                                | "yield"
+                                | "else"
+                                | "do"
+                                | "case"
+                                | "in"
+                                | "of"
+                                | "instanceof"
+                                | "new"
+                                | "as"
+                                | "satisfies"
+                        )
                 });
                 return argument && next.starts_with([')', ',']) && !followed_by_assignment(next);
             }
@@ -306,8 +336,15 @@ fn this_escapes(text: &str, members: &BTreeSet<&str>, callable: &BTreeSet<String
 /// assignment (`(this.m) = f`).
 fn followed_by_assignment(next: &str) -> bool {
     let rest = next.trim_start_matches(|ch: char| ch == ')' || ch.is_whitespace());
-    rest.strip_prefix('=')
-        .is_some_and(|after| !after.starts_with(['=', '>']))
+    // `=`, any compound or logical assignment, a non-null `!`, or a comment
+    // that may hide one.
+    rest.starts_with(['!', '/'])
+        || rest.find('=').is_some_and(|at| {
+            at <= 4
+                && rest[..at].chars().all(|ch| "+-*/%&|^<>?".contains(ch))
+                && !rest[at + 1..].starts_with(['=', '>'])
+                && !matches!(&rest[..at], "<" | ">" | "!")
+        })
 }
 
 /// A plain member access after a `this` keyword.

@@ -267,6 +267,13 @@ fn method_run_on_this_through_call_keeps_the_built_value() {
 }
 
 #[test]
+fn property_of_a_digit_suffixed_name_is_another_binding() {
+    // `cfg2.WEIGHTS` is a property; only `1.` closes a numeric literal.
+    let source = "function weigh(c: string) {\n  return c.length;\n}\nconst WEIGHTS = (() => {\n  const out = [];\n  out[0] = weigh(\"a\");\n  return out;\n})();\nexport function f(i: number) {\n  return WEIGHTS[i];\n}\nexport function g(cfg2: any) {\n  cfg2.WEIGHTS = 1;\n  return cfg2.WEIGHTS;\n}\n";
+    assert_eq!(entry_names(source, "weigh"), ["f"]);
+}
+
+#[test]
 fn function_source_read_keeps_the_built_value() {
     // ohash reads `Function.prototype.toString` inside the building function.
     let source = SRC.replacen(

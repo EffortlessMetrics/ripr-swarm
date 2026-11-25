@@ -1069,10 +1069,11 @@ Candidates come from the first non-empty tier:
    `@param` does not), no computed member and no `return` in a constructor
    spelled `constructor` or `"constructor"`, no `this.m` of a method other
    than a direct call (`this.m(`, `this.m?.(`, `this.m<T>(`) or an argument
-   of a call (`.sort(this.m)`), since any other spelling may be an
-   assignment target that replaces it (`[this.m] = ...`, `({ k: this.m } =
-   ...)`, `for (this.m of ...)`, `(this.m as T) = f`, `this.m! = f`,
-   `(this.m) = f`); its name is declared once
+   of a call whose `(` follows a callee name, not a keyword or `)`
+   (`.sort(this.m)`), since any other spelling may be an assignment target
+   that replaces it (`[this.m] = ...`, `({ k: this.m } = ...)`,
+   `for (this.m of ...)`, `(this.m as T) = f`, `this.m! = f`,
+   `(this.m) = f`, `if (c) (this.m) &&= f`); its name is declared once
    in the file and every other mention outside the declaration is a
    construction `new X(...)` (a property of the same name `o.X`, which
    text cannot tell from the binding after `1.` and a line break, an alias,

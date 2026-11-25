@@ -411,6 +411,18 @@ fn a_class_whose_this_escapes_has_no_method_node() {
             "  constructor() {\n    (this.order) = (keys: string[]) => keys;\n  }\n",
         ),
         (
+            "parenthesized assignment after a condition",
+            "  constructor(c?: boolean) {\n    if (c) (this.order) = (keys: string[]) => keys;\n  }\n",
+        ),
+        (
+            "parenthesized logical assignment after a condition",
+            "  constructor(c?: boolean) {\n    if (c) (this.order) &&= (keys: string[]) => keys;\n  }\n",
+        ),
+        (
+            "parenthesized assignment returned",
+            "  reset(): unknown {\n    return (this.order) ||= (keys: string[]) => keys;\n  }\n",
+        ),
+        (
             "parenthesized destructuring onto a method",
             "  constructor() {\n    [(this.order)] = [(keys: string[]) => keys];\n  }\n",
         ),

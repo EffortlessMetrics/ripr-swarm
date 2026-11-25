@@ -244,12 +244,17 @@ fn bounded(text: &str, idx: usize, name: &str) -> bool {
 }
 
 /// Whether `before` (trimmed text ahead of a mention) ends in a member-access
-/// `.`: `other.NAME` names another binding. Not after a digit, where the `.`
-/// may close a numeric literal and a line break leaves the binding itself
-/// (`1.\nNAME.prototype.m = f`), and not a spread `...`.
+/// `.`: `other.NAME` names another binding. Not after a number, where the
+/// `.` may close a numeric literal and a line break leaves the binding itself
+/// (`1.\nNAME.prototype.m = f`), and not a spread `...`. A name ending in a
+/// digit (`cfg2.NAME`) is a member access.
 fn is_member_dot(before: &str) -> bool {
     before.strip_suffix('.').is_some_and(|rest| {
-        !rest.ends_with("..") && !rest.ends_with(|ch: char| ch.is_ascii_digit())
+        let start = rest
+            .rfind(|ch: char| !is_javascript_identifier_char(ch))
+            .map_or(0, |offset| offset + 1);
+        let token = &rest[start..];
+        !rest.ends_with("..") && !token.starts_with(|ch: char| ch.is_ascii_digit())
     })
 }
 
