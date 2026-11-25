@@ -165,6 +165,93 @@ fn agent_brief_states_workflow_commands_once() -> TestResult {
     Ok(())
 }
 
+/// #15361: through the real `ripr agent brief --json`, a brief that names a
+/// seam states `value_basis` once, as one string, in the ranged, the file and
+/// the seam form; a brief that names no seam leaves the property out. The
+/// published schema 0.2 does not declare the property (its root accepts extra
+/// properties), so these assertions hold the producer to the extension that
+/// `docs/OUTPUT_SCHEMA.md` documents, until a schema version declares it.
+#[test]
+fn agent_brief_json_states_the_value_basis_as_one_string_or_leaves_it_out() -> TestResult {
+    let (project, _cleanup) = workspace("agent-value-basis")?;
+    let ranged = ["agent", "brief", "--diff", "change.diff", "--json"];
+    let brief: serde_json::Value = serde_json::from_str(&run(&project, &ranged)?)?;
+    let seam_id = brief["top_seams"][0]["seam_id"]
+        .as_str()
+        .ok_or("the ranged brief names no seam with an id")?
+        .to_owned();
+    let forms = [
+        ("ranged", ranged.to_vec()),
+        (
+            "file",
+            vec!["agent", "brief", "--files", "src/lib.rs", "--json"],
+        ),
+        (
+            "seam",
+            vec!["agent", "brief", "--seam-id", seam_id.as_str(), "--json"],
+        ),
+    ];
+    for (label, args) in forms {
+        let brief = run(&project, &args)?;
+        let value: serde_json::Value = serde_json::from_str(&brief)?;
+        assert!(
+            value["top_seams"]
+                .as_array()
+                .is_some_and(|seams| !seams.is_empty()),
+            "{label}: the brief names no seam:\n{brief}"
+        );
+        let basis = value["value_basis"]
+            .as_str()
+            .ok_or_else(|| format!("{label}: value_basis is not one string:\n{brief}"))?;
+        for phrase in [
+            "assert what it does now",
+            "an input the change left alone keeps its value",
+            "`candidate_values`: inputs or values to assert",
+            "not all of one kind",
+        ] {
+            assert!(
+                basis.contains(phrase),
+                "{label}: value_basis lacks {phrase:?}: {basis}"
+            );
+        }
+        assert_eq!(
+            brief.matches("\"value_basis\"").count(),
+            1,
+            "{label}: the note is stated once, at the top level:\n{brief}"
+        );
+        if label == "seam" {
+            // The seam form names the seam asked for and no other.
+            let seams = value["top_seams"]
+                .as_array()
+                .ok_or("top_seams is not an array")?;
+            assert_eq!(
+                seams.len(),
+                1,
+                "the seam form names one seam, the one asked for:\n{brief}"
+            );
+            assert_eq!(
+                seams[0]["seam_id"].as_str(),
+                Some(seam_id.as_str()),
+                "the seam form names the seam asked for:\n{brief}"
+            );
+        }
+    }
+    // A brief that names no seam leaves the property out.
+    let none = run(
+        &project,
+        &["agent", "brief", "--seam-id", "no-such-seam", "--json"],
+    )?;
+    let value: serde_json::Value = serde_json::from_str(&none)?;
+    assert!(
+        value["top_seams"]
+            .as_array()
+            .is_some_and(|seams| seams.is_empty()),
+        "an unknown seam id names no seam:\n{none}"
+    );
+    assert!(value.get("value_basis").is_none(), "{none}");
+    Ok(())
+}
+
 /// #13803: the human `agent repair --phase before` start prints the next
 /// command once (stdout), keeps the fields an agent acts on (target, edit
 /// boundary with its terminality, redirect stop condition), and stays inside
