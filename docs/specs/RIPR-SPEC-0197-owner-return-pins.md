@@ -2874,7 +2874,9 @@ call is the root of `?`, `.await`, parentheses and standard pass-through
 methods (`unwrap`, `expect`, `unwrap_or`, `clone`, `into` and similar), whose
 arguments are values the method selects or converts rather than invokes. A
 method that invokes a caller-supplied function item (`map(helper)`) is also
-transparent, because a function item cannot capture. A path argument is a
+transparent, because a function item cannot capture a test local. A function
+item that records its argument through a static is a known boundary: the
+reading then withholds credit, it never grants it. A path argument is a
 function item only when it is not a local binding in the test: a closure bound
 to a local (`let callback = |v| ..; .inspect(callback)`) is also a path at its
 call site, and it can capture and record the result, so it is not transparent.
@@ -2886,8 +2888,13 @@ not count either. For a method owner, `.pick` is a call only when an argument
 list follows; `Holder { pick: .. }.pick` is a field access, not a call of the
 owner. A method call outside the macro is a free use of the owner only when
 its receiver is the receiver of a call the macro holds, `self`, `Self`, an
-owner type, or an owner-result local; an unrelated `other.new()` is not a call
-of `Widget::new`. A read
+owner type, an owner-result local, or a top-level binding whose plain type
+annotation or unit-struct initializer names the owner's type. Parentheses
+around a bare receiver preserve that receiver on either side of the macro.
+An unrelated `other.new()` is not a call of `Widget::new`. A receiver that is
+not a bare name (`w.clone().new()`) is not resolved; such a call outside the
+macro counts as a free use and inside it does not count as held, so an
+unresolved receiver never supplies the demotion. A read
 outside the untrusted macro of any other local whose initializer names a call
 of the owner or such a local (`let actual = &pick(0);`, then `*actual`)
 observes the result, so the assertion keeps its parsed reading. A bare path to

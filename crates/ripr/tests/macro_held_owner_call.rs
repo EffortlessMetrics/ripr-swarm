@@ -24,6 +24,19 @@ impl Workspace {
     /// One package whose `pick` returns `Ok(Mode::A)` and whose test `picks_a`
     /// defines `macros` before running `assertion`.
     fn create(macros: &str, assertion: &str) -> Result<Self, String> {
+        Self::create_with_owner(
+            macros,
+            assertion,
+            "pub fn pick(n: u32) -> Result<Mode, ()> {
+    if n > 10 {
+        return Err(());
+    }
+    Ok(Mode::A)
+}",
+        )
+    }
+
+    fn create_with_owner(macros: &str, assertion: &str, declaration: &str) -> Result<Self, String> {
         static SEQUENCE: AtomicU64 = AtomicU64::new(0);
         let root = std::env::temp_dir().join(format!(
             "ripr-macro-held-owner-call-{}-{}",
@@ -48,12 +61,7 @@ impl Workspace {
                 "#[derive(Debug, PartialEq)]
 pub enum Mode {{ A, B }}
 
-pub fn pick(n: u32) -> Result<Mode, ()> {{
-    if n > 10 {{
-        return Err(());
-    }}
-    Ok(Mode::A)
-}}
+{declaration}
 
 #[cfg(test)]
 mod tests {{
@@ -73,6 +81,10 @@ mod tests {{
     /// (grip class, oracle kind of `picks_a`, its relation reason) on the
     /// `Ok(Mode::A)` return seam of `pick`.
     fn ok_seam(&self) -> Result<(String, String, String), String> {
+        self.ok_seam_for("src/lib.rs::pick")
+    }
+
+    fn ok_seam_for(&self, owner: &str) -> Result<(String, String, String), String> {
         let output = Command::new(env!("CARGO_BIN_EXE_ripr"))
             .args(["check", "--root"])
             .arg(&self.root)
@@ -102,7 +114,7 @@ mod tests {{
         let seam = seams
             .iter()
             .find(|seam| {
-                seam.pointer("/owner").and_then(Value::as_str) == Some("src/lib.rs::pick")
+                seam.pointer("/owner").and_then(Value::as_str) == Some(owner)
                     && seam.pointer("/expression").and_then(Value::as_str) == Some("Ok(Mode::A)")
             })
             .ok_or_else(|| format!("premise: no `Ok(Mode::A)` seam in {seams:?}"))?;
@@ -365,4 +377,55 @@ fn an_owner_result_local_only_an_untrusted_macro_uses_gives_no_exact_credit() ->
     } else {
         Err(wrong.join("\n"))
     }
+}
+
+#[test]
+fn method_receivers_preserve_real_observations_and_demote_held_calls() -> Result<(), String> {
+    let declaration = "
+        #[derive(Clone)]
+        pub struct Picker;
+        impl Picker {
+            pub fn pick(&self, n: u32) -> Result<Mode, ()> {
+                if n > 10 { return Err(()); }
+                Ok(Mode::A)
+            }
+        }
+        struct Other;
+        impl Other {
+            fn pick(&self, _: u32) -> Result<Mode, ()> { Ok(Mode::A) }
+        }
+    ";
+    let macros = "macro_rules! check_ok { ($e:expr) => { Ok::<Mode, ()>(Mode::A) }; }";
+    let cases = [
+        (
+            "a second binding of the owner type is observed",
+            "let held = Picker; let observed = Picker;
+             assert_eq!(check_ok!(held.pick(0)), observed.pick(0));",
+            "exact_value",
+        ),
+        (
+            "a parenthesized receiver is held",
+            "let picker = Picker;
+             assert_eq!(check_ok!((picker).pick(0)), Ok(Mode::A));",
+            "unknown",
+        ),
+        (
+            "a same-named call on another type is unrelated",
+            "let picker = Picker; let other = Other;
+             assert_eq!(check_ok!((picker).pick(0)), other.pick(0));",
+            "unknown",
+        ),
+        (
+            "an unresolved receiver outside the macro keeps the parsed reading",
+            "let picker = Picker;
+             assert_eq!(check_ok!(picker.pick(0)), picker.clone().pick(0));",
+            "exact_value",
+        ),
+    ];
+    for (label, assertion, expected) in cases {
+        let workspace = Workspace::create_with_owner(macros, assertion, declaration)?;
+        let (_, oracle, _) = workspace.ok_seam_for("src/lib.rs::impl Picker::pick")?;
+        assert_eq!(oracle, expected, "{label}");
+    }
+    Ok(())
 }

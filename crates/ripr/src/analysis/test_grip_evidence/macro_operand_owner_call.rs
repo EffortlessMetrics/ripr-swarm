@@ -393,8 +393,10 @@ const PASS_THROUGH_METHODS: &[&str] = &[
 
 /// Methods that invoke a caller-supplied function. They are transparent only
 /// when every argument is a function item or a literal: a function item
-/// cannot capture, so `map(helper)` cannot record the result, while a closure
-/// (`inspect(|v| seen = ..)`) can. #16220.
+/// cannot capture a test local, so `map(helper)` cannot record the result in
+/// one, while a closure (`inspect(|v| seen = ..)`) can. A function item that
+/// records through a static is a known boundary: the reading then withholds
+/// credit (`unknown`), it never grants it. #16220.
 const TRANSFORMING_METHODS: &[&str] = &[
     "map",
     "and_then",
@@ -431,13 +433,13 @@ fn owner_rooted(
                 // spelling. A pass-through method selects or converts, so its
                 // argument is a value, not a callback. A transforming method
                 // is transparent only when every argument is a function item
-                // or a literal: a function item cannot capture, so
-                // `map(helper)` cannot record the result, while a closure
+                // or a literal: a function item cannot capture a local, so
+                // `map(helper)` cannot record the result in one, while a closure
                 // (`inspect(|v| seen = ..)`) can.
                 let pass_through = call.name_ref().is_some_and(|name| {
                     let name = name.text();
-                    PASS_THROUGH_METHODS.iter().any(|method| name == *method)
-                        || (TRANSFORMING_METHODS.iter().any(|method| name == *method)
+                    PASS_THROUGH_METHODS.contains(&name)
+                        || (TRANSFORMING_METHODS.contains(&name)
                             && ast::HasArgList::arg_list(call).is_some_and(|arguments| {
                                 arguments.args().all(|argument| match argument {
                                     ast::Expr::Literal(_) => true,
@@ -526,8 +528,9 @@ fn demote_macro_held_owner_call(
     owner: &OwnerName<'_>,
     locals: &[OwnerResultLocal],
     file_source: Option<&str>,
+    test_body: &str,
 ) -> bool {
-    if !owner_use_only_inside_untrusted_macro(&oracle.text, owner, locals, file_source) {
+    if !owner_use_only_inside_untrusted_macro(&oracle.text, owner, locals, file_source, test_body) {
         return false;
     }
     oracle.kind = OracleKind::Unknown;
@@ -544,7 +547,7 @@ fn owner_call_only_inside_untrusted_macro(
     owner: &OwnerName<'_>,
     file_source: Option<&str>,
 ) -> bool {
-    owner_use_only_inside_untrusted_macro(text, owner, &[], file_source)
+    owner_use_only_inside_untrusted_macro(text, owner, &[], file_source, "")
 }
 
 /// Whether the assertion `text` uses the owner's result at least once, by a
@@ -556,6 +559,7 @@ fn owner_use_only_inside_untrusted_macro(
     owner: &OwnerName<'_>,
     locals: &[OwnerResultLocal],
     file_source: Option<&str>,
+    test_body: &str,
 ) -> bool {
     let named = !owner.name.is_empty() && text.contains(owner.name)
         || locals.iter().any(|local| text.contains(&local.name));
@@ -593,16 +597,16 @@ fn owner_use_only_inside_untrusted_macro(
         free: 0,
         local_held: vec![0; locals.len()],
     };
-    // #16220: a method call outside the macro is a free use of the owner only
-    // when its receiver is the receiver of a held call (or `self`/`Self`/an
-    // owner type). Otherwise an unrelated `other.new()` would keep the parsed
-    // reading for `Widget::new`.
-    let held_receivers = held_method_receivers(tree.syntax(), owner, &trusted);
+    let mut owner_receivers = BTreeSet::new();
+    if owner.is_method() {
+        collect_held_receivers(tree.syntax(), owner, false, &trusted, &mut owner_receivers);
+        owner_receivers.extend(owner_receiver_bindings(test_body, owner));
+    }
     walk(
         tree.syntax(),
         owner,
         locals,
-        &held_receivers,
+        &owner_receivers,
         false,
         &trusted,
         &mut counts,
@@ -636,7 +640,7 @@ fn walk(
     tree: &SyntaxNode,
     owner: &OwnerName<'_>,
     locals: &[OwnerResultLocal],
-    held_receivers: &BTreeSet<String>,
+    owner_receivers: &BTreeSet<String>,
     inside_untrusted: bool,
     trusted: &dyn Fn(&str) -> bool,
     counts: &mut UseCounts,
@@ -662,7 +666,7 @@ fn walk(
                         group,
                         owner,
                         locals,
-                        held_receivers,
+                        owner_receivers,
                         untrusted,
                         trusted,
                         counts,
@@ -694,9 +698,10 @@ fn walk(
                         &children,
                         position,
                         after_dot,
+                        inside_untrusted,
                         owner,
                         locals,
-                        held_receivers,
+                        owner_receivers,
                     )
                     && qualifier(&children, position)
                         .is_none_or(|qualifier| owner.admits_qualifier(&qualifier))
@@ -709,9 +714,12 @@ fn walk(
                                     .first_token()
                                     .is_some_and(|open| open.kind() == SyntaxKind::L_PAREN)
                     );
-                    if !inside_untrusted {
+                    let turbofish = next.is_some_and(|next| next.kind() == SyntaxKind::COLON2)
+                        || next.is_some_and(|next| next.kind() == SyntaxKind::COLON)
+                            && after.is_some_and(|after| after.kind() == SyntaxKind::COLON);
+                    if !inside_untrusted && (!after_dot || paren_call || turbofish) {
                         counts.free += 1;
-                    } else if paren_call {
+                    } else if inside_untrusted && paren_call {
                         counts.held += 1;
                     }
                 }
@@ -735,7 +743,7 @@ fn walk(
                     group,
                     owner,
                     locals,
-                    held_receivers,
+                    owner_receivers,
                     inside_untrusted,
                     trusted,
                     counts,
@@ -747,56 +755,150 @@ fn walk(
     }
 }
 
-/// Whether a method call's receiver may be the owner's receiver. A free
-/// function has no receiver, so it always passes. A method owner's `.name`
-/// is the owner's call only when the receiver is `self`, `Self`, one of the
-/// owner's types, an owner-result local, or the receiver of a call the
-/// untrusted macro holds; otherwise `other.new()` is an unrelated method, not
-/// a free use of `Widget::new`. A complex receiver (`w.clone().new()`) is not
-/// resolved and is not counted, which withholds the demotion. #16220.
+/// Match a bare receiver name, optionally wrapped in parentheses. A group
+/// after a callee is an argument list, so `make(picker).pick()` does not
+/// use `picker` as its receiver.
+fn receiver_name(
+    children: &[NodeOrToken<SyntaxNode, SyntaxToken>],
+    method_at: usize,
+) -> Option<String> {
+    let receiver_at = method_at.checked_sub(2)?;
+    let receiver = children.get(receiver_at)?;
+    if matches!(receiver, NodeOrToken::Node(_))
+        && receiver_at
+            .checked_sub(1)
+            .and_then(|at| children.get(at))
+            .is_some_and(|before| {
+                !matches!(
+                    before.kind(),
+                    SyntaxKind::L_PAREN
+                        | SyntaxKind::L_BRACK
+                        | SyntaxKind::L_CURLY
+                        | SyntaxKind::COMMA
+                        | SyntaxKind::AMP
+                )
+            })
+    {
+        return None;
+    }
+    let mut receiver = receiver.clone();
+    loop {
+        match receiver {
+            NodeOrToken::Token(token)
+                if matches!(
+                    token.kind(),
+                    SyntaxKind::IDENT | SyntaxKind::SELF_KW | SyntaxKind::SELF_TYPE_KW
+                ) =>
+            {
+                return Some(token.text().to_string());
+            }
+            NodeOrToken::Node(group) if group.kind() == SyntaxKind::TOKEN_TREE => {
+                let mut parts = group
+                    .children_with_tokens()
+                    .filter(|part| !part.kind().is_trivia());
+                match (parts.next(), parts.next(), parts.next(), parts.next()) {
+                    (Some(open), Some(inner), Some(close), None)
+                        if open.kind() == SyntaxKind::L_PAREN
+                            && close.kind() == SyntaxKind::R_PAREN =>
+                    {
+                        receiver = inner;
+                    }
+                    _ => return None,
+                }
+            }
+            _ => return None,
+        }
+    }
+}
+
+/// Find unshadowed top-level bindings with a plain owner type annotation or a
+/// unit-struct initializer such as `let second = Picker`. This lets a second
+/// receiver of the owner type count without counting an unrelated `Other`.
+fn owner_receiver_bindings(body: &str, owner: &OwnerName<'_>) -> Vec<String> {
+    let Some(parse) = crate::analysis::syntax::parse_clean_source_file_memoized(body) else {
+        return Vec::new();
+    };
+    let Some(block) = parse
+        .tree()
+        .syntax()
+        .descendants()
+        .find_map(ast::Fn::cast)
+        .and_then(|function| function.body())
+    else {
+        return Vec::new();
+    };
+    let Some(statements) = block.stmt_list() else {
+        return Vec::new();
+    };
+    statements
+        .statements()
+        .filter_map(|statement| {
+            let ast::Stmt::LetStmt(binding) = statement else {
+                return None;
+            };
+            let ast::Pat::IdentPat(pattern) = binding.pat()? else {
+                return None;
+            };
+            if pattern.ref_token().is_some() || pattern.pat().is_some() {
+                return None;
+            }
+            let name = pattern.name()?.text().to_string();
+            let path = match binding.ty() {
+                Some(ast::Type::PathType(ty)) => ty.path()?,
+                Some(_) => return None,
+                None => match binding.initializer()? {
+                    ast::Expr::PathExpr(initializer) => initializer.path()?,
+                    _ => return None,
+                },
+            };
+            if path.qualifier().is_some()
+                || path
+                    .segment()
+                    .and_then(|segment| segment.name_ref())
+                    .is_none_or(|ty| owner.types.first().is_none_or(|known| known != ty.text()))
+            {
+                return None;
+            }
+            let declarations = block
+                .syntax()
+                .descendants()
+                .filter_map(ast::IdentPat::cast)
+                .filter(|pattern| pattern.name().is_some_and(|other| other.text() == name))
+                .take(2)
+                .count();
+            (declarations == 1).then_some(name)
+        })
+        .collect()
+}
+
+/// A dot call can reach the owner through a known type, an owner-result
+/// local, a matching binding, or a receiver named in a held call. A receiver
+/// that is not a bare name (`w.clone().new()`, `make(w).new()`) is not
+/// resolved, and the unresolved call settles toward keeping the parsed
+/// reading: outside the macro it counts as a free use, inside it does not
+/// count as held, so it never supplies the demotion. #16220.
 fn receiver_is_owner(
     children: &[NodeOrToken<SyntaxNode, SyntaxToken>],
     position: usize,
     after_dot: bool,
+    inside_untrusted: bool,
     owner: &OwnerName<'_>,
     locals: &[OwnerResultLocal],
-    held_receivers: &BTreeSet<String>,
+    owner_receivers: &BTreeSet<String>,
 ) -> bool {
-    if !after_dot || !owner.is_method() {
+    if !after_dot {
         return true;
     }
-    position
-        .checked_sub(2)
-        .and_then(|at| children.get(at))
-        .and_then(|child| match child {
-            NodeOrToken::Token(receiver) if receiver.kind() == SyntaxKind::IDENT => {
-                Some(receiver.text().to_string())
-            }
-            _ => None,
-        })
-        .is_some_and(|receiver| {
-            receiver == "self"
-                || receiver == "Self"
-                || owner.types.iter().any(|known| known == &receiver)
-                || locals
-                    .iter()
-                    .any(|local| local.evidence && local.name == receiver)
-                || held_receivers.contains(&receiver)
-        })
-}
-
-/// The receiver identifiers of method calls of `owner` that sit inside an
-/// untrusted inner macro. A method call outside the macro is a free use of
-/// the owner only when its receiver is one of these (or `self`/`Self`/an
-/// owner type), so an unrelated `other.new()` is not the owner's call.
-fn held_method_receivers(
-    tree: &SyntaxNode,
-    owner: &OwnerName<'_>,
-    trusted: &dyn Fn(&str) -> bool,
-) -> BTreeSet<String> {
-    let mut receivers = BTreeSet::new();
-    collect_held_receivers(tree, owner, false, trusted, &mut receivers);
-    receivers
+    let Some(receiver) = receiver_name(children, position) else {
+        return !inside_untrusted;
+    };
+    receiver == "self"
+        || receiver == "Self"
+        || owner.types.contains(&receiver)
+        || locals
+            .iter()
+            .any(|local| local.evidence && local.name == receiver)
+        || owner_receivers.contains(&receiver)
 }
 
 fn collect_held_receivers(
@@ -842,11 +944,9 @@ fn collect_held_receivers(
                                     .first_token()
                                     .is_some_and(|open| open.kind() == SyntaxKind::L_PAREN)
                     )
-                    && let Some(NodeOrToken::Token(receiver)) =
-                        position.checked_sub(2).and_then(|at| children.get(at))
-                    && receiver.kind() == SyntaxKind::IDENT
+                    && let Some(receiver) = receiver_name(&children, position)
                 {
-                    receivers.insert(receiver.text().to_string());
+                    receivers.insert(receiver);
                 }
             }
             NodeOrToken::Node(group) if group.kind() == SyntaxKind::TOKEN_TREE => {
@@ -912,9 +1012,15 @@ pub(super) fn test_has_macro_held_owner_call(
         .get(&test.file)
         .map(|facts| facts.data().source.as_ref());
     let locals = test_locals(test, owner);
-    test.assertions
-        .iter()
-        .any(|oracle| owner_use_only_inside_untrusted_macro(&oracle.text, owner, &locals, source))
+    test.assertions.iter().any(|oracle| {
+        owner_use_only_inside_untrusted_macro(
+            &oracle.text,
+            owner,
+            &locals,
+            source,
+            test.body.as_str(),
+        )
+    })
 }
 
 /// The owner-result locals of `test`, read only when an assertion holds an
@@ -939,11 +1045,17 @@ pub(super) fn demoted_view(
 ) -> Option<Vec<OracleFact>> {
     let locals = test_locals(test, owner);
     let first = test.assertions.iter().position(|oracle| {
-        owner_use_only_inside_untrusted_macro(&oracle.text, owner, &locals, file_source)
+        owner_use_only_inside_untrusted_macro(
+            &oracle.text,
+            owner,
+            &locals,
+            file_source,
+            test.body.as_str(),
+        )
     })?;
     let mut assertions = test.assertions.clone();
     for oracle in &mut assertions[first..] {
-        demote_macro_held_owner_call(oracle, owner, &locals, file_source);
+        demote_macro_held_owner_call(oracle, owner, &locals, file_source, test.body.as_str());
     }
     Some(assertions)
 }
@@ -1038,6 +1150,11 @@ mod tests {
             ("assert_eq!(mystery!(w.new()), w)", true),
             ("assert_eq!(mystery!(w.new()), other.new())", true),
             ("assert_eq!(mystery!(w.new()), w.new())", false),
+            // An unresolved receiver keeps the parsed reading on either side.
+            ("assert_eq!(mystery!(w.new()), w.clone().new())", false),
+            ("assert_eq!(mystery!(w.clone().new()), Mode::A)", false),
+            ("assert_eq!(mystery!(w.clone().new()), other.new())", false),
+            ("assert_eq!(mystery!((w).new()), Mode::A)", true),
         ];
         for (text, expected) in cases {
             assert_eq!(
@@ -1288,7 +1405,13 @@ mod tests {
             let body = format!("fn t() {{ {setup} {assertion}; }}");
             let locals = owner_result_locals(&body, &pick);
             assert_eq!(
-                owner_use_only_inside_untrusted_macro(assertion, &pick, &locals, Some(local)),
+                owner_use_only_inside_untrusted_macro(
+                    assertion,
+                    &pick,
+                    &locals,
+                    Some(local),
+                    &body
+                ),
                 *expected,
                 "{setup} {assertion}"
             );
@@ -1338,7 +1461,13 @@ mod tests {
             let body = format!("fn t() {{ {setup} {assertion}; }}");
             let locals = owner_result_locals(&body, &pick);
             assert_eq!(
-                owner_use_only_inside_untrusted_macro(assertion, &pick, &locals, Some(local)),
+                owner_use_only_inside_untrusted_macro(
+                    assertion,
+                    &pick,
+                    &locals,
+                    Some(local),
+                    &body
+                ),
                 *expected,
                 "{setup} {assertion}"
             );
@@ -1376,7 +1505,13 @@ mod tests {
             let body = format!("fn t() {{ {setup} {assertion}; }}");
             let locals = owner_result_locals(&body, &pick);
             assert_eq!(
-                owner_use_only_inside_untrusted_macro(assertion, &pick, &locals, Some(local)),
+                owner_use_only_inside_untrusted_macro(
+                    assertion,
+                    &pick,
+                    &locals,
+                    Some(local),
+                    &body
+                ),
                 *expected,
                 "{setup} {assertion}"
             );
@@ -1415,7 +1550,13 @@ mod tests {
             let body = format!("fn t() {{ {setup} {assertion}; }}");
             let locals = owner_result_locals(&body, &pick);
             assert_eq!(
-                owner_use_only_inside_untrusted_macro(assertion, &pick, &locals, Some(local)),
+                owner_use_only_inside_untrusted_macro(
+                    assertion,
+                    &pick,
+                    &locals,
+                    Some(local),
+                    &body
+                ),
                 *expected,
                 "{setup} {assertion}"
             );
