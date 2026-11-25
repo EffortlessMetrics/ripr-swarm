@@ -903,11 +903,24 @@ fn parenthesized_spaced_and_parameter_default_writes_unbind_the_argument() -> Re
         let owner = format!(
             "export function label({signature}): string {{\n  return name || 'anon';\n}}\n"
         );
-        let call = if signature.starts_with('{') {
-            "expect(label({ name: null })).toBe('anon');"
+        // A default that runs leaves 'Bob' on both versions; the arrow body
+        // never runs here (only an unseen call to `other` would run it), and
+        // the static scan withholds for it regardless.
+        let result = if matches!(
+            label,
+            "arrow-body-default-writes-operand" | "own-default-only"
+        ) {
+            "anon"
         } else {
-            "expect(label(null)).toBe('anon');"
+            "Bob"
         };
+        let argument = if signature.starts_with('{') {
+            "{ name: null }"
+        } else {
+            "null"
+        };
+        let call = format!("expect(label({argument})).toBe('{result}');");
+        let call = call.as_str();
         assert_rows(
             "label",
             &owner,
