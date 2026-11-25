@@ -20135,6 +20135,7 @@ tests = [
   "crates/ripr/src/analysis/language/typescript/tests/overwritten_method_tests.rs::a_static_member_does_not_overwrite_the_instance_method",
   "crates/ripr/src/analysis/language/typescript/tests/overwritten_method_tests.rs::an_overwritten_body_is_still_an_owner_marked_overwritten",
   "crates/ripr/src/analysis/language/typescript/tests/overwritten_method_tests.rs::a_quoted_later_key_overwrites_the_earlier_method",
+  "crates/ripr/src/analysis/language/typescript/tests/overwritten_method_tests.rs::a_private_name_and_a_quoted_public_key_are_different_keys",
   "crates/ripr/src/analysis/language/typescript/tests/overwritten_method_tests.rs::an_overwritten_body_points_at_the_definition_that_remains",
   "crates/ripr/src/analysis/language/typescript/tests/commonjs_inline_class_tests.rs::a_changed_method_of_the_inline_class_is_reported_and_related",
   "crates/ripr/src/analysis/language/typescript/tests/commonjs_inline_class_tests.rs::a_whole_module_require_of_the_inline_class_relates_under_any_local_name",

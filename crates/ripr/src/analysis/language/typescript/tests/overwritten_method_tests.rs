@@ -165,6 +165,25 @@ fn an_overwritten_body_is_still_an_owner_marked_overwritten() -> Result<(), Stri
 }
 
 #[test]
+fn a_private_name_and_a_quoted_public_key_are_different_keys() -> Result<(), String> {
+    // `#total` is a private name; `'#total'` is a public property of that
+    // spelling. Neither replaces the other.
+    let text = "class Cart {\n  #total() {\n    return 1;\n  }\n  '#total'() {\n    return 2;\n  }\n  total() {\n    return this.#total();\n  }\n}\nmodule.exports = Cart;\n";
+    let owners = extract_owners(Path::new("src/cart.js"), text);
+    let private = owners
+        .iter()
+        .find(|owner| owner.name == "#total")
+        .ok_or_else(|| format!("the private method is no owner: {owners:?}"))?;
+    if private.method_kind != TypeScriptMethodKind::Ordinary {
+        return Err(format!(
+            "the private method was read as overwritten: {:?}",
+            private.method_kind
+        ));
+    }
+    Ok(())
+}
+
+#[test]
 fn a_getter_and_setter_of_one_key_keep_the_getter_relation() -> Result<(), String> {
     let text = "export class Cart {\n  constructor() {\n    this.n = 100;\n  }\n  get total() {\n    if (this.n >= 100) {\n      return this.n - 10;\n    }\n    return this.n;\n  }\n  set total(value) {\n    this.n = value;\n  }\n}\n";
     let finding = diff_finding(

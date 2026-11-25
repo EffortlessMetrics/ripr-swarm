@@ -54,17 +54,18 @@ pub(super) fn overwritten_method_starts(class: &Class<'_>) -> BTreeSet<u32> {
 }
 
 /// The property key `method` defines, when it is static text: an identifier
-/// or string-literal key (bracketed or not) by its name, a private name with
-/// its `#`.
+/// or string-literal key (bracketed or not) as a public key, a private name
+/// as a private key. The two spaces never meet: `#total()` and `'#total'()`
+/// are different keys.
 fn runtime_key(method: &MethodDefinition<'_>) -> Option<String> {
     match &method.key {
         PropertyKey::StaticIdentifier(identifier) if !method.computed => {
-            Some(identifier.name.to_string())
+            Some(format!("public:{}", identifier.name))
         }
         PropertyKey::PrivateIdentifier(identifier) if !method.computed => {
-            Some(format!("#{}", identifier.name))
+            Some(format!("private:{}", identifier.name))
         }
-        PropertyKey::StringLiteral(literal) => Some(literal.value.to_string()),
+        PropertyKey::StringLiteral(literal) => Some(format!("public:{}", literal.value)),
         _ => None,
     }
 }
