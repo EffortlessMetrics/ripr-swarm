@@ -16,7 +16,8 @@
 //!   method, or any value) the earlier class is dead and yields no owner, the
 //!   same fail-closed rule as a reassigned function export (#4638); a
 //!   reassigned function export now also counts value assignments that are
-//!   not functions.
+//!   not functions, and two entries of one `module.exports = { ... }` object
+//!   with the same key still count as two assignments.
 //! * Instance fields of the class and a declared class of the same name read
 //!   under the property name, so field shadowing and repeated-name guards
 //!   see them.
@@ -215,6 +216,23 @@ fn a_function_export_reassigned_to_a_value_yields_no_owner() -> Result<(), Strin
     if owners.iter().any(|owner| owner.name == "total") {
         return Err(format!(
             "the reassigned function export kept an owner {owners:?}"
+        ));
+    }
+    Ok(())
+}
+
+#[test]
+fn a_duplicated_key_in_one_export_object_still_reads_as_reassigned() -> Result<(), String> {
+    let source = "module.exports = {\n  total(n) {\n    return n;\n  },\n  total(n) {\n    return n - 5;\n  },\n};\n";
+    let owners = extract_owners(Path::new("src/cart.js"), source);
+    if owners.iter().any(|owner| owner.name == "total") {
+        return Err(format!("a duplicated object key kept an owner {owners:?}"));
+    }
+    let single = "module.exports = {\n  total(n) {\n    return n;\n  },\n  other(n) {\n    return n;\n  },\n};\n";
+    let owners = extract_owners(Path::new("src/cart.js"), single);
+    if !owners.iter().any(|owner| owner.name == "total") {
+        return Err(format!(
+            "control: a single object key lost its owner {owners:?}"
         ));
     }
     Ok(())

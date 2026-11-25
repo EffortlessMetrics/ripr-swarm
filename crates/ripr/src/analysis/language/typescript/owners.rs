@@ -44,8 +44,11 @@ pub(crate) fn owners_from_program(
     // One line index per source; every owner line below is a binary
     // search against it rather than a rescan from byte 0.
     let source = &SourceText::new(source);
-    // `(owner, CommonJS export slot it is assigned to, statement index)`,
-    // in source order.
+    // `(owner, CommonJS export slot it is assigned to, assignment)`, in
+    // source order. An assignment is `(statement index, value position)`:
+    // every member of one inline `exports.Cart = class ...` is the one value
+    // `(index, 0)`, while each entry of `module.exports = { f, f }` is its own
+    // value, so a duplicated object key still reads as two assignments.
     let mut owners = Vec::new();
     for (index, stmt) in program.body.iter().enumerate() {
         let named_class = commonjs_named_class_export(stmt).map(|(property, _)| property);
@@ -53,17 +56,19 @@ pub(crate) fn owners_from_program(
         owners.extend(
             owners_from_statement(stmt, file, source, &imports)
                 .into_iter()
+                .enumerate()
                 // Members of an inline `module.exports = class ...` are not
                 // export names: two accessors or overloads sharing a name
                 // must not read as a reassigned export. Members of an inline
                 // `exports.Cart = class ...` share the one slot `Cart`.
-                .map(|owner| {
+                .map(|(position, owner)| {
                     let slot = match named_class {
                         Some(property) => Some(property.to_string()),
                         None if commonjs && !owner.class_default_export => Some(owner.name.clone()),
                         None => None,
                     };
-                    (owner, slot, index)
+                    let value = if named_class.is_some() { 0 } else { position };
+                    (owner, slot, (index, value))
                 }),
         );
     }
@@ -325,7 +330,7 @@ fn owners_from_commonjs_export(
 /// code no test reaches. Fail-closed: no owner for a reassigned export.
 fn without_reassigned_commonjs_exports(
     body: &[Statement<'_>],
-    owners: Vec<(TypeScriptOwner, Option<String>, usize)>,
+    owners: Vec<(TypeScriptOwner, Option<String>, (usize, usize))>,
 ) -> Vec<TypeScriptOwner> {
     // #7507: every bare `module.exports = <fn>` assigns the SAME default
     // slot, whatever the function id names it. Two such assignments mean the
@@ -347,7 +352,7 @@ fn without_reassigned_commonjs_exports(
     let duplicated: std::collections::HashSet<String> = {
         let mut slot_statements: std::collections::HashMap<
             &str,
-            std::collections::BTreeSet<usize>,
+            std::collections::BTreeSet<(usize, usize)>,
         > = std::collections::HashMap::new();
         for (_, slot, index) in &owners {
             if let Some(slot) = slot.as_deref() {
@@ -359,7 +364,7 @@ fn without_reassigned_commonjs_exports(
                 if let Some(property) = commonjs_named_export_property(stmt)
                     && let Some(statements) = slot_statements.get_mut(property)
                 {
-                    statements.insert(index);
+                    statements.insert((index, 0));
                 }
             }
         }
