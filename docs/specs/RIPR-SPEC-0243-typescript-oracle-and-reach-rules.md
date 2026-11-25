@@ -2623,8 +2623,9 @@ keys); do not take the next number.
   prototype controls, the member, spaced-member, pattern, nested-pattern,
   grouped, parenthesized-target, parameter-default and callback-shadowing
   writes, and the advice wording;
-  `fixtures/typescript_added_fallback_populated_input` and
-  `fixtures/typescript_added_fallback_member_write` pin the rendered withheld
+  `fixtures/typescript_added_fallback_populated_input`,
+  `fixtures/typescript_added_fallback_member_write` and
+  `fixtures/typescript_added_fallback_parameter_default_write` pin the rendered withheld
   findings against the credited control
   `fixtures/typescript_added_fallback_empty_input_control` in the
   cross-language evidence-promotion-honesty corpus.

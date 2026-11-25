@@ -28,6 +28,7 @@ fixtures = [
   "fixtures/typescript_added_fallback_populated_input",
   "fixtures/typescript_added_fallback_member_write",
   "fixtures/typescript_added_fallback_empty_input_control",
+  "fixtures/typescript_added_fallback_parameter_default_write",
 ]
 code = [
   "crates/ripr/src/analysis/language/typescript/classifier.rs::ts_added_fallback_change",

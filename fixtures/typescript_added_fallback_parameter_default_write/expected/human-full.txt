@@ -1,0 +1,93 @@
+ripr static RIPR exposure analysis
+mode: fast
+root: fixtures/typescript_added_fallback_parameter_default_write/input
+config: <cwd>/fixtures/typescript_added_fallback_parameter_default_write/input/ripr.toml
+
+Summary: 1 changed behavior(s) checked: 0 exposed, 1 weakly_exposed, 0 reachable_unrevealed, 0 no_static_path, 0 infection_unknown, 0 propagation_unknown, 0 static_unknown; 1 of 1 finding(s) unsuppressed
+Terms: exposed = tests appear to notice the change; weakly_exposed = tests reach it but check it
+  only loosely; reachable_unrevealed = tests reach it but nothing appears to notice a change;
+  no_static_path = no test path found; infection_unknown, propagation_unknown, static_unknown = ripr
+  could not tell from the code (analysis limited, not a verdict); finding = one reported gap;
+  unsuppressed = not hidden by your suppression policy
+
+Changed file(s) by language: typescript = 1
+
+Analysis outcome: findings below (analysis complete; complete_with_findings)
+  Counts: 1 changed file(s), 2 changed line(s), 1 candidate line(s), 1 changed behavior(s) checked, 1 finding(s)
+
+WARNING src/label.ts:2
+  id: probe:src_label.ts:typescript_preview:f1a70d02
+
+Changed
+  after:    return name || 'anon';
+
+Change type
+  a returned value changed
+  family: return_value
+  delta:  value (changes a computed value)
+  owner:  typescript:src/label.ts::label
+
+Language
+  language: typescript
+  status: preview
+  owner kind: function
+
+Preview actionability
+  authority: preview_advisory_only
+  gap state: unknown
+  category: incomplete_repair_packet
+  repair packet ready: false
+  why not actionable: TypeScript preview has owner, related-test, oracle, and probe evidence but lacks a complete repair packet contract
+  repair route: project canonical TypeScript repair packet fields only after verify, receipt, evidence refs, and edit boundaries are available
+  missing fields: canonical_gap_id, repair_kind, target_test_shape, related_test_or_observer, verify_command, receipt_command, must_not_change, allowed_edit_surface, raw_evidence_refs
+  evidence needed: canonical gap identity, repair kind, target test shape, related observer, verify command, receipt command, raw evidence refs, and edit constraints
+  raw evidence: src/label.ts:2 (typescript_preview_probe) source=probe:src_label.ts:typescript_preview:f1a70d02 owner=label
+
+Static exposure
+  weakly_exposed (warning, confidence 0.40)
+  Why capped: preview adapter: infection/propagation not modeled (TypeScript); syntax-first, no type or import resolution; the assertion is not confirmed to observe the changed value. Preview score, not on the same scale as Rust confidence.
+
+Evidence
+  - reach yes: 1 related test(s) found for owner `label`
+  - infection unknown: TypeScript preview adapter does not yet model infection
+  - propagation unknown: TypeScript preview adapter does not yet model propagation
+  - observation weak: Strongest extracted oracle kind: `exact_value` (rank 5)
+  - discriminator weak: TypeScript preview adapter: strong oracle found but no assertion's observed_expression flows from the changed sub-expression; the observation is unconfirmed — discriminate unknown
+  - local flow reaches returned value: return name || 'anon'; (line 2)
+  - related test tests/label.test.ts:7 labels a null name uses strong exact value oracle: expect(...).toBe(...)
+
+Weakness
+  - The change to `label` only differs when `name` is missing or falsy (undefined, null, "", 0, or false), but `label` writes or rebinds `name` before the fallback reads it, so ripr cannot read which call input reaches it, and the related assertion is not established to tell the versions apart
+  - missing discriminator return value == name || 'anon': changed TypeScript returned-value at line 2 lacks a concrete preview discriminator
+
+TypeScript preview card (advisory)
+  card version: typescript_preview_card.v1
+  authority: preview_advisory_only (typescript/preview)
+  owner: label
+  owner kind: function
+  changed behavior: return_value changed at src/label.ts:2: `return name || 'anon';`
+  related test: tests/label.test.ts:7 labels a null name
+  oracle: exact_value (strong)
+  missing discriminator: return value == name || 'anon'
+  suggested assertion shape: Exact-value evidence is present; verify it targets the changed discriminator.
+  repair packet ready: false
+  why not actionable: TypeScript preview has owner, related-test, oracle, and probe evidence but lacks a complete repair packet contract
+  repair route: project canonical TypeScript repair packet fields only after verify, receipt, evidence refs, and edit boundaries are available
+  limits:
+    - Syntax-first TypeScript/JavaScript preview evidence only.
+    - No tsc, tsserver, package graph, Jest/Vitest runtime, mutation execution, generated tests, provider calls, source edits, gate authority, or badge authority.
+    - This card is advisory and is not a repair packet.
+
+TypeScript repair packet (advisory)
+  status: not actionable
+  limitation: TypeScript preview has owner, related-test, oracle, and probe evidence but lacks a complete repair packet contract
+  next capability needed: canonical gap identity, repair kind, target test shape, related observer, verify command, receipt command, raw evidence refs, and edit constraints
+
+Next step
+  TypeScript preview advisory: add or strengthen a focused assertion for the missing check `return value == name || 'anon'`; no actionable repair packet is emitted until verify, receipt, and edit-boundary fields are available
+Drill in:
+  (finding id, for explain/context)
+  ripr explain --root <cwd>/fixtures/typescript_added_fallback_parameter_default_write/input --diff <cwd>/fixtures/typescript_added_fallback_parameter_default_write/diff.patch --mode fast probe:src_label.ts:typescript_preview:f1a70d02
+  ripr context --root <cwd>/fixtures/typescript_added_fallback_parameter_default_write/input --diff <cwd>/fixtures/typescript_added_fallback_parameter_default_write/diff.patch --mode fast --at probe:src_label.ts:typescript_preview:f1a70d02
+
+Note: 1 TypeScript file analyzed under preview support — preview evidence is advisory and may be incomplete. Treat its findings as advisory, not Rust-grade.
