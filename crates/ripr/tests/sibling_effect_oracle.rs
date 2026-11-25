@@ -143,7 +143,8 @@ fn parser_only_decoys_cannot_supply_aggregation_discrimination() -> Result<(), S
     assert_eq!(decoys.len(), 2, "{with}");
     for row in decoys {
         assert_eq!(row["relation_reason"], "same_test_file", "{row}");
-        assert_eq!(row["miss"], "observation_unconfirmed", "{row}");
+        // #16213: a file-proximity row never calls the owner.
+        assert_eq!(row["miss"], "no_call_path", "{row}");
     }
     for caller in [
         "module_note_line_byte_boundary_excludes_line_terminators",
@@ -326,7 +327,7 @@ fn free_and_inherent_trait_method_names_do_not_admit_decoys() -> Result<(), Stri
         let finding = finding(&source, &changed_effect(&source, expression), expression, "call_deletion")?;
         assert_eq!(finding["classification"], "weakly_exposed", "{finding}");
         assert_eq!(finding["ripr"]["discriminate"]["state"], "weak", "{finding}");
-        assert!(finding["related_tests"].as_array().ok_or("missing decoy rows")?.iter().any(|r| r["name"] == "implicit_observer" && r["miss"] == "observation_unconfirmed"), "{finding}");
+        assert!(finding["related_tests"].as_array().ok_or("missing decoy rows")?.iter().any(|r| r["name"] == "implicit_observer" && r["miss"] == "no_call_path"), "{finding}");
     }
     }
     Ok(())
@@ -901,8 +902,10 @@ fn same_test_dispatch_cannot_credit_disconnected_assertions() -> Result<(), Stri
             assert_eq!(row["ripr"]["discriminate"]["state"], "weak", "{row}");
             let rows = row["related_tests"].as_array().ok_or("missing rows")?;
             assert!(
-                rows.iter()
-                    .any(|r| r["oracle"].is_string() && r["miss"] == "observation_unconfirmed"),
+                // #16213: a disconnected oracle row is either unconfirmed
+                // or, when linked only by proximity, has no call path.
+                rows.iter().any(|r| r["oracle"].is_string()
+                    && (r["miss"] == "observation_unconfirmed" || r["miss"] == "no_call_path")),
                 "{row}"
             );
         }
