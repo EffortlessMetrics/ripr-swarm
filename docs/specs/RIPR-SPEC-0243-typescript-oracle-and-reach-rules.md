@@ -1683,7 +1683,12 @@ adds no named export beside the class (no `exports.` or `exports[` spelling)
 they relate through a whole-module `require` exactly as the declared form
 does. Otherwise the members stay owners but lose the class name: a class
 expression's name binds only inside its body, so no named import or same-file
-construction reaches them. An anonymous `module.exports = class { ... }` yields
+construction reaches them. A static method of a whole-export class (inline
+or declared) relates through the whole-module `require` binding
+(`Local.method()`), never through a named binding, which reads a static
+property of the class. An instance field of an inline class shadows the
+prototype method of the same name for sibling calls, as for a declared class.
+An anonymous `module.exports = class { ... }` yields
 owners that stay unrelated, as `export default class {}` does. Named property
 exports of a class expression (`exports.Name = class ...`) and `const Name =
 class ...; module.exports = Name;` are not read.
@@ -2786,7 +2791,10 @@ keys); do not take the next number.
   whole-module `require` under any local name as related, beside the controls
   that stay unrelated: named, default-named and ES imports, another module, a
   named export beside the class, an ambiguous whole export, a rebound or
-  shadowed require local, and an anonymous class.
+  shadowed require local, and an anonymous class. End-to-end `analyze_diff`
+  cases pin that a changed method yields a finding, a static method relates
+  only through the whole-module binding, and an instance field shadows a
+  sibling-called method.
 
 - #11196 (rule 11, object rows): `tests/object_row_tests.rs` pins the per-row
   literal assertions for the `for...of` and `test.each` object-row forms and

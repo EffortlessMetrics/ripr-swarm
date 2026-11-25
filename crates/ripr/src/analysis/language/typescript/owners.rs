@@ -366,7 +366,11 @@ fn without_reassigned_esm_bindings(
             // A class method shares only the binding name with a reassigned
             // top-level binding; its receiver keeps it live, so the
             // name-only drop must not take it.
-            owner.class_name.is_some() || !reassigned.contains(owner.name.as_str())
+            // A member of an inline `module.exports = class ...` whose class
+            // name was cleared (#16252) is still a class method.
+            owner.class_name.is_some()
+                || matches!(owner.owner_kind, OwnerKind::Method | OwnerKind::ClassMethod)
+                || !reassigned.contains(owner.name.as_str())
         })
         .collect()
 }

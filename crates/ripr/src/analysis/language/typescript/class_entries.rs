@@ -646,6 +646,17 @@ pub(crate) fn class_instance_field_names(
                     visit(class);
                 }
             }
+            // `module.exports = class Cart { ... }` (#16252): its methods are
+            // owners, so its fields must shadow them here too.
+            Statement::ExpressionStatement(statement) => {
+                if let oxc_ast::ast::Expression::AssignmentExpression(assign) =
+                    &statement.expression
+                    && let oxc_ast::ast::Expression::ClassExpression(class) =
+                        assign.right.get_inner_expression()
+                {
+                    visit(class);
+                }
+            }
             _ => {}
         }
     }

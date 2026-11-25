@@ -18,8 +18,14 @@
 //! * An anonymous `module.exports = class { ... }` yields owners and is not
 //!   related (no name to construct it by), like `export default class {}`.
 //!
-//! Every case relates through `find_related_tests`, the production path, after
-//! asserting the parsed subjects.
+//! * A static method relates through the whole-module `require` binding
+//!   (`Basket.make()`), not through a named binding, which reads a static
+//!   property of the class.
+//! * An instance field shadows the prototype method a sibling calls.
+//!
+//! The relation cases run `find_related_tests` after asserting the parsed
+//! subjects; the end-to-end cases run `TypeScriptAdapter::analyze_diff` and
+//! read the finding on the changed line.
 
 use super::*;
 use crate::domain::RelationReason;
@@ -305,4 +311,170 @@ fn accessor_pairs_of_the_inline_class_are_not_reassigned_exports() {
     let owners = extract_owners(Path::new("src/cart.js"), text);
     let sizes = owners.iter().filter(|owner| owner.name == "size").count();
     assert_eq!(sizes, 2, "getter and setter both stay owners: {owners:?}");
+}
+
+// ── End to end through `TypeScriptAdapter::analyze_diff` ────────────────────
+
+const JEST_PACKAGE: &str =
+    "{\"name\":\"demo\",\"version\":\"1.0.0\",\"devDependencies\":{\"jest\":\"^29.0.0\"}}\n";
+
+/// The finding `analyze_diff` reports on the line of `src/cart.js` that reads
+/// `changed`, with `test` as `tests/cart.test.js`; `Ok(None)` when the
+/// changed line yields no finding at all.
+fn diff_finding(
+    label: &str,
+    owner_text: &str,
+    changed: &str,
+    test: &str,
+) -> Result<Option<Finding>, String> {
+    let line = owner_text
+        .lines()
+        .position(|text| text == changed)
+        .map(|index| index + 1)
+        .ok_or_else(|| format!("{label}: the changed line is missing from the owner"))?;
+    let root = ts_unique_tempdir(label)?;
+    ts_write_file(&root.join("package.json"), JEST_PACKAGE)?;
+    ts_write_file(&root.join("src/cart.js"), owner_text)?;
+    ts_write_file(&root.join("tests/cart.test.js"), test)?;
+    let result = TypeScriptAdapter.analyze_diff(
+        &ts_analysis_options(root.clone()),
+        &OraclePolicy::default(),
+        &[changed_with_lines("src/cart.js", &[(line, changed)])],
+    );
+    let _ = std::fs::remove_dir_all(&root);
+    Ok(result?
+        .findings
+        .into_iter()
+        .find(|finding| finding.probe.location.line == line))
+}
+
+fn jest_test(preamble: &str, body: &str) -> String {
+    format!("{preamble}\n\ndescribe('Cart', () => {{\n  test('it', () => {{\n{body}  }});\n}});\n")
+}
+
+const CHANGED_TOTAL: &str = "    if (sum >= 100) {";
+
+#[test]
+fn a_changed_method_of_the_inline_class_is_reported_and_related() -> Result<(), String> {
+    let test = test_source(REQUIRE, "Cart");
+    let named = diff_finding(
+        "inline-class-finding",
+        &owner_source("class Cart", ""),
+        CHANGED_TOTAL,
+        &test,
+    )?
+    .ok_or("the changed method of the inline class yields no finding")?;
+    if named.related_tests.is_empty() {
+        return Err(format!("expected a related test, got {named:?}"));
+    }
+    let anonymous = diff_finding(
+        "inline-anonymous-class-finding",
+        &owner_source("class", ""),
+        CHANGED_TOTAL,
+        &test,
+    )?
+    .ok_or("the changed method of the anonymous inline class yields no finding")?;
+    if !anonymous.related_tests.is_empty() {
+        return Err(format!(
+            "anonymous inline class: expected no related test, got {:?}",
+            anonymous.related_tests
+        ));
+    }
+    Ok(())
+}
+
+const STATIC_MAKE: &str =
+    "  static make(n) {\n    if (n >= 100) {\n      return n - 10;\n    }\n    return n;\n  }\n";
+const CHANGED_MAKE: &str = "    if (n >= 100) {";
+
+#[test]
+fn a_static_method_relates_through_the_whole_module_require_only() -> Result<(), String> {
+    let source = format!("module.exports = class Cart {{\n{STATIC_MAKE}}};\n");
+    let whole = diff_finding(
+        "inline-static-whole-require",
+        &source,
+        CHANGED_MAKE,
+        &jest_test(
+            "const Basket = require('../src/cart');",
+            "    expect(Basket.make(100)).toBe(90);\n",
+        ),
+    )?
+    .ok_or("the changed static method yields no finding")?;
+    if whole.related_tests.is_empty() {
+        return Err(format!(
+            "whole-module require: expected a related test, got {whole:?}"
+        ));
+    }
+    // `const { Cart }` reads the static property `Cart`, another class.
+    let with_property = format!(
+        "module.exports = class Cart {{\n{STATIC_MAKE}  static Cart = class {{ static make() {{ return 90; }} }};\n}};\n"
+    );
+    let named = diff_finding(
+        "inline-static-named-require",
+        &with_property,
+        CHANGED_MAKE,
+        &jest_test(NAMED_REQUIRE, "    expect(Cart.make(100)).toBe(90);\n"),
+    )?
+    .ok_or("the changed static method yields no finding")?;
+    if !named.related_tests.is_empty() {
+        return Err(format!(
+            "named require of a static property: expected no related test, got {:?}",
+            named.related_tests
+        ));
+    }
+    Ok(())
+}
+
+#[test]
+fn an_instance_field_shadows_the_prototype_method_a_sibling_calls() -> Result<(), String> {
+    let sibling = "  read() {\n    return this.total(100);\n  }\n  total(n) {\n    if (n >= 100) {\n      return n - 10;\n    }\n    return n;\n  }\n";
+    let changed = "    if (n >= 100) {";
+    let reached = diff_finding(
+        "inline-sibling-reached",
+        &format!("module.exports = class Cart {{\n{sibling}}};\n"),
+        changed,
+        &jest_test(REQUIRE, "    expect(new Cart().read()).toBe(100);\n"),
+    )?
+    .ok_or("the changed method yields no finding")?;
+    if reached.related_tests.is_empty() {
+        return Err(format!(
+            "sibling call without a field: expected a related test, got {reached:?}"
+        ));
+    }
+    let shadowed = diff_finding(
+        "inline-sibling-field-shadow",
+        &format!("module.exports = class Cart {{\n  total = () => 1;\n{sibling}}};\n"),
+        changed,
+        &jest_test(REQUIRE, "    expect(new Cart().read()).toBe(1);\n"),
+    )?
+    .ok_or("the changed method yields no finding")?;
+    if !shadowed.related_tests.is_empty() {
+        return Err(format!(
+            "an instance field replaces the method: expected no related test, got {:?}",
+            shadowed.related_tests
+        ));
+    }
+    Ok(())
+}
+
+#[test]
+fn a_reassigned_binding_sharing_a_method_name_keeps_the_method_owner() -> Result<(), String> {
+    // The named export unmarks the class and clears its name; the method is
+    // still a method, so the name-only reassignment filter must not drop it.
+    let source = "let total = () => 0;\ntotal = () => 1;\nmodule.exports = class Cart {\n  total(n) {\n    if (n >= 100) {\n      return n - 10;\n    }\n    return n;\n  }\n};\nmodule.exports.helper = total;\n";
+    let owners = extract_owners(Path::new("src/cart.js"), source);
+    if !owners
+        .iter()
+        .any(|owner| owner.name == "total" && owner.owner_kind == OwnerKind::Method)
+    {
+        return Err(format!("the method owner `total` was dropped: {owners:?}"));
+    }
+    diff_finding(
+        "inline-reassigned-helper",
+        source,
+        "    if (n >= 100) {",
+        &jest_test(REQUIRE, "    expect(new Cart().total(100)).toBe(100);\n"),
+    )?
+    .ok_or("the changed method yields no finding")?;
+    Ok(())
 }
