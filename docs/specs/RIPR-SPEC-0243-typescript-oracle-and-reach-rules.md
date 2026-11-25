@@ -2599,6 +2599,27 @@ keys); do not take the next number.
 
 ## Test Mapping
 
+- #15285 case 4 (added input-class fallback): an edit that wraps a read in
+  `|| d` or `?? d` changes behavior only on a falsy or nullish input, so an
+  exact assertion on any other input passes on both versions. The finding
+  reads `exposed` only when a related test's owner call is read as supplying
+  that input class: a `null` literal, `undefined`/`void 0` for a `??` or an
+  accessed field, a falsy literal for `||`, or a readable object literal whose
+  target field is absent. An omitted argument, a variable, an unreadable
+  literal (a spread, computed key, accessor, `__proto__`, escape or comment),
+  an `Object.prototype` member name, a later method or shorthand definition of
+  the target key, an operand whose binding is written or shadowed before the
+  read, and a guessed destructured field all withhold the witness.
+  `crates/ripr/tests/typescript_added_fallback.rs` runs the binary over the
+  issue shape, each credited input class and its withheld twin, the operator
+  and owner-form variants, the unreadable-literal and prototype controls, and
+  the member, pattern, nested-pattern, grouped and callback-shadowing writes;
+  `fixtures/typescript_added_fallback_populated_input` and
+  `fixtures/typescript_added_fallback_member_write` pin the rendered withheld
+  findings against the credited control
+  `fixtures/typescript_added_fallback_empty_input_control` in the
+  cross-language evidence-promotion-honesty corpus.
+
 - #15939 (replaced owner function):
   `crates/ripr/tests/typescript_replaced_owner_function.rs` runs the binary over
   each replacement call in the test body, in a hook and at the top level, the

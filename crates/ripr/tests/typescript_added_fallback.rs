@@ -691,6 +691,12 @@ fn a_member_or_destructuring_write_unbinds_the_argument() -> Result<(), String> 
         ("array-pattern-write", "  [name] = ['Bob'];"),
         ("object-pattern-write", "  ({ name } = { name: 'Bob' });"),
         ("grouped-write", "  (name = 'Bob');"),
+        ("nested-array-pattern-write", "  [[name]] = [['Bob']];"),
+        (
+            "nested-object-pattern-write",
+            "  ({ a: [name] } = { a: ['Bob'] });",
+        ),
+        ("parenthesized-pattern-target", "  [(name)] = ['Bob'];"),
     ] {
         let owner = format!(
             "export function label(name: string | null): string {{\n{write}\n  return name || 'anon';\n}}\n"

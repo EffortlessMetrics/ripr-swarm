@@ -3705,10 +3705,10 @@ fn ts_operand_binding_unstable(source: &str, name: &str) -> bool {
         if cursor > end && writes(&next_text(cursor, 4)) {
             return true;
         }
-        // The innermost enclosing brackets: a destructuring pattern that is
-        // assigned to, or a parameter list of a nested function.
+        // Every enclosing bracket: a destructuring pattern at any nesting
+        // level that is assigned to (`[[name]] = ...`, `[(name)] = ...`), or
+        // a parameter list of a nested function.
         let mut depth = 0usize;
-        let mut pattern_checked = false;
         for open in (from..at).rev() {
             match masked[open] {
                 ')' | ']' | '}' => depth += 1,
@@ -3719,13 +3719,9 @@ fn ts_operand_binding_unstable(source: &str, name: &str) -> bool {
                     };
                     let following = next_text(close + 1, 2);
                     if opener != '(' {
-                        if !pattern_checked
-                            && following.starts_with('=')
-                            && !following[1..].starts_with(['=', '>'])
-                        {
+                        if following.starts_with('=') && !following[1..].starts_with(['=', '>']) {
                             return true;
                         }
-                        pattern_checked = true;
                         continue;
                     }
                     let keyword: String = masked[from..open]
@@ -3744,7 +3740,8 @@ fn ts_operand_binding_unstable(source: &str, name: &str) -> bool {
                     {
                         return true;
                     }
-                    break;
+                    // A grouping or call parenthesis: keep walking outward so
+                    // an enclosing assigned pattern is still seen.
                 }
                 _ => {}
             }
