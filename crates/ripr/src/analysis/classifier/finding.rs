@@ -491,6 +491,25 @@ fn annotate_related_test_misses(
             test.miss = Some(RelatedTestMiss::NoCallPath);
         }
     }
+    if matches!(
+        class,
+        ExposureClass::WeaklyExposed | ExposureClass::ReachableUnrevealed
+    ) {
+        // #16213: `reveal` may already have marked a matched proximity row
+        // `observation_unconfirmed`; that label presupposes a path to the
+        // owner, so the missing call takes precedence. Refusals and other
+        // established misses stay as recorded.
+        for test in related_tests.iter_mut().filter(|test| {
+            test.miss == Some(RelatedTestMiss::ObservationUnconfirmed)
+                && test.oracle.is_some()
+                && test.relation_reason.is_some()
+                && test.is_contributing()
+                && !reaches(test)
+        }) {
+            test.miss = Some(RelatedTestMiss::NoCallPath);
+            test.miss_support = None;
+        }
+    }
     for test in related_tests.iter_mut().filter(|test| test.miss.is_none()) {
         let row_unconfirmed = match unconfirmed {
             Unconfirmed::Confirmed => false,
@@ -1937,6 +1956,31 @@ mod tests {
                         Some(RelationReason::SameTestFile),
                     )
                 },
+                // `reveal` already marked these rows unconfirmed.
+                RelatedTest {
+                    miss: Some(RelatedTestMiss::ObservationUnconfirmed),
+                    ..row(
+                        "unconfirmed_file_neighbour",
+                        OracleStrength::Strong,
+                        Some(RelationReason::SameTestFile),
+                    )
+                },
+                RelatedTest {
+                    miss: Some(RelatedTestMiss::ObservationUnconfirmed),
+                    ..row(
+                        "unconfirmed_caller",
+                        OracleStrength::Strong,
+                        Some(RelationReason::DirectOwnerCall),
+                    )
+                },
+                RelatedTest {
+                    miss: Some(RelatedTestMiss::AssertionNotObserving),
+                    ..row(
+                        "not_observing_neighbour",
+                        OracleStrength::Strong,
+                        Some(RelationReason::SameTestFile),
+                    )
+                },
             ];
             annotate_related_test_misses(
                 &mut rows,
@@ -1956,6 +2000,9 @@ mod tests {
                     Some(RelatedTestMiss::NoCallPath),
                     Some(RelatedTestMiss::MissingExactAssertion),
                     None,
+                    Some(RelatedTestMiss::NoCallPath),
+                    Some(RelatedTestMiss::ObservationUnconfirmed),
+                    Some(RelatedTestMiss::AssertionNotObserving),
                 ],
                 "{class:?}"
             );

@@ -715,7 +715,7 @@ fn unused_reverse_trait_does_not_authorize_parser_oracle() -> Result<(), String>
             let row = finding(&source, &changed_effect(&source, expression), expression, family)?;
             assert_eq!(row["classification"], "weakly_exposed", "{row}");
             assert_eq!(row["ripr"]["discriminate"]["state"], "weak", "{row}");
-            assert!(row["related_tests"].as_array().ok_or("missing rows")?.iter().any(|r| r["name"] == "parser_only" && r["miss"] == "observation_unconfirmed"), "{row}");
+            assert!(row["related_tests"].as_array().ok_or("missing rows")?.iter().any(|r| r["name"] == "parser_only" && r["miss"] == "no_call_path"), "{row}");
         }
     }
     Ok(())
