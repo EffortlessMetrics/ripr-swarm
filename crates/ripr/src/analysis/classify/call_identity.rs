@@ -3870,10 +3870,12 @@ fn bare_name_renamed_in_nested_blocks(
     else {
         return false;
     };
+    let tree_of = |path: &std::path::Path| index.source_syntax.get(index, path)?.tree();
+    let ancestors = crate::analysis::syntax::enclosing_module_files(&test.file, tree_of);
     let Some(paths) = index
         .source_syntax
         .get(index, &test.file)
-        .and_then(|snapshot| snapshot.nested_block_renames(test, name))
+        .and_then(|snapshot| snapshot.nested_block_renames(test, &ancestors, name))
     else {
         return false;
     };
@@ -7356,6 +7358,85 @@ mod tests {
                 bare_name_renamed_in_nested_blocks(&globbed, owner, test),
                 refused,
                 "{glob}"
+            );
+        }
+        Ok(())
+    }
+
+    /// #16277: a test module file's `use super::*;` reaches the file that
+    /// declares it, so the nested-block reading inside `assert_eq!` follows
+    /// the plain `mod tests;` declaration and reads that file's macros,
+    /// imports and globs. A parent that defines or imports such a macro, a
+    /// foreign glob in it, or a `#[path]` declaration keeps the prior
+    /// reading.
+    #[test]
+    fn a_file_module_super_glob_reads_the_declaring_file_inside_a_std_macro() -> Result<(), String>
+    {
+        const LIB: &str = "\
+pub fn discount(amount: u32) -> u32 {
+    if amount > 100 { 10 } else { 0 }
+}
+
+pub fn other(a: u32) -> u32 {
+    if a >= 100 { 10 } else { 0 }
+}
+
+pub mod helpers {
+    pub fn unrelated() {}
+}
+
+#[cfg(test)]
+mod tests;
+";
+        const TESTS: &str = "\
+use super::*;
+
+#[test]
+fn file_module_case() {
+    {
+        use super::other as discount;
+        assert_eq!(discount(100), 10);
+    }
+}
+";
+        for (lib, tests_path, refused, label) in [
+            (LIB.to_string(), "src/tests.rs", true, "plain declaration"),
+            (
+                format!("macro_rules! assert_eq {{ ($a:expr, $b:expr) => {{}}; }}\n{LIB}"),
+                "src/tests.rs",
+                false,
+                "parent defines assert_eq",
+            ),
+            (
+                format!("use other_crate::assert_eq;\n{LIB}"),
+                "src/tests.rs",
+                false,
+                "parent imports assert_eq",
+            ),
+            (
+                format!("use crate::helpers::*;\n{LIB}"),
+                "src/tests.rs",
+                false,
+                "parent holds a foreign glob",
+            ),
+            (
+                LIB.replace("mod tests;", "#[path = \"t.rs\"]\nmod tests;"),
+                "src/t.rs",
+                false,
+                "path declaration",
+            ),
+        ] {
+            let files = index(&[("src/lib.rs", lib.as_str()), (tests_path, TESTS)]);
+            let (owner, test) = renamed_other_parts(&files, "file_module_case")?;
+            assert_eq!(
+                bare_name_renamed_in_nested_blocks(&files, owner, test),
+                refused,
+                "{label}"
+            );
+            assert_eq!(
+                test_calls_only_a_renamed_other_function(&files, owner, test),
+                refused,
+                "{label}"
             );
         }
         Ok(())

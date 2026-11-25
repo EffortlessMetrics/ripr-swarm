@@ -212,6 +212,8 @@
     "fixtures/evidence-promotion-honesty-corpus/reports/rust-repo-exposure-renamed-other-function-qualified-control.json",
     "fixtures/evidence-promotion-honesty-corpus/reports/rust-repo-exposure-nested-block-renamed-other-function.json",
     "fixtures/evidence-promotion-honesty-corpus/reports/rust-repo-exposure-nested-block-renamed-other-function-outer-call-control.json",
+    "fixtures/evidence-promotion-honesty-corpus/reports/rust-repo-exposure-file-module-nested-block-renamed-other-function.json",
+    "fixtures/evidence-promotion-honesty-corpus/reports/rust-repo-exposure-file-module-nested-block-renamed-other-function-outer-call-control.json",
     "fixtures/evidence-promotion-honesty-corpus/reports/rust-repo-exposure-wrapper-fed-error.json",
     "fixtures/evidence-promotion-honesty-corpus/reports/rust-repo-exposure-guarded-boundary-guard-missing.json",
     "fixtures/evidence-promotion-honesty-corpus/reports/rust-repo-exposure-unselected-match-arm.json",

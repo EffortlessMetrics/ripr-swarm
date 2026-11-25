@@ -250,8 +250,16 @@ pub(super) fn name_scopes_in_tree(
 /// when the file redefines or imports its name or holds a glob that may
 /// bring in a same-named macro; and for a block whose item
 /// under `cfg`/`cfg_attr` may bind the name.
+///
+/// `ancestors` are the files of the modules that enclose this file, nearest
+/// first, each declaring the next one's module at its top level (`mod
+/// tests;`). A `super` glob that leaves this file is read through them, and
+/// each one's macro definitions, imports and globs count like this file's
+/// (#16277). A glob that climbs past the last known ancestor may bring in a
+/// macro.
 pub(crate) fn nested_block_renames_in_tree(
     tree: &ast::SourceFile,
+    ancestors: &[ast::SourceFile],
     line_index: &LineIndex,
     fn_line: usize,
     fn_name: &str,
@@ -331,10 +339,18 @@ pub(crate) fn nested_block_renames_in_tree(
         }
         if !macro_names.is_empty()
             && (*std_macros_rebound.get_or_insert_with(|| {
-                file_rebinds_a_std_macro(tree) || file_glob_may_import_macros(tree)
-            }) || macro_names
-                .iter()
-                .any(|macro_name| file_imports_name(tree, macro_name)))
+                std::iter::once(tree)
+                    .chain(ancestors)
+                    .enumerate()
+                    .any(|(level, file)| {
+                        file_rebinds_a_std_macro(file)
+                            || file_glob_may_import_macros(file, ancestors.len() - level)
+                    })
+            }) || std::iter::once(tree).chain(ancestors).any(|file| {
+                macro_names
+                    .iter()
+                    .any(|macro_name| file_imports_name(file, macro_name))
+            }))
         {
             return None;
         }
@@ -405,8 +421,10 @@ pub(crate) fn nested_block_renames_in_tree(
 /// dependency can stand in for either); a glob of only `super`
 /// segments that stays within the file's inline modules reaches items this
 /// file declares, which `file_rebinds_a_std_macro` and `file_imports_name`
-/// read. Any other glob, or one the scan cannot read, may.
-fn file_glob_may_import_macros(tree: &ast::SourceFile) -> bool {
+/// read. `levels_above` more `super` segments are admitted when the caller
+/// reads that many enclosing module files the same way. Any other glob, or
+/// one the scan cannot read, may.
+fn file_glob_may_import_macros(tree: &ast::SourceFile, levels_above: usize) -> bool {
     tree.syntax()
         .descendants()
         .filter_map(ast::Use::cast)
@@ -426,7 +444,7 @@ fn file_glob_may_import_macros(tree: &ast::SourceFile) -> bool {
                     && !file_may_bind_name(tree, STD_CRATE_ROOT);
                 let in_file_super = !path.is_empty()
                     && path.iter().all(|segment| segment == "super")
-                    && path.len() <= depth;
+                    && path.len() <= depth + levels_above;
                 !(std_root || in_file_super)
             })
         })

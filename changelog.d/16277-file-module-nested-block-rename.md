@@ -1,0 +1,2 @@
+<!-- section: Fixed -->
+- Analysis: the nested-block rename reading now also covers a test in its own module file (`src/tests.rs` with `use super::*;`) whose renamed call sits inside `assert!` or `assert_eq!`. The reading follows the plain `mod tests;` declaration to the files that enclose the test and checks their macros, imports and globs; a `#[path]` declaration, a macro of that name or a foreign glob there keeps the earlier reading. Pinned in the evidence-promotion honesty corpus with an outer-call control (#16277).

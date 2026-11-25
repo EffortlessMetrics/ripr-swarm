@@ -405,16 +405,25 @@ impl SourceSnapshot {
     /// `name` when every bare mention of `name` in its body sits in such a
     /// block (#14069); see `nested_block_renames_in_tree`. `None` for a
     /// macro-generated test, whose body the file does not spell.
+    /// `ancestors` are the enclosing module files, nearest first.
     pub(crate) fn nested_block_renames(
         &self,
         caller: &TestSummary,
+        ancestors: &[SourceFile],
         name: &str,
     ) -> Option<Vec<Vec<String>>> {
         if caller.generated.is_some() {
             return None;
         }
         let tree = self.parse.as_ref()?.tree();
-        nested_block_renames_in_tree(&tree, &self.lines, caller.start_line, &caller.name, name)
+        nested_block_renames_in_tree(
+            &tree,
+            ancestors,
+            &self.lines,
+            caller.start_line,
+            &caller.name,
+            name,
+        )
     }
 
     /// Recover the unique full-source declaration, including qualifiers,
