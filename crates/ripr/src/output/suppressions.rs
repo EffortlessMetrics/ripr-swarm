@@ -818,13 +818,24 @@ pub struct SuppressionApplication {
 /// Root-relative `/`-separated finding path for suppression matching.
 /// Finding locations may be emitted root-joined (for example, `./src/lib.rs`
 /// for `--root .`); policy globs are written root-relative (`src/**`).
+/// Only the platform's own separator becomes `/` (#16271): on Unix a `\` is
+/// an ordinary filename character, so a file named `a\b.rs` must not match a
+/// `src/a/**` glob, matching the distinct URI SARIF publishes for it.
 pub(crate) fn root_relative_finding_path(root: &Path, file: &Path) -> String {
     let relative = file.strip_prefix(root).unwrap_or(file);
-    let display = relative.display().to_string();
-    display
+    native_separators_to_slash(&relative.display().to_string(), std::path::MAIN_SEPARATOR)
         .trim_start_matches("./")
-        .replace('\\', "/")
         .to_string()
+}
+
+/// `display` with `separator` rewritten to `/`; a no-op where the separator
+/// already is `/`. Split out so both platforms' rules are testable anywhere.
+fn native_separators_to_slash(display: &str, separator: char) -> String {
+    if separator == '/' {
+        display.to_string()
+    } else {
+        display.replace(separator, "/")
+    }
 }
 
 /// Applies exact-ID exposure-gap suppressions against a slice of finding ids
@@ -1387,9 +1398,44 @@ mod tests {
         CheckSuppressionCandidate, SUPPRESSIONS_PATH, SuppressionApplication, SuppressionEntry,
         SuppressionKind, apply_check_suppressions, apply_exposure_suppressions,
         apply_test_efficiency_suppressions, current_iso_date, days_to_civil_date, is_expired,
-        is_iso_date, load_check_suppression_policy, owner_function_of, parse_suppressions_manifest,
-        path_glob_matches,
+        is_iso_date, load_check_suppression_policy, native_separators_to_slash, owner_function_of,
+        parse_suppressions_manifest, path_glob_matches, root_relative_finding_path,
     };
+
+    /// #16271: only the platform separator becomes `/`. On Unix a literal
+    /// backslash stays part of the file name, so a directory glob cannot
+    /// reach a sibling file whose name contains one; on Windows both
+    /// spellings are the same directory separator.
+    #[test]
+    fn candidate_paths_keep_a_unix_literal_backslash() {
+        assert_eq!(
+            native_separators_to_slash("src\\a\\b.rs", '\\'),
+            "src/a/b.rs"
+        );
+        assert_eq!(
+            native_separators_to_slash("src/a\\b.rs", '/'),
+            "src/a\\b.rs"
+        );
+        assert!(!path_glob_matches(
+            "src/a/**",
+            &native_separators_to_slash("src/a\\b.rs", '/')
+        ));
+        assert!(path_glob_matches(
+            "src/a/**",
+            &native_separators_to_slash("src/a/b.rs", '/')
+        ));
+        if std::path::MAIN_SEPARATOR == '/' {
+            let root = Path::new("repo");
+            assert_eq!(
+                root_relative_finding_path(root, Path::new("repo/src/a\\b.rs")),
+                "src/a\\b.rs"
+            );
+            assert_eq!(
+                root_relative_finding_path(root, Path::new("./src/a/b.rs")),
+                "src/a/b.rs"
+            );
+        }
+    }
 
     #[test]
     fn parse_accepts_well_formed_manifest_with_both_kinds() {
