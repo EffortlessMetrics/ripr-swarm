@@ -1,5 +1,15 @@
 # Golden Output Changes
 
+## Pending — corpus cache generation 1.199 for include-reading helper wrappers (#10357)
+
+A helper wrapper that reads `include_str!` or `include_bytes!` before calling
+its helper now forwards the helper's result, which bumps the analyzer cache
+schema to 1.199. Move the portable unchanged-attempt snapshots to 1.199,
+recompute the `raw_json_placeholder_v1` artifact content commitment, then the
+dependent verify commitments and receipt byte hashes. Weak grip, unchanged
+movement, historical currentness, incomplete receipt status and fail-closed
+first-action routing remain the same. No other fixture output is regenerated.
+
 ## Pending — corpus cache generation 1.198 for discarded owner calls (#16258)
 
 An owner call outside an untrusted inner macro whose statement discards the
