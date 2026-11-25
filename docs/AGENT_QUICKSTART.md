@@ -84,8 +84,7 @@ Loop (max 3 rounds per gap):
            Check its exit status before reading it; do not change inputs before DONE.
 5. DONE    Use that same report; require exit 0 and its last line `verify=complete|...` or
            `verify=complete_with_limits|...` (only analyzer limits remain; report its `limits=`).
-           `verify=refused`, a missing `verify=` line, or a cut-off report mean STOP.
-           `done=` or an empty gap list alone is never enough.
+           `verify=refused`, a missing `verify=` line, or a cut-off report mean STOP; `done=` or an empty gap list alone is never enough.
            If gaps remain, return to FIND; if inputs change, repeat VERIFY before DONE.
            Report tests and static result; this does not establish runtime bug detection.
 
