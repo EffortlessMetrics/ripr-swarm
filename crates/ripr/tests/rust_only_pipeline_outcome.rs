@@ -120,15 +120,15 @@ fn require_unavailable_python(report: &Value) -> Result<(), String> {
 }
 
 #[test]
-fn excluded_python_input_stays_partial_when_the_adapter_is_unavailable()
--> Result<(), Box<dyn Error>> {
+fn changed_python_stays_partial_when_the_adapter_is_unavailable() -> Result<(), Box<dyn Error>> {
+    const PYTHON_PATH: &str = "src/value.py";
+    const OTHER_PYTHON_PATH: &str = "src/other.py";
     let mut config = RiprConfig::default();
     config.languages.enabled.push(LanguageId::Python);
-    config.languages.python.excluded_file_patterns = vec!["src/value.py".into()];
 
     for invalid in ["", "first\nsecond", "first\r\nsecond", "first\n", "first\r"] {
         assert_eq!(
-            check_single_line_added_file("src/value.py", invalid, &config)
+            check_single_line_added_file(PYTHON_PATH, invalid, &config)
                 .err()
                 .map(|error| error.to_string())
                 .as_deref(),
@@ -137,8 +137,14 @@ fn excluded_python_input_stays_partial_when_the_adapter_is_unavailable()
         );
     }
 
-    let python = check_single_line_added_file("src/value.py", "VALUE = 1", &config)?;
-    require_unavailable_python(&python)?;
+    // The Python matcher is bypassed without the adapter. Either configured
+    // pattern must leave the changed Python file partial and unavailable.
+    for pattern in [PYTHON_PATH, OTHER_PYTHON_PATH] {
+        config.languages.python.excluded_file_patterns = vec![pattern.into()];
+        let python = check_single_line_added_file(PYTHON_PATH, "VALUE = 1", &config)?;
+        require_unavailable_python(&python)
+            .map_err(|error| format!("pattern {pattern:?}: {error}"))?;
+    }
 
     // Exercise the competing outcome through the same public API. An available
     // adapter can apply its configured exclusion and report complete scope.

@@ -1,5 +1,5 @@
 [[extend]]
 id = "RIPR-SPEC-0309"
 tests = [
-  "crates/ripr/tests/rust_only_pipeline_outcome.rs::excluded_python_input_stays_partial_when_the_adapter_is_unavailable",
+  "crates/ripr/tests/rust_only_pipeline_outcome.rs::changed_python_stays_partial_when_the_adapter_is_unavailable",
 ]
