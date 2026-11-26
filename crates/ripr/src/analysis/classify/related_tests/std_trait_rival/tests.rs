@@ -1,0 +1,162 @@
+use super::super::owner_call_is_direct;
+use super::calls_through_the_trait_path;
+use crate::analysis::RustIndex;
+use crate::analysis::syntax::{RaRustSyntaxAdapter, RustSyntaxAdapter};
+use std::path::{Path, PathBuf};
+
+/// `Foo` is an `Iterator`, so `IntoIterator::into_iter(self)` reaches it by
+/// the standard blanket impl, and `Peeky::into_iter(&self)` is the only
+/// indexed method of the name.
+fn production(peeky_receiver: &str, name: &str) -> String {
+    format!(
+        "pub struct Foo(pub u32);\n\
+         impl Foo {{\n    pub fn new(n: u32) -> Self {{ Foo(n) }}\n}}\n\
+         impl Iterator for Foo {{\n    type Item = u32;\n    fn next(&mut self) -> Option<u32> {{ None }}\n}}\n\
+         pub trait Peeky {{\n    fn {name}({peeky_receiver}) -> u32;\n}}\n\
+         impl Peeky for Foo {{\n    fn {name}({peeky_receiver}) -> u32 {{ if self.0 > 3 {{ 1 }} else {{ 0 }} }}\n}}\n"
+    )
+}
+
+/// A parser-backed index of `production` followed by one test whose body
+/// is `test_body`, so containers and symbol ids are the pipeline's own.
+fn parsed_index(production: &str, test_body: &str) -> Result<RustIndex, String> {
+    let source = format!(
+        "{production}\n#[cfg(test)]\nmod tests {{\n    use super::*;\n    #[test]\n    fn t() {{ {test_body} }}\n}}\n"
+    );
+    let path = Path::new("src/lib.rs");
+    let facts = RaRustSyntaxAdapter.summarize_file(path, &source)?;
+    let mut index = RustIndex::default();
+    index.extend_tests(facts.tests.iter().cloned());
+    index.extend_functions(facts.functions.iter().cloned());
+    index.insert_file_only(PathBuf::from(path), facts);
+    Ok(index)
+}
+
+/// Whether the owner-call relation credits the one test as a direct call of
+/// the one function whose symbol id ends in `owner_suffix`.
+fn direct(production: &str, owner_suffix: &str, test_body: &str) -> Result<bool, String> {
+    let index = parsed_index(production, test_body)?;
+    let functions = index.functions();
+    let mut owners = functions
+        .iter()
+        .filter(|function| function.id.0.ends_with(owner_suffix));
+    let (Some(owner), None) = (owners.next(), owners.next()) else {
+        return Err(format!("exactly one owner ends in `{owner_suffix}`"));
+    };
+    let tests = index.tests();
+    let (Some(test), None) = (tests.iter().next(), tests.iter().nth(1)) else {
+        return Err("exactly one test is indexed".to_string());
+    };
+    if !test.body.contains(owner.name.as_str()) {
+        return Err(format!("the test body names `{}`", owner.name));
+    }
+    Ok(owner_call_is_direct(test, owner, &index))
+}
+
+/// The issue's example: the by-value `IntoIterator::into_iter` takes
+/// `Foo::new(5).into_iter()` before the owner's `&self` step.
+#[test]
+fn a_standard_trait_method_of_the_name_withholds_the_relation() -> Result<(), String> {
+    let owner = "impl Peeky for Foo::into_iter";
+    let peeky = production("&self", "into_iter");
+    assert!(!direct(&peeky, owner, "let _ = Foo::new(5).into_iter();")?);
+    assert!(!direct(
+        &peeky,
+        owner,
+        "let foo = Foo::new(5); let _ = foo.into_iter();"
+    )?);
+    assert!(!direct(
+        &production("&mut self", "into_iter"),
+        owner,
+        "let _ = Foo::new(5).into_iter();"
+    )?);
+    Ok(())
+}
+
+/// The same impl under a name no standard trait has keeps the relation, and
+/// so does an owner taking `self` by value, which the first probing step
+/// tries.
+#[test]
+fn an_unlisted_name_or_a_by_value_owner_keeps_the_relation() -> Result<(), String> {
+    assert!(direct(
+        &production("&self", "peek_count"),
+        "impl Peeky for Foo::peek_count",
+        "let _ = Foo::new(5).peek_count();"
+    )?);
+    assert!(direct(
+        &production("self", "into_iter"),
+        "impl Peeky for Foo::into_iter",
+        "let _ = Foo::new(5).into_iter();"
+    )?);
+    Ok(())
+}
+
+/// A standard method at the owner's own probing step would make the call
+/// ambiguous, so it takes nothing: `ExactSizeIterator::len(&self)` leaves a
+/// `&self` owner named `len`, and withholds a `&mut self` one, which it
+/// precedes.
+#[test]
+fn only_an_earlier_probing_step_withholds_the_relation() -> Result<(), String> {
+    let owner = "impl Peeky for Foo::len";
+    let body = "let _ = Foo::new(5).len();";
+    assert!(direct(&production("&self", "len"), owner, body)?);
+    assert!(!direct(&production("&mut self", "len"), owner, body)?);
+    Ok(())
+}
+
+/// The standard trait's own impl is not its own rival.
+#[test]
+fn the_standard_traits_own_impl_keeps_the_relation() -> Result<(), String> {
+    assert!(direct(
+        &production("&self", "peek_count"),
+        "impl Iterator for Foo::next",
+        "let _ = Foo::new(5).next();"
+    )?);
+    Ok(())
+}
+
+/// A call through the owner's trait path names the owner's trait.
+#[test]
+fn a_call_through_the_trait_path_keeps_the_relation() -> Result<(), String> {
+    let peeky = production("&self", "into_iter");
+    let owner = "impl Peeky for Foo::into_iter";
+    for body in [
+        "let _ = Peeky::into_iter(&Foo::new(5));",
+        "let _ = crate::Peeky :: into_iter (&Foo::new(5));",
+        "let _ = <Foo as Peeky>::into_iter(&Foo::new(5));",
+    ] {
+        assert!(direct(&peeky, owner, body)?, "{body}");
+    }
+    Ok(())
+}
+
+/// Only a path ending in the owner's trait counts, outside comments and
+/// literals, and `Type<Trait>::name(` names no trait.
+#[test]
+fn only_the_owner_traits_path_counts() {
+    for body in [
+        "Peeky::into_iter(&foo)",
+        "x = self::Peeky::into_iter(&foo)",
+        "<Foo as Peeky>::into_iter(&foo)",
+        "< Foo as r#Peeky > :: r#into_iter (&foo)",
+    ] {
+        assert!(
+            calls_through_the_trait_path(body, "into_iter", "Peeky"),
+            "{body}"
+        );
+    }
+    for body in [
+        "foo.into_iter()",
+        "HasPeeky::into_iter(&foo)",
+        "Vec<Peeky>::into_iter(foo)",
+        "Peeky::into_iter_all(&foo)",
+        "// Peeky::into_iter(&foo)\nfoo.into_iter()",
+        "let s = \"Peeky::into_iter(&foo)\"; foo.into_iter()",
+        "Peeky::into_iter",
+    ] {
+        assert!(
+            !calls_through_the_trait_path(body, "into_iter", "Peeky"),
+            "{body}"
+        );
+    }
+}

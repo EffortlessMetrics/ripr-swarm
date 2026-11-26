@@ -42,6 +42,7 @@ mod operator_dispatch;
 mod parse_dispatch;
 mod path_arg;
 mod std_receiver;
+mod std_trait_rival;
 mod trait_receiver;
 pub(in crate::analysis::classify) use operator_dispatch::stringified_ranges;
 
@@ -8887,6 +8888,13 @@ fn owner_call_relation_reason_gated(
         } else {
             RelationReason::WeakTokenSubstring
         };
+    }
+    // #16040: a standard trait's method of the name is indexed nowhere, so
+    // the unique-name credit below cannot see it take the call first.
+    if !fmt_dispatch_resolved
+        && std_trait_rival::a_standard_trait_method_may_take_the_call(test, owner, owner_name)
+    {
+        return RelationReason::WeakTokenSubstring;
     }
     // The formatting dispatch already bound the value to this impl's type
     // and trait, and refused a second `fmt` for the same pair.
