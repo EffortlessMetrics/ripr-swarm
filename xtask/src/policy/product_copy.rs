@@ -352,8 +352,9 @@ mod tests {
     #[test]
     fn readme_first_run_admits_only_the_guarded_extracted_command() -> Result<(), String> {
         let head = "## The first useful run\n\n```bash\n";
+        // A stand-in for the snippet's download line; only the markdown is read.
         let install =
-            "curl -fsSLO \"$b/$f\" && \\\n  && export PATH=\"$PWD/ripr-bin:$PATH\" && \\\n";
+            "fetch -fsSLO \"$b/$f\" && \\\n  && export PATH=\"$PWD/ripr-bin:$PATH\" && \\\n";
         let block = |body: &str| readme_first_run_command(&format!("{head}{body}```\n"));
         if block(&format!("{install}  && ./ripr-bin/ripr check\n"))? != "ripr check" {
             return Err("the guarded extracted command must read as `ripr check`".to_string());
