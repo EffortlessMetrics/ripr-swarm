@@ -503,7 +503,11 @@ fn offenders_in_production(relative: &str, body: &str) -> BTreeSet<String> {
     keys
 }
 
-fn source_files(dir: &Path, out: &mut Vec<PathBuf>) -> Result<(), String> {
+/// Every `.rs` file under `dir`, paired with whether its text is scanned.
+/// Test-named files and `tests`/`testing` directories are not scanned, but
+/// they stay in the module graph: a production-looking file reached only
+/// through one of them is test-only too (#16361 review).
+fn source_files(dir: &Path, scan: bool, out: &mut Vec<(PathBuf, bool)>) -> Result<(), String> {
     let entries =
         std::fs::read_dir(dir).map_err(|error| format!("read {}: {error}", dir.display()))?;
     for entry in entries {
@@ -511,12 +515,11 @@ fn source_files(dir: &Path, out: &mut Vec<PathBuf>) -> Result<(), String> {
         let path = entry.path();
         let name = entry.file_name().to_string_lossy().to_string();
         if path.is_dir() {
-            if name == "tests" || name == "testing" {
-                continue;
-            }
-            source_files(&path, out)?;
-        } else if name.ends_with(".rs") && name != "tests.rs" && !name.ends_with("_tests.rs") {
-            out.push(path);
+            let scan = scan && name != "tests" && name != "testing";
+            source_files(&path, scan, out)?;
+        } else if name.ends_with(".rs") {
+            let scan = scan && name != "tests.rs" && !name.ends_with("_tests.rs");
+            out.push((path, scan));
         }
     }
     Ok(())
@@ -670,11 +673,11 @@ fn current_offenders(src: &Path) -> Result<BTreeMap<String, BTreeSet<String>>, S
     let src = src
         .canonicalize()
         .map_err(|error| format!("resolve {}: {error}", src.display()))?;
-    let mut files = Vec::new();
-    source_files(&src, &mut files)?;
+    let mut all_files = Vec::new();
+    source_files(&src, true, &mut all_files)?;
     let mut modules = BTreeMap::new();
     let mut found = Vec::new();
-    for path in &files {
+    for (path, scan) in &all_files {
         let relative = format!(
             "crates/ripr/src/{}",
             path.strip_prefix(&src)
@@ -693,6 +696,9 @@ fn current_offenders(src: &Path) -> Result<BTreeMap<String, BTreeSet<String>>, S
             let children = module_children(&file, &tree);
             modules.insert(file, children);
         }
+        if !scan {
+            continue;
+        }
         let keys = offenders_in_production(&relative, &without_test_items(&source, &tree));
         if !keys.is_empty() {
             found.push((path, relative, keys));
@@ -708,6 +714,13 @@ fn current_offenders(src: &Path) -> Result<BTreeMap<String, BTreeSet<String>>, S
                 .chain(&children.ordinary)
                 .map(|child| &child.path)
         })
+        .collect();
+    // Only scanned files can be standalone roots; an unscanned test file
+    // must not make the files it declares look like production.
+    let files: Vec<PathBuf> = all_files
+        .iter()
+        .filter(|(_, scan)| *scan)
+        .map(|(path, _)| path.clone())
         .collect();
     let mut roots: Vec<_> = files
         .iter()
@@ -1186,6 +1199,42 @@ fn scan_excludes_nested_test_rows_and_keeps_production_rows()
     assert_eq!(
         keys,
         BTreeSet::from(["crates/ripr/src/rows.rs|production row is missing".into(),])
+    );
+    Ok(())
+}
+
+#[test]
+fn scan_follows_modules_declared_by_an_unscanned_test_file()
+-> Result<(), Box<dyn std::error::Error>> {
+    // A test-named file is not scanned, but the module it declares is reached
+    // only through a test-only path, so it is test-only too.
+    let test_only = scan_module_fixture(&[
+        (
+            "lib.rs",
+            r#"#[cfg(test)] #[path = "driver_tests.rs"] mod driver;"#,
+        ),
+        ("driver_tests.rs", "mod helper;"),
+        (
+            "helper.rs",
+            r#"fn f() { Err("fixture widget is missing"); }"#,
+        ),
+    ])?;
+    assert_eq!(test_only, BTreeSet::new());
+    // Control: a production declaration of the same file keeps it visible.
+    let shared = scan_module_fixture(&[
+        (
+            "lib.rs",
+            r#"mod helper; #[cfg(test)] #[path = "driver_tests.rs"] mod driver;"#,
+        ),
+        ("driver_tests.rs", "mod helper;"),
+        (
+            "helper.rs",
+            r#"fn f() { Err("fixture widget is missing"); }"#,
+        ),
+    ])?;
+    assert_eq!(
+        shared,
+        BTreeSet::from(["crates/ripr/src/helper.rs|fixture widget is missing".into()])
     );
     Ok(())
 }
