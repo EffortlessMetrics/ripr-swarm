@@ -1662,6 +1662,20 @@ fn six_step_agent_contract(reported: ReportedRun) -> Result<(), String> {
         "{status}"
     );
     let test_run = &status["test_run"];
+    // The aggregate `agent status --json` document carries the same reading
+    // and conforms to the published schema in every variant (#16311).
+    let published = stdout_json(&run(&["agent", "status", "--root", ".", "--json"])?)?;
+    let schema = published_schema::read("schemas/ripr/agent-status.schema.json")?;
+    assert_eq!(
+        published_schema::unsupported_keywords(&schema),
+        Vec::<String>::new()
+    );
+    published_schema::check(&published, &schema, &schema, "agent_status")?;
+    assert_eq!(
+        published["test_run"].get("edited_test"),
+        test_run.get("edited_test"),
+        "{published}"
+    );
     let aggregate = run(&["status", "--root", "."])?;
     let aggregate = String::from_utf8_lossy(&aggregate.stdout).to_string();
     let counts = |passed: u64, failed: u64| {
@@ -1849,6 +1863,9 @@ fn ripr_fixture_head(fixture: &Fixture) -> Result<String, String> {
 
 #[path = "common/repair_start_fixture.rs"]
 mod repair_start_fixture;
+
+#[path = "common/published_schema.rs"]
+mod published_schema;
 
 /// The packet gate and the compact inspection card keep their own contracts.
 /// An approved proposal on the card does not permit preparing a transaction

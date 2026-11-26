@@ -252,6 +252,33 @@ pub(crate) fn read_retained_focused_run(
     })
 }
 
+/// Whether a supplied focused-run record makes the same claim as the pending
+/// record an interrupted finish retained. Equal bytes match. A pending record
+/// written before #16311 carries no `edited_test` reading, which is derived
+/// from the same inputs, so it matches a supplied record that differs only by
+/// that reading; every other field must still be equal.
+pub(crate) fn same_focused_claim(supplied: &str, pending: &str) -> bool {
+    if supplied == pending {
+        return true;
+    }
+    let (Ok(mut supplied), Ok(pending)) = (
+        serde_json::from_str::<Value>(supplied),
+        serde_json::from_str::<Value>(pending),
+    ) else {
+        return false;
+    };
+    if pending.get("edited_test").is_some() {
+        return false;
+    }
+    match supplied.as_object_mut() {
+        Some(object) => {
+            object.remove("edited_test");
+        }
+        None => return false,
+    }
+    supplied == pending
+}
+
 /// Validate a caller-supplied focused result against the attempt's scope.
 /// Every refusal names the cause and the recovery; nothing is recorded.
 pub(crate) fn validate_focused_run(
@@ -398,7 +425,14 @@ pub(crate) fn validate_focused_run(
     let edited = scope
         .baseline_source
         .and_then(|before| edit_coverage::edited_tests(scope.file, before, scope.file_source));
-    let edited_test = edit_coverage::coverage(scope.file, edited.as_ref(), &ran_tests).as_str();
+    // The coverage reading attributes each counted test exactly as the gate
+    // above counted it, so a declared test target outside `tests/` reads the
+    // same as a conventional one.
+    let ran_internal: Vec<&str> = ran_tests
+        .iter()
+        .filter_map(|name| file_internal_name(name, &name_scope))
+        .collect();
+    let edited_test = edit_coverage::coverage(edited.as_ref(), &ran_internal).as_str();
     Ok(FocusedRunRecord {
         schema_version: FOCUSED_RUN_SCHEMA_VERSION,
         kind: FOCUSED_RUN_RECORD_KIND,
@@ -486,6 +520,19 @@ fn name_scope(scope: &FocusedRunScope<'_>) -> Result<NameScope, String> {
                 None => NameScope::Nothing,
             })
         }
+    }
+}
+
+/// The file-internal name `analysis::executable_test_function_names` reports
+/// for a counted libtest name, under the attribution `name_is_in_scope` used.
+fn file_internal_name<'a>(name: &'a str, scope: &NameScope) -> Option<&'a str> {
+    match scope {
+        NameScope::AnyPath => Some(name),
+        NameScope::Prefix(prefix) => {
+            let (_, file_parts) = prefix.split_last()?;
+            file_internal_path(name, &file_parts.join("::"))
+        }
+        NameScope::Nothing => None,
     }
 }
 
@@ -763,6 +810,30 @@ mod tests {
             Ok(1),
             "{record:?}"
         );
+    }
+
+    /// #16311: the coverage reading attributes ran tests the way the gate
+    /// counted them, so a `[[test]]` target declared outside `tests/` reads
+    /// `covered` or `not_covered` rather than `unknown`.
+    #[test]
+    fn a_declared_target_outside_tests_reads_its_edited_test_coverage() {
+        let before = "#[test]\nfn adds() {}\n\nfn helper() {}\n";
+        let declared = FocusedRunScope {
+            file: "spec/math.rs",
+            baseline_source: Some(before),
+            ..scope(None)
+        };
+        let reading = |name: &str| {
+            let raw = document(
+                "attempt-1",
+                "abc123",
+                "spec/math.rs",
+                serde_json::json!([ok(name)]),
+            );
+            validate_focused_run(&raw, &declared).map(|record| record.edited_test)
+        };
+        assert_eq!(reading("subtracts"), Ok("covered"));
+        assert_eq!(reading("adds"), Ok("not_covered"));
     }
 
     #[test]
@@ -1075,6 +1146,21 @@ mod tests {
             }),
             "{with_new:?}"
         );
+    }
+
+    #[test]
+    fn a_legacy_pending_claim_matches_only_without_the_derived_reading() {
+        let legacy = "{\n  \"attempt_id\": \"a\",\n  \"passed\": 1,\n  \"failed\": 0\n}\n";
+        let current = "{\n  \"attempt_id\": \"a\",\n  \"passed\": 1,\n  \"failed\": 0,\n  \"edited_test\": \"covered\"\n}\n";
+        let changed = "{\n  \"attempt_id\": \"a\",\n  \"passed\": 0,\n  \"failed\": 1,\n  \"edited_test\": \"covered\"\n}\n";
+        let other = "{\n  \"attempt_id\": \"a\",\n  \"passed\": 1,\n  \"failed\": 0,\n  \"edited_test\": \"unknown\"\n}\n";
+        assert!(same_focused_claim(current, current));
+        // A pre-#16311 pending record: only the derived reading may differ.
+        assert!(same_focused_claim(current, legacy));
+        assert!(!same_focused_claim(changed, legacy));
+        // A current pending record keeps the exact byte comparison.
+        assert!(!same_focused_claim(other, current));
+        assert!(!same_focused_claim("not json", legacy));
     }
 
     #[test]

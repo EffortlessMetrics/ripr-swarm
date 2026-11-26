@@ -32,6 +32,9 @@ pub(crate) fn issued_test_run_json(
     reading.test_not_run().then(|| test_run_json(&reading))
 }
 
+/// What a failing run adds when none of its tests is the edited one (#16311).
+const NOT_COVERED_FAILURE: &str = "The reported run also did not include the test this attempt's edit added or changed, so that test has no reported run.";
+
 /// The counts of a caller-reported run, in the words the finish printed.
 pub(crate) fn reported_test_run_counts(run: &ReportedTestRun) -> String {
     format!(
@@ -45,7 +48,13 @@ pub(crate) fn reported_test_run_counts(run: &ReportedTestRun) -> String {
 pub(crate) fn reported_test_run_next_step(run: &ReportedTestRun) -> String {
     const BOUND: &str = "ripr checked that the result is bound to this attempt, its HEAD and the test file; it did not run or observe the tests, and the receipt's static movement is separate evidence.";
     if run.failed > 0 {
-        "The reported run has a failing test: make the focused test pass before keeping it. Static movement `improved` does not establish a passing test.".to_string()
+        let failing = "The reported run has a failing test: make the focused test pass before keeping it. Static movement `improved` does not establish a passing test.";
+        // #16311: a failing sibling must not hide that the edited test has
+        // no reported run.
+        match run.edited_test {
+            Some("not_covered") => format!("{failing} {NOT_COVERED_FAILURE}"),
+            _ => failing.to_string(),
+        }
     } else {
         // #16311: say whether the run included a test the edit added or
         // changed, when ripr could tell.
@@ -81,7 +90,11 @@ pub(crate) fn next_step_after_reported_run(
     match run {
         Some(run) if receipt_status == Some("advisory") && movement == Some("improved") => {
             if run.failed > 0 {
-                "Make the focused test pass before keeping it; ripr did not run it. A fix that edits the patch leaves this receipt stale, so do not include it in review; re-check the gap with `ripr check` after the fix.".to_string()
+                let fix = "Make the focused test pass before keeping it; ripr did not run it. A fix that edits the patch leaves this receipt stale, so do not include it in review; re-check the gap with `ripr check` after the fix.";
+                match run.edited_test {
+                    Some("not_covered") => format!("{fix} {NOT_COVERED_FAILURE}"),
+                    _ => fix.to_string(),
+                }
             } else {
                 // #16311: credit the edited test only when the finish saw it
                 // among the ran tests.
@@ -209,6 +222,24 @@ mod tests {
         assert!(reported_test_run_next_step(&missed).starts_with("None of the reported tests"));
         for unknown in [with(Some("unknown")), with(None)] {
             assert!(next(&unknown).starts_with("Confirm the reported run included"));
+        }
+        // A failing sibling still names the edited test's missing run.
+        let failed_sibling = ReportedTestRun {
+            edited_test: Some("not_covered"),
+            ..run(0, 1)
+        };
+        let failed_edited = ReportedTestRun {
+            edited_test: Some("covered"),
+            ..run(0, 1)
+        };
+        for (failed, names_missing) in [(&failed_sibling, true), (&failed_edited, false)] {
+            let status_step = reported_test_run_next_step(failed);
+            let finish_step = next(failed);
+            assert!(status_step.starts_with("The reported run has a failing test"));
+            assert!(finish_step.starts_with("Make the focused test pass"));
+            for text in [&status_step, &finish_step] {
+                assert_eq!(text.contains(NOT_COVERED_FAILURE), names_missing, "{text}");
+            }
         }
         assert!(
             test_run_json(&reading(Some(with(None))))

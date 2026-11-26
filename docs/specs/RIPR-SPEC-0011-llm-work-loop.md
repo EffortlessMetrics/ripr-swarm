@@ -957,8 +957,17 @@ whether a ran test is among the added or changed ones:
 
 CLI status and MCP receipt status project it in `test_run`. A record retained
 before this amendment omits it. The finish's next step credits the edited test
-only on `covered`, names the missing run on `not_covered`, and asks the caller
-to confirm otherwise. ripr runs nothing, and the reading never changes `status`.
+only on `covered`, names the missing run on `not_covered` (after a failing run
+too, so a failing sibling never hides it), and asks the caller to confirm
+otherwise. ripr runs nothing, and the reading never changes `status`.
+
+The reading attributes each counted test the way the focused-run gate counted
+it, so a test target declared outside `tests/` reads like a conventional one.
+A file whose start or finish text defines an ambiguous duplicate test identity,
+such as `cfg` twins of one test, reads `unknown`: removing one twin must not
+make the survivor look added. An interrupted finish retained before this
+amendment carries no reading; its retry matches a supplied record that differs
+only by `edited_test`, and every other field must still be equal.
 
 ## Amendment (#16263): the finish's next step reads the reported run back
 

@@ -16671,9 +16671,11 @@ Field contract:
   and otherwise says that ripr checked the result's binding and did not run or
   observe the tests. Since #16311 it also adds `edited_test`: `covered` when a
   ran test is one the attempt's edit added or changed, `not_covered` when those
-  tests are known and none ran (`next_step` then says so), and `unknown` when
-  ripr could not tell which tests the edit changed (the selected file's start
-  text was not recoverable exactly, or the edit changed no test function). A
+  tests are known and none ran (`next_step` then says so, after a failing run
+  too), and `unknown` when ripr could not tell which tests the edit changed
+  (the selected file's start text was not recoverable exactly, either text
+  defines an ambiguous duplicate test such as `cfg` twins, or the edit changed
+  no test function). A
   record retained before #16311 omits it. The Markdown line then starts `Test run: reported by the
   caller, not run by ripr:`. The receipt's `verification.status` stays
   `verification_not_run` either way: the counts are the caller's claim, on a

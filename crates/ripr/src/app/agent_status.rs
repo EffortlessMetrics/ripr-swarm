@@ -257,7 +257,7 @@ pub(crate) enum AgentStatusAttemptReceipt {
     /// receipt owner. `path` is the exact artifact that was read.
     Issued {
         path: String,
-        reading: AgentReceiptReading,
+        reading: Box<AgentReceiptReading>,
     },
 }
 
@@ -350,7 +350,7 @@ impl AgentStatusReport {
             .iter()
             .filter_map(|attempt| match &attempt.receipt {
                 AgentStatusAttemptReceipt::Issued { reading, .. } if reading.test_not_run() => {
-                    Some((attempt.attempt_id.as_str(), reading))
+                    Some((attempt.attempt_id.as_str(), &**reading))
                 }
                 _ => None,
             })
@@ -612,7 +612,7 @@ fn attempt_receipt(
     match load_attempt_terminal_receipt(root, manifest) {
         AttemptTerminalReceipt::Issued { path, value } => AgentStatusAttemptReceipt::Issued {
             path,
-            reading: test_run::issued_reading(manifest, &value),
+            reading: Box::new(test_run::issued_reading(manifest, &value)),
         },
         AttemptTerminalReceipt::Unavailable { path, reason } => {
             AgentStatusAttemptReceipt::Unavailable { path, reason }
@@ -708,7 +708,7 @@ fn legacy_workflow_attempt_receipt(
     }
     AgentStatusAttemptReceipt::Issued {
         path: WORKFLOW_AGENT_RECEIPT_ARTIFACT.to_string(),
-        reading: AgentReceiptReading::from_value(receipt),
+        reading: Box::new(AgentReceiptReading::from_value(receipt)),
     }
 }
 
@@ -2902,7 +2902,7 @@ fn attempt_receipt_json(receipt: &AgentStatusAttemptReceipt) -> Value {
             Some(reason.as_str()),
         ),
         AgentStatusAttemptReceipt::Issued { path, reading } => {
-            (path.as_str(), Some(reading), None, false, None)
+            (path.as_str(), Some(&**reading), None, false, None)
         }
     };
     serde_json::json!({
@@ -3241,7 +3241,7 @@ pub(crate) fn build_agent_attempt_status(
     );
     let test_run = match &view.receipt {
         AgentStatusAttemptReceipt::Issued { reading, .. } if reading.test_not_run() => {
-            Some(reading.clone())
+            Some((**reading).clone())
         }
         _ => None,
     };
@@ -8327,7 +8327,7 @@ mod tests {
             attempt.command = None;
             attempt.receipt = AgentStatusAttemptReceipt::Issued {
                 path: "receipt.json".to_string(),
-                reading: improved(),
+                reading: Box::new(improved()),
             };
             attempt
         };
@@ -8375,17 +8375,17 @@ mod tests {
         let mut not_advisory = finished();
         not_advisory.receipt = AgentStatusAttemptReceipt::Issued {
             path: "receipt.json".to_string(),
-            reading: AgentReceiptReading {
+            reading: Box::new(AgentReceiptReading {
                 status: Some("invalid".to_string()),
                 ..improved()
-            },
+            }),
         };
         assert_eq!(report(not_advisory).status(), "incomplete");
 
         let mut open_gap = finished();
         open_gap.receipt = AgentStatusAttemptReceipt::Issued {
             path: "receipt.json".to_string(),
-            reading: open_gap_reading(),
+            reading: Box::new(open_gap_reading()),
         };
         assert_eq!(report(open_gap).status(), "incomplete");
     }
@@ -8444,7 +8444,7 @@ mod tests {
                 manifest_state: RepairAttemptState::ReadyToFinish,
                 receipt: || AgentStatusAttemptReceipt::Issued {
                     path: "receipt.json".to_string(),
-                    reading: open_gap_reading(),
+                    reading: Box::new(open_gap_reading()),
                 },
                 dto_class: crate::domain::NextActionClass::RetryCurrentSubject,
                 step: Some("repair_attempt_before"),
@@ -8475,7 +8475,7 @@ mod tests {
                 manifest_state: RepairAttemptState::ReadyToFinish,
                 receipt: || AgentStatusAttemptReceipt::Issued {
                     path: "receipt.json".to_string(),
-                    reading: open_gap_reading(),
+                    reading: Box::new(open_gap_reading()),
                 },
                 dto_class: crate::domain::NextActionClass::InspectDetails,
                 step: None,
@@ -8485,7 +8485,7 @@ mod tests {
                 manifest_state: RepairAttemptState::ReadyToFinish,
                 receipt: || AgentStatusAttemptReceipt::Issued {
                     path: "receipt.json".to_string(),
-                    reading: open_gap_reading(),
+                    reading: Box::new(open_gap_reading()),
                 },
                 dto_class: crate::domain::NextActionClass::TerminalNoAction,
                 step: None,
@@ -8495,7 +8495,7 @@ mod tests {
                 manifest_state: RepairAttemptState::ReadyToFinish,
                 receipt: || AgentStatusAttemptReceipt::Issued {
                     path: "receipt.json".to_string(),
-                    reading: open_gap_reading(),
+                    reading: Box::new(open_gap_reading()),
                 },
                 dto_class: crate::domain::NextActionClass::TerminalNoAction,
                 step: None,
@@ -8752,7 +8752,7 @@ mod tests {
                     path:
                         "target/ripr/repair-attempts/repair-attempt-01/artifacts/agent-receipt.json"
                             .to_string(),
-                    reading: open_gap_reading(),
+                    reading: Box::new(open_gap_reading()),
                 }),
             },
             Row {
@@ -8883,7 +8883,7 @@ mod tests {
             let mut attempt = synthetic_attempt(id, &format!("seam-{id}"), "finished", None);
             attempt.receipt = AgentStatusAttemptReceipt::Issued {
                 path: format!("{id}/receipt.json"),
-                reading,
+                reading: Box::new(reading),
             };
             attempt
         };

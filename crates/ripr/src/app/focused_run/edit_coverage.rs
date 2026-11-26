@@ -5,11 +5,11 @@
 //! file, so a passing sibling test satisfies it. This reading compares the
 //! file's executable tests at attempt start with those at finish and asks
 //! whether a ran test is among the added or changed ones. It fails closed: a
-//! start text it cannot recover exactly, a file that does not parse, an edit
-//! that changed no test item, or a libtest path it cannot attribute all read
-//! as `unknown`, never as covered.
+//! start text it cannot recover exactly, a file that does not parse, a file
+//! with an ambiguous duplicate test identity (such as `cfg` twins), an edit
+//! that changed no test item, or a run with no attributed test all read as
+//! `unknown`, never as covered.
 
-use super::{file_internal_path, file_module_path};
 use crate::edit_cage::AttemptBaseline;
 use sha2::{Digest as _, Sha256};
 use std::collections::BTreeSet;
@@ -70,11 +70,12 @@ pub(crate) fn baseline_source(
 }
 
 /// File-internal names of the executable tests the edit added or whose body
-/// changed. `None` when either text does not parse.
+/// changed. `None` when either text does not parse or defines an ambiguous
+/// duplicate test identity, which the comparison cannot attribute.
 pub(crate) fn edited_tests(file: &str, before: &str, after: &str) -> Option<BTreeSet<String>> {
     let path = Path::new(file);
-    let before = crate::analysis::executable_test_function_bodies(path, before).ok()?;
-    let after = crate::analysis::executable_test_function_bodies(path, after).ok()?;
+    let before = crate::analysis::executable_test_function_bodies(path, before).ok()??;
+    let after = crate::analysis::executable_test_function_bodies(path, after).ok()??;
     Some(
         after
             .into_iter()
@@ -84,23 +85,17 @@ pub(crate) fn edited_tests(file: &str, before: &str, after: &str) -> Option<BTre
     )
 }
 
-/// Whether any ran libtest name is one of `edited`.
-pub(crate) fn coverage(
-    file: &str,
-    edited: Option<&BTreeSet<String>>,
-    ran: &[String],
-) -> EditedTestCoverage {
-    let (Some(edited), Some(prefix)) = (edited, file_module_path(file)) else {
+/// Whether any ran test is one of `edited`. `ran` holds the file-internal
+/// names of the counted tests, attributed the way the focused-run gate
+/// counted them; an empty `ran` means none could be attributed.
+pub(crate) fn coverage(edited: Option<&BTreeSet<String>>, ran: &[&str]) -> EditedTestCoverage {
+    let Some(edited) = edited else {
         return EditedTestCoverage::Unknown;
     };
-    if edited.is_empty() {
+    if edited.is_empty() || ran.is_empty() {
         return EditedTestCoverage::Unknown;
     }
-    let prefix = prefix.join("::");
-    if ran
-        .iter()
-        .any(|name| file_internal_path(name, &prefix).is_some_and(|path| edited.contains(path)))
-    {
+    if ran.iter().any(|name| edited.contains(*name)) {
         EditedTestCoverage::Covered
     } else {
         EditedTestCoverage::NotCovered
@@ -112,10 +107,6 @@ mod tests {
     use super::*;
 
     const BEFORE: &str = "#[test]\nfn below() { assert_eq!(1, 1); }\n";
-
-    fn names(items: &[&str]) -> Vec<String> {
-        items.iter().map(|item| item.to_string()).collect()
-    }
 
     #[test]
     fn an_added_or_changed_test_is_edited_and_an_untouched_sibling_is_not() {
@@ -132,42 +123,36 @@ mod tests {
             Some(BTreeSet::new())
         );
         assert_eq!(edited_tests("tests/p.rs", BEFORE, "fn broken( {"), None);
+        // Removing one `cfg` twin leaves the survivor looking added; the
+        // ambiguous start text reads as unattributable instead.
+        let twins = "#[cfg(unix)]\n#[test]\nfn os() { assert_eq!(1, 1); }\n#[cfg(not(unix))]\n#[test]\nfn os() { assert_eq!(2, 2); }\n";
+        let survivor = "#[cfg(unix)]\n#[test]\nfn os() { assert_eq!(1, 1); }\n";
+        assert_eq!(edited_tests("tests/p.rs", twins, survivor), None);
+        assert_eq!(edited_tests("tests/p.rs", survivor, twins), None);
+        assert_eq!(
+            edited_tests("tests/p.rs", survivor, survivor),
+            Some(BTreeSet::new())
+        );
     }
 
     #[test]
     fn only_a_ran_edited_test_covers_the_edit() {
         let edited = BTreeSet::from(["boundary".to_string()]);
-        let file = "tests/p.rs";
         assert_eq!(
-            coverage(file, Some(&edited), &names(&["below", "boundary"])),
+            coverage(Some(&edited), &["below", "boundary"]),
             EditedTestCoverage::Covered
         );
         assert_eq!(
-            coverage(file, Some(&edited), &names(&["below"])),
+            coverage(Some(&edited), &["below"]),
             EditedTestCoverage::NotCovered
         );
+        assert_eq!(coverage(None, &["boundary"]), EditedTestCoverage::Unknown);
         assert_eq!(
-            coverage(file, None, &names(&["boundary"])),
+            coverage(Some(&BTreeSet::new()), &["boundary"]),
             EditedTestCoverage::Unknown
         );
-        assert_eq!(
-            coverage(file, Some(&BTreeSet::new()), &names(&["boundary"])),
-            EditedTestCoverage::Unknown
-        );
-        // A file whose libtest path cannot be derived reads as unknown.
-        assert_eq!(
-            coverage("src/bin/tool.rs", Some(&edited), &names(&["boundary"])),
-            EditedTestCoverage::Unknown
-        );
-        let inline = BTreeSet::from(["tests::boundary".to_string()]);
-        assert_eq!(
-            coverage(
-                "src/pricing.rs",
-                Some(&inline),
-                &names(&["pricing::tests::boundary"])
-            ),
-            EditedTestCoverage::Covered
-        );
+        // No attributed ran test reads as unknown, never as not covered.
+        assert_eq!(coverage(Some(&edited), &[]), EditedTestCoverage::Unknown);
         for coverage in [
             EditedTestCoverage::Covered,
             EditedTestCoverage::NotCovered,
