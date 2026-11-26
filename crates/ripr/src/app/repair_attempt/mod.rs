@@ -1845,14 +1845,14 @@ pub(crate) struct BeforeRepairAttemptIdentity {
 impl BeforeRepairAttemptIdentity {
     pub(crate) fn prepare(root: &Path, seam_id: &str) -> Result<Self, String> {
         if seam_id.trim().is_empty() {
-            return Err("repair attempt requires a non-empty seam ID".to_string());
+            return Err("repair attempt requires a non-empty seam ID; pass --seam-id with an ID from `ripr agent status` or `ripr pilot --root .`".to_string());
         }
         let canonical_root = root
             .canonicalize()
             .map_err(|error| format!("canonicalize repair attempt root failed: {error}"))?;
         let repository_head =
             crate::agent::artifact::current_git_head(&canonical_root).map_err(|error| {
-                format!("repair attempt requires a concrete repository HEAD: {error}")
+                format!("repair attempt requires a concrete repository HEAD: {error}; commit the repository at least once, then rerun")
             })?;
         let created_unix_ms = current_unix_ms()?;
         let nonce = ATTEMPT_NONCE.fetch_add(1, Ordering::Relaxed);
@@ -1883,7 +1883,7 @@ pub(crate) fn begin_repair_attempt_with(
     options: BeginRepairAttemptOptions<'_>,
 ) -> Result<BeginRepairAttemptResult, String> {
     if options.seam_id.trim().is_empty() {
-        return Err("repair attempt requires a non-empty seam ID".to_string());
+        return Err("repair attempt requires a non-empty seam ID; pass --seam-id with an ID from `ripr agent status` or `ripr pilot --root .`".to_string());
     }
     if options.sources.is_empty() {
         return Err("repair attempt requires at least one before-phase artifact".to_string());
@@ -1925,7 +1925,7 @@ fn begin_repair_attempt_inner(
         store,
     } = options;
     if seam_id.trim().is_empty() {
-        return Err("repair attempt requires a non-empty seam ID".to_string());
+        return Err("repair attempt requires a non-empty seam ID; pass --seam-id with an ID from `ripr agent status` or `ripr pilot --root .`".to_string());
     }
     if sources.is_empty() {
         return Err("repair attempt requires at least one before-phase artifact".to_string());
@@ -1942,7 +1942,7 @@ fn begin_repair_attempt_inner(
     // path re-verifies after staging, and an A-B-A swap inside that window
     // is undetectable by commit comparison alone (#6822).
     let repository_identity = crate::agent::artifact::current_git_head_identity(canonical_root)
-        .map_err(|error| format!("repair attempt requires a concrete repository HEAD: {error}"))?;
+        .map_err(|error| format!("repair attempt requires a concrete repository HEAD: {error}; commit the repository at least once, then rerun"))?;
     let repository_head = repository_identity.head.clone();
     // Pre-publication head gate: compare the caller's verified pin against
     // the repository HEAD this publication would record, before the attempt
@@ -3767,7 +3767,7 @@ pub(crate) fn resolve_awaiting_repair_attempt_from(
             );
         }
         (None, None) => {
-            return Err("repair after selection requires an attempt ID or seam ID".to_string());
+            return Err("repair after selection requires an attempt ID or seam ID; pass --attempt ID, or --seam-id ID to select the one repair awaiting that gap".to_string());
         }
     };
     if manifest.state != RepairAttemptState::AwaitingEdit {
@@ -4205,7 +4205,7 @@ pub(crate) fn finish_repair_attempt_with_workflow_backups_from(
     let baseline: AttemptBaseline = serde_json::from_slice(&baseline_bytes)
         .map_err(|error| format!("decode edit-cage baseline failed: {error}; the staged baseline is damaged, so start a new attempt with `ripr agent repair`"))?;
     if baseline.root() != root {
-        return Err("edit-cage baseline root does not match selected repository".to_string());
+        return Err("edit-cage baseline root does not match selected repository; run from the repository the attempt was started in, or select that repository as the root".to_string());
     }
     // Head identity (not just HEAD) brackets the evaluation: an A-B-A
     // swap inside the window is undetectable by commit comparison alone,
@@ -4883,7 +4883,7 @@ fn select_awaiting_repair_attempt_by_seam(
     seam_id: &str,
 ) -> Result<(PathBuf, RepairAttemptManifest), String> {
     if seam_id.trim().is_empty() {
-        return Err("repair after selection requires a non-empty seam ID".to_string());
+        return Err("repair after selection requires a non-empty seam ID; pass the gap's --seam-id, or select the attempt with --attempt ID".to_string());
     }
     let manifests_root = store.resolved_path();
     let mut matches = Vec::new();
@@ -4959,7 +4959,7 @@ fn load_repair_attempt_by_id(
         .join(REPAIR_ATTEMPT_MANIFEST);
     if !path.is_file() {
         return Err(format!(
-            "repair attempt manifest not found for {} at {}",
+            "repair attempt manifest not found for {} at {}; check the --attempt ID and --store, or run `ripr agent status` to list attempts",
             attempt_id.as_str(),
             crate::output::path::human_path(&path)
         ));
@@ -4985,7 +4985,7 @@ fn load_repair_attempt_snapshot_by_id(
         .join(REPAIR_ATTEMPT_MANIFEST);
     if !path.is_file() {
         return Err(format!(
-            "repair attempt manifest not found for {} at {}",
+            "repair attempt manifest not found for {} at {}; check the --attempt ID and --store, or run `ripr agent status` to list attempts",
             attempt_id.as_str(),
             crate::output::path::human_path(&path)
         ));
@@ -5623,7 +5623,7 @@ fn validate_manifest_at(
         .canonicalize()
         .map_err(|error| format!("canonicalize declared manifest root failed: {error}"))?;
     if declared_root != root {
-        return Err("repair attempt manifest root does not match selected repository".to_string());
+        return Err("repair attempt manifest root does not match selected repository; run from the repository the attempt was started in, or select that repository as the root".to_string());
     }
     let expected_manifest = store
         .attempt_directory(&manifest.repair_attempt_id)

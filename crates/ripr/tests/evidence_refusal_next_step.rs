@@ -1,9 +1,11 @@
 //! Refusals for a missing or broken input file name where a usable one comes
 //! from, not just the read error: `ripr pr-evidence --check`,
 //! `ripr impacted-evidence --check`, `ripr baseline update`,
-//! `ripr calibrate cargo-mutants` and `ripr check --suppression-policy`. Each case runs the real binary in a scratch directory and
-//! pins the next-step clause, so a regression that drops it fails here rather
-//! than only in the looser action-word floor (`refusal_next_step.rs`).
+//! `ripr calibrate cargo-mutants`, `ripr check --suppression-policy` and the
+//! `ripr agent repair` attempt selectors. Each case runs the real binary in a
+//! scratch directory and pins the next-step clause, so a regression that drops
+//! it fails here rather than only in the looser action-word floor
+//! (`refusal_next_step.rs`).
 
 #[path = "common/mod.rs"]
 mod common;
@@ -312,6 +314,67 @@ fn suppression_policy_refusals_name_the_fix() -> Result<(), String> {
         &[
             "bad.toml` is invalid; fix each problem listed below, then rerun:\n",
             "unsupported `[[suppressions]]` field `bogus`",
+        ],
+    )
+}
+
+/// An unknown `--attempt` names how to find the right one, and a repository
+/// with no commit says to commit before a repair attempt can bind HEAD.
+#[test]
+fn agent_repair_attempt_refusals_name_the_fix() -> Result<(), String> {
+    let repo = committed_repo()?;
+    let stderr = refusal(
+        &repo.0,
+        &[
+            "agent",
+            "repair",
+            "--root",
+            ".",
+            "--attempt",
+            "repair-attempt-0123456789abcdef01234567",
+            "--phase",
+            "after",
+        ],
+    )?;
+    stderr_has_all(
+        &stderr,
+        &[
+            "repair attempt manifest not found for repair-attempt-0123456789abcdef01234567 at ",
+            "; check the --attempt ID and --store, or run `ripr agent status` to list attempts",
+        ],
+    )?;
+
+    let fresh = scratch()?;
+    git(&fresh.0, &["init", "-q"])?;
+    std::fs::write(
+        fresh.0.join("Cargo.toml"),
+        "[package]\nname = \"fixture\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+    )
+    .map_err(|error| format!("write Cargo.toml: {error}"))?;
+    std::fs::create_dir_all(fresh.0.join("src")).map_err(|error| format!("create src: {error}"))?;
+    std::fs::write(
+        fresh.0.join("src/lib.rs"),
+        "pub fn f(x: i32) -> i32 { x + 1 }\n",
+    )
+    .map_err(|error| format!("write lib.rs: {error}"))?;
+    let stderr = refusal(
+        &fresh.0,
+        &[
+            "agent",
+            "repair",
+            "--root",
+            ".",
+            "--seam-id",
+            "x",
+            "--phase",
+            "before",
+        ],
+    )?;
+    stderr_has_all(
+        &stderr,
+        &[
+            "repair attempt requires a concrete repository HEAD: ",
+            "; commit the repository at least once, then rerun",
         ],
     )
 }

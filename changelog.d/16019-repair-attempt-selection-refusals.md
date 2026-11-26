@@ -1,0 +1,2 @@
+<!-- section: Changed -->
+- `ripr agent repair` refusals for a wrong attempt selection now name the fix. An unknown `--attempt` says to check the ID and `--store` or run `ripr agent status`. A missing selector or empty seam ID says which flag to pass. An attempt from another repository says to run from (or select) the repository it started in. A repository with no commit says to commit once before starting an attempt (#16019).
