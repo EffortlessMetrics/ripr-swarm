@@ -165,6 +165,9 @@ Test discovery:
   suite is named by the computed-title placeholder `<computed title, line N>`
 - Jest/Vitest `test.each`, `it.each`, and table-driven variants when
   syntactically identifiable
+  - An inline generator function used as a row callback contributes no assertions.
+    Calling it returns an iterator without executing its body. This also applies
+    when the table cannot be resolved to literal rows (#14833).
   - An inline empty literal table (including erased TypeScript wrappers)
     registers no callback and contributes no test or descendant-suite evidence.
     Its dormant callback does not create a partial-extraction warning. Direct

@@ -250,6 +250,13 @@ pub(crate) fn table_row_assertions(
     let Expression::CallExpression(each_call) = &call.callee else {
         return None;
     };
+    // Calling a generator produces an iterator without executing its body.
+    // Keep the registration, but skip both row substitution and the caller's
+    // ordinary callback assertion fallback, even for an unresolved table.
+    if matches!(callback, oxc_ast::ast::Argument::FunctionExpression(function) if function.generator)
+    {
+        return Some(Vec::new());
+    }
     let text: &str = source;
     if !text
         .get(call.span.start as usize..call.span.end as usize)
