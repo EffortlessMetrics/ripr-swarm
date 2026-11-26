@@ -789,12 +789,21 @@ fn imported_json_wrapper_forwards_unless_json_is_rebound() -> Result<(), String>
         let diff = BULK_DIFF.replace("@@ -1,3 +1,3 @@", &format!("@@ -{0},3 +{0},3 @@", first));
         Ok((source, diff, first + 1))
     };
-    // `use serde_json::json;` with an audited locked release forwards.
-    let (source, diff, line) = with_prelude("use serde_json::json;")?;
-    for family in ["predicate", "return_value"] {
-        let finding = finding_with_dependencies(SERDE_JSON, AUDITED, &source, &diff, family)?;
-        assert_eq!(finding["probe"]["line"], line, "{finding}");
-        assert_eq!(finding["classification"], "exposed", "{finding}");
+    // `use serde_json::json;` with an audited locked release forwards, and
+    // so do the spellings that also import the crate itself under its own
+    // name, which rustfmt merges into one list (#16350).
+    for prelude in [
+        "use serde_json::json;",
+        "use serde_json::{self, json};",
+        "use serde_json::{self};\nuse serde_json::json;",
+        "use serde_json;\nuse serde_json::json;",
+    ] {
+        let (source, diff, line) = with_prelude(prelude)?;
+        for family in ["predicate", "return_value"] {
+            let finding = finding_with_dependencies(SERDE_JSON, AUDITED, &source, &diff, family)?;
+            assert_eq!(finding["probe"]["line"], line, "{prelude}\n{finding}");
+            assert_eq!(finding["classification"], "exposed", "{prelude}\n{finding}");
+        }
     }
     for (label, locked, prelude) in [
         // A release outside the audit.

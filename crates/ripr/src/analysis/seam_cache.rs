@@ -1550,7 +1550,8 @@ pub(crate) const COUNT_CACHE_SCHEMA_VERSION: &str = "0.2";
 /// `Any` (#16060); earlier candidates let the binding scan skip such a file.
 /// `1.67`: a grouped `self` import that binds `serde_json` from another
 /// path (`use other::serde_json::{self};`) is a `json` binding candidate
-/// (#10357); earlier candidates let the binding scan skip such a file.
+/// (#10357); earlier candidates let the binding scan skip such a file. The
+/// bare crate name (`use serde_json::{self, json};`) is not (#16350).
 pub(crate) const FILE_FACT_CACHE_SCHEMA_VERSION: &str = "1.67";
 
 /// Keep the best-effort classified-seam cache from turning a successful live

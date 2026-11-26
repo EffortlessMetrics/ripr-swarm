@@ -167,19 +167,33 @@ pub(super) fn json_namespace_rebound(node: &SyntaxNode) -> bool {
 /// The name a leaf use tree binds is its last path segment, or for a
 /// grouped `self` (`use other::serde_json::{self};`) the segment the group
 /// hangs from (#10357). Either spelling of `serde_json` binds the root,
-/// except `use serde_json::{self, ..};`, which names the extern crate itself.
+/// except a path that is the bare crate name itself (`use serde_json;`,
+/// `use serde_json::{self, ..};`, `use ::serde_json::{self};`), which names
+/// the extern crate under its own name (#16350). A `self` path segment is a
+/// keyword, not a name reference, so the path is read from its text.
 fn use_tree_binds_serde_json(tree: &ast::UseTree) -> bool {
-    let segments = super::use_tree_segments(tree);
-    let names: Vec<&str> = segments
-        .iter()
-        .map(|name| name.trim_start_matches("r#"))
+    let mut parts: Vec<String> = tree
+        .syntax()
+        .ancestors()
+        .filter_map(ast::UseTree::cast)
+        .filter_map(|tree| tree.path())
+        .map(|path| {
+            path.syntax()
+                .text()
+                .to_string()
+                .chars()
+                .filter(|c| !c.is_whitespace())
+                .collect()
+        })
         .collect();
-    match names.as_slice() {
-        [.., "serde_json"] => true,
-        ["serde_json", "self"] => false,
-        [.., "serde_json", "self"] => true,
-        _ => false,
+    parts.reverse();
+    let mut path = parts.join("::");
+    if let Some(parent) = path.strip_suffix("::self") {
+        path = parent.to_string();
     }
+    let path = path.replace("r#", "");
+    let bare = path.strip_prefix("::").unwrap_or(&path);
+    bare != "serde_json" && path.rsplit("::").next() == Some("serde_json")
 }
 
 #[cfg(test)]
@@ -207,6 +221,8 @@ mod tests {
             "use other::serde_json::{self};",
             "use other::{serde_json::{self}};",
             "use crate::serde_json::{self, json};",
+            "use self::serde_json;",
+            "use super::serde_json::{self};",
             "use other as serde_json;",
             "mod serde_json {}",
         ] {
@@ -217,6 +233,10 @@ mod tests {
             "use serde_json::{json, Value};",
             "use serde_json::{self, json};",
             "use ::serde_json::{self};",
+            "use serde_json::{self};",
+            "use serde_json;",
+            "use ::serde_json;",
+            "use r#serde_json::{self, json};",
             "use other::json;",
         ] {
             assert!(!rebinds(source), "{source}");
