@@ -1934,6 +1934,94 @@ fn interrupted_focused_recovery_refuses_changed_claim_and_partial_publication() 
     Ok(())
 }
 
+/// #16320: a finish interrupted under a ripr that predates the #16311
+/// `edited_test` reading leaves a pending record without that key. A retry
+/// with the same result resumes it, binding the record it retains, and a
+/// changed claim still refuses with the manifest unchanged. The legacy pending record is simulated by
+/// removing the key from the manifest this binary wrote; a second, older
+/// executable is not exercised here.
+#[cfg(all(target_os = "linux", target_env = "gnu"))]
+#[test]
+fn a_legacy_pending_claim_without_edited_test_resumes() -> Result<(), String> {
+    let (fixture, attempt) = edited_attempt("focused-legacy-pending")?;
+    let root = &fixture.root;
+    let input = result_document(
+        &attempt.id,
+        &head_sha(root)?,
+        PROPOSED_FILE,
+        serde_json::json!([ok_event("equality_boundary_discounts")]),
+    );
+    let result = write_result(root, "legacy-pending", &input)?;
+    let first = after_with_publication_hook(root, &attempt, &result, "stop-finish")?;
+    assert_eq!(first.status.code(), Some(77), "{}", combined(&first));
+
+    // Rewrite the pending record as a pre-#16311 finish retained it.
+    let manifest_path = root
+        .join("target/ripr/repair-attempts")
+        .join(&attempt.id)
+        .join("attempt.json");
+    let mut pending = manifest(root, &attempt)?;
+    let record_text = pending
+        .pointer("/after/focused_result/record")
+        .and_then(Value::as_str)
+        .ok_or("the interrupted finish retained no pending focused record")?
+        .to_string();
+    let mut record: Value =
+        serde_json::from_str(&record_text).map_err(|error| format!("parse record: {error}"))?;
+    let removed = record
+        .as_object_mut()
+        .and_then(|object| object.remove("edited_test"));
+    // This fixture's test file is new, so its start text is absent and the
+    // current finish reads `unknown`; any present reading is removed.
+    assert_eq!(removed, Some(Value::from("unknown")), "{record_text}");
+    let mut legacy_text =
+        serde_json::to_string_pretty(&record).map_err(|error| error.to_string())?;
+    legacy_text.push('\n');
+    *pending
+        .pointer_mut("/after/focused_result/record")
+        .ok_or("no pending record pointer")? = Value::from(legacy_text.clone());
+    let mut manifest_bytes =
+        serde_json::to_vec_pretty(&pending).map_err(|error| error.to_string())?;
+    manifest_bytes.push(b'\n');
+    fs::write(&manifest_path, &manifest_bytes).map_err(|error| error.to_string())?;
+
+    let changed_input = result_document(
+        &attempt.id,
+        &head_sha(root)?,
+        PROPOSED_FILE,
+        serde_json::json!([{ "type": "test", "event": "failed", "name": "equality_boundary_discounts" }]),
+    );
+    let changed = write_result(root, "legacy-changed-claim", &changed_input)?;
+    let refused = after_with(root, &attempt, &changed)?;
+    assert_eq!(refused.status.code(), Some(3), "{}", combined(&refused));
+    assert!(
+        combined(&refused).contains("differs from"),
+        "{}",
+        combined(&refused)
+    );
+    assert_eq!(manifest(root, &attempt)?, pending);
+
+    // Before a receipt, the retry restores the attempt and finishes again,
+    // so it retains the current record, and the manifest binds those bytes.
+    let retry = after_with(root, &attempt, &result)?;
+    assert!(retry.status.success(), "{}", combined(&retry));
+    let state = manifest(root, &attempt)?;
+    let retained = retained_terminal(root, &state, RESULT_ROLE)?;
+    let current: Value =
+        serde_json::from_str(&record_text).map_err(|error| format!("parse record: {error}"))?;
+    assert_eq!(retained, current);
+    let bound: Value = state
+        .pointer("/after/focused_result/record")
+        .and_then(Value::as_str)
+        .ok_or("the finished attempt binds no focused record")
+        .map_err(str::to_string)
+        .and_then(|text| {
+            serde_json::from_str(text).map_err(|error| format!("parse bound record: {error}"))
+        })?;
+    assert_eq!(bound, retained);
+    Ok(())
+}
+
 #[cfg(all(target_os = "linux", target_env = "gnu"))]
 #[test]
 fn interrupted_before_receipt_requires_and_retries_the_same_claim() -> Result<(), String> {
