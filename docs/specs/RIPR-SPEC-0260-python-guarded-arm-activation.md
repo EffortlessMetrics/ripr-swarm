@@ -157,9 +157,15 @@ For an edit to the alternatives of a literal or-pattern on a bare parameter,
 each added or removed alternative needs a strong row that changes the selected
 arm. A row must get past earlier arms and match the changed alternative under
 Python's pattern rules. Numeric patterns use equality and singleton patterns
-use identity. An unrelated assertion or an unbound input cannot supply a row.
+use identity: dropping `True` from `case 1 | True` changes no selected arm and
+gets no card, while dropping it from `case 2 | True` does. A row may pass its
+input as a literal expression, `1+2j` included. An unrelated assertion or an
+unbound input cannot supply a row.
 When a witness is missing, the finding withholds strong credit and names the
-first missing case. For example, removing `"y"` from `case "yes" | "y"` with
+first missing case. An altered alternative that an earlier arm or a guard
+keeps every input from reaching withholds strong credit without naming a
+case, because no row can select this arm through it. For example, removing
+`"y"` from `case "yes" | "y"` with
 rows only for `"yes"` and `"on"` gives `weakly_exposed` and `val == "y"`.
 
 ## Guarded self-field credit (#9833, #9868)

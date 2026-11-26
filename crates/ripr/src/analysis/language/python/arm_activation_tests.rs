@@ -461,6 +461,7 @@ fn literal_or_edit_requires_each_alternative_to_change_the_selected_arm() -> Res
         ("b'a' | b'b'", "b'a'", "b'b'", Exposed),
         ("2j | 1j", "2j", "3", WeaklyExposed),
         ("1+2j | 3", "3", "3", WeaklyExposed),
+        ("1+2j | 3", "3", "1+2j", Exposed),
         ("2 | True", "2", "1", WeaklyExposed),
         ("True | 1", "True", "True", WeaklyExposed),
         ("True | 1", "True", "1.0", Exposed),
@@ -479,6 +480,43 @@ fn literal_or_edit_requires_each_alternative_to_change_the_selected_arm() -> Res
             "{old} with {row}"
         );
     }
+
+    // A numeric pattern takes a boolean input by equality. Dropping or adding
+    // the boolean beside it changes no selected arm, like a repeated
+    // alternative; beside a singleton pattern the numeric one still does.
+    for (old, new, row, class, missing) in [
+        ("1 | True", "1", "True", Exposed, false),
+        ("1 | True", "1", "1", Exposed, false),
+        ("0 | False", "0", "False", Exposed, false),
+        ("1", "1 | True", "True", Exposed, false),
+        ("True | 1", "True", "True", WeaklyExposed, true),
+        ("True | 1", "True", "1", Exposed, false),
+    ] {
+        let test = format!("def test_kind():\n    assert kind({row}) == True\n");
+        let finding = classify_case(old, new, "", &test)?;
+        assert_eq!(finding.class, class, "{old} to {new} with {row}");
+        assert_eq!(
+            !finding.activation.missing_discriminators.is_empty(),
+            missing,
+            "{old} to {new} with {row}: {finding:?}"
+        );
+    }
+
+    // An earlier arm takes the dropped alternative on both sides, so no input
+    // selects this arm through it and no case can be named. Credit stays
+    // withheld, because no row shows the arm's selection unchanged.
+    let shadowed = "        case 2:\n            return False\n";
+    let finding = classify_case(
+        "1 | 2",
+        "1",
+        shadowed,
+        "def test_kind():\n    assert kind(1) == True\n",
+    )?;
+    assert_eq!(finding.class, WeaklyExposed, "{finding:?}");
+    assert!(
+        finding.activation.missing_discriminators.is_empty(),
+        "{finding:?}"
+    );
     Ok(())
 }
 

@@ -204,6 +204,15 @@ pub(super) fn valid_owner_call(
     owner: &PythonOwner,
     call: &rustpython_parser::ast::ExprCall,
 ) -> bool {
+    valid_owner_call_with(owner, call, plain_argument)
+}
+
+/// `binds` decides which argument expressions bind a parameter.
+pub(super) fn valid_owner_call_with(
+    owner: &PythonOwner,
+    call: &rustpython_parser::ast::ExprCall,
+    binds: impl Fn(&rustpython_parser::ast::Expr) -> bool,
+) -> bool {
     let Some(skip) = receiver_skip(owner) else {
         return false;
     };
@@ -220,7 +229,7 @@ pub(super) fn valid_owner_call(
     }
     let mut bound = std::collections::BTreeSet::new();
     for (argument, parameter) in call.args.iter().zip(positional) {
-        if !plain_argument(argument) || !bound.insert(parameter.name.as_str()) {
+        if !binds(argument) || !bound.insert(parameter.name.as_str()) {
             return false;
         }
     }
@@ -232,7 +241,7 @@ pub(super) fn valid_owner_call(
             .iter()
             .any(|p| p.name == name && !p.positional_only)
             || !bound.insert(name)
-            || !plain_argument(&keyword.value)
+            || !binds(&keyword.value)
         {
             return false;
         }
@@ -254,7 +263,7 @@ pub(super) fn receiver_skip(owner: &PythonOwner) -> Option<usize> {
     }
 }
 
-fn plain_argument(value: &rustpython_parser::ast::Expr) -> bool {
+pub(super) fn plain_argument(value: &rustpython_parser::ast::Expr) -> bool {
     use rustpython_parser::ast::{self, Expr};
     match value {
         Expr::Constant(_) | Expr::Name(_) => true,

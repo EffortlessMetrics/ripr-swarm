@@ -56,12 +56,12 @@
         {"stage":"observe","state":"yes","confidence":"low"},
         {"stage":"discriminate","state":"weak","confidence":"low"}
       ],
-      "evidence_path": ["reach yes: 1 related Python test(s) found for owner `to_bool`", "infection weak: Related tests reach the changed predicate, but no strong related test call places an input at the changed boundary.", "propagation weak: Changed Python control flow can propagate by selecting a different branch; preview evidence does not prove the concrete downstream sink.", "observation yes: Strongest extracted Python oracle kind: `exact_value` (rank 5)", "discriminator weak: Related Python test uses an `exact_value` oracle, but static evidence does not establish discrimination of the changed behavior.", "local flow reaches unknown sink: case \"yes\": (line 3)", "related test tests/test_answer.py:7 test_to_bool uses strong exact value oracle: assert to_bool(val) == expected", "missing discriminator val == \"y\": No strong related test row establishes that this edit changes the arm selected by `match val`. Check earlier arms and pin the result for a distinguishing input."],
+      "evidence_path": ["reach yes: 1 related Python test(s) found for owner `to_bool`", "infection weak: Related tests reach the changed predicate, but no strong related test call places an input at the changed boundary.", "propagation weak: Changed Python control flow can propagate by selecting a different branch; preview evidence does not prove the concrete downstream sink.", "observation yes: Strongest extracted Python oracle kind: `exact_value` (rank 5)", "discriminator weak: Related Python test uses an `exact_value` oracle, but static evidence does not establish discrimination of the changed behavior.", "local flow reaches unknown sink: case \"yes\": (line 3)", "related test tests/test_answer.py:7 test_to_bool uses strong exact value oracle: assert to_bool(val) == expected", "missing discriminator val == \"y\": No strong related test row establishes that this edit changes the arm selected by `match val`. Check earlier arms and pin the result for a distinguishing input"],
       "flow_sinks": [
         {"kind":"unknown","text":"case \"yes\":","line":3}
       ],
       "evidence": ["owner: to_bool", "owner_kind: function", "missing_discriminator: val == \"y\"", "suggested_repair_action: strengthen_existing_test", "suggested_test_file: tests/test_answer.py", "suggested_test_name: test_to_bool", "suggested_test_node_id: tests/test_answer.py::test_to_bool", "suggested_verify_command: python -m pytest tests/test_answer.py::test_to_bool", "suggested_verify_command_confidence: high", "suggested_test_location_reason: strengthen existing weak pytest relation", "test_framework: pytest (test_to_bool)", "test_fixtures: expected, val (test_to_bool)", "test_parametrized: pytest (test_to_bool)", "test_verify_command: python -m pytest tests/test_answer.py::test_to_bool (test_to_bool)", "related_test_relation: syntactic_call (test_to_bool)", "test_oracle: exact_value strong (test_to_bool)"],
-      "missing": ["A strong Python oracle reaches `to_bool`, but static evidence does not place a related test input at the changed predicate boundary `val == \"y\"`. No strong related test row establishes that this edit changes the arm selected by `match val`. Check earlier arms and pin the result for a distinguishing input.."],
+      "missing": ["A strong Python oracle reaches `to_bool`, but static evidence does not place a related test input at the changed predicate boundary `val == \"y\"`. No strong related test row establishes that this edit changes the arm selected by `match val`. Check earlier arms and pin the result for a distinguishing input."],
       "assertion_texts": {
       },
       "activation": {
@@ -70,7 +70,7 @@
         "missing_discriminators": [
           {
             "value": "val == \"y\"",
-            "reason": "No strong related test row establishes that this edit changes the arm selected by `match val`. Check earlier arms and pin the result for a distinguishing input.",
+            "reason": "No strong related test row establishes that this edit changes the arm selected by `match val`. Check earlier arms and pin the result for a distinguishing input",
             "flow_sink": {"kind":"unknown","text":"case \"yes\":","line":3}
           }
         ]
@@ -80,7 +80,7 @@
       "missing_discriminators": [
         {
           "value": "val == \"y\"",
-          "reason": "No strong related test row establishes that this edit changes the arm selected by `match val`. Check earlier arms and pin the result for a distinguishing input.",
+          "reason": "No strong related test row establishes that this edit changes the arm selected by `match val`. Check earlier arms and pin the result for a distinguishing input",
           "flow_sink": {"kind":"unknown","text":"case \"yes\":","line":3}
         }
       ],

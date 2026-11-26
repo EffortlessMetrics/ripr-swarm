@@ -47,7 +47,7 @@ Evidence
   - related test tests/test_answer.py:7 test_to_bool uses strong exact value oracle: assert to_bool(val) == expected
 
 Weakness
-  - A strong Python oracle reaches `to_bool`, but static evidence does not place a related test input at the changed predicate boundary `val == "y"`. No strong related test row establishes that this edit changes the arm selected by `match val`. Check earlier arms and pin the result for a distinguishing input..
+  - A strong Python oracle reaches `to_bool`, but static evidence does not place a related test input at the changed predicate boundary `val == "y"`. No strong related test row establishes that this edit changes the arm selected by `match val`. Check earlier arms and pin the result for a distinguishing input
 
 Next step
   Python preview: strengthen the existing related test with a focused boundary assertion for the missing check `val == "y"`

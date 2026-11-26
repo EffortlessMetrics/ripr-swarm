@@ -275,7 +275,11 @@ fn pinned_input(
     } else if literal(expected).is_none() {
         return None;
     }
-    if !super::range_activation::valid_owner_call(owner, call) {
+    // A literal expression such as 1+2j binds as directly as a plain operand
+    // and can neither call the owner again nor raise.
+    let literal_or_plain =
+        |value: &Expr| super::range_activation::plain_argument(value) || literal(value).is_some();
+    if !super::range_activation::valid_owner_call_with(owner, call, literal_or_plain) {
         return None;
     }
     let callee = expr_full_name(&call.func)?;
@@ -332,8 +336,11 @@ pub(super) fn missing(
     if old.subject != new.subject || (old.alternatives.len() < 2 && new.alternatives.len() < 2) {
         return None;
     }
-    let changed =
-        |a: &Alternative, other: &Case| !other.alternatives.iter().any(|b| a.value == b.value);
+    // An alternative changes while no retained one takes its input: beside
+    // `case 1` a dropped `True` selects nothing new or lost.
+    let changed = |a: &Alternative, other: &Case| {
+        !other.alternatives.iter().any(|kept| kept.accepts(&a.value))
+    };
     let mut altered = old
         .alternatives
         .iter()
@@ -405,7 +412,7 @@ pub(super) fn missing(
     Some(PythonBoundaryEvidence {
         activation: BoundaryActivation::Missing,
         reason: format!(
-            "No strong related test row establishes that this edit changes the arm selected by `match {}`. Check earlier arms and pin the result for a distinguishing input.",
+            "No strong related test row establishes that this edit changes the arm selected by `match {}`. Check earlier arms and pin the result for a distinguishing input",
             new.subject
         ),
         discriminator,
