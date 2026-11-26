@@ -472,10 +472,14 @@ mod tests {
 fn a_test_generated_by_a_macro_naming_the_owner_names_the_macro_limit() -> Result<(), String> {
     let fixture = Fixture::new("generator", GENERATED)?;
     let finding = fixture.rate_finding()?;
-    // Fixture construction: the generated test is not indexed, so the only
-    // related test is the hand-written one sharing the file.
+    // #6649: the closure-callback generator is expanded and indexed, but its
+    // asserts sit on the closure parameter, which return-value oracle pairing
+    // does not yet bind. The macro-reach limit stays until that lands.
     assert!(
-        all_relations(&finding, crate::analysis::classify::is_proximity_only),
+        finding
+            .related_tests
+            .iter()
+            .any(|test| test.name == "rate_triples"),
         "{:?}",
         finding.related_tests
     );
