@@ -220,6 +220,7 @@
     "fixtures/evidence-promotion-honesty-corpus/reports/rust-repo-exposure-local-binder-named-like-owner-block-control.json",
     "fixtures/evidence-promotion-honesty-corpus/reports/rust-repo-exposure-matches-or-pattern-of-values.json",
     "fixtures/evidence-promotion-honesty-corpus/reports/rust-repo-exposure-matches-or-pattern-single-value-control.json",
+    "fixtures/evidence-promotion-honesty-corpus/reports/rust-repo-exposure-matches-compared-with-true.json",
     "fixtures/evidence-promotion-honesty-corpus/reports/rust-repo-exposure-wrapper-fed-error.json",
     "fixtures/evidence-promotion-honesty-corpus/reports/rust-repo-exposure-guarded-boundary-guard-missing.json",
     "fixtures/evidence-promotion-honesty-corpus/reports/rust-repo-exposure-unselected-match-arm.json",

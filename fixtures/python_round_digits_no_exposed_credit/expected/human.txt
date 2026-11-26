@@ -22,17 +22,19 @@ Start here:
   Gap ID (for scripts): gap:python:src/lib.py:money:return_value:return_value:round_x_3
   Changed behavior: return round(x, 3)
   Missing check (1 of 2): A strong Python oracle reaches `money`, but the edit only changes
-    `round(x, 2)` to `round(x, 3)`, and no strong related call passes `x` with more than 2 decimal
-    places; both versions return the same value for every related input, so static evidence cannot
-    confirm the change is discriminated. Add a test that calls `money` with `x` with more than 2
-    decimal places
+    `round(x, 2)` to `round(x, 3)`, and no strong related call is seen to pass `x` with a value that
+    `round(x, 2)` and `round(x, 3)` round differently, such as `1.234`; whether these tests would
+    notice the change is not established, so static evidence cannot confirm the change is
+    discriminated. Add a test that calls `money` with `x` with a value that `round(x, 2)` and
+    `round(x, 3)` round differently, such as `1.234`
   Related test: tests/test_lib.py:4 test_money
   Suggested test file: tests/test_lib.py
   Suggested test: test_money
   Test node: tests/test_lib.py::test_money
   Verify command (Bash): (cd -P -- <cwd>/fixtures/python_round_digits_no_exposed_credit/input && python -m pytest tests/test_lib.py::test_money) (high)
   Next step — Python preview: strengthen the existing related test with an exact return-value
-    assertion for the missing check `call `money` with `x` with more than 2 decimal places`
+    assertion for the missing check `call `money` with `x` with a value that `round(x, 2)` and
+    `round(x, 3)` round differently, such as `1.234``
   Evidence: reach yes · infection weak · propagation yes · observation weak · assertion weak
     Stages (static evidence): reach = test path to changed owner; infection = inputs can activate change;
       propagation = changed effect reaches output; observation = related test/assertion evidence;
@@ -45,7 +47,7 @@ Start here:
       found = listed for review; suppressed by your settings = hidden by your suppression policy;
       base-side = evidence from the old code, not an edit target; candidate line = changed line ripr considers
     - reach yes: 1 related Python test(s) found for owner `money`
-    - infection weak: Related tests reach the changed call, but no strong related test call passes `x` with more than 2 decimal places, so `round(x, 2)` and `round(x, 3)` return the…
+    - infection weak: Related tests reach the changed call, but no strong related test call is seen to pass `x` with a value that `round(x, 2)` and `round(x, 3)` round differently, such…
     - 5 more detail line(s) in --format human-full
 
 Next: drill into the top finding:

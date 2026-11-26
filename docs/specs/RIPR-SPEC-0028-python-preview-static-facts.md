@@ -2239,45 +2239,94 @@ Tests: `connective_swap_tests.rs::agreeing_operands_do_not_expose_an_and_or_swap
 
 A one-line edit whose only change picks another `strip`, `lstrip` or `rstrip`
 on a parameter with no arguments, or another literal digit count in
-`round(<parameter>, <int>)`, or flips the literal `reverse` flag alone on one
-`sorted(<parameter>)` or `<parameter>.sort()` call with no other argument
-(#16203), changes the result only for a string with whitespace on a side one
-version keeps, a number with more decimal places than the smaller count, or a
-collection holding two different elements. The parameter must be one the body
-never rebinds; for a sort, the changed line must also be the start of the first
+`round(<parameter>, <int>)` (a negative count rounds to tens and coarser; the
+count's sign is read on each side, so an edit that adds or removes the `-` is
+still one edit), or
+flips the literal `reverse` flag alone on one `sorted(<parameter>)` or
+`<parameter>.sort()` call with no other argument (#16203), changes the result
+only for a string with whitespace on a side one version keeps, a number the
+two counts round differently (an int spelling is read by exact decimal
+half-to-even rounding, a plain decimal float spelling likewise, except that
+Python rounds a float by the double it names, which can lie on either side of
+a decimal tie, so a float spelling on an exact tie at either count is not
+read; a count whose place lies past the value's leading digit rounds the value
+to zero; the reading stays within 15 significant digits, a spelling of 48
+digits and counts within ±20, and a number beyond those bounds, or in
+scientific notation, is not read, so the gate does not apply to it), or a
+collection holding
+two different elements,
+where two scalars agree only as Python compares them: an int spelling is the
+exact number and a float spelling is the nearest representable double, so
+above `2^53` `9007199254740993` and `9007199254740993.0` are unequal while
+`9007199254740992` and `9007199254740993.0` are equal. The parameter must be one the body never
+rebinds; for a sort, the changed line must also be the start of the first
 top-level body statement that names the parameter, and name it once, so the
-sort sees the collection the test passed; because Python normalizes
-identifiers, a non-ASCII parameter or statement before that line leaves the
-reading alone. A bare `round` or `sorted` must name
-the builtin (nothing in the owner's file rebinds it), the owner must not call
-itself, and a line inside a multiline string is never read as a call. When
-every strong related call binds the parameter to a plain literal the rule
-evaluates (a quoted string without escapes, an int or decimal float, or a list,
-tuple or set display the call itself spells, not a parametrize case value the
-test may change in place) and both versions give the same result, the edit
-reads `weakly_exposed` and the missing discriminator names the separating
-input. List elements agree only when they share a spelling or are plain strings
-or ints of equal value. A call the reader cannot resolve, or no resolved call
-at all, leaves the reading to the other rules.
+sort sees the collection the test passed. A body statement holding a
+non-ASCII character in code, outside strings and comments, may spell the
+parameter under Python's NFKC normalization or a confusable, so the
+first-mention scan abstains for that parameter and the sort gate does not
+fire (#16221). The scan also abstains for a statement the text reader
+cannot follow to its end (a single-line f-string whose quote pairing cannot
+be followed, or a field of a triple-quoted f-string it cannot prove closed),
+because a mention of the parameter after that place would be missed. The gate does not read a recursive owner (its own call can
+hand it an argument no test passes), an owner whose file rebinds `round`
+or `sorted` anywhere (the bare call may be that other function), or a
+changed line inside a multi-line string (its text is data). For a sort,
+only a display the call itself spells is read, not a parametrize case
+value the test may change in place. When every
+strong related call binds the parameter to a plain literal the rule
+evaluates (a quoted string without escapes, an int or decimal float within
+the bounds above, or a list, tuple or set display of scalars that the call
+itself spells, where a string element with an escape is compared as spelled,
+so two spellings of one text are two elements) and both
+versions give the same result, the edit reads `weakly_exposed` and the
+missing discriminator names an input the two versions treat differently; the
+messages say only that no related call is seen to pass it, not that the
+versions agree on every input. For a `round` count the message names a value
+the two counts round differently, never a wider set such as a number with
+more digits than the smaller count keeps, and it gives an example only when
+the same rule finds one the counts round differently inside the bounds
+above. A call the reader cannot resolve, an unreadable literal, or no
+resolved call at all, leaves the reading to the other rules.
 
 Tests: `call_variant_tests.rs::inputs_without_trailing_whitespace_do_not_expose_strip_to_lstrip`,
 `call_variant_tests.rs::an_input_with_trailing_whitespace_keeps_strip_to_lstrip_exposed`,
 `call_variant_tests.rs::inputs_within_the_smaller_digit_count_do_not_expose_a_round_change`,
+`call_variant_tests.rs::a_literal_both_counts_round_alike_does_not_expose_a_round_change`,
 `call_variant_tests.rs::an_input_with_more_decimals_keeps_a_round_change_exposed`,
+`call_variant_tests.rs::a_negative_count_agreeing_input_does_not_expose_a_round_change`,
+`call_variant_tests.rs::an_example_the_reader_cannot_read_is_left_out_of_the_message`,
+`call_variant_tests.rs::the_missing_check_names_an_input_the_counts_round_differently`,
+`call_variant_tests.rs::every_example_is_an_input_the_counts_round_differently`,
+`call_variant_tests.rs::a_count_that_changes_its_sign_is_read_as_one_edit`,
+`call_variant_tests.rs::a_sign_added_to_a_count_is_read_as_one_edit`,
+`call_variant_tests.rs::a_negative_count_off_grid_input_keeps_a_round_change_exposed`,
+`call_variant_tests.rs::a_recursive_owner_keeps_the_entry_rows_from_reading_agreement`,
+`call_variant_tests.rs::a_line_inside_a_multiline_string_is_not_read_as_a_call`,
+`call_variant_tests.rs::an_unrelated_non_ascii_string_does_not_block_the_sort_reading`,
 `call_variant_tests.rs::an_unread_argument_keeps_its_reading`,
 `call_variant_tests.rs::only_a_strip_side_or_round_digits_edit_on_a_name_is_read`,
 `call_variant_tests.rs::agreement_follows_python_strip_and_round`,
 `call_variant_tests.rs::lists_without_two_different_elements_do_not_expose_a_sort_direction_flip`,
 `call_variant_tests.rs::a_list_with_different_elements_keeps_a_sort_direction_flip_exposed`,
+`call_variant_tests.rs::a_list_python_compares_unequal_keeps_a_sort_direction_flip_exposed`,
+`call_variant_tests.rs::a_list_python_compares_equal_does_not_expose_a_sort_direction_flip`,
 `call_variant_tests.rs::an_unread_list_keeps_a_sort_direction_flip_exposed`,
 `call_variant_tests.rs::a_list_the_body_changes_before_the_sort_keeps_its_reading`,
+`call_variant_tests.rs::a_list_the_body_changes_where_the_text_reader_stops_short_keeps_a_sort_direction_flip_exposed`,
 `call_variant_tests.rs::only_a_lone_reverse_flag_flip_on_a_named_sort_is_read`,
 `call_variant_tests.rs::sorting_agrees_only_without_two_different_elements`,
 `call_variant_tests.rs::a_module_round_or_sorted_keeps_its_reading`,
+`call_variant_tests.rs::a_module_that_defines_round_is_not_read_as_the_builtin`,
 `call_variant_tests.rs::a_parametrized_list_keeps_a_sort_direction_flip_exposed`,
 `call_variant_tests.rs::a_recursive_owner_keeps_its_reading`,
 `call_variant_tests.rs::a_call_shaped_line_inside_a_multiline_string_is_not_read_as_a_call`,
-`call_variant_tests.rs::a_prior_use_spelled_with_a_normalized_identifier_keeps_the_sort_exposed`.
+`call_variant_tests.rs::a_prior_use_spelled_with_a_normalized_identifier_keeps_the_sort_exposed`,
+`call_variant_tests.rs::an_exact_tie_rounds_to_the_even_digit`,
+`call_variant_tests.rs::a_count_past_the_leading_digit_keeps_a_round_change_exposed`,
+`call_variant_tests.rs::a_float_on_a_decimal_tie_keeps_a_round_change_exposed`,
+`boundary.rs::an_int_spelling_its_float_spelling_above_two_to_the_53rd`,
+`boundary.rs::a_float_spelling_is_the_nearest_double_not_its_digits`.
 
 ## Changed Range Header Amendment (#12948)
 

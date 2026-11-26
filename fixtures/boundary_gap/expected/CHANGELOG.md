@@ -11,6 +11,16 @@ verify commitments and receipt byte hashes. Weak grip, unchanged movement,
 historical currentness, incomplete receipt status and fail-closed first-action
 routing remain the same. No other fixture output is regenerated.
 
+## Pending — corpus cache generation 1.202 for compared pattern oracles (#16290)
+
+`assert_eq!(matches!(value, PATTERN), true)` now reads only as strong as its
+pattern, which bumps the analyzer cache schema to 1.202. Move the portable
+unchanged-attempt snapshots to 1.202, recompute the
+`raw_json_placeholder_v1` artifact content commitment, then the dependent
+verify commitments and receipt byte hashes. Weak grip, unchanged movement,
+historical currentness, incomplete receipt status and fail-closed
+first-action routing remain the same. No other fixture output is regenerated.
+
 ## Pending — corpus cache generation 1.201 for file-module nested-block renames (#16277)
 
 A test in its own module file (`src/tests.rs` with `use super::*;`) whose
