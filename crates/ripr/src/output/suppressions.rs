@@ -1375,7 +1375,7 @@ pub fn load_check_suppression_policy(path: &Path) -> Result<Vec<SuppressionEntry
         .map(|violation| violation.replacen(SUPPRESSIONS_PATH, &display, 1))
         .collect();
     Err(format!(
-        "suppression policy `{display}` is invalid:\n{}",
+        "suppression policy `{display}` is invalid; fix each problem listed below, then rerun:\n{}",
         renamed.join("\n")
     ))
 }
