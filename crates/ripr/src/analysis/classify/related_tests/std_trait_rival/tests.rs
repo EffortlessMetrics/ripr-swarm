@@ -286,6 +286,8 @@ fn only_every_borrowed_receiver_counts() {
     for (body, kind) in [
         ("(&foo).into_iter()", shared),
         ("(&Foo::new::<u8>(&0)).into_iter()", shared),
+        ("match (&foo).into_iter() { n => n }", shared),
+        ("return (&foo).into_iter()", shared),
         ("(&foo).into_iter::<u8>()", shared),
         ("( & foo ).into_iter(); (&bar).into_iter()", shared),
         ("(&mut foo).into_iter()", exclusive),
@@ -309,6 +311,8 @@ fn only_every_borrowed_receiver_counts() {
         ("(&foo).into_iter()", exclusive),
         ("(&mutable).into_iter()", exclusive),
         ("wrap(&foo).into_iter()", shared),
+        ("matches(&foo).into_iter()", shared),
+        ("r#match(&foo).into_iter()", shared),
         ("id!(&foo).into_iter()", shared),
         ("Foo::new::<u8>(&0).into_iter()", shared),
         ("items[0](&foo).into_iter()", shared),

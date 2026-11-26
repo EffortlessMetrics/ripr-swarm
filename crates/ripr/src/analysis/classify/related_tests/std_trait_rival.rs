@@ -393,9 +393,12 @@ fn borrowed_receiver(receiver: &str, kind: ReceiverKind) -> bool {
         return false;
     };
     let head = receiver[..open].trim_end();
-    if head.ends_with(|ch: char| is_word(ch) || matches!(ch, '!' | ')' | '>' | ']' | '?')) {
+    let callable_head = head.ends_with(['!', ')', '>', ']', '?'])
+        || (head.ends_with(is_word) && !ends_with_keyword(head));
+    if callable_head {
         // `call(x).name(`, `mac!(x).name(`, `Foo::new::<u8>(&x).name(`: the
-        // parentheses are a call's arguments, not the receiver.
+        // parentheses are a call's arguments, not the receiver. A keyword
+        // (`match (&x).name()`) begins an expression instead.
         return false;
     }
     let Some(borrowed) = receiver[open + 1..receiver.len() - 1]
