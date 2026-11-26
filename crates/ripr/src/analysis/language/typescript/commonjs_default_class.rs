@@ -206,3 +206,62 @@ fn member_chain_is_assigned(rest: &str) -> bool {
     }
     after.starts_with('=')
 }
+
+/// Marks the top-level function owners other than `target` as unreachable by
+/// name when `module.exports = target;` (or `export = target;`) is the
+/// module's whole export and nothing adds them back (#16366).
+///
+/// `require()` then hands back `target` itself, so a named binding
+/// (`const { total } = require(...)`) or a namespace member (`lib.total`)
+/// reads a property of `target`, never a sibling function. Called only after
+/// the file-level `module.exports` gate held. The sibling stays readable when
+/// the file may add a named property: any `exports.` / `exports[` spelling,
+/// any ES export statement, a member written onto `target` or an
+/// `Object.assign` / `defineProperty` onto it, or a second declaration of
+/// `target` (a merged `namespace target {}` exports its members as
+/// properties).
+pub(super) fn mark_unexported_siblings(
+    program: &oxc_ast::ast::Program<'_>,
+    target: &str,
+    code: &str,
+    division_code: &str,
+    owners: &mut [TypeScriptOwner],
+) {
+    let es_export = program.body.iter().any(|stmt| {
+        matches!(
+            stmt,
+            Statement::ExportNamedDeclaration(_)
+                | Statement::ExportDefaultDeclaration(_)
+                | Statement::ExportAllDeclaration(_)
+        )
+    });
+    if es_export {
+        return;
+    }
+    let mut declared = Vec::new();
+    super::tests_extract::collect_registration_scope_names(&program.body, &mut declared, false);
+    if declared
+        .iter()
+        .filter(|name| name.as_str() == target)
+        .count()
+        != 1
+    {
+        return;
+    }
+    let adds_property = [code, division_code].iter().any(|text| {
+        let compact: String = text.chars().filter(|ch| !ch.is_whitespace()).collect();
+        compact.contains("exports.")
+            || compact.contains("exports[")
+            || class_binding_gains_member(text, &compact, target)
+    });
+    if adds_property {
+        return;
+    }
+    for owner in owners.iter_mut().filter(|owner| {
+        owner.class_name.is_none()
+            && owner.owner_kind == OwnerKind::Function
+            && owner.name != target
+    }) {
+        owner.commonjs_whole_function = true;
+    }
+}
