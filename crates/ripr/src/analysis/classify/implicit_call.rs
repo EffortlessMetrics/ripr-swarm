@@ -1915,21 +1915,28 @@ impl HiddenImpls {
     }
 
     /// Whether a macro whose definition or item-level invocation names
-    /// `self_type` can write a `fn name`.
+    /// `self_type`, or a name some alias or renamed import gives a type, can
+    /// write a `fn name`. `type Tile = Square;` lets `impl Tile { .. }`
+    /// written by a macro add methods to `Square` without naming it, and the
+    /// alias's target is not read, so every aliased name counts.
     fn macro_naming_type_may_write_fn(&self, self_type: &str, name: &str) -> bool {
+        let names_the_type = |words: &std::collections::BTreeSet<String>| {
+            words.contains(self_type)
+                || self.renamed_types.iter().any(|alias| words.contains(alias))
+        };
         let defined_with_type = self
             .macro_definitions
             .iter()
             .filter(|(_, definitions)| {
                 definitions
                     .iter()
-                    .any(|definition| definition.words.contains(self_type))
+                    .any(|definition| names_the_type(&definition.words))
             })
             .map(|(macro_name, _)| macro_name.as_str());
         let invoked_with_type = self
             .item_macro_invocations
             .iter()
-            .filter(|(_, words)| words.contains(self_type))
+            .filter(|(_, words)| names_the_type(words))
             .map(|(macro_name, _)| macro_name.as_str());
         let mut seen = std::collections::BTreeSet::new();
         defined_with_type

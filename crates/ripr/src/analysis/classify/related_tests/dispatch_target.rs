@@ -222,7 +222,8 @@ pub(super) fn inherent_twin_takes_every_call(
 /// owned `base`: the unit value, a tuple-struct constructor or struct literal
 /// written in place, a call of an associated function whose one indexed
 /// definition returns `Self`, or a `let` binding of one of those or one
-/// annotated with the type. A parenthesised receiver, a borrowed one, a call
+/// annotated with the type, also inside grouping parentheses. A borrowed
+/// receiver, a parenthesised binding, a call
 /// whose return type is not read as owned (`fn new() -> &'static Square`)
 /// and a binding this cannot read are not established as owned.
 fn receiver_is_an_owned_value(
@@ -296,6 +297,9 @@ fn ends_in_owned_construction(text: &str, base: &str, index: &RustIndex) -> bool
         .rev()
         .find(|&(_, ch)| !(ch.is_alphanumeric() || ch == '_' || ch == ':'))
         .map_or(0, |(at, ch)| at + ch.len_utf8());
+    if open_byte == b'(' && path_start == before.len() {
+        return grouping_holds_an_owned_value(&text[open + 1..close], base, index);
+    }
     let mut segments = before[path_start..].rsplit("::");
     let Some(last) = segments.next().filter(|segment| !segment.is_empty()) else {
         return false;
@@ -304,6 +308,29 @@ fn ends_in_owned_construction(text: &str, base: &str, index: &RustIndex) -> bool
         return true;
     }
     open_byte == b'(' && segments.next() == Some(base) && returns_the_type_owned(base, last, index)
+}
+
+/// Whether the inside of grouping parentheses (`(Square(3))`) is one
+/// expression that builds an owned `base`. A tuple, a borrow and a
+/// dereference are not.
+fn grouping_holds_an_owned_value(inner: &str, base: &str, index: &RustIndex) -> bool {
+    let inner = inner.trim();
+    let mut depth = 0usize;
+    let top_level_comma = inner.bytes().any(|byte| match byte {
+        b'(' | b'[' | b'{' => {
+            depth += 1;
+            false
+        }
+        b')' | b']' | b'}' => {
+            depth = depth.saturating_sub(1);
+            false
+        }
+        b',' | b';' => depth == 0,
+        _ => false,
+    });
+    !top_level_comma
+        && !inner.starts_with(['&', '*'])
+        && (inner == base || ends_in_owned_construction(inner, base, index))
 }
 
 /// Whether `base::constructor(..)` evaluates to an owned `base`. Every

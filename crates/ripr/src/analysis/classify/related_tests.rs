@@ -1913,6 +1913,7 @@ fn find_related_tests_with_candidates<'a>(
                 test_source,
                 index,
                 dispatches_to_fmt,
+                workspace_complete,
             );
             // A name-only call (an unrelated same-named method) never hides
             // the formatting reach of a helper-entry `fmt` (#8999).
@@ -8195,6 +8196,7 @@ pub(in crate::analysis) fn inherent_owner_call_resolves(
                 .map(|facts| facts.data().source.as_ref()),
             index,
             false,
+            false,
         ) == RelationReason::DirectOwnerCall
 }
 
@@ -8260,7 +8262,9 @@ pub(in crate::analysis::classify) fn assertion_inherent_owner_calls_resolve(
 /// resolved receiver, no test-module type or trait shadow, no rename). The
 /// caller must already be known to call `owner` by name; this only refuses.
 /// Same-name workspace functions are read from a full scan, so ambiguity
-/// refuses exactly as it does for the check-side relation.
+/// refuses exactly as it does for the check-side relation. The index is read
+/// as complete: this only refuses after the check-side relation, which
+/// applied the index-completeness gate, already related the caller.
 pub(in crate::analysis) fn owner_call_is_direct(
     caller: &TestSummary,
     owner: &FunctionSummary,
@@ -8283,6 +8287,7 @@ pub(in crate::analysis) fn owner_call_is_direct(
             .map(|facts| facts.data().source.as_ref()),
         index,
         false,
+        true,
     ) == RelationReason::DirectOwnerCall
 }
 
@@ -8309,6 +8314,7 @@ pub(in crate::analysis) fn inherent_owner_call_resolves_if_macros_trusted(
             index,
             false,
             trust,
+            false,
         )
     };
     requires_inherent_receiver_identity(owner)
@@ -8345,6 +8351,7 @@ pub(in crate::analysis) fn inherent_owner_call_resolves_inside_unreadable_macro(
             index,
             false,
             trust,
+            false,
         )
     };
     requires_inherent_receiver_identity(owner)
@@ -8383,6 +8390,7 @@ pub(in crate::analysis) fn inherent_owner_call_resolves_in_forwarded_body(
             .get(&caller.file)
             .map(|facts| facts.data().source.as_ref()),
         index,
+        false,
         false,
         false,
     ) == RelationReason::DirectOwnerCall
@@ -8692,6 +8700,10 @@ fn trait_declaration_owner_shadowed(
     }) || super::owner_pin::parent_chain_shadows_trait(test, trait_name, owner_scope, index)
 }
 
+#[allow(
+    clippy::too_many_arguments,
+    reason = "the relation reason carries the index-completeness input beside the existing ones without a parameter struct"
+)]
 fn owner_call_relation_reason(
     test: &TestSummary,
     owner_fn: Option<&FunctionSummary>,
@@ -8700,6 +8712,7 @@ fn owner_call_relation_reason(
     test_source: Option<&str>,
     index: &RustIndex,
     fmt_dispatch_resolved: bool,
+    workspace_complete: bool,
 ) -> RelationReason {
     owner_call_relation_reason_gated(
         test,
@@ -8710,12 +8723,13 @@ fn owner_call_relation_reason(
         index,
         fmt_dispatch_resolved,
         false,
+        workspace_complete,
     )
 }
 
 #[allow(
     clippy::too_many_arguments,
-    reason = "the gated form adds one input to the existing relation reason without a parameter struct"
+    reason = "the gated form adds two inputs to the existing relation reason without a parameter struct"
 )]
 fn owner_call_relation_reason_gated(
     test: &TestSummary,
@@ -8726,6 +8740,7 @@ fn owner_call_relation_reason_gated(
     index: &RustIndex,
     fmt_dispatch_resolved: bool,
     trust_unplaced_standard_root: bool,
+    workspace_complete: bool,
 ) -> RelationReason {
     let indexed_same_name_count = same_name_ids.len();
     let Some(owner) = owner_fn else {
@@ -8889,13 +8904,17 @@ fn owner_call_relation_reason_gated(
             && impl_trait_name(&owner.id.0).is_some_and(|impl_trait| {
                 fully_qualified_call_names_impl(test, owner_name, &impl_type, &impl_trait)
             }))
-        || trait_receiver::typed_receiver_runs_trait_impl(
-            test,
-            owner,
-            &impl_type,
-            index,
-            trust_unplaced_standard_root,
-        )
+        // A changed-files index can omit the module that declares a rival
+        // method of the name, so the typed trait receiver reading needs the
+        // whole workspace indexed.
+        || (workspace_complete
+            && trait_receiver::typed_receiver_runs_trait_impl(
+                test,
+                owner,
+                &impl_type,
+                index,
+                trust_unplaced_standard_root,
+            ))
     {
         RelationReason::DirectOwnerCall
     } else {

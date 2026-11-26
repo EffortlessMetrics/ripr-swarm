@@ -236,7 +236,7 @@ fn a_generic_type_with_one_impl_reaches_it() -> Result<(), String> {
         impl BufMut for Limit {\n    fn advance_mut(&mut self, cnt: usize) { self.left -= cnt; }\n}\n\
         pub struct Chain<T, U> { a: T, b: U }\n\
         impl<T, U> Chain<T, U> {\n    pub fn pair(a: T, b: U) -> Chain<T, U> { Chain { a, b } }\n}\n\
-        impl<T: BufMut, U: BufMut> BufMut for Chain<T, U> {\n    fn advance_mut(&mut self, cnt: usize) { self.a.advance_mut(cnt); self.b.advance_mut(cnt); }\n}\n";
+        impl<T, U> BufMut for Chain<T, U> {\n    fn advance_mut(&mut self, cnt: usize) { let _ = (cnt, &self.a, &self.b); }\n}\n";
     let owner = "impl BufMut for Chain<T, U>::advance_mut";
     assert!(direct(
         chain,
@@ -365,6 +365,8 @@ fn a_standard_trait_method_of_the_name_withholds_the_relation() -> Result<(), St
         "to_string",
         "last",
         "contains",
+        "read_exact_at",
+        "seek_read",
     ] {
         let body = format!("let _ = Shelf::stocked(5).{method}();");
         assert!(
@@ -474,6 +476,142 @@ fn a_borrowed_receiver_of_a_by_value_owner_is_withheld() -> Result<(), String> {
         production,
         owner,
         "let _ = Square::with_side(3).area();"
+    )?);
+    Ok(())
+}
+
+/// An impl covers every specialization of a generic type only when its
+/// header lists distinct, unbounded parameters. `impl<T> BufMut for
+/// Chain<T, T>` leaves `Chain<u8, u16>` to an impl that may list no method
+/// and inherit the default, and a bound or `where` clause narrows the same
+/// way, so each withholds the relation the unbounded header keeps.
+#[test]
+fn only_distinct_unbounded_parameters_cover_the_type() -> Result<(), String> {
+    let chain = |header: &str| {
+        format!(
+            "pub trait BufMut {{\n    fn advance_mut(&mut self, _cnt: usize) {{}}\n}}\n\
+             pub struct Chain<T, U> {{ a: T, b: U }}\n\
+             impl<T, U> Chain<T, U> {{\n    pub fn pair(a: T, b: U) -> Chain<T, U> {{ Chain {{ a, b }} }}\n}}\n\
+             {header} {{\n    fn advance_mut(&mut self, cnt: usize) {{ let _ = (cnt, &self.a, &self.b); }}\n}}\n"
+        )
+    };
+    let body = "let mut c = Chain::pair(1u8, 2u16); c.advance_mut(1);";
+    for (header, owner) in [
+        (
+            "impl<T> BufMut for Chain<T, T>",
+            "impl BufMut for Chain<T, T>::advance_mut",
+        ),
+        (
+            "impl<T: Copy, U> BufMut for Chain<T, U>",
+            "impl BufMut for Chain<T, U>::advance_mut",
+        ),
+        (
+            "impl<T, U> BufMut for Chain<T, U> where T: Copy",
+            "impl BufMut for Chain<T, U>::advance_mut",
+        ),
+    ] {
+        assert!(!direct(&chain(header), owner, body)?, "{header}");
+    }
+    assert!(direct(
+        &chain("impl<T, U> BufMut for Chain<T, U>"),
+        "impl BufMut for Chain<T, U>::advance_mut",
+        body
+    )?);
+    Ok(())
+}
+
+/// A capitalised path segment on the impl's type is read as a variant
+/// constructor only when an `enum` of that name declares the variant.
+/// `Tile::Make(3)` names no variant of `Tile`, so it may be an associated
+/// function returning another type, and the relation is withheld; the
+/// declared `Tile::Square(3)` keeps it.
+#[test]
+fn a_variant_shaped_call_needs_a_declared_variant() -> Result<(), String> {
+    let production = "pub trait Measure {\n    fn area(&self) -> u32;\n}\n\
+        pub enum Tile { Square(u32), Round(u32) }\n\
+        impl Measure for Tile {\n    fn area(&self) -> u32 { match self { Tile::Square(s) | Tile::Round(s) => s * s } }\n}\n";
+    let owner = "impl Measure for Tile::area";
+    assert!(direct(
+        production,
+        owner,
+        "let _ = Tile::Square(3).area();"
+    )?);
+    assert!(!direct(production, owner, "let _ = Tile::Make(3).area();")?);
+    Ok(())
+}
+
+/// A changed-files index can leave out the module that declares a rival
+/// method of the name, so the typed trait receiver reading credits a call
+/// only over a complete index. The same index read as partial keeps the
+/// name-only relation.
+#[test]
+fn a_partial_index_withholds_the_typed_trait_receiver() -> Result<(), String> {
+    let index = parsed_index(BUF, TYPED_CALL)?;
+    let functions = index.functions();
+    let Some(owner) = functions
+        .iter()
+        .find(|function| function.id.0.ends_with(BYTES_MUT_ADVANCE))
+    else {
+        return Err("the owner is indexed".to_string());
+    };
+    let Some(test) = index.tests().iter().next() else {
+        return Err("the test is indexed".to_string());
+    };
+    let same_name_ids: Vec<&str> = functions
+        .iter()
+        .filter(|function| function.name == owner.name)
+        .map(|function| function.id.0.as_str())
+        .collect();
+    let source = index
+        .files()
+        .get(&test.file)
+        .map(|facts| facts.data().source.clone());
+    let relation = |workspace_complete| {
+        super::super::owner_call_relation_reason_gated(
+            test,
+            Some(owner),
+            &owner.name,
+            &same_name_ids,
+            source.as_deref(),
+            &index,
+            false,
+            false,
+            workspace_complete,
+        )
+    };
+    assert_eq!(
+        relation(true),
+        super::super::RelationReason::DirectOwnerCall
+    );
+    assert_eq!(
+        relation(false),
+        super::super::RelationReason::WeakTokenSubstring
+    );
+    Ok(())
+}
+
+/// A macro whose expansion writes `impl Tile { .. }` for `type Tile =
+/// BytesMut;` adds a method to `BytesMut` without naming it. When that
+/// expansion can hold the owner's name, the relation is withheld; a macro
+/// writing only another name leaves it.
+#[test]
+fn a_macro_writing_through_an_alias_withholds_the_relation() -> Result<(), String> {
+    let production = |method: &str| {
+        format!(
+            "{BUF}pub type Tile = BytesMut;\n\
+             macro_rules! add_method {{\n    () => {{\n        impl Tile {{\n            pub fn {method}(&mut self, _cnt: usize) {{}}\n        }}\n    }};\n}}\n\
+             add_method!();\n"
+        )
+    };
+    assert!(!direct(
+        &production("advance_mut"),
+        BYTES_MUT_ADVANCE,
+        TYPED_CALL
+    )?);
+    assert!(direct(
+        &production("reserve"),
+        BYTES_MUT_ADVANCE,
+        TYPED_CALL
     )?);
     Ok(())
 }

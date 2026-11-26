@@ -60,6 +60,7 @@ pub(super) fn typed_receiver_runs_trait_impl(
     if a_sibling_specialization_may_inherit_the_default(owner, owner_trait, self_ty, index)
         || the_type_derefs(impl_type, index)
         || a_borrowed_receiver_meets_a_by_value_owner(test, owner)
+        || a_variant_shaped_path_names_no_declared_variant(test, impl_type, index)
     {
         return false;
     }
@@ -94,7 +95,10 @@ fn self_type_is_a_named_type(self_ty: &str) -> bool {
 /// by the type's name alone and cannot tell the two apart. An impl whose
 /// every generic argument is a lifetime or one of the impl's own type
 /// parameters (`impl<T, U> BufMut for Chain<T, U>`) covers the whole type,
-/// so coherence leaves it the only impl of the trait for that type.
+/// so coherence leaves it the only impl of the trait for that type. That
+/// reading needs the owner's own impl header: distinct parameters with no
+/// bound and no `where` clause. `impl<T> Shape for Pair<T, T>` leaves
+/// `Pair<u8, u16>` to another impl, and a bound narrows the same way.
 fn a_sibling_specialization_may_inherit_the_default(
     owner: &FunctionSummary,
     owner_trait: &str,
@@ -104,16 +108,19 @@ fn a_sibling_specialization_may_inherit_the_default(
     let Some(arguments) = generic_arguments(self_ty) else {
         return false;
     };
-    let source = index
-        .files()
-        .get(&owner.file)
-        .map(|facts| facts.data().source.clone());
-    let covers_the_whole_type = arguments.iter().all(|argument| {
-        argument.starts_with('\'')
-            || (argument.chars().all(|ch| ch.is_alphanumeric() || ch == '_')
-                && source.as_deref().is_some_and(|source| {
-                    super::super::owner_pin::impl_generics_name(source, argument)
-                }))
+    let covers_the_whole_type = index.files().get(&owner.file).is_some_and(|facts| {
+        unbounded_impl_parameters(&facts.data().source, owner.start_line, self_ty).is_some_and(
+            |parameters| {
+                let mut seen = Vec::new();
+                arguments.iter().all(|argument| {
+                    argument.starts_with('\'')
+                        || (parameters.contains(argument) && !seen.contains(argument) && {
+                            seen.push(argument.clone());
+                            true
+                        })
+                })
+            },
+        )
     });
     if covers_the_whole_type {
         return false;
@@ -128,6 +135,145 @@ fn a_sibling_specialization_may_inherit_the_default(
         None => true,
         Some(first) => first.item.has_body || declarations.any(|other| other.item.has_body),
     }
+}
+
+/// The type parameters of the impl block that holds the function starting on
+/// 1-based `line` of `source`, when its header is `impl<..> Trait for
+/// self_ty` with every type parameter a bare name: no bound, default or
+/// `const`, and no `where` clause. Lifetimes are left out. `None` whenever
+/// the header is not read that way, including a nearest `impl` whose self
+/// type is not `self_ty`.
+fn unbounded_impl_parameters(source: &str, line: usize, self_ty: &str) -> Option<Vec<String>> {
+    let masked = super::mask_comments_and_strings(source);
+    let end = masked
+        .split_inclusive('\n')
+        .take(line)
+        .map(str::len)
+        .sum::<usize>();
+    // An item-level `impl` starts a statement; `-> impl Iterator` and an
+    // argument's `impl Trait` do not.
+    let header_at = super::super::owner_pin::whole_word_offsets(masked.get(..end)?, "impl")
+        .into_iter()
+        .rev()
+        .find(|&offset| {
+            let before = masked[..offset].trim_end();
+            before.is_empty()
+                || before.ends_with(['}', ';', '{', ']'])
+                || before.ends_with("unsafe")
+                || before.ends_with("default")
+        })?;
+    let after = &masked[header_at + "impl".len()..];
+    let header = &after[..after.find('{')?];
+    let header = header.trim_start();
+    let (generics, rest) = match header.strip_prefix('<') {
+        Some(inner) => {
+            let mut depth = 1usize;
+            let bytes = inner.as_bytes();
+            let close = (0..bytes.len()).find(|&at| match bytes[at] {
+                b'<' => {
+                    depth += 1;
+                    false
+                }
+                b'>' if at > 0 && bytes[at - 1] == b'-' => false,
+                b'>' => {
+                    depth -= 1;
+                    depth == 0
+                }
+                _ => false,
+            })?;
+            (&inner[..close], &inner[close + 1..])
+        }
+        None => ("", header),
+    };
+    let (_, self_part) = rest.split_once(" for ")?;
+    let squeeze = |text: &str| text.split_whitespace().collect::<String>();
+    if !super::super::owner_pin::whole_word_offsets(self_part, "where").is_empty()
+        || squeeze(self_part) != squeeze(self_ty)
+    {
+        return None;
+    }
+    let mut parameters = Vec::new();
+    for parameter in generics.split(',').map(str::trim) {
+        if parameter.is_empty() || parameter.starts_with('\'') {
+            continue;
+        }
+        if !parameter
+            .chars()
+            .all(|ch| ch.is_alphanumeric() || ch == '_')
+        {
+            return None;
+        }
+        parameters.push(parameter.to_string());
+    }
+    Some(parameters)
+}
+
+/// Whether the test writes `impl_type::Name` with a capitalised `Name` that
+/// no `enum impl_type` in the workspace declares as a variant. Such a path
+/// is read as a variant constructor by the receiver rule, yet it may be an
+/// associated function a trait provides that returns another type, or an
+/// associated constant. A declared variant of the enum is the type itself.
+fn a_variant_shaped_path_names_no_declared_variant(
+    test: &TestSummary,
+    impl_type: &str,
+    index: &RustIndex,
+) -> bool {
+    let body = test.body.as_str();
+    let prefix = format!("{impl_type}::");
+    let ident = |ch: char| ch.is_alphanumeric() || ch == '_';
+    body.match_indices(&prefix).any(|(at, _)| {
+        if body[..at].ends_with(ident) {
+            return false;
+        }
+        let rest = &body[at + prefix.len()..];
+        let end = rest.find(|ch: char| !ident(ch)).unwrap_or(rest.len());
+        let name = &rest[..end];
+        name.starts_with(|ch: char| ch.is_uppercase())
+            && !rest[end..].starts_with("::")
+            && !an_enum_declares_the_variant(impl_type, name, index)
+    })
+}
+
+/// Whether some `enum impl_type { .. }` in an indexed file lists `variant`.
+fn an_enum_declares_the_variant(impl_type: &str, variant: &str, index: &RustIndex) -> bool {
+    index.files().values().any(|facts| {
+        let source = &facts.data().source;
+        if !source.contains(impl_type) || !source.contains(variant) {
+            return false;
+        }
+        let masked = super::mask_comments_and_strings(source);
+        super::super::owner_pin::whole_word_offsets(&masked, "enum")
+            .into_iter()
+            .any(|offset| {
+                let rest = masked[offset + "enum".len()..].trim_start();
+                let Some(after_name) = rest.strip_prefix(impl_type) else {
+                    return false;
+                };
+                if after_name.starts_with(|ch: char| ch.is_alphanumeric() || ch == '_') {
+                    return false;
+                }
+                let Some(open) = after_name.find('{') else {
+                    return false;
+                };
+                let bytes = after_name.as_bytes();
+                let mut depth = 0usize;
+                let close = (open..bytes.len()).find(|&at| match bytes[at] {
+                    b'{' => {
+                        depth += 1;
+                        false
+                    }
+                    b'}' => {
+                        depth -= 1;
+                        depth == 0
+                    }
+                    _ => false,
+                });
+                close.is_some_and(|close| {
+                    !super::super::owner_pin::whole_word_offsets(&after_name[open..close], variant)
+                        .is_empty()
+                })
+            })
+    })
 }
 
 /// The top-level generic arguments of a self type (`Square<u32>` gives
@@ -502,6 +648,24 @@ const STANDARD_TRAIT_METHODS: &[(&str, &[&str])] = &[
     ("ShrAssign", &["shr_assign"]),
     ("Index", &["index"]),
     ("RangeBounds", &["start_bound", "end_bound", "contains"]),
+    // `std::os::unix::fs::FileExt` provides `read_exact_at` and
+    // `write_all_at` over the two required methods; the Windows trait of the
+    // same name has `seek_read` and `seek_write`.
+    (
+        "FileExt",
+        &[
+            "read_at",
+            "read_vectored_at",
+            "read_buf_at",
+            "read_exact_at",
+            "read_buf_exact_at",
+            "write_at",
+            "write_vectored_at",
+            "write_all_at",
+            "seek_read",
+            "seek_write",
+        ],
+    ),
     ("IndexMut", &["index_mut"]),
 ];
 

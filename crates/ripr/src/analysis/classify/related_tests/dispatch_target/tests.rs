@@ -210,6 +210,8 @@ fn an_owned_receiver_runs_an_inherent_by_value_twin_first() -> Result<(), String
         "let mut s = Square(3); s.0 = 4; assert_eq!(s.area(), 9);",
         "assert_eq!(Square::area(Square(3)), 9);",
         "assert_eq!(Square(3).area(), 9); let s = Square(4); assert_eq!(s.area(), 9);",
+        "assert_eq!((Square(3)).area(), 9);",
+        "assert_eq!(( Square(3) ).area(), 9);",
     ] {
         assert!(!direct(&production, TRAIT_AREA, body)?, "{body}");
     }
@@ -218,9 +220,9 @@ fn an_owned_receiver_runs_an_inherent_by_value_twin_first() -> Result<(), String
 
 /// A borrowed receiver starts probing at `&Square`, where the trait's
 /// `&self` method is a by-value match and comes before the inherent
-/// `area(self)`. A parenthesised receiver is not read as owned and keeps
-/// the relation too, and so does a test where one call of several may run
-/// the trait impl.
+/// `area(self)`. A borrow inside grouping parentheses, a parenthesised
+/// tuple, and a test where one call of several may run the trait impl keep
+/// the relation too.
 #[test]
 fn a_receiver_not_established_as_owned_keeps_the_relation() -> Result<(), String> {
     let production = by_value_twin();
@@ -228,7 +230,7 @@ fn a_receiver_not_established_as_owned_keeps_the_relation() -> Result<(), String
         "assert_eq!((&Square(3)).area(), 9);",
         "let s = &Square(3); assert_eq!(s.area(), 9);",
         "let s: &Square = &Square(3); assert_eq!(s.area(), 9);",
-        "assert_eq!((Square(3)).area(), 9);",
+        "assert_eq!((&Square(3)).area(), 9); assert_eq!((&(Square(3))).area(), 9);",
         "assert_eq!(Square(3).area(), 9); let s = &Square(4); assert_eq!(s.area(), 9);",
     ] {
         assert!(direct(&production, TRAIT_AREA, body)?, "{body}");

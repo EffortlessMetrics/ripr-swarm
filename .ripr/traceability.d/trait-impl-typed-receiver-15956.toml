@@ -21,6 +21,10 @@ tests = [
   "crates/ripr/src/analysis/classify/related_tests/dispatch_target/tests.rs::a_restricted_earlier_step_twin_keeps_the_relation",
   "crates/ripr/src/analysis/classify/related_tests/dispatch_target/tests.rs::a_workspace_trait_providing_the_constructor_keeps_the_relation",
   "crates/ripr/src/analysis/classify/implicit_call.rs::tests::a_macro_name_after_a_multibyte_character_is_read_without_slicing_it",
+  "crates/ripr/src/analysis/classify/related_tests/trait_receiver/tests.rs::only_distinct_unbounded_parameters_cover_the_type",
+  "crates/ripr/src/analysis/classify/related_tests/trait_receiver/tests.rs::a_variant_shaped_call_needs_a_declared_variant",
+  "crates/ripr/src/analysis/classify/related_tests/trait_receiver/tests.rs::a_partial_index_withholds_the_typed_trait_receiver",
+  "crates/ripr/src/analysis/classify/related_tests/trait_receiver/tests.rs::a_macro_writing_through_an_alias_withholds_the_relation",
 ]
 code = [
   "crates/ripr/src/analysis/classify/related_tests/trait_receiver.rs",
