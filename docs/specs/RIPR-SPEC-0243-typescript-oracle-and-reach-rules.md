@@ -1954,7 +1954,11 @@ or class relates through the local and a member is read off it
 (`x.name(...)`, `new x.Name()`). A type-only `import type x = require(...)`
 and the entity-name forms (`import x = Ns.y`) load nothing and record no
 import. An ES `import Name from` of an `export =` class stays refused, as for
-its `module.exports` twin. Before, both sides read `no_static_path`. An
+its `module.exports` twin. A CommonJS barrel (#15284) reads both forms the same
+way: `export = require('./x')`, or `export = local` of an `import local =
+require('./x')` or `const local = require('./x')`, forwards the whole module,
+and an `export =` beside a `module.exports =` write is a second whole write,
+which refuses every edge from that barrel. Before, both sides read `no_static_path`. An
 inline `export = class { ... }` or `export = function ...`, and a class
 merged with a same-named `namespace` (two file-level declarations of the
 name), are not read.
@@ -3173,7 +3177,10 @@ keys); do not take the next number.
   write beside `export =`, a class rewritten after the export, a type-only
   import and an import spelled only in a comment stay unrelated. A parse test
   pins that only one identifier `export =` with no ES export beside it is a
-  target.
+  target. Through a TypeScript barrel, `export =` of an import-equals local,
+  of a `require()` local or of an inline `require()` forwards to the owner,
+  while a barrel that also writes `module.exports` (a forward TypeScript's
+  trailing `export =` overwrites) or forwards another module does not.
 - #16366 (rule 19, sibling of a whole export):
   `crates/ripr/src/analysis/language/typescript/tests/commonjs_unexported_sibling_tests.rs`
   runs `analyze_diff` on a function beside `module.exports = other;` (and a
