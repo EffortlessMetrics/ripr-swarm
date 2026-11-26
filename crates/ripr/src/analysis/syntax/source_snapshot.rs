@@ -5,7 +5,8 @@
 use super::{
     NameScopes,
     name_scope::{
-        TreeScopeIndex, every_mention_bound_locally_in_tree, name_scopes_for_test_caller,
+        TreeScopeIndex, every_mention_bound_locally_in_fragment,
+        every_mention_bound_locally_in_tree, name_scopes_for_test_caller,
         nested_block_renames_in_tree,
     },
     parse_clean_source_file,
@@ -430,22 +431,26 @@ impl SourceSnapshot {
         )
     }
 
-    /// Whether every mention of `name` in the authored test `caller` is
-    /// bound by a local of its body (#14552); see
-    /// `every_mention_bound_locally_in_tree`. `false` for a macro-generated
-    /// test, whose body the file does not spell, and for an unparsed file.
+    /// Whether every mention of `name` in the test `caller` is bound by a
+    /// local of its body (#14552); see `every_mention_bound_locally_in_tree`.
+    /// A macro-generated test, whose body the file does not spell, is read
+    /// from `generated_body`, its parsed expansion; without one it answers
+    /// `false`, as does an unparsed file.
     pub(crate) fn every_mention_bound_locally(
         &self,
         caller: &TestSummary,
         ancestors: Option<&[SourceFile]>,
+        generated_body: Option<&SourceFile>,
         name: &str,
     ) -> bool {
-        if caller.generated.is_some() {
-            return false;
-        }
         let Some(parse) = self.parse.as_ref() else {
             return false;
         };
+        if caller.generated.is_some() {
+            return generated_body.is_some_and(|fragment| {
+                every_mention_bound_locally_in_fragment(&parse.tree(), ancestors, fragment, name)
+            });
+        }
         every_mention_bound_locally_in_tree(
             &parse.tree(),
             ancestors,

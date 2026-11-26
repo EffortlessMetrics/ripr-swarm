@@ -27,7 +27,9 @@ use std::sync::Arc;
 mod index_tests;
 mod local_binding;
 
-pub(crate) use local_binding::every_mention_bound_locally_in_tree;
+pub(crate) use local_binding::{
+    every_mention_bound_locally_in_fragment, every_mention_bound_locally_in_tree,
+};
 
 /// The scopes around one function, innermost first: the function body (and
 /// any enclosing function bodies), then each enclosing inline module, then

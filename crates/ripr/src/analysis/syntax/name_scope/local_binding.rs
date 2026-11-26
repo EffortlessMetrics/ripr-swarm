@@ -15,7 +15,7 @@ use super::{
 };
 use ra_ap_syntax::{
     AstNode, SyntaxKind, SyntaxNode, T,
-    ast::{self, HasAttrs, HasName},
+    ast::{self, HasAttrs, HasModuleItem, HasName},
 };
 
 /// For the authored function `fn_name` declared at `fn_line`: whether `name`
@@ -58,6 +58,33 @@ pub(crate) fn every_mention_bound_locally_in_tree(
     if functions.next().is_some() {
         return false;
     }
+    every_mention_bound_locally_in_function(tree, ancestors, &function, name)
+}
+
+/// [`every_mention_bound_locally_in_tree`] for a macro-generated test, whose
+/// expanded body `fragment` (one `fn` item) the file does not spell. Macro
+/// scope is still read from the file `tree` and its `ancestors`. The
+/// expansion is read as written text, as the line-based shadow facts read
+/// it, so a binder and a mention keep no separate macro hygiene.
+pub(crate) fn every_mention_bound_locally_in_fragment(
+    tree: &ast::SourceFile,
+    ancestors: Option<&[ast::SourceFile]>,
+    fragment: &ast::SourceFile,
+    name: &str,
+) -> bool {
+    let mut items = fragment.items();
+    let (Some(ast::Item::Fn(function)), None) = (items.next(), items.next()) else {
+        return false;
+    };
+    every_mention_bound_locally_in_function(tree, ancestors, &function, name)
+}
+
+fn every_mention_bound_locally_in_function(
+    tree: &ast::SourceFile,
+    ancestors: Option<&[ast::SourceFile]>,
+    function: &ast::Fn,
+    name: &str,
+) -> bool {
     let Some(body) = function.body() else {
         return false;
     };
@@ -398,6 +425,21 @@ mod tests {
             let source = format!("fn other(x: i32) -> i32 {{ x }}\nfn t() {{\n    {body}\n}}\n");
             assert_eq!(bound(&source), expected, "{label}");
         }
+    }
+
+    #[test]
+    fn a_generated_body_is_read_from_its_expanded_fragment() {
+        let file =
+            SourceFile::parse("macro_rules! case { () => {}; }\n", Edition::Edition2024).tree();
+        let read = |body: &str| {
+            let fragment = SourceFile::parse(body, Edition::Edition2024).tree();
+            super::every_mention_bound_locally_in_fragment(&file, Some(&[]), &fragment, "dt")
+        };
+        assert!(read(
+            "#[test]\nfn t() {\n    let dt = |x: u32| x;\n    assert_eq!(dt(9), 9);\n}\n"
+        ));
+        assert!(!read("#[test]\nfn t() {\n    assert_eq!(dt(9), 9);\n}\n"));
+        assert!(!read("fn t() { let dt = other; dt(1); }\nfn u() {}\n"));
     }
 
     #[test]

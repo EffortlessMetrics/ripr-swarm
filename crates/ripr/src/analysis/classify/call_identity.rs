@@ -4142,19 +4142,35 @@ pub(in crate::analysis) fn test_calls_only_a_local_binding(
     owner: &FunctionSummary,
     test: &TestSummary,
 ) -> bool {
-    if owner.item.container != FunctionContainer::Free || test.generated.is_some() {
+    if owner.item.container != FunctionContainer::Free {
         return false;
     }
     let name = owner.name.trim_start_matches("r#");
     if !spells_a_local_binder(&test.body, name) {
         return false;
     }
+    // A generated test is read from its expanded body, so it reads as its
+    // hand-written twin does; an expansion that declares its own items may
+    // import the name and keeps the earlier reading.
+    let generated_body = match test.generated.as_ref() {
+        None => None,
+        Some(origin) if origin.body_declares_items => return false,
+        Some(_) => match index.source_syntax.parse_fragment(&test.body) {
+            Some(parse) => Some(parse.tree()),
+            None => return false,
+        },
+    };
     let ancestors = macro_scope_ancestors(index, test);
     index
         .source_syntax
         .get(index, &test.file)
         .is_some_and(|snapshot| {
-            snapshot.every_mention_bound_locally(test, ancestors.as_deref(), name)
+            snapshot.every_mention_bound_locally(
+                test,
+                ancestors.as_deref(),
+                generated_body.as_ref(),
+                name,
+            )
         })
 }
 
