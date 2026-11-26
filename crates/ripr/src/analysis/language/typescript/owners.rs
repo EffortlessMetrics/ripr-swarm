@@ -54,12 +54,18 @@ pub(crate) fn owners_from_program(
     // `(index, 0)`, while each entry of `module.exports = { f, f }` is its own
     // value, so a duplicated object key still reads as two assignments.
     let mut owners = Vec::new();
+    let replaced = super::overwritten_methods::top_level_replaced_members(&program.body);
     for (index, stmt) in program.body.iter().enumerate() {
         let named_class = commonjs_named_class_export(stmt).map(|(property, _)| property);
         let commonjs = matches!(stmt, Statement::ExpressionStatement(_));
+        let declared_class = super::overwritten_methods::declared_class_name(stmt);
         owners.extend(
             owners_from_statement(stmt, file, source, &imports)
                 .into_iter()
+                .map(|mut owner| {
+                    mark_replaced_by_assignment(&mut owner, declared_class, &replaced);
+                    owner
+                })
                 .enumerate()
                 // Members of an inline `module.exports = class ...` are not
                 // export names: two accessors or overloads sharing a name
@@ -304,6 +310,7 @@ fn owners_from_commonjs_export(
         // when the export is not provably this class.
         Expression::ClassExpression(class) => {
             let mut owners = owners_from_class(class, file, source, imports);
+            name_anonymous_default_class(class, &mut owners);
             for owner in &mut owners {
                 owner.class_default_export = true;
                 owner.commonjs_default_export = true;
@@ -463,7 +470,7 @@ pub(crate) fn commonjs_named_class_export<'a>(
 }
 
 /// The class of a top-level `module.exports = class ...` statement.
-fn commonjs_whole_class_export<'a>(stmt: &'a Statement<'a>) -> Option<&'a Class<'a>> {
+pub(crate) fn commonjs_whole_class_export<'a>(stmt: &'a Statement<'a>) -> Option<&'a Class<'a>> {
     let Statement::ExpressionStatement(expression) = stmt else {
         return None;
     };
@@ -1558,7 +1565,9 @@ pub(crate) fn owners_from_default_export(
             )]
         }
         ExportDefaultDeclarationKind::ClassDeclaration(class) => {
-            owners_from_class(class, file, source, imports)
+            let mut owners = owners_from_class(class, file, source, imports);
+            name_anonymous_default_class(class, &mut owners);
+            owners
         }
         ExportDefaultDeclarationKind::ArrowFunctionExpression(arrow) => vec![owner_from_arrow(
             file,
@@ -1809,6 +1818,50 @@ pub(crate) fn owner_from_arrow(
     }
 }
 
+/// Marks an ordinary method [`TypeScriptMethodKind::ReplacedByAssignment`]
+/// when a top-level `Class.prototype.NAME = ...` (instance) or
+/// `Class.NAME = ...` (static) statement of the file replaces it (#16314,
+/// RIPR-SPEC-0243 rule 29). `declared_class` is the class name the owner's
+/// own statement declares in module scope: an owner of an inline
+/// `exports.Cart = class {}` has none, so a same-named declaration or local
+/// never marks it.
+fn mark_replaced_by_assignment(
+    owner: &mut TypeScriptOwner,
+    declared_class: Option<&str>,
+    replaced: &std::collections::BTreeSet<(String, String, bool)>,
+) {
+    let is_static = match owner.owner_kind {
+        OwnerKind::Method => false,
+        OwnerKind::ClassMethod => true,
+        _ => return,
+    };
+    if owner.method_kind == TypeScriptMethodKind::Ordinary
+        && let Some(class_name) = declared_class
+        && owner.class_name.as_deref() == Some(class_name)
+        && replaced.contains(&(class_name.to_string(), owner.name.clone(), is_static))
+    {
+        owner.method_kind = TypeScriptMethodKind::ReplacedByAssignment;
+    }
+}
+
+/// The class name an anonymous default-exported class carries: an ES
+/// `export default class {}` is named `default` at runtime, and an inline
+/// `module.exports = class {}` is the module's whole export under any local
+/// name. Its members get that name so the class-method relation, which needs
+/// one, can credit a default import or a whole-module `require` (#16349).
+/// `default` is a reserved word, so no same-file `new default()` or
+/// `default.member()` can match it; a named class keeps its own name.
+fn name_anonymous_default_class(class: &Class<'_>, owners: &mut [TypeScriptOwner]) {
+    if class.id.is_some() {
+        return;
+    }
+    for owner in owners {
+        if owner.class_name.is_none() {
+            owner.class_name = Some("default".to_string());
+        }
+    }
+}
+
 pub(crate) fn owners_from_class(
     class: &Class<'_>,
     file: &Path,
@@ -1823,6 +1876,7 @@ pub(crate) fn owners_from_class(
         .map(|identifier| identifier.name.as_str().to_string());
     let overwritten = super::overwritten_methods::overwritten_method_starts(class);
     let shadowed = super::overwritten_methods::field_shadowed_method_starts(class);
+    let replaced = super::overwritten_methods::constructor_replaced_method_starts(class);
     for element in &class.body.body {
         if let ClassElement::MethodDefinition(method) = element
             && let Some(mut owner) = owner_from_method(
@@ -1838,6 +1892,8 @@ pub(crate) fn owners_from_class(
                 owner.method_kind = TypeScriptMethodKind::Overwritten;
             } else if shadowed.contains(&method.span.start) {
                 owner.method_kind = TypeScriptMethodKind::FieldShadowed;
+            } else if replaced.contains(&method.span.start) {
+                owner.method_kind = TypeScriptMethodKind::ReplacedInConstructor;
             }
             owners.push(owner);
         }

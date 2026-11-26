@@ -41,6 +41,8 @@ Linked issues:
 - #16261 (class method overwritten by a later same-key member; rule 26)
 - #16275 (class expression as a CommonJS named export; rule 27)
 - #16306 (class method shadowed by a same-key field; rule 28)
+- #16314 (class method replaced by an assignment; rule 29)
+- #16349 (methods of an anonymous default-exported class; rule 19)
 - #9435 (exact oracle ignored on five changed-line shapes)
 - #9497 (skipped or unexercised tests credited as exposed; rules 17 and 18)
 - #11196 (start rate: a conditional assertion in an unconsulted test no longer
@@ -1404,7 +1406,12 @@ the relation, since it could reach the sibling outside `local.member(` calls
 (`u2.extend()`, `ns.default.extend()`, `extend()`); this is a blanket
 fail-closed rule, not a check of which names the second binding uses (#13750).
 Known limits: a second binding whose source the import resolver cannot match
-to the owner module, and a sibling that reaches the module only through a
+to the owner module (for example a named import through a barrel,
+`import { extend } from '../src/index'` where the index has
+`export * from './utils'`, which resolves to the barrel and not to the owner's
+module), an inline loader call such as
+`createRequire(import.meta.url)('../src/utils')` (only the callees `import`,
+`require`, `requireActual` and `importActual` are read as loads), and a sibling that reaches the module only through a
 path alias such as `@/utils` (only sources starting with `.` count as possibly
 self-reachable), are not covered. The test file must use `local` for nothing but direct
 calls `local.member(` (any number of distinct members, each credited only to
@@ -1489,6 +1496,34 @@ method has its own no-reach cause, a test importing a same-named package symbol
 does not replace this guidance with an unresolved-alias disclosure; the same
 holds for an overwritten method (rule 26). Sibling reach already treated such a
 field as shadowing.
+
+**Rule 29. A class method that an assignment replaces relates to no test
+(#16314).** An unconditional `this.NAME = ...` statement at the top level of a
+class's constructor, before any statement that can `return` from it, defines
+`NAME` on each instance; an unconditional top-level `Class.prototype.NAME =
+...` statement of the same file overwrites the method on the prototype; and a
+top-level `Class.NAME = ...` replaces a static method. In each case
+`new Class().NAME()` (or `Class.NAME()`) runs the assigned value. The receiver
+is read through parentheses and TypeScript casts (`(Cart.prototype as
+any).total = ...`, `(this as any).total = ...`), and a top-level assignment
+counts only for a class a top-level declaration binds in module scope (the
+class name of an inline `exports.Cart = class {}` is an export property, not a
+binding), and only for a method of that declaration itself, not of an
+inline `exports.Cart = class {}` sharing its name, even on the same line. Such an ordinary method (not a getter, setter or constructor) stays
+an owner (a changed line is still reported) but relates to no test, so it
+reads `no_static_path`, and its guidance names the assignment it found. Not a
+replacement: any read of the same member in the same scope (the constructor
+body and its parameter initializers, or the file's top level) outside the assignment's own target, dotted or
+bracketed with a string key (`this.total = this.total.bind(this)`,
+`this['total'].bind(this)`, `Class.prototype.total =
+wrap(Class.prototype.total)`, `const original = Class.prototype.total;`),
+since the replacement may still call the method; an assignment nested in a
+condition, loop or callback, or after a possible `return`; an assignment of
+the other placement (`Class.total = ...` beside an instance method,
+`Class.prototype.total = ...` beside a static method); and an assignment to
+an accessor, which calls its setter. As for rules 26 and 28, a same-named
+package import in a test does not replace this guidance with an
+unresolved-alias disclosure.
 
 ### Observation guard
 
@@ -1891,8 +1926,18 @@ or declared) relates through the whole-module `require` binding
 (`Local.method()`), never through a named binding, which reads a static
 property of the class. An instance field of an inline class shadows the
 prototype method of the same name for sibling calls, as for a declared class.
-An anonymous `module.exports = class { ... }` yields
-owners that stay unrelated, as `export default class {}` does. Named property
+Amended 2026-11-26 (#16349): an anonymous `module.exports = class { ... }`
+and an anonymous ES `export default class { ... }` are default exports like
+their named twins, reached under any local name, so a missing class name is
+no reason to withhold the relation. Their members carry the class name
+`default` (the ES class's runtime name; a reserved word, so no same-file
+construction or static call can spell it) and relate through the whole-module
+`require` or the default import respectively; their instance fields are keyed by
+the same name, so a field (a computed one included) still shadows a method a
+sibling calls, and two anonymous default classes in one file repeat it. Every
+other gate above is unchanged (a named import or `require`, a default-named `require` of the
+CommonJS form, and a named export beside the inline class stay unrelated).
+Before, both read `no_static_path`. Named property
 exports of a class expression (`exports.Name = class ...`) and `const Name =
 class ...; module.exports = Name;` are not read.
 
@@ -3014,7 +3059,7 @@ keys); do not take the next number.
   whole-module `require` under any local name as related, beside the controls
   that stay unrelated: named, default-named and ES imports, another module, a
   named export beside the class, an ambiguous whole export, a rebound or
-  shadowed require local, and an anonymous class. End-to-end `analyze_diff`
+  shadowed require local (an anonymous class relates since #16349). End-to-end `analyze_diff`
   cases pin that a changed method yields a finding, a static method relates
   only through the whole-module binding, and an instance field shadows a
   sibling-called method.
@@ -3054,6 +3099,40 @@ keys); do not take the next number.
   same-named package symbol keeps the field guidance. Each test body asserts
   the runtime value (the field's for a shadowed case, the method's for a
   control).
+- #16314 (rule 29, replaced class method):
+  `crates/ripr/src/analysis/language/typescript/tests/replaced_method_tests.rs`
+  runs `analyze_diff` on a method replaced by a constructor `this.total = ...`
+  (an arrow, or a read of another object's member), a top-level
+  `Cart.prototype.total = ...`, a static `Cart.total = ...` and a constructor
+  replacement in an ES-exported class, plus the three receivers behind a
+  TypeScript `as any` cast in a `.ts` file: each relates to no test, and the guidance
+  names the assignment and keeps the method through the same receiver
+  (`this.total = this.total.bind(this)`, `Cart.prototype.total =
+  wrap(Cart.prototype.total)`). A wrapper that
+  calls a different saved method still replaces. Controls that keep their
+  relation: no assignment, a constructor self-bind (dotted or bracketed), a
+  saved original in the constructor, a constructor parameter default
+  (`constructor(original = this.total)`) or at the top level, a prototype or static
+  wrap of the same member, a conditional constructor assignment, one after an
+  early `return`, assignments of another name, assignments of the other
+  placement, and a write to a local named like an inline
+  `exports.Cart = class {}`, including one beside a declared `class Cart`
+  whose own method the write does replace. The owner is marked `Replaced`, while a
+  constructor assignment to an accessor leaves the setter and getter as they
+  are. Each test body asserts the runtime value.
+- #16349 (rule 19, anonymous default class):
+  `crates/ripr/src/analysis/language/typescript/tests/anonymous_default_class_tests.rs`
+  runs `analyze_diff` on a method of `export default class {}` (also
+  `extends Base`) and `module.exports = class {}`: a default import or
+  whole-module `require` under any local name relates, while a named import or
+  `require`, a default-named `require` and a named export beside the inline
+  class stay unrelated; owner extraction names the members `default` and leaves
+  a named or non-default anonymous class alone. A method the constructor
+  replaces stays unrelated (rule 29), and a computed instance field blocks the
+  edge from a sibling that calls the method, in both forms; the field inventory
+  keys such a class by `default`, and two anonymous default classes in one file
+  repeat that name. `commonjs_inline_class_tests.rs` now credits the anonymous
+  inline class through a whole-module `require`.
 
 - #11196 (rule 11, object rows): `tests/object_row_tests.rs` pins the per-row
   literal assertions for the `for...of` and `test.each` object-row forms and
