@@ -104,13 +104,23 @@ fn only_an_earlier_probing_step_withholds_the_relation() -> Result<(), String> {
     Ok(())
 }
 
-/// The standard trait's own impl is not its own rival.
+/// The standard trait's own impl is not its own rival, and neither is
+/// another standard trait sharing the name: `Iterator::eq` takes `self` by
+/// value, but only for a type that is an `Iterator` too.
 #[test]
 fn the_standard_traits_own_impl_keeps_the_relation() -> Result<(), String> {
     assert!(direct(
         &production("&self", "peek_count"),
         "impl Iterator for Foo::next",
         "let _ = Foo::new(5).next();"
+    )?);
+    let equality = "pub struct Foo(pub u32);\n\
+         impl Foo {\n    pub fn new(n: u32) -> Self { Foo(n) }\n}\n\
+         impl PartialEq for Foo {\n    fn eq(&self, other: &Foo) -> bool { self.0 == other.0 }\n}\n";
+    assert!(direct(
+        equality,
+        "impl PartialEq for Foo::eq",
+        "assert!(Foo::new(1).eq(&Foo::new(1)));"
     )?);
     Ok(())
 }

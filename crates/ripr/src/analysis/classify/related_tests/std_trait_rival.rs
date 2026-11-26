@@ -26,8 +26,10 @@ use super::{FunctionSummary, TestSummary, owner_trait_name};
 /// method before a `&mut self` owner. An owner taking `self` by value is
 /// tried first and keeps the relation.
 ///
-/// - The standard trait's own impl (`impl Iterator for Foo { fn next }`) is
-///   not its own rival.
+/// - An owner that is a standard trait's own method (`impl Iterator for Foo
+///   { fn next }`, `impl PartialEq for Foo { fn eq }`) keeps the relation:
+///   another standard trait shares its name only for a type implementing
+///   both, which this does not read.
 /// - A call through the owner's trait path (`Peeky::into_iter(&foo)`,
 ///   `<Foo as Peeky>::into_iter(&foo)`) names the owner's trait, so a test
 ///   with one keeps the relation.
@@ -49,11 +51,20 @@ pub(super) fn a_standard_trait_method_may_take_the_call(
     };
     let name = owner_name.strip_prefix("r#").unwrap_or(owner_name);
     let owner_trait = owner_trait.strip_prefix("r#").unwrap_or(&owner_trait);
-    earlier.iter().any(|table| {
-        table
-            .iter()
-            .any(|(standard, methods)| *standard != owner_trait && methods.contains(&name))
-    }) && !calls_through_the_trait_path(&test.body, name, owner_trait)
+    // `impl PartialEq for Foo { fn eq(&self, ..) }` is a standard trait's own
+    // method; `Iterator::eq(self, ..)` shares the name only for a type that
+    // is an `Iterator` too, which this does not read.
+    let lists = |table: &[(&str, &[&str])], rival: bool| {
+        table.iter().any(|(standard, methods)| {
+            (*standard != owner_trait) == rival && methods.contains(&name)
+        })
+    };
+    let own_standard_method = [BY_VALUE, BY_SHARED_REFERENCE]
+        .into_iter()
+        .any(|table| lists(table, false));
+    !own_standard_method
+        && earlier.iter().any(|table| lists(table, true))
+        && !calls_through_the_trait_path(&test.body, name, owner_trait)
 }
 
 /// Standard trait methods taking `self` by value, by the trait's last path
@@ -196,11 +207,13 @@ const BY_SHARED_REFERENCE: &[(&str, &[&str])] = &[
 /// whitespace between the tokens. Comments and literals do not count.
 fn calls_through_the_trait_path(body: &str, name: &str, owner_trait: &str) -> bool {
     let masked = crate::analysis::extract::mask_comments_and_strings(body);
-    let plain = |ident: &str| ident.strip_prefix("r#").unwrap_or(ident).to_string();
+    fn plain(ident: &str) -> &str {
+        ident.strip_prefix("r#").unwrap_or(ident)
+    }
     let name = plain(name);
     let owner_trait = plain(owner_trait);
     let word = |ch: char| ch.is_alphanumeric() || ch == '_';
-    masked.match_indices(name.as_str()).any(|(at, _)| {
+    masked.match_indices(name).any(|(at, _)| {
         let after = &masked[at + name.len()..];
         if after.starts_with(word) || !after.trim_start().starts_with('(') {
             return false;
