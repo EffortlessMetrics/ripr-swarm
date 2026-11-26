@@ -831,6 +831,11 @@ fn imported_json_wrapper_forwards_unless_json_is_rebound() -> Result<(), String>
             "use serde_json::json;\nuse other::{serde_json::{self}};",
         ),
         (
+            "commented foreign path",
+            AUDITED,
+            "use serde_json::json;\nuse other::/* note */serde_json;",
+        ),
+        (
             "namespace alias",
             AUDITED,
             "use serde_json::json;\nmod serde_json { macro_rules! json { ($($t:tt)*) => { return 5 }; } }",

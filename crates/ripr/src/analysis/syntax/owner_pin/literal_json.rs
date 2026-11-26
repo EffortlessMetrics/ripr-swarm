@@ -178,11 +178,12 @@ fn use_tree_binds_serde_json(tree: &ast::UseTree) -> bool {
         .filter_map(ast::UseTree::cast)
         .filter_map(|tree| tree.path())
         .map(|path| {
+            // Tokens, not text, so whitespace and comments drop out.
             path.syntax()
-                .text()
-                .to_string()
-                .chars()
-                .filter(|c| !c.is_whitespace())
+                .descendants_with_tokens()
+                .filter_map(|element| element.into_token())
+                .filter(|token| !token.kind().is_trivia())
+                .map(|token| token.text().to_string())
                 .collect()
         })
         .collect();
@@ -217,6 +218,7 @@ mod tests {
         };
         for source in [
             "use other::serde_json;",
+            "use other::/* note */serde_json;",
             "use other::{serde_json};",
             "use other::serde_json::{self};",
             "use other::{serde_json::{self}};",
@@ -234,6 +236,7 @@ mod tests {
             "use serde_json::{self, json};",
             "use ::serde_json::{self};",
             "use serde_json::{self};",
+            "use /* note */ serde_json::{self, json};",
             "use serde_json;",
             "use ::serde_json;",
             "use r#serde_json::{self, json};",
