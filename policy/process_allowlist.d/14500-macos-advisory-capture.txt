@@ -1,0 +1,1 @@
+tools/repo-policy/tests/macos_advisory_capture.rs|Command::new|1|macos-advisory-capture-proof|#14500: Linux-only finite Cargo/tee fixtures replay the checked-in macOS advisory shell blocks through a five-second timeout; no native macOS workload or network.
