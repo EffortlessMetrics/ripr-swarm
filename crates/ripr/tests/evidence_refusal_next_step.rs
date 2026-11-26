@@ -1,9 +1,11 @@
 //! Refusals for a missing or broken input file name where a usable one comes
 //! from, not just the read error: `ripr pr-evidence --check`,
 //! `ripr impacted-evidence --check`, `ripr baseline update`,
-//! `ripr calibrate cargo-mutants` and `ripr check --suppression-policy`. Each case runs the real binary in a scratch directory and
-//! pins the next-step clause, so a regression that drops it fails here rather
-//! than only in the looser action-word floor (`refusal_next_step.rs`).
+//! `ripr calibrate cargo-mutants`, `ripr check --suppression-policy` and the
+//! `ripr agent repair` attempt selectors. Each case runs the real binary in a
+//! scratch directory and pins the next-step clause, so a regression that drops
+//! it fails here rather than only in the looser action-word floor
+//! (`refusal_next_step.rs`).
 
 #[path = "common/mod.rs"]
 mod common;
@@ -314,4 +316,115 @@ fn suppression_policy_refusals_name_the_fix() -> Result<(), String> {
             "unsupported `[[suppressions]]` field `bogus`",
         ],
     )
+}
+
+/// An unknown `--attempt` names how to find the right one, and a repository
+/// with no commit says to commit before a repair attempt can bind HEAD.
+#[test]
+fn agent_repair_attempt_refusals_name_the_fix() -> Result<(), String> {
+    let repo = committed_repo()?;
+    std::fs::create_dir_all(repo.0.join("target/ripr/team-attempts"))
+        .map_err(|error| format!("create store: {error}"))?;
+    let stderr = refusal(
+        &repo.0,
+        &[
+            "agent",
+            "repair",
+            "--root",
+            ".",
+            "--attempt",
+            "repair-attempt-0123456789abcdef01234567",
+            "--store",
+            "target/ripr/team-attempts",
+            "--phase",
+            "after",
+        ],
+    )?;
+    // The status follow-up must search the same root and store as the lookup
+    // that refused; a bare `ripr agent status` lists a different store.
+    stderr_has_all(
+        &stderr,
+        &[
+            "repair attempt manifest not found for repair-attempt-0123456789abcdef01234567 at ",
+            "; check the --attempt ID and --store",
+            "inspect it with `ripr agent status --root ",
+            " --store target/ripr/team-attempts --attempt repair-attempt-0123456789abcdef01234567`",
+            "No new repair attempt was started.",
+        ],
+    )?;
+    if stderr.matches("ripr agent status").count() != 1 {
+        return Err(format!("expected one status command:\n{stderr}"));
+    }
+
+    let fresh = scratch()?;
+    git(&fresh.0, &["init", "-q"])?;
+    std::fs::write(
+        fresh.0.join("Cargo.toml"),
+        "[package]\nname = \"fixture\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+    )
+    .map_err(|error| format!("write Cargo.toml: {error}"))?;
+    std::fs::create_dir_all(fresh.0.join("src")).map_err(|error| format!("create src: {error}"))?;
+    std::fs::write(
+        fresh.0.join("src/lib.rs"),
+        "pub fn f(x: i32) -> i32 { x + 1 }\n",
+    )
+    .map_err(|error| format!("write lib.rs: {error}"))?;
+    let stderr = refusal(
+        &fresh.0,
+        &[
+            "agent",
+            "repair",
+            "--root",
+            ".",
+            "--seam-id",
+            "x",
+            "--phase",
+            "before",
+        ],
+    )?;
+    stderr_has_all(
+        &stderr,
+        &[
+            "repair attempt requires a concrete repository HEAD: ",
+            "; commit the repository at least once, then rerun",
+        ],
+    )?;
+
+    // Control: a committed checkout whose HEAD ripr cannot use keeps Git's
+    // diagnosis and is not told to commit again.
+    let sha256 = scratch()?;
+    git(&sha256.0, &["init", "-q", "--object-format=sha256"])?;
+    std::fs::write(
+        sha256.0.join("Cargo.toml"),
+        "[package]\nname = \"fixture\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+    )
+    .map_err(|error| format!("write Cargo.toml: {error}"))?;
+    git(&sha256.0, &["add", "Cargo.toml"])?;
+    git(&sha256.0, &["commit", "-q", "-m", "fixture"])?;
+    let stderr = refusal(
+        &sha256.0,
+        &[
+            "agent",
+            "repair",
+            "--root",
+            ".",
+            "--seam-id",
+            "x",
+            "--phase",
+            "before",
+        ],
+    )?;
+    stderr_has_all(
+        &stderr,
+        &[
+            "repair attempt requires a concrete repository HEAD: ",
+            "; fix the Git problem it names, then rerun",
+        ],
+    )?;
+    if stderr.contains("commit the repository at least once") {
+        return Err(format!(
+            "committed SHA-256 checkout was told to commit again:\n{stderr}"
+        ));
+    }
+    Ok(())
 }

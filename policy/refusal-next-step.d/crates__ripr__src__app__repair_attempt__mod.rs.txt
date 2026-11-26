@@ -13,7 +13,6 @@ crates/ripr/src/app/repair_attempt/mod.rs|decode edit-cage baseline failed: {err
 crates/ripr/src/app/repair_attempt/mod.rs|decode focused receipt before acceptance failed: {error}
 crates/ripr/src/app/repair_attempt/mod.rs|decode retained receipt failed: {error}
 crates/ripr/src/app/repair_attempt/mod.rs|decode {} failed: {error}
-crates/ripr/src/app/repair_attempt/mod.rs|edit-cage baseline root does not match selected repository
 crates/ripr/src/app/repair_attempt/mod.rs|expected exactly one repair in progress for gap `{seam_id}`: {detail}
 crates/ripr/src/app/repair_attempt/mod.rs|focused finish custody changed before terminal retention; refusing to retain
 crates/ripr/src/app/repair_attempt/mod.rs|focused finish custody changed or terminal evidence is already retained; refusing to restore
@@ -40,8 +39,6 @@ crates/ripr/src/app/repair_attempt/mod.rs|read repair attempt entry failed: {err
 crates/ripr/src/app/repair_attempt/mod.rs|read terminal artifact {} failed: {error}
 crates/ripr/src/app/repair_attempt/mod.rs|read {} failed: {error}
 crates/ripr/src/app/repair_attempt/mod.rs|receipt evaluation evidence changed before retention; refusing foreign bytes
-crates/ripr/src/app/repair_attempt/mod.rs|repair after selection requires a non-empty seam ID
-crates/ripr/src/app/repair_attempt/mod.rs|repair after selection requires an attempt ID or seam ID
 crates/ripr/src/app/repair_attempt/mod.rs|repair attempt after-phase refusal has an empty reason
 crates/ripr/src/app/repair_attempt/mod.rs|repair attempt after-phase refusal history is inconsistent
 crates/ripr/src/app/repair_attempt/mod.rs|repair attempt artifact binding failed: {}
@@ -56,14 +53,10 @@ crates/ripr/src/app/repair_attempt/mod.rs|repair attempt manifest contains an in
 crates/ripr/src/app/repair_attempt/mod.rs|repair attempt manifest contains an unknown terminal artifact role
 crates/ripr/src/app/repair_attempt/mod.rs|repair attempt manifest identity does not match its selector
 crates/ripr/src/app/repair_attempt/mod.rs|repair attempt manifest is incomplete or malformed
-crates/ripr/src/app/repair_attempt/mod.rs|repair attempt manifest not found for {} at {}
 crates/ripr/src/app/repair_attempt/mod.rs|repair attempt manifest path has no parent
 crates/ripr/src/app/repair_attempt/mod.rs|repair attempt manifest path is not bound to its identity
-crates/ripr/src/app/repair_attempt/mod.rs|repair attempt manifest root does not match selected repository
 crates/ripr/src/app/repair_attempt/mod.rs|repair attempt packet binding failed
 crates/ripr/src/app/repair_attempt/mod.rs|repair attempt receipt bound_gap does not equal the verify document's closure of gap `{seam_id}`
-crates/ripr/src/app/repair_attempt/mod.rs|repair attempt requires a concrete repository HEAD: {error}
-crates/ripr/src/app/repair_attempt/mod.rs|repair attempt requires a non-empty seam ID
 crates/ripr/src/app/repair_attempt/mod.rs|repair attempt requires at least one before-phase artifact
 crates/ripr/src/app/repair_attempt/mod.rs|repair attempt schema must be {REPAIR_ATTEMPT_SCHEMA_VERSION}, got {}
 crates/ripr/src/app/repair_attempt/mod.rs|repair attempt store schema must be {}, got {}

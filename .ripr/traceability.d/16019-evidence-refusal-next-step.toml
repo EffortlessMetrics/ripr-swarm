@@ -27,3 +27,10 @@ id = "RIPR-SPEC-0007"
 tests = [
   "crates/ripr/tests/evidence_refusal_next_step.rs::suppression_policy_refusals_name_the_fix",
 ]
+
+# `ripr agent repair` attempt-selection refusals name the fix (#16019).
+[[extend]]
+id = "RIPR-SPEC-0011"
+tests = [
+  "crates/ripr/tests/evidence_refusal_next_step.rs::agent_repair_attempt_refusals_name_the_fix",
+]
