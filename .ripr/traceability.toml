@@ -20152,6 +20152,7 @@ tests = [
   "crates/ripr/src/analysis/language/typescript/tests/replaced_method_tests.rs::a_replacement_through_a_typescript_cast_relates_to_no_test",
   "crates/ripr/src/analysis/language/typescript/tests/replaced_method_tests.rs::assignments_that_keep_the_method_keep_its_relation",
   "crates/ripr/src/analysis/language/typescript/tests/replaced_method_tests.rs::a_write_to_a_local_named_like_an_inline_export_class_keeps_the_relation",
+  "crates/ripr/src/analysis/language/typescript/tests/replaced_method_tests.rs::a_write_to_a_declared_class_leaves_an_inline_export_class_of_that_name",
   "crates/ripr/src/analysis/language/typescript/tests/replaced_method_tests.rs::a_replaced_method_is_an_owner_marked_replaced_and_an_accessor_is_not",
   "crates/ripr/src/analysis/language/typescript/tests/replaced_method_tests.rs::a_replaced_method_points_at_the_assignment",
   "crates/ripr/src/analysis/language/typescript/tests/commonjs_named_class_export_tests.rs::a_named_export_class_expression_yields_owners_named_by_the_property",

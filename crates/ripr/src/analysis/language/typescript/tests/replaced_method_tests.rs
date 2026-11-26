@@ -276,6 +276,13 @@ fn assignments_that_keep_the_method_keep_its_relation() -> Result<(), String> {
             METHOD_CALL,
         ),
         (
+            "constructor-parameter-saves-original",
+            format!(
+                "class Cart {{\n  constructor(original = this.total) {{\n    this.total = (n) => original.call(this, n);\n  }}\n{METHOD}}}\nmodule.exports = {{ Cart }};\n"
+            ),
+            METHOD_CALL,
+        ),
+        (
             "constructor-other-name",
             cart("    this.items = [];\n", METHOD, ""),
             METHOD_CALL,
@@ -315,6 +322,37 @@ fn a_write_to_a_local_named_like_an_inline_export_class_keeps_the_relation() -> 
     );
     case(
         "inline-export-local-write",
+        &owner_text,
+        STATIC_METHOD_CALL,
+        true,
+    )
+}
+
+/// A declared `class Cart` beside an inline `exports.Cart = class {}`: a
+/// top-level `Cart.total = ...` replaces the declared class's method, not the
+/// exported class's.
+#[test]
+fn a_write_to_a_declared_class_leaves_an_inline_export_class_of_that_name() -> Result<(), String> {
+    let owner_text = format!(
+        "class Cart {{\n  static total(n) {{ return 0; }}\n}}\nexports.Cart = class {{\n{}}};\nCart.total = (n) => n * 2;\n",
+        static_method()
+    );
+    let owners = extract_owners(Path::new("src/cart.js"), &owner_text);
+    let kinds: Vec<_> = owners
+        .iter()
+        .filter(|owner| owner.name == "total")
+        .map(|owner| owner.method_kind)
+        .collect();
+    if kinds
+        != [
+            TypeScriptMethodKind::ReplacedByAssignment,
+            TypeScriptMethodKind::Ordinary,
+        ]
+    {
+        return Err(format!("unexpected owners {owners:?}"));
+    }
+    case(
+        "declared-and-inline-export",
         &owner_text,
         STATIC_METHOD_CALL,
         true,
@@ -371,9 +409,12 @@ fn a_replaced_method_points_at_the_assignment() -> Result<(), String> {
         ));
     }
     let step = finding.recommended_next_step.as_deref().unwrap_or_default();
-    if !step.contains("an assignment to `total` in this file replaces the method") {
+    if !step.contains("an assignment to `total` in this file replaces the method")
+        || !step.contains("`Cart.prototype.total = wrap(Cart.prototype.total)`")
+        || step.contains("this.total")
+    {
         return Err(format!(
-            "recommendation does not name the assignment: {step:?}"
+            "recommendation does not name the assignment and its receiver: {step:?}"
         ));
     }
     let constructor = diff_finding(
@@ -388,6 +429,15 @@ fn a_replaced_method_points_at_the_assignment() -> Result<(), String> {
         return Err(format!(
             "constructor guidance names another site: {:?}",
             constructor.missing
+        ));
+    }
+    let step = constructor
+        .recommended_next_step
+        .as_deref()
+        .unwrap_or_default();
+    if !step.contains("`this.total = this.total.bind(this)`") || step.contains("prototype") {
+        return Err(format!(
+            "constructor recommendation names another receiver: {step:?}"
         ));
     }
     Ok(())

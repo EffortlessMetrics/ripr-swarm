@@ -13132,8 +13132,22 @@ pub(crate) fn no_static_path_recommendation(owner: &TypeScriptOwner) -> String {
         // #16314: a direct receiver call runs the assigned value, so the
         // usual "add a direct call" advice would point at code that never
         // runs.
+        // The example keeps the method through the receiver the assignment
+        // writes to.
+        let keep = if owner.method_kind == TypeScriptMethodKind::ReplacedInConstructor {
+            format!(
+                "bind the method itself (`this.{0} = this.{0}.bind(this)`)",
+                owner.name
+            )
+        } else {
+            let target = replaced_member_target(owner);
+            format!(
+                "call the method from the new value (`{target}.{0} = wrap({target}.{0})`)",
+                owner.name
+            )
+        };
         return format!(
-            "TypeScript preview advisory: an assignment to `{0}` in this file replaces the method, so a test calling `{0}` runs the assigned value, not the changed body. Remove the assignment, bind the method itself (`this.{0} = this.{0}.bind(this)`), or make the change in the assigned function, then rerun `ripr check`.",
+            "TypeScript preview advisory: an assignment to `{0}` in this file replaces the method, so a test calling `{0}` runs the assigned value, not the changed body. Remove the assignment, {keep}, or make the change in the assigned function, then rerun `ripr check`.",
             owner.name
         );
     }

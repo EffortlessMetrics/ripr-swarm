@@ -19,11 +19,12 @@ use std::collections::BTreeSet;
 
 use oxc_ast::ast::{
     ArrowFunctionExpression, AssignmentOperator, AssignmentTarget, Class, ClassElement,
-    ComputedMemberExpression, Declaration, ExportDefaultDeclarationKind, Expression, Function,
-    MethodDefinition, MethodDefinitionKind, PropertyDefinition, PropertyKey, ReturnStatement,
-    Statement, StaticMemberExpression,
+    ComputedMemberExpression, Declaration, ExportDefaultDeclarationKind, Expression,
+    FormalParameters, Function, MethodDefinition, MethodDefinitionKind, PropertyDefinition,
+    PropertyKey, ReturnStatement, Statement, StaticMemberExpression,
 };
 use oxc_ast_visit::{Visit, walk};
+use oxc_span::Span;
 use oxc_syntax::scope::ScopeFlags;
 
 /// Span starts of the methods in `class` whose key a later member overwrites.
@@ -208,14 +209,17 @@ fn accessor_pair(earlier: MethodDefinitionKind, later: MethodDefinitionKind) -> 
 /// an assignment to an accessor calls its setter, and `this` in a constructor
 /// is the instance.
 pub(super) fn constructor_replaced_method_starts(class: &Class<'_>) -> BTreeSet<u32> {
-    let Some(body) = class.body.body.iter().find_map(|element| match element {
+    let Some(constructor) = class.body.body.iter().find_map(|element| match element {
         ClassElement::MethodDefinition(method)
             if method.kind == MethodDefinitionKind::Constructor =>
         {
-            method.value.body.as_ref()
+            Some(&method.value)
         }
         _ => None,
     }) else {
+        return BTreeSet::new();
+    };
+    let Some(body) = constructor.body.as_ref() else {
         return BTreeSet::new();
     };
     let statements = &body.statements;
@@ -229,7 +233,8 @@ pub(super) fn constructor_replaced_method_starts(class: &Class<'_>) -> BTreeSet<
         .filter_map(|statement| {
             let (object, key, _) = member_assignment(statement)?;
             (matches!(object.get_inner_expression(), Expression::ThisExpression(_))
-                && !scope_reads_member(statements, MemberObject::This, key))
+                && !scope_reads_member(statements, MemberObject::This, key)
+                && !parameters_read_this_member(&constructor.params, key))
             .then(|| format!("public:{key}"))
         })
         .collect();
@@ -291,25 +296,29 @@ pub(super) fn top_level_replaced_members(
         .collect()
 }
 
-/// The names a top-level class declaration of `body` binds in module scope:
-/// `class Cart {}`, `export class Cart {}` and `export default class Cart {}`.
-/// An inline `exports.Cart = class {}` binds no `Cart`, so a top-level
-/// `Cart.total = ...` there writes some other binding.
-pub(super) fn module_class_bindings(body: &[Statement<'_>]) -> BTreeSet<String> {
+/// The name and span of each top-level class declaration of `body`, which
+/// binds that name in module scope: `class Cart {}`, `export class Cart {}`
+/// and `export default class Cart {}`. An inline `exports.Cart = class {}`
+/// binds no `Cart`, so a top-level `Cart.total = ...` writes some other
+/// binding, even when a declared `Cart` sits beside it.
+pub(super) fn module_class_bindings(body: &[Statement<'_>]) -> Vec<(String, Span)> {
     body.iter()
         .filter_map(|statement| match statement {
-            Statement::ClassDeclaration(class) => class.id.as_ref(),
+            Statement::ClassDeclaration(class) => Some(class),
             Statement::ExportNamedDeclaration(export) => match &export.declaration {
-                Some(Declaration::ClassDeclaration(class)) => class.id.as_ref(),
+                Some(Declaration::ClassDeclaration(class)) => Some(class),
                 _ => None,
             },
             Statement::ExportDefaultDeclaration(export) => match &export.declaration {
-                ExportDefaultDeclarationKind::ClassDeclaration(class) => class.id.as_ref(),
+                ExportDefaultDeclarationKind::ClassDeclaration(class) => Some(class),
                 _ => None,
             },
             _ => None,
         })
-        .map(|identifier| identifier.name.to_string())
+        .filter_map(|class| {
+            let identifier = class.id.as_ref()?;
+            Some((identifier.name.to_string(), class.span))
+        })
         .collect()
 }
 
@@ -363,35 +372,50 @@ impl MemberObject<'_> {
     }
 }
 
+/// Finds a read of `object.key`, dotted or through a string-literal bracket.
+struct Reads<'n> {
+    object: MemberObject<'n>,
+    key: &'n str,
+    found: bool,
+}
+
+/// Whether a parameter initializer reads `this.key`:
+/// `constructor(original = this.total)`.
+fn parameters_read_this_member(parameters: &FormalParameters<'_>, key: &str) -> bool {
+    let mut reads = Reads {
+        object: MemberObject::This,
+        key,
+        found: false,
+    };
+    reads.visit_formal_parameters(parameters);
+    reads.found
+}
+
+impl<'a> Visit<'a> for Reads<'_> {
+    fn visit_static_member_expression(&mut self, member: &StaticMemberExpression<'a>) {
+        if self.found {
+            return;
+        }
+        self.found = member.property.name == self.key && self.object.matches(&member.object);
+        walk::walk_static_member_expression(self, member);
+    }
+    fn visit_computed_member_expression(&mut self, member: &ComputedMemberExpression<'a>) {
+        if self.found {
+            return;
+        }
+        self.found = matches!(
+            member.expression.get_inner_expression(),
+            Expression::StringLiteral(literal) if literal.value == self.key
+        ) && self.object.matches(&member.object);
+        walk::walk_computed_member_expression(self, member);
+    }
+}
+
 /// Whether any of `statements` reads `object.key` (dotted, or bracketed with
 /// a string key), outside the target of a plain `object.key = ...`
 /// assignment, so the original member may be captured (bound, wrapped or
 /// saved) by the value that replaces it.
 fn scope_reads_member(statements: &[Statement<'_>], object: MemberObject<'_>, key: &str) -> bool {
-    struct Reads<'n> {
-        object: MemberObject<'n>,
-        key: &'n str,
-        found: bool,
-    }
-    impl<'a> Visit<'a> for Reads<'_> {
-        fn visit_static_member_expression(&mut self, member: &StaticMemberExpression<'a>) {
-            if self.found {
-                return;
-            }
-            self.found = member.property.name == self.key && self.object.matches(&member.object);
-            walk::walk_static_member_expression(self, member);
-        }
-        fn visit_computed_member_expression(&mut self, member: &ComputedMemberExpression<'a>) {
-            if self.found {
-                return;
-            }
-            self.found = matches!(
-                member.expression.get_inner_expression(),
-                Expression::StringLiteral(literal) if literal.value == self.key
-            ) && self.object.matches(&member.object);
-            walk::walk_computed_member_expression(self, member);
-        }
-    }
     let mut reads = Reads {
         object,
         key,

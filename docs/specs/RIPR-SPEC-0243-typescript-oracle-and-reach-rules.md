@@ -1502,11 +1502,12 @@ is read through parentheses and TypeScript casts (`(Cart.prototype as
 any).total = ...`, `(this as any).total = ...`), and a top-level assignment
 counts only for a class a top-level declaration binds in module scope (the
 class name of an inline `exports.Cart = class {}` is an export property, not a
-binding). Such an ordinary method (not a getter, setter or constructor) stays
+binding), and only for a method of that declared class, not of an inline
+`exports.Cart = class {}` sharing its name. Such an ordinary method (not a getter, setter or constructor) stays
 an owner (a changed line is still reported) but relates to no test, so it
 reads `no_static_path`, and its guidance names the assignment it found. Not a
 replacement: any read of the same member in the same scope (the constructor
-body, or the file's top level) outside the assignment's own target, dotted or
+body and its parameter initializers, or the file's top level) outside the assignment's own target, dotted or
 bracketed with a string key (`this.total = this.total.bind(this)`,
 `this['total'].bind(this)`, `Class.prototype.total =
 wrap(Class.prototype.total)`, `const original = Class.prototype.total;`),
@@ -3089,14 +3090,18 @@ keys); do not take the next number.
   `Cart.prototype.total = ...`, a static `Cart.total = ...` and a constructor
   replacement in an ES-exported class, plus the three receivers behind a
   TypeScript `as any` cast in a `.ts` file: each relates to no test, and the guidance
-  names the assignment (constructor and prototype spellings). A wrapper that
+  names the assignment and keeps the method through the same receiver
+  (`this.total = this.total.bind(this)`, `Cart.prototype.total =
+  wrap(Cart.prototype.total)`). A wrapper that
   calls a different saved method still replaces. Controls that keep their
   relation: no assignment, a constructor self-bind (dotted or bracketed), a
-  saved original in the constructor or at the top level, a prototype or static
+  saved original in the constructor, a constructor parameter default
+  (`constructor(original = this.total)`) or at the top level, a prototype or static
   wrap of the same member, a conditional constructor assignment, one after an
   early `return`, assignments of another name, assignments of the other
   placement, and a write to a local named like an inline
-  `exports.Cart = class {}`. The owner is marked `Replaced`, while a
+  `exports.Cart = class {}`, including one beside a declared `class Cart`
+  whose own method the write does replace. The owner is marked `Replaced`, while a
   constructor assignment to an accessor leaves the setter and getter as they
   are. Each test body asserts the runtime value.
 

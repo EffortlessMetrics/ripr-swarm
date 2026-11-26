@@ -95,7 +95,7 @@ pub(crate) fn owners_from_program(
     // #7812: keep the original owner when `export default ident`
     // snapshots the binding before that reassignment.
     owners = without_reassigned_esm_bindings(&program.body, owners);
-    mark_top_level_replaced_methods(&program.body, &mut owners);
+    mark_top_level_replaced_methods(&program.body, source, &mut owners);
     let (entries, outbound, value_names) = module_entries_and_outbound(
         &program.body,
         source,
@@ -1817,12 +1817,27 @@ pub(crate) fn owner_from_arrow(
 /// module scope is matched: the class name of an inline
 /// `exports.Cart = class {}` is an export property, and a `Cart` written in
 /// that file is some other binding.
-fn mark_top_level_replaced_methods(body: &[Statement<'_>], owners: &mut [TypeScriptOwner]) {
+fn mark_top_level_replaced_methods(
+    body: &[Statement<'_>],
+    source: &SourceText<'_>,
+    owners: &mut [TypeScriptOwner],
+) {
     let replaced = super::overwritten_methods::top_level_replaced_members(body);
     if replaced.is_empty() {
         return;
     }
-    let bound = super::overwritten_methods::module_class_bindings(body);
+    // `(name, first line, last line)` of each declared class.
+    let declared: Vec<(String, usize, usize)> =
+        super::overwritten_methods::module_class_bindings(body)
+            .into_iter()
+            .map(|(name, span)| {
+                (
+                    name,
+                    source.line_for_offset(span.start as usize),
+                    source.line_for_offset(span.end as usize),
+                )
+            })
+            .collect();
     for owner in owners {
         let is_static = match owner.owner_kind {
             OwnerKind::Method => false,
@@ -1831,7 +1846,11 @@ fn mark_top_level_replaced_methods(body: &[Statement<'_>], owners: &mut [TypeScr
         };
         if owner.method_kind == TypeScriptMethodKind::Ordinary
             && let Some(class_name) = &owner.class_name
-            && bound.contains(class_name)
+            // The owner sits in the declared class itself, not in an inline
+            // `exports.Cart = class {}` that shares its name.
+            && declared.iter().any(|(name, first, last)| {
+                name == class_name && (*first..=*last).contains(&owner.start_line)
+            })
             && replaced.contains(&(class_name.clone(), owner.name.clone(), is_static))
         {
             owner.method_kind = TypeScriptMethodKind::ReplacedByAssignment;
