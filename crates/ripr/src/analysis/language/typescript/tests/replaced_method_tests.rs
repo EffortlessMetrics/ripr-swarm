@@ -37,6 +37,18 @@ const STATIC_ASSIGNED_CALL: &str = "    expect(Cart.total(100)).toBe(100);\n";
 /// The finding `analyze_diff` reports on the line of `src/cart.js` that reads
 /// `CHANGED`, with `test` as the jest test file.
 fn diff_finding(label: &str, owner_text: &str, test: &str) -> Result<Finding, String> {
+    diff_finding_at(label, "src/cart.js", owner_text, "tests/cart.test.js", test)
+}
+
+/// [`diff_finding`] with the owner at `owner_path` and the test at
+/// `test_path`.
+fn diff_finding_at(
+    label: &str,
+    owner_path: &str,
+    owner_text: &str,
+    test_path: &str,
+    test: &str,
+) -> Result<Finding, String> {
     let line = owner_text
         .lines()
         .position(|text| text == CHANGED)
@@ -44,12 +56,12 @@ fn diff_finding(label: &str, owner_text: &str, test: &str) -> Result<Finding, St
         .ok_or_else(|| format!("{label}: the changed line is missing from the owner"))?;
     let root = ts_unique_tempdir(label)?;
     ts_write_file(&root.join("package.json"), JEST_PACKAGE)?;
-    ts_write_file(&root.join("src/cart.js"), owner_text)?;
-    ts_write_file(&root.join("tests/cart.test.js"), test)?;
+    ts_write_file(&root.join(owner_path), owner_text)?;
+    ts_write_file(&root.join(test_path), test)?;
     let result = TypeScriptAdapter.analyze_diff(
         &ts_analysis_options(root.clone()),
         &OraclePolicy::default(),
-        &[changed_with_lines("src/cart.js", &[(line, CHANGED)])],
+        &[changed_with_lines(owner_path, &[(line, CHANGED)])],
     );
     let _ = std::fs::remove_dir_all(&root);
     result?
@@ -141,6 +153,47 @@ fn an_es_exported_class_method_replaced_in_the_constructor_relates_to_no_test() 
         &jest_test("import { Cart } from '../src/cart';", ASSIGNED_CALL),
     )?;
     expect_related("ES export", &finding, false)
+}
+
+/// A TypeScript cast on the receiver (`(Cart.prototype as any).total = ...`,
+/// `(this as any).total = ...`) is the same replacement.
+#[test]
+fn a_replacement_through_a_typescript_cast_relates_to_no_test() -> Result<(), String> {
+    let method = METHOD.replace("total(n) {", "total(n: number): number {");
+    let static_method = static_method().replace("total(n) {", "total(n: number): number {");
+    for (label, owner_text, body) in [
+        (
+            "ts-constructor-cast",
+            format!(
+                "export class Cart {{\n  constructor() {{\n    (this as any).total = (n: number) => n;\n  }}\n{method}}}\n"
+            ),
+            ASSIGNED_CALL,
+        ),
+        (
+            "ts-prototype-cast",
+            format!(
+                "export class Cart {{\n{method}}}\n(Cart.prototype as any).total = (n: number) => n;\n"
+            ),
+            ASSIGNED_CALL,
+        ),
+        (
+            "ts-static-cast",
+            format!(
+                "export class Cart {{\n{static_method}}}\n(Cart as any).total = (n: number) => n;\n"
+            ),
+            STATIC_ASSIGNED_CALL,
+        ),
+    ] {
+        let finding = diff_finding_at(
+            label,
+            "src/cart.ts",
+            &owner_text,
+            "tests/cart.test.ts",
+            &jest_test("import { Cart } from '../src/cart';", body),
+        )?;
+        expect_related(label, &finding, false)?;
+    }
+    Ok(())
 }
 
 #[test]

@@ -1497,7 +1497,9 @@ class's constructor defines `NAME` on each instance, and an unconditional
 top-level `Class.prototype.NAME = ...` statement of the same file overwrites the
 method on the prototype, so in either case `new Class().NAME()` runs the
 assigned value; a top-level `Class.NAME = ...` replaces a static method the same
-way. Such an ordinary method (not a getter, setter or constructor) stays an
+way. The receiver is read through parentheses and TypeScript casts
+(`(Cart.prototype as any).total = ...`, `(this as any).total = ...`). Such an
+ordinary method (not a getter, setter or constructor) stays an
 owner (a changed line is still reported) but relates to no test, so it reads
 `no_static_path`, and its guidance names the assignment. Not a replacement: an
 assignment whose right-hand side reads the same member (`this.total =
@@ -3078,7 +3080,8 @@ keys); do not take the next number.
   runs `analyze_diff` on a method replaced by a constructor `this.total = ...`
   (an arrow, or a read of another object's member), a top-level
   `Cart.prototype.total = ...`, a static `Cart.total = ...` and a constructor
-  replacement in an ES-exported class: each relates to no test, and the guidance
+  replacement in an ES-exported class, plus the three receivers behind a
+  TypeScript `as any` cast in a `.ts` file: each relates to no test, and the guidance
   names the assignment. Controls that keep their relation: no assignment, a
   constructor self-bind, a prototype or static wrap of the same member, a
   conditional constructor assignment, assignments of another name, and

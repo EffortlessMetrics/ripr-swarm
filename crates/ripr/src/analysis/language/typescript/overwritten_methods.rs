@@ -218,7 +218,7 @@ pub(super) fn constructor_replaced_method_starts(class: &Class<'_>) -> BTreeSet<
         .iter()
         .filter_map(|statement| {
             let (object, key, value) = member_assignment(statement)?;
-            (matches!(object, Expression::ThisExpression(_))
+            (matches!(object.get_inner_expression(), Expression::ThisExpression(_))
                 && !reads_member(value, MemberObject::This, key))
             .then(|| format!("public:{key}"))
         })
@@ -256,12 +256,12 @@ pub(super) fn top_level_replaced_members(
     body.iter()
         .filter_map(|statement| {
             let (object, key, value) = member_assignment(statement)?;
-            let (class_name, is_static) = match object.without_parentheses() {
+            let (class_name, is_static) = match object.get_inner_expression() {
                 Expression::Identifier(class) => (class.name.as_str(), true),
                 Expression::StaticMemberExpression(prototype)
                     if prototype.property.name == "prototype" =>
                 {
-                    match prototype.object.without_parentheses() {
+                    match prototype.object.get_inner_expression() {
                         Expression::Identifier(class) => (class.name.as_str(), false),
                         _ => return None,
                     }
@@ -280,7 +280,8 @@ pub(super) fn top_level_replaced_members(
 }
 
 /// `(object, NAME, value)` of a plain `object.NAME = value;` expression
-/// statement.
+/// statement. Callers read `object` through parentheses and TypeScript casts
+/// (`(Cart.prototype as any).total = ...`, `(this as Cart).total = ...`).
 fn member_assignment<'s, 'a>(
     statement: &'s Statement<'a>,
 ) -> Option<(&'s Expression<'a>, &'s str, &'s Expression<'a>)> {
@@ -313,13 +314,13 @@ enum MemberObject<'n> {
 
 impl MemberObject<'_> {
     fn matches(self, object: &Expression<'_>) -> bool {
-        match (self, object.without_parentheses()) {
+        match (self, object.get_inner_expression()) {
             (Self::This, Expression::ThisExpression(_)) => true,
             (Self::Class(name), Expression::Identifier(identifier)) => identifier.name == name,
             (Self::Prototype(name), Expression::StaticMemberExpression(prototype)) => {
                 prototype.property.name == "prototype"
                     && matches!(
-                        prototype.object.without_parentheses(),
+                        prototype.object.get_inner_expression(),
                         Expression::Identifier(identifier) if identifier.name == name
                     )
             }
@@ -338,7 +339,10 @@ fn reads_member(value: &Expression<'_>, object: MemberObject<'_>, key: &str) -> 
     }
     impl<'a> Visit<'a> for Reads<'_> {
         fn visit_static_member_expression(&mut self, member: &StaticMemberExpression<'a>) {
-            self.found |= member.property.name == self.key && self.object.matches(&member.object);
+            if self.found {
+                return;
+            }
+            self.found = member.property.name == self.key && self.object.matches(&member.object);
             walk::walk_static_member_expression(self, member);
         }
     }
