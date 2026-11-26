@@ -20166,6 +20166,7 @@ tests = [
   "crates/ripr/src/analysis/language/typescript/tests/anonymous_default_class_tests.rs::an_anonymous_default_class_method_relates_through_the_default_binding",
   "crates/ripr/src/analysis/language/typescript/tests/anonymous_default_class_tests.rs::other_bindings_of_an_anonymous_default_class_stay_unrelated",
   "crates/ripr/src/analysis/language/typescript/tests/anonymous_default_class_tests.rs::members_of_an_anonymous_default_class_are_named_default",
+  "crates/ripr/src/analysis/language/typescript/tests/anonymous_default_class_tests.rs::a_constructor_replaced_method_of_an_anonymous_default_class_stays_unrelated",
   "crates/ripr/src/analysis/language/typescript/tests/commonjs_named_class_export_tests.rs::a_named_export_class_expression_yields_owners_named_by_the_property",
   "crates/ripr/src/analysis/language/typescript/tests/commonjs_named_class_export_tests.rs::a_changed_method_of_a_named_export_class_relates_to_a_named_require",
   "crates/ripr/src/analysis/language/typescript/tests/commonjs_named_class_export_tests.rs::the_inner_class_id_and_a_sibling_export_stay_unrelated",

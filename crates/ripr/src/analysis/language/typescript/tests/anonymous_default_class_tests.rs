@@ -137,6 +137,32 @@ fn other_bindings_of_an_anonymous_default_class_stay_unrelated() -> Result<(), S
     Ok(())
 }
 
+/// The `default` name does not lift rule 29: a method the constructor
+/// replaces (`this.total = (n) => n;`) stays unrelated through the very
+/// default binding that relates the ordinary method above.
+#[test]
+fn a_constructor_replaced_method_of_an_anonymous_default_class_stays_unrelated()
+-> Result<(), String> {
+    let replaced = BODY.replacen(
+        "{\n  total(n)",
+        "{\n  constructor() {\n    this.total = (n) => n;\n  }\n  total(n)",
+        1,
+    );
+    let assigned_call = "    expect(new Cart().total(100)).toBe(100);\n";
+    case(
+        "es-constructor-replaced",
+        &format!("export default class {replaced}\n"),
+        &jest_test(ES_DEFAULT, assigned_call),
+        false,
+    )?;
+    case(
+        "commonjs-constructor-replaced",
+        &format!("module.exports = class {replaced};\n"),
+        &jest_test(REQUIRE, assigned_call),
+        false,
+    )
+}
+
 #[test]
 fn members_of_an_anonymous_default_class_are_named_default() -> Result<(), String> {
     for (label, text) in [("es", es_anonymous()), ("commonjs", commonjs_anonymous(""))] {
