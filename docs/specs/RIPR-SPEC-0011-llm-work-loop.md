@@ -541,6 +541,11 @@ interprets it through the receipt owner (`output::agent_receipt`):
   be reconstructed, and the warning names the new-attempt command for the seam
   in case its gap is still open.
 
+When an advisory receipt reports unchanged movement after a focused test edit,
+the human after-phase summary uses the restart admitted for that attempt by
+status. It tells the caller to set aside the uncommitted test edit, start the
+same gap again, and restore and strengthen the test in the fresh attempt.
+
 One `agent status` call takes at most one successful worktree observation per
 (root, whole edit-cage policy) and reuses it for every finished attempt it
 reevaluates, so equal-policy attempts do not each rescan the worktree (#9823).

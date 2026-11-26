@@ -1,0 +1,5 @@
+[[extend]]
+id = "RIPR-SPEC-0011"
+tests = [
+  "crates/ripr/tests/task_first_facade.rs::unchanged_continue_restarts_only_the_selected_seam_and_preserves_the_attempt",
+]
