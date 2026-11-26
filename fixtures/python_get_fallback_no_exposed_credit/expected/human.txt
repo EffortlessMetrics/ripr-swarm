@@ -22,9 +22,10 @@ Start here:
   Gap ID (for scripts): gap:python:src/lib.py:score:return_value:return_value:d.get_k_5+1
   Changed behavior: return d.get("k", 5) + 1
   Missing check (1 of 2): A strong Python oracle reaches `score`, but the edit only changes
-    `d.get("k", 0)` to `d.get("k", 5)`, and no strong related call passes `d` without the key "k";
-    both versions return the same value for every related input, so static evidence cannot confirm
-    the change is discriminated. Add a test that calls `score` with `d` without the key "k"
+    `d.get("k", 0)` to `d.get("k", 5)`, and no strong related call is seen to pass `d` without the
+    key "k"; whether these tests would notice the change is not established, so static evidence
+    cannot confirm the change is discriminated. Add a test that calls `score` with `d` without the
+    key "k"
   Related test: tests/test_lib.py:4 test_score
   Suggested test file: tests/test_lib.py
   Suggested test: test_score
@@ -43,7 +44,7 @@ Start here:
       found = listed for review; suppressed by your settings = hidden by your suppression policy;
       base-side = evidence from the old code, not an edit target; candidate line = changed line ripr considers
     - reach yes: 1 related Python test(s) found for owner `score`
-    - infection weak: Related tests reach the changed call, but no strong related test call passes `d` without the key "k", so `d.get("k", 0)` and `d.get("k", 5)` return the same value
+    - infection weak: Related tests reach the changed call, but no strong related test call is seen to pass `d` without the key "k", so whether `d.get("k", 0)` and `d.get("k", 5)`…
     - 5 more detail line(s) in --format human-full
 
 Next: drill into the top finding:

@@ -39,7 +39,7 @@ Static exposure
 
 Evidence
   - reach yes: 1 related Python test(s) found for owner `score`
-  - infection weak: Related tests reach the changed call, but no strong related test call passes `d` without the key "k", so `d.get("k", 0)` and `d.get("k", 5)` return the same value
+  - infection weak: Related tests reach the changed call, but no strong related test call is seen to pass `d` without the key "k", so whether `d.get("k", 0)` and `d.get("k", 5)` return different values there is not established
   - propagation yes: Changed Python return value is already at the owner output boundary
   - observation weak: Strongest extracted Python oracle kind: `exact_value` (rank 5)
   - discriminator weak: Related Python test uses an `exact_value` oracle, but static evidence does not establish discrimination of the changed behavior
@@ -47,8 +47,8 @@ Evidence
   - related test tests/test_lib.py:4 test_score uses strong exact value oracle: assert score({"k": 2}) == 3
 
 Weakness
-  - A strong Python oracle reaches `score`, but the edit only changes `d.get("k", 0)` to `d.get("k", 5)`, and no strong related call passes `d` without the key "k"; both versions return the same value for every related input, so static evidence cannot confirm the change is discriminated. Add a test that calls `score` with `d` without the key "k"
-  - missing discriminator call `score` with `d` without the key "k": the change at line 2 only changes `d.get("k", 0)` to `d.get("k", 5)`, and no related call passes `d` without the key "k"
+  - A strong Python oracle reaches `score`, but the edit only changes `d.get("k", 0)` to `d.get("k", 5)`, and no strong related call is seen to pass `d` without the key "k"; whether these tests would notice the change is not established, so static evidence cannot confirm the change is discriminated. Add a test that calls `score` with `d` without the key "k"
+  - missing discriminator call `score` with `d` without the key "k": the change at line 2 only changes `d.get("k", 0)` to `d.get("k", 5)`, and no related call is seen to pass `d` without the key "k"; whether the current tests would notice the change is not established
 
 Next step
   Python preview: strengthen the existing related test with an exact return-value assertion for the missing check `call `score` with `d` without the key "k"`

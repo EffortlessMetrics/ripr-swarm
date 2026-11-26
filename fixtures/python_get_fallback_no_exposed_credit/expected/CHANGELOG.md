@@ -12,3 +12,16 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — python_get_fallback_no_exposed_credit (2)
+
+Reason:
+RIPR-SPEC-0028: adopt the call-variant discriminator wording from #16282 (is seen to pass)
+
+Command:
+`cargo xtask goldens bless python_get_fallback_no_exposed_credit --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
