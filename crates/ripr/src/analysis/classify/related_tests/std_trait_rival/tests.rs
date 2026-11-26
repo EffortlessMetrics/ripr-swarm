@@ -1,6 +1,9 @@
 use super::super::dispatch_target::ReceiverKind;
-use super::super::owner_call_is_direct;
-use super::{calls_through_the_trait_path, every_method_call_borrows_its_receiver};
+use super::super::{FunctionSummary, TestSummary, owner_call_is_direct};
+use super::{
+    a_standard_trait_method_may_take_the_call, calls_through_the_trait_path,
+    every_method_call_borrows_its_receiver,
+};
 use crate::analysis::RustIndex;
 use crate::analysis::extract::mask_comments_and_strings;
 use crate::analysis::syntax::{RaRustSyntaxAdapter, RustSyntaxAdapter};
@@ -37,6 +40,25 @@ fn parsed_index(production: &str, test_body: &str) -> Result<RustIndex, String> 
 /// Whether the owner-call relation credits the one test as a direct call of
 /// the one function whose symbol id ends in `owner_suffix`.
 fn direct(production: &str, owner_suffix: &str, test_body: &str) -> Result<bool, String> {
+    judged(production, owner_suffix, test_body, owner_call_is_direct)
+}
+
+/// Whether this module's rule alone withholds the relation, whatever the
+/// rest of the owner-call relation decides for the test.
+fn withheld(production: &str, owner_suffix: &str, test_body: &str) -> Result<bool, String> {
+    judged(production, owner_suffix, test_body, |test, owner, _| {
+        a_standard_trait_method_may_take_the_call(test, owner, owner.name.as_str())
+    })
+}
+
+/// `judge` applied to the one test and the one function whose symbol id ends
+/// in `owner_suffix`.
+fn judged<R>(
+    production: &str,
+    owner_suffix: &str,
+    test_body: &str,
+    judge: impl FnOnce(&TestSummary, &FunctionSummary, &RustIndex) -> R,
+) -> Result<R, String> {
     let index = parsed_index(production, test_body)?;
     let functions = index.functions();
     let mut owners = functions
@@ -52,7 +74,7 @@ fn direct(production: &str, owner_suffix: &str, test_body: &str) -> Result<bool,
     if !test.body.contains(owner.name.as_str()) {
         return Err(format!("the test body names `{}`", owner.name));
     }
-    Ok(owner_call_is_direct(test, owner, &index))
+    Ok(judge(test, owner, &index))
 }
 
 /// The issue's example: the by-value `IntoIterator::into_iter` takes
@@ -127,19 +149,28 @@ fn the_standard_traits_own_impl_keeps_the_relation() -> Result<(), String> {
     Ok(())
 }
 
-/// A call through the owner's trait path names the owner's trait.
+/// A call through the owner's trait path names the owner's trait, so this
+/// rule does not withhold the relation. Whether the rest of the relation
+/// credits a bare `Peeky::name(` path call is decided elsewhere and is
+/// unchanged by #16040; the qualified `<Foo as ..>` form is credited.
 #[test]
 fn a_call_through_the_trait_path_keeps_the_relation() -> Result<(), String> {
     let peeky = production("&self", "into_iter");
     let owner = "impl Peeky for Foo::into_iter";
+    assert!(withheld(&peeky, owner, "let _ = Foo::new(5).into_iter();")?);
     for body in [
         "let _ = Peeky::into_iter(&Foo::new(5));",
         "let _ = crate::Peeky :: into_iter (&Foo::new(5));",
         "let _ = <Foo as Peeky>::into_iter(&Foo::new(5));",
         "let _ = <Foo as crate::Peeky>::into_iter(&Foo::new(5));",
     ] {
-        assert!(direct(&peeky, owner, body)?, "{body}");
+        assert!(!withheld(&peeky, owner, body)?, "{body}");
     }
+    assert!(direct(
+        &peeky,
+        owner,
+        "assert_eq!(<Foo as crate::Peeky>::into_iter(&Foo::new(3)), 1);"
+    )?);
     Ok(())
 }
 
@@ -186,23 +217,28 @@ fn only_the_owner_traits_path_counts() {
 fn a_borrowed_receiver_keeps_the_relation() -> Result<(), String> {
     let owner = "impl Peeky for Foo::into_iter";
     let shared = production("&self", "into_iter");
-    assert!(direct(
+    assert!(!withheld(
         &shared,
         owner,
         "let _ = (&Foo::new(5)).into_iter();"
     )?);
-    assert!(!direct(
+    assert!(direct(
+        &shared,
+        owner,
+        "assert_eq!((&Foo::new(3)).into_iter(), 1);"
+    )?);
+    assert!(withheld(
         &shared,
         owner,
         "let foo = &Foo::new(5);\n    let _ = foo.into_iter();"
     )?);
     let exclusive = production("&mut self", "into_iter");
-    assert!(direct(
+    assert!(!withheld(
         &exclusive,
         owner,
         "let mut foo = Foo::new(5);\n    let _ = (&mut foo).into_iter();"
     )?);
-    assert!(!direct(
+    assert!(withheld(
         &exclusive,
         owner,
         "let foo = Foo::new(5);\n    let _ = (&foo).into_iter();"
