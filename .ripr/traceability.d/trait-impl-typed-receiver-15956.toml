@@ -26,6 +26,7 @@ tests = [
   "crates/ripr/src/analysis/classify/related_tests/trait_receiver/tests.rs::a_partial_index_withholds_the_typed_trait_receiver",
   "crates/ripr/src/analysis/classify/related_tests/trait_receiver/tests.rs::a_macro_writing_through_an_alias_withholds_the_relation",
   "crates/ripr/src/analysis/classify/related_tests/trait_receiver/tests.rs::a_same_trait_impl_under_an_alias_withholds_the_relation",
+  "crates/ripr/src/analysis/classify/related_tests/trait_receiver/tests.rs::a_generic_trait_withholds_the_typed_receiver",
 ]
 code = [
   "crates/ripr/src/analysis/classify/related_tests/trait_receiver.rs",

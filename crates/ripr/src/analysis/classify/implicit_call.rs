@@ -1399,6 +1399,9 @@ pub(super) struct HiddenImpls {
     /// are read without scope, so a self-type name found here may stand for
     /// another type even when a `struct` of that name exists in some module.
     renamed_types: std::collections::BTreeSet<String>,
+    /// How many workspace traits declare each trait name. Names are read
+    /// without paths, so `Measure` and `other::Measure` share one count.
+    trait_declarations: std::collections::BTreeMap<String, usize>,
 }
 
 /// What one macro definition's own text can put into its expansion.
@@ -1597,6 +1600,10 @@ impl HiddenImpls {
                         .name()
                         .map(|name| name.text().to_string())
                         .unwrap_or_default();
+                    *self
+                        .trait_declarations
+                        .entry(trait_name.clone())
+                        .or_default() += 1;
                     self.read_assoc_macro_calls(it.assoc_item_list(), "", &trait_name);
                 }
                 ast::Item::MacroCall(call) => {
@@ -1878,13 +1885,18 @@ impl HiddenImpls {
     ///
     /// Every other source answers as in [`Self::may_define`].
     fn may_define_method(&self, self_type: &str, name: &str, owner_trait: &str) -> bool {
+        // A trait name stands for the owner's trait only when no other
+        // workspace trait shares it: `other::Measure` records `Measure` too.
+        let is_the_owner_trait = |recorded: &str| {
+            recorded == owner_trait && self.trait_declarations.get(owner_trait).copied() == Some(1)
+        };
         self.unreadable_source
             || self.blanket_methods.contains(name)
             || self
                 .blanket_macro_calls
                 .iter()
                 .any(|(blanket, macro_name, words)| {
-                    blanket != owner_trait
+                    !is_the_owner_trait(blanket)
                         && (words.contains(name)
                             || self.macro_may_write_fn(
                                 macro_name,
@@ -1907,7 +1919,7 @@ impl HiddenImpls {
                     // overrides its provided method, so its other impls and
                     // its own body write nothing this receiver runs.
                     (impl_type == self_type
-                        || (in_trait != owner_trait
+                        || (!is_the_owner_trait(in_trait)
                             && (impl_type.is_empty()
                                 || !self.names_only_a_declared_type(impl_type))))
                         && (words.contains(name)

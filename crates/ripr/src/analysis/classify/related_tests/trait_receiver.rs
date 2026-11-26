@@ -51,7 +51,13 @@ pub(super) fn typed_receiver_runs_trait_impl(
         return false;
     }
     let owner_trait = impl_trait_name_from_path(trait_path);
-    if a_standard_trait_names_the_method(owner.name.as_str()) {
+    // A generic trait (`Measure<u8>`) can be implemented for the type again
+    // under other arguments, each with or without the method, and the call's
+    // argument types select among them; the name-typed receiver reads none
+    // of that.
+    if a_standard_trait_names_the_method(owner.name.as_str())
+        || generic_arguments(trait_path).is_some()
+    {
         return false;
     }
     if super::super::implicit_call::unindexed_impl_may_take_method_call(owner, owner_trait, index) {
@@ -394,7 +400,18 @@ fn a_borrowed_receiver_meets_a_by_value_owner(test: &TestSummary, owner: &Functi
     let name = owner.name.strip_prefix("r#").unwrap_or(&owner.name);
     let body = test.body.as_str();
     let bytes = body.as_bytes();
-    body.match_indices(&format!(").{name}(")).any(|(close, _)| {
+    // `).name(`, with any whitespace or line break between the tokens.
+    let closes = body.match_indices(name).filter_map(|(at, _)| {
+        let word = |ch: char| ch.is_ascii_alphanumeric() || ch == '_';
+        let before = &body[..at];
+        let after = &body[at + name.len()..];
+        if before.chars().next_back().is_some_and(word) || !after.trim_start().starts_with('(') {
+            return None;
+        }
+        let before = before.trim_end().strip_suffix('.')?.trim_end();
+        before.ends_with(')').then(|| before.len() - 1)
+    });
+    closes.into_iter().any(|close| {
         let mut depth = 0usize;
         let open = (0..=close).rev().find(|&at| match bytes[at] {
             b')' => {

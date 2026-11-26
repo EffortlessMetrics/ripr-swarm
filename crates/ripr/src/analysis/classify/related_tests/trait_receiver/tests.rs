@@ -328,6 +328,11 @@ fn a_macro_that_may_write_the_method_withholds_the_relation() -> Result<(), Stri
             "foreign::implement!(Other for BytesMut);\n",
         ),
         (
+            "a trait-body macro of a namesake trait",
+            "pub mod other {\n    pub trait BufMut {\n        forward!();\n    }\n}\n\
+             macro_rules! forward {\n    () => {\n        fn advance_mut(self, _cnt: usize) {}\n    };\n}\n",
+        ),
+        (
             "a macro-written blanket impl of another trait",
             "macro_rules! forward {\n    () => {\n        fn advance_mut(&mut self, _cnt: usize) {}\n    };\n}\n\
              impl<T: BufMut> Other for T {\n    forward!();\n}\n",
@@ -410,6 +415,27 @@ fn a_rival_on_another_type_and_an_unrelated_impl_macro_leave_the_relation() -> R
             "{addition}"
         );
     }
+    Ok(())
+}
+
+/// A generic trait can be implemented for the type again under other
+/// arguments (`impl Measure<u16> for Square {}` inherits the default), and
+/// the call's argument types pick the impl, so the relation is withheld. The
+/// same impl of a trait without parameters keeps it.
+#[test]
+fn a_generic_trait_withholds_the_typed_receiver() -> Result<(), String> {
+    let plain = "pub trait Measure {\n    fn area(&self, x: u8) -> u32 { 0 }\n}\n\
+        pub struct Square(pub u32);\n\
+        impl Square {\n    pub fn with_side(side: u32) -> Square { Square(side) }\n}\n\
+        impl Measure for Square {\n    fn area(&self, _x: u8) -> u32 { 9 }\n}\n";
+    let generic = "pub trait Measure<T> {\n    fn area(&self, x: T) -> u32 { 0 }\n}\n\
+        pub struct Square(pub u32);\n\
+        impl Square {\n    pub fn with_side(side: u32) -> Square { Square(side) }\n}\n\
+        impl Measure<u8> for Square {\n    fn area(&self, _x: u8) -> u32 { 9 }\n}\n\
+        impl Measure<u16> for Square {}\n";
+    let body = "let _ = Square::with_side(3).area(0);";
+    assert!(direct(plain, "for Square::area", body)?);
+    assert!(!direct(generic, "for Square::area", body)?);
     Ok(())
 }
 
@@ -500,6 +526,11 @@ fn a_borrowed_receiver_of_a_by_value_owner_is_withheld() -> Result<(), String> {
         production,
         owner,
         "let _ = (&mut Square::with_side(3)).area();"
+    )?);
+    assert!(!direct(
+        production,
+        owner,
+        "let _ = (&mut Square::with_side(3))\n        . area ();"
     )?);
     assert!(direct(
         production,
