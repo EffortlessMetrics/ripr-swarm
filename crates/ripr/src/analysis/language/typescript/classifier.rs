@@ -9194,13 +9194,24 @@ pub(crate) fn classify_resolved_owner(
         .iter()
         .map(|c| c.test.file.clone())
         .collect();
-    let alias_gap: Option<TsAliasGapDisclosure> = alias_gap_for_unresolved_import(
-        owner,
-        all_tests,
-        |test| credited_test_files.contains(&test.file),
-        alias_map,
-        alias_unavailable,
+    // A method no call can reach (overwritten by a later member, rule 26, or
+    // shadowed by a same-named field, rule 28) has its own no-reach cause; a
+    // same-named package import in some test must not replace it (#16306).
+    let unreachable_method = matches!(
+        owner.method_kind,
+        TypeScriptMethodKind::Overwritten | TypeScriptMethodKind::FieldShadowed
     );
+    let alias_gap: Option<TsAliasGapDisclosure> = if unreachable_method {
+        None
+    } else {
+        alias_gap_for_unresolved_import(
+            owner,
+            all_tests,
+            |test| credited_test_files.contains(&test.file),
+            alias_map,
+            alias_unavailable,
+        )
+    };
     // Ghost relative import disclosure (#4104-C): when an uncredited test
     // name-calls the owner through a relative specifier that resolves to no
     // workspace file, the exclusion is correct but was silent — name it.

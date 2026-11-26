@@ -13,7 +13,8 @@
 use std::collections::BTreeSet;
 
 use oxc_ast::ast::{
-    Class, ClassElement, MethodDefinition, MethodDefinitionKind, PropertyDefinition, PropertyKey,
+    Class, ClassElement, Expression, MethodDefinition, MethodDefinitionKind, PropertyDefinition,
+    PropertyKey,
 };
 
 /// Span starts of the methods in `class` whose key a later member overwrites.
@@ -65,14 +66,17 @@ pub(super) fn overwritten_method_starts(class: &Class<'_>) -> BTreeSet<u32> {
 /// static field replaces a static method on the constructor the same way.
 /// Source order does not matter. A `declare` or `abstract` field defines
 /// nothing at runtime and shadows nothing; a computed field key other than a
-/// string literal is never compared.
+/// string literal is never compared; a field initialized from the method
+/// itself ([`retains_same_member`]) still runs it.
 pub(super) fn field_shadowed_method_starts(class: &Class<'_>) -> BTreeSet<u32> {
     let fields: BTreeSet<(bool, String)> = class
         .body
         .body
         .iter()
         .filter_map(|element| match element {
-            ClassElement::PropertyDefinition(field) if !field.declare && !is_abstract(field) => {
+            ClassElement::PropertyDefinition(field)
+                if !field.declare && !is_abstract(field) && !retains_same_member(field) =>
+            {
                 field_key(field).map(|key| (field.r#static, key))
             }
             _ => None,
@@ -98,6 +102,38 @@ pub(super) fn field_shadowed_method_starts(class: &Class<'_>) -> BTreeSet<u32> {
             _ => None,
         })
         .collect()
+}
+
+/// Whether `field` is initialized from the member it shadows, read while the
+/// field is defined: `total = this.total;` or `total = this.total.bind(this);`
+/// (`this` is the instance in an instance field and the class in a static
+/// one). The prototype or static method is captured before the field is
+/// installed, so calling the field runs the method body, and the field does
+/// not cut the method off. Only these two unambiguous shapes count; any other
+/// initializer (`total = (n) => this.total(n)` reads the field itself at call
+/// time) still shadows.
+fn retains_same_member(field: &PropertyDefinition<'_>) -> bool {
+    let (Some(value), PropertyKey::StaticIdentifier(key)) = (&field.value, &field.key) else {
+        return false;
+    };
+    if field.computed {
+        return false;
+    }
+    let target = match value.without_parentheses() {
+        Expression::CallExpression(call) => match call.callee.without_parentheses() {
+            Expression::StaticMemberExpression(bind) if bind.property.name == "bind" => {
+                &bind.object
+            }
+            _ => return false,
+        },
+        other => other,
+    };
+    matches!(
+        target.without_parentheses(),
+        Expression::StaticMemberExpression(member)
+            if member.property.name == key.name
+                && matches!(member.object.without_parentheses(), Expression::ThisExpression(_))
+    )
 }
 
 fn is_abstract(field: &PropertyDefinition<'_>) -> bool {

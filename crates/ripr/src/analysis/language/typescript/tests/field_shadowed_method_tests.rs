@@ -10,8 +10,14 @@
 //! static field shadows a static method.
 //!
 //! Controls that keep their relation: a field of another name, a static field
-//! beside an instance method, a `#private` field beside a public method, and
-//! a TypeScript `declare` field (no runtime definition).
+//! beside an instance method, a `#private` field beside a public method, a
+//! TypeScript `declare` field (no runtime definition), and a field initialized
+//! from the method itself (`total = this.total.bind(this)`), which captures
+//! the method before the field is installed.
+//!
+//! Each test body asserts what the code does at runtime: a shadowed case
+//! asserts the field's value (or the throw of calling a bare field), a control
+//! asserts the method's value.
 //!
 //! Every case runs `TypeScriptAdapter::analyze_diff` on a generated jest
 //! repository and reads the finding on the changed line.
@@ -27,7 +33,12 @@ const METHOD: &str =
 const CHANGED: &str = "    if (n > 50) {";
 
 const NAMED_REQUIRE: &str = "const { Cart } = require('../src/cart');";
+/// Calls the method: the body subtracts 5 above 50.
 const CALL: &str = "    expect(new Cart().total(100)).toBe(95);\n";
+/// Calls the field `total = (n) => n`, which returns its input.
+const FIELD_CALL: &str = "    expect(new Cart().total(100)).toBe(100);\n";
+/// Calls a bare `total;` field, which holds `undefined`.
+const BARE_CALL: &str = "    expect(() => new Cart().total(100)).toThrow(TypeError);\n";
 
 /// The finding `analyze_diff` reports on the line of `owner_path` that reads
 /// `CHANGED`, with `test` as the test file at `test_path`.
@@ -92,13 +103,30 @@ fn js_finding(label: &str, owner_text: &str, body: &str) -> Result<Finding, Stri
 
 #[test]
 fn a_method_shadowed_by_an_instance_field_relates_to_no_test() -> Result<(), String> {
-    for (label, members) in [
-        ("field-before", format!("  total = (n) => n;\n{METHOD}")),
-        ("field-after", format!("{METHOD}  total = (n) => n;\n")),
-        ("bare-field", format!("  total;\n{METHOD}")),
-        ("quoted-field", format!("  'total' = (n) => n;\n{METHOD}")),
+    for (label, members, body) in [
+        (
+            "field-before",
+            format!("  total = (n) => n;\n{METHOD}"),
+            FIELD_CALL,
+        ),
+        (
+            "field-after",
+            format!("{METHOD}  total = (n) => n;\n"),
+            FIELD_CALL,
+        ),
+        ("bare-field", format!("  total;\n{METHOD}"), BARE_CALL),
+        (
+            "quoted-field",
+            format!("  'total' = (n) => n;\n{METHOD}"),
+            FIELD_CALL,
+        ),
+        (
+            "bound-other-method",
+            format!("  total = this.other.bind(this);\n  other(n) {{ return n; }}\n{METHOD}"),
+            FIELD_CALL,
+        ),
     ] {
-        let finding = js_finding(label, &commonjs_class(&members), CALL)?;
+        let finding = js_finding(label, &commonjs_class(&members), body)?;
         expect_related(label, &finding, false)?;
     }
     Ok(())
@@ -111,7 +139,7 @@ fn an_es_exported_class_method_shadowed_by_a_field_relates_to_no_test() -> Resul
         "src/cart.js",
         &format!("export class Cart {{\n  total = (n) => n;\n{METHOD}}}\n"),
         "tests/cart.test.js",
-        &jest_test("import { Cart } from '../src/cart';", CALL),
+        &jest_test("import { Cart } from '../src/cart';", FIELD_CALL),
     )?;
     expect_related("ES export", &finding, false)
 }
@@ -125,7 +153,7 @@ fn a_static_method_shadowed_by_a_static_field_relates_to_no_test() -> Result<(),
     let finding = js_finding(
         "static-field",
         &commonjs_class(&members),
-        "    expect(Cart.total(100)).toBe(95);\n",
+        "    expect(Cart.total(100)).toBe(100);\n",
     )?;
     expect_related("static field", &finding, false)
 }
@@ -142,6 +170,34 @@ fn fields_that_do_not_shadow_keep_the_method_relation() -> Result<(), String> {
         ("private-field", format!("  #total = 0;\n{METHOD}")),
     ] {
         let finding = js_finding(label, &commonjs_class(&members), CALL)?;
+        expect_related(label, &finding, true)?;
+    }
+    Ok(())
+}
+
+#[test]
+fn a_field_bound_from_the_method_itself_keeps_the_method_relation() -> Result<(), String> {
+    for (label, members, body) in [
+        (
+            "self-bind",
+            format!("  total = this.total.bind(this);\n{METHOD}"),
+            CALL,
+        ),
+        (
+            "self-read",
+            format!("  total = this.total;\n{METHOD}"),
+            CALL,
+        ),
+        (
+            "static-self-bind",
+            format!(
+                "  static total = this.total.bind(this);\n{}",
+                METHOD.replace("  total(n)", "  static total(n)")
+            ),
+            "    expect(Cart.total(100)).toBe(95);\n",
+        ),
+    ] {
+        let finding = js_finding(label, &commonjs_class(&members), body)?;
         expect_related(label, &finding, true)?;
     }
     Ok(())
@@ -180,8 +236,29 @@ fn a_shadowed_method_points_at_the_field() -> Result<(), String> {
     let finding = js_finding(
         "field-guidance",
         &commonjs_class(&format!("  total = (n) => n;\n{METHOD}")),
-        CALL,
+        FIELD_CALL,
     )?;
+    expect_field_guidance(&finding)
+}
+
+/// A test that also imports an unrelated package symbol named like the method
+/// does not turn the field's guidance into an unresolved-alias disclosure.
+#[test]
+fn a_same_named_package_import_keeps_the_field_guidance() -> Result<(), String> {
+    let finding = diff_finding(
+        "field-guidance-package-import",
+        "src/cart.js",
+        &format!("export class Cart {{\n  total = (n) => n;\n{METHOD}}}\n"),
+        "tests/cart.test.js",
+        &jest_test(
+            "import { Cart } from '../src/cart';\nimport { total } from 'lodash-es';",
+            &format!("{FIELD_CALL}    expect(total).toBeDefined();\n"),
+        ),
+    )?;
+    expect_field_guidance(&finding)
+}
+
+fn expect_field_guidance(finding: &Finding) -> Result<(), String> {
     if finding.class != ExposureClass::NoStaticPath {
         return Err(format!("expected no_static_path, got {:?}", finding.class));
     }

@@ -1457,8 +1457,15 @@ whose key and `static` placement match a field, keyed as in rule 26 (a bare
 relates to no test, so it reads `no_static_path`, and its guidance names the
 field instead of suggesting a direct call. Not a shadow: a `declare` or
 `abstract` field (no runtime definition), a field of the other placement, a
-`#private` field beside a public method, and a computed key other than a string
-literal. Sibling reach already treated such a field as shadowing.
+`#private` field beside a public method, a computed key other than a string
+literal, and a field initialized from the method itself (`total = this.total;`
+or `total = this.total.bind(this);`, `this` being the class for a static
+field), which reads the method before the field is installed, so calling the
+field runs the method body. Any other initializer still shadows. Because the
+method has its own no-reach cause, a test importing a same-named package symbol
+does not replace this guidance with an unresolved-alias disclosure; the same
+holds for an overwritten method (rule 26). Sibling reach already treated such a
+field as shadowing.
 
 ### Observation guard
 
@@ -3007,7 +3014,11 @@ keys); do not take the next number.
   static method: each relates to no test, the owner is marked `FieldShadowed`,
   and the guidance names the field. Controls that keep their relation: no
   field, a field of another name, a static field beside an instance method, a
-  `#private` field and a TypeScript `declare` field.
+  `#private` field, a TypeScript `declare` field, and a field bound or read
+  from the method itself (instance and static). A test that also imports a
+  same-named package symbol keeps the field guidance. Each test body asserts
+  the runtime value (the field's for a shadowed case, the method's for a
+  control).
 
 - #11196 (rule 11, object rows): `tests/object_row_tests.rs` pins the per-row
   literal assertions for the `for...of` and `test.each` object-row forms and
