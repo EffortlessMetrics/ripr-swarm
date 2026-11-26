@@ -132,7 +132,7 @@ pub(super) fn cross_crate_free_hop(
         module_qualified: true,
         crate_qualifier: Some(qualifier),
         transparent_macros_rebound: super::transparent_macro_name_rebound(&caller.body, index),
-        verified_logging_roots: super::logging_roots::verified_logging_roots(caller, index),
+        verified_macro_roots: super::audited_macro_roots::verified_macro_roots(caller, index),
         diverging_handlers: Vec::new(),
     })
 }
@@ -195,7 +195,7 @@ pub(super) fn cross_crate_imported_free_hop(
         module_qualified: true,
         crate_qualifier: Some(qualifier),
         transparent_macros_rebound: super::transparent_macro_name_rebound(&caller.body, index),
-        verified_logging_roots: super::logging_roots::verified_logging_roots(caller, index),
+        verified_macro_roots: super::audited_macro_roots::verified_macro_roots(caller, index),
         diverging_handlers: Vec::new(),
     })
 }

@@ -81,6 +81,25 @@ const AUDITED_LOGGING_VERSIONS: &[(&str, &str, &[&str])] = &[
     ("log", "log", &["0.4.29", "0.4.30", "0.4.34"]),
 ];
 
+/// #10357 value-macro audit table: `(source crate name, Cargo.lock package
+/// name, audited versions)` for crates whose value-building macro was read in
+/// `src/macros.rs` and found to expand to no `return`, `break`, `continue` or
+/// `?` of its own: anyhow's `anyhow!` (and the `__anyhow!` it shares arms
+/// with) and serde_json's `json!` (with `json_internal!`,
+/// `json_unexpected!` and `json_expect_expr_comma!`). A helper wrapper that
+/// calls one path-qualified (`serde_json::json!(..)`) still forwards its
+/// helper result. anyhow's `bail!` and `ensure!` return and are not covered.
+/// The trust is these exact versions: to audit a new release, re-read those
+/// macros, then append its version here.
+const AUDITED_VALUE_MACRO_VERSIONS: &[(&str, &str, &[&str])] = &[
+    ("anyhow", "anyhow", &["1.0.100", "1.0.102", "1.0.104"]),
+    (
+        "serde_json",
+        "serde_json",
+        &["1.0.150", "1.0.151", "1.0.154"],
+    ),
+];
+
 /// The source crate names with an audit row, for the cross-check against the
 /// trusted prelude globs in `syntax/owner_pin.rs`.
 #[cfg(test)]
@@ -100,6 +119,7 @@ fn audited_version_locked(directory: &Path, krate: &str) -> bool {
         .iter()
         .chain(AUDITED_WRAPPER_VERSIONS)
         .chain(AUDITED_LOGGING_VERSIONS)
+        .chain(AUDITED_VALUE_MACRO_VERSIONS)
         .find(|(name, _, _)| *name == krate)
         .is_none_or(|(_, lock_name, versions)| {
             crate::analysis::workspace::locked_at_audited_version(directory, lock_name, versions)

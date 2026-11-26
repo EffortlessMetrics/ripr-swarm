@@ -1425,7 +1425,7 @@ mod tests {
                         module_qualified: false,
                         crate_qualifier: None,
                         transparent_macros_rebound: false,
-                        verified_logging_roots: Vec::new(),
+                        verified_macro_roots: Vec::new(),
                         diverging_handlers: Vec::new(),
                     }
                 })

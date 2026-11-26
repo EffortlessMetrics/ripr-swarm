@@ -809,7 +809,9 @@ pub(crate) struct CachedSeamLimitInfo {
 /// initializer (#16296).
 /// `1.206`: a helper wrapper that logs through an audited
 /// `tracing::`/`log::` leveled macro forwards (#10357).
-pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.206";
+/// `1.207`: a helper wrapper that builds a value through an
+/// audited `anyhow::anyhow!` or `serde_json::json!` forwards (#10357).
+pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.207";
 /// `0.2` → `0.3`: same semantic transition as the outer cache (#3273 /
 /// #3286) — sharded entries derive from the same facts and cannot bypass
 /// the outer generation bump.
@@ -1052,7 +1054,8 @@ pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.206";
 /// `0.206`: same local-binder refusal as full `1.204` (#14552).
 /// `0.207`: same compared-bool-local oracle reading as full `1.205` (#16296).
 /// `0.208`: same audited logging-wrapper forwarding as full `1.206` (#10357).
-const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.208";
+/// `0.209`: same audited value-macro wrapper forwarding as full `1.207` (#10357).
+const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.209";
 
 /// Compact-classified seam cache schema. This cache stores the same
 /// `ClassifiedSeam` envelope shape as the full repo exposure cache, but
@@ -1297,7 +1300,8 @@ const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.208";
 /// `0.206`: same local-binder refusal as full `1.204` (#14552).
 /// `0.207`: same compared-bool-local oracle reading as full `1.205` (#16296).
 /// `0.208`: same audited logging-wrapper forwarding as full `1.206` (#10357).
-pub(crate) const COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.208";
+/// `0.209`: same audited value-macro wrapper forwarding as full `1.207` (#10357).
+pub(crate) const COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.209";
 
 /// Compact class-count cache used by repo badge rendering. It keys off
 /// the same workspace state as the full fact cache, but stores only
@@ -5913,7 +5917,8 @@ mod tests {
         // 1.202 -> 1.204: a test-local binder of the name withholds direct credit (#14552).
         // 1.204 -> 1.205: a compared bool local follows its initializer (#16296).
         // 1.205 -> 1.206: an audited qualified logging macro is transparent (#10357).
-        assert_eq!(CACHE_SCHEMA_VERSION, "1.206");
+        // 1.206 -> 1.207: an audited qualified value macro is transparent (#10357).
+        assert_eq!(CACHE_SCHEMA_VERSION, "1.207");
         // 1.168 -> 1.169: plain `assert_eq!` literal withhold in the audit (#13005).
         // 0.12 -> 0.13 through 0.14 / 0.15 / 0.16 / 0.17 / 0.18: same
         // #3731 semantic transition as the outer classified-seam cache,
@@ -6096,8 +6101,9 @@ mod tests {
         // 0.204 -> 0.206: same local-binder refusal as full 1.204 (#14552).
         // 0.206 -> 0.207: same compared-bool-local oracle reading as full 1.205 (#16296).
         // 0.207 -> 0.208: same audited logging-wrapper forwarding as full 1.206 (#10357).
-        assert_eq!(SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.208");
-        assert_eq!(COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.208");
+        // 0.208 -> 0.209: same audited value-macro wrapper forwarding as full 1.207 (#10357).
+        assert_eq!(SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.209");
+        assert_eq!(COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.209");
         // 0.170 -> 0.171: same plain `assert_eq!` literal withhold as full 1.169 (#13005).
     }
 

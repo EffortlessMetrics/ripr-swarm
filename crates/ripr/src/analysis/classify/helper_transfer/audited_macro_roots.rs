@@ -1,11 +1,16 @@
-//! #10357: path-qualified logging macros in a helper wrapper.
+//! #10357: path-qualified audited macros in a helper wrapper.
 //!
-//! `tracing::info!(..)` and `log::warn!(..)` expand to an event built from
-//! their arguments. The leveled macros of the audited releases expand to no
-//! `return`, `break`, `continue` or `?` of their own (read from `src/macros.rs`
-//! of tracing 0.1.44 and log 0.4.29, 0.4.30 and 0.4.34; the audited versions
-//! live in the drop-in authority's `AUDITED_LOGGING_VERSIONS`), so the wrapper
-//! keeps the helper result the return scan reads.
+//! Each audited macro expands to a value built from its arguments, with no
+//! `return`, `break`, `continue` or `?` of its own, so the wrapper keeps the
+//! helper result the return scan reads. The expansions were read in the
+//! published sources of the audited releases, which live in the drop-in
+//! authority's `AUDITED_LOGGING_VERSIONS` and `AUDITED_VALUE_MACRO_VERSIONS`:
+//! - `tracing::info!(..)` and `log::warn!(..)` (and the other leveled
+//!   macros) build an event, from `src/macros.rs` of tracing and log;
+//! - `anyhow::anyhow!(..)` builds an `anyhow::Error`, from anyhow's
+//!   `src/macros.rs` (`bail!` and `ensure!` return, so they are not audited);
+//! - `serde_json::json!(..)` builds a `serde_json::Value` through
+//!   `json_internal!`, from serde_json's `src/macros.rs`.
 //!
 //! Such a path is trusted only when its root is that crate. That needs three
 //! things:
@@ -18,7 +23,8 @@
 //!   crate root reaches every file of the crate);
 //! - the macro's arguments do not mention the callee. A logging macro
 //!   evaluates its arguments only when its level is enabled, so a call in
-//!   them may not run.
+//!   them may not run, and in any audited macro a call there is not the
+//!   call whose result the wrapper forwards.
 //!
 //! Anything else keeps the path opaque, as before.
 
@@ -26,23 +32,28 @@ use ra_ap_syntax::{AstNode, SyntaxKind, ast, ast::HasName};
 
 use crate::analysis::facts::{FunctionSummary, RustIndex};
 
-/// The crate roots whose leveled logging macros were audited.
-pub(super) const AUDITED_LOGGING_ROOTS: &[&str] = &["tracing", "log"];
+/// The leveled macros tracing and log each export under these names.
+const LEVELED_LOGGING_MACROS: &[&str] = &["trace", "debug", "info", "warn", "error"];
 
-/// The leveled macros each audited root exports under these names.
-pub(super) const AUDITED_LOGGING_MACROS: &[&str] = &["trace", "debug", "info", "warn", "error"];
+/// The crate roots with audited macros, and the macros audited under each.
+pub(super) const AUDITED_MACRO_ROOTS: &[(&str, &[&str])] = &[
+    ("tracing", LEVELED_LOGGING_MACROS),
+    ("log", LEVELED_LOGGING_MACROS),
+    ("anyhow", &["anyhow"]),
+    ("serde_json", &["json"]),
+];
 
-/// The [`AUDITED_LOGGING_ROOTS`] that `caller` spells as a macro path root
+/// The [`AUDITED_MACRO_ROOTS`] that `caller` spells as a macro path root
 /// and that name the registry crate in its file. Empty for a caller that
 /// spells none, without reading any manifest.
-pub(super) fn verified_logging_roots(
+pub(super) fn verified_macro_roots(
     caller: &FunctionSummary,
     index: &RustIndex,
 ) -> Vec<&'static str> {
     let body: &str = &caller.body;
-    let spelled: Vec<&'static str> = AUDITED_LOGGING_ROOTS
+    let spelled: Vec<&'static str> = AUDITED_MACRO_ROOTS
         .iter()
-        .copied()
+        .map(|(root, _)| *root)
         .filter(|root| body.contains(&format!("{root}::")))
         .collect();
     if spelled.is_empty() {
@@ -141,12 +152,17 @@ fn glob_reads_in_file_module(tree: &ast::UseTree) -> bool {
     }
 }
 
-/// Whether the path `segments` (with no leading `::`) is an audited logging
-/// macro under one of `verified_roots`. Spelling is exact: a raw identifier
-/// or any other leaf stays opaque.
-pub(super) fn is_verified_logging_macro(segments: &[&str], verified_roots: &[&str]) -> bool {
-    matches!(segments, [root, name]
-        if verified_roots.contains(root) && AUDITED_LOGGING_MACROS.contains(name))
+/// Whether the path `segments` (with no leading `::`) is an audited macro
+/// under one of `verified_roots`. Spelling is exact: a raw identifier or any
+/// leaf not audited under that root stays opaque.
+pub(super) fn is_verified_audited_macro(segments: &[&str], verified_roots: &[&str]) -> bool {
+    let [root, name] = segments else {
+        return false;
+    };
+    verified_roots.contains(root)
+        && AUDITED_MACRO_ROOTS
+            .iter()
+            .any(|(audited, macros)| audited == root && macros.contains(name))
 }
 
 /// Whether the delimited arguments that open at `open` in `masked` mention
@@ -239,10 +255,12 @@ mod tests {
     }
 
     #[test]
-    fn only_an_exact_leveled_leaf_under_a_verified_root_is_trusted() {
-        let roots = ["tracing"];
-        assert!(is_verified_logging_macro(&["tracing", "info"], &roots));
-        assert!(is_verified_logging_macro(&["tracing", "error"], &roots));
+    fn only_an_exact_audited_leaf_under_a_verified_root_is_trusted() {
+        let roots = ["tracing", "anyhow", "serde_json"];
+        assert!(is_verified_audited_macro(&["tracing", "info"], &roots));
+        assert!(is_verified_audited_macro(&["tracing", "error"], &roots));
+        assert!(is_verified_audited_macro(&["anyhow", "anyhow"], &roots));
+        assert!(is_verified_audited_macro(&["serde_json", "json"], &roots));
         for segments in [
             &["log", "info"][..],
             &["tracing", "event"],
@@ -250,8 +268,15 @@ mod tests {
             &["tracing", "r#info"],
             &["info"],
             &["dep", "tracing", "info"],
+            // bail! and ensure! return; a leaf audited under another root
+            // is not audited here.
+            &["anyhow", "bail"],
+            &["anyhow", "ensure"],
+            &["anyhow", "json"],
+            &["serde_json", "anyhow"],
+            &["serde_json", "json_internal"],
         ] {
-            assert!(!is_verified_logging_macro(segments, &roots), "{segments:?}");
+            assert!(!is_verified_audited_macro(segments, &roots), "{segments:?}");
         }
     }
 
