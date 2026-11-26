@@ -109,18 +109,25 @@ fn a_sibling_specialization_may_inherit_the_default(
         return false;
     };
     let covers_the_whole_type = index.files().get(&owner.file).is_some_and(|facts| {
-        unbounded_impl_parameters(&facts.data().source, owner.start_line, self_ty).is_some_and(
-            |parameters| {
-                let mut seen = Vec::new();
-                arguments.iter().all(|argument| {
-                    argument.starts_with('\'')
-                        || (parameters.contains(argument) && !seen.contains(argument) && {
-                            seen.push(argument.clone());
-                            true
-                        })
-                })
+        unbounded_impl_parameters(
+            &facts.data().source,
+            ImplSite {
+                line: owner.start_line,
+                function: &owner.name,
+                trait_name: owner_trait,
+                self_ty,
             },
         )
+        .is_some_and(|parameters| {
+            let mut seen = Vec::new();
+            arguments.iter().all(|argument| {
+                argument.starts_with('\'')
+                    || (parameters.contains(argument) && !seen.contains(argument) && {
+                        seen.push(argument.clone());
+                        true
+                    })
+            })
+        })
     });
     if covers_the_whole_type {
         return false;
@@ -137,19 +144,44 @@ fn a_sibling_specialization_may_inherit_the_default(
     }
 }
 
-/// The type parameters of the impl block that holds the function starting on
-/// 1-based `line` of `source`, when its header is `impl<..> Trait for
-/// self_ty` with every type parameter a bare name: no bound, default or
-/// `const`, and no `where` clause. Lifetimes are left out. `None` whenever
-/// the header is not read that way, including a nearest `impl` whose self
-/// type is not `self_ty`.
-fn unbounded_impl_parameters(source: &str, line: usize, self_ty: &str) -> Option<Vec<String>> {
+/// Where an owner method sits: its 1-based start line, its name, and the
+/// trait and self type of the impl that holds it.
+struct ImplSite<'a> {
+    line: usize,
+    function: &'a str,
+    trait_name: &'a str,
+    self_ty: &'a str,
+}
+
+/// The type parameters of the impl block that holds the owner at `site`,
+/// when its header is `impl<..> Trait for self_ty` with every type parameter
+/// a bare name: no bound, default or `const`, and no `where` clause.
+/// Lifetimes are left out. The header is the nearest item-level `impl`
+/// before the owner's `fn`, so a later impl on the same line is never read.
+/// `None` whenever the header is not read that way, including a nearest
+/// `impl` for another trait or self type.
+fn unbounded_impl_parameters(source: &str, site: ImplSite<'_>) -> Option<Vec<String>> {
     let masked = super::mask_comments_and_strings(source);
-    let end = masked
+    let line_start = masked
         .split_inclusive('\n')
-        .take(line)
+        .take(site.line.checked_sub(1)?)
         .map(str::len)
         .sum::<usize>();
+    // The owner's start line may hold its attributes, so its `fn` is the
+    // first one of its name from that line on.
+    let from_owner = masked.get(line_start..)?;
+    let function = site.function.strip_prefix("r#").unwrap_or(site.function);
+    let end = line_start
+        + super::super::owner_pin::whole_word_offsets(from_owner, function)
+            .into_iter()
+            .find(|&at| {
+                from_owner[..at]
+                    .trim_end()
+                    .strip_suffix("fn")
+                    .is_some_and(|before| {
+                        !before.ends_with(|ch: char| ch.is_alphanumeric() || ch == '_')
+                    })
+            })?;
     // An item-level `impl` starts a statement; `-> impl Iterator` and an
     // argument's `impl Trait` do not.
     let header_at = super::super::owner_pin::whole_word_offsets(masked.get(..end)?, "impl")
@@ -185,10 +217,22 @@ fn unbounded_impl_parameters(source: &str, line: usize, self_ty: &str) -> Option
         }
         None => ("", header),
     };
-    let (_, self_part) = rest.split_once(" for ")?;
+    let (trait_part, self_part) = rest.split_once(" for ")?;
+    let trait_part = trait_part.trim();
+    let trait_name = trait_part
+        .split('<')
+        .next()
+        .unwrap_or(trait_part)
+        .rsplit("::")
+        .next()
+        .unwrap_or(trait_part)
+        .trim();
+    if trait_name != site.trait_name {
+        return None;
+    }
     let squeeze = |text: &str| text.split_whitespace().collect::<String>();
     if !super::super::owner_pin::whole_word_offsets(self_part, "where").is_empty()
-        || squeeze(self_part) != squeeze(self_ty)
+        || squeeze(self_part) != squeeze(site.self_ty)
     {
         return None;
     }

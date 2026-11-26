@@ -517,6 +517,18 @@ fn only_distinct_unbounded_parameters_cover_the_type() -> Result<(), String> {
         "impl BufMut for Chain<T, U>::advance_mut",
         body
     )?);
+    // A bounded owner impl followed on the same line by an unbounded impl of
+    // another trait: only the owner's own header is read.
+    let same_line = "pub trait BufMut {\n    fn advance_mut(&mut self, _cnt: usize) {}\n}\n\
+        pub trait Marker {}\n\
+        pub struct Chain<T, U> { a: T, b: U }\n\
+        impl<T, U> Chain<T, U> {\n    pub fn pair(a: T, b: U) -> Chain<T, U> { Chain { a, b } }\n}\n\
+        impl<T: Copy, U> BufMut for Chain<T, U> { fn advance_mut(&mut self, cnt: usize) { let _ = (cnt, &self.a, &self.b); } } impl<T, U> Marker for Chain<T, U> {}\n";
+    assert!(!direct(
+        same_line,
+        "impl BufMut for Chain<T, U>::advance_mut",
+        body
+    )?);
     Ok(())
 }
 
