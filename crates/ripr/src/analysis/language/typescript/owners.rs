@@ -470,7 +470,7 @@ pub(crate) fn commonjs_named_class_export<'a>(
 }
 
 /// The class of a top-level `module.exports = class ...` statement.
-fn commonjs_whole_class_export<'a>(stmt: &'a Statement<'a>) -> Option<&'a Class<'a>> {
+pub(crate) fn commonjs_whole_class_export<'a>(stmt: &'a Statement<'a>) -> Option<&'a Class<'a>> {
     let Statement::ExpressionStatement(expression) = stmt else {
         return None;
     };

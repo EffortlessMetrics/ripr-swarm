@@ -50,6 +50,12 @@ fn diff_finding(label: &str, owner_text: &str, test: &str) -> Result<Finding, St
     let root = ts_unique_tempdir(label)?;
     ts_write_file(&root.join("package.json"), JEST_PACKAGE)?;
     ts_write_file(&root.join("src/cart.js"), owner_text)?;
+    // The base class the `extends Base` fixture imports, so that the module
+    // graph is complete rather than holding an unresolved import.
+    ts_write_file(
+        &root.join("src/base.js"),
+        "export default class Base {\n  label() {\n    return 'base';\n  }\n}\n",
+    )?;
     ts_write_file(&root.join("tests/cart.test.js"), test)?;
     let result = TypeScriptAdapter.analyze_diff(
         &ts_analysis_options(root.clone()),
@@ -206,6 +212,88 @@ fn members_of_an_anonymous_default_class_are_named_default() -> Result<(), Strin
         return Err(format!(
             "expected the `make` owner and no `default` name, got {local:?}"
         ));
+    }
+    Ok(())
+}
+
+#[test]
+fn a_field_of_an_anonymous_default_class_shadows_the_method_a_sibling_calls() -> Result<(), String>
+{
+    // `read()` calls `this.total`; a test of `read` reaches the changed
+    // `total` only when no instance field replaces it. A computed field key
+    // may define `total`, so it blocks the sibling edge like a plain
+    // `total = ...` field does (review of #16351).
+    let members = "  read() {\n    return this.total(100);\n  }\n  total(n) {\n    if (n > 50) {\n      return n - 5;\n    }\n    return n;\n  }\n";
+    let computed = "  [key] = () => 1;\n";
+    let preamble = "const key = 'total';\n";
+    let es = |field: &str| format!("{preamble}export default class {{\n{field}{members}}}\n");
+    let commonjs =
+        |field: &str| format!("{preamble}module.exports = class {{\n{field}{members}}};\n");
+    for (label, owner_text, test) in [
+        (
+            "es-sibling",
+            es(""),
+            jest_test(ES_DEFAULT, "    expect(new Cart().read()).toBe(95);\n"),
+        ),
+        (
+            "commonjs-sibling",
+            commonjs(""),
+            jest_test(REQUIRE, "    expect(new Cart().read()).toBe(95);\n"),
+        ),
+    ] {
+        case(label, &owner_text, &test, true)?;
+    }
+    for (label, owner_text, test) in [
+        (
+            "es-computed-field",
+            es(computed),
+            jest_test(ES_DEFAULT, "    expect(new Cart().read()).toBe(1);\n"),
+        ),
+        (
+            "commonjs-computed-field",
+            commonjs(computed),
+            jest_test(REQUIRE, "    expect(new Cart().read()).toBe(1);\n"),
+        ),
+    ] {
+        case(label, &owner_text, &test, false)?;
+    }
+    Ok(())
+}
+
+#[test]
+fn anonymous_default_classes_key_fields_and_repeats_by_default() -> Result<(), String> {
+    let allocator = Allocator::default();
+    // The fields of an anonymous ES or CommonJS default class are keyed by
+    // `default`, the name its members carry; a computed key reads as `*`.
+    for (label, source) in [
+        (
+            "es",
+            "export default class {\n  [key] = () => 1;\n  total() {}\n}\n",
+        ),
+        (
+            "commonjs",
+            "module.exports = class {\n  [key] = () => 1;\n  total() {}\n};\n",
+        ),
+    ] {
+        let parsed = Parser::new(&allocator, source, SourceType::mjs()).parse();
+        let fields = class_instance_field_names(&parsed.program);
+        if !fields
+            .get("default")
+            .is_some_and(|names| names.contains("*"))
+        {
+            return Err(format!("{label}: unexpected fields {fields:?}"));
+        }
+        if repeated_class_names(&parsed.program).contains("default") {
+            return Err(format!("{label}: one anonymous default class repeats"));
+        }
+    }
+    // An ES and a CommonJS anonymous default class in one file both carry
+    // `default`, so the name repeats and neither lends sibling edges.
+    let both = format!("export default class {BODY}\nmodule.exports = class {BODY};\n");
+    let parsed = Parser::new(&allocator, &both, SourceType::mjs()).parse();
+    let repeated = repeated_class_names(&parsed.program);
+    if !repeated.contains("default") {
+        return Err(format!("two anonymous default classes: {repeated:?}"));
     }
     Ok(())
 }

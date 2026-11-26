@@ -1927,8 +1927,10 @@ their named twins, reached under any local name, so a missing class name is
 no reason to withhold the relation. Their members carry the class name
 `default` (the ES class's runtime name; a reserved word, so no same-file
 construction or static call can spell it) and relate through the whole-module
-`require` or the default import respectively; every other gate above is
-unchanged (a named import or `require`, a default-named `require` of the
+`require` or the default import respectively; their instance fields are keyed by
+the same name, so a field (a computed one included) still shadows a method a
+sibling calls, and two anonymous default classes in one file repeat it. Every
+other gate above is unchanged (a named import or `require`, a default-named `require` of the
 CommonJS form, and a named export beside the inline class stay unrelated).
 Before, both read `no_static_path`. Named property
 exports of a class expression (`exports.Name = class ...`) and `const Name =
@@ -3120,8 +3122,12 @@ keys); do not take the next number.
   whole-module `require` under any local name relates, while a named import or
   `require`, a default-named `require` and a named export beside the inline
   class stay unrelated; owner extraction names the members `default` and leaves
-  a named or non-default anonymous class alone. `commonjs_inline_class_tests.rs`
-  now credits the anonymous inline class through a whole-module `require`.
+  a named or non-default anonymous class alone. A method the constructor
+  replaces stays unrelated (rule 29), and a computed instance field blocks the
+  edge from a sibling that calls the method, in both forms; the field inventory
+  keys such a class by `default`, and two anonymous default classes in one file
+  repeat that name. `commonjs_inline_class_tests.rs` now credits the anonymous
+  inline class through a whole-module `require`.
 
 - #11196 (rule 11, object rows): `tests/object_row_tests.rs` pins the per-row
   literal assertions for the `for...of` and `test.each` object-row forms and

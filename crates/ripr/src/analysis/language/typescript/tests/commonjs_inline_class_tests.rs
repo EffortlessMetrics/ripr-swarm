@@ -384,10 +384,11 @@ fn a_changed_method_of_the_inline_class_is_reported_and_related() -> Result<(), 
         &test,
     )?
     .ok_or("the changed method of the anonymous inline class yields no finding")?;
-    if !anonymous.related_tests.is_empty() {
+    // Since #16349 the anonymous class is the module's whole export too, so the
+    // whole-module `require` relates it like its named twin.
+    if anonymous.related_tests.is_empty() {
         return Err(format!(
-            "anonymous inline class: expected no related test, got {:?}",
-            anonymous.related_tests
+            "anonymous inline class: expected a related test, got {anonymous:?}"
         ));
     }
     Ok(())
