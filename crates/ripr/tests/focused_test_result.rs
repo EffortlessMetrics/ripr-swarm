@@ -2010,15 +2010,42 @@ fn a_legacy_pending_claim_without_edited_test_resumes() -> Result<(), String> {
     let current: Value =
         serde_json::from_str(&record_text).map_err(|error| format!("parse record: {error}"))?;
     assert_eq!(retained, current);
-    let bound: Value = state
+    // Status reports the run only when the terminal bytes equal the bound
+    // record's bytes, so compare bytes, then read the run back through status.
+    let bound = state
         .pointer("/after/focused_result/record")
         .and_then(Value::as_str)
-        .ok_or("the finished attempt binds no focused record")
-        .map_err(str::to_string)
-        .and_then(|text| {
-            serde_json::from_str(text).map_err(|error| format!("parse bound record: {error}"))
-        })?;
-    assert_eq!(bound, retained);
+        .ok_or("the finished attempt binds no focused record")?;
+    let terminal_path = state
+        .pointer("/terminal_artifacts")
+        .and_then(Value::as_array)
+        .and_then(|artifacts| {
+            artifacts
+                .iter()
+                .find(|artifact| artifact.get("role").and_then(Value::as_str) == Some(RESULT_ROLE))
+        })
+        .and_then(|artifact| artifact.get("path"))
+        .and_then(Value::as_str)
+        .ok_or("no terminal focused result path")?;
+    let terminal = fs::read(root.join(terminal_path)).map_err(|error| error.to_string())?;
+    assert_eq!(terminal, bound.as_bytes());
+    let status = run_ripr(
+        root,
+        &[
+            "agent",
+            "status",
+            "--root",
+            &attempt.root_arg,
+            "--attempt",
+            &attempt.id,
+            "--json",
+        ],
+    )?;
+    assert!(status.status.success(), "{}", combined(&status));
+    let status: Value =
+        serde_json::from_slice(&status.stdout).map_err(|error| format!("parse status: {error}"))?;
+    assert_eq!(status["test_run"]["status"], "caller_reported", "{status}");
+    assert_eq!(status["test_run"]["edited_test"], "unknown", "{status}");
     Ok(())
 }
 
