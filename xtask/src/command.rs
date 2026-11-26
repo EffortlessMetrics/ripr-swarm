@@ -1865,7 +1865,7 @@ pub(crate) fn command_catalog() -> Vec<CommandCatalogEntry> {
             "target/ripr/reports/readiness-snapshot.{json,md}",
             false,
             false,
-            "Projects exact-SHA package, toolchain and supply-chain evidence into the readiness snapshot without building, installing, publishing, or signing.",
+            "Projects retained exact-SHA readiness evidence, including the saved-edit sequence receipt from lsp-performance-report, without running its producers.",
         ),
         command_entry(
             "freeze-readiness --candidate <full-sha> [--public-head <full-sha>] [--control-tip <full-sha>] [--hosted-checks <check-runs.json>]... [--repo <dir>]",

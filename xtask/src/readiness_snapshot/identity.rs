@@ -191,7 +191,11 @@ pub(crate) fn supply_chain_report_status(path: &Path) -> Result<Option<String>, 
 pub(crate) fn digest_file(path: &Path) -> Result<String, String> {
     let bytes =
         fs::read(path).map_err(|err| format!("failed to read {}: {err}", path.display()))?;
-    Ok(format!("sha256:{}", sha256_hex(&bytes)))
+    Ok(digest_bytes(&bytes))
+}
+
+pub(super) fn digest_bytes(bytes: &[u8]) -> String {
+    format!("sha256:{}", sha256_hex(bytes))
 }
 
 fn sha256_hex(bytes: &[u8]) -> String {
@@ -307,6 +311,16 @@ pub(crate) fn semantic_identity_digest(snapshot: &super::model::ReadinessSnapsho
     let mut clone = snapshot.clone();
     clone.generated_at = String::new();
     clone.semantic_identity_digest = String::new();
+    if let Some(lifecycle) = clone
+        .dimensions
+        .get_mut(super::model::ReadinessDimensionId::SavedWorkspaceLifecycle.as_str())
+    {
+        // The raw saved-edit receipt digest identifies the evidence, including
+        // timings. Hash the projected lifecycle result without those timings.
+        for record in &mut lifecycle.evidence {
+            record.artifact_digest = None;
+        }
+    }
     let json = serde_json::to_string(&clone).unwrap_or_default();
     format!("sha256:{}", sha256_hex(json.as_bytes()))
 }

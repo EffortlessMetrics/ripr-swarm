@@ -4,6 +4,7 @@ mod identity;
 mod model;
 mod rehearsal;
 mod render;
+mod saved_workspace;
 
 pub(crate) use command::run;
 
