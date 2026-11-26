@@ -1,0 +1,4 @@
+[package]
+name = "rust_return_value_inline_tail_if_arm_repeated_value_fixture"
+version = "0.0.0"
+edition = "2024"
