@@ -12454,7 +12454,7 @@
       "tier": "pure",
       "source_fixture": "fixtures/rust_trait_impl_std_into_iter_takes_call",
       "vector": "trait_dispatch_identity_std_method_takes_text_receiver",
-      "probe_family": "return_value",
+      "probe_family": "predicate",
       "assertions": [
         {
           "type": "must_not_report_clean"

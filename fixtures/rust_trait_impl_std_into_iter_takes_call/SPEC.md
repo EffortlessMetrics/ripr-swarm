@@ -19,7 +19,7 @@ cargo xtask fixtures rust_trait_impl_std_into_iter_takes_call
 
 ## Then
 
-Exactly one `return_value` finding is not promoted. The related test's
+Exactly one `predicate` finding is not promoted. The related test's
 relation is `weak_token_substring`, not `direct_owner_call`: method probing
 tries the by-value receiver first, where `IntoIterator::into_iter(self)` takes
 the call before the `&self` step reaches `Peeky::into_iter`.
