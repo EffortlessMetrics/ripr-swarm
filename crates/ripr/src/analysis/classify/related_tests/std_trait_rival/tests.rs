@@ -174,6 +174,30 @@ fn a_call_through_the_trait_path_keeps_the_relation() -> Result<(), String> {
     Ok(())
 }
 
+/// A generic owner called through its trait path with a method turbofish
+/// still names the owner's trait, while the plain method call is withheld.
+#[test]
+fn a_turbofish_call_through_the_trait_path_keeps_the_relation() -> Result<(), String> {
+    let peeky = production("&self", "collect<T>");
+    let owner = "impl Peeky for Foo::collect";
+    assert!(withheld(
+        &peeky,
+        owner,
+        "let _ = Foo::new(5).collect::<u8>();"
+    )?);
+    assert!(!withheld(
+        &peeky,
+        owner,
+        "let _ = Peeky::collect::<u8>(&Foo::new(5));"
+    )?);
+    assert!(!withheld(
+        &peeky,
+        owner,
+        "let _ = <Foo as crate::Peeky>::collect::<u8>(&Foo::new(5));"
+    )?);
+    Ok(())
+}
+
 /// Only a path ending in the owner's trait counts, outside comments and
 /// literals, and `Type<Trait>::name(` names no trait.
 #[test]

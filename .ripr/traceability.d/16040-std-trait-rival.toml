@@ -7,6 +7,7 @@ tests = [
   "crates/ripr/src/analysis/classify/related_tests/std_trait_rival/tests.rs::only_an_earlier_probing_step_withholds_the_relation",
   "crates/ripr/src/analysis/classify/related_tests/std_trait_rival/tests.rs::the_standard_traits_own_impl_keeps_the_relation",
   "crates/ripr/src/analysis/classify/related_tests/std_trait_rival/tests.rs::a_call_through_the_trait_path_keeps_the_relation",
+  "crates/ripr/src/analysis/classify/related_tests/std_trait_rival/tests.rs::a_turbofish_call_through_the_trait_path_keeps_the_relation",
   "crates/ripr/src/analysis/classify/related_tests/std_trait_rival/tests.rs::only_the_owner_traits_path_counts",
   "crates/ripr/src/analysis/classify/related_tests/std_trait_rival/tests.rs::a_borrowed_receiver_keeps_the_relation",
   "crates/ripr/src/analysis/classify/related_tests/std_trait_rival/tests.rs::only_every_borrowed_receiver_counts",
