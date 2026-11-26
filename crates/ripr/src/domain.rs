@@ -163,6 +163,8 @@ pub(crate) use ripr_contract::domain::enablement_tip_languages;
 pub(crate) use ripr_contract::domain::exact_assertion_fact;
 #[cfg(test)]
 pub(crate) use ripr_contract::domain::example_preregistered_study;
+#[cfg(feature = "lang-python")]
+pub(crate) use ripr_contract::domain::first_observing_related_test;
 pub(crate) use ripr_contract::domain::format_languages_enabled_toml;
 pub(crate) use ripr_contract::domain::guard_refusal_digest_classification_hint;
 pub(crate) use ripr_contract::domain::guard_refusal_kind;
