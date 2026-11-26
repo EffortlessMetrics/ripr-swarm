@@ -83,6 +83,10 @@ pub(crate) struct PilotLanguageRoute {
     /// TypeScript/JavaScript, the `python_diff_first` repair route for Python,
     /// or the unavailable-adapter notice.
     pub(crate) guidance: Option<String>,
+    /// `ripr check` cannot run at this root (not a Git work tree, or a bare
+    /// repository), so no check command is offered and `guidance` carries the
+    /// route that works instead (#15297).
+    pub(crate) blocked_by_work_tree: bool,
 }
 
 impl PilotLanguageRoute {
@@ -95,7 +99,9 @@ impl PilotLanguageRoute {
     }
 
     pub(crate) fn route(&self) -> &'static str {
-        if self.available {
+        if self.blocked_by_work_tree {
+            "needs_git_work_tree"
+        } else if self.available {
             "check_diff_first"
         } else {
             "unavailable_in_this_binary"
@@ -127,11 +133,13 @@ pub(crate) struct PilotLanguageRoutes {
 impl PilotLanguageRoutes {
     /// Build the routes from preview-language file discovery
     /// (`analysis::workspace_preview_language_files`), whether pilot's Rust
-    /// scan produced any seam, and the effective enabled languages.
+    /// scan produced any seam, the effective enabled languages, and whether
+    /// that enablement came from built-in defaults rather than `ripr.toml`.
     pub(crate) fn from_discovered(
         root: &Path,
         rust_seams_present: bool,
         enabled_languages: &[LanguageId],
+        auto_defaulted: bool,
         discovered: &[(LanguageId, PathBuf)],
     ) -> Self {
         let mut routes = Vec::new();
@@ -146,7 +154,13 @@ impl PilotLanguageRoutes {
             if file_count == 0 {
                 continue;
             }
-            routes.push(route_for(root, *language, file_count, enabled_languages));
+            routes.push(route_for(
+                root,
+                *language,
+                file_count,
+                enabled_languages,
+                auto_defaulted,
+            ));
         }
         let state = if routes.is_empty() {
             PilotLanguageRoutesState::NotDetected
@@ -186,6 +200,32 @@ impl PilotLanguageRoutes {
         self.no_rust_source = !self.rust_seams_present && !rust_source_present;
         self.unanalyzed = unanalyzed;
         self
+    }
+
+    /// A root where `ripr check` refuses (not a Git work tree, or bare): drop
+    /// every check command and name the route that works, so no next step
+    /// points back into the refusal (#15297).
+    pub(crate) fn with_check_blocker(mut self, root: &Path, blocker: CheckBlocker) -> Self {
+        let text = blocker.route_text(root);
+        for route in self
+            .routes
+            .iter_mut()
+            .filter(|route| route.command.is_some())
+        {
+            route.command = None;
+            route.guidance_category = None;
+            route.guidance = Some(text.clone());
+            route.blocked_by_work_tree = true;
+        }
+        self
+    }
+
+    /// The route text for a blocked root, when a check command was withheld.
+    pub(crate) fn blocked_route_text(routes: &[PilotLanguageRoute]) -> Option<&str> {
+        routes
+            .iter()
+            .find(|route| route.blocked_by_work_tree)
+            .and_then(|route| route.guidance.as_deref())
     }
 
     /// The repository has no Rust source, so Rust-scan wording does not apply.
@@ -277,8 +317,17 @@ fn route_for(
     language: LanguageId,
     file_count: usize,
     enabled_languages: &[LanguageId],
+    auto_defaulted: bool,
 ) -> PilotLanguageRoute {
-    let available = language.is_available();
+    use crate::domain::language_availability::availability_report_for_detected_pilot;
+
+    let report = availability_report_for_detected_pilot(
+        language,
+        file_count,
+        Some(enabled_languages),
+        auto_defaulted,
+    );
+    let available = report.compiled_available;
     if !available {
         return PilotLanguageRoute {
             language,
@@ -287,35 +336,43 @@ fn route_for(
             enabled: false,
             command: None,
             guidance_category: None,
-            guidance: language.unavailable_adapter_notice(),
+            // The notice names the build prerequisite exactly as the other
+            // surfaces do; an explicit disable has no remediation, so none.
+            guidance: if report.remediation.is_empty() {
+                None
+            } else {
+                language.unavailable_adapter_notice()
+            },
+            blocked_by_work_tree: false,
         };
     }
-    let typescript_family = matches!(language, LanguageId::TypeScript | LanguageId::JavaScript);
-    // JavaScript runs through the TypeScript-family adapter, which the
-    // `[languages] enabled = ["typescript"]` entry turns on.
-    let config_language = if typescript_family {
-        LanguageId::TypeScript
-    } else {
-        language
-    };
-    let (guidance_category, guidance) = if typescript_family {
-        (
-            Some(TsFullRepoGuidance::CATEGORY),
-            Some(TsFullRepoGuidance::REPAIR_ROUTE.to_string()),
-        )
-    } else if language == LanguageId::Python {
-        (
-            Some(PythonRepoExposureGuidance::CATEGORY),
-            Some(PythonRepoExposureGuidance::REPAIR_ROUTE.to_string()),
-        )
-    } else {
-        (None, None)
-    };
+    let enabled = report.effective_enabled;
+    let remediation = (!report.remediation.is_empty()).then(|| report.remediation.join("; "));
+    let (guidance_category, guidance) =
+        if matches!(language, LanguageId::TypeScript | LanguageId::JavaScript) {
+            (
+                Some(TsFullRepoGuidance::CATEGORY),
+                Some(with_enable_steps(
+                    TsFullRepoGuidance::REPAIR_ROUTE,
+                    remediation,
+                )),
+            )
+        } else if language == LanguageId::Python {
+            (
+                Some(PythonRepoExposureGuidance::CATEGORY),
+                Some(with_enable_steps(
+                    PythonRepoExposureGuidance::REPAIR_ROUTE,
+                    remediation,
+                )),
+            )
+        } else {
+            (None, remediation)
+        };
     PilotLanguageRoute {
         language,
         file_count,
         available,
-        enabled: enabled_languages.contains(&config_language),
+        enabled,
         // The route is pasted after the pilot report, often from another
         // directory, so it names the repository pilot analyzed (#4000).
         command: Some(format!(
@@ -324,5 +381,98 @@ fn route_for(
         )),
         guidance_category,
         guidance,
+        blocked_by_work_tree: false,
+    }
+}
+
+/// Why `ripr check` cannot run at the pilot root (#15297).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum CheckBlocker {
+    /// The root is not inside a Git work tree.
+    NotWorkTree,
+    /// The root is a bare repository: a repository with no checked-out source.
+    BareRepository,
+    /// `git` is not on `PATH`, so only a saved patch can be checked.
+    GitMissing,
+}
+
+impl CheckBlocker {
+    /// The route that works at this root, in place of the refused check.
+    fn route_text(self, root: &Path) -> String {
+        let shown = shell_arg(&root_path_display(&bound_root_path(root)));
+        match self {
+            CheckBlocker::NotWorkTree => format!(
+                "ripr check needs a Git work tree and this root is not one: run `git -C {shown} init` and commit the files there, or check a saved patch with `ripr check --root {shown} --diff PATH`"
+            ),
+            CheckBlocker::GitMissing => format!(
+                "ripr check needs Git to read the change and Git was not found on PATH: install Git, or check a saved patch with `ripr check --root {shown} --diff PATH`"
+            ),
+            // #15297 review: the route names the bare repository's own path, so
+            // it works from any directory and tells an empty repository apart.
+            CheckBlocker::BareRepository => format!(
+                "ripr check needs checked-out source and this root is a bare Git repository: {}, then pass `--root <path>`",
+                crate::work_tree_route::bare_root_work_tree_route_or_plain(root)
+            ),
+        }
+    }
+}
+
+/// Keep the stable diff-first repair route and append any enable steps, so a
+/// disabled-but-available language names both (#2961).
+fn with_enable_steps(route: &str, remediation: Option<String>) -> String {
+    match remediation {
+        Some(steps) => format!("{route} {steps}"),
+        None => route.to_string(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::domain::LanguageId;
+
+    #[test]
+    fn auto_defaulted_python_is_effectively_enabled_for_pilot_routes() {
+        if !LanguageId::Python.is_available() {
+            return;
+        }
+        let files = [(LanguageId::Python, PathBuf::from("src/app.py"))];
+        let auto = PilotLanguageRoutes::from_discovered(
+            Path::new("."),
+            false,
+            &[LanguageId::Rust, LanguageId::Python],
+            true,
+            &files,
+        );
+        let python = auto
+            .routes
+            .iter()
+            .find(|route| route.language == LanguageId::Python);
+        assert!(python.is_some_and(|route| route.enabled));
+    }
+
+    #[test]
+    fn disabled_compiled_language_carries_shared_enable_remediation() {
+        if !LanguageId::Python.is_available() {
+            return;
+        }
+        let files = [(LanguageId::Python, PathBuf::from("src/app.py"))];
+        let routes = PilotLanguageRoutes::from_discovered(
+            Path::new("."),
+            false,
+            &[LanguageId::Rust],
+            false,
+            &files,
+        );
+        let python = &routes.routes[0];
+        assert!(!python.enabled);
+        assert!(
+            python
+                .guidance
+                .as_deref()
+                .is_some_and(|text| text.contains("[languages]")),
+            "{:?}",
+            python.guidance
+        );
     }
 }

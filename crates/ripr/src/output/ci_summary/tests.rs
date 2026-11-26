@@ -138,7 +138,7 @@ impl Fixture {
             comment_mode: comment_mode.to_string(),
             configured_languages: languages.iter().map(|name| (*name).to_string()).collect(),
         };
-        Ok(String::from_utf8(render_ci_summary(&input))?)
+        Ok(String::from_utf8(render_ci_summary(&input, true))?)
     }
 
     /// Every artifact the summary reads, with a carried repair start.
@@ -833,6 +833,8 @@ fn checkout_paths_become_the_repository_root_in_copied_commands() -> TestResult 
 fn repo_relative_rewrites_only_whole_path_tokens() {
     let relative = RepoRelative {
         physical: b"/w/repo".to_vec(),
+        display: Vec::new(),
+        quoted: Vec::new(),
         logical: b"/link/repo".to_vec(),
     };
     assert_eq!(
@@ -1194,6 +1196,14 @@ fn a_clean_run_is_not_reported_as_an_unfinished_one() -> TestResult {
     let head = block(&summary, HEADLINE);
     assert!(head.contains("did not complete"), "{head}");
     assert!(!head.contains("No changed-behavior spot"), "{head}");
+    unfinished.json(
+        "target/ripr/review/comments.json",
+        &json!({"comments": [], "analysis_outcome": {"analysis_complete": true, "document_complete": false}}),
+    )?;
+    let summary = unfinished.render(&[])?;
+    let head = block(&summary, HEADLINE);
+    assert!(head.contains("reported subset"), "{head}");
+    assert!(!head.contains("No changed-behavior spot"), "{head}");
     Ok(())
 }
 
@@ -1288,7 +1298,7 @@ fn an_unproven_clean_report_is_never_clean() -> TestResult {
     let head = block(&stated.render(&[])?, HEADLINE).to_string();
     assert!(head.contains("**2 changed-behavior spots"), "{head}");
     assert!(
-        head.contains("The items are in the PR guidance section below."),
+        head.contains("The report lists a count without individual spot details."),
         "{head}"
     );
     Ok(())
@@ -1312,7 +1322,10 @@ fn a_summary_only_report_names_its_first_spot_from_the_root_array() -> TestResul
         head.contains("- First: `src/pricing.rs:88` in `pricing::discounted_total`"),
         "{head}"
     );
-    assert!(!head.contains("PR guidance section below"), "{head}");
+    assert!(
+        !head.contains("count without individual spot details"),
+        "{head}"
+    );
     // A count with no cards still points at the guidance section.
     let counted = Fixture::new("headline-count-only")?;
     counted.json(
@@ -1321,7 +1334,10 @@ fn a_summary_only_report_names_its_first_spot_from_the_root_array() -> TestResul
     )?;
     let head = block(&counted.render(&[])?, HEADLINE).to_string();
     assert!(head.contains("**2 changed-behavior spots"), "{head}");
-    assert!(head.contains("PR guidance section below"), "{head}");
+    assert!(
+        head.contains("count without individual spot details"),
+        "{head}"
+    );
     Ok(())
 }
 
@@ -1370,7 +1386,7 @@ fn render_gate_mode(
         comment_mode: String::new(),
         configured_languages: vec!["rust".to_string()],
     };
-    Ok(String::from_utf8(render_ci_summary(&input))?)
+    Ok(String::from_utf8(render_ci_summary(&input, true))?)
 }
 
 #[test]
@@ -1928,7 +1944,7 @@ fn manual_run_flags_a_missing_seam_sarif_not_the_diff_sarif() -> TestResult {
         comment_mode: String::new(),
         configured_languages: vec!["rust".to_string()],
     };
-    let summary = String::from_utf8(render_ci_summary(&input))?;
+    let summary = String::from_utf8(render_ci_summary(&input, true))?;
     assert!(
         summary.contains("- Diff SARIF: not generated (pull request runs only)\n"),
         "{summary}"
@@ -1953,7 +1969,7 @@ fn render_event(fixture: &Fixture, event_name: &str) -> Result<String, Box<dyn s
         comment_mode: String::new(),
         configured_languages: vec!["rust".to_string()],
     };
-    Ok(String::from_utf8(render_ci_summary(&input))?)
+    Ok(String::from_utf8(render_ci_summary(&input, false))?)
 }
 
 /// The First-run status section: up to any collapsed block or the next heading.
@@ -2002,6 +2018,17 @@ fn a_blocked_start_here_packet_shows_its_reason() -> TestResult {
         "{visible}"
     );
 
+    fixture.json(super::COMMENTS_JSON, &json!({"comments": []}))?;
+    let compact = render_event(&fixture, "pull_request")?;
+    assert!(compact.contains("### Reports in the `ripr-reports` artifact"));
+    assert!(
+        compact.contains(&format!(
+            "- Start-here packet: blocked.\n- Reason: ``{reason}``"
+        )),
+        "{compact}"
+    );
+    fs::remove_file(fixture.root.join(super::COMMENTS_JSON))?;
+
     fixture.json(
         "target/ripr/reports/start-here.json",
         &json!({"status": "advisory", "selected": {"state": "no_action", "message": ""}}),
@@ -2036,20 +2063,11 @@ fn a_run_without_a_pull_request_says_so() -> TestResult {
         !pull_request.contains("No pull request in this run"),
         "{pull_request}"
     );
-    // A local run (no event) prints no note either. Like the manual run it
-    // is not a pull request run, which picks the SARIF rows (#14300), so the
-    // note is the only difference between the two.
+    // With readable PR guidance, a local preview uses the PR front page.
     let local = render_event(&fixture, "")?;
-    assert!(!local.contains("No pull request in this run"), "{local}");
-    assert_eq!(
-        manual.replace(
-            "- No pull request in this run: the event is `workflow_dispatch`, so the pull request findings were not produced. A missing PR repair cards state below follows from that; repository-wide reports do not need a pull request.\n\
-             - Next step: open or update a pull request to get changed-behavior findings for it.\n",
-            ""
-        ),
-        local,
-        "the note is the only difference"
-    );
+    assert_eq!(local, pull_request);
+    assert!(local.contains("### Reports in the `ripr-reports` artifact"));
+    assert!(manual.contains("#### First-run status"));
 
     // The event says what kind of run this is, not which stages finished: a
     // manual run that produced no reports gets the same note, and the note
@@ -2061,5 +2079,95 @@ fn a_run_without_a_pull_request_says_so() -> TestResult {
         "{bare}"
     );
     assert!(!bare.contains("still ran"), "{bare}");
+    Ok(())
+}
+
+/// The compact front page names the packet's carried repair start when its
+/// headline names none for the first spot (#14301): a card without a repair
+/// route still leaves the start-here packet's selected gap to start from,
+/// and the full page leads with that start.
+#[test]
+fn a_compact_page_carries_the_packet_repair_start_when_the_headline_has_none() -> TestResult {
+    let fixture = Fixture::new("compact-carried-start")?;
+    let mut without_route = card();
+    without_route["llm_guidance"] = json!({"note": "add a separating input first"});
+    fixture.json(
+        super::COMMENTS_JSON,
+        &json!({
+            "summary": {"comments": 1},
+            "analysis_outcome": {"analysis_complete": true},
+            "comments": [without_route],
+        }),
+    )?;
+    let packet = json!({
+        "status": "advisory",
+        "selected": {"state": "repair_packet_ready", "repair_command": REPAIR},
+    });
+    fixture.json("target/ripr/reports/start-here.json", &packet)?;
+    let compact = render_event(&fixture, "pull_request")?;
+    assert!(
+        compact.contains("### Reports in the `ripr-reports` artifact"),
+        "{compact}"
+    );
+    assert!(!compact.contains("- Next step: "), "{compact}");
+    assert_eq!(
+        compact
+            .matches(&format!("- Start repair: `{REPAIR}`"))
+            .count(),
+        1,
+        "{compact}"
+    );
+    assert!(
+        compact.contains(&format!(
+            "- {REPAIR_AFTER_PHASE_LABEL}: {REPAIR_AFTER_PHASE_STEP}"
+        )),
+        "{compact}"
+    );
+    // The headline keeps its place: the carried start follows it.
+    let headline = compact.find(HEADLINE).ok_or("headline is missing")?;
+    let start = compact
+        .find("- Start repair: ")
+        .ok_or("the carried start is missing")?;
+    assert!(headline < start, "{compact}");
+
+    // A packet that carries no start leaves the page without one.
+    fixture.json(
+        "target/ripr/reports/start-here.json",
+        &json!({"status": "advisory", "selected": {"state": "no_action"}}),
+    )?;
+    let bare = render_event(&fixture, "pull_request")?;
+    assert!(!bare.contains("- Start repair: "), "{bare}");
+    Ok(())
+}
+
+/// One repair command on the compact page: when the headline already names
+/// the first spot's, the packet's carried start is not repeated beside it.
+#[test]
+fn a_compact_page_prints_one_repair_command_when_the_headline_names_one() -> TestResult {
+    let fixture = Fixture::new("compact-one-command")?;
+    let carried = "ripr agent repair --root . --seam-id s2 --phase before";
+    fixture.json(
+        super::COMMENTS_JSON,
+        &json!({
+            "summary": {"comments": 1},
+            "analysis_outcome": {"analysis_complete": true},
+            "comments": [card()],
+        }),
+    )?;
+    fixture.json(
+        "target/ripr/reports/start-here.json",
+        &json!({
+            "status": "advisory",
+            "selected": {"state": "repair_packet_ready", "repair_command": carried},
+        }),
+    )?;
+    let compact = render_event(&fixture, "pull_request")?;
+    assert!(
+        compact.contains(&format!("- Next step: `{REPAIR}`")),
+        "{compact}"
+    );
+    assert_eq!(compact.matches(REPAIR).count(), 1, "{compact}");
+    assert!(!compact.contains(carried), "{compact}");
+    assert!(!compact.contains("- Start repair: "), "{compact}");
     Ok(())
 }

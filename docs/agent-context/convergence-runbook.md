@@ -78,7 +78,8 @@ since 2026-11-10T21:32Z with `bypass_actors: []`); direct expected-head
 After current-head substantive review, addressed findings, applicable proof, and
 all live required PR obligations are established, follow the live queue-landing
 sequence in [merge flow](../MERGE_FLOW.md): confirm `Ripr Rust Small Result` and
-other required checks/review threads, enqueue the PR on the native merge queue,
+other required checks/review threads, enqueue the PR on the native merge queue
+through the [enqueue interface](../MERGE_FLOW.md#enqueue-interface) the session has,
 and let the queue run qualify and squash the exact queued merge commit. Read the
 current requirements rather than assuming a fixed protection configuration. A
 behind-only branch does not itself invalidate unaffected proof; a green old-head

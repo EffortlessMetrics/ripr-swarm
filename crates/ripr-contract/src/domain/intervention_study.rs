@@ -9,7 +9,10 @@ use std::fmt;
 
 /// Wire schema identity for a preregistered matched intervention study.
 pub const RIPR_INTERVENTION_STUDY_SCHEMA_VERSION: &str = "ripr_intervention_study.v1";
+/// The `kind` every study document carries.
 pub const RIPR_INTERVENTION_STUDY_KIND: &str = "ripr_intervention_study";
+/// The only accepted `implementation_state`: the document is a frozen
+/// protocol, not a run or a result.
 pub const RIPR_INTERVENTION_STUDY_IMPLEMENTATION_STATE: &str = "preregistration_only";
 
 const SHA256_PREFIX: &str = "sha256:";
@@ -18,28 +21,57 @@ const GIT_SHA_LENGTH: usize = 40;
 
 /// Stable rejection codes for the ten issue #4649 falsifiers plus digest/shape.
 pub mod codes {
+    /// The schema version, kind, implementation state or study phase is not the
+    /// supported one.
     pub const UNSUPPORTED_SCHEMA: &str = "unsupported_schema";
+    /// Something the protocol must declare is missing: an empty required field
+    /// or list, a condition other than exactly `control` and `ripr_assisted`,
+    /// a condition without a budget overlay, an assisted surface that names no
+    /// RIPR evidence, a task outside every assignment pair, a required outcome
+    /// cell or axis, a claim ceiling not bounded to this study, or a planned
+    /// analysis that does not report exact numerators and denominators.
     pub const MISSING_FIELD: &str = "missing_field";
+    /// An identity is malformed, duplicated or names something unknown, such as
+    /// a task in an unknown stratum.
     pub const MALFORMED_IDENTITY: &str = "malformed_identity";
+    /// Assignment could be chosen or changed after an outcome or grader signal
+    /// is visible.
     pub const ASSIGNMENT_AFTER_OUTCOME: &str = "assignment_after_outcome";
+    /// One condition gets extra tokens, time, tools or retries.
     pub const UNEQUAL_CONDITION_BUDGETS: &str = "unequal_condition_budgets";
+    /// The control condition may read RIPR outputs.
     pub const CONTROL_CAN_READ_RIPR_OUTPUTS: &str = "control_can_read_ripr_outputs";
+    /// The assisted condition gets repository context it does not declare.
     pub const ASSISTED_UNDECLARED_EXTRA_CONTEXT: &str = "assisted_undeclared_extra_context";
+    /// A task may be replaced after a difficult failure.
     pub const TASK_REPLACEMENT_AFTER_FAILURE: &str = "task_replacement_after_failure";
+    /// The retry policy differs between conditions.
     pub const RETRY_ONLY_IN_WEAKER_CONDITION: &str = "retry_only_in_weaker_condition";
+    /// Timeouts or invalid attempts may be dropped from the denominator.
     pub const DROP_INVALID_FROM_DENOMINATOR: &str = "drop_timeouts_or_invalid_from_denominator";
+    /// The study may stop on a favorable interim estimate.
     pub const STOPPING_ON_FAVORABLE_INTERIM: &str = "stopping_on_favorable_interim";
+    /// Adjudication is not independent: no grader identity, no rubric id or
+    /// version, a zero minimum grader count, or grading that is not blind to
+    /// the condition.
     pub const GRADER_OR_RUBRIC_ABSENT: &str = "grader_or_rubric_absent";
+    /// The protocol lock is weakened, or a study with a recorded first attempt
+    /// changes its protocol or clears that record under the same `study_id`.
     pub const PROTOCOL_MUTATION_REQUIRES_NEW_STUDY_ID: &str =
         "protocol_mutation_requires_new_study_id";
+    /// Outcome axes are combined into a score where one axis can make up for
+    /// another.
     pub const COMPENSATING_OUTCOME_SCORE: &str = "compensating_outcome_score";
+    /// The recorded protocol digest does not match the sealed payload.
     pub const PROTOCOL_DIGEST_MISMATCH: &str = "protocol_digest_mismatch";
 }
 
 /// Typed failure from the preregistration validator.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct InterventionStudyError {
+    /// The stable rejection code, one of the constants in [`codes`].
     pub code: &'static str,
+    /// A human-readable explanation of the rejection.
     pub message: String,
 }
 
@@ -60,96 +92,158 @@ fn error(code: &'static str, message: impl Into<String>) -> InterventionStudyErr
 #[derive(Clone, Debug, Eq, PartialEq, serde::Serialize, serde::Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct RiprInterventionStudyV1 {
+    /// Must be [`RIPR_INTERVENTION_STUDY_SCHEMA_VERSION`].
     pub schema_version: String,
+    /// Must be [`RIPR_INTERVENTION_STUDY_KIND`].
     pub kind: String,
+    /// Must be [`RIPR_INTERVENTION_STUDY_IMPLEMENTATION_STATE`].
     pub implementation_state: String,
+    /// The study's identity. A changed protocol needs a new one once the
+    /// study has started.
     pub study_id: String,
+    /// The protocol's version label.
     pub protocol_version: String,
+    /// The `sha256:<64 lowercase hex>` digest sealed over
+    /// [`RiprInterventionStudyV1::canonical_protocol_payload`].
     pub protocol_digest: String,
+    /// The issue the study belongs to.
     pub parent_issue: String,
+    /// The study's place in its sequence.
     pub sequence: String,
+    /// Must be [`StudyPhase::Preregistered`] on this document.
     pub study_phase: StudyPhase,
+    /// The exact repository and head the study analyzes.
     pub repository: RepositoryIdentity,
+    /// The task series the study draws from.
     pub task_series: TaskSeries,
+    /// Which tasks may and may not be selected.
     pub eligibility: EligibilityRules,
+    /// The matched strata tasks are grouped into.
     pub strata: Vec<MatchedStratum>,
+    /// The tasks selected before any outcome exists.
     pub tasks: Vec<StudyTask>,
+    /// The two conditions, `control` and `ripr_assisted`.
     pub conditions: Vec<StudyCondition>,
+    /// How tasks are assigned to conditions and in which order.
     pub assignment: AssignmentLaw,
+    /// The model, operator, runtime, tool and resource budget both
+    /// conditions share.
     pub shared_budget: ResourceBudget,
+    /// Per-condition additions to the shared budget, keyed by condition id.
     pub condition_budget_overlays: BTreeMap<String, BudgetOverlay>,
+    /// The RIPR evidence surface only the assisted condition may read.
     pub intervention_surface: InterventionSurface,
+    /// Contamination and prior-exposure controls.
     pub leakage_controls: LeakageControls,
+    /// The attempt, retry and task-replacement policy.
     pub attempt_policy: AttemptPolicy,
+    /// The primary outcome axes, kept separate rather than combined.
     pub outcome_axes: Vec<OutcomeAxis>,
+    /// An optional summary that may not stand in for the outcome axes.
     pub non_authoritative_summary: Option<NonAuthoritativeSummary>,
+    /// The independent adjudication plan.
     pub adjudication: AdjudicationPlan,
+    /// How missing, invalid and instrument-failure outcomes are counted.
     pub invalid_attempt_rules: InvalidAttemptRules,
+    /// When the study may stop.
     pub stopping_rule: StoppingRule,
+    /// The analysis planned before outcomes exist.
     pub planned_analysis: PlannedAnalysis,
+    /// The strongest claim the study may support.
     pub claim_ceiling: ClaimCeiling,
+    /// The lock that freezes the protocol once attempts start.
     pub protocol_lock: ProtocolLock,
+    /// Claims the study explicitly does not make; at least one is required.
     pub non_claims: Vec<String>,
 }
 
+/// The phase a study document is in.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum StudyPhase {
+    /// `preregistered`: frozen before any outcome; the only phase this
+    /// document accepts.
     Preregistered,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, serde::Serialize, serde::Deserialize)]
 #[serde(deny_unknown_fields)]
+/// The exact repository a study analyzes.
 pub struct RepositoryIdentity {
+    /// The repository's identity.
     pub repository_id: String,
+    /// Where the repository is cloned from.
     pub clone_url: String,
+    /// The full 40-character lowercase commit the study analyzes.
     pub analyzed_head_sha: String,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, serde::Serialize, serde::Deserialize)]
 #[serde(deny_unknown_fields)]
+/// The task series a study draws its tasks from.
 pub struct TaskSeries {
+    /// The series identity.
     pub task_series_id: String,
+    /// What the series contains.
     pub description: String,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, serde::Serialize, serde::Deserialize)]
 #[serde(deny_unknown_fields)]
+/// Which tasks may be selected for the study.
 pub struct EligibilityRules {
+    /// Inclusion rules.
     pub include: Vec<String>,
+    /// Exclusion rules.
     pub exclude: Vec<String>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, serde::Serialize, serde::Deserialize)]
 #[serde(deny_unknown_fields)]
+/// A group of tasks matched on the properties that could affect outcomes.
 pub struct MatchedStratum {
+    /// The stratum identity, unique within the study.
     pub stratum_id: String,
+    /// The family of behavior the tasks change.
     pub behavior_family: String,
+    /// What proof already exists for the behavior.
     pub existing_proof_state: String,
+    /// How complete the repair route is.
     pub route_completeness: String,
+    /// The tasks' difficulty class.
     pub difficulty_class: String,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, serde::Serialize, serde::Deserialize)]
 #[serde(deny_unknown_fields)]
+/// One task selected for the study.
 pub struct StudyTask {
+    /// The task identity, unique within the study.
     pub task_id: String,
+    /// The stratum the task belongs to; must name a declared stratum.
     pub stratum_id: String,
+    /// The behavior the task is about.
     pub canonical_behavior: String,
+    /// What proof already exists for the behavior.
     pub existing_proof_state: String,
+    /// The fixture the task uses.
     pub fixture_id: String,
 }
 
+/// A study condition.
 #[derive(
     Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd, serde::Serialize, serde::Deserialize,
 )]
 #[serde(rename_all = "snake_case")]
 pub enum ConditionId {
+    /// `control`: no access to RIPR outputs.
     Control,
+    /// `ripr_assisted`: may read the declared RIPR evidence surface.
     RiprAssisted,
 }
 
 impl ConditionId {
+    /// The snake_case wire token for this condition.
     pub const fn as_str(self) -> &'static str {
         match self {
             Self::Control => "control",
@@ -160,224 +254,367 @@ impl ConditionId {
 
 #[derive(Clone, Debug, Eq, PartialEq, serde::Serialize, serde::Deserialize)]
 #[serde(deny_unknown_fields)]
+/// One condition a task is run under.
 pub struct StudyCondition {
+    /// Which condition this is.
     pub condition_id: ConditionId,
+    /// What the condition provides.
     pub description: String,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, serde::Serialize, serde::Deserialize)]
 #[serde(deny_unknown_fields)]
+/// How tasks are assigned to conditions. Assignment must be fixed before any
+/// outcome or grader signal is visible.
 pub struct AssignmentLaw {
+    /// Must be true: assignment was chosen before outcomes existed.
     pub selected_before_outcomes: bool,
+    /// When assignment freezes; must be
+    /// [`AssignmentFreezeRule::BeforeFirstOutcomeOrGraderSignal`].
     pub freeze_rule: AssignmentFreezeRule,
+    /// Must be false: assignment cannot change once an outcome or grader
+    /// signal is visible.
     pub may_change_after_outcome_or_grader_signal: bool,
+    /// How tasks are paired across conditions.
     pub pairing: PairingLaw,
+    /// One pair per selected task, together counterbalancing condition order.
     pub pairs: Vec<AssignmentPair>,
+    /// The preregistered seed the assignment was drawn with.
     pub assignment_seed: String,
 }
 
+/// When assignment freezes.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum AssignmentFreezeRule {
+    /// Before the first outcome or grader signal; the only accepted rule.
     BeforeFirstOutcomeOrGraderSignal,
+    /// After an outcome is visible; rejected as `assignment_after_outcome`.
     AfterOutcomeVisible,
 }
 
+/// How tasks are paired across conditions.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum PairingLaw {
+    /// Each task runs under both conditions, and both condition orders occur.
+    /// Validation checks order balance across the whole study, not within each
+    /// stratum.
     MatchedStratumCounterbalanced,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, serde::Serialize, serde::Deserialize)]
 #[serde(deny_unknown_fields)]
+/// The order one task runs under the two conditions.
 pub struct AssignmentPair {
+    /// The pair identity.
     pub pair_id: String,
+    /// The task this pair assigns; each task appears in exactly one pair.
     pub task_id: String,
+    /// The condition the task runs under first.
     pub first_condition: ConditionId,
+    /// The condition the task runs under second; must differ from the first.
     pub second_condition: ConditionId,
 }
 
+/// The model, operator, runtime, tool, time, token, and retry budget that both
+/// conditions share.
 #[derive(Clone, Debug, Eq, PartialEq, serde::Serialize, serde::Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ResourceBudget {
+    /// The model identity; must be non-empty.
     pub model_id: String,
+    /// The operator profile; must be non-empty.
     pub operator_profile: String,
+    /// The runtime identity; must be non-empty.
     pub runtime_id: String,
+    /// The tools available to every attempt; must name at least one.
     pub tool_ids: Vec<String>,
+    /// The wall-clock budget, in milliseconds.
     pub wall_clock_ms: u64,
+    /// The token budget.
     pub token_budget: u64,
+    /// The retry limit.
     pub retry_limit: u32,
+    /// The command authority an attempt has, such as `test_only_repair`.
     pub command_authority: String,
 }
 
+/// What one condition adds to the shared budget. Validation accepts only an
+/// overlay that adds nothing, so both conditions run on equal budgets.
 #[derive(Clone, Debug, Eq, PartialEq, serde::Serialize, serde::Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct BudgetOverlay {
+    /// Extra wall-clock time, in milliseconds; must be zero.
     pub additional_wall_clock_ms: u64,
+    /// Extra tokens; must be zero.
     pub additional_token_budget: u64,
+    /// Extra retries; must be zero.
     pub additional_retries: u32,
+    /// Extra tools; must be empty.
     pub additional_tools: Vec<String>,
 }
 
+/// The RIPR evidence each condition may see. This is the only declared
+/// difference between the conditions.
 #[derive(Clone, Debug, Eq, PartialEq, serde::Serialize, serde::Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct InterventionSurface {
+    /// The control surface; must not allow any RIPR receipt, view, command,
+    /// or output.
     pub control: ConditionEvidenceSurface,
+    /// The assisted surface; must list at least one receipt, view, or
+    /// command. Validation does not check that each listed name is non-empty.
     pub ripr_assisted: ConditionEvidenceSurface,
 }
 
+/// The RIPR evidence and repository context one condition may use.
 #[derive(Clone, Debug, Eq, PartialEq, serde::Serialize, serde::Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ConditionEvidenceSurface {
+    /// RIPR receipt kinds the condition may read, such as `agent_receipt.v0.5`.
     pub allowed_ripr_receipts: Vec<String>,
+    /// RIPR views the condition may read.
     pub allowed_ripr_views: Vec<String>,
+    /// Exact RIPR command lines the condition may run.
     pub allowed_ripr_commands: Vec<String>,
+    /// Whether the condition may read RIPR outputs at all.
     pub may_read_ripr_outputs: bool,
+    /// Repository context given beyond the declared surface; must be empty
+    /// for both conditions.
     pub undeclared_repository_context: Vec<String>,
 }
 
+/// How each contamination route between attempts is controlled. Recorded in
+/// the protocol; `validate` does not check these values.
 #[derive(Clone, Debug, Eq, PartialEq, serde::Serialize, serde::Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct LeakageControls {
+    /// An operator who has seen the task before.
     pub prior_exposure: IsolationPolicy,
+    /// Reuse of one attempt's branch by another attempt.
     pub branch_reuse: IsolationPolicy,
+    /// Artifacts from one condition reaching the other.
     pub cross_condition_artifacts: IsolationPolicy,
+    /// Scratch state shared between attempts.
     pub shared_scratch_state: IsolationPolicy,
+    /// One operator carrying knowledge between conditions.
     pub operator_leakage: IsolationPolicy,
 }
 
+/// How one contamination route is handled.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum IsolationPolicy {
+    /// `forbidden`: the route must not occur.
     Forbidden,
+    /// `disclose_and_exclude`: an affected attempt is disclosed and excluded.
     DiscloseAndExclude,
+    /// `independent_operators`: separate operators run each condition.
     IndependentOperators,
 }
 
+/// Rules for replacing tasks and retrying attempts.
 #[derive(Clone, Debug, Eq, PartialEq, serde::Serialize, serde::Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct AttemptPolicy {
+    /// Whether a task may be replaced after a failure; must be `forbidden`.
     pub task_replacement_after_failure: TaskReplacementPolicy,
+    /// Whether both conditions get the same retry policy; must be `true`.
     pub retry_policy_equal_across_conditions: bool,
 }
 
+/// Whether a task may be replaced after it fails.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum TaskReplacementPolicy {
+    /// `forbidden`: the only accepted policy.
     Forbidden,
+    /// `allowed_after_difficult_failure`: rejected by validation.
     AllowedAfterDifficultFailure,
 }
 
+/// One preregistered outcome axis. Validation requires the eight axes named in
+/// RIPR-SPEC-0216, each scored on its own.
 #[derive(Clone, Debug, Eq, PartialEq, serde::Serialize, serde::Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct OutcomeAxis {
+    /// The axis identity, such as `behavior_alignment`.
     pub axis_id: String,
+    /// What the axis measures.
     pub description: String,
+    /// Whether a high score on this axis may offset a low score on another;
+    /// must be `false`.
     pub compensating: bool,
+    /// Whether the axis can be observed on its own; must be `true`.
     pub independently_observable: bool,
 }
 
+/// A combined score reported alongside the outcome axes. Allowed only when it
+/// is declared non-authoritative.
 #[derive(Clone, Debug, Eq, PartialEq, serde::Serialize, serde::Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct NonAuthoritativeSummary {
+    /// The summary's name.
     pub name: String,
+    /// Whether the summary is authoritative; must be `false`.
     pub authoritative: bool,
 }
 
+/// How attempts are graded.
 #[derive(Clone, Debug, Eq, PartialEq, serde::Serialize, serde::Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct AdjudicationPlan {
+    /// The graders; must name at least one.
     pub grader_identities: Vec<String>,
+    /// The rubric identity; must be non-empty.
     pub rubric_id: String,
+    /// The rubric version; must be non-empty.
     pub rubric_version: String,
+    /// Whether graders are blind to the condition; must be `true`.
     pub blinded_to_condition: bool,
+    /// The minimum number of independent graders per attempt; must be at
+    /// least one.
     pub min_independent_graders: u32,
+    /// What happens when graders disagree.
     pub disagreement_policy: DisagreementPolicy,
 }
 
+/// How grader disagreement is recorded.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum DisagreementPolicy {
+    /// `retain_per_axis_do_not_average_correctness`: keep each grader's score
+    /// per axis and never average correctness.
     RetainPerAxisDoNotAverageCorrectness,
 }
 
+/// How invalid and incomplete attempts are counted. Every attempt stays in the
+/// denominator.
 #[derive(Clone, Debug, Eq, PartialEq, serde::Serialize, serde::Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct InvalidAttemptRules {
+    /// The outcome cells an attempt can land in; must include all six.
     pub outcome_cells: Vec<OutcomeCell>,
+    /// Keep timed-out attempts; must be `true`.
     pub retain_timeouts: bool,
+    /// Keep cancelled attempts; must be `true`.
     pub retain_cancellations: bool,
+    /// Keep invalid attempts; must be `true`.
     pub retain_invalid_attempts: bool,
+    /// Keep attempts with missing evidence; must be `true`.
     pub retain_missing_evidence: bool,
+    /// Keep attempts whose instrument failed; must be `true`.
     pub retain_instrument_failures: bool,
+    /// Drop timed-out attempts; must be `false`.
     pub drop_timeouts: bool,
+    /// Drop invalid attempts; must be `false`.
     pub drop_invalid_attempts: bool,
 }
 
+/// The typed outcome of one attempt.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum OutcomeCell {
+    /// `pass`.
     Pass,
+    /// `fail`.
     Fail,
+    /// `partial`.
     Partial,
+    /// `not_proven`: the attempt ended without the evidence to decide.
     NotProven,
+    /// `invalid`: the attempt broke the protocol.
     Invalid,
+    /// `instrument_failure`: the measuring harness failed, not the attempt.
     InstrumentFailure,
 }
 
+/// When the study stops collecting attempts.
 #[derive(Clone, Debug, Eq, PartialEq, serde::Serialize, serde::Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct StoppingRule {
+    /// The stopping kind; must be `fixed_sample`.
     pub kind: StoppingKind,
+    /// The number of pairs to run; must equal the number of assignment pairs.
     pub planned_pair_count: u32,
+    /// Whether stopping may depend on an interim estimate; must be `false`.
     pub may_depend_on_interim_estimate: bool,
+    /// Whether a favorable interim result may stop the study; must be
+    /// `forbidden`.
     pub favorable_interim_stop: FavorableInterimStop,
 }
 
+/// How the sample size is decided.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum StoppingKind {
+    /// `fixed_sample`: run every preregistered pair; the only accepted kind.
     FixedSample,
+    /// `stop_on_favorable_interim`: rejected by validation.
     StopOnFavorableInterim,
 }
 
+/// Whether a favorable interim result may end the study early.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum FavorableInterimStop {
+    /// `forbidden`: the only accepted value.
     Forbidden,
+    /// `allowed`: rejected by validation.
     Allowed,
 }
 
+/// The preregistered analysis.
 #[derive(Clone, Debug, Eq, PartialEq, serde::Serialize, serde::Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct PlannedAnalysis {
+    /// The unit of analysis, such as one exact repository, head, and behavior
+    /// task.
     pub unit: String,
+    /// The conditions compared.
     pub compares: Vec<String>,
+    /// Whether results report exact numerators and denominators; must be
+    /// `true`.
     pub reports_exact_numerators_and_denominators: bool,
 }
 
+/// The limit on what the study's conclusions may claim.
 #[derive(Clone, Debug, Eq, PartialEq, serde::Serialize, serde::Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ClaimCeiling {
+    /// Conclusions hold only for this task series; must be `true`.
     pub bounded_to_task_series: bool,
+    /// Conclusions hold only for this model and operator profile; must be
+    /// `true`.
     pub bounded_to_model_operator_profile: bool,
+    /// Conclusions hold only for this intervention form; must be `true`.
     pub bounded_to_intervention_form: bool,
+    /// Whether the preregistration itself shows the intervention has value;
+    /// must be `false`.
     pub preregistration_proves_intervention_value: bool,
 }
 
+/// Whether the protocol may change once attempts begin.
 #[derive(Clone, Debug, Eq, PartialEq, serde::Serialize, serde::Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ProtocolLock {
+    /// Whether the protocol is frozen after the first attempt; must be `true`.
     pub immutable_after_first_attempt: bool,
+    /// Whether a first attempt has been recorded.
     pub first_attempt_recorded: bool,
+    /// Whether the protocol may change without a new `study_id`; must be
+    /// `forbidden`.
     pub mutation_without_new_study_id: MutationPolicy,
 }
 
+/// Whether a protocol change may keep the same `study_id`.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum MutationPolicy {
+    /// `forbidden`: the only accepted value.
     Forbidden,
+    /// `allowed`: rejected by validation.
     Allowed,
 }
 

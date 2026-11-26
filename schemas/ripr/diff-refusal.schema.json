@@ -22,8 +22,7 @@
       "const": "ripr"
     },
     "root": {
-      "type": "string",
-      "minLength": 1
+      "type": "string"
     },
     "mode": {
       "enum": [

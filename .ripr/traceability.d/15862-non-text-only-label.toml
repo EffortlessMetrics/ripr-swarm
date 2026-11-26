@@ -1,0 +1,7 @@
+# Registers the plain-word label for a well-formed binary- or mode-only diff
+# (#15862) under RIPR-SPEC-0083.
+[[extend]]
+id = "RIPR-SPEC-0083"
+tests = [
+  "crates/ripr/tests/cli_smoke/diff_nothing_analyzed.rs::a_mode_only_diff_is_not_labelled_unparseable",
+]

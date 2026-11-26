@@ -252,3 +252,15 @@ Command:
 
 Updated:
 - `expected/human.txt`
+
+## Pending — exact_any_membership_oracle (22)
+
+Reason:
+RIPR-SPEC-0259: #13037 amendment, a weak finding whose related test already asserts an exact value names the unestablished link instead of the strengthen template; static class unchanged
+
+Command:
+`cargo xtask goldens bless exact_any_membership_oracle --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

@@ -3,7 +3,7 @@ mode: fast
 root: fixtures/typescript_static_limit_taxonomy/input
 config: <cwd>/fixtures/typescript_static_limit_taxonomy/input/ripr.toml
 
-Summary: 4 changed behaviors checked: 0 appear noticed by tests, 3 partly noticed, 0 reached but not noticed, 1 no test path. 4 found, 0 suppressed by your settings
+Summary: 4 changed behaviors checked: 0 appear noticed by tests, 3 partly noticed (3 through a test link ripr could not confirm), 0 reached but not noticed, 1 no test path. 4 found, 0 suppressed by your settings
 
 Changed file(s) by language: javascript = 2, typescript = 2
 

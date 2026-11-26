@@ -710,21 +710,39 @@ pub fn is_iso_date(value: &str) -> bool {
     (1..=12).contains(&m) && (1..=31).contains(&d)
 }
 
+/// Read a root-relative suppressions manifest that the checkout itself
+/// controls, shared by every loader of it (`check`, `config validate`,
+/// `policy suppression-health`). `Ok(None)` when nothing is there.
+///
+/// A link inside the checkout can point anywhere, and the parser echoes the
+/// keys of whatever it reads, so the manifest goes through the root-contained
+/// reader: a manifest that resolves outside the root (through the file or any
+/// parent directory) is refused before reading, naming only the configured
+/// path, and a FIFO cannot block the run (#15546).
+pub(crate) fn read_root_manifest(
+    root: &Path,
+    relative_path: &Path,
+) -> Result<Option<String>, String> {
+    crate::bounded_input::read_root_metadata_toml(root, relative_path, "suppressions manifest")
+}
+
 /// Loads suppressions relative to the analyzed workspace root. Returns
 /// an empty list when the file does not exist (the normal case for
 /// projects with no accepted debt). Parse violations are returned via
 /// `Err` so the orchestrator can surface them through the existing
 /// badge-rendering error path.
+///
+/// Production reads the repository-controlled policy through the confined
+/// wrapper in `suppressions_confined.rs`; this unconfined form is kept for
+/// the unix audit control that pins `read_root_manifest`'s refusal messages.
+#[cfg(all(test, unix))]
 pub fn load_suppressions_for_root_at(
     root: &Path,
     relative_path: &Path,
 ) -> Result<Vec<SuppressionEntry>, Vec<String>> {
-    let path = root.join(relative_path);
-    if !path.exists() {
+    let Some(text) = read_root_manifest(root, relative_path).map_err(|err| vec![err])? else {
         return Ok(Vec::new());
-    }
-    let text = std::fs::read_to_string(&path)
-        .map_err(|err| vec![format!("failed to read {}: {err}", path.display())])?;
+    };
     let (entries, violations) = parse_suppressions_manifest(&text);
     if violations.is_empty() {
         Ok(entries)
@@ -800,13 +818,25 @@ pub struct SuppressionApplication {
 /// Root-relative `/`-separated finding path for suppression matching.
 /// Finding locations may be emitted root-joined (for example, `./src/lib.rs`
 /// for `--root .`); policy globs are written root-relative (`src/**`).
+/// Only the platform's own separator becomes `/` (#16271): on Unix a `\` is
+/// an ordinary filename character, so a file named `a\b.rs` must not match a
+/// `src/a/**` glob, matching the distinct URI SARIF publishes for it.
 pub(crate) fn root_relative_finding_path(root: &Path, file: &Path) -> String {
     let relative = file.strip_prefix(root).unwrap_or(file);
-    let display = relative.display().to_string();
-    display
-        .trim_start_matches("./")
-        .replace('\\', "/")
-        .to_string()
+    native_separators_to_slash(&relative.display().to_string(), std::path::MAIN_SEPARATOR)
+}
+
+/// `display` with `separator` rewritten to `/` (a no-op where the separator
+/// already is `/`), then any leading `./` dropped, so a Windows `.\src\x.rs`
+/// and a Unix `./src/x.rs` both become `src/x.rs`. Split out so both
+/// platforms' rules are testable anywhere.
+fn native_separators_to_slash(display: &str, separator: char) -> String {
+    let slashed = if separator == '/' {
+        display.to_string()
+    } else {
+        display.replace(separator, "/")
+    };
+    slashed.trim_start_matches("./").to_string()
 }
 
 /// Applies exact-ID exposure-gap suppressions against a slice of finding ids
@@ -984,6 +1014,26 @@ impl CheckSuppressionCandidate {
                 }
             })
             .collect()
+    }
+
+    /// One finding's candidate for matching alone: no 0.10 id, which only
+    /// names a replacement in an unmatched-selector warning. SARIF uses it
+    /// to mark a result (#15377).
+    pub(crate) fn for_finding(root: &Path, finding: &crate::domain::Finding) -> Self {
+        let file = finding.probe.location.file.as_path();
+        let path = root_relative_finding_path(root, file);
+        Self {
+            finding_id: finding.id.clone(),
+            owner_function: owner_function_of(
+                &path,
+                file,
+                finding.probe.owner.as_ref().map(|owner| owner.0.as_str()),
+            ),
+            path,
+            class: finding.class.as_str().to_string(),
+            legacy_finding_id: None,
+            finding_aliases: Vec::new(),
+        }
     }
 
     /// Builds matcher candidates for diff-scoped review-comments seams
@@ -1205,33 +1255,7 @@ pub fn apply_check_suppressions(
         }
         let mut hit = false;
         for candidate in candidates {
-            let entry_matches = match &entry.finding_id {
-                Some(id) => id == &candidate.finding_id || candidate.finding_aliases.contains(id),
-                None if entry.function.is_some() => {
-                    // Exact file plus exact owner function (#13895); the
-                    // finding id is deliberately ignored so an expression
-                    // edit keeps the suppression. Unknown owners never match.
-                    entry.path.as_deref() == Some(candidate.path.as_str())
-                        && entry.function.is_some()
-                        && entry.function == candidate.owner_function
-                        && entry
-                            .static_class
-                            .as_deref()
-                            .map(|class| class == candidate.class)
-                            .unwrap_or(true)
-                }
-                None => {
-                    entry
-                        .path
-                        .as_deref()
-                        .is_some_and(|glob| path_glob_matches(glob, &candidate.path))
-                        && entry
-                            .static_class
-                            .as_deref()
-                            .map(|class| class == candidate.class)
-                            .unwrap_or(true)
-                }
-            };
+            let entry_matches = exposure_entry_matches(entry, candidate);
             if entry_matches {
                 hit = true;
                 matched
@@ -1254,6 +1278,13 @@ pub fn apply_check_suppressions(
                     candidate.finding_id,
                     candidate.finding_id
                 )),
+                // #14129: an id-keyed entry lapses on any edit to the
+                // suppressed expression, so the warning names the selector
+                // that does not.
+                None if entry.finding_id.is_some() => warnings.push(format!(
+                    "{} suppression for `{selector}` did not match any current finding; {STALE_FINDING_ID_HINT}",
+                    entry.kind.as_str()
+                )),
                 None => warnings.push(format!(
                     "{} suppression for `{selector}` did not match any current finding",
                     entry.kind.as_str()
@@ -1263,6 +1294,58 @@ pub fn apply_check_suppressions(
     }
     (matched, warnings)
 }
+
+/// Whether one `exposure_gap` entry's selector names `candidate`: the one
+/// matching rule every surface shares (#15377). A `finding_id` matches the id
+/// or an alias; `path` + `function` matches the exact file and owner function
+/// (#13895), ignoring the id so an expression edit keeps the suppression;
+/// a bare `path` is a glob. `static_class` narrows the last two. Kind and
+/// expiry are the caller's to check.
+fn exposure_entry_matches(entry: &SuppressionEntry, candidate: &CheckSuppressionCandidate) -> bool {
+    let class_matches = || {
+        entry
+            .static_class
+            .as_deref()
+            .is_none_or(|class| class == candidate.class)
+    };
+    match (&entry.finding_id, &entry.function) {
+        (Some(id), _) => id == &candidate.finding_id || candidate.finding_aliases.contains(id),
+        // Unknown owners never match.
+        (None, Some(function)) => {
+            entry.path.as_deref() == Some(candidate.path.as_str())
+                && candidate.owner_function.as_deref() == Some(function.as_str())
+                && class_matches()
+        }
+        (None, None) => {
+            entry
+                .path
+                .as_deref()
+                .is_some_and(|glob| path_glob_matches(glob, &candidate.path))
+                && class_matches()
+        }
+    }
+}
+
+/// The first live `exposure_gap` entry, in manifest order, that names
+/// `candidate` under [`apply_check_suppressions`]'s rule. SARIF marks a
+/// result with this entry's justification, so code scanning suppresses
+/// exactly what the findings formats and badges suppress (#15377).
+pub(crate) fn matching_exposure_entry<'a>(
+    candidate: &CheckSuppressionCandidate,
+    entries: &'a [SuppressionEntry],
+    today: &str,
+) -> Option<&'a SuppressionEntry> {
+    entries.iter().find(|entry| {
+        entry.kind == SuppressionKind::ExposureGap
+            && (entry.finding_id.is_some() || entry.path.is_some())
+            && !is_expired(entry.expires.as_deref(), today)
+            && exposure_entry_matches(entry, candidate)
+    })
+}
+
+/// Appended to the unmatched-`finding_id` warning (#14129): the owner
+/// selector is the edit-stable alternative to an id that hashes the expression.
+const STALE_FINDING_ID_HINT: &str = "finding ids hash the parsed expression, so an edit to the suppressed expression changes the id; to keep suppressing a finding's owning function across edits, select it with `path` + `function` instead of `finding_id`; that covers every finding in the function, and a changed `const` or `static` has no owning function, so it needs a fresh `finding_id`";
 
 /// The selector label reported for a `path` + `function` entry: the exact
 /// root-relative file and the owner function, joined as the owner symbol is.
@@ -1316,9 +1399,54 @@ mod tests {
         CheckSuppressionCandidate, SUPPRESSIONS_PATH, SuppressionApplication, SuppressionEntry,
         SuppressionKind, apply_check_suppressions, apply_exposure_suppressions,
         apply_test_efficiency_suppressions, current_iso_date, days_to_civil_date, is_expired,
-        is_iso_date, load_check_suppression_policy, owner_function_of, parse_suppressions_manifest,
-        path_glob_matches,
+        is_iso_date, load_check_suppression_policy, native_separators_to_slash, owner_function_of,
+        parse_suppressions_manifest, path_glob_matches, root_relative_finding_path,
     };
+
+    /// #16271: only the platform separator becomes `/`. On Unix a literal
+    /// backslash stays part of the file name, so a directory glob cannot
+    /// reach a sibling file whose name contains one; on Windows both
+    /// spellings are the same directory separator.
+    #[test]
+    fn candidate_paths_keep_a_unix_literal_backslash() {
+        assert_eq!(
+            native_separators_to_slash("src\\a\\b.rs", '\\'),
+            "src/a/b.rs"
+        );
+        // Windows `--root .` display: the separator is rewritten before the
+        // `./` trim, so an exact `path` + `function` entry still matches.
+        assert_eq!(
+            native_separators_to_slash(".\\src\\lib.rs", '\\'),
+            "src/lib.rs"
+        );
+        assert_eq!(
+            native_separators_to_slash("./src/lib.rs", '/'),
+            "src/lib.rs"
+        );
+        assert_eq!(
+            native_separators_to_slash("src/a\\b.rs", '/'),
+            "src/a\\b.rs"
+        );
+        assert!(!path_glob_matches(
+            "src/a/**",
+            &native_separators_to_slash("src/a\\b.rs", '/')
+        ));
+        assert!(path_glob_matches(
+            "src/a/**",
+            &native_separators_to_slash("src/a/b.rs", '/')
+        ));
+        if std::path::MAIN_SEPARATOR == '/' {
+            let root = Path::new("repo");
+            assert_eq!(
+                root_relative_finding_path(root, Path::new("repo/src/a\\b.rs")),
+                "src/a\\b.rs"
+            );
+            assert_eq!(
+                root_relative_finding_path(root, Path::new("./src/a/b.rs")),
+                "src/a/b.rs"
+            );
+        }
+    }
 
     #[test]
     fn parse_accepts_well_formed_manifest_with_both_kinds() {
@@ -2629,26 +2757,141 @@ mod audit_controls {
             .ok_or("duplicate policy must fail closed")?;
         assert!(error.contains("custom-policy.toml:8 duplicate"), "{error}");
         assert!(!error.contains(SUPPRESSIONS_PATH), "{error}");
-        load_suppressions_for_root_at(&root, Path::new("custom-policy.toml"))
-            .err()
-            .ok_or("duplicate implicit policy must fail closed")?;
+        crate::output::suppressions::load_suppressions_for_root_at(
+            &root,
+            Path::new("custom-policy.toml"),
+        )
+        .err()
+        .ok_or("duplicate implicit policy must fail closed")?;
         std::fs::write(&path, VALID).map_err(|e| e.to_string())?;
         assert_eq!(load_check_suppression_policy(&path)?.len(), 1);
         assert_eq!(
-            load_suppressions_for_root_at(&root, Path::new("custom-policy.toml"))
-                .map_err(|e| e.join("\n"))?
-                .len(),
+            crate::output::suppressions::load_suppressions_for_root_at(
+                &root,
+                Path::new("custom-policy.toml")
+            )
+            .map_err(|e| e.join("\n"))?
+            .len(),
             1
         );
         assert!(
-            load_suppressions_for_root_at(&root, Path::new("missing.toml"))
-                .map_err(|e| e.join("\n"))?
-                .is_empty()
+            crate::output::suppressions::load_suppressions_for_root_at(
+                &root,
+                Path::new("missing.toml")
+            )
+            .map_err(|e| e.join("\n"))?
+            .is_empty()
         );
         load_check_suppression_policy(&root.join("missing.toml"))
             .err()
             .ok_or("missing explicit policy must fail closed")?;
         std::fs::remove_dir_all(&root).map_err(|e| e.to_string())?;
+        Ok(())
+    }
+
+    /// A checkout can make its suppressions manifest a link to a file outside
+    /// the repository; the parser would echo that file's keys (#15546). The
+    /// loader must refuse it by configured path only, while an in-root link
+    /// keeps working.
+    #[cfg(unix)]
+    #[test]
+    fn root_loader_refuses_a_manifest_link_that_leaves_the_root() -> Result<(), String> {
+        let base = std::env::temp_dir().join(format!(
+            "ripr-suppression-link-escape-{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&base);
+        let root = base.join("repo");
+        std::fs::create_dir_all(root.join(".ripr")).map_err(|e| e.to_string())?;
+        let outside = base.join("outside-secret.toml");
+        std::fs::write(&outside, "outside_secret_key = \"value\"\n").map_err(|e| e.to_string())?;
+        let manifest = Path::new(".ripr/suppressions.toml");
+        std::os::unix::fs::symlink(&outside, root.join(manifest)).map_err(|e| e.to_string())?;
+
+        let refused = load_suppressions_for_root_at(&root, manifest)
+            .err()
+            .ok_or("a manifest link out of the root must be refused")?;
+        let text = refused.join("\n");
+        assert!(
+            text.contains("resolves outside the repository root"),
+            "{text}"
+        );
+        assert!(text.contains(".ripr/suppressions.toml"), "{text}");
+        assert!(!text.contains("outside_secret_key"), "{text}");
+        assert!(!text.contains("outside-secret"), "{text}");
+
+        // Control: the same link target inside the root is read and parsed,
+        // so the refusal above is containment, not a broken link.
+        let inside = root.join("policy.toml");
+        std::fs::write(&inside, VALID).map_err(|e| e.to_string())?;
+        std::fs::remove_file(root.join(manifest)).map_err(|e| e.to_string())?;
+        std::os::unix::fs::symlink(&inside, root.join(manifest)).map_err(|e| e.to_string())?;
+        assert_eq!(
+            load_suppressions_for_root_at(&root, manifest)
+                .map_err(|e| e.join("\n"))?
+                .len(),
+            1
+        );
+        // An in-root FIFO is refused instead of blocking the read.
+        std::fs::remove_file(root.join(manifest)).map_err(|e| e.to_string())?;
+        let made = std::process::Command::new("mkfifo")
+            .arg(root.join(manifest))
+            .status()
+            .map_err(|e| format!("mkfifo: {e}"))?;
+        assert!(made.success(), "mkfifo failed");
+        let (tx, rx) = std::sync::mpsc::channel();
+        let probe = root.clone();
+        std::thread::spawn(move || {
+            let _ = tx.send(load_suppressions_for_root_at(&probe, manifest));
+        });
+        let refused = rx
+            .recv_timeout(std::time::Duration::from_secs(10))
+            .map_err(|e| format!("a FIFO manifest blocked the loader: {e}"))?;
+        let refused = refused
+            .err()
+            .ok_or("a FIFO manifest must be refused")?
+            .join("\n");
+        assert!(refused.contains("not a regular file"), "{refused}");
+
+        // A link loop is an unreadable manifest, not an absent one.
+        std::fs::remove_file(root.join(manifest)).map_err(|e| e.to_string())?;
+        std::os::unix::fs::symlink("suppressions.toml", root.join(manifest))
+            .map_err(|e| e.to_string())?;
+        let refused = read_root_manifest(&root, manifest)
+            .err()
+            .ok_or("a manifest link loop must be refused, not read as absent")?;
+        assert!(refused.contains("cannot be resolved"), "{refused}");
+        assert!(refused.contains(".ripr/suppressions.toml"), "{refused}");
+
+        // A parent-directory link (`.ripr -> outside`) escapes the same way.
+        std::fs::remove_dir_all(root.join(".ripr")).map_err(|e| e.to_string())?;
+        let outside_dir = base.join("outside-dir");
+        std::fs::create_dir_all(&outside_dir).map_err(|e| e.to_string())?;
+        std::fs::write(
+            outside_dir.join("suppressions.toml"),
+            "outside_dir_key = \"value\"\n",
+        )
+        .map_err(|e| e.to_string())?;
+        std::os::unix::fs::symlink(&outside_dir, root.join(".ripr")).map_err(|e| e.to_string())?;
+        let refused = load_suppressions_for_root_at(&root, manifest)
+            .err()
+            .ok_or("a parent-directory link out of the root must be refused")?
+            .join("\n");
+        assert!(
+            refused.contains("resolves outside the repository root"),
+            "{refused}"
+        );
+        assert!(!refused.contains("outside_dir_key"), "{refused}");
+        // The shared reader that `policy suppression-health` uses refuses too.
+        let shared = read_root_manifest(&root, manifest)
+            .err()
+            .ok_or("the shared manifest reader must refuse the escape")?;
+        assert!(
+            shared.contains("resolves outside the repository root"),
+            "{shared}"
+        );
+        assert!(!shared.contains("outside-dir"), "{shared}");
+        std::fs::remove_dir_all(&base).map_err(|e| e.to_string())?;
         Ok(())
     }
 
@@ -2734,4 +2977,5 @@ mod audit_controls {
 }
 
 #[cfg(test)]
+#[path = "suppressions/typo_hint_tests.rs"]
 mod typo_hint_tests;

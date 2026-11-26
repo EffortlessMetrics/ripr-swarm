@@ -1,5 +1,5 @@
 //! Current repository guides must agree with the candidate's rendered help.
-//! These seven source-checkout audits are deliberately outside the published crate.
+//! The source-checkout audits also cover the lockstep crate publication guide.
 
 #[path = "../../crates/ripr/tests/common/help_contract.rs"]
 mod help_contract;
@@ -1034,4 +1034,69 @@ fn public_leads_ask_the_question_and_qualify_the_test_to_add() -> Result<(), Str
         return Err("an unqualified repair promise passed the lead check".to_string());
     }
     Ok(())
+}
+
+// Keep the fully qualified test selector stable when moving this guide check
+// onto the required docs-only test target (#15796).
+mod publish_rehearsal {
+    mod tests {
+        use std::fs;
+
+        #[test]
+        fn release_guide_binds_to_lockstep_contract_dependency() -> Result<(), String> {
+            let ripr_manifest = fs::read_to_string(concat!(
+                env!("CARGO_MANIFEST_DIR"),
+                "/../crates/ripr/Cargo.toml"
+            ))
+            .map_err(|e| format!("read ripr Cargo.toml: {e}"))?;
+            let release_doc =
+                fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/../docs/RELEASE.md"))
+                    .map_err(|e| format!("read docs/RELEASE.md: {e}"))?;
+
+            if ripr_manifest.contains("ripr-contract") {
+                // Standalone product dry-run must not appear as an instruction line.
+                for line in release_doc.lines() {
+                    assert_ne!(
+                        line.trim(),
+                        "cargo publish -p ripr --dry-run",
+                        "docs/RELEASE.md must not instruct standalone `cargo publish -p ripr --dry-run`"
+                    );
+                }
+                // Commands must appear as instruction lines, not merely as a
+                // substring of prose: a required command inside a "do not run"
+                // sentence would otherwise satisfy the check.
+                for required in [
+                    "cargo xtask publish-dry-run",
+                    "cargo xtask publish-precheck",
+                    "cargo search ripr-contract",
+                ] {
+                    assert!(
+                        release_doc
+                            .lines()
+                            .any(|line| line.trim_start().starts_with(required)),
+                        "docs/RELEASE.md must give `{required}` as an instruction line, not only mention it"
+                    );
+                }
+                // The real publish runs from the kept stage (#14198), so the guide
+                // must name those exact commands. A prefix match would let the
+                // `ripr-contract` line satisfy the `ripr` requirement.
+                for required in [
+                    "cargo publish --allow-dirty -p ripr-contract",
+                    "cargo publish --allow-dirty -p ripr",
+                ] {
+                    assert!(
+                        release_doc.lines().any(|line| line.trim() == required),
+                        "docs/RELEASE.md must give `{required}` as its own instruction line"
+                    );
+                }
+                for required in ["crates/ripr-contract", "Partial-publication recovery"] {
+                    assert!(
+                        release_doc.contains(required),
+                        "docs/RELEASE.md missing lockstep publication requirement `{required}`"
+                    );
+                }
+            }
+            Ok(())
+        }
+    }
 }

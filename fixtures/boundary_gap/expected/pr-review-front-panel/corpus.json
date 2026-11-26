@@ -363,6 +363,30 @@
         "warnings": 2
       },
       "reason": "A synthesized required-input warning must not outrank the unusable receipt, so the Missing input line names the receipt, not the present proof."
+    },
+    {
+      "id": "absent_optional_guidance",
+      "scenario": "absent optional PR guidance alongside a missing assistant proof",
+      "inputs": {
+        "pr_guidance": "fixtures/boundary_gap/input/absent-pr-guidance.json",
+        "assistant_proof": "target/ripr/reports/test-oracle-assistant-proof.json"
+      },
+      "expected_report": "fixtures/boundary_gap/expected/pr-review-front-panel/absent-optional-guidance/pr-review-front-panel.json",
+      "expected_markdown": "fixtures/boundary_gap/expected/pr-review-front-panel/absent-optional-guidance/pr-review-front-panel.md",
+      "expected": {
+        "status": "incomplete",
+        "top_issue_state": "missing_required_input",
+        "policy_state": "none",
+        "placement": "not_available",
+        "movement_state": "unknown",
+        "coverage_grip_state": "not_available",
+        "new_policy_eligible": 0,
+        "baseline_resolved": 0,
+        "blocking_candidates": 0,
+        "warnings": 2
+      },
+      "reason": "Pin the optional guidance warning from the production reader and keep the required proof first on the front panel.",
+      "absent_input": "pr_guidance"
     }
   ]
 }

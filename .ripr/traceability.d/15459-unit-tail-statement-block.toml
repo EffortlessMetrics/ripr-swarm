@@ -1,0 +1,6 @@
+[[extend]]
+id = "RIPR-SPEC-0197"
+code = ["crates/ripr/src/analysis/syntax/ra/probe_shapes.rs"]
+tests = [
+  "crates/ripr/src/analysis/syntax/ra/probe_shape_walk_tests.rs::probe_walk_unit_tail_statement_block_has_no_return_value",
+]

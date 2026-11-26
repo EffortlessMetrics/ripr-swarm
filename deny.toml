@@ -16,6 +16,13 @@ targets = [
 
 [advisories]
 yanked = "deny"
+# Report unmaintained advisories for every crate in the graph. cargo-deny
+# 0.22.0 changed this default from `all` to `workspace`, which reports only
+# direct workspace dependencies: the transitive unic rows below would then
+# fail as `advisory-not-detected`, and an unmaintained transitive crate
+# would go unreported. Stating the scope keeps one result across versions
+# (#15945).
+unmaintained = "all"
 # cargo-deny advisory ignore entries accept IDs or `{ id, reason }` metadata,
 # but reject per-entry `until` fields (verified with cargo-deny 0.19.0). Keep
 # expiry metadata in comments and enforce it with `cargo xtask check-dependencies`.
@@ -52,6 +59,25 @@ ignore = [
   "RUSTSEC-2025-0090",  # unic-emoji-char; expires: 2026-12-31
   "RUSTSEC-2025-0098",  # unic-ucd-version; expires: 2026-12-31
   "RUSTSEC-2025-0100",  # unic-ucd-ident; expires: 2026-12-31
+  # `chrono` is declared unmaintained (RustSec informational
+  # `unmaintained`, every version, no patched release). It reaches the
+  # graph only through the MCP SDK:
+  #   ripr -> rmcp =3.9.0 -> chrono
+  #   ripr -> rmcp =3.9.0 -> schemars (rmcp's `schemars` feature enables
+  #     `chrono04`) -> chrono
+  # Both ripr edges already disable rmcp's default features, and
+  # published rmcp 3.11.0 still declares chrono as a required dependency,
+  # so no version bump or feature choice on our side removes it.
+  #
+  # Disposition (#15068, maintainer decision 2026-11-21): accepted
+  # time-bounded suppression so the 0.11 candidate can pass the advisory
+  # check. The dependency movement that removes it is an rmcp release
+  # carrying modelcontextprotocol/rust-sdk#1474, which makes chrono
+  # optional; bump both exact rmcp pins when it publishes.
+  # `unused-ignored-advisory` rejects this row once chrono leaves the
+  # graph. A vulnerability advisory against chrono gets a new ID and
+  # fails the check again.
+  "RUSTSEC-2026-0543",  # chrono via rmcp; expires: 2026-12-31
 ]
 
 [licenses]

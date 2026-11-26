@@ -1,0 +1,28 @@
+{
+  "id": "python_class_attr_text_unobserved",
+  "language": "python",
+  "tier": "pure",
+  "source_fixture": "fixtures/python_class_attr_text_unobserved",
+  "vector": "class_attribute_text_reached_without_a_pinning_literal",
+  "probe_family": "predicate",
+  "assertions": [
+    {
+      "type": "must_not_report_clean"
+    },
+    {
+      "type": "expected_finding_count",
+      "count": 1
+    },
+    {
+      "type": "must_not_promote"
+    },
+    {
+      "type": "expected_class",
+      "class": "weakly_exposed"
+    },
+    {
+      "type": "expected_finding_owner",
+      "owner": "python:src/fx/core.py::Length"
+    }
+  ]
+}

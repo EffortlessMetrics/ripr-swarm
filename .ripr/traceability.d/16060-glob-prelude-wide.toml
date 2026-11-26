@@ -1,0 +1,11 @@
+# Every trusted name of core's macro prelude is unbindable by a glob (#16060).
+[[extend]]
+id = "RIPR-SPEC-0369"
+tests = [
+  "crates/ripr/src/analysis/classify/owner_pin/tests/glob_prelude_macros.rs::every_trusted_name_is_either_core_prelude_or_glob_bindable",
+  "crates/ripr/src/analysis/classify/owner_pin/tests/glob_prelude_macros.rs::the_widened_prelude_names_keep_every_non_glob_site",
+  "crates/ripr/src/analysis/classify/owner_pin/tests/glob_prelude_macros.rs::a_foreign_glob_does_not_refuse_a_test_reading_env_or_concat",
+]
+code = [
+  "crates/ripr/src/analysis/syntax/owner_pin.rs",
+]

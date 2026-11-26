@@ -11,6 +11,7 @@ cargo_manifest|crates/ripr/tests/fixtures/proptest_singleton/input/Cargo.toml|an
 cargo_manifest|crates/ripr/tests/fixtures/bolero_singleton/Cargo.toml|analysis-fixtures owned locked bolero provider fixture (#10758)
 cargo_manifest|crates/ripr/tests/fixtures/proptest_empty_string/input/Cargo.toml|analysis-fixtures owned unchanged Perl-LSP empty-property integration subject (#10843)
 cargo_manifest|crates/ripr/tests/fixtures/proptest_empty_string/input/perl-test-generators/Cargo.toml|analysis-fixtures owned standalone manifest for the unchanged original Unicode generator (#10843)
+cargo_manifest|crates/ripr/tests/fixtures/weak_reach_summary/input/Cargo.toml|analysis-fixtures owned Rust-only fixture for the withheld weak-reach Summary note (#15601)
 cargo_manifest|editors/vscode/test-fixtures/**/Cargo.toml|VS Code extension test fixture workspace manifest
 cargo_manifest|editors/zed/Cargo.toml|Zed extension crate; its own workspace, compiled to wasm32-wasip2 by Zed (#4460)
 cargo_manifest|fixtures/**/Cargo.toml|fixture input workspace manifests

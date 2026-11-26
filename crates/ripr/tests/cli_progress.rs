@@ -1501,17 +1501,34 @@ fn machine_format_on_a_pipe_is_silent_by_default() -> Result<(), String> {
     Ok(())
 }
 
-/// #11598 negative: the default flips only for machine formats. A human
-/// format on the same piped stderr keeps its progress.
+/// A human format on a piped stderr holds its progress for the first 2s: a
+/// fast run (an agent's shell tool, a CI log) prints no `ripr progress:` line
+/// at all, `RIPR_PROGRESS=1` restores the immediate stream, and `--quiet` /
+/// `RIPR_QUIET` still win over it (supersedes the #11598 "human keeps
+/// progress on a pipe" negative, which only the machine-format default flipped).
 #[test]
-fn human_format_on_a_pipe_keeps_progress_by_default() -> Result<(), String> {
+fn human_format_on_a_pipe_is_silent_when_the_run_finishes_fast() -> Result<(), String> {
     let fixture = DiffFixture::new()?;
     let human = run_check_as(ripr_default(), &fixture, &[])?;
     assert!(human.status.success(), "{}", stderr_text(&human));
     assert!(
-        stderr_text(&human).contains("ripr progress: completed [diff]"),
-        "the human format keeps progress on a pipe: {}",
+        !stderr_text(&human).contains("ripr progress:"),
+        "a fast human run on a pipe prints no progress: {}",
         stderr_text(&human)
+    );
+    let forced = run_check_as(ripr(), &fixture, &[])?;
+    assert!(
+        stderr_text(&forced).contains("ripr progress: completed [diff]"),
+        "RIPR_PROGRESS=1 forces the stream (control): {}",
+        stderr_text(&forced)
+    );
+    let mut quiet = ripr();
+    quiet.env("RIPR_QUIET", "1");
+    let quiet = run_check_as(quiet, &fixture, &[])?;
+    assert!(
+        !stderr_text(&quiet).contains("ripr progress:"),
+        "RIPR_QUIET beats RIPR_PROGRESS: {}",
+        stderr_text(&quiet)
     );
     Ok(())
 }
@@ -1623,8 +1640,8 @@ fn explain_agent_format_on_a_pipe_is_silent_by_default() -> Result<(), String> {
         .output()
         .map_err(|error| format!("run ripr explain: {error}"))?;
     assert!(
-        stderr_text(&human_default).contains("ripr progress: loading_input [diff]"),
-        "the human explain keeps progress on a pipe: {}",
+        !stderr_text(&human_default).contains("ripr progress:"),
+        "a fast human explain on a pipe prints no progress: {}",
         stderr_text(&human_default)
     );
     Ok(())
@@ -1796,6 +1813,51 @@ fn strip_narration(stderr: &str) -> String {
     stderr
         .lines()
         .filter(|line| !is_narration_line(line))
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+/// Where a command's narration and refusal prose land. `reports ci-packet`
+/// replays each child's stderr on its own stdout, inside a
+/// `::stop-commands::` window, so both are read from the two streams together.
+/// A window's token differs on every run and is spelled `TOKEN` here.
+fn narration_log(path: &str, output: &Output) -> String {
+    let stderr = stderr_text(output);
+    if path != "reports ci-packet" {
+        return stderr;
+    }
+    let mut log = String::new();
+    let mut open: Option<String> = None;
+    for line in String::from_utf8_lossy(&output.stdout).lines() {
+        match (&open, line.strip_prefix("::stop-commands::")) {
+            (None, Some(token)) => {
+                open = Some(format!("::{token}::"));
+                log.push_str("::stop-commands::TOKEN\n");
+            }
+            (Some(resume), _) if line == resume => {
+                open = None;
+                log.push_str("::TOKEN::\n");
+            }
+            _ => {
+                log.push_str(line);
+                log.push('\n');
+            }
+        }
+    }
+    log + &stderr
+}
+
+/// Everything in a command's log that is not narration. For `reports
+/// ci-packet` the log holds its children's reports too, and quiet changes one
+/// later `Next:` line there, which is not narration (#11955).
+fn refusal_prose(path: &str, log: &str) -> String {
+    let prose = strip_narration(log);
+    if path != "reports ci-packet" {
+        return prose;
+    }
+    prose
+        .lines()
+        .filter(|line| !line.starts_with("Next: "))
         .collect::<Vec<_>>()
         .join("\n")
 }
@@ -2065,23 +2127,24 @@ fn catalog_commands_with_narration_paths_stay_quiet_under_ripr_quiet() -> Result
             continue;
         }
         let quiet_err = stderr_text(&quiet);
-        let loud_err = stderr_text(&loud);
-        let leaked = narration_lines(&quiet_err);
+        let leaked = narration_lines(&narration_log(&path, &quiet));
         if !leaked.is_empty() {
             failures.push(format!(
                 "{path}: RIPR_QUIET=1 still printed narration: {leaked:?}\nstderr={quiet_err}"
             ));
             continue;
         }
-        if MUST_EMIT_NARRATION.contains(&path.as_str()) && narration_lines(&loud_err).is_empty() {
+        let loud_log = narration_log(&path, &loud);
+        if MUST_EMIT_NARRATION.contains(&path.as_str()) && narration_lines(&loud_log).is_empty() {
             failures.push(format!(
-                "{path} loud run emitted no progress, so RIPR_QUIET has nothing to drop: {loud_err}"
+                "{path} loud run emitted no progress, so RIPR_QUIET has nothing to drop: {loud_log}"
             ));
             continue;
         }
-        if strip_narration(&loud_err) != strip_narration(&quiet_err) {
+        let quiet_log = narration_log(&path, &quiet);
+        if refusal_prose(&path, &loud_log) != refusal_prose(&path, &quiet_log) {
             failures.push(format!(
-                "{path}: RIPR_QUIET changed refusal prose\nloud={loud_err}\nquiet={quiet_err}"
+                "{path}: RIPR_QUIET changed refusal prose\nloud={loud_log}\nquiet={quiet_log}"
             ));
             continue;
         }
@@ -2104,7 +2167,7 @@ fn catalog_commands_with_narration_paths_stay_quiet_under_ripr_quiet() -> Result
             ));
             continue;
         }
-        let leaked = narration_lines(&flag_err);
+        let leaked = narration_lines(&narration_log(&path, &flag));
         if !leaked.is_empty() {
             failures.push(format!(
                 "{path}: --quiet still printed narration: {leaked:?}\nstderr={flag_err}"

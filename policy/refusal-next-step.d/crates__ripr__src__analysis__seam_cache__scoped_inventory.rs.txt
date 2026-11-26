@@ -1,0 +1,2 @@
+crates/ripr/src/analysis/seam_cache/scoped_inventory.rs|create scoped inventory cache dir failed: {err}
+crates/ripr/src/analysis/seam_cache/scoped_inventory.rs|encode scoped inventory failed: {err}

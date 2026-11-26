@@ -82,6 +82,12 @@ before classification and metadata operations. A deadline records
 `limited_timeout` in `language_facts`, before owner indexing. It never truncates
 the inputs or the guidance silently.
 
+When admission cannot inspect an unchanged directory, review guidance stops
+before owner attribution. The failed run receipt records
+`language_scope_unsupported` and names the missing evidence in its repair
+route. An unreadable scan root or directory covering a changed owner retains
+the discovery error.
+
 `RIPR_REVIEW_GUIDANCE_MAX_INDEX_FILES` defaults to 5000 (#12940). It was 1200
 while the guidance second stage evaluated every caller-file seam; with that
 stage bounded, ripr-swarm (2,646 indexed files) peaks at 0.99 to 1.87 GB for
