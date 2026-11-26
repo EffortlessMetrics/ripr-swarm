@@ -1979,7 +1979,7 @@ fn a_legacy_pending_claim_without_edited_test_resumes() -> Result<(), String> {
     legacy_text.push('\n');
     *pending
         .pointer_mut("/after/focused_result/record")
-        .ok_or("no pending record pointer")? = Value::from(legacy_text.clone());
+        .ok_or("no pending record pointer")? = Value::from(legacy_text);
     let mut manifest_bytes =
         serde_json::to_vec_pretty(&pending).map_err(|error| error.to_string())?;
     manifest_bytes.push(b'\n');
