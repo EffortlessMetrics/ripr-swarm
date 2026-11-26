@@ -187,6 +187,8 @@ fn only_the_owner_traits_path_counts() {
         "<Foo as crate::inner::Peeky<u8>>::into_iter(&foo)",
         "<Foo as Peeky<fn() -> u8>>::into_iter(&foo)",
         "Peeky::<u8>::into_iter(&foo)",
+        "Peeky::into_iter::<u8>(&foo)",
+        "<Foo as Peeky>::into_iter :: < Vec<u8> > (&foo)",
     ] {
         assert!(
             calls_through_the_trait_path(&mask_comments_and_strings(body), "into_iter", "Peeky"),
@@ -201,6 +203,7 @@ fn only_the_owner_traits_path_counts() {
         "// Peeky::into_iter(&foo)\nfoo.into_iter()",
         "let s = \"Peeky::into_iter(&foo)\"; foo.into_iter()",
         "Peeky::into_iter",
+        "let f = Peeky::into_iter::<u8>;",
         "<Peeky as Other>::into_iter(&foo)",
         "<Foo as crate::Peeky::Inner>::into_iter(&foo)",
     ] {
@@ -254,6 +257,8 @@ fn only_every_borrowed_receiver_counts() {
     let exclusive = ReceiverKind::Exclusive;
     for (body, kind) in [
         ("(&foo).into_iter()", shared),
+        ("(&Foo::new::<u8>(&0)).into_iter()", shared),
+        ("(&foo).into_iter::<u8>()", shared),
         ("( & foo ).into_iter(); (&bar).into_iter()", shared),
         ("(&mut foo).into_iter()", exclusive),
         ("(& mut foo) . r#into_iter ()", exclusive),
@@ -277,6 +282,12 @@ fn only_every_borrowed_receiver_counts() {
         ("(&mutable).into_iter()", exclusive),
         ("wrap(&foo).into_iter()", shared),
         ("id!(&foo).into_iter()", shared),
+        ("Foo::new::<u8>(&0).into_iter()", shared),
+        ("items[0](&foo).into_iter()", shared),
+        (
+            "(&foo).into_iter(); Foo::new::<u8>(&0).into_iter::<u8>()",
+            shared,
+        ),
         ("(&foo).into_iter_all()", shared),
         ("Peeky::into_iter(&foo)", shared),
     ] {

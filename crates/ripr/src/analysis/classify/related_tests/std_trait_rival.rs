@@ -223,17 +223,47 @@ fn plain(ident: &str) -> &str {
 }
 
 /// The text before each call of `name` in the masked body: `name` as a whole
-/// word (raw or not) followed by `(`.
+/// word (raw or not) followed by `(`, or by a method turbofish and `(`
+/// (`name::<u8>(`).
 fn calls_of<'a>(masked: &'a str, name: &'a str) -> impl Iterator<Item = &'a str> + 'a {
     masked.match_indices(name).filter_map(move |(at, _)| {
         let after = &masked[at + name.len()..];
-        if after.starts_with(is_word) || !after.trim_start().starts_with('(') {
+        if after.starts_with(is_word) || !past_turbofish(after).starts_with('(') {
             return None;
         }
         let before = &masked[..at];
         let before = before.strip_suffix("r#").unwrap_or(before);
         (!before.ends_with(is_word)).then_some(before)
     })
+}
+
+/// The text after a leading method turbofish (`::<u8>`), trimmed; `text`
+/// trimmed when it has none or the turbofish does not close.
+fn past_turbofish(text: &str) -> &str {
+    let text = text.trim_start();
+    let Some(args) = text
+        .strip_prefix("::")
+        .map(str::trim_start)
+        .filter(|args| args.starts_with('<'))
+    else {
+        return text;
+    };
+    let mut depth = 0usize;
+    let mut previous = None;
+    for (index, ch) in args.char_indices() {
+        match ch {
+            '<' => depth += 1,
+            '>' if previous != Some('-') => {
+                depth = depth.saturating_sub(1);
+                if depth == 0 {
+                    return args[index + 1..].trim_start();
+                }
+            }
+            _ => {}
+        }
+        previous = Some(ch);
+    }
+    text
 }
 
 /// Whether the masked body calls `name` through a path naming `owner_trait`:
@@ -348,8 +378,9 @@ fn borrowed_receiver(receiver: &str, kind: ReceiverKind) -> bool {
         return false;
     };
     let head = receiver[..open].trim_end();
-    if head.ends_with(is_word) || head.ends_with('!') || head.ends_with(')') {
-        // `call(x).name(`, `mac!(x).name(`: the parentheses are a call.
+    if head.ends_with(|ch: char| is_word(ch) || matches!(ch, '!' | ')' | '>' | ']' | '?')) {
+        // `call(x).name(`, `mac!(x).name(`, `Foo::new::<u8>(&x).name(`: the
+        // parentheses are a call's arguments, not the receiver.
         return false;
     }
     let Some(borrowed) = receiver[open + 1..receiver.len() - 1]
