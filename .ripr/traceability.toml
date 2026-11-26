@@ -20138,6 +20138,15 @@ id = "RIPR-SPEC-0243"
 name = "TypeScript oracle and reach rules"
 spec = "docs/specs/RIPR-SPEC-0243-typescript-oracle-and-reach-rules.md"
 tests = [
+  "crates/ripr/src/analysis/language/typescript/tests/field_shadowed_method_tests.rs::a_method_shadowed_by_an_instance_field_relates_to_no_test",
+  "crates/ripr/src/analysis/language/typescript/tests/field_shadowed_method_tests.rs::an_es_exported_class_method_shadowed_by_a_field_relates_to_no_test",
+  "crates/ripr/src/analysis/language/typescript/tests/field_shadowed_method_tests.rs::a_static_method_shadowed_by_a_static_field_relates_to_no_test",
+  "crates/ripr/src/analysis/language/typescript/tests/field_shadowed_method_tests.rs::fields_that_do_not_shadow_keep_the_method_relation",
+  "crates/ripr/src/analysis/language/typescript/tests/field_shadowed_method_tests.rs::a_field_bound_from_the_method_itself_keeps_the_method_relation",
+  "crates/ripr/src/analysis/language/typescript/tests/field_shadowed_method_tests.rs::a_declare_field_defines_nothing_and_keeps_the_method_relation",
+  "crates/ripr/src/analysis/language/typescript/tests/field_shadowed_method_tests.rs::a_shadowed_method_is_an_owner_marked_field_shadowed",
+  "crates/ripr/src/analysis/language/typescript/tests/field_shadowed_method_tests.rs::a_shadowed_method_points_at_the_field",
+  "crates/ripr/src/analysis/language/typescript/tests/field_shadowed_method_tests.rs::a_same_named_package_import_keeps_the_field_guidance",
   "crates/ripr/src/analysis/language/typescript/tests/commonjs_named_class_export_tests.rs::a_named_export_class_expression_yields_owners_named_by_the_property",
   "crates/ripr/src/analysis/language/typescript/tests/commonjs_named_class_export_tests.rs::a_changed_method_of_a_named_export_class_relates_to_a_named_require",
   "crates/ripr/src/analysis/language/typescript/tests/commonjs_named_class_export_tests.rs::the_inner_class_id_and_a_sibling_export_stay_unrelated",

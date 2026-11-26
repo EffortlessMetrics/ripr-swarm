@@ -9194,13 +9194,24 @@ pub(crate) fn classify_resolved_owner(
         .iter()
         .map(|c| c.test.file.clone())
         .collect();
-    let alias_gap: Option<TsAliasGapDisclosure> = alias_gap_for_unresolved_import(
-        owner,
-        all_tests,
-        |test| credited_test_files.contains(&test.file),
-        alias_map,
-        alias_unavailable,
+    // A method no call can reach (overwritten by a later member, rule 26, or
+    // shadowed by a same-named field, rule 28) has its own no-reach cause; a
+    // same-named package import in some test must not replace it (#16306).
+    let unreachable_method = matches!(
+        owner.method_kind,
+        TypeScriptMethodKind::Overwritten | TypeScriptMethodKind::FieldShadowed
     );
+    let alias_gap: Option<TsAliasGapDisclosure> = if unreachable_method {
+        None
+    } else {
+        alias_gap_for_unresolved_import(
+            owner,
+            all_tests,
+            |test| credited_test_files.contains(&test.file),
+            alias_map,
+            alias_unavailable,
+        )
+    };
     // Ghost relative import disclosure (#4104-C): when an uncredited test
     // name-calls the owner through a relative specifier that resolves to no
     // workspace file, the exclusion is correct but was silent — name it.
@@ -13048,6 +13059,12 @@ pub(crate) fn cross_module_fan_in_limit_missing(owner: &TypeScriptOwner) -> Stri
 }
 
 pub(crate) fn no_static_path_missing(owner: &TypeScriptOwner) -> String {
+    if owner.method_kind == TypeScriptMethodKind::FieldShadowed {
+        return format!(
+            "A field of the same class is also named `{}` and shadows this body, so a call of `{}` runs the field's value, not the changed code (RIPR-SPEC-0243 rule 28).",
+            owner.name, owner.name
+        );
+    }
     if owner.method_kind == TypeScriptMethodKind::Overwritten {
         return format!(
             "A later member of the same class defines `{}` again and replaces this body, so no call runs the changed code (RIPR-SPEC-0243 rule 26).",
@@ -13079,6 +13096,14 @@ pub(crate) fn no_static_path_missing(owner: &TypeScriptOwner) -> String {
 }
 
 pub(crate) fn no_static_path_recommendation(owner: &TypeScriptOwner) -> String {
+    if owner.method_kind == TypeScriptMethodKind::FieldShadowed {
+        // #16306: a direct receiver call reaches the field, so the usual
+        // "add a direct call" advice would point at code that never runs.
+        return format!(
+            "TypeScript preview advisory: the field `{}` of this class shadows the method, so a test calling `{}` runs the field's value, not the changed body. Rename or remove the field or the method, then rerun `ripr check`.",
+            owner.name, owner.name
+        );
+    }
     if owner.method_kind == TypeScriptMethodKind::Overwritten {
         // #16261: a direct receiver call runs the replacement, so the usual
         // "add a direct call" advice would point at the wrong body.
