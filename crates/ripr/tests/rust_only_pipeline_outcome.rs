@@ -34,11 +34,15 @@ impl Drop for FixtureRoot {
     }
 }
 
-fn check_added_file(
+fn check_single_line_added_file(
     path: &str,
-    source: &str,
+    line: &str,
     config: &RiprConfig,
 ) -> Result<Value, Box<dyn Error>> {
+    // The helper supplies the same final LF to the file and its one-line hunk.
+    if line.is_empty() || line.contains(['\r', '\n']) {
+        return Err("fixture requires one nonempty line without CR or LF".into());
+    }
     let workspace = FixtureRoot::create()?;
     let root = &workspace.0;
     fs::create_dir(root.join("src"))?;
@@ -47,12 +51,12 @@ fn check_added_file(
         "[package]\nname = \"scope-fixture\"\nversion = \"0.1.0\"\nedition = \"2024\"\n",
     )?;
     fs::write(root.join("src/lib.rs"), "")?;
-    fs::write(root.join(path), format!("{source}\n"))?;
+    fs::write(root.join(path), format!("{line}\n"))?;
     let diff_file = root.join("change.diff");
     fs::write(
         &diff_file,
         format!(
-            "diff --git a/{path} b/{path}\nnew file mode 100644\n--- /dev/null\n+++ b/{path}\n@@ -0,0 +1 @@\n+{source}\n"
+            "diff --git a/{path} b/{path}\nnew file mode 100644\n--- /dev/null\n+++ b/{path}\n@@ -0,0 +1 @@\n+{line}\n"
         ),
     )?;
 
@@ -122,14 +126,26 @@ fn excluded_python_input_stays_partial_when_the_adapter_is_unavailable()
     config.languages.enabled.push(LanguageId::Python);
     config.languages.python.excluded_file_patterns = vec!["src/value.py".into()];
 
-    let python = check_added_file("src/value.py", "VALUE = 1", &config)?;
+    for invalid in ["", "first\nsecond", "first\r\nsecond", "first\n", "first\r"] {
+        assert_eq!(
+            check_single_line_added_file("src/value.py", invalid, &config)
+                .err()
+                .map(|error| error.to_string())
+                .as_deref(),
+            Some("fixture requires one nonempty line without CR or LF"),
+            "fixture unexpectedly accepted {invalid:?}"
+        );
+    }
+
+    let python = check_single_line_added_file("src/value.py", "VALUE = 1", &config)?;
     require_unavailable_python(&python)?;
 
     // Exercise the competing outcome through the same public API. An available
     // adapter can apply its configured exclusion and report complete scope.
     let mut rust_config = RiprConfig::default();
     rust_config.languages.rust.generated_file_patterns = vec!["src/value.rs".into()];
-    let rust = check_added_file("src/value.rs", "pub const VALUE: u32 = 1;", &rust_config)?;
+    let rust =
+        check_single_line_added_file("src/value.rs", "pub const VALUE: u32 = 1;", &rust_config)?;
     assert_eq!(
         rust.pointer("/analysis_outcome/analysis_complete"),
         Some(&Value::Bool(true)),
