@@ -561,7 +561,8 @@ pub(in crate::analysis::language::python) fn publish_production_finding(
 
 /// Record which related rows live in a test file the diff changed (#14027) so
 /// the one shared headline pick can prefer them. Nothing is stamped when the
-/// first row already is one (the default pick already names it) or no row is.
+/// headline anchor (the first row of the best observation tier, #14483)
+/// already is one (the default pick already names it) or no row is.
 /// Display evidence only: row order, class and oracle strength are untouched.
 fn stamp_related_tests_changed_in_diff(finding: &mut Finding, changed_files: &BTreeSet<PathBuf>) {
     // The headline anchors on the first row of the best observation tier
