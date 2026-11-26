@@ -24,7 +24,7 @@ const OUTCOME_NONE: u8 = 0;
 const OUTCOME_ABORT_OBSERVED: u8 = 1;
 const OUTCOME_FAILURE_PROPAGATED: u8 = 2;
 
-/// Clock a budgeted token reads to measure elapsed time.
+/// A clock that a budgeted token reads to measure elapsed time.
 pub type AnalysisClock = Arc<dyn Fn() -> Instant + Send + Sync>;
 
 struct AnalysisBudget {
@@ -81,7 +81,8 @@ pub enum AnalysisAbortKind {
     Superseded,
     /// The attempt was cancelled, explicitly or by an interrupt flag.
     Cancelled,
-    /// The token's time budget ran out.
+    /// A deadline passed: the token's budget ran out at a checkpoint, or a
+    /// caller such as the LSP refresh timer cancelled it with this kind.
     DeadlineExceeded,
 }
 
@@ -155,8 +156,8 @@ impl AnalysisCancellationToken {
         }))
     }
 
-    /// A server token that reads `interrupted` at each checkpoint and owns
-    /// fresh Unix process groups for its analysis workers.
+    /// A server token that reads `interrupted` at each checkpoint and puts the
+    /// subprocesses its analysis spawns into fresh Unix process groups.
     #[cfg(unix)]
     pub fn with_server_interrupt(interrupted: Arc<AtomicBool>) -> Self {
         Self(Arc::new(CancellationState {
@@ -206,7 +207,7 @@ impl AnalysisCancellationToken {
         }
     }
 
-    /// Record `kind` as the abort reason. Only the first call wins; returns
+    /// Records `kind` as the abort reason. Only the first call wins; returns
     /// `false` when a reason was already recorded.
     pub fn cancel(&self, kind: AnalysisAbortKind) -> bool {
         let value = match kind {
@@ -220,9 +221,11 @@ impl AnalysisCancellationToken {
             .is_ok()
     }
 
-    /// Return the abort to the running work, if there is one. Sets `Cancelled`
-    /// when the interrupt flag is up and `DeadlineExceeded` when the budget is
-    /// spent, then records that the work observed the abort.
+    /// Returns the recorded abort, if any, to the running work. With no reason
+    /// recorded yet, it sets `Cancelled` when the interrupt flag is up,
+    /// otherwise `DeadlineExceeded` when the budget is spent; an earlier
+    /// recorded reason is kept. On an abort it records that the work observed
+    /// it.
     pub fn checkpoint(&self) -> Result<(), AnalysisCancellation> {
         if self
             .0
@@ -344,7 +347,7 @@ impl Drop for ContextGuard {
     }
 }
 
-/// Run `work` with `token` installed as the current thread's token, restoring
+/// Runs `work` with `token` installed as the current thread's token, restoring
 /// the previous one afterwards.
 pub fn with_token<T>(token: &AnalysisCancellationToken, work: impl FnOnce() -> T) -> T {
     with_optional_token(Some(token), work)
