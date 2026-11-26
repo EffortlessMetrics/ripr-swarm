@@ -2736,12 +2736,15 @@ fn run_agent_repair_phase(
                     )
                 && !preflight_violations.is_empty()
             {
-                return Err(crate::app::repair_attempt::seam_dirty_premise_refusal(
-                    &seam_id,
-                    &root,
-                    store_ref,
-                    facade_start,
-                    &preflight_violations,
+                return Err(dirty_premise_hold(
+                    refusal,
+                    crate::app::repair_attempt::seam_dirty_premise_refusal(
+                        &seam_id,
+                        &root,
+                        store_ref,
+                        facade_start,
+                        &preflight_violations,
+                    ),
                 ));
             }
             if !quiet {
@@ -2920,12 +2923,15 @@ fn run_agent_repair_phase(
                 &premise_head,
             )?;
             if !premise_violations.is_empty() {
-                return Err(crate::app::repair_attempt::seam_dirty_premise_refusal(
-                    &seam_id,
-                    &root,
-                    store_ref,
-                    facade_start,
-                    &premise_violations,
+                return Err(dirty_premise_hold(
+                    refusal,
+                    crate::app::repair_attempt::seam_dirty_premise_refusal(
+                        &seam_id,
+                        &root,
+                        store_ref,
+                        facade_start,
+                        &premise_violations,
+                    ),
                 ));
             }
 
@@ -5349,6 +5355,16 @@ fn gap_bound_rejected_attempt_message(
 /// typed not-started refusal on `refusal`. Called at the early admission and
 /// again immediately before the first shared workflow write (#13452), so both
 /// share one mapping.
+/// A dirty production premise is a typed not-started start hold (#15265):
+/// `ripr repair` exits `3` with `start_refused_uncommitted_source` (and the
+/// `cli_refusal` document under `--json`) instead of an operational exit `2`
+/// with empty stdout. The prose is unchanged.
+fn dirty_premise_hold(refusal: &mut AfterPhaseRefusalContext, message: String) -> String {
+    refusal.start_refused = true;
+    refusal.code = Some(crate::app::task_first::RepairRefusalCode::StartRefusedUncommittedSource);
+    message
+}
+
 fn admit_build_output_before_write(
     root: &Path,
     policy: &crate::edit_cage::EditCagePolicy,
@@ -5418,9 +5434,9 @@ fn run_gap_bound_before_phase(
             )
         && !preflight_violations.is_empty()
     {
-        return Err(crate::app::repair_attempt::dirty_premise_refusal(
-            &restart,
-            &preflight_violations,
+        return Err(dirty_premise_hold(
+            refusal,
+            crate::app::repair_attempt::dirty_premise_refusal(&restart, &preflight_violations),
         ));
     }
     // The snapshot is produced against the commit the base resolves to, and
@@ -5513,9 +5529,9 @@ fn run_gap_bound_before_phase(
         &premise_head,
     )?;
     if !premise_violations.is_empty() {
-        return Err(crate::app::repair_attempt::dirty_premise_refusal(
-            &restart,
-            &premise_violations,
+        return Err(dirty_premise_hold(
+            refusal,
+            crate::app::repair_attempt::dirty_premise_refusal(&restart, &premise_violations),
         ));
     }
 

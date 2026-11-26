@@ -7897,3 +7897,67 @@ fn repair_refuses_an_uncommitted_external_test_file_before_starting() -> Result<
     );
     Ok(())
 }
+
+/// #15265: uncommitted production source is a typed not-started start hold
+/// too. `ripr repair --json` exits 3 with one `cli_refusal` document coded
+/// `start_refused_uncommitted_source` and keeps the commit-first prose,
+/// instead of an operational exit 2 with empty stdout.
+#[test]
+fn repair_refuses_uncommitted_source_with_a_typed_json_refusal() -> Result<(), String> {
+    let fixture = Fixture::boundary("facade-uncommitted-source")?;
+    let root = &fixture.root;
+    let root_arg = root.to_string_lossy().into_owned();
+    std::fs::write(
+        root.join("src/lib.rs"),
+        format!("{FIXTURE_LIB}// an unrelated note\n"),
+    )
+    .map_err(|e| e.to_string())?;
+
+    let refused = run_ripr(
+        root,
+        &["repair", FIXTURE_SEAM, "--root", &root_arg, "--json"],
+    )?;
+    assert_exit(&refused, 3, "repair over uncommitted production source");
+    assert_refusal_code(
+        &refused,
+        "start_refused_uncommitted_source",
+        "not_started",
+        "uncommitted production source",
+    );
+    let document: serde_json::Value = serde_json::from_str(&stdout_text(&refused))
+        .map_err(|error| format!("stdout must be one cli_refusal document: {error}"))?;
+    assert_eq!(document["status"], "refused", "{document:#}");
+    assert_eq!(
+        document["error"]["code"], "start_refused_uncommitted_source",
+        "{document:#}"
+    );
+    assert_eq!(
+        document["error"]["disposition"], "not_started",
+        "{document:#}"
+    );
+    let message = document["error"]["message"]
+        .as_str()
+        .ok_or("refusal message missing")?;
+    assert!(
+        message.contains("Uncommitted: src/lib.rs")
+            && message.contains(&format!("ripr repair {FIXTURE_SEAM} --root ")),
+        "the refusal names the file and the facade rerun:\n{message}"
+    );
+    assert!(attempt_ids(root).is_empty(), "no attempt may be created");
+    assert!(
+        !root.join("target/ripr/workflow/workflow.json").exists(),
+        "a refused start writes no workflow artifact"
+    );
+
+    // Control: committing the source lets the same start proceed.
+    run_git(root, &["add", "src/lib.rs"])?;
+    git_commit(root, "commit the source note")?;
+    let started = run_ripr(root, &["repair", FIXTURE_SEAM, "--root", &root_arg])?;
+    assert_exit(&started, 0, "repair over committed source");
+    assert_eq!(
+        attempt_ids(root).len(),
+        1,
+        "the clean start creates one attempt"
+    );
+    Ok(())
+}

@@ -33,6 +33,7 @@
             "several_eligible_seams",
             "repair_needs_item",
             "start_refused_uncommitted_target",
+            "start_refused_uncommitted_source",
             "build_output_not_ignored",
             "no_test_route",
             "awaiting_edit",
