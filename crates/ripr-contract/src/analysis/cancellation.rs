@@ -24,6 +24,7 @@ const OUTCOME_NONE: u8 = 0;
 const OUTCOME_ABORT_OBSERVED: u8 = 1;
 const OUTCOME_FAILURE_PROPAGATED: u8 = 2;
 
+/// Clock a budgeted token reads to measure elapsed time.
 pub type AnalysisClock = Arc<dyn Fn() -> Instant + Send + Sync>;
 
 struct AnalysisBudget {
@@ -49,6 +50,9 @@ struct CancellationState {
     owns_process_groups: bool,
 }
 
+/// Shared cancellation state for one analysis attempt. Clones share the same
+/// state, and two tokens are equal only when they share it. Work sees an abort
+/// only at cooperative checkpoints.
 #[derive(Clone)]
 pub struct AnalysisCancellationToken(Arc<CancellationState>);
 
@@ -70,15 +74,22 @@ impl PartialEq for AnalysisCancellationToken {
 
 impl Eq for AnalysisCancellationToken {}
 
+/// Why an analysis attempt was stopped.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum AnalysisAbortKind {
+    /// A newer request or run replaced this one.
     Superseded,
+    /// The attempt was cancelled, explicitly or by an interrupt flag.
     Cancelled,
+    /// The token's time budget ran out.
     DeadlineExceeded,
 }
 
+/// The error a checkpoint returns once the attempt has been stopped. It
+/// displays as `analysis cancelled: <kind>`.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct AnalysisCancellation {
+    /// Why the attempt was stopped.
     pub kind: AnalysisAbortKind,
 }
 
@@ -95,6 +106,7 @@ impl Default for AnalysisCancellationToken {
 }
 
 impl AnalysisCancellationToken {
+    /// A token with no budget and no interrupt flags.
     pub fn new() -> Self {
         Self(Arc::new(CancellationState {
             reason: AtomicU8::new(ACTIVE),
@@ -125,6 +137,8 @@ impl AnalysisCancellationToken {
         }))
     }
 
+    /// A token that reads the CLI's interrupt flag at each checkpoint and hands
+    /// stdout publication to native interruption through `native_publication`.
     #[cfg(unix)]
     pub fn with_interrupt_flags(
         interrupted: Arc<AtomicBool>,
@@ -141,6 +155,8 @@ impl AnalysisCancellationToken {
         }))
     }
 
+    /// A server token that reads `interrupted` at each checkpoint and owns
+    /// fresh Unix process groups for its analysis workers.
     #[cfg(unix)]
     pub fn with_server_interrupt(interrupted: Arc<AtomicBool>) -> Self {
         Self(Arc::new(CancellationState {
@@ -170,6 +186,7 @@ impl AnalysisCancellationToken {
         }))
     }
 
+    /// Time left in the budget, or `None` when the token has no budget.
     pub fn remaining_budget(&self) -> Option<Duration> {
         self.0.budget.as_ref().map(|budget| {
             budget
@@ -189,6 +206,8 @@ impl AnalysisCancellationToken {
         }
     }
 
+    /// Record `kind` as the abort reason. Only the first call wins; returns
+    /// `false` when a reason was already recorded.
     pub fn cancel(&self, kind: AnalysisAbortKind) -> bool {
         let value = match kind {
             AnalysisAbortKind::Superseded => SUPERSEDED,
@@ -201,6 +220,9 @@ impl AnalysisCancellationToken {
             .is_ok()
     }
 
+    /// Return the abort to the running work, if there is one. Sets `Cancelled`
+    /// when the interrupt flag is up and `DeadlineExceeded` when the budget is
+    /// spent, then records that the work observed the abort.
     pub fn checkpoint(&self) -> Result<(), AnalysisCancellation> {
         if self
             .0
@@ -258,7 +280,9 @@ impl AnalysisCancellationToken {
 /// read a rendered message to tell an abort from an ordinary failure (#6721).
 #[derive(Debug, Eq, PartialEq)]
 pub enum WorkerError {
+    /// The worker stopped at a checkpoint.
     Aborted(AnalysisCancellation),
+    /// The worker failed for an ordinary reason, with its message.
     Failed(String),
 }
 
@@ -320,6 +344,8 @@ impl Drop for ContextGuard {
     }
 }
 
+/// Run `work` with `token` installed as the current thread's token, restoring
+/// the previous one afterwards.
 pub fn with_token<T>(token: &AnalysisCancellationToken, work: impl FnOnce() -> T) -> T {
     with_optional_token(Some(token), work)
 }
@@ -351,6 +377,8 @@ pub fn with_optional_token<T>(
     work()
 }
 
+/// Whether the current token's interrupt flag is up. `false` with no current
+/// token or no flag.
 pub fn cli_interrupted() -> bool {
     current_token().is_some_and(|token| {
         token
@@ -424,6 +452,8 @@ pub fn begin_cli_publication() -> Result<(), String> {
     Ok(())
 }
 
+/// [`AnalysisCancellationToken::checkpoint`] on the current thread's token,
+/// with the abort rendered as text. `Ok` when no token is installed.
 pub fn checkpoint() -> Result<(), String> {
     checkpoint_typed().map_err(|error| error.to_string())
 }
@@ -438,6 +468,8 @@ pub fn checkpoint_typed() -> Result<(), AnalysisCancellation> {
     })
 }
 
+/// The current thread's token's remaining budget, or `None` when there is no
+/// token or no budget.
 pub fn remaining_budget() -> Option<Duration> {
     CURRENT_TOKEN.with(|slot| {
         slot.borrow()
