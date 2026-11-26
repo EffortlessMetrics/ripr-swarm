@@ -1,0 +1,6 @@
+[[extend]]
+id = "RIPR-SPEC-0011"
+tests = [
+  "crates/ripr/src/app/agent_status.rs::tests::finished_gap_attempt_is_not_incomplete_for_absent_legacy_artifacts",
+  "crates/ripr/tests/installed_python_typescript_journeys.rs::gap_bound_after_phase_closes_the_gap_on_positive_evidence",
+]
