@@ -148,11 +148,14 @@ pub(crate) enum TypeScriptMethodKind {
     /// shadows (#16306, RIPR-SPEC-0243 rule 28): calls on an instance (or the
     /// class, for a static field) reach the field, so it relates to no test.
     FieldShadowed,
-    /// An ordinary method that an unconditional `this.NAME = ...` of its
-    /// class constructor, or a top-level `Class.prototype.NAME = ...` /
-    /// `Class.NAME = ...` of the same file, replaces (#16314, RIPR-SPEC-0243
+    /// An ordinary instance method that an unconditional `this.NAME = ...`
+    /// of its class constructor replaces (#16314, RIPR-SPEC-0243 rule 29):
+    /// calls reach the assigned value, so it relates to no test.
+    ReplacedInConstructor,
+    /// An ordinary method that a top-level `Class.prototype.NAME = ...` or
+    /// `Class.NAME = ...` of the same file replaces (#16314, RIPR-SPEC-0243
     /// rule 29): calls reach the assigned value, so it relates to no test.
-    Replaced,
+    ReplacedByAssignment,
 }
 
 impl TypeScriptOwner {

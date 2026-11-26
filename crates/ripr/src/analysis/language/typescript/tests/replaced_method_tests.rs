@@ -139,6 +139,17 @@ fn a_method_replaced_by_an_assignment_relates_to_no_test() -> Result<(), String>
         &cart("", &static_method(), "Cart.total = (n) => n;\n"),
         STATIC_ASSIGNED_CALL,
         false,
+    )?;
+    // A wrapper around a different saved method still cuts `total` off.
+    case(
+        "prototype-wraps-another-method",
+        &cart(
+            "",
+            &format!("{METHOD}  size(n) {{ return n; }}\n"),
+            "const original = Cart.prototype.size;\nCart.prototype.total = function (n) { return original.call(this, n); };\n",
+        ),
+        ASSIGNED_CALL,
+        false,
     )
 }
 
@@ -233,6 +244,38 @@ fn assignments_that_keep_the_method_keep_its_relation() -> Result<(), String> {
             METHOD_CALL,
         ),
         (
+            "constructor-bracket-bind",
+            cart("    this.total = this['total'].bind(this);\n", METHOD, ""),
+            METHOD_CALL,
+        ),
+        (
+            "constructor-saved-original",
+            cart(
+                "    const original = this.total;\n    this.total = (n) => original.call(this, n);\n",
+                METHOD,
+                "",
+            ),
+            METHOD_CALL,
+        ),
+        (
+            "constructor-after-early-return",
+            cart(
+                "    if (!globalThis.FLAG) {\n      return;\n    }\n    this.total = (n) => n;\n",
+                METHOD,
+                "",
+            ),
+            METHOD_CALL,
+        ),
+        (
+            "prototype-saved-original",
+            cart(
+                "",
+                METHOD,
+                "const original = Cart.prototype.total;\nCart.prototype.total = function (n) { return original.call(this, n); };\n",
+            ),
+            METHOD_CALL,
+        ),
+        (
             "constructor-other-name",
             cart("    this.items = [];\n", METHOD, ""),
             METHOD_CALL,
@@ -262,6 +305,22 @@ fn assignments_that_keep_the_method_keep_its_relation() -> Result<(), String> {
     Ok(())
 }
 
+/// An inline `exports.Cart = class {}` binds no module-scope `Cart`, so a
+/// top-level write to a local `Cart` does not replace the class's method.
+#[test]
+fn a_write_to_a_local_named_like_an_inline_export_class_keeps_the_relation() -> Result<(), String> {
+    let owner_text = format!(
+        "const Cart = {{ total: (n) => n }};\nexports.Cart = class {{\n{}}};\nCart.total = (n) => n * 2;\n",
+        static_method()
+    );
+    case(
+        "inline-export-local-write",
+        &owner_text,
+        STATIC_METHOD_CALL,
+        true,
+    )
+}
+
 #[test]
 fn a_replaced_method_is_an_owner_marked_replaced_and_an_accessor_is_not() -> Result<(), String> {
     let source = format!(
@@ -276,7 +335,7 @@ fn a_replaced_method_is_an_owner_marked_replaced_and_an_accessor_is_not() -> Res
             .map(|owner| owner.method_kind)
             .collect::<Vec<_>>()
     };
-    if kinds("total", "Cart") != [TypeScriptMethodKind::Replaced] {
+    if kinds("total", "Cart") != [TypeScriptMethodKind::ReplacedInConstructor] {
         return Err(format!("unexpected owners {owners:?}"));
     }
     // Assigning `this.size` in the constructor calls the setter; it does not
@@ -315,6 +374,20 @@ fn a_replaced_method_points_at_the_assignment() -> Result<(), String> {
     if !step.contains("an assignment to `total` in this file replaces the method") {
         return Err(format!(
             "recommendation does not name the assignment: {step:?}"
+        ));
+    }
+    let constructor = diff_finding(
+        "replaced-guidance-constructor",
+        &cart("    this.total = (n) => n;\n", METHOD, ""),
+        &jest_test(NAMED_REQUIRE, ASSIGNED_CALL),
+    )?;
+    if !constructor.missing.iter().any(|line| {
+        line.contains("(`this.total = ...` in the constructor) replaces this body")
+            && !line.contains("prototype")
+    }) {
+        return Err(format!(
+            "constructor guidance names another site: {:?}",
+            constructor.missing
         ));
     }
     Ok(())

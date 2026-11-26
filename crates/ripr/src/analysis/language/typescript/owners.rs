@@ -1810,15 +1810,19 @@ pub(crate) fn owner_from_arrow(
     }
 }
 
-/// Marks an ordinary method [`TypeScriptMethodKind::Replaced`] when a
-/// top-level `Class.prototype.NAME = ...` (instance) or `Class.NAME = ...`
-/// (static) statement of the file replaces it (#16314, RIPR-SPEC-0243 rule
-/// 29).
+/// Marks an ordinary method [`TypeScriptMethodKind::ReplacedByAssignment`]
+/// when a top-level `Class.prototype.NAME = ...` (instance) or
+/// `Class.NAME = ...` (static) statement of the file replaces it (#16314,
+/// RIPR-SPEC-0243 rule 29). Only a class a top-level declaration binds in
+/// module scope is matched: the class name of an inline
+/// `exports.Cart = class {}` is an export property, and a `Cart` written in
+/// that file is some other binding.
 fn mark_top_level_replaced_methods(body: &[Statement<'_>], owners: &mut [TypeScriptOwner]) {
     let replaced = super::overwritten_methods::top_level_replaced_members(body);
     if replaced.is_empty() {
         return;
     }
+    let bound = super::overwritten_methods::module_class_bindings(body);
     for owner in owners {
         let is_static = match owner.owner_kind {
             OwnerKind::Method => false,
@@ -1827,9 +1831,10 @@ fn mark_top_level_replaced_methods(body: &[Statement<'_>], owners: &mut [TypeScr
         };
         if owner.method_kind == TypeScriptMethodKind::Ordinary
             && let Some(class_name) = &owner.class_name
+            && bound.contains(class_name)
             && replaced.contains(&(class_name.clone(), owner.name.clone(), is_static))
         {
-            owner.method_kind = TypeScriptMethodKind::Replaced;
+            owner.method_kind = TypeScriptMethodKind::ReplacedByAssignment;
         }
     }
 }
@@ -1865,7 +1870,7 @@ pub(crate) fn owners_from_class(
             } else if shadowed.contains(&method.span.start) {
                 owner.method_kind = TypeScriptMethodKind::FieldShadowed;
             } else if replaced.contains(&method.span.start) {
-                owner.method_kind = TypeScriptMethodKind::Replaced;
+                owner.method_kind = TypeScriptMethodKind::ReplacedInConstructor;
             }
             owners.push(owner);
         }

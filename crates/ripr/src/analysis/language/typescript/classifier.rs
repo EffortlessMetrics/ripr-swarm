@@ -9202,7 +9202,8 @@ pub(crate) fn classify_resolved_owner(
         owner.method_kind,
         TypeScriptMethodKind::Overwritten
             | TypeScriptMethodKind::FieldShadowed
-            | TypeScriptMethodKind::Replaced
+            | TypeScriptMethodKind::ReplacedInConstructor
+            | TypeScriptMethodKind::ReplacedByAssignment
     );
     let alias_gap: Option<TsAliasGapDisclosure> = if unreachable_method {
         None
@@ -13062,15 +13063,14 @@ pub(crate) fn cross_module_fan_in_limit_missing(owner: &TypeScriptOwner) -> Stri
 }
 
 pub(crate) fn no_static_path_missing(owner: &TypeScriptOwner) -> String {
-    if owner.method_kind == TypeScriptMethodKind::Replaced {
-        let assignment = if owner.owner_kind == OwnerKind::ClassMethod {
-            format!("`{}.{} = ...`", replaced_member_target(owner), owner.name)
+    if matches!(
+        owner.method_kind,
+        TypeScriptMethodKind::ReplacedInConstructor | TypeScriptMethodKind::ReplacedByAssignment
+    ) {
+        let assignment = if owner.method_kind == TypeScriptMethodKind::ReplacedInConstructor {
+            format!("`this.{} = ...` in the constructor", owner.name)
         } else {
-            format!(
-                "`this.{0} = ...` in the constructor or `{1}.{0} = ...`",
-                owner.name,
-                replaced_member_target(owner)
-            )
+            format!("`{}.{} = ...`", replaced_member_target(owner), owner.name)
         };
         return format!(
             "An assignment in this file ({assignment}) replaces this body, so a call of `{}` runs the assigned value, not the changed code (RIPR-SPEC-0243 rule 29).",
@@ -13125,7 +13125,10 @@ fn replaced_member_target(owner: &TypeScriptOwner) -> String {
 }
 
 pub(crate) fn no_static_path_recommendation(owner: &TypeScriptOwner) -> String {
-    if owner.method_kind == TypeScriptMethodKind::Replaced {
+    if matches!(
+        owner.method_kind,
+        TypeScriptMethodKind::ReplacedInConstructor | TypeScriptMethodKind::ReplacedByAssignment
+    ) {
         // #16314: a direct receiver call runs the assigned value, so the
         // usual "add a direct call" advice would point at code that never
         // runs.

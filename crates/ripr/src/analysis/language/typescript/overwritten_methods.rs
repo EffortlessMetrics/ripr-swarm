@@ -18,10 +18,13 @@
 use std::collections::BTreeSet;
 
 use oxc_ast::ast::{
-    AssignmentOperator, AssignmentTarget, Class, ClassElement, Expression, MethodDefinition,
-    MethodDefinitionKind, PropertyDefinition, PropertyKey, Statement, StaticMemberExpression,
+    ArrowFunctionExpression, AssignmentOperator, AssignmentTarget, Class, ClassElement,
+    ComputedMemberExpression, Declaration, ExportDefaultDeclarationKind, Expression, Function,
+    MethodDefinition, MethodDefinitionKind, PropertyDefinition, PropertyKey, ReturnStatement,
+    Statement, StaticMemberExpression,
 };
 use oxc_ast_visit::{Visit, walk};
+use oxc_syntax::scope::ScopeFlags;
 
 /// Span starts of the methods in `class` whose key a later member overwrites.
 ///
@@ -197,11 +200,13 @@ fn accessor_pair(earlier: MethodDefinitionKind, later: MethodDefinitionKind) -> 
 /// constructed, so `new Cart().total()` calls the assigned value, never the
 /// prototype method. Only a plain `=` expression statement at the top level
 /// of the constructor body counts: one inside an `if`, a loop or a callback
-/// may not run. A right-hand side that reads the same member
-/// (`this.total = this.total.bind(this)`) keeps the method running and does
-/// not count. Getters, setters and static methods are never marked: an
-/// assignment to an accessor calls its setter, and `this` in a constructor is
-/// the instance.
+/// may not run, and neither may one after a statement that can `return` from
+/// the constructor (`if (!custom) return;`). The method is kept when any
+/// constructor statement reads it on `this` (`this.total =
+/// this.total.bind(this)`, `const original = this.total;`), since the value
+/// may still call it. Getters, setters and static methods are never marked:
+/// an assignment to an accessor calls its setter, and `this` in a constructor
+/// is the instance.
 pub(super) fn constructor_replaced_method_starts(class: &Class<'_>) -> BTreeSet<u32> {
     let Some(body) = class.body.body.iter().find_map(|element| match element {
         ClassElement::MethodDefinition(method)
@@ -213,13 +218,18 @@ pub(super) fn constructor_replaced_method_starts(class: &Class<'_>) -> BTreeSet<
     }) else {
         return BTreeSet::new();
     };
-    let replaced: BTreeSet<String> = body
-        .statements
+    let statements = &body.statements;
+    // Assignments past a statement that can return may be skipped.
+    let reached = statements
+        .iter()
+        .position(can_return)
+        .unwrap_or(statements.len());
+    let replaced: BTreeSet<String> = statements[..reached]
         .iter()
         .filter_map(|statement| {
-            let (object, key, value) = member_assignment(statement)?;
+            let (object, key, _) = member_assignment(statement)?;
             (matches!(object.get_inner_expression(), Expression::ThisExpression(_))
-                && !reads_member(value, MemberObject::This, key))
+                && !scope_reads_member(statements, MemberObject::This, key))
             .then(|| format!("public:{key}"))
         })
         .collect();
@@ -247,15 +257,17 @@ pub(super) fn constructor_replaced_method_starts(class: &Class<'_>) -> BTreeSet<
 /// The `(class name, member name, static)` triples that an unconditional
 /// top-level statement of `body` replaces on a class (#16314, RIPR-SPEC-0243
 /// rule 29): `Cart.prototype.total = ...` replaces the instance method
-/// `total` of `Cart`, `Cart.total = ...` its static method. A right-hand side
-/// that reads the same member (`Cart.prototype.total =
-/// wrap(Cart.prototype.total)`) keeps the method running and does not count.
+/// `total` of `Cart`, `Cart.total = ...` its static method. The method is
+/// kept when any top-level statement reads the same member, outside the
+/// assignment's own target (`Cart.prototype.total =
+/// wrap(Cart.prototype.total)`, `const original = Cart.prototype.total;`),
+/// since the replacement may still call it.
 pub(super) fn top_level_replaced_members(
     body: &[Statement<'_>],
 ) -> BTreeSet<(String, String, bool)> {
     body.iter()
         .filter_map(|statement| {
-            let (object, key, value) = member_assignment(statement)?;
+            let (object, key, _) = member_assignment(statement)?;
             let (class_name, is_static) = match object.get_inner_expression() {
                 Expression::Identifier(class) => (class.name.as_str(), true),
                 Expression::StaticMemberExpression(prototype)
@@ -273,9 +285,31 @@ pub(super) fn top_level_replaced_members(
             } else {
                 MemberObject::Prototype(class_name)
             };
-            (!reads_member(value, object, key))
+            (!scope_reads_member(body, object, key))
                 .then(|| (class_name.to_string(), key.to_string(), is_static))
         })
+        .collect()
+}
+
+/// The names a top-level class declaration of `body` binds in module scope:
+/// `class Cart {}`, `export class Cart {}` and `export default class Cart {}`.
+/// An inline `exports.Cart = class {}` binds no `Cart`, so a top-level
+/// `Cart.total = ...` there writes some other binding.
+pub(super) fn module_class_bindings(body: &[Statement<'_>]) -> BTreeSet<String> {
+    body.iter()
+        .filter_map(|statement| match statement {
+            Statement::ClassDeclaration(class) => class.id.as_ref(),
+            Statement::ExportNamedDeclaration(export) => match &export.declaration {
+                Some(Declaration::ClassDeclaration(class)) => class.id.as_ref(),
+                _ => None,
+            },
+            Statement::ExportDefaultDeclaration(export) => match &export.declaration {
+                ExportDefaultDeclarationKind::ClassDeclaration(class) => class.id.as_ref(),
+                _ => None,
+            },
+            _ => None,
+        })
+        .map(|identifier| identifier.name.to_string())
         .collect()
 }
 
@@ -329,9 +363,11 @@ impl MemberObject<'_> {
     }
 }
 
-/// Whether `value` reads `object.key` anywhere, so the original member is
-/// captured (bound, wrapped or kept) by the value that replaces it.
-fn reads_member(value: &Expression<'_>, object: MemberObject<'_>, key: &str) -> bool {
+/// Whether any of `statements` reads `object.key` (dotted, or bracketed with
+/// a string key), outside the target of a plain `object.key = ...`
+/// assignment, so the original member may be captured (bound, wrapped or
+/// saved) by the value that replaces it.
+fn scope_reads_member(statements: &[Statement<'_>], object: MemberObject<'_>, key: &str) -> bool {
     struct Reads<'n> {
         object: MemberObject<'n>,
         key: &'n str,
@@ -345,12 +381,51 @@ fn reads_member(value: &Expression<'_>, object: MemberObject<'_>, key: &str) -> 
             self.found = member.property.name == self.key && self.object.matches(&member.object);
             walk::walk_static_member_expression(self, member);
         }
+        fn visit_computed_member_expression(&mut self, member: &ComputedMemberExpression<'a>) {
+            if self.found {
+                return;
+            }
+            self.found = matches!(
+                member.expression.get_inner_expression(),
+                Expression::StringLiteral(literal) if literal.value == self.key
+            ) && self.object.matches(&member.object);
+            walk::walk_computed_member_expression(self, member);
+        }
     }
     let mut reads = Reads {
         object,
         key,
         found: false,
     };
-    reads.visit_expression(value);
-    reads.found
+    for statement in statements {
+        match member_assignment(statement) {
+            // The assignment's own target writes the member; only its value
+            // can read it.
+            Some((target, target_key, value)) if target_key == key && object.matches(target) => {
+                reads.visit_expression(value);
+            }
+            _ => reads.visit_statement(statement),
+        }
+        if reads.found {
+            return true;
+        }
+    }
+    false
+}
+
+/// Whether `statement` contains a `return` of the enclosing function, outside
+/// any nested function or class.
+fn can_return(statement: &Statement<'_>) -> bool {
+    struct Returns(bool);
+    impl<'a> Visit<'a> for Returns {
+        fn visit_return_statement(&mut self, _: &ReturnStatement<'a>) {
+            self.0 = true;
+        }
+        fn visit_function(&mut self, _: &Function<'a>, _: ScopeFlags) {}
+        fn visit_arrow_function_expression(&mut self, _: &ArrowFunctionExpression<'a>) {}
+        fn visit_class(&mut self, _: &Class<'a>) {}
+    }
+    let mut returns = Returns(false);
+    returns.visit_statement(statement);
+    returns.0
 }

@@ -2831,7 +2831,8 @@ pub(crate) fn related_test_candidates<'a>(
         owner.method_kind,
         TypeScriptMethodKind::Overwritten
             | TypeScriptMethodKind::FieldShadowed
-            | TypeScriptMethodKind::Replaced
+            | TypeScriptMethodKind::ReplacedInConstructor
+            | TypeScriptMethodKind::ReplacedByAssignment
     ) {
         return Vec::new();
     }

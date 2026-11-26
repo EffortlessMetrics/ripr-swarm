@@ -1493,23 +1493,30 @@ field as shadowing.
 
 **Rule 29. A class method that an assignment replaces relates to no test
 (#16314).** An unconditional `this.NAME = ...` statement at the top level of a
-class's constructor defines `NAME` on each instance, and an unconditional
-top-level `Class.prototype.NAME = ...` statement of the same file overwrites the
-method on the prototype, so in either case `new Class().NAME()` runs the
-assigned value; a top-level `Class.NAME = ...` replaces a static method the same
-way. The receiver is read through parentheses and TypeScript casts
-(`(Cart.prototype as any).total = ...`, `(this as any).total = ...`). Such an
-ordinary method (not a getter, setter or constructor) stays an
-owner (a changed line is still reported) but relates to no test, so it reads
-`no_static_path`, and its guidance names the assignment. Not a replacement: an
-assignment whose right-hand side reads the same member (`this.total =
-this.total.bind(this)`, `Class.prototype.total = wrap(Class.prototype.total)`,
-`Class.total = wrap(Class.total)`), which keeps the method running; an
-assignment nested in a condition, loop or callback; an assignment of the other
-placement (`Class.total = ...` beside an instance method, `Class.prototype.total
-= ...` beside a static method); and an assignment to an accessor, which calls
-its setter. As for rules 26 and 28, a same-named package import in a test does
-not replace this guidance with an unresolved-alias disclosure.
+class's constructor, before any statement that can `return` from it, defines
+`NAME` on each instance; an unconditional top-level `Class.prototype.NAME =
+...` statement of the same file overwrites the method on the prototype; and a
+top-level `Class.NAME = ...` replaces a static method. In each case
+`new Class().NAME()` (or `Class.NAME()`) runs the assigned value. The receiver
+is read through parentheses and TypeScript casts (`(Cart.prototype as
+any).total = ...`, `(this as any).total = ...`), and a top-level assignment
+counts only for a class a top-level declaration binds in module scope (the
+class name of an inline `exports.Cart = class {}` is an export property, not a
+binding). Such an ordinary method (not a getter, setter or constructor) stays
+an owner (a changed line is still reported) but relates to no test, so it
+reads `no_static_path`, and its guidance names the assignment it found. Not a
+replacement: any read of the same member in the same scope (the constructor
+body, or the file's top level) outside the assignment's own target, dotted or
+bracketed with a string key (`this.total = this.total.bind(this)`,
+`this['total'].bind(this)`, `Class.prototype.total =
+wrap(Class.prototype.total)`, `const original = Class.prototype.total;`),
+since the replacement may still call the method; an assignment nested in a
+condition, loop or callback, or after a possible `return`; an assignment of
+the other placement (`Class.total = ...` beside an instance method,
+`Class.prototype.total = ...` beside a static method); and an assignment to
+an accessor, which calls its setter. As for rules 26 and 28, a same-named
+package import in a test does not replace this guidance with an
+unresolved-alias disclosure.
 
 ### Observation guard
 
@@ -3082,10 +3089,14 @@ keys); do not take the next number.
   `Cart.prototype.total = ...`, a static `Cart.total = ...` and a constructor
   replacement in an ES-exported class, plus the three receivers behind a
   TypeScript `as any` cast in a `.ts` file: each relates to no test, and the guidance
-  names the assignment. Controls that keep their relation: no assignment, a
-  constructor self-bind, a prototype or static wrap of the same member, a
-  conditional constructor assignment, assignments of another name, and
-  assignments of the other placement. The owner is marked `Replaced`, while a
+  names the assignment (constructor and prototype spellings). A wrapper that
+  calls a different saved method still replaces. Controls that keep their
+  relation: no assignment, a constructor self-bind (dotted or bracketed), a
+  saved original in the constructor or at the top level, a prototype or static
+  wrap of the same member, a conditional constructor assignment, one after an
+  early `return`, assignments of another name, assignments of the other
+  placement, and a write to a local named like an inline
+  `exports.Cart = class {}`. The owner is marked `Replaced`, while a
   constructor assignment to an accessor leaves the setter and getter as they
   are. Each test body asserts the runtime value.
 
