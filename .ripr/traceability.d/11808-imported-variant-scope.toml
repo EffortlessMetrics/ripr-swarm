@@ -1,0 +1,5 @@
+[[extend]]
+id = "RIPR-SPEC-0352"
+tests = [
+  "crates/ripr/src/analysis/classify/related_tests.rs::imported_unit_variant_receiver_uses_the_tests_own_module",
+]
