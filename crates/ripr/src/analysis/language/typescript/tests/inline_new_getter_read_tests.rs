@@ -1,6 +1,6 @@
 //! #16353: a getter read straight off a fresh instance
-//! (`expect(new Cart(50).total).toBe(45)`) runs the getter body, like a read
-//! through a named receiver (`const cart = new Cart(50); cart.total`). Before,
+//! (`expect(new Cart(100).total).toBe(95)`) runs the getter body, like a read
+//! through a named receiver (`const cart = new Cart(100); cart.total`). Before,
 //! only the receiver read and an inline method call (`new Cart().m(`) were
 //! needles, so the inline read reported `no_static_path`.
 
@@ -80,23 +80,23 @@ fn a_getter_read_on_a_fresh_instance_relates() -> Result<(), String> {
     for (label, body) in [
         (
             "inline-getter-read",
-            "    expect(new Cart(50).total).toBe(45);",
+            "    expect(new Cart(100).total).toBe(95);",
         ),
         (
             "inline-getter-optional",
-            "    expect(new Cart(50)?.total).toBe(45);",
+            "    expect(new Cart(100)?.total).toBe(95);",
         ),
         (
             "inline-getter-wrapped",
-            "    expect(\n      new Cart(50)\n        .total\n    ).toBe(45);",
+            "    expect(\n      new Cart(100)\n        .total\n    ).toBe(95);",
         ),
         (
             "inline-getter-chained",
-            "    expect(new Cart(50).total.toFixed(0)).toBe('45');",
+            "    expect(new Cart(100).total.toFixed(0)).toBe('95');",
         ),
         (
             "inline-getter-receiver-control",
-            "    const cart = new Cart(50);\n    expect(cart.total).toBe(45);",
+            "    const cart = new Cart(100);\n    expect(cart.total).toBe(95);",
         ),
     ] {
         assert_related(label, body)?;

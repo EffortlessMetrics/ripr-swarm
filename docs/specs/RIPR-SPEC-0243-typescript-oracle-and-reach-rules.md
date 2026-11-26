@@ -935,7 +935,9 @@ Candidates come from the first non-empty tier:
    - method: `ReceiverOwnerCall`, a receiver bound by `new Class(...)` in
      the body or in describe or `beforeEach` scope, a getter read (on such a
      receiver, or straight off `new Class(...)`, as in `expect(new
-     Cart(50).total)`, since #16353), or a constructor call;
+     Cart(100).total)`, since #16353; like the inline call, a parenthesized
+     `(new Cart(100)).total` or an explicit `new Cart<T>(...)` is not read), or
+     a constructor call;
    - static method: `ClassMethodCall` through the class name or an import;
    - function, arrow or component, in order: an owner-module mock or a
      spy fabrication blocks every relation; then `DirectOwnerCall` (a
@@ -3075,7 +3077,7 @@ keys); do not take the next number.
   property.
 - #16353 (getter read off a fresh instance):
   `crates/ripr/src/analysis/language/typescript/tests/inline_new_getter_read_tests.rs`
-  runs `analyze_diff` on a changed getter read as `new Cart(50).total`, through
+  runs `analyze_diff` on a changed getter read as `new Cart(100).total`, through
   `?.`, wrapped across lines and chained (`.total.toFixed(0)`): each relates,
   as does the named-receiver control. A longer property (`.totalPrice`),
   another class's same-named getter, the read inside a comment or string, a
