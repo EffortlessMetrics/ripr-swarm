@@ -198,13 +198,32 @@ fn numbered_binding_cases_keep_exact_semantic_contracts() -> Result<(), String> 
                 );
                 assert_eq!(finding.probe.before.as_deref(), Some(before), "{name}");
                 assert_eq!(finding.probe.after.as_deref(), Some(after), "{name}");
-                assert!(
-                    finding.evidence.iter().any(|evidence| {
-                        evidence.starts_with("binding_predicate_value_unresolved:")
-                            && evidence.ends_with(&format!("`{operation}`"))
-                    }),
-                    "{name}: earliest operation"
-                );
+                if name == "0150-len-utf8-map-or" {
+                    assert_eq!(finding.class, ExposureClass::Exposed, "{finding:#?}");
+                    assert!(
+                        finding
+                            .evidence
+                            .iter()
+                            .all(|e| !e.starts_with("binding_predicate_value_unresolved:"))
+                    );
+                    for width in [0, 1, 2] {
+                        assert!(
+                            finding.activation.observed_values.iter().any(|fact| {
+                                fact.value == format!("width = {width}")
+                                    && fact.text.ends_with("via first char len_utf8()")
+                            }),
+                            "missing literal width {width}"
+                        );
+                    }
+                } else {
+                    assert!(
+                        finding.evidence.iter().any(|evidence| {
+                            evidence.starts_with("binding_predicate_value_unresolved:")
+                                && evidence.ends_with(&format!("`{operation}`"))
+                        }),
+                        "{name}: earliest operation"
+                    );
+                }
                 assert!(
                     !finding.evidence.iter().any(|evidence| {
                         evidence.contains("not mapped to a high-confidence probe family")
@@ -212,6 +231,98 @@ fn numbered_binding_cases_keep_exact_semantic_contracts() -> Result<(), String> 
                     "{name}: no generic syntax limitation after retarget"
                 );
             }
+        }
+    }
+    Ok(())
+}
+
+#[test]
+fn leading_character_width_requires_direct_literal_rows_and_matching_transforms()
+-> Result<(), String> {
+    let corpus = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/rust-verdict-corpus");
+    let case = read_json(&corpus.join("cases/spec-b-0150-len-utf8-map-or.json"))?;
+    for (from, to, class) in [
+        (
+            "first_width_is(\"é\", 2)",
+            "first_width_is(\"🦀abc\", 4)",
+            ExposureClass::Exposed,
+        ),
+        (
+            "first_width_is(\"é\", 2)",
+            "first_width_is(String::from(\"é\").trim(), 2)",
+            ExposureClass::InfectionUnknown,
+        ),
+        (
+            "assert!(!first_width_is(\"a\", 0));",
+            "",
+            ExposureClass::InfectionUnknown,
+        ),
+        (
+            "assert!(first_width_is(\"\", 0));",
+            "",
+            ExposureClass::InfectionUnknown,
+        ),
+        (
+            "assert!(first_width_is(\"é\", 2));",
+            "",
+            ExposureClass::InfectionUnknown,
+        ),
+        (
+            "|ch| ch.len_utf8()",
+            "|ch| ch.len_utf8() + 0",
+            ExposureClass::InfectionUnknown,
+        ),
+        (
+            "|ch| ch.len_utf8()",
+            "|ch| 'a'.len_utf8()",
+            ExposureClass::InfectionUnknown,
+        ),
+        (
+            "chars().next()",
+            "chars().next_back()",
+            ExposureClass::InfectionUnknown,
+        ),
+    ] {
+        let scratch = Scratch::create()?;
+        let diff = materialize(&corpus, &case, &scratch.0)?;
+        let source_path = scratch.0.join("src/b_utf8.rs");
+        let source = std::fs::read_to_string(&source_path).map_err(|err| err.to_string())?;
+        assert!(source.contains(from));
+        std::fs::write(source_path, source.replace(from, to)).map_err(|err| err.to_string())?;
+        let patch = std::fs::read_to_string(&diff).map_err(|err| err.to_string())?;
+        let local_diff = scratch.0.join("edit.diff");
+        // Keep the changed initializer in the diff consistent with the source.
+        let patch = patch
+            .lines()
+            .map(|line| {
+                if line.starts_with('+') {
+                    line.replace(from, to)
+                } else {
+                    line.to_owned()
+                }
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
+        std::fs::write(&local_diff, format!("{patch}\n")).map_err(|err| err.to_string())?;
+        let result = check_workspace(CheckInput {
+            root: scratch.0.clone(),
+            diff_file: Some(local_diff),
+            mode: Mode::Draft,
+            include_unchanged_tests: true,
+            ..CheckInput::default()
+        })?;
+        let [finding] = result.findings.as_slice() else {
+            return Err(format!("expected one finding for {to:?}"));
+        };
+        assert_eq!(finding.class, class, "{from} -> {to}: {finding:#?}");
+        if class == ExposureClass::Exposed {
+            assert!(
+                finding
+                    .activation
+                    .observed_values
+                    .iter()
+                    .any(|fact| fact.value == "width = 4")
+            );
         }
     }
     Ok(())
