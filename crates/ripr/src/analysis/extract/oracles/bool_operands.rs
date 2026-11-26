@@ -300,7 +300,7 @@ fn literal_spelling_value(side: &str) -> Option<bool> {
 /// The expression inside a block that holds only that expression
 /// (`{ r == Err(E::Bad) }`): the first `{` closes at the last `}` and no
 /// top-level `;` ends a statement before it.
-fn unwrap_block(text: &str) -> Option<&str> {
+pub(super) fn unwrap_block(text: &str) -> Option<&str> {
     let text = text.trim();
     let inner = text.strip_prefix('{')?.strip_suffix('}')?;
     let masked = mask_comments_and_strings(inner);
