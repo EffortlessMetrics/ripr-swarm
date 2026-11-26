@@ -65,6 +65,12 @@ fn unsafe_context_keeps_the_edited_behavior_primary() -> Result<(), String> {
             "wrap.diff",
             &[inline, (19, "static_unknown", "unsafe block")],
         ),
+        // The removed line nests deeper than the static budget, so it is not
+        // parsed to compare the opener: the block keeps its note.
+        (
+            "overbudget.diff",
+            &[inline, (19, "static_unknown", "unsafe block")],
+        ),
         (
             "mixed.diff",
             &[
