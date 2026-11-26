@@ -255,7 +255,10 @@ pub(crate) fn decode_artifact_text(bytes: &[u8]) -> std::io::Result<String> {
     let text = std::str::from_utf8(bytes).map_err(|err| {
         std::io::Error::new(
             std::io::ErrorKind::InvalidData,
-            format!("stream did not contain valid UTF-8 ({err})"),
+            format!(
+                "not UTF-8 text (invalid byte at offset {}); pass a UTF-8 text file",
+                err.valid_up_to()
+            ),
         )
     })?;
     Ok(text.strip_prefix('\u{feff}').unwrap_or(text).to_owned())

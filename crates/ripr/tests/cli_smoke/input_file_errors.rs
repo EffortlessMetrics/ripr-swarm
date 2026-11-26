@@ -33,7 +33,7 @@ fn outcome_non_json_snapshot_names_role_file_and_serde_position() -> Result<(), 
     assert_eq!(output.status.code(), Some(2), "{stderr}");
     assert!(
         stderr.contains("before snapshot ")
-            && stderr.contains("x.txt is not valid JSON (expected value at line 1 column 1)"),
+            && stderr.contains("x.txt is not valid JSON: expected value at line 1 column 1"),
         "{stderr}"
     );
     assert!(
@@ -200,7 +200,19 @@ fn policy_operations_still_reports_a_missing_input_as_missing() -> Result<(), St
         &out_md_arg,
     ]);
     let stderr = stderr_of(&output);
-    assert_eq!(output.status.code(), Some(0), "{stderr}");
+    // The report is written with the input marked unavailable, then the
+    // command refuses with exit 2 and names the flag.
+    assert_eq!(output.status.code(), Some(2), "{stderr}");
+    assert!(
+        stderr.contains("could not read 1 supplied input: --gate-decision: read gate decision ")
+            && stderr.contains("absent-gate.json failed: "),
+        "{stderr}"
+    );
+    // A plain `not found` or `does not exist` would read as unreadable.
+    assert!(
+        !stderr.contains("not found") && !stderr.contains("does not exist"),
+        "{stderr}"
+    );
     let json =
         std::fs::read_to_string(&out).map_err(|err| format!("read {}: {err}", out.display()))?;
     assert!(json.contains("\"gate_decision_missing\""), "{json}");
