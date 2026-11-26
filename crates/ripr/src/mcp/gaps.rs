@@ -624,7 +624,7 @@ impl GapItem {
         admission: &SeamAdmission,
     ) -> Result<Self, String> {
         let canonical_id = canonical_id_of(finding);
-        let file = crate::analysis::finding_location_text(root, &finding.probe.location.file);
+        let file = crate::analysis::finding_location_text_bare(root, &finding.probe.location.file);
         let served_file =
             crate::analysis::finding_location_text_bare(root, &finding.probe.location.file);
         let class = finding.class.as_str().to_string();
@@ -1589,10 +1589,13 @@ mod tests {
         let mut finding = finding()?;
         finding.probe.location =
             crate::domain::SourceLocation::new(root.join("src").join("main.rs"), 4, 1);
+        // Check/context/human keep the shared `./` spelling (#5996); the MCP
+        // item serves the same location without that prefix.
         let expected = "./src/main.rs";
+        let served = "src/main.rs";
 
         let item = GapItem::from_finding(&finding, &root)?;
-        if item.file != expected {
+        if item.file != served {
             return Err(format!(
                 "MCP diagnostic budget key must keep the shared spelling: {}",
                 item.file
@@ -1609,7 +1612,7 @@ mod tests {
                     item.evidence_core
                 )
             })?;
-        if location_file != "src/main.rs" {
+        if location_file != served {
             return Err(format!(
                 "MCP gap location file must be workspace-relative: {location_file}"
             ));
@@ -3400,7 +3403,7 @@ mod tests {
             finding.probe.location.file = file;
             let item = GapItem::from_finding(&finding, root)?;
             let expected =
-                crate::analysis::finding_location_text(root, &finding.probe.location.file);
+                crate::analysis::finding_location_text_bare(root, &finding.probe.location.file);
             let budget = budget_items(std::slice::from_ref(&item));
             assert_eq!(budget[0].document, expected);
             assert_eq!(item.list_summary["file"], "src/lib.rs");
@@ -3433,6 +3436,33 @@ mod tests {
             );
         }
         Ok(())
+    }
+
+    /// The served file never carries the presentational `./` prefix, while
+    /// a plain relative root (already bare) and an out-of-root file are
+    /// unchanged by the normalization.
+    #[test]
+    fn served_finding_file_strips_only_the_dot_slash_prefix() {
+        let root = std::env::temp_dir().join("ripr-gap-path-root");
+        assert_eq!(
+            crate::analysis::finding_location_text_bare(&root, &root.join("src/lib.rs")),
+            "src/lib.rs"
+        );
+        assert_eq!(
+            crate::analysis::finding_location_text_bare(Path::new("."), Path::new("src/lib.rs")),
+            "src/lib.rs"
+        );
+        let outside = std::env::temp_dir().join("ripr-gap-path-elsewhere/lib.rs");
+        assert_eq!(
+            crate::analysis::finding_location_text_bare(&root, &outside),
+            outside.to_string_lossy().replace('\\', "/"),
+            "an out-of-root file keeps its exact stable spelling"
+        );
+        assert_eq!(
+            crate::analysis::finding_location_text_bare(&root, Path::new("../x")),
+            "../x",
+            "a parent-relative file keeps its spelling"
+        );
     }
 
     #[test]

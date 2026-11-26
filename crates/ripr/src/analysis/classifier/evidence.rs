@@ -2239,35 +2239,70 @@ impl ClassifiedProbeEvidence {
                 stage
             }
         };
-        let assigned_field_weakly_read =
-            matches!(context.probe.family, ProbeFamily::FieldConstruction)
-                && context.owner_fn.is_some_and(|owner| {
-                    crate::analysis::classify::assigned_field_of(
-                        owner,
-                        context.probe,
-                        context.index,
-                    )
-                    .is_some_and(|path| {
-                        // #11870: every test that runs the owner, not those
-                        // related by file or name proximity alone.
-                        let tests: Vec<&TestSummary> = context
-                            .related_tests
-                            .iter()
-                            .filter(|(_, reason)| reason.establishes_reach(true))
-                            .map(|(test, _)| *test)
-                            .collect();
-                        crate::analysis::classify::assigned_field_gap_is_placed(
-                            owner,
-                            &context.probe.expression,
-                            &path,
-                            &tests,
-                            context.index,
-                        )
-                    })
-                });
+        // #11870: every test that runs the owner, not those related by file
+        // or name proximity alone.
+        let reaching_tests = || -> Vec<&TestSummary> {
+            context
+                .related_tests
+                .iter()
+                .filter(|(_, reason)| reason.establishes_reach(true))
+                .map(|(test, _)| *test)
+                .collect()
+        };
+        let assigned_path = context
+            .owner_fn
+            .filter(|_| matches!(context.probe.family, ProbeFamily::FieldConstruction))
+            .and_then(|owner| {
+                crate::analysis::classify::assigned_field_of(owner, context.probe, context.index)
+                    .map(|path| (owner, path))
+            });
+        let assigned_field_weakly_read = assigned_path.as_ref().is_some_and(|(owner, path)| {
+            crate::analysis::classify::assigned_field_gap_is_placed(
+                owner,
+                &context.probe.expression,
+                path,
+                &reaching_tests(),
+                context.index,
+            )
+        });
+        // RIPR-SPEC-0228 example 5 and Decision 3 (#6485): when every test
+        // that runs the owner observes nothing after the call, no reaching
+        // test holds a discriminator, however a file neighbour asserts on
+        // other fields. Observe and discriminate read `no`, so the class is
+        // `reachable_unrevealed`, not a weak discriminator. "Every test" needs
+        // the complete workspace index: a changed-files-only index can omit an
+        // untouched test that runs the owner and checks the field.
+        let assigned_field_unread = !reach_ruled_out
+            && context.workspace_complete
+            && !assigned_field_weakly_read
+            && assigned_path.as_ref().is_some_and(|(owner, path)| {
+                crate::analysis::classify::assigned_field_is_unread(
+                    owner,
+                    &context.probe.expression,
+                    path,
+                    &reaching_tests(),
+                    context.index,
+                )
+            });
         let infect = unreached(infect, "activate");
         let observe = unreached(observe, "observe");
         let discriminate = unreached(discriminate, "discriminate");
+        let (observe, discriminate) = if assigned_field_unread {
+            (
+                StageEvidence::new(
+                    StageState::No,
+                    Confidence::Medium,
+                    "No test that runs the owner checks anything after the call, so nothing observes the written field",
+                ),
+                StageEvidence::new(
+                    StageState::No,
+                    Confidence::Medium,
+                    "No assertion found on the tests that run the owner",
+                ),
+            )
+        } else {
+            (observe, discriminate)
+        };
 
         // #1715: a complete expression identifies the changed `?`, but an
         // equality for another error exit cannot certify that propagation path.

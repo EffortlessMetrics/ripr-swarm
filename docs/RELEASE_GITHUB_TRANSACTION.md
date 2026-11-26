@@ -1,7 +1,7 @@
 # GitHub release transaction
 
 Owner: [ripr#1644](https://github.com/EffortlessMetrics/ripr/issues/1644).
-Status: decision core only. Nothing in this slice reads GitHub or writes to it.
+Status: decision core and read-only observer. Nothing here writes to GitHub.
 
 The transaction publishes one tag, one release and one exact set of assets for
 one release candidate. It never replaces, moves or deletes a public object, and
@@ -9,24 +9,63 @@ it resumes only when everything already present is exact.
 
 ## What exists
 
-`xtask/src/release_github_transaction/` holds three parts:
+`xtask/src/release_github_transaction/` holds four parts:
 
 | Part | Role |
 | --- | --- |
 | `model.rs` | The typed request and the reasons it can be refused |
 | `inventory.rs` | Classification of observed tag, release, asset and provenance state |
 | `plan.rs` | `decide`: the single next step, completion, or a terminal stop |
+| `observe.rs` | The read-only GitHub observer that produces an inventory |
 
-`cargo xtask release-github-transaction-plan --request <request.json>
---authorization <authorization.json> --inventory <inventory.json>` evaluates
-supplied files and prints the decision as JSON with
+`cargo xtask release-github-transaction-observe --request <request.json>`
+reads GitHub and prints the inventory. `cargo xtask
+release-github-transaction-plan --request <request.json> --authorization
+<authorization.json> --inventory <inventory.json>` evaluates supplied files
+and prints the decision as JSON with
 `schema: ripr.release.github_transaction.decision.v1`. It exits nonzero for a
 stop.
 
-Not built yet: the transport that observes GitHub and performs a step, the
-loop that drives steps to completion with a receipt, and the retirement of
+Not built yet: the transport that performs a step,
+the loop that drives steps to completion with a receipt, and the retirement of
 `release-upload-assets`, which still creates a release on any failed view and
 uploads with `--clobber`. Do not use that command for a release.
+
+## Observation
+
+The observer runs `gh api --hostname github.com --method GET` and, for
+provenance, `gh attestation verify`. Neither writes to GitHub. It refuses a request with violations before any read.
+
+| Read | Reported as |
+| --- | --- |
+| `repos/<repo>` does not answer this repository with `permissions.push = true` | tag and releases `unavailable`; nothing else is read |
+| Tag ref answers 404 | `absent` |
+| Tag ref points at a tag object whose target is a commit | `present`, annotated, with that tag object's id and that commit |
+| Tag ref points straight at a commit, or at a tag of a tag | `present`, not annotated |
+
+The plan compares the reported tag object id with the authorization's
+`expected_tag_object`, so another annotated tag at the candidate is a conflict.
+| Every release whose tag name matches ignoring case, drafts included | listed, with every asset from the paged asset endpoint |
+| An expected asset, fully uploaded, downloaded with the listed length | SHA-256 of the downloaded bytes |
+| An expected asset that is still uploading, fails to download, or downloads with another length | bytes `unavailable` |
+| An asset the request does not expect | listed by name, not downloaded |
+| Any other status, no answer, unparseable JSON, a missing field, or a listing that does not end within 50 pages | `unavailable` |
+
+The write-permission check exists because GitHub answers 404 for a repository
+a token cannot read and omits draft releases for a token that cannot write.
+Without it a weak token would read an existing draft as absent.
+
+Provenance is checked with `gh attestation verify` over the downloaded bytes
+of a subject, and only when exactly one asset of that exact name downloaded
+with the subject's SHA-256. The command binds the repository, the exact
+certificate identity `https://github.com/<signer_workflow>@<source_ref>`
+(`--cert-identity`; `--signer-workflow` would match a regular-expression
+prefix), the source ref, the candidate commit as source digest, and refuses
+self-hosted runners. The bytes are written to a temporary directory readable
+only by the current user, since a draft's assets are not public yet. Its JSON output must also
+name the subject with its digest. Anything else, including a subject that is
+not uploaded yet, is `unavailable`: `gh` does not separate "no attestation"
+from "could not check", so the observer never reports `missing`.
 
 ## Request
 
@@ -44,6 +83,9 @@ the ordered expected subjects with size and SHA-256.
   subject's `kind` is one of the GitHub asset classes a GitHub authorization
   packet may carry: `server_archive`, `server_manifest`, `checksums`, `vsix`,
   `attestation_bundle`.
+- `provenance.signer_workflow` is `<repository>/.github/workflows/<file>.yml`
+  and `provenance.source_ref` is `refs/heads/<name>` or `refs/tags/<name>`.
+  The signing run's commit must be the candidate.
 - `candidate_tree` is format-checked and bound into the request ID. No
   observation is compared with it: the tag names the commit, and the commit
   names its tree.
@@ -102,9 +144,11 @@ transport lands, the authorization must be built from a live verifier record
 
 Each call reads one fresh inventory and returns at most one step. The
 inventory records the repository and tag name it observed, even when nothing
-was found; an inventory for any other target stops with `inventory_mismatch`
-before classification, so an empty snapshot of another tag cannot read as
-"absent" for this one.
+was found, and the signer workflow and source ref its provenance was verified
+against. An inventory for any other target or provenance policy stops with
+`inventory_mismatch` before classification, so an empty snapshot of another
+tag cannot read as "absent" for this one, and a verdict under one signer
+cannot finalize a release that requires another.
 
 ```text
 tag absent, no release          -> create the tag
@@ -120,6 +164,7 @@ Everything else stops:
 
 | Observation | Stop |
 | --- | --- |
+| The inventory observed another repository, tag or provenance policy than the request names | `inventory_mismatch` |
 | Tag, releases or an asset's bytes could not be read | `remote_unavailable` |
 | Tag is lightweight, at another commit, or another tag object than the authorized one | `remote_conflict` |
 | Authorization profile, kind, request, commit, ref, tag object or subject set differs | `authorization_mismatch` |
@@ -137,7 +182,7 @@ nothing is uploaded to a finalized release.
 
 ## Proof
 
-`cargo test -p xtask release_github_transaction` runs 15 tests. One sweeps all
+`cargo test -p xtask release_github_transaction` runs 25 tests. One sweeps all
 1,000 combinations of tag, release, asset and provenance state the model can
 observe and checks, against the classification alone, that a mutation is
 proposed only when the object it writes is absent and everything present is
@@ -145,6 +190,20 @@ exact. Because the sweep trusts the classification, classification errors are
 caught by the named conflict cases instead: removing the tag-object comparison
 fails the "foreign annotated tag object at the candidate" case.
 
-These tests exercise the decision against stand-in inventories. They do not
-show that a real GitHub read produces a correct inventory; that belongs to the
-transport slice.
+The decision tests use stand-in inventories. The observer tests use scripted
+HTTP answers and check each row of the observation table, including that a
+failed or partial read is never reported as absent or as a shorter list, and
+that bytes other than the subject's are never offered for verification.
+
+Observed against GitHub on 2026-11-22 with gh 2.89.0, read-only: the
+`--include` output shape the parser expects, a 404 for a missing tag ref, and
+an asset download whose SHA-256 matched the digest GitHub lists for it. The
+command was also run end to end against an existing draft release with no
+tag: it reported the tag absent, listed the one draft with its 13 assets, and
+downloaded and hashed only the two the request expected. Not observed: an
+annotated tag, since the repository read had none; whether GitHub returns a
+release body byte-for-byte as submitted, which `body_sha256` depends on; and a
+successful provenance verification. From the machine these checks ran on
+`gh attestation verify` could not initialize a Sigstore verifier, so only its
+refusal path ran, and the JSON shape `names_subject` reads is taken from gh's
+documentation rather than a real verification.

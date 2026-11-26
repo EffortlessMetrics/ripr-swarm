@@ -189,10 +189,13 @@ receipt strength, and currentness as separate facts:
 - That diff's base is inferred the way a bare `ripr check` infers it, through
   the shared base resolver (#11246), so a change committed on a branch scopes
   repair like the same change left uncommitted (already true before #11246;
-  pinned by regression tests). Inference only narrows: when
-  no base resolves, or nothing differs from the inferred base (for example on
-  the default branch itself), the selection stays unscoped and the refusal
-  says first that ripr could not tell which lines changed. `--base REF`, as on
+  pinned by regression tests). On a clean checkout of the default branch,
+  where bare human `ripr check` analyzes the last commit, repair reads that
+  same range; the decision is check's own, so repair rescopes exactly when
+  check does (#16082). Inference only narrows: when no base resolves, or
+  nothing differs from the inferred base and check does not rescope (for
+  example a root commit on the default branch), the selection stays unscoped
+  and the refusal says first that ripr could not tell which lines changed. `--base REF`, as on
   `ripr check`, names the base explicitly and wins over inference; it is
   refused together with an item, which is never scoped. The note leads a
   refusal (including the zero-seam one). An unscoped menu or single start

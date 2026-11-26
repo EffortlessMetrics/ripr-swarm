@@ -458,8 +458,26 @@ Two pattern terms are used below.
    payload (`Err(1..=5)`) assigns `broad_error` / weak. At steps 0, 1 and
    5, an or-pattern that is not irrefutable but has alternatives on both
    sides (`Ok` and `Err`, or `Some` and `None`) assigns `relational_check` /
-   weak, because it does not observe the side (`Ok(_) | Err(E::X)`); any
-   other or-pattern reads as its weakest alternative. Any other pattern
+   weak, because it does not observe the side (`Ok(_) | Err(E::X)`). An
+   or-pattern whose alternatives all pin a value (`4 | 5`,
+   `Mode::A | Mode::B`, `Some(3 | 4)`) accepts each of them, so, like the
+   disjunction in rule 1, it assigns `relational_check` / weak, or
+   `broad_error` / weak when every alternative is an `Err(..)` pin
+   (`Err(E::A) | Err(E::B)`, `Err(E::A | E::B)`) (#16286); a guard that pins
+   a value still decides first (decision 7). Any other or-pattern reads as
+   its weakest alternative. A whole `matches!` that an equality macro
+   compares with a boolean literal at positive polarity (rule 1:
+   `assert_eq!(matches!(..), true)` in either operand order, through
+   comments, grouping parentheses and a block that holds only the operand)
+   asserts the pattern, so it takes this rule's reading as the whole
+   condition of `assert!` does (#16290). `assert_ne!` stays an inequality
+   macro whatever the literal, so rule 1 keeps
+   `assert_ne!(matches!(..), false)` weak even for a pinned pattern. An
+   equality assertion that compares a boolean local with a boolean literal
+   (`let ok = value > 0; assert_eq!(ok, true);`) asserts the local's
+   initializer, so it takes the weaker of its own reading and the reading of
+   the same assertion with the initializer written in place, when the test
+   binds the name once with a plain immutable `let` (#16296). Any other pattern
    stays `exact_value` only when it pins a value: it contains a literal
    outside a range, a constant, or a variant of an enum shown to have more
    than one variant (the `Option` and `Result` constructors are read as

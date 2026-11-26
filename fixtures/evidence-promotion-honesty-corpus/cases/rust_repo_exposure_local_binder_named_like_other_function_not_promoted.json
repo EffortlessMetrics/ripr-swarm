@@ -1,0 +1,27 @@
+{
+  "id": "rust_repo_exposure_local_binder_named_like_other_function_not_promoted",
+  "language": "rust",
+  "tier": "pure",
+  "source_report": "fixtures/evidence-promotion-honesty-corpus/reports/rust-repo-exposure-local-binder-named-like-other-function.json",
+  "report_subject": "fixtures/evidence-promotion-honesty-corpus/repo-exposure-subjects/local-binder-named-like-other-function",
+  "vector": "bare_call_of_a_test_local_closure_named_like_another_function_cannot_credit_that_function",
+  "assertions": [
+    {
+      "type": "expected_repo_seam_grip",
+      "owner": "src/lib.rs::unrelated::dt",
+      "expression": "0",
+      "grip_class": "opaque",
+      "reach": "weak"
+    },
+    {
+      "type": "expected_repo_seam_related_test",
+      "owner": "src/lib.rs::unrelated::dt",
+      "expression": "0",
+      "test": "closure_binder",
+      "file": "src/lib.rs",
+      "line": 14,
+      "oracle_strength": "strong",
+      "relation_reason": "same_test_file"
+    }
+  ]
+}

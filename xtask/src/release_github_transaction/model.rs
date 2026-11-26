@@ -66,6 +66,17 @@ pub(crate) struct WithheldChannels {
     pub(crate) open_vsx: bool,
 }
 
+/// The identity every subject's source provenance attestation must carry.
+/// The source commit is the request's `candidate_sha`.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct Provenance {
+    /// `<owner>/<repo>/.github/workflows/<file>` of the workflow that signed.
+    pub(crate) signer_workflow: String,
+    /// Fully qualified git ref the signing run was started from.
+    pub(crate) source_ref: String,
+}
+
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct GitHubReleaseTransactionRequest {
@@ -87,6 +98,7 @@ pub(crate) struct GitHubReleaseTransactionRequest {
     pub(crate) stable_decision_sha256: Option<String>,
     pub(crate) subject_inventory_sha256: String,
     pub(crate) subjects: Vec<ExpectedSubject>,
+    pub(crate) provenance: Provenance,
     pub(crate) withheld_channels: WithheldChannels,
 }
 
@@ -97,7 +109,7 @@ pub(crate) fn is_hex(value: &str, len: usize) -> bool {
             .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
 }
 
-fn is_stable_version(value: &str) -> bool {
+pub(crate) fn is_stable_version(value: &str) -> bool {
     let mut parts = value.split('.');
     let numeric = |part: Option<&str>| {
         part.is_some_and(|part| {
@@ -226,6 +238,30 @@ impl GitHubReleaseTransactionRequest {
                     violations.push("stable requires a 64-hex stable_decision_sha256".to_string());
                 }
             }
+        }
+        let workflow_ok = self
+            .provenance
+            .signer_workflow
+            .strip_prefix(&format!("{}/.github/workflows/", self.repository))
+            .is_some_and(|file| {
+                (file.ends_with(".yml") || file.ends_with(".yaml")) && valid_subject_name(file)
+            });
+        if !workflow_ok {
+            violations.push(
+                "provenance.signer_workflow must be <repository>/.github/workflows/<file>.yml"
+                    .to_string(),
+            );
+        }
+        let source_ref = &self.provenance.source_ref;
+        let ref_ok = ["refs/heads/", "refs/tags/"].iter().any(|prefix| {
+            source_ref
+                .strip_prefix(prefix)
+                .is_some_and(|name| !name.is_empty() && name.split('/').all(valid_subject_name))
+        });
+        if !ref_ok {
+            violations.push(
+                "provenance.source_ref must be refs/heads/<name> or refs/tags/<name>".to_string(),
+            );
         }
         let withheld = &self.withheld_channels;
         if withheld.crates_io || withheld.npm || withheld.vs_marketplace || withheld.open_vsx {

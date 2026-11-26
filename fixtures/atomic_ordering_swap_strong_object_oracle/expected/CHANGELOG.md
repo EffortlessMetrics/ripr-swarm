@@ -256,3 +256,14 @@ Updated:
 - `expected/human-full.txt`
 - `expected/sarif.json`
 - `expected/github.txt`
+
+## Pending — atomic_ordering_swap_strong_object_oracle (20)
+
+Reason:
+RIPR-SPEC-0008: SARIF alert messages are one plain line (#15374)
+
+Command:
+`cargo xtask goldens bless atomic_ordering_swap_strong_object_oracle --reason "..."`
+
+Updated:
+- `expected/sarif.json`

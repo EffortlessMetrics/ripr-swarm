@@ -15,8 +15,13 @@ use std::collections::{BTreeMap, BTreeSet};
 use crate::analysis::extract::mask_comments_and_strings;
 use crate::domain::{OracleKind, OracleStrength};
 
-use super::arguments::{complete_macro_arguments, parenthesized_contents};
+use super::arguments::{
+    AssertionComparison, assertion_comparison, complete_macro_arguments, parenthesized_contents,
+};
 use super::classify::OracleClassification;
+use super::patterns::{
+    PatternPolarity, pattern_comparison_polarity, pattern_operand_negations, transparent_operand,
+};
 
 /// The `Option` and `Result` constructors, which only say which side a value
 /// is on.
@@ -36,7 +41,8 @@ enum Reading {
     SideOnly(Side),
     /// A range, or a constructor whose payload is a range.
     Range { err: bool },
-    /// Fixes a shape (a slice length, a tuple of side checks) but no value.
+    /// Fixes a shape (a slice length, a tuple of side checks) but no value,
+    /// or accepts several values (an or-pattern of pins, #16286).
     PinsNothing { err: bool },
     /// Contains a literal, a constant or an unresolved variant.
     Pins,
@@ -322,10 +328,12 @@ fn pattern_pair_classification(
     reading_classification(read_pattern(pattern, decls), guarded)
 }
 
-/// The pattern operand of an `assert_matches!` / `debug_assert_matches!`, or
-/// of a `matches!` that is the whole condition of `assert!`, `debug_assert!`,
-/// `prop_assert!` or `ensure!`. A compound condition is not a pattern
-/// assertion.
+/// The pattern operand of an `assert_matches!` / `debug_assert_matches!`, of
+/// a `matches!` that is the whole condition of `assert!`, `debug_assert!`,
+/// `prop_assert!` or `ensure!`, or of a `matches!` an equality macro
+/// compares with positive polarity (`assert_eq!(matches!(..), true)`,
+/// `assert_ne!(false, matches!(..))`; #16290). A compound condition is not a
+/// pattern assertion.
 fn asserted_pattern(line: &str) -> Option<(String, String)> {
     let pair = |arguments: Vec<String>| match arguments.as_slice() {
         [scrutinee, pattern] => Some((scrutinee.clone(), pattern.clone())),
@@ -336,6 +344,20 @@ fn asserted_pattern(line: &str) -> Option<(String, String)> {
         .find_map(|name| complete_macro_arguments(line, name))
     {
         return pair(arguments);
+    }
+    // RIPR-SPEC-0231 rule 1 owns the polarity: only `== true`, `!= false`
+    // and their negated-literal spellings assert the pattern. Any other
+    // comparison is capped at the inequality strength before this reading.
+    if pattern_comparison_polarity(line) == Some(PatternPolarity::Positive)
+        && let Some(AssertionComparison::Operands { left, right, .. }) = assertion_comparison(line)
+    {
+        let operand = [left, right]
+            .into_iter()
+            .find(|operand| pattern_operand_negations(operand) == Some(0))?;
+        return pair(complete_macro_arguments(
+            transparent_operand(&operand),
+            "matches!",
+        )?);
     }
     let condition = ["assert!", "debug_assert!", "prop_assert!", "ensure!"]
         .into_iter()
@@ -674,9 +696,15 @@ fn or_pattern_classification(
             strength: OracleStrength::Weak,
         });
     }
-    // Otherwise the or-pattern reads as its weakest alternative. An
-    // alternative that pins a value keeps the ordinary chain's (strong)
-    // reading, so only when every alternative pins does the chain decide.
+    // Otherwise the or-pattern reads as its weakest alternative. When every
+    // alternative pins a value, the pattern still accepts several values: a
+    // disjunction that passes when any one alternative holds, so, as for a
+    // `||` (RIPR-SPEC-0231 rule 1), no alternative lends it an exact kind
+    // (#16286). Alternatives that are all `Err(..)` pins are a broad error.
+    if readings.iter().all(|reading| *reading == Reading::Pins) {
+        let err = sides.len() == alternatives.len() && sides.iter().all(|side| *side == Side::Err);
+        return reading_classification(Reading::PinsNothing { err }, guarded);
+    }
     readings
         .into_iter()
         .filter_map(|reading| reading_classification(reading, guarded))
@@ -992,7 +1020,12 @@ fn nested_or_reading(alternatives: &[&str], decls: &LocalDecls) -> Reading {
         .filter(|reading| **reading != Reading::Pins)
         .collect::<Vec<_>>();
     if weaker.is_empty() {
-        Reading::Pins
+        // Every alternative pins, so the pattern accepts several values and
+        // pins none of them (#16286). Alternatives that are all `Err(..)`
+        // pins (`e @ (Err(1) | Err(2))`) stay a broad error; an enclosing
+        // constructor still decides its own side.
+        let err = sides.len() == alternatives.len() && sides.iter().all(|side| *side == Side::Err);
+        Reading::PinsNothing { err }
     } else if let [Reading::SideOnly(side), rest @ ..] = weaker.as_slice()
         && rest
             .iter()
@@ -1352,6 +1385,113 @@ mod tests {
                 RelationalCheck,
                 Weak,
             ),
+            // #16286: an or-pattern whose alternatives all pin accepts each
+            // of them, a disjunction no alternative lends an exact kind.
+            ("assert!(matches!(score(2), 4 | 5))", RelationalCheck, Weak),
+            (
+                "assert!(matches!(mode(), Mode::A | Mode::B))",
+                RelationalCheck,
+                Weak,
+            ),
+            (
+                "assert!(matches!(lookup(1), Some(3 | 4)))",
+                RelationalCheck,
+                Weak,
+            ),
+            (
+                "assert!(matches!(lookup(1), Some(Foo::A | Foo::None)))",
+                RelationalCheck,
+                Weak,
+            ),
+            (
+                "assert!(matches!(lookup(1), Some(3) | Some(4)))",
+                RelationalCheck,
+                Weak,
+            ),
+            ("assert_matches!(score(2), 4 | 5)", RelationalCheck, Weak),
+            (
+                "assert!(matches!(score(2), x @ (4 | 5)))",
+                RelationalCheck,
+                Weak,
+            ),
+            (
+                "assert!(matches!(score(2), 4 | 5 if ready))",
+                RelationalCheck,
+                Weak,
+            ),
+            // All-`Err` alternatives name several errors: a broad error.
+            (
+                "assert!(matches!(check(20), Err(E::A) | Err(E::B)))",
+                BroadError,
+                Weak,
+            ),
+            (
+                "assert!(matches!(check(20), Err(E::A | E::B)))",
+                BroadError,
+                Weak,
+            ),
+            // A grouped or-pattern keeps its error side through a binding;
+            // an enclosing `Ok` decides its own side.
+            (
+                "assert!(matches!(check(20), e @ (Err(1) | Err(2)) if ready))",
+                BroadError,
+                Weak,
+            ),
+            (
+                "assert!(matches!(check(20), r @ (Ok(1) | Err(2)) if ready))",
+                RelationalCheck,
+                Weak,
+            ),
+            (
+                "assert!(matches!(nested(), Ok(Err(1) | Err(2))))",
+                RelationalCheck,
+                Weak,
+            ),
+            // #16290: an equality macro that compares a whole `matches!` with
+            // a boolean literal at positive polarity asserts the pattern, in
+            // either operand order and through parentheses.
+            (
+                "assert_eq!(matches!(check(5), Ok(_)), true)",
+                SmokeOnly,
+                Smoke,
+            ),
+            (
+                "assert_eq!(true, matches!(score(2), 4 | 5))",
+                RelationalCheck,
+                Weak,
+            ),
+            (
+                "assert_eq!((matches!(value, _)), (true))",
+                RelationalCheck,
+                Weak,
+            ),
+            (
+                "assert_ne!(matches!(value, _), false)",
+                RelationalCheck,
+                Weak,
+            ),
+            (
+                "debug_assert_eq!(matches!(check(20), Err(_)), true)",
+                BroadError,
+                Weak,
+            ),
+            // Comments, groups and a block holding only the operand are
+            // transparent to the compared pattern.
+            (
+                "assert_eq!((matches!(score(2), 4 | 5)) /* either */, true)",
+                RelationalCheck,
+                Weak,
+            ),
+            (
+                "assert_eq!({ matches!(score(2), 4 | 5) }, true)",
+                RelationalCheck,
+                Weak,
+            ),
+            (
+                "assert_eq!(true, /* note */ { (matches!(value, _)) })",
+                RelationalCheck,
+                Weak,
+            ),
         ];
         for (text, kind, strength) in weakened {
             let actual = pattern_assertion_classification(text);
@@ -1377,7 +1517,6 @@ mod tests {
             "assert!(matches!(lookup(1), Some(\"a\")))",
             "assert!(matches!(make(), Only::Value))",
             "assert!(matches!(cfg(), Cfg { .. }))",
-            "assert!(matches!(check(20), Err(E::A) | Err(E::B)))",
             "assert!(matches!(check(5), Ok(_)) && score(2) == 4)",
             "assert_eq!(check(20), Err(e))",
             // A guard equating the scrutinee, a binding, or a field /
@@ -1398,9 +1537,20 @@ mod tests {
             "assert!(matches!(mode(), Mode::None))",
             "assert!(matches!(reply(), Reply::Ok(_)))",
             "assert!(matches!(reply(), Reply::Err(_)))",
-            "assert!(matches!(lookup(1), Some(Foo::A | Foo::None)))",
-            "assert!(matches!(lookup(1), Some(3 | 4)))",
             "assert!(matches!(lookup(1), Some(3 /* three */)))",
+            // A pinned element beside an or-pattern still pins (#16286), and
+            // a guard that pins a value decides as before (decision 7).
+            "assert!(matches!(pair(), (3, 4 | 5)))",
+            "assert!(matches!(value, 4 | 5 if value == 4))",
+            // A pinned compared pattern keeps the chain's reading, and a
+            // comparison that is not positive is rule 1's, not this one's.
+            "assert_eq!(matches!(check(5), Ok(5)), true)",
+            "assert_eq!(matches!(check(5), Ok(_)), false)",
+            "assert_ne!(matches!(check(5), Ok(_)), true)",
+            "assert_eq!(matches!(check(5), Ok(_)), flag)",
+            "assert_eq!({ matches!(check(5), Ok(_)) } /* no */, false)",
+            // A block with a statement before its tail is not transparent.
+            "assert_eq!({ let _ = 1; matches!(value, _) }, true)",
         ] {
             let actual = pattern_assertion_classification(text);
             if actual.is_some() {

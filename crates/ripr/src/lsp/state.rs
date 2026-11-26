@@ -1141,6 +1141,12 @@ pub(super) struct AnalysisSnapshot {
     /// Invoking `ripr.refreshDiagnostics` produces a new snapshot with
     /// `seams_deferred = false` and the full seam inventory.
     pub(super) seams_deferred: bool,
+    /// Whether a full refresh under this snapshot's configuration builds the
+    /// spot inventory (full diagnostic profile, spot diagnostics enabled,
+    /// Rust enabled; #13636). A deferred snapshot only promises that
+    /// "ripr: Refresh Full Analysis" brings repair spots back when this is
+    /// true; otherwise the refresh would leave them out as well.
+    pub(super) seam_inventory_on_full_refresh: bool,
     /// Partial diff-scope run state (RIPR-PROP-0019, #1999). `Some` only when
     /// the diff exceeded the partial-selection budget and the run analyzed a
     /// deterministic bounded partition (`limited_partial_scope`). The run
@@ -1698,6 +1704,12 @@ pub(super) enum DocumentStalenessReason {
     /// saved, or rewritten on disk and reloaded, after the last analysis.
     /// Saving again cannot help; the next analysis of the saved file can.
     SavedContentNotYetAnalyzed,
+    /// The document lies outside the selected workspace root, so no
+    /// analysis of that root can ever record it; saving or refreshing cannot
+    /// lift the pause. Never stored by the ledger: the backend discloses a
+    /// stored `NoAnalyzedSavedContent` under this reason when the document's
+    /// path is outside the effective root (`Backend::disclosed_quarantine`).
+    OutsideAnalyzedRoot,
 }
 
 impl DocumentStalenessReason {
@@ -1710,6 +1722,7 @@ impl DocumentStalenessReason {
             Self::DocumentStoreLimitReached => "document_store_limit_reached",
             Self::NoAnalyzedSavedContent => "no_analyzed_saved_content",
             Self::SavedContentNotYetAnalyzed => "saved_content_not_yet_analyzed",
+            Self::OutsideAnalyzedRoot => "outside_analyzed_root",
         }
     }
 
@@ -1728,6 +1741,7 @@ impl DocumentStalenessReason {
             Self::SavedContentNotYetAnalyzed => {
                 "the saved file changed since ripr last analyzed it"
             }
+            Self::OutsideAnalyzedRoot => "this file is outside the analyzed workspace root",
         }
     }
 
@@ -5015,6 +5029,7 @@ mod tests {
             diagnostic_uri_index: None,
             delivery_selection: None,
             seams_deferred: false,
+            seam_inventory_on_full_refresh: false,
             partial_scope: None,
             component_outcomes: Vec::new(),
             out_of_scope_test_file_findings: 0,
@@ -5054,6 +5069,7 @@ mod tests {
             diagnostic_uri_index: None,
             delivery_selection: None,
             seams_deferred: false,
+            seam_inventory_on_full_refresh: false,
             partial_scope: None,
             component_outcomes: Vec::new(),
             out_of_scope_test_file_findings: 0,
@@ -5103,6 +5119,7 @@ mod tests {
             diagnostic_uri_index: None,
             delivery_selection: None,
             seams_deferred: false,
+            seam_inventory_on_full_refresh: false,
             partial_scope: None,
             component_outcomes: Vec::new(),
             out_of_scope_test_file_findings: 0,
@@ -5160,6 +5177,7 @@ mod tests {
             diagnostic_uri_index: None,
             delivery_selection: None,
             seams_deferred: false,
+            seam_inventory_on_full_refresh: false,
             partial_scope: None,
             component_outcomes: Vec::new(),
             out_of_scope_test_file_findings: 0,

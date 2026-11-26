@@ -196,7 +196,7 @@ pub fn fixture_git_ok_with_deadline(
 // targets that only consume `fixture_git_ok` (see .ripr/allow-attributes.txt).
 #[allow(
     dead_code,
-    reason = "consumed by the generated-workflow and cli_smoke targets only"
+    reason = "consumed by the generated-workflow, cli_smoke and agent_packet_json_schema targets only"
 )]
 pub fn fixture_git_output(root: &Path, args: &[&str]) -> Result<String, String> {
     if fixture_subcommand(args) == Some("commit") {

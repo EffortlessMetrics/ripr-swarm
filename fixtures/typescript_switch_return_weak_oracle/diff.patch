@@ -1,0 +1,24 @@
+diff --git a/src/price.ts b/src/price.ts
+--- a/src/price.ts
++++ b/src/price.ts
+@@ -3,7 +3,7 @@ export function price(kind: string): number {
+     case 'gold':
+       return 10;
+     case 'silver':
+-      return 5;
++      return 7;
+     default:
+       return 0;
+   }
+diff --git a/src/rate.ts b/src/rate.ts
+--- a/src/rate.ts
++++ b/src/rate.ts
+@@ -3,7 +3,7 @@ export function rate(kind: string): number {
+     case 'gold':
+       return 10;
+     case 'silver':
+-      return 5;
++      return 7;
+     default:
+       return 0;
+   }

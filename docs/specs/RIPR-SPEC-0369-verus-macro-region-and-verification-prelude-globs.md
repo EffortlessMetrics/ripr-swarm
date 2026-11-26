@@ -160,7 +160,10 @@ unlocked crate, a missing or unreadable lockfile, a newer, older or unknown
 version, a path, git or other-registry package, a workspace member of the same
 name, or several locked versions of the crate refuse credit with the same named
 macro-binding refusal as before this spec; the refusal text does not name the
-version. A future release that exports a trusted assertion name is never
+version. Since #16060 that refusal covers only the names a glob can bind
+(`vec!`, `format!`, the claims and expect-test macros, `json!`): a bare core
+prelude assertion is credited beside any glob, audited or not (see "A glob
+cannot rebind a core prelude macro" below). A future release that exports a trusted assertion name is never
 covered by this entry until it is re-read and added.
 
 New-audit procedure: re-read the published crate's prelude export list at the
@@ -232,6 +235,60 @@ and does not consult the edition. In a 2015-edition crate a non-root file's
 `extern crate dep as name;` could hide a foreign glob there. That is an accepted
 residual; the scan has no edition input.
 
+### A glob cannot rebind a core prelude macro (#16060)
+
+rustc rejects a bare macro call whose name both a glob import and the macro
+prelude supply: `error[E0659]: ... is ambiguous` ("a conflict between a name
+from a glob import and an outer scope"). This holds in every edition (2015,
+2018, 2021 and 2024 were checked with rustc 1.100), for a glob at file level,
+in a module reached through `use super::*` or another glob chain, for a glob
+of a workspace module or an outside crate, and under `#![no_std]`, whose
+prelude keeps `core`'s macros. A glob that brings an attribute named `test`
+fails the same way for `#[test]`, and so does a glob that brings a module
+named like an extern-prelude crate for a qualified `pretty_assertions::`
+call.
+
+So in a crate that compiles, a glob cannot silently replace the trusted names
+of `core`'s macro prelude at a bare call: `assert`, `assert_eq`, `assert_ne`,
+`cfg`, `column`, `concat`, `debug_assert`, `debug_assert_eq`,
+`debug_assert_ne`, `env`, `file`, `format_args`, `include_bytes`,
+`include_str`, `line`, `matches`, `module_path`, `option_env`, `panic`,
+`stringify`, `todo`, `unimplemented`, `unreachable`, `write` and `writeln`
+(each checked with rustc beside a glob, std and `#![no_std]`). The list is
+one code constant, `CORE_PRELUDE_MACROS`, and a test requires every trusted
+name to sit either there or on the glob-bindable side. A foreign glob reports
+no binding site for them, so it no longer refuses a test's standard
+assertions, a test that reads `env!` or `concat!`, or makes a standard
+wrapper call (`assert!` around `assert_eq!`) a named wrapper. It still
+reports every other trusted name: `vec`, `format`, `print`, `println`,
+`eprint`, `eprintln` and `dbg`, which a `#![no_std]` prelude lacks, the
+claims and expect-test macros, and `json`. The rule covers bare calls beside
+a glob only: an explicit `use std::concat;` keeps its import site, since in a
+`#![no_std]` target a glob may supply a module named `std`. The
+assertion-family imports keep the #15263 reading.
+
+The rule does not reach a scope under `#[no_implicit_prelude]`, where a glob
+does bind the name without error; that attribute reports its own site for
+every trusted name. An explicit import, a `macro_rules!` definition, a
+`#[macro_use]` crate and an item-position macro keep their sites. `#![no_core]`
+crates (unstable, rustc-internal) are not modeled.
+
+An item-position `include!` (at a file's top level or in an inline module,
+any spelling: `std::include!`, `r#include!`) whose path is not one string
+literal reports a site for every trusted name. A literal path names a
+workspace file, which the index reads and the include resolver composes. The included file, often a build-script output read through
+`concat!(env!("OUT_DIR"), ..)`, may hold `macro_rules! assert_eq`, which
+shadows the prelude macro for the code after it without any ambiguity
+error. Before this rule a foreign glob in the same crate hid that gap (serde's
+`serde_core/src/lib.rs`, verdict corpus case `serde-format-u8-hundreds`). An
+expression-position `include!` is a block inside its function and is read
+there. The stored per-file binding candidates read such a file as `Any`, so
+the file-fact cache moves to 1.66.
+
+A workspace with a foreign glob no longer saturates the binding-site scan from
+the glob alone, so the scan reads the rest of the index when no other site
+binds the core names.
+
 ### Audited pass-through wrappers confine their argument mentions (#14116)
 
 A trusted name mentioned in another macro's arguments is a binding site for
@@ -246,6 +303,10 @@ arguments only into generated function bodies, closures and expressions:
   `prop_oneof!` (the same crate): expressions over the caller's tokens.
 - `serde_json::json!` (the audited literal `json!` identity): an expression
   over the caller's tokens.
+- The standard `pin!` (`std::pin::pin!`, the same macro as
+  `core::pin::pin!`): it places its argument in an expression,
+  `Pin { __pointer: &mut { $value } }`. It ships with the toolchain, so it
+  needs no locked-version audit.
 - `tokio::select!` (tokio 1.54.1 `src/macros/select.rs`): branch patterns,
   futures, `if` preconditions, handlers and the `else` arm are captured as
   `pat`, `expr` and `block` fragments and placed in a `match`, a tuple and
@@ -277,6 +338,18 @@ test elsewhere, when all of these hold:
   of the root name unless the path is absolute); or it is a bare
   `proptest!`, or a bare call of another of those wrappers, whose module (the file, or the inline module holding the call)
   has an admitted exact `proptest::prelude::*` glob.
+- Or it is the standard `pin!`, spelled `std::pin::pin!` or
+  `core::pin::pin!` (either with a leading `::`) with that root not bound
+  to another package by any manifest, not shadowed by a workspace package,
+  module or rename, and not taken over by a plain import of the root name
+  unless the path is absolute. Or it is a bare
+  `pin!` whose module holds exactly one import binding `pin` anywhere in the
+  file: a plain `use std::pin::pin;` or `use core::pin::pin;` (the root
+  under the same shadowing conditions), with no rename. The file must have
+  no `macro_rules!` or `macro` named `pin`, no glob in a block or inline
+  module between the call and its module, and no item-position macro call
+  there. A pasting `pin` definition anywhere reports its own wrapper
+  redefinition site, since textual scope outranks the import.
 - For a bare `proptest!`: the file has no plain import and no `macro_rules!`
   or `macro` of any of the wrapper names above, no glob in a block or inline
   module between the call and its module (an inner glob would shadow the
@@ -334,12 +407,19 @@ every one of its calls, inside the confined call too, a workspace-wide site
 for what its arguments mention.
 
 A `macro_rules!` or `macro` definition that takes one of the wrapper names
-and whose transcriber pastes caller tokens (any `$`) is itself a binding site
+and whose transcriber pastes caller tokens that may carry an item or
+statement is itself a binding site
 for every trusted name in its crate
 (`WrapperRedefinition`): through textual scope it may replace the audited
 macro for calls below it, including in child modules declared in other files,
-which the calling file cannot see. A definition whose transcribers paste
-nothing adds nothing a call's arguments can bind and reports no such site.
+which the calling file cannot see. A transcriber pastes such tokens when it
+names a metavariable that its arm's matcher does not declare as `expr`,
+`expr_2021`, `ty`, `pat`, `pat_param`, `literal`, `lifetime` or `block`
+(`$crate` and a repetition's `$(` excepted); rustc pastes those fragments as
+one node, so a definition inside one stays scoped to it. A definition whose
+transcribers paste nothing, or only those fragments, adds nothing a call's
+arguments can bind and reports no such site. A `macro` item's body is read
+whole, so any `$` in it counts.
 
 Any other spelling, version, source, argument shape or local redefinition
 keeps the workspace-wide argument site. A test inside the call keeps the

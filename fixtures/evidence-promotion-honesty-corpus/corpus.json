@@ -148,10 +148,18 @@
       "report": "fixtures/evidence-promotion-honesty-corpus/reports/rust-repo-exposure-proximity-other-function.json",
       "cache_schema_version": "1.176",
       "reason": "the claims field-construction pin (#12394, #12864) and the multiline Python receiver rebind rule (#9992) judge none of this Rust capture's seams; its judged seams are unchanged and it is held at its recorded generation until the next corpus recapture"
+    },
+    {
+      "report": "fixtures/evidence-promotion-honesty-corpus/reports/rust-repo-exposure-unasserted-predicate-boundary.json",
+      "cache_schema_version": "1.184",
+      "reason": "captured at 1.184 by 29f3917caa before the branch merged the 1.189 generation; the regeneration guard judges none of the fields that bump touched for this subject, so its judged seams are unchanged and it is held at its recorded generation until the next corpus recapture"
     }
   ],
   "report_digest_exemptions": [],
   "report_digest_required": [
+    "fixtures/evidence-promotion-honesty-corpus/reports/rust-repo-exposure-macro-held-owner-result-local.json",
+    "fixtures/evidence-promotion-honesty-corpus/reports/rust-repo-exposure-macro-held-owner-call.json",
+    "fixtures/evidence-promotion-honesty-corpus/reports/rust-repo-exposure-manifest-rebound-assertion-root.json",
     "fixtures/evidence-promotion-honesty-corpus/reports/rust-repo-exposure-lib-test-false-skipped.json",
     "fixtures/evidence-promotion-honesty-corpus/reports/rust-repo-exposure-branch-local-else-only.json",
     "fixtures/evidence-promotion-honesty-corpus/reports/rust-repo-exposure-branch-local-rebound-let.json",
@@ -200,9 +208,24 @@
     "fixtures/evidence-promotion-honesty-corpus/reports/rust-repo-exposure-panic-marker-neutral.json",
     "fixtures/evidence-promotion-honesty-corpus/reports/rust-repo-exposure-test-local-rival-bare-use.json",
     "fixtures/evidence-promotion-honesty-corpus/reports/rust-repo-exposure-test-local-rival-glob-use.json",
+    "fixtures/evidence-promotion-honesty-corpus/reports/rust-repo-exposure-renamed-other-function.json",
+    "fixtures/evidence-promotion-honesty-corpus/reports/rust-repo-exposure-renamed-other-function-qualified-control.json",
+    "fixtures/evidence-promotion-honesty-corpus/reports/rust-repo-exposure-nested-block-renamed-other-function.json",
+    "fixtures/evidence-promotion-honesty-corpus/reports/rust-repo-exposure-nested-block-renamed-other-function-outer-call-control.json",
+    "fixtures/evidence-promotion-honesty-corpus/reports/rust-repo-exposure-file-module-nested-block-renamed-other-function.json",
+    "fixtures/evidence-promotion-honesty-corpus/reports/rust-repo-exposure-file-module-nested-block-renamed-other-function-outer-call-control.json",
+    "fixtures/evidence-promotion-honesty-corpus/reports/rust-repo-exposure-integration-test-nested-block-renamed-other-function.json",
+    "fixtures/evidence-promotion-honesty-corpus/reports/rust-repo-exposure-integration-test-nested-block-renamed-other-function-sibling-mount-control.json",
+    "fixtures/evidence-promotion-honesty-corpus/reports/rust-repo-exposure-local-binder-named-like-other-function.json",
+    "fixtures/evidence-promotion-honesty-corpus/reports/rust-repo-exposure-local-binder-named-like-owner-block-control.json",
+    "fixtures/evidence-promotion-honesty-corpus/reports/rust-repo-exposure-matches-or-pattern-of-values.json",
+    "fixtures/evidence-promotion-honesty-corpus/reports/rust-repo-exposure-matches-or-pattern-single-value-control.json",
+    "fixtures/evidence-promotion-honesty-corpus/reports/rust-repo-exposure-matches-compared-with-true.json",
+    "fixtures/evidence-promotion-honesty-corpus/reports/rust-repo-exposure-bool-local-compared-with-true.json",
     "fixtures/evidence-promotion-honesty-corpus/reports/rust-repo-exposure-wrapper-fed-error.json",
     "fixtures/evidence-promotion-honesty-corpus/reports/rust-repo-exposure-guarded-boundary-guard-missing.json",
     "fixtures/evidence-promotion-honesty-corpus/reports/rust-repo-exposure-unselected-match-arm.json",
+    "fixtures/evidence-promotion-honesty-corpus/reports/rust-repo-exposure-unasserted-predicate-boundary.json",
     "fixtures/evidence-promotion-honesty-corpus/reports/rust-repo-exposure-rebound-assert-eq-match-arms.json",
     "fixtures/evidence-promotion-honesty-corpus/reports/rust-repo-exposure-late-assert-eq-definition-match-arms.json"
   ],
@@ -6968,6 +6991,30 @@
       ]
     },
     {
+      "id": "py_match_or_missing_alternative",
+      "language": "python",
+      "tier": "pure",
+      "source_fixture": "fixtures/python_match_or_missing_alternative",
+      "vector": "strong_rows_on_an_unchanged_literal_and_fallback_do_not_observe_the_removed_alternative",
+      "probe_family": "predicate",
+      "assertions": [
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "expected_finding_count",
+          "count": 1
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "expected_class",
+          "class": "weakly_exposed"
+        }
+      ]
+    },
+    {
       "id": "py_unreached_match_arm_no_exposed_credit",
       "language": "python",
       "tier": "pure",
@@ -9556,7 +9603,7 @@
         },
         {
           "type": "expected_class",
-          "class": "no_static_path"
+          "class": "static_unknown"
         },
         {
           "type": "maximum_class",
@@ -12362,6 +12409,141 @@
           "name": "square_area",
           "file": "src/lib.rs",
           "line": 25,
+          "kind": "exact_value",
+          "strength": "strong",
+          "relation_reason": "weak_token_substring"
+        }
+      ]
+    },
+    {
+      "id": "rust_trait_inherent_by_value_twin",
+      "language": "rust",
+      "tier": "pure",
+      "source_fixture": "fixtures/rust_trait_inherent_by_value_twin",
+      "vector": "trait_dispatch_identity_inherent_by_value_twin",
+      "probe_family": "return_value",
+      "assertions": [
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "expected_finding_count",
+          "count": 1
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "expected_class",
+          "class": "static_unknown"
+        },
+        {
+          "type": "expected_related_test",
+          "name": "square_area",
+          "file": "src/lib.rs",
+          "line": 25,
+          "kind": "exact_value",
+          "strength": "strong",
+          "relation_reason": "weak_token_substring"
+        }
+      ]
+    },
+    {
+      "id": "rust_trait_impl_std_method_takes_receiver",
+      "language": "rust",
+      "tier": "pure",
+      "source_fixture": "fixtures/rust_trait_impl_std_method_takes_receiver",
+      "vector": "trait_dispatch_identity_std_method_takes_receiver",
+      "probe_family": "return_value",
+      "assertions": [
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "expected_finding_count",
+          "count": 1
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "expected_class",
+          "class": "static_unknown"
+        },
+        {
+          "type": "expected_related_test",
+          "name": "shelf_count",
+          "file": "src/lib.rs",
+          "line": 37,
+          "kind": "exact_value",
+          "strength": "strong",
+          "relation_reason": "weak_token_substring"
+        }
+      ]
+    },
+    {
+      "id": "rust_trait_impl_alias_macro_method",
+      "language": "rust",
+      "tier": "pure",
+      "source_fixture": "fixtures/rust_trait_impl_alias_macro_method",
+      "vector": "trait_dispatch_identity_alias_macro_method",
+      "probe_family": "return_value",
+      "assertions": [
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "expected_finding_count",
+          "count": 1
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "expected_class",
+          "class": "static_unknown"
+        },
+        {
+          "type": "expected_related_test",
+          "name": "square_area",
+          "file": "src/lib.rs",
+          "line": 38,
+          "kind": "exact_value",
+          "strength": "strong",
+          "relation_reason": "weak_token_substring"
+        }
+      ]
+    },
+    {
+      "id": "rust_trait_impl_constructed_receiver",
+      "language": "rust",
+      "tier": "pure",
+      "source_fixture": "fixtures/rust_trait_impl_constructed_receiver",
+      "vector": "trait_dispatch_identity_constructed_receiver",
+      "probe_family": "return_value",
+      "assertions": [
+        {
+          "type": "expected_finding_count",
+          "count": 1
+        },
+        {
+          "type": "expected_class",
+          "class": "exposed"
+        },
+        {
+          "type": "expected_related_test",
+          "name": "square_area",
+          "file": "src/lib.rs",
+          "line": 34,
+          "kind": "exact_value",
+          "strength": "strong",
+          "relation_reason": "direct_owner_call"
+        },
+        {
+          "type": "expected_related_test",
+          "name": "line_area",
+          "file": "src/lib.rs",
+          "line": 39,
           "kind": "exact_value",
           "strength": "strong",
           "relation_reason": "weak_token_substring"
@@ -21759,6 +21941,20 @@
       ]
     },
     {
+      "id": "rust_bench_rejected_workspace",
+      "language": "rust",
+      "tier": "pure",
+      "source_fixture": "fixtures/rust_bench_rejected_workspace",
+      "vector": "unchanged_bench_test_in_package_rejected_by_enclosing_workspace",
+      "probe_family": "return_value",
+      "assertions": [
+        { "type": "must_not_report_clean" },
+        { "type": "expected_finding_count", "count": 1 },
+        { "type": "must_not_promote" },
+        { "type": "expected_class", "class": "no_static_path" }
+      ]
+    },
+    {
       "id": "rust_masked_comparison_return",
       "language": "rust",
       "tier": "pure",
@@ -21974,6 +22170,91 @@
           "line": 10,
           "kind": "exact_value",
           "strength": "strong",
+          "relation_reason": "direct_owner_call"
+        }
+      ]
+    },
+    {
+      "id": "rust_repo_exposure_manifest_rebound_assertion_root",
+      "language": "rust",
+      "tier": "pure",
+      "source_report": "fixtures/evidence-promotion-honesty-corpus/reports/rust-repo-exposure-manifest-rebound-assertion-root.json",
+      "report_subject": "fixtures/evidence-promotion-honesty-corpus/repo-exposure-subjects/manifest-rebound-assertion-root",
+      "vector": "repo_exposure_constructor_inside_a_manifest_rebound_std_assertion_is_not_credited",
+      "assertions": [
+        {
+          "type": "expected_repo_seam_grip",
+          "owner": "a/src/lib.rs::impl Widget::new",
+          "expression": "Widget { size: 4 }",
+          "grip_class": "propagation_unknown",
+          "reach": "yes"
+        },
+        {
+          "type": "expected_repo_seam_grip",
+          "owner": "a/src/lib.rs::impl Widget::new",
+          "expression": "size: 4",
+          "grip_class": "propagation_unknown",
+          "reach": "yes"
+        },
+        {
+          "type": "expected_repo_seam_related_test",
+          "owner": "a/src/lib.rs::impl Widget::new",
+          "expression": "Widget { size: 4 }",
+          "test": "reads",
+          "file": "a/src/lib.rs",
+          "oracle_strength": "unknown",
+          "relation_reason": "direct_owner_call"
+        }
+      ]
+    },
+    {
+      "id": "rust_repo_exposure_macro_held_owner_call",
+      "language": "rust",
+      "tier": "pure",
+      "source_report": "fixtures/evidence-promotion-honesty-corpus/reports/rust-repo-exposure-macro-held-owner-call.json",
+      "report_subject": "fixtures/evidence-promotion-honesty-corpus/repo-exposure-subjects/macro-held-owner-call",
+      "vector": "repo_exposure_owner_call_held_only_by_an_untrusted_local_macro_is_not_credited",
+      "assertions": [
+        {
+          "type": "expected_repo_seam_grip",
+          "owner": "src/lib.rs::pick",
+          "expression": "Ok(Mode::A)",
+          "grip_class": "propagation_unknown",
+          "reach": "yes"
+        },
+        {
+          "type": "expected_repo_seam_related_test",
+          "owner": "src/lib.rs::pick",
+          "expression": "Ok(Mode::A)",
+          "test": "picks_a",
+          "file": "src/lib.rs",
+          "oracle_strength": "unknown",
+          "relation_reason": "direct_owner_call"
+        }
+      ]
+    },
+    {
+      "id": "rust_repo_exposure_macro_held_owner_result_local",
+      "language": "rust",
+      "tier": "pure",
+      "source_report": "fixtures/evidence-promotion-honesty-corpus/reports/rust-repo-exposure-macro-held-owner-result-local.json",
+      "report_subject": "fixtures/evidence-promotion-honesty-corpus/repo-exposure-subjects/macro-held-owner-result-local",
+      "vector": "repo_exposure_owner_result_local_used_only_by_an_untrusted_local_macro_is_not_credited",
+      "assertions": [
+        {
+          "type": "expected_repo_seam_grip",
+          "owner": "src/lib.rs::pick",
+          "expression": "Ok(Mode::A)",
+          "grip_class": "propagation_unknown",
+          "reach": "yes"
+        },
+        {
+          "type": "expected_repo_seam_related_test",
+          "owner": "src/lib.rs::pick",
+          "expression": "Ok(Mode::A)",
+          "test": "picks_a",
+          "file": "src/lib.rs",
+          "oracle_strength": "unknown",
           "relation_reason": "direct_owner_call"
         }
       ]

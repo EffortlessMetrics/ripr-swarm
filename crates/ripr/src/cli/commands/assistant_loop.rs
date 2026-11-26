@@ -163,7 +163,7 @@ fn assistant_loop_health(args: &[String]) -> Result<(), String> {
 /// common case (a mistyped path), so it uses the shared `not found` wording
 /// (#9851) and names the producer; other failures keep the OS detail (#14371).
 fn read_health_proof(path: &std::path::Path) -> Result<String, String> {
-    crate::bounded_input::read_to_string(path).map_err(|err| {
+    crate::bounded_input::read_artifact_text(path).map_err(|err| {
         let detail = crate::bounded_input::read_failure_detail(&err);
         if err.kind() == std::io::ErrorKind::NotFound {
             format!(

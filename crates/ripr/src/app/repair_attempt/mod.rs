@@ -1172,8 +1172,19 @@ pub(crate) fn validate_issued_receipt_evidence(
     receipt: &serde_json::Value,
     verify_bytes: &[u8],
 ) -> Result<(), String> {
-    let verify: serde_json::Value = serde_json::from_slice(verify_bytes)
-        .map_err(|error| format!("repair attempt verify document is not JSON: {error}; regenerate it with `ripr agent verify --json`"))?;
+    let verify: serde_json::Value = serde_json::from_slice(verify_bytes).map_err(|error| {
+        // The attempt store keeps the verify document's exact bytes, so a
+        // re-encoded copy (#15936) is refused here; say why instead of
+        // reporting a JSON syntax error at column 1.
+        if verify_bytes.starts_with(&[0xEF, 0xBB, 0xBF])
+            || verify_bytes.starts_with(&[0xFF, 0xFE])
+            || verify_bytes.starts_with(&[0xFE, 0xFF])
+        {
+            "repair attempt verify document starts with a byte-order mark, but a repair attempt binds the exact UTF-8 bytes `ripr agent verify --json` printed; write it without re-encoding (in Windows PowerShell 5.1, `cmd /c \"ripr agent verify ... --json > verify.json\"`)".to_string()
+        } else {
+            format!("repair attempt verify document is not JSON: {error}; regenerate it with `ripr agent verify --json`")
+        }
+    })?;
     let schema_version = verify
         .get("schema_version")
         .and_then(serde_json::Value::as_str);
@@ -3374,7 +3385,7 @@ pub(crate) fn edit_cage_policy_from_packet_with(
             .map(|path| {
                 path.as_str()
                     .ok_or_else(|| format!("repair packet {name} contains a non-string path"))
-                    .and_then(packet_path)
+                    .and_then(|text| forbidden_packet_path_text(text, stable_paths))
                     .and_then(crate::edit_cage::CagePathRule::exact)
             })
             .collect()
@@ -3511,8 +3522,8 @@ pub(crate) fn edit_cage_policy_from_packet_with(
 /// `src/a%25b.rs`, a file that does not exist.
 ///
 /// A decoded backslash refuses: on Unix it is a literal file-name byte
-/// (`%5C`), and the cage normalizer would read it as a separator, so
-/// `tests/a%5Cb.rs` would become the rule for a different file,
+/// (`%5C`), and the test-surface classifier reads it as a separator, so
+/// `tests/a%5Cb.rs` would be admitted as if it were a different file,
 /// `tests/a/b.rs`.
 fn packet_path_text(text: &str, stable_path_text: bool) -> Result<String, String> {
     if !stable_path_text {
@@ -3532,6 +3543,27 @@ fn packet_path_text(text: &str, stable_path_text: bool) -> Result<String, String
         ));
     }
     Ok(decoded.to_string())
+}
+
+/// A forbidden packet path in its native spelling. Unlike an allowed path, a
+/// literal Unix backslash (`%5C`) is accepted here (#15908): the cage compares
+/// the rule with the path Git reports, byte for byte on Unix, so the rule for
+/// `src/a%5Cb.rs` forbids exactly `src/a\b.rs`. The refusal above stays for
+/// paths that may be edited, because the test-surface classifier still reads
+/// a backslash as a separator. A production file with such a name no longer
+/// refuses the whole attempt.
+fn forbidden_packet_path_text(text: &str, stable_path_text: bool) -> Result<String, String> {
+    if !stable_path_text {
+        return Ok(text.to_string());
+    }
+    crate::analysis::decode_stable_path_text(text)
+        .to_str()
+        .map(str::to_string)
+        .ok_or_else(|| {
+            format!(
+                "repair packet path `{text}` does not name a UTF-8 path; rename the file to a UTF-8 name, then regenerate the packet"
+            )
+        })
 }
 
 /// A packet the gap decision ledger rendered. Its paths come from the
@@ -5846,17 +5878,30 @@ pub(crate) fn seam_dirty_premise_refusal(
     facade_start: bool,
     violations: &[String],
 ) -> String {
+    let restart = seam_start_command(seam_id, root, store, facade_start);
+    dirty_premise_refusal(&restart, violations)
+}
+
+/// The command a not-started seam refusal tells the user to rerun: the
+/// `ripr repair <item>` façade keeps its short spelling, and an advanced
+/// start or one with an explicit `--store` keeps that store, so the retried
+/// attempt lands where the original command would have put it (#15265).
+pub(crate) fn seam_start_command(
+    seam_id: &str,
+    root: &Path,
+    store: Option<&Path>,
+    facade_start: bool,
+) -> String {
     let root_arg = shell_arg(&bound_root(&root.to_string_lossy()));
     let seam_arg = shell_arg(seam_id);
     let store_flag = quoted_store_flag(store);
-    let restart = if facade_start && store.is_none() {
+    if facade_start && store.is_none() {
         format!("ripr repair {seam_arg} --root {root_arg}")
     } else {
         format!(
             "ripr agent repair --root {root_arg}{store_flag} --seam-id {seam_arg} --phase before"
         )
-    };
-    dirty_premise_refusal(&restart, violations)
+    }
 }
 
 /// [`seam_dirty_premise_refusal`] for any start spelling: the seam and
@@ -6548,6 +6593,33 @@ mod tests {
         let rendered = serde_json::to_string(&packet).map_err(|error| error.to_string())?;
         if edit_cage_policy_from_packet(&rendered, "seam:sample").is_ok() {
             return Err("a production recommended test constructed a cage policy".to_string());
+        }
+        Ok(())
+    }
+
+    /// A forbidden production file named `a\b.rs` on Unix no longer refuses
+    /// the whole policy: its rule is the path Git reports for that file. A
+    /// path that may be edited keeps refusing (#15908).
+    #[cfg(unix)]
+    #[test]
+    fn cage_policy_forbids_a_backslash_named_file_by_its_own_path() -> Result<(), String> {
+        let packet = serde_json::json!({
+            "seam_id": "seam:sample",
+            "allowed_edit_surface": ["tests/pricing.rs"],
+            "forbidden_files": ["src/a%5Cb.rs"]
+        });
+        let rendered = serde_json::to_string(&packet).map_err(|error| error.to_string())?;
+        let policy = edit_cage_policy_from_packet(&rendered, "seam:sample")?;
+        let forbidden = policy.forbidden_paths.first().map(|rule| rule.path());
+        if forbidden != Some("src/a\\b.rs") {
+            return Err(format!("forbidden rule names another file: {forbidden:?}"));
+        }
+        let rule = policy
+            .forbidden_paths
+            .first()
+            .ok_or_else(|| "no forbidden rule".to_string())?;
+        if !rule.matches("src/a\\b.rs") || rule.matches("src/a/b.rs") {
+            return Err("the rule must match its own file only".to_string());
         }
         Ok(())
     }

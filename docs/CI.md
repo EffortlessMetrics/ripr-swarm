@@ -160,6 +160,13 @@ needed. That is false.` still refuse (#14355). The cue sets are closed
 enumerations, so a phrasing outside them is not detected. The check is
 same-sentence/line only: a refutation on a separate line, such as `It is not
 true.` followed by `No changes are needed.`, is not detected.
+A negated blocker phrase is a resolved finding too: `No source blocker found.`
+and `no source blockers remain` admit, while `Blocker found.` and a later
+blocker sentence such as `No source blocker found. The build is red.` still
+refuse; the cue set is closed, and a refutation after the phrase — including an
+italicized `*That is false.*` — still refuses (#15980). The remainder scan is
+best-effort, not complete: a defect phrasing outside the closed vocabulary still
+admits, so the gate is a strong filter rather than a proof.
 Both carriers screen later lines the same way, so a residual written as plain
 narration (`Residual: the hosted lane on this head has not run.`) admits under
 either, while a retraction word used as narration (`the withdrawn attribution`)
@@ -418,7 +425,7 @@ remain in their producing workflows.
 | Workflow / artifact | Consumer and retained evidence |
 | --- | --- |
 | `future-clippy.yml` / `ripr-future-clippy` | Maintainer investigation of lint readiness and instrumentation failures. Native status and identity are also printed in the job summary; the scan log is streamed to the job log. |
-| `macos-advisory.yml` / `macos-advisory-logs-clippy`, `macos-advisory-logs-lib-tests` | Maintainer investigation of native Clippy and library-test outcomes. The job judges its local logs and statuses before upload and retains the verdict in its summary. |
+| `macos-advisory.yml` / `macos-advisory-logs-clippy`, `macos-advisory-logs-lib-build`, `macos-advisory-logs-lib-tests` (and the one-day `macos-advisory-lib-test-binary` handover) | Maintainer investigation of native Clippy and library-test outcomes. The job judges its local logs and statuses before upload and retains the verdict in its summary. |
 | `windows-gate.yml` / `ripr-windows-gate-subset` | Maintainer investigation of the subset logs and statuses. `Ripr Windows Gate Result` consumes job outputs, not the uploaded artifact. |
 | `kani.yml` / `ripr-kani` | Maintainer inspection of the per-harness report. `cargo xtask kani` prints the same report to the job log and judges the run before upload. |
 
@@ -671,11 +678,12 @@ and single-platform CI was the root cause enabling both.
 - **`Windows Watchdog Qualification`** (`windows-watchdog-qualification.yml`, manual `workflow_dispatch` only) extracts the shard workflow's shipped test step, shortens only its timer to 12 seconds and runs it against a native fixture process tree in three cells: mapped, a primary-only-kill mutation that must fail the descendant check, and forced-missing mapping. It checks root identity, primary reaping, descendant termination, an unowned sentinel and uploaded receipts. It qualifies only the shortened bound (#9272).
 - **`Pilot Measure`** (`pilot-measure.yml`, manual `workflow_dispatch` only) builds a release `ripr` on a hosted runner, runs `ripr pilot` on this repository with default budgets and reports the byte sizes of `repo-exposure.json`, `agent-seam-packets.json` and the output tree, the exit code and each document's `run_status` in the job summary, then runs `ripr check --format agent --committed` on the pinned humantime commit plus the fortnight gap patch from `docs/AGENT_AS_USER_RUNS.md` and prints whether the terminal state is `open=` or `stop=`. It asserts nothing and never fails on a size or finding; the pilot output uploads as a 7-day `pilot-measure` artifact. It exists so #11951 (packet size target) and #12058 (humantime `open=`) can be confirmed on a current-main release binary.
 - **Test steps run under `windows-advisory-run`** (#9272, #9660). The
-  `--no-default-features` test step and both workspace runs go through
+  `--no-default-features` test parts and both workspace runs go through
   `cargo xtask windows-advisory-run`, which owns the cargo process tree (a Job
   Object on Windows). It streams output to the job log as it arrives and into
   the log file, ends the whole tree at its own deadline (40 minutes for the
-  `--no-default-features` tests, 70 for each workspace run), and on a timeout
+  `--no-default-features` unit targets and for each integration part, 15 for
+  its doctests, 70 for each workspace run), and on a timeout
   names every test libtest reported as running for over 60 seconds with no
   result, so a stuck run points at a test. It records cargo's exit code in the
   status file (124 when it enforced the deadline, 127 when the command could
@@ -711,6 +719,21 @@ and single-platform CI was the root cause enabling both.
   exhaust it (setup, summary compilation and the manual isolation repeats have
   no separate deadline). The manual nested-alias isolation repeats use the
   redirect-and-replay form.
+- **Rust-only tests in parts (#2400, #16036).** One
+  `cargo test -p ripr --no-default-features --features lang-rust` step did not
+  fit its 40-minute deadline (run 44952408835: 8 minutes of build, 11 of unit
+  tests, then only the `a*` to `l*` integration targets). `windows-advisory`
+  now runs that feature set's unit targets (`--lib --bins`) and doctests, and
+  each `windows-advisory-integration` part runs its third of the `ripr`
+  integration targets after both samples, under its own deadline. On run
+  45008347596 the parts took 21 minutes (unit), under 1 (doctests), and 27,
+  20 and 34 (`a-c`, `d-o`, `rest`), each with every target reached.
+  `cargo xtask windows-advisory-feature-rows` prints the feature-combination
+  section: one row per part and a joined `nofeatures-test` row that is FAIL
+  when a part failed, PASS only when every part passed, and INCOMPLETE when a
+  part was cut at its deadline (124), could not start (127) or left no
+  status. A cut part is missing evidence, not a test failure. The rows stay
+  advisory.
 - **Two samples per run.** The suite runs twice on purpose: one sample cannot
   separate a reproducible failure from a load-dependent flake. The summarizer
   tracks three states per test (failed, observed pass, not observed) and reports
@@ -721,6 +744,18 @@ and single-platform CI was the root cause enabling both.
   job. A missing log, a missing captured exit status, or a summarizer crash
   does. A lane that reports success while proving nothing is exactly the
   false-confidence condition it exists to prevent.
+- **Public's no-default-features fallback is superseded (#16122).** Public ripr
+  #1745 added `windows-advisory-summary --nofeatures-log <path>
+  --nofeatures-status <path>` after run 35497884041, where the unbounded
+  `--no-default-features` test step consumed the whole job before either
+  workspace run started, so the verdict could only report two missing logs. In
+  this lane that step runs under `windows-advisory-run`, which ends it at its
+  own deadline and names every test libtest reported as running for over 60
+  seconds with no result, and the workspace runs start regardless. The
+  summarizer refuses both flags and the catalog does not list them; a test holds
+  the catalog entry, its documented arity and the parser's listed flags to
+  agreement. When swarm returns to public, the option's removal there is
+  deliberate.
 - **Selection.** A daily schedule and explicit `workflow_dispatch`. PR and
   label subscriptions are retired. `runner_probe_only` selects the manual
   runner probe instead of the full and subset jobs.
@@ -837,19 +872,21 @@ printed commands, so macOS-only dead code behind `cfg(target_os = "linux")`
 gating (#8055, #8060), `/var` -> `/private/var` temp paths and APFS case or
 normalization behavior surfaced only on a maintainer's local run.
 
-- **What runs.** On `macos-15`: `cargo clippy -p ripr -p xtask --all-targets
-  -- -D warnings` and `cargo test -p ripr --lib --no-fail-fast`, each in its
-  own job (`macos-advisory-clippy`, `macos-advisory-lib-tests`) under the same
-  40-minute limit: as steps of one job they were cancelled by it every night
-  from 2026-11-12, before the tests had finished compiling. Clippy now
-  fits (25 to 30 minutes cold). The library tests do not yet: the `ripr` test
-  build alone takes about 30 minutes and its tests about 14, so that job
-  fails at its 34-minute step deadline as missing evidence until the build
-  and the run are separate jobs (#8391). The integration suites are not part
-  of this lane.
+- **What runs.** On `macos-15`, three jobs under the same 40-minute limit:
+  `macos-advisory-clippy` (`cargo clippy -p ripr -p xtask --all-targets -- -D
+  warnings`), `macos-advisory-lib-build` (`cargo test -p ripr --lib --no-run`,
+  which hands the test executable over as an artifact) and
+  `macos-advisory-lib-tests`, which runs that executable from the package
+  directory. As steps of one job they were cancelled by the limit every night
+  from 2026-11-12, and the library tests did not fit a job of their own
+  either: the `ripr` test build takes 24 to 36 minutes (one `rustc` that
+  needs about 14 GB on a 7 GB runner) and the tests about 9 (#8391). Clippy
+  takes 18 to over 34. The clippy and build steps may each run for 37
+  minutes; a slower night fails that job as missing evidence. The integration suites are not part of this lane.
 - **Contract.** Clippy and test outcomes are advisory and appear in the job
-  summary. A missing log or exit status, or a library run that executed zero
-  tests, fails the job. It is not a required check.
+  summary. A missing log or exit status, a missing test executable, or a
+  library run whose last result line does not account for every test it
+  started, fails the job. It is not a required check.
 - **Selection.** A daily schedule and explicit `workflow_dispatch` only.
   The retained job predicates do not restore a PR or label subscription.
 
@@ -1722,6 +1759,59 @@ atomic write fence or a detection-latency promise.
 `main_health_sentinel_contract.rs` runs the real reader and tracker against API
 fixtures, including late competing runs, attempt changes and main movement.
 
+#### Observe a frozen native stack
+
+For a frozen-stack observation, record the trunk commit and the ordered PR numbers and head commits
+before enrollment. Once GitHub creates the queue entries, record their native
+IDs against those same PRs and heads. Seal this file independently of the
+workflow that will produce the observation. An arrival after the freeze belongs
+to a subsequent cohort. Obtain the two workflow blob IDs from independently
+reviewed source.
+
+The JSON file has three required fields. The placeholders below show where to
+put full 40-character lowercase hexadecimal Git object IDs and native queue-entry IDs.
+
+```json
+{
+  "trunk": "<trunk-commit>",
+  "members": [
+    {"pr": 105, "head": "<first-pr-head>", "queue_entry": "<first-entry-id>"},
+    {"pr": 108, "head": "<second-pr-head>", "queue_entry": "<second-entry-id>"}
+  ],
+  "workflow_blobs": {
+    ".github/workflows/routed-rust.yml": "<reviewed-caller-blob>",
+    ".github/workflows/rust-gates.yml": "<reviewed-producer-blob>"
+  }
+}
+```
+
+Include every member in order (2–100). Each PR number, head and queue entry
+must be distinct. While the landed group commit is still the tip of main, run
+
+```bash
+python3 -I tools/ci/main-qualification.py \
+  --repository EffortlessMetrics/ripr-swarm --sha "$LANDED_GROUP_SHA" \
+  --frozen-stack freeze.json --out observed.json
+```
+
+A green verdict with `hosted_group_digest` records a match to the first-attempt
+hosted Rust gates job's terminal checkout and clean tracked tree. The existing
+Result owns qualification. A stale attempt, suffix-only event, changed source,
+or missing receipt yields unknown for a previously green qualification. The
+reader preserves an authenticated red Result. The digest grants no authority
+to merge and makes no claim about individual shard binaries.
+
+The #14500 contract maps to `HostedStackTests` in
+`tools/ci/test_main_qualification.py`.
+`test_actual_admission_drives_hosted_producer_for_three_independent_heads`
+runs the admission and receipt scripts.
+`test_membership_recomposition_and_tampering` and
+`test_wrong_source_tree_issuer_attempt_and_marker` exercise refusals in
+`hosted_stack` in `tools/ci/main-qualification.py`. The workflow steps are
+`Record hosted group checkout` in `rust-gates.yml` and
+`Hosted group receipt …` in `routed-rust.yml`. The API fixture supplies the
+resolved step name. Confirming its actual rendering requires a native receipt.
+
 ### Golden Re-bless
 
 Re-blessing renderer-prose golden drift used to be a per-agent ritual: run the
@@ -2004,37 +2094,13 @@ log instead of leaving the summary empty. When `target/ripr/review/comments.json
 exists, the summary opens with "What RIPR found in this pull request": the count
 of changed-behavior spots where the tests may not notice a wrong result, the first
 spot with its missing check, and the `ripr agent repair` start when it is a plain
-`ripr agent repair ...` command (an unfinished analysis is never reported as clean). With no gate configured (`RIPR_GATE_MODE`
-unset or empty), the policy and governance sections (readiness, operations,
-history, promotion, waiver aging, suppression health) are folded into one
-collapsed block; when any `RIPR_GATE_MODE` value is set they are not folded.
-The fold stays open ("needs attention") when a folded report is unreadable,
-has an unexpected shape, omits an expected count, or states a warning,
-unknown, blocker, config-error, stale or ownerless-suppression count that is
-not `0`. It folds with the "no warnings or unknowns" label only when the
-readiness, operations, history, promotion and suppression-health report
-categories each parsed with all expected counts at `0` (preview-promotion and
-waiver-aging reports are conditional and keep it open only when present and not
-clean); it stays open ("some policy reports not found") when a required
-category is missing, and says
-"no policy reports found" (also open) when none was read. First-run status rows
-whose value is only the `not_available` placeholder are omitted, and the
-start-here packet is named as a file in the `ripr-reports` artifact rather than
-a `target/` path. The summary then continues with
-the `start-here` first-run packet when `ripr first-pr` can compose one from
-explicit artifacts, then includes the PR review front panel, first useful
-action fallback, a language preview grouping section when `[languages]` enables
-TypeScript or Python, policy readiness, waiver aging, and suppression health
-when their input artifacts exist, assistant-loop health when proof artifacts
-exist, the report packet index when any indexed artifact exists, the top
-recommendation, the agent review packet when present, artifact links,
-SARIF and badge status, known limits, and PR guidance annotation counts when
-`target/ripr/review/comments.json` exists. Each section keeps its at-a-glance
-lines and names its full Markdown report as a file in the `ripr-reports`
-artifact (`- Full report: ripr/... in the ripr-reports artifact`, the path
-inside the downloaded artifact, which drops the `target/` prefix) rather than
-inlining it; a three-line pull request's summary went from about 50 KB to
-13 KB (#14301). On pull
+`ripr agent repair ...` command (an unfinished analysis is never reported as clean). On a PR with readable guidance, the front page shows the gate status, analysis
+limits and available report paths in the `ripr-reports` artifact. Open
+`ripr/reports/index.md` there to navigate the complete packet. Missing guidance
+and non-PR runs retain the detailed diagnostic sections. To preview those
+sections locally against the same checkout and run settings, run
+`ripr reports ci-summary --root . --full`. This command reads existing artifacts.
+On pull
 requests, the generated workflow writes that report before emitting
 changed-line check annotations by default without posting inline review
 comments.

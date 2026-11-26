@@ -1570,6 +1570,9 @@ fn run_pipeline_for_diff_text_with_language_config(
     // file count and the out-of-scope count. These are intake quantities, not
     // raw Git path counts and not adapter result counts.
     super::publish_scoped_intake_facts(changed_files.len(), out_of_scope.count);
+    // #16250: changed files the operator's own configuration left out, with
+    // the setting that matched, for the `explain` miss diagnosis.
+    let mut configured_exclusions: Vec<(String, String)> = Vec::new();
     let mut limitations = parsed_diff
         .limitations
         .into_iter()
@@ -1680,10 +1683,16 @@ fn run_pipeline_for_diff_text_with_language_config(
                     .collect::<Vec<_>>()
             };
             if !configured.is_empty() {
+                let setting = "[languages.rust] generated_file_patterns";
                 limitations.push(configured_exclusion_note(
-                    "[languages.rust] generated_file_patterns",
+                    setting,
                     &normalized(&configured),
                 )?);
+                configured_exclusions.extend(
+                    configured
+                        .iter()
+                        .map(|path| (super::stable_path_text(path), setting.to_string())),
+                );
             }
             let builtin_skipped = result.skipped_files.saturating_sub(configured.len());
             // The language outcome and every projection below count only
@@ -2161,10 +2170,14 @@ fn run_pipeline_for_diff_text_with_language_config(
         // #13894: paths the operator's own `excluded_file_patterns` left out
         // are requested scope: a scope note, not an incomplete limitation.
         if skip_class == PreviewSkipClass::ConfiguredPattern {
-            limitations.push(configured_exclusion_note(
-                &format!("[{config_section}] excluded_file_patterns"),
-                &skipped,
-            )?);
+            let setting = format!("[{config_section}] excluded_file_patterns");
+            limitations.push(configured_exclusion_note(&setting, &skipped)?);
+            configured_exclusions.extend(skipped.iter().map(|path| {
+                (
+                    super::stable_path_text(std::path::Path::new(path)),
+                    setting.clone(),
+                )
+            }));
             continue;
         }
         let (recovery_kind, recovery) = match skip_class {
@@ -2496,6 +2509,9 @@ fn run_pipeline_for_diff_text_with_language_config(
             super::stable_path_text(&file.path),
             file.added_lines.iter().map(|line| line.new_side_line),
         );
+    }
+    for (path, setting) in configured_exclusions {
+        changed_line_index.record_configured_exclusion(path, setting);
     }
     let kind = if limitations.iter().any(|limitation| {
         matches!(
@@ -3519,7 +3535,7 @@ fn is_excluded_from_typescript_workspace_index(
 /// [`is_excluded_from_preview_analysis`] for TypeScript/JS, where `docs/` is
 /// skipped as changed scope but still indexed. The Python walk applies the
 /// same three authorities as its diff loop, so the two agree there.
-fn is_excluded_from_diff_and_workspace_index(
+pub(crate) fn is_excluded_from_diff_and_workspace_index(
     language: LanguageId,
     path: &std::path::Path,
     language_config: &crate::config::LanguagesConfig,

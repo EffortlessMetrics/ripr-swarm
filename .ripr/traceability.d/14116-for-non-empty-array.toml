@@ -1,0 +1,9 @@
+# A `for` over any non-empty array runs its assertion; row values still need constant rows (#14116).
+[[extend]]
+id = "RIPR-SPEC-0197"
+tests = [
+  "crates/ripr/tests/owner_pin_execution/non_empty_array_loop.rs::a_non_empty_array_loop_admits_execution_only",
+]
+code = [
+  "crates/ripr/src/analysis/syntax/owner_pin.rs",
+]

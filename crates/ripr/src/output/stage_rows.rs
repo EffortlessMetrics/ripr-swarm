@@ -9,10 +9,12 @@
 //! This module is the one shared row-form projection both machine surfaces
 //! consume:
 //!
-//! - `check --format json` (and its `json-compact`/`json-terse` minifications)
-//!   emits `evidence_stages`: one row per stage carrying `stage`, `state`,
+//! - `check --format json` (and its `json-compact` minification) emits
+//!   `evidence_stages`: one row per stage carrying `stage`, `state`,
 //!   `confidence`, and the capping basis entries the finding's
 //!   `confidence_basis` names for that stage (where applicable).
+//!   `json-terse` omits the array when it is exactly the five basis-free rows
+//!   the `ripr` stages yield and lists it in `dropped_aliases` (#14005).
 //! - `--format agent` / `ripr explain --format agent` emit one compact
 //!   `stages=` row after each finding record.
 //!

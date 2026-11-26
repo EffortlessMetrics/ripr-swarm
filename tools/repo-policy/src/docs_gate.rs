@@ -994,7 +994,15 @@ fn offline_git() -> std::process::Command {
 
 fn materialize_tree(checkout: &Path, head_id: &str) -> Result<PathBuf, String> {
     let tree = create_staging_dir(head_id)?;
+    // `git archive` applies checkout end-of-line conversion. With
+    // `core.autocrlf=true` (the Git for Windows and hosted Windows runner
+    // default) or a native CRLF `core.eol`, every text file would arrive with
+    // CRLF and no archived role input could match its blob, so the gate
+    // widened on every Windows checkout (#16105). Pin both settings for this
+    // child only; an in-tree `eol`/`text` attribute still converts, and
+    // `verify_archived_roles` then widens instead of checking other bytes.
     let mut archive = offline_git()
+        .args(["-c", "core.autocrlf=false", "-c", "core.eol=lf"])
         .args(["archive", "--format=tar", head_id])
         .current_dir(checkout)
         .stdout(std::process::Stdio::piped())

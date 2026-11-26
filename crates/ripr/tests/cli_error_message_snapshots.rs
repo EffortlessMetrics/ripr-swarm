@@ -86,7 +86,7 @@ const CASES: &[Case] = &[
     Case {
         args: &["reports", "ts-false-actionable"],
         exit: 2,
-        stderr: "ripr: reports ts-false-actionable requires --corpus PATH; pass the TypeScript preview audit corpus JSON (run `ripr help reports` for the format)\n",
+        stderr: "ripr: reports ts-false-actionable requires --corpus PATH; pass the TypeScript preview audit corpus JSON (`ripr reports ts-false-actionable --help` documents the corpus format)\n",
     },
     Case {
         args: &["explain", "--root", "/ripr-missing-root", "some-id"],
@@ -249,7 +249,7 @@ const CASES: &[Case] = &[
     Case {
         args: &["--al"],
         exit: 2,
-        stderr: "ripr: unknown command \"--al\"; options go after the command, and `ripr check` has no `--al` option. Run `ripr --help`.\n",
+        stderr: "ripr: unknown option --al; run `ripr --help` to list commands and options\n",
     },
     // #15201: the same near miss after the command gets no `--all` either.
     Case {

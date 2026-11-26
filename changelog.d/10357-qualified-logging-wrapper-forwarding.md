@@ -1,0 +1,2 @@
+<!-- section: Fixed -->
+- A Rust helper wrapper that logs through `tracing::info!`, `log::warn!` or another leveled macro of an audited `tracing` (0.1.44) or `log` (0.4.29, 0.4.30, 0.4.34) release now forwards its helper result, so a boundary test of the wrapper can read `exposed`. The root must be a plain registry dependency locked at an audited version and not rebound in the file. Any other qualified macro path stays opaque (#10357).

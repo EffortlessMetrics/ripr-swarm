@@ -100,6 +100,12 @@ import {
   parseAfterPhaseRepairFinish,
   resolveLiveAttemptForFinish,
 } from './repairFinish';
+import {
+  AnalysisStatusResolvedFindings,
+  resolvedFindingsAnnouncement,
+  resolvedFindingsMessage,
+  resolvedFindingsNote,
+} from './resolvedFindings';
 
 // Re-export for backward compatibility: the picker test imports these symbols
 // from '../../src/client'. They now live in workspaceHelpers.ts (#2553).
@@ -600,6 +606,8 @@ export class RiprClientController {
    * start. Reset whenever the session stops.
    */
   private lastCompletedStatus: RiprStatusState | undefined;
+  /** Row set whose now-exposed findings were last announced (#13636). */
+  private lastResolvedFindingsSnapshot: string | undefined;
   /**
    * True while the main status shows a rejected configuration pull (#9917).
    * An accepted pull in a state that paints no status of its own (`stopped`)
@@ -1564,6 +1572,7 @@ export class RiprClientController {
       this.firstUsefulAction = undefined;
       this.dirtyRiprDocuments.clear();
       this.lastCompletedStatus = undefined;
+      this.lastResolvedFindingsSnapshot = undefined;
       this.configurationFailurePainted = false;
       this.configurationFailureStatus = undefined;
       this.clearAttemptStatusBar();
@@ -2441,10 +2450,26 @@ export class RiprClientController {
         });
         return;
       case 'succeeded': {
+        // #13636: gaps a saved test now appears to expose. Their diagnostics
+        // stop being published, so name them instead of going quiet; once
+        // per row set, since the same status can be re-sent. The server
+        // recomputes the rows at each commit (a repeat commit has none), so
+        // the rows alone identify one transition.
+        const resolved = resolvedFindingsNote(status.resolved_findings);
+        const announcement = resolvedFindingsAnnouncement(this.lastResolvedFindingsSnapshot, resolved);
+        this.lastResolvedFindingsSnapshot = announcement.key;
+        if (resolved && announcement.announce) {
+          for (const line of resolved.lines) {
+            this.output.appendLine(`ripr now exposed: ${line}`);
+          }
+          void this.runtime.showInformationMessage(resolvedFindingsMessage(resolved));
+        }
         // The clean saved-workspace form (no dirty overlay) is what closing
         // an unsaved buffer restores (#7340, #8585).
         const cleanInput = {
-          detail: analysisStatusDetail(status),
+          detail: resolved
+            ? `${analysisStatusDetail(status)}\nNow exposed since the last analysis:\n${resolved.lines.join('\n')}`
+            : analysisStatusDetail(status),
           retryCommand: typeof status.retry_command === 'string' ? status.retry_command : undefined,
           // #5999: the server's budget-bound recovery replaces the canned
           // refresh tail — refreshing a running sidecar cannot read a raised
@@ -4215,6 +4240,8 @@ interface RiprAnalysisStatusPayload {
   /** #8585: changed-file languages skipped because their adapter is not
    * enabled; the server's typed row, not the limitation's detail text. */
   unavailable_languages?: AnalysisStatusUnavailableLanguage[];
+  /** #13636: gaps the committed snapshot now finds exposed; the server's rows. */
+  resolved_findings?: AnalysisStatusResolvedFindings | null;
 }
 
 /** One typed `unavailable_languages` row from `ripr/analysisStatus` (#8585, #2962). */

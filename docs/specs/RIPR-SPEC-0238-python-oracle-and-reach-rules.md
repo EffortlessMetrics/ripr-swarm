@@ -453,6 +453,26 @@ one changed raise only (#12952); the general class-only table row stays weak.
    edit and fails before; naming the class raised before the edit (a test
    written before the diff) passes before and fails after. Both distinguish
    the edit, and the evidence names which class the context rejects.
+   Imported class on its sole construction site (#15356): the new class may
+   instead be bound in the owner module by one plain, unaliased
+   `from M import NewError` when the changed line is the only place the
+   production tree names it. Exactly one workspace source is module `M`, the
+   import resolves to it unshadowed, and it defines the name once as
+   `class NewError(Base): pass` over `Exception` or a listed builtin, naming
+   it nowhere else. The owner module names it only in that import and on the
+   changed line, and no other production source or `conftest.py` names it.
+   The old class is a listed builtin. The test imports the class by the same
+   plain import, names it once, in `with pytest.raises(NewError):`, and that
+   context runs the owner with constant arguments only (a callback or an
+   object with a hook could raise the class itself). A class module spelled
+   with a layout root the owner import omits (`src.verlib.errors` beside
+   `verlib.core`) is a second module object and is not read. A passing context then saw an instance only the
+   changed line can construct, and the old raise never produces one, so the
+   base class may be an ancestor of the old class (`ValueError` to an
+   imported `ValueError` subclass). A context naming the old or a base class
+   passes against both raises and stays weak, as does the same spelling
+   imported from another module, a second production use of the class, a
+   class body other than `pass`, or any name the scan cannot count.
    Module identity needs a separate positive per-file admission, defaulting
    to false and computed from the raw foreign-module view before legacy path
    refusal flags. Every supported dotted spelling is checked at all known
@@ -756,7 +776,9 @@ This order is the existing behavior and is normative:
   or an unanalysed compound statement (such as `try`, `for` or `with`)
   mentioning the alias also withholds credit (#14846).
   `C` is the owner's class imported under its own
-  name from the owner's module, and the fixture's file binds neither the
+  name from the owner's module or from a package whose `__init__.py`
+  re-exports that class (RIPR-SPEC-0028's bounded chain, #15967), and the
+  fixture's file binds neither the
   fixture name nor `C` a second time. The test takes the fixture as a
   parameter without a default, does not rebind it, and carries no
   decorator other than a pytest mark. In its scope (the test's module and
@@ -764,7 +786,18 @@ This order is the existing behavior and is normative:
   read and parsed; no other fixture, renamed `name=` fixture (decorators
   included) or top-level compound statement spells the fixture name; no
   file but the fixture's own binds the name by import or assignment;
-  every `from` import comes from the owner's module or pytest; and no file
+  every `from` import comes from the owner's module, a package that
+  re-exports the owner's class, pytest, or a module that can bring no
+  fixture (#15967): a non-star import of a standard-library module, or
+  of a workspace module (a relative import is read as the module it
+  resolves to) whose import closure (at most 256 modules, with the
+  `__init__.py` of every parent package that loading them runs) defines
+  no fixture, has no star import or other opaque construct, and imports
+  only workspace or standard-library modules (never pytest or a
+  conftest). An import that resolves to no workspace file and is not
+  standard library, such a module anywhere in the closure, and a
+  standard-library name a workspace file also answers to whose closure
+  has one of these hazards keep the limit; and no file
   star-imports, declares `pytest_plugins` or `pytestmark`, defines a
   `pytest_*` hook, has a fixture that walks the request (`getfixturevalue`,
   `fixturenames`, `funcargs`, `node`) or rebinds a name with `global`.
@@ -1997,6 +2030,16 @@ otherwise. Python emits `reachable_unrevealed` only for row 2a, where every
 related test replaces the owner itself so none runs the changed code; the
 class never carries credit. Python never emits `infection_unknown`. The ladder is the existing behavior and is normative.
 
+A `weakly_exposed` finding on one entry of a multi-line `return {` dict
+(the statement opens with a bare `return {`, the entry sits at the
+literal's top level, is the only entry on its line with a plain quoted key,
+ends on that line, and no later entry can override it: every later
+top-level entry has a distinct plain quoted key and the literal closes on a
+bare `}`) carries the missing check `result["key"] == <literal>` (or
+`response.json()["key"]` for a route owner; a non-literal value names
+`<expected value>`). Any other shape keeps the generic missing check. This
+names a check only; it never changes the class (#15357).
+
 ### Decisions
 
 The owner delegated these choices on 2026-10-04 ("make reasonable documented
@@ -2752,6 +2795,9 @@ and the test is `tests/test_subject.py`, which imports each owner from
   `crates/ripr/src/analysis/language/python/literal_fixture_tests.rs`
   pins the inlined control, the conftest and same-module fixture, and
   every negative shape and interference route of example 41.
+  `crates/ripr/src/analysis/language/python/class_identity_tests.rs` pins
+  the re-exported class, the standard-library and fixture-free scope
+  imports, and the imports that keep the limit (#15967).
 - Async test styles (#14803):
   `crates/ripr/src/app/tests/python_test_style_matrix.rs` pins the
   `pytest_asyncio` literal fixture, the awaited result local, the

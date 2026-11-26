@@ -119,7 +119,16 @@ bullets' plain class words, and a summary that names classes in plain words
 reached but not noticed, 1 no test path. 4 found, 0 suppressed by your
 settings`; with zero changed behaviors, `Summary: 0 changed behaviors checked`, never
 "nothing to check", because a skipped language makes the run incomplete). The three unknown classes share the one plain word `unclear` and sum
-into a single bucket named only when non-zero. Limitation lines on this
+into a single bucket named only when non-zero. "Partly noticed" and "reached
+but not noticed" both say a test gets to the change, so when a finding in
+either bucket has a reach stage that is not `yes` (or callee-only reach), the
+bucket says how many: `2 partly noticed (1 through a test link ripr could not
+confirm)`. The count uses the same rule as the per-finding reason `test reach
+to this change is not established`, so the Summary and the finding under it
+cannot disagree (#15295); a bucket with no such finding is unchanged. A
+finding withheld by a suppression policy or an owner opt-out has left its
+bucket and is not counted in the note either.
+Limitation lines on this
 surface likewise drop their parenthesized kind/stage and recovery tokens; a
 `language_adapter_unavailable` limitation renders as one `Not analyzed:` pointer
 to the preview-language note, which carries the `ripr.toml` recovery block
@@ -615,6 +624,150 @@ text, so a rerun writes a second stub with a `_2` suffix beside it; delete or
 fill in the old stub first. Human output also escapes control and bidi
 characters in the stub text and in the `Inputs`, `Receiver:` and `Fill in:`
 lines, since they carry repository text.
+
+A boundary stub on a string's length writes a string whose length sits on the
+boundary instead of a labelled `todo!()` for that `&str` parameter (#8361), for
+example `s = "xxx"` for `n <= MIN_LEN` after `let n = s.chars().count();` with
+`const MIN_LEN: usize = 3;`, or `a = "ab"`, `b = "cd"` for `a.len() > b.len()`.
+The string is `x` repeated (so its byte length and char count agree), and is
+written only when:
+
+- one side of the changed comparison is `p.len()` or `p.chars().count()` for
+  a `&str` parameter `p`, or a local the body binds exactly once, by an
+  immutable top-level `let` with no attribute before the comparison, to one
+  of those and never assigns;
+- the other side is a non-negative integer literal, a file-root `const` of
+  integer type whose value is such a literal (for an owner outside any inline
+  module, with no other item, import, rename or item macro of that name), or
+  the length of a different `&str` parameter, which gets the same length and
+  other text;
+- the length is at most 64;
+- the parameter is not declared `mut`, and nothing before the comparison
+  rebinds it, assigns it or names it inside a macro call;
+- the owner (and any enclosing function) calls no macro and declares no
+  `use` or nested item, since a macro may bind a local or emit an item of any
+  name and a block-level `use` or item shadows a name for its block; a
+  `const` bound also needs no attribute on the const (a `cfg` may remove it
+  from the test build) and no generic parameter of the owner or an enclosing
+  impl or trait that could shadow it.
+
+A boundary stub that writes the inputs its comparison reads copies the owner's
+other parameters from an existing test instead of leaving them as labelled
+`todo!()`s (#8361), for example `amount = 10_000` from `assert_eq!(tax_cents(10_000,
+825), Ok(825))` beside `rate_bps = 10_000` for `rate_bps >= 10_000`. A comment
+above the inputs and an `Other inputs:` line name the test they came from, and
+the expected value stays a `todo!()`. The values are copied only when:
+
+- the owner is a free function and the stub goes into an existing inline test
+  module;
+- the call is the first one in that module, in source order, that meets
+  every condition here: it goes through the owner's bare name with one
+  literal argument per parameter, and it is authored at the top level of the
+  test's own body, as a statement or `let` initializer or as an asserted
+  operand (not a message argument) of a statement `assert!`, `assert_eq!` or
+  `assert_ne!`;
+- it sits in a `#[test]` function that is not `should_panic`, `ignore` or a
+  ripr stub and carries only plain attributes (`test`, lint levels, `doc`),
+  outside closures, `async` blocks and `cfg`, with no `return` or `?` before
+  it in the test (an earlier macro's tokens included) or inside the
+  assertion holding it;
+- the owner and any module around it carry only plain attributes (lint
+  levels, `doc`, `inline`, `must_use`, `cfg`), since an attribute macro may
+  rewrite the body;
+- the owner has no `mut` parameter and the file never names
+  `overflowing_literals`, so no input is reassigned and no literal wraps;
+- each copied literal fits its parameter's declared type as written: an
+  in-range integer literal for an integer type, a float literal for `f32` or
+  `f64` that stays finite, `true`/`false`, a char literal, a string literal for `&str`, a byte
+  string for `&[u8]` (an alias or any other type takes no copy), and no name
+  the file declares or imports shadows that primitive type, or the primitive
+  of any other parameter, since a guard reads each parameter as its primitive;
+- the copied values do not steer the owner away from the statement holding
+  the changed comparison (an earlier guard on the written inputs alone is
+  outside this check, as it is for any boundary stub): each earlier statement that names a copied
+  parameter (including a `{name}` or `{:name$}` format capture, read after escapes are decoded) is an `if` without `else`
+  whose condition evaluates to false with every integer literal in it
+  fitting each integer type in play (a parameter it names or a literal's
+  suffix, plus `i32` when a literal is unsuffixed), no earlier statement binds the
+  name of a written or copied input, nothing before the
+  comparison calls `include!` or a macro other than a standard one (which
+  may read a copied value without naming it), and the comparison's own statement is not a
+  `let`, does not hold the comparison inside an assignment (a tail one included), a closure or an
+  `async` block, and names a copied value only after the comparison;
+- nothing in the module declares, binds, imports or renames another item of
+  the owner's name (a local inside a test ripr wrote cannot reach another
+  test's call, so it does not count);
+- the module calls only standard macros (`assert_eq!`, `vec!`, `println!` and
+  the like), since another macro or `include!` may emit a function of the
+  owner's name, and the file defines, imports or `#[macro_use]`s no macro of
+  a standard macro's name;
+- the test module, on it or inside it, carries no attribute other than the plain ones, `cfg`,
+  `should_panic`, `ignore` and standard `derive`s (and no import or rename
+  takes a standard macro, derive or attribute name such as `test`), since an attribute or
+  derive macro may emit a function of the owner's name; macros defined in
+  another file (a crate-root `#[macro_use]` or `macro_rules!`) are not seen,
+  and the type check above still keeps the stub compiling.
+
+The JSON document changes only in the stub `text` and `fill_ins`; the copied
+values appear on the human `Other inputs:` line.
+
+A match-arm stub writes the input the changed arm's own pattern names instead
+of a labelled `todo!()` for that parameter (#8361), for example `ev =
+Event::Fail` for `(State::Running, Event::Fail) => ..` on `match (self.state,
+ev)`, or `n = 2` for `2 => ..` on `match n`. The value is written only when:
+
+- the scrutinee is a bare parameter or a tuple of bare parameters and `self`
+  fields of the stub's owner function, the match is not inside a closure,
+  the seam sits on the arm's own pattern (not a nested `match` in its body),
+  neither the arm nor an earlier one carries an attribute such as `cfg`,
+  and the arm has no guard;
+- the parameter's sub-pattern (the first alternative of an or-pattern) is an
+  integer, char, bool or, for a `&str` parameter, string literal without
+  escapes or a raw prefix, written exactly as the arm spells it; or, in an
+  inline test module that sees the owner's items, a two-segment
+  `Type::Variant` path naming a unit variant of the one enum the file
+  declares under the parameter's declared (non-reference) type name, when no other item, rename, import other than through `super::`
+  or `self::`, or item-position macro gives that name another meaning;
+- every earlier arm differs from it at some position by a provably different
+  value: integers compared by parsed value, unescaped char and string literals
+  by text, distinct unit variants of that same enum. A constant, range,
+  binding or other pattern counts as possibly equal;
+- the owner's parameter is not declared `mut`, no `const`, `static` or `fn`
+  of its name sits in the body, and nothing before the match rebinds it
+  (`r#n` included), assigns it or names it inside a macro call.
+
+When the arm also constrains a `self` field (anything but `_` or a plain
+lowercase binding, since a bare `RUNNING` may be a constant), the receiver
+line names that state (for example "set it so `self.state` matches `State::Running`"),
+because a built receiver may start in another state. The input reaches the
+arm once the receiver is in that state; the expected value stays a `todo!()`.
+Human output lists the inputs on the `Inputs from the changed code:` line.
+
+The `expected` fill-in's label names what the owner returns for the stub's
+written inputs when a small evaluation decides it (#8361): "(the changed code
+returns `C`; with `>=` it returns `N`; keep the intended one)", where `N`,
+for a relational-boundary seam, is the result with the changed comparison's
+operator replaced by its neighbor (`>`/`>=`, `<`/`<=`). The stub never writes
+either value as `expected`, since the change may be the defect; it still
+stops at that `todo!()`. The evaluation applies only when the owner has no
+receiver, type generics, `async`, attributes or `mut` parameter type, its
+body holds no `let`, assignment, closure, macro call or nested item, and the
+path for the written inputs is decided by:
+
+- `if` statements and tails (with `else`/`else if`), `return` and blocks;
+  a statement-position block whose tail is not a `return`, or any statement
+  with an attribute, refuses;
+- a `match` on a written parameter whose arms up to the taken one are
+  literal, unit-variant or `_` patterns without guards or attributes;
+- conditions comparing a written parameter with an integer, bool, char or
+  string literal (`<`, `<=`, `>`, `>=`, `==`, `!=`), combined with `&&`,
+  `||`, `!` and parentheses;
+
+and the returned expression on that path is a constant: a literal, a unit
+variant of a file-local enum (inline test module only), `None`, a tuple of
+constants, `Some`/`Ok`/`Err` of one constant, or a written parameter. A file
+that redeclares, imports or renames `Some`, `Ok`, `Err` or `None` by name
+refuses.
 
 Direct JSON stub refusals distinguish an absent selector (`seam_not_found`)
 from a suffix naming several files or disjoint same-kind seams that tie

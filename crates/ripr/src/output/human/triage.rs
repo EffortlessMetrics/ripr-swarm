@@ -2504,9 +2504,10 @@ fn has_ranked_repair_route(finding: &Finding) -> bool {
         // static-limited finding never prints a repair route
         // (`printed_repair_route`), so its advisory next step must not lift
         // it to the routed tier over a gap whose route does print.
-        // #14919: an unreferenced owner is a gap but prints no repair route
-        // either (the app's repair gate still refuses it), so it ranks by
-        // class among the gaps, behind every gap whose route prints.
+        // #14919: an unreferenced owner ranks by class among the gaps,
+        // behind every gap whose route prints. Since #15926 its route can
+        // print too (when its seam passes the repair-packet flip); the rank
+        // stays conservative so Start here does not move.
         return !is_static_limited(finding)
             && !finding.is_unreferenced_no_static_path()
             && has_repair_route(finding);
@@ -3594,8 +3595,9 @@ mod tests {
         backslash_root.root = PathBuf::from(["C:", "tmp", "probe win space"].join(r"\"));
         let raw = backslash_root.root.display().to_string();
         // Independent slash-stable contract: forward-slash join of the
-        // same components, not `display_path` output.
-        let expected = ["C:", "tmp", "probe win space"].join("/");
+        // same components, not `display_path` output. On Unix the backslash
+        // is a file-name byte, spelled `%5C` (#15908).
+        let expected = ["C:", "tmp", "probe win space"].join(if cfg!(unix) { "%5C" } else { "/" });
         if raw == expected {
             return Err(format!(
                 "fixture lost its discriminator: raw display {raw:?} already matches {expected:?}"
@@ -3631,15 +3633,15 @@ mod tests {
 
         // Verbatim Windows prefix: never `\\?\` in JSON identity (#5996). On
         // Windows it folds to the plain drive spelling, as every printed path
-        // does (#9660); on Unix `\` is a filename byte, so the text only
-        // slash-unifies.
+        // does (#9660); on Unix `\` is a filename byte, spelled `%5C`
+        // (#15908).
         let mut verbatim = test_output(Vec::new());
         verbatim.root = PathBuf::from(["\\\\?", "C:", "tmp", "probe"].join(r"\"));
         let verbatim_raw = verbatim.root.display().to_string();
         let verbatim_expected = if cfg!(windows) {
             ["C:", "tmp", "probe"].join("/")
         } else {
-            ["//?", "C:", "tmp", "probe"].join("/")
+            ["%5C%5C?", "C:", "tmp", "probe"].join("%5C")
         };
         if verbatim_raw == verbatim_expected {
             return Err(format!(
