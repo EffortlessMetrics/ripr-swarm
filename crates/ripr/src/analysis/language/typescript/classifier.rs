@@ -13048,6 +13048,12 @@ pub(crate) fn cross_module_fan_in_limit_missing(owner: &TypeScriptOwner) -> Stri
 }
 
 pub(crate) fn no_static_path_missing(owner: &TypeScriptOwner) -> String {
+    if owner.method_kind == TypeScriptMethodKind::FieldShadowed {
+        return format!(
+            "A field of the same class is also named `{}` and shadows this body, so a call of `{}` runs the field's value, not the changed code (RIPR-SPEC-0243 rule 28).",
+            owner.name, owner.name
+        );
+    }
     if owner.method_kind == TypeScriptMethodKind::Overwritten {
         return format!(
             "A later member of the same class defines `{}` again and replaces this body, so no call runs the changed code (RIPR-SPEC-0243 rule 26).",
@@ -13079,6 +13085,14 @@ pub(crate) fn no_static_path_missing(owner: &TypeScriptOwner) -> String {
 }
 
 pub(crate) fn no_static_path_recommendation(owner: &TypeScriptOwner) -> String {
+    if owner.method_kind == TypeScriptMethodKind::FieldShadowed {
+        // #16306: a direct receiver call reaches the field, so the usual
+        // "add a direct call" advice would point at code that never runs.
+        return format!(
+            "TypeScript preview advisory: the field `{}` of this class shadows the method, so a test calling `{}` runs the field's value, not the changed body. Rename or remove the field or the method, then rerun `ripr check`.",
+            owner.name, owner.name
+        );
+    }
     if owner.method_kind == TypeScriptMethodKind::Overwritten {
         // #16261: a direct receiver call runs the replacement, so the usual
         // "add a direct call" advice would point at the wrong body.

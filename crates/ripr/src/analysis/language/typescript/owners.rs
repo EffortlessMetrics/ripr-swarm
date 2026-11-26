@@ -1688,6 +1688,7 @@ pub(crate) fn owners_from_class(
         .as_ref()
         .map(|identifier| identifier.name.as_str().to_string());
     let overwritten = super::overwritten_methods::overwritten_method_starts(class);
+    let shadowed = super::overwritten_methods::field_shadowed_method_starts(class);
     for element in &class.body.body {
         if let ClassElement::MethodDefinition(method) = element
             && let Some(mut owner) = owner_from_method(
@@ -1701,6 +1702,8 @@ pub(crate) fn owners_from_class(
         {
             if overwritten.contains(&method.span.start) {
                 owner.method_kind = TypeScriptMethodKind::Overwritten;
+            } else if shadowed.contains(&method.span.start) {
+                owner.method_kind = TypeScriptMethodKind::FieldShadowed;
             }
             owners.push(owner);
         }

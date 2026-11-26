@@ -144,6 +144,10 @@ pub(crate) enum TypeScriptMethodKind {
     /// the same key and placement replaces (#16261, RIPR-SPEC-0243 rule 26):
     /// its body never runs, so it relates to no test.
     Overwritten,
+    /// A method, getter or setter that a field of the same key and placement
+    /// shadows (#16306, RIPR-SPEC-0243 rule 28): calls on an instance (or the
+    /// class, for a static field) reach the field, so it relates to no test.
+    FieldShadowed,
 }
 
 impl TypeScriptOwner {

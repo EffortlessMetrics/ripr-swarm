@@ -22776,6 +22776,7 @@ mod directory_specifier_tests;
 mod dropped_term_tests;
 mod enum_member_tests;
 mod error_payload_tests;
+mod field_shadowed_method_tests;
 mod floating_promise_tests;
 mod folded_module_constant_tests;
 mod function_reference_callback_tests;

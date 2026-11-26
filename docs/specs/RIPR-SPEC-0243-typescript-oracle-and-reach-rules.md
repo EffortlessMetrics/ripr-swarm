@@ -39,6 +39,7 @@ Linked issues:
 - #15092 (class as a CommonJS module's whole export)
 - #16252 (inline class expression as a CommonJS module's whole export)
 - #16261 (class method overwritten by a later same-key member; rule 26)
+- #16306 (class method shadowed by a same-key field; rule 28)
 - #9435 (exact oracle ignored on five changed-line shapes)
 - #9497 (skipped or unexercised tests credited as exposed; rules 17 and 18)
 - #11196 (start rate: a conditional assertion in an unconsulted test no longer
@@ -1444,6 +1445,20 @@ setter of one key (one accessor property), a static and an instance member of
 one name (different objects), body-less TypeScript overload signatures, and a
 computed key other than a string literal (`[name]()`), which is never
 compared.
+
+**Rule 28. A class method that a field of the same key shadows relates to no
+test (#16306).** A class field is defined on each instance when it is
+constructed (a static field on the constructor when the class is evaluated),
+after the prototype (or the constructor) already holds the methods, so in
+`class Cart { total = (n) => n; total(n) {...} }` a call `new Cart().total()`
+runs the field's value, whatever the source order. A method, getter or setter
+whose key and `static` placement match a field, keyed as in rule 26 (a bare
+`total;` field counts), stays an owner (a changed line is still reported) but
+relates to no test, so it reads `no_static_path`, and its guidance names the
+field instead of suggesting a direct call. Not a shadow: a `declare` or
+`abstract` field (no runtime definition), a field of the other placement, a
+`#private` field beside a public method, and a computed key other than a string
+literal. Sibling reach already treated such a field as shadowing.
 
 ### Observation guard
 
@@ -2984,6 +2999,15 @@ keys); do not take the next number.
   that keep their relation: a getter beside its setter, an instance method
   beside a static member of the same name, and an implementation after
   TypeScript overload signatures.
+
+- #16306 (rule 28, field-shadowed class method):
+  `crates/ripr/src/analysis/language/typescript/tests/field_shadowed_method_tests.rs`
+  runs `analyze_diff` on a method shadowed by an instance field before or after
+  it, a bare field, a quoted field key, an ES export and a static field beside a
+  static method: each relates to no test, the owner is marked `FieldShadowed`,
+  and the guidance names the field. Controls that keep their relation: no
+  field, a field of another name, a static field beside an instance method, a
+  `#private` field and a TypeScript `declare` field.
 
 - #11196 (rule 11, object rows): `tests/object_row_tests.rs` pins the per-row
   literal assertions for the `for...of` and `test.each` object-row forms and

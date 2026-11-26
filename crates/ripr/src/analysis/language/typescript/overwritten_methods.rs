@@ -12,7 +12,9 @@
 
 use std::collections::BTreeSet;
 
-use oxc_ast::ast::{Class, ClassElement, MethodDefinition, MethodDefinitionKind, PropertyKey};
+use oxc_ast::ast::{
+    Class, ClassElement, MethodDefinition, MethodDefinitionKind, PropertyDefinition, PropertyKey,
+};
 
 /// Span starts of the methods in `class` whose key a later member overwrites.
 ///
@@ -51,6 +53,72 @@ pub(super) fn overwritten_method_starts(class: &Class<'_>) -> BTreeSet<u32> {
         }
     }
     dead
+}
+
+/// Span starts of the methods, getters and setters in `class` that a field of
+/// the same key and `static` placement shadows (#16306, RIPR-SPEC-0243 rule
+/// 28).
+///
+/// An instance field (`total = (n) => n;`, or a bare `total;`) is defined on
+/// every instance when it is constructed, after the prototype holds the
+/// method, so `new Cart().total()` calls the field and never the method; a
+/// static field replaces a static method on the constructor the same way.
+/// Source order does not matter. A `declare` or `abstract` field defines
+/// nothing at runtime and shadows nothing; a computed field key other than a
+/// string literal is never compared.
+pub(super) fn field_shadowed_method_starts(class: &Class<'_>) -> BTreeSet<u32> {
+    let fields: BTreeSet<(bool, String)> = class
+        .body
+        .body
+        .iter()
+        .filter_map(|element| match element {
+            ClassElement::PropertyDefinition(field) if !field.declare && !is_abstract(field) => {
+                field_key(field).map(|key| (field.r#static, key))
+            }
+            _ => None,
+        })
+        .collect();
+    if fields.is_empty() {
+        return BTreeSet::new();
+    }
+    class
+        .body
+        .body
+        .iter()
+        .filter_map(|element| match element {
+            ClassElement::MethodDefinition(method)
+                if method.value.body.is_some()
+                    && method.kind != MethodDefinitionKind::Constructor =>
+            {
+                let key = runtime_key(method)?;
+                fields
+                    .contains(&(method.r#static, key))
+                    .then_some(method.span.start)
+            }
+            _ => None,
+        })
+        .collect()
+}
+
+fn is_abstract(field: &PropertyDefinition<'_>) -> bool {
+    matches!(
+        field.r#type,
+        oxc_ast::ast::PropertyDefinitionType::TSAbstractPropertyDefinition
+    )
+}
+
+/// The property key a field defines, in the key space of [`runtime_key`].
+fn field_key(field: &PropertyDefinition<'_>) -> Option<String> {
+    match &field.key {
+        PropertyKey::StaticIdentifier(identifier) if !field.computed => {
+            Some(format!("public:{}", identifier.name))
+        }
+        PropertyKey::PrivateIdentifier(identifier) if !field.computed => {
+            Some(format!("private:{}", identifier.name))
+        }
+        PropertyKey::StringLiteral(literal) => Some(format!("public:{}", literal.value)),
+        _ => None,
+    }
 }
 
 /// The property key `method` defines, when it is static text: an identifier
