@@ -1,4 +1,6 @@
 mod arguments;
+mod bool_local;
+pub(crate) use bool_local::with_bool_local_inlined;
 mod bool_operands;
 mod classify;
 mod pattern_admission;

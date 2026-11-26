@@ -3009,6 +3009,13 @@ fn extract_parser_oracles(
             &assertion_text,
             &scope.at(usize::from(range.start() - function_offset)),
         );
+        // #16296: `let ok = value > 0; assert_eq!(ok, true)` asserts `value > 0`.
+        let classification = crate::analysis::extract::with_bool_local_inlined(
+            classification,
+            &assertion_text,
+            function.syntax(),
+            decls.get(),
+        );
         assertions.push(OracleFact {
             line: line_index.line(range.start()),
             kind: classification.kind,
