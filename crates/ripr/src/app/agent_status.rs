@@ -8901,6 +8901,7 @@ mod tests {
             ran: 1,
             passed: 0,
             failed: 1,
+            edited_test: None,
         };
 
         // A (earlier, no run recorded) and B (reported failure): the reading
@@ -8951,6 +8952,7 @@ mod tests {
         let passing = ReportedTestRun {
             passed: 1,
             failed: 0,
+            edited_test: None,
             ..failing
         };
         let report = report_of(vec![issued("a", Some(passing)), issued("b", None)]);

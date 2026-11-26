@@ -1390,6 +1390,9 @@ enum ReportedRun {
     Passed,
     /// The agent reports the new test ran and failed.
     Failed,
+    /// The agent reports only an untouched sibling test, which passed
+    /// (#16311): the edited test has no reported run.
+    SiblingOnly,
 }
 
 /// The last line of a `check --format agent` report: its `verify=` record.
@@ -1433,7 +1436,12 @@ fn agent_check_verify_line(fixture: &Fixture, worktree: bool) -> Result<String, 
 ///    receipt state and digest-bound retained evidence.
 #[test]
 fn six_step_agent_contract_holds_through_cli_and_mcp() -> Result<(), String> {
-    for reported in [ReportedRun::None, ReportedRun::Passed, ReportedRun::Failed] {
+    for reported in [
+        ReportedRun::None,
+        ReportedRun::Passed,
+        ReportedRun::Failed,
+        ReportedRun::SiblingOnly,
+    ] {
         six_step_agent_contract(reported).map_err(|error| format!("{reported:?}: {error}"))?;
     }
     Ok(())
@@ -1556,10 +1564,10 @@ fn six_step_agent_contract(reported: ReportedRun) -> Result<(), String> {
     let result_arg = result_file.display().to_string();
     if reported != ReportedRun::None {
         let head = ripr_fixture_head(&fixture)?;
-        let event = if reported == ReportedRun::Passed {
-            "ok"
-        } else {
-            "failed"
+        let (name, event) = match reported {
+            ReportedRun::Failed => (NEW_TEST, "failed"),
+            ReportedRun::SiblingOnly => ("below", "ok"),
+            _ => (NEW_TEST, "ok"),
         };
         let document = json!({
             "schema_version": "0.1",
@@ -1568,8 +1576,8 @@ fn six_step_agent_contract(reported: ReportedRun) -> Result<(), String> {
             "head": head,
             "test_file": TEST_FILE,
             "libtest_events": [
-                {"type": "test", "event": "started", "name": NEW_TEST},
-                {"type": "test", "event": event, "name": NEW_TEST}
+                {"type": "test", "event": "started", "name": name},
+                {"type": "test", "event": event, "name": name}
             ]
         });
         std::fs::write(&result_file, document.to_string()).map_err(|e| e.to_string())?;
@@ -1676,12 +1684,19 @@ fn six_step_agent_contract(reported: ReportedRun) -> Result<(), String> {
                 "{finish_stdout}"
             );
         }
-        ReportedRun::Passed | ReportedRun::Failed => {
-            let (passed, failed) = if reported == ReportedRun::Passed {
-                (1, 0)
-            } else {
+        ReportedRun::Passed | ReportedRun::Failed | ReportedRun::SiblingOnly => {
+            let (passed, failed) = if reported == ReportedRun::Failed {
                 (0, 1)
+            } else {
+                (1, 0)
             };
+            // #16311: only the run that included the new test covers the
+            // edit; a passing sibling does not.
+            let edited_test = match reported {
+                ReportedRun::SiblingOnly => "not_covered",
+                _ => "covered",
+            };
+            assert_eq!(test_run["edited_test"], edited_test, "{status}");
             assert_eq!(test_run["status"], "caller_reported", "{status}");
             assert_eq!(test_run["file"], TEST_FILE, "{status}");
             assert_eq!(test_run["ran"], 1, "{status}");
@@ -1704,10 +1719,16 @@ fn six_step_agent_contract(reported: ReportedRun) -> Result<(), String> {
             }
             // #16263: the finish's next step reads the reported run back
             // instead of asking for the run it just recorded.
-            let expected_next = if reported == ReportedRun::Passed {
-                "\nNext: Confirm the reported run included the test you added or edited (ripr checked the test file, not the test names, and ran nothing), then include this receipt in review.\n"
-            } else {
-                "\nNext: Make the focused test pass before keeping it; ripr did not run it. A fix that edits the patch leaves this receipt stale, so do not include it in review; re-check the gap with `ripr check` after the fix.\n"
+            let expected_next = match reported {
+                ReportedRun::Passed => {
+                    "\nNext: Keep the focused test (the reported run included the test you added or edited; ripr ran nothing) and include this receipt in review.\n"
+                }
+                ReportedRun::SiblingOnly => {
+                    "\nNext: Run the test you added or edited and keep it only if it passes: the reported run did not include it, and ripr ran nothing. Then include this receipt in review.\n"
+                }
+                _ => {
+                    "\nNext: Make the focused test pass before keeping it; ripr did not run it. A fix that edits the patch leaves this receipt stale, so do not include it in review; re-check the gap with `ripr check` after the fix.\n"
+                }
             };
             assert!(finish_stdout.contains(expected_next), "{finish_stdout}");
             assert!(

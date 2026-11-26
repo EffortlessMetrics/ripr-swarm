@@ -43,10 +43,21 @@ pub(crate) fn reported_test_run_counts(run: &ReportedTestRun) -> String {
 /// What a caller-reported run leaves to do. A reported failure is named:
 /// static movement `improved` never turns a failing test into a pass.
 pub(crate) fn reported_test_run_next_step(run: &ReportedTestRun) -> String {
+    const BOUND: &str = "ripr checked that the result is bound to this attempt, its HEAD and the test file; it did not run or observe the tests, and the receipt's static movement is separate evidence.";
     if run.failed > 0 {
         "The reported run has a failing test: make the focused test pass before keeping it. Static movement `improved` does not establish a passing test.".to_string()
     } else {
-        "ripr checked that the result is bound to this attempt, its HEAD and the test file; it did not run or observe the tests, and the receipt's static movement is separate evidence.".to_string()
+        // #16311: say whether the run included a test the edit added or
+        // changed, when ripr could tell.
+        match run.edited_test {
+            Some("covered") => {
+                format!("The run included a test this attempt's edit added or changed. {BOUND}")
+            }
+            Some("not_covered") => format!(
+                "None of the reported tests is one this attempt's edit added or changed, so the edited test has no reported run. {BOUND}"
+            ),
+            _ => BOUND.to_string(),
+        }
     }
 }
 
@@ -55,9 +66,9 @@ pub(crate) fn reported_test_run_next_step(run: &ReportedTestRun) -> String {
 /// An `advisory` receipt whose static movement is `improved` asks the caller
 /// to run the focused test; that guidance is the receipt's static-only
 /// default and stays in its digest-bound bytes. When the finish recorded a
-/// run, the summary names what is left instead. The finish validated the
-/// file the reported tests ran in, not that they include the added or edited
-/// test, so a pass asks the caller to confirm that rather than crediting it.
+/// run, the summary names what is left instead. A pass credits the added or
+/// edited test only when the finish saw it among the ran tests (#16311);
+/// otherwise it names the missing run or asks the caller to confirm it.
 /// A failure means the patch must change, and a changed patch leaves this
 /// receipt stale. Any other receipt keeps its own step: only it decides
 /// whether it is review evidence.
@@ -72,7 +83,13 @@ pub(crate) fn next_step_after_reported_run(
             if run.failed > 0 {
                 "Make the focused test pass before keeping it; ripr did not run it. A fix that edits the patch leaves this receipt stale, so do not include it in review; re-check the gap with `ripr check` after the fix.".to_string()
             } else {
-                "Confirm the reported run included the test you added or edited (ripr checked the test file, not the test names, and ran nothing), then include this receipt in review.".to_string()
+                // #16311: credit the edited test only when the finish saw it
+                // among the ran tests.
+                match run.edited_test {
+                    Some("covered") => "Keep the focused test (the reported run included the test you added or edited; ripr ran nothing) and include this receipt in review.".to_string(),
+                    Some("not_covered") => "Run the test you added or edited and keep it only if it passes: the reported run did not include it, and ripr ran nothing. Then include this receipt in review.".to_string(),
+                    _ => "Confirm the reported run included the test you added or edited (ripr could not tell which tests the edit changed, and ran nothing), then include this receipt in review.".to_string(),
+                }
             }
         }
         _ => receipt_step.to_string(),
@@ -131,7 +148,8 @@ pub(super) fn aggregate_test_run_json(attempt_id: &str, reading: &AgentReceiptRe
 /// prior shape; `caller_reported` adds the reported counts.
 pub(super) fn test_run_json(reading: &AgentReceiptReading) -> Value {
     match &reading.reported_test_run {
-        Some(run) => serde_json::json!({
+        Some(run) => {
+            let mut value = serde_json::json!({
             "status": "caller_reported",
             "test_changed": reading.test_changed,
             "file": run.file,
@@ -139,7 +157,13 @@ pub(super) fn test_run_json(reading: &AgentReceiptReading) -> Value {
             "passed": run.passed,
             "failed": run.failed,
             "next_step": reported_test_run_next_step(run)
-        }),
+            });
+            // #16311: absent for a run retained before the reading existed.
+            if let (Some(edited_test), Some(object)) = (run.edited_test, value.as_object_mut()) {
+                object.insert("edited_test".to_string(), Value::from(edited_test));
+            }
+            value
+        }
         None => test_not_run_json(reading),
     }
 }
@@ -160,7 +184,37 @@ mod tests {
             ran: passed + failed,
             passed,
             failed,
+            edited_test: None,
         }
+    }
+
+    #[test]
+    fn the_edited_test_is_credited_only_when_the_run_covered_it() {
+        let step = "Run the focused test and keep it only if it passes.";
+        let with = |edited_test| ReportedTestRun {
+            edited_test,
+            ..run(1, 0)
+        };
+        let next = |run: &ReportedTestRun| {
+            next_step_after_reported_run(Some(run), Some("advisory"), Some("improved"), step)
+        };
+        let covered = with(Some("covered"));
+        assert!(next(&covered).starts_with("Keep the focused test"));
+        assert_eq!(
+            test_run_json(&reading(Some(covered.clone())))["edited_test"],
+            "covered"
+        );
+        let missed = with(Some("not_covered"));
+        assert!(next(&missed).starts_with("Run the test you added or edited"));
+        assert!(reported_test_run_next_step(&missed).starts_with("None of the reported tests"));
+        for unknown in [with(Some("unknown")), with(None)] {
+            assert!(next(&unknown).starts_with("Confirm the reported run included"));
+        }
+        assert!(
+            test_run_json(&reading(Some(with(None))))
+                .get("edited_test")
+                .is_none()
+        );
     }
 
     #[test]

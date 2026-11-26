@@ -17,6 +17,8 @@
 //! run. Whether a result is required to finish is decided by the caller of
 //! this module: only an attempt that follows a new-test proposal needs one.
 
+pub(crate) mod edit_coverage;
+
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::{BTreeMap, BTreeSet};
@@ -150,6 +152,9 @@ pub(crate) struct FocusedRunScope<'a> {
     pub(crate) file_source: &'a str,
     /// The governed inline module name when the target is an inline module.
     pub(crate) inline_module: Option<&'a str>,
+    /// That file's text when the attempt began, when it is recoverable
+    /// exactly (#16311); `None` reads the edited-test coverage as unknown.
+    pub(crate) baseline_source: Option<&'a str>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
@@ -167,6 +172,9 @@ pub(crate) struct FocusedRunRecord {
     failed: usize,
     /// Tests that ran but are not defined in the file or module; not counted.
     uncounted_ran: usize,
+    /// Whether a ran test is one the attempt's edit added or changed
+    /// (#16311): `covered`, `not_covered` or `unknown`.
+    edited_test: &'static str,
     claim: &'static str,
 }
 
@@ -195,6 +203,7 @@ impl FocusedRunRecord {
             ran: self.counted(),
             passed: self.passed,
             failed: self.failed,
+            edited_test: Some(self.edited_test),
         }
     }
 
@@ -236,6 +245,10 @@ pub(crate) fn read_retained_focused_run(
         ran: value.get("ran_tests").and_then(Value::as_array)?.len(),
         passed: count("passed")?,
         failed: count("failed")?,
+        // A record from before #16311 carries no coverage reading.
+        edited_test: text("edited_test")
+            .and_then(edit_coverage::EditedTestCoverage::parse)
+            .map(edit_coverage::EditedTestCoverage::as_str),
     })
 }
 
@@ -381,6 +394,11 @@ pub(crate) fn validate_focused_run(
         ));
     }
     let failed = failed_in_scope.len();
+    let ran_tests: Vec<String> = ran_in_scope.into_iter().collect();
+    let edited = scope
+        .baseline_source
+        .and_then(|before| edit_coverage::edited_tests(scope.file, before, scope.file_source));
+    let edited_test = edit_coverage::coverage(scope.file, edited.as_ref(), &ran_tests).as_str();
     Ok(FocusedRunRecord {
         schema_version: FOCUSED_RUN_SCHEMA_VERSION,
         kind: FOCUSED_RUN_RECORD_KIND,
@@ -388,10 +406,11 @@ pub(crate) fn validate_focused_run(
         head: scope.head.to_string(),
         file: scope.file.to_string(),
         module: scope.inline_module.map(str::to_string),
-        passed: ran_in_scope.len() - failed,
+        passed: ran_tests.len() - failed,
         failed,
         uncounted_ran: uncounted.len(),
-        ran_tests: ran_in_scope.into_iter().collect(),
+        edited_test,
+        ran_tests,
         claim: "caller-supplied; ripr checked shape, attempt and HEAD binding, file membership, per-test outcomes and reported completion; ripr did not run or observe the tests",
     })
 }
@@ -659,6 +678,7 @@ mod tests {
             passed: 1,
             failed: 1,
             uncounted_ran: 3,
+            edited_test: "covered",
             claim: "caller-supplied",
         };
         let text = String::from_utf8(record.render()?).map_err(|error| error.to_string())?;
@@ -702,6 +722,7 @@ mod tests {
             file: "tests/math.rs",
             file_source: SOURCE,
             inline_module,
+            baseline_source: None,
         }
     }
 
@@ -828,6 +849,7 @@ mod tests {
             file: "src/lib.rs",
             file_source: source,
             inline_module: Some("tests"),
+            baseline_source: None,
         };
         let counted = document(
             "attempt-1",
@@ -860,6 +882,7 @@ mod tests {
             file: "src/lib.rs",
             file_source: source,
             inline_module: Some("tests"),
+            baseline_source: None,
         };
         for name in [
             "tests::outside",
@@ -898,6 +921,7 @@ mod tests {
             file,
             file_source: source,
             inline_module: Some("tests"),
+            baseline_source: None,
         };
         let raw = document("attempt-1", "abc123", file, serde_json::json!([ok(name)]));
         validate_focused_run(&raw, &inline).map(|record| record.counted())

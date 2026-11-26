@@ -921,7 +921,9 @@ also carries an optional `test_run` object (#16251): the same object `ripr
 agent status --attempt <id> --json` emits, read from the same retained record.
 It is `not_recorded` when the caller reported no focused run and
 `caller_reported` (with `file`, `ran`, `passed`, `failed` and `next_step`) when
-the finish retained one; a reported failure is named in `next_step`. It never
+the finish retained one; a reported failure is named in `next_step`, and
+`edited_test` (#16311) says whether the reported tests included one the
+attempt's edit added or changed (`covered`, `not_covered` or `unknown`). It never
 changes `status`, and session transactions omit it. The output schema types
 every field but does not tie the counts to `status` (no `oneOf`, to keep the
 opt-in full listing small): one shared producer emits both shapes, so a

@@ -7639,6 +7639,7 @@ mod repair_summary_tests {
             ran: passed + failed,
             passed,
             failed,
+            edited_test: None,
         };
         let line = |run: Option<&ReportedTestRun>| {
             repair_receipt_summary_lines(receipt, run)
@@ -8713,6 +8714,10 @@ fn validate_focused_run_input(
             file,
             file_source: &source,
             inline_module,
+            baseline_source: crate::app::focused_run::edit_coverage::baseline_source(
+                root, &baseline, file,
+            )
+            .as_deref(),
         },
     )?;
     let rendered = String::from_utf8(record.render()?)
