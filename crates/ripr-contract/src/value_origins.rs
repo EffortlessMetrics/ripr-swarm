@@ -22,7 +22,7 @@ pub struct LocatedValueFact {
     pub context: ValueContext,
 }
 impl LocatedValueFact {
-    /// The public four-field fact, without the file.
+    /// Returns the public four-field fact, dropping the file.
     pub fn into_public(self) -> domain::ValueFact {
         domain::ValueFact {
             line: self.line,
@@ -59,7 +59,8 @@ pub struct LocatedActivationEvidence {
     pub missing_discriminators: Vec<domain::MissingDiscriminatorFact>,
 }
 impl LocatedActivationEvidence {
-    /// The public evidence, plus each observed value's file in the same order.
+    /// Returns the public evidence, plus each observed value's file in the same
+    /// order.
     pub fn into_public(self) -> (domain::ActivationEvidence, Vec<Option<PathBuf>>) {
         let files = self
             .observed_values
@@ -94,7 +95,10 @@ pub struct OriginReceipt {
     files: Vec<Option<PathBuf>>,
 }
 impl ValueOrigins {
-    /// Prepare the immutable snapshot before acquiring any shared collector lock.
+    /// Builds a receipt binding `finding`'s probe and observed values to
+    /// `files`, one entry per observed value (`None` for an unknown file).
+    /// Returns `None` when `files` is empty or its length differs from the
+    /// observed values. Call it before acquiring any shared collector lock.
     pub fn prepare(
         finding: &domain::Finding,
         files: Vec<Option<PathBuf>>,
@@ -119,7 +123,7 @@ impl ValueOrigins {
             .push(receipt);
     }
     /// Runs [`ValueOrigins::prepare`] and inserts the receipt; does nothing when
-    /// `prepare` returns `None`.
+    /// `files` is empty or does not hold exactly one entry per observed value.
     pub fn record(&mut self, finding: &domain::Finding, files: Vec<Option<PathBuf>>) {
         if let Some(receipt) = Self::prepare(finding, files) {
             self.insert_receipt(receipt);
@@ -133,9 +137,9 @@ impl ValueOrigins {
             self.0.entry(location).or_default().append(&mut receipts);
         }
     }
-    /// The files recorded for `finding`'s observed values, in order. `None`
-    /// when no receipt matches its full probe and value list, or when matching
-    /// receipts disagree on the files.
+    /// Returns the files recorded for `finding`'s observed values, in order.
+    /// Returns `None` when no receipt matches its full probe and value list, or
+    /// when matching receipts disagree on the files.
     pub fn files(&self, finding: &domain::Finding) -> Option<&[Option<PathBuf>]> {
         self.files_for(&finding.probe, &finding.activation.observed_values)
     }
