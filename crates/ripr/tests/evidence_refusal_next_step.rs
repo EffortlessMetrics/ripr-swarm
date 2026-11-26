@@ -170,9 +170,10 @@ fn success(dir: &Path, args: &[&str]) -> Result<(), String> {
     }
 }
 
-/// Following the baseline refusal's advice (`ripr baseline create`) yields a
-/// ledger the same update accepts; a broken gate decision names the command
-/// that writes one.
+/// Every `baseline update` input refusal names that input's source: the
+/// reviewed ledger (restored, since `ripr baseline create` starts an
+/// unreviewed one) or `ripr gate evaluate` output. A `baseline create`
+/// ledger is still accepted, so the fallback the advice names works.
 #[test]
 fn baseline_update_refusals_name_the_command_that_writes_each_input() -> Result<(), String> {
     let dir = scratch()?;
@@ -190,14 +191,35 @@ fn baseline_update_refusals_name_the_command_that_writes_each_input() -> Result<
         "current.json",
         "--remove-resolved",
     ];
+    const BASELINE_SOURCE: &str = "; pass the reviewed baseline ledger, restored from version control if this copy is damaged (`ripr baseline create` starts a new, unreviewed one)";
+    const GATE_SOURCE: &str = "; pass the gate-decision JSON that `ripr gate evaluate` writes";
     let stderr = refusal(&dir.0, &update)?;
     stderr_has_all(
         &stderr,
-        &[
-            "parse baseline baseline.json failed: ",
-            "; pass the reviewed baseline ledger that `ripr baseline create` writes",
-        ],
+        &["parse baseline baseline.json failed: ", BASELINE_SOURCE],
     )?;
+    for (baseline, current, first) in [
+        (
+            r#"{"schema_version":"9","kind":"gate_baseline","entries":[]}"#,
+            r#"{"schema_version":"0.1","decisions":[]}"#,
+            "baseline baseline.json has unsupported schema_version `9`; expected `0.1`",
+        ),
+        (
+            r#"{"schema_version":"0.1","entries":[]}"#,
+            r#"{"schema_version":"0.1","decisions":[]}"#,
+            "baseline baseline.json missing kind",
+        ),
+        (
+            r#"{"schema_version":"0.1","kind":"other","entries":[]}"#,
+            r#"{"schema_version":"0.1","decisions":[]}"#,
+            "baseline baseline.json has unsupported kind `other`; expected `gate_baseline`",
+        ),
+    ] {
+        write("baseline.json", baseline)?;
+        write("current.json", current)?;
+        stderr_has_all(&refusal(&dir.0, &update)?, &[first, BASELINE_SOURCE])?;
+    }
+    write("current.json", r#"{"schema_version":"0.1","decisions":[]}"#)?;
     success(
         &dir.0,
         &[
@@ -212,12 +234,20 @@ fn baseline_update_refusals_name_the_command_that_writes_each_input() -> Result<
     )?;
     success(&dir.0, &update)?;
 
-    write("current.json", r#"{"decisions":[]}"#)?;
-    let stderr = refusal(&dir.0, &update)?;
+    write("current.json", r#"{"schema_version":"9","decisions":[]}"#)?;
     stderr_has_all(
-        &stderr,
+        &refusal(&dir.0, &update)?,
         &[
-            "current gate-decision current.json missing schema_version; pass the gate-decision JSON that `ripr gate evaluate` writes",
+            "current gate-decision current.json has unsupported schema_version `9`; expected `0.1`",
+            GATE_SOURCE,
+        ],
+    )?;
+    write("current.json", r#"{"decisions":[]}"#)?;
+    stderr_has_all(
+        &refusal(&dir.0, &update)?,
+        &[
+            "current gate-decision current.json missing schema_version",
+            GATE_SOURCE,
         ],
     )
 }
@@ -225,27 +255,41 @@ fn baseline_update_refusals_name_the_command_that_writes_each_input() -> Result<
 #[test]
 fn calibrate_refusal_names_the_snapshot_command() -> Result<(), String> {
     let dir = scratch()?;
-    std::fs::write(dir.0.join("repo.json"), r#"{"seams":[{"seam_id":"a"}]}"#)
-        .map_err(|error| format!("write repo.json: {error}"))?;
     std::fs::write(dir.0.join("mutants.json"), "[]")
         .map_err(|error| format!("write mutants.json: {error}"))?;
-    let stderr = refusal(
-        &dir.0,
-        &[
-            "calibrate",
-            "cargo-mutants",
-            "--repo-exposure-json",
-            "repo.json",
-            "--mutants-json",
-            "mutants.json",
-        ],
-    )?;
-    stderr_has_all(
-        &stderr,
-        &[
-            "repo exposure seam is missing string field `kind`; pass a file written by `ripr check --format repo-exposure-json`",
-        ],
-    )
+    let calibrate = [
+        "calibrate",
+        "cargo-mutants",
+        "--repo-exposure-json",
+        "repo.json",
+        "--mutants-json",
+        "mutants.json",
+    ];
+    for (repo, first) in [
+        (
+            r#"{"seams":[{"seam_id":"a"}]}"#,
+            "repo exposure seam is missing string field `kind`",
+        ),
+        (
+            r#"{"seams":[{"seam_id":"a","kind":"k","file":"src/a.rs"}]}"#,
+            "repo exposure seam is missing numeric field `line`",
+        ),
+        (
+            r#"{"schema_version":"0.1"}"#,
+            "repo exposure JSON is missing `seams` array",
+        ),
+    ] {
+        std::fs::write(dir.0.join("repo.json"), repo)
+            .map_err(|error| format!("write repo.json: {error}"))?;
+        stderr_has_all(
+            &refusal(&dir.0, &calibrate)?,
+            &[
+                first,
+                "; pass a file written by `ripr check --format repo-exposure-json`",
+            ],
+        )?;
+    }
+    Ok(())
 }
 
 #[test]

@@ -436,14 +436,16 @@ fn disclosed_analyzer_version(version: Option<&str>) -> String {
 
 pub(crate) use crate::output::path::display_path;
 
-/// The command that writes each `baseline update` input, so a refusal for
-/// an unreadable or foreign file names where a usable one comes from.
+/// Where a usable `baseline update` input comes from, so a refusal for an
+/// unreadable or foreign file names it. A baseline carries review decisions
+/// that `ripr baseline create` cannot rebuild (it writes `reviewed: false`),
+/// so the advice is to restore the reviewed ledger, not regenerate it.
 /// `BASELINE_KIND` is the baseline ledger; every other kind, including the
 /// empty kind the current gate-decision input passes, is named as
 /// gate-decision JSON. A new input kind needs its own arm here.
 fn input_source(expected_kind: &str) -> &'static str {
     if expected_kind == BASELINE_KIND {
-        "the reviewed baseline ledger that `ripr baseline create` writes"
+        "the reviewed baseline ledger, restored from version control if this copy is damaged (`ripr baseline create` starts a new, unreviewed one)"
     } else {
         "the gate-decision JSON that `ripr gate evaluate` writes"
     }
