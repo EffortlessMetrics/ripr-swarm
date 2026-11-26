@@ -295,8 +295,9 @@ fn path_names_trait(path: &str, owner_trait: &str) -> bool {
         // `Trait::<U>::name(`
         return last_segment_is(trait_path, owner_trait);
     }
-    if head.ends_with(is_word) {
-        // `Type<Trait>::name(` names no trait.
+    if head.ends_with(is_word) && !ends_with_keyword(head) {
+        // `Type<Trait>::name(` names no trait; `return <T as Trait>::name(`
+        // begins a qualified path after a keyword.
         return false;
     }
     // `<T as path::Trait<U>>::name(`
@@ -317,6 +318,20 @@ fn path_names_trait(path: &str, owner_trait: &str) -> bool {
         false => trait_path,
     };
     last_segment_is(trait_path, owner_trait)
+}
+
+/// Whether `text` ends in a keyword that an expression path can follow.
+fn ends_with_keyword(text: &str) -> bool {
+    let start = text
+        .char_indices()
+        .rev()
+        .find(|(_, ch)| !is_word(*ch))
+        .map_or(0, |(index, ch)| index + ch.len_utf8());
+    let raw = text[..start].ends_with("r#");
+    !raw && matches!(
+        &text[start..],
+        "return" | "break" | "else" | "in" | "yield" | "match" | "if" | "while" | "move" | "mut"
+    )
 }
 
 /// Whether the path's last identifier, raw or not, is `owner_trait`.

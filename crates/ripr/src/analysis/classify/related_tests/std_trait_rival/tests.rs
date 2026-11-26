@@ -188,6 +188,8 @@ fn only_the_owner_traits_path_counts() {
         "<Foo as Peeky<fn() -> u8>>::into_iter(&foo)",
         "Peeky::<u8>::into_iter(&foo)",
         "Peeky::into_iter::<u8>(&foo)",
+        "return <Foo as crate::Peeky>::into_iter(&foo)",
+        "if ok { 0 } else <Foo as Peeky>::into_iter(&foo)",
         "<Foo as Peeky>::into_iter :: < Vec<u8> > (&foo)",
     ] {
         assert!(
@@ -205,6 +207,8 @@ fn only_the_owner_traits_path_counts() {
         "Peeky::into_iter",
         "let f = Peeky::into_iter::<u8>;",
         "<Peeky as Other>::into_iter(&foo)",
+        "returned<Peeky>::into_iter(&foo)",
+        "r#return<Peeky>::into_iter(&foo)",
         "<Foo as crate::Peeky::Inner>::into_iter(&foo)",
     ] {
         assert!(
