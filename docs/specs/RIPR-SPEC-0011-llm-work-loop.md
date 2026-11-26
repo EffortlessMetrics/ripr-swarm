@@ -938,7 +938,18 @@ exactly those bytes and the record is for this attempt. The two axes stay
 separate: the receipt's `verification.status` remains `verification_not_run`
 (ripr ran nothing), and static movement is whatever the static comparison
 found, so a reported failure can sit beside `improved`. The receipt-owned
-`next:` line is unchanged. MCP documents do not project the record yet.
+`next:` line is unchanged. MCP receipt status projects it since #16251.
+
+## Amendment (#16251): MCP receipt status carries the same test-run reading
+
+`ripr_get_receipt_status` and `ripr://receipt/{receipt_id}` add an optional
+`test_run` object for a finished durable attempt whose issued receipt records
+`verification_not_run`. It is the object `ripr agent status --attempt <id>
+--json` emits for the same attempt, built by the same owner from the same
+retained record: `not_recorded` when the caller reported no run,
+`caller_reported` with the counts and next step when the finish retained one.
+It is absent for session transactions and for attempts without an issued
+receipt. It never changes the document's `status`; ripr ran nothing either way.
 
 ## Amendment (#14146): the aggregate test-run reading names its attempt
 
@@ -1359,7 +1370,7 @@ is not decided here.
 - `crates/ripr/tests/repair_check_recommended_start.rs::open_spots_on_the_change_close_on_the_per_spot_reasons` (#12861)
 - `crates/ripr/tests/repair_check_recommended_start.rs::a_start_whose_card_cannot_be_produced_creates_no_attempt` (#12867)
 - `crates/ripr/tests/repair_check_recommended_start.rs::a_refused_field_seam_names_the_stub_or_why_there_is_none` (#12959)
-- `crates/ripr/tests/mcp_cli_repair_parity.rs::six_step_agent_contract_holds_through_cli_and_mcp` (#14079: gap, one unit, one test edit, re-recorded static evidence, the caller's run as a separate axis, durable read-back from a new MCP process)
+- `crates/ripr/tests/mcp_cli_repair_parity.rs::six_step_agent_contract_holds_through_cli_and_mcp` (#14079: gap, one unit, one test edit, re-recorded static evidence, the caller's run as a separate axis, durable read-back from a new MCP process; #16251: the MCP receipt `test_run` equals CLI status)
 - `crates/ripr/src/app/focused_run.rs::tests::a_retained_record_reads_back_only_for_its_own_attempt_and_kind` (#14079)
 - `crates/ripr/src/cli/commands/agent.rs::repair_summary_tests::repair_summary_reports_a_recorded_caller_run_instead_of_none_recorded` (#14079)
 - `crates/ripr/src/app/agent_status/test_run.rs::tests::a_reported_run_is_read_back_with_its_counts_and_a_failure_is_named` (#14079)

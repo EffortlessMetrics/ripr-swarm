@@ -51,7 +51,13 @@ pub(crate) fn owners_from_program(
         owners.extend(
             owners_from_statement(stmt, file, source, &imports)
                 .into_iter()
-                .map(|owner| (owner, commonjs)),
+                // Members of an inline `module.exports = class ...` are not
+                // export names: two accessors or overloads sharing a name
+                // must not read as a reassigned export.
+                .map(|owner| {
+                    let export = commonjs && !owner.class_default_export;
+                    (owner, export)
+                }),
         );
     }
     let mut owners = without_reassigned_commonjs_exports(owners);
@@ -99,6 +105,19 @@ pub(crate) fn owners_from_program(
     let instance_fields = class_instance_field_names(program);
     let repeated_names = repeated_class_names(program);
     assign_class_entries(&mut owners, &instance_fields, &repeated_names);
+    // A method of a module-private class an exported entry constructs
+    // (`Class.method` graph node, #15928) also carries those entries.
+    for owner in &mut owners {
+        if owner.owner_kind == OwnerKind::Method
+            && owner.method_kind == TypeScriptMethodKind::Ordinary
+            && let Some(class_name) = owner.class_name.as_ref()
+            && !repeated_names.contains(class_name)
+            && let Some(owner_entries) = entries.get(&format!("{class_name}.{}", owner.name))
+        {
+            owner.module_entries.extend(owner_entries.iter().cloned());
+            owner.module_entries.sort();
+        }
+    }
     assign_instance_factories(
         program,
         source,
@@ -241,6 +260,19 @@ fn owners_from_commonjs_export(
             vec![owner]
         })
         .unwrap_or_default(),
+        // `module.exports = class Cart { ... }`: the class itself is the
+        // whole export, the inline twin of `class Cart {}` followed by
+        // `module.exports = Cart;` (#15092). Its members carry both markers;
+        // the file-level gate in `mark_commonjs_default_binding` clears them
+        // when the export is not provably this class.
+        Expression::ClassExpression(class) => {
+            let mut owners = owners_from_class(class, file, source, imports);
+            for owner in &mut owners {
+                owner.class_default_export = true;
+                owner.commonjs_default_export = true;
+            }
+            owners
+        }
         Expression::ObjectExpression(object) => object
             .properties
             .iter()
@@ -347,7 +379,11 @@ fn without_reassigned_esm_bindings(
             // A class method shares only the binding name with a reassigned
             // top-level binding; its receiver keeps it live, so the
             // name-only drop must not take it.
-            owner.class_name.is_some() || !reassigned.contains(owner.name.as_str())
+            // A member of an inline `module.exports = class ...` whose class
+            // name was cleared (#16252) is still a class method.
+            owner.class_name.is_some()
+                || matches!(owner.owner_kind, OwnerKind::Method | OwnerKind::ClassMethod)
+                || !reassigned.contains(owner.name.as_str())
         })
         .collect()
 }
@@ -789,11 +825,13 @@ fn mark_commonjs_default_binding(
         // Only the inline owners this pass flagged lose their default
         // export; every other file (ESM, no `module.exports`) fails the gate.
         for owner in owners.iter_mut().filter(|o| o.commonjs_default_export) {
+            super::commonjs_default_class::unmark_inline_class_member(owner);
             owner.commonjs_default_export = false;
             owner.exported_as_default = false;
         }
         return;
     };
+    super::commonjs_default_class::keep_inline_class_whole_export(&code, &division_code, owners);
     if let Some(class_name) = target
         && super::commonjs_default_class::mark_whole_export_class(
             program,
@@ -1649,9 +1687,10 @@ pub(crate) fn owners_from_class(
         .id
         .as_ref()
         .map(|identifier| identifier.name.as_str().to_string());
+    let overwritten = super::overwritten_methods::overwritten_method_starts(class);
     for element in &class.body.body {
         if let ClassElement::MethodDefinition(method) = element
-            && let Some(owner) = owner_from_method(
+            && let Some(mut owner) = owner_from_method(
                 method,
                 file,
                 source,
@@ -1660,6 +1699,9 @@ pub(crate) fn owners_from_class(
                 imports,
             )
         {
+            if overwritten.contains(&method.span.start) {
+                owner.method_kind = TypeScriptMethodKind::Overwritten;
+            }
             owners.push(owner);
         }
     }
@@ -1719,7 +1761,7 @@ pub(crate) fn binding_identifier_name<'a>(pattern: &'a BindingPattern<'a>) -> Op
 /// A class method's owner name: a plain identifier, or a `#private` name kept
 /// with its `#` so it can never collide with a public member of the same name
 /// and cannot match a test's `receiver.name(` needle (#10440).
-fn method_key_name(method: &MethodDefinition<'_>) -> Option<String> {
+pub(super) fn method_key_name(method: &MethodDefinition<'_>) -> Option<String> {
     if method.computed {
         return None;
     }

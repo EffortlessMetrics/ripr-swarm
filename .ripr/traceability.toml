@@ -1588,6 +1588,13 @@ id = "RIPR-SPEC-0008"
 name = "SARIF and CI policy"
 spec = "docs/specs/RIPR-SPEC-0008-sarif-ci-policy.md"
 tests = [
+  "crates/ripr/src/output/sarif.rs::tests::finding_message_is_one_plain_line_without_jargon_or_doubled_cut",
+  "crates/ripr/src/output/sarif.rs::tests::finding_message_carries_no_analyzer_route",
+  "crates/ripr/src/output/sarif.rs::tests::seam_message_is_one_bounded_line",
+  "crates/ripr/src/output/sarif.rs::tests::alert_next_step_keeps_literal_spacing_and_joins_lines",
+  "crates/ripr/src/output/sarif.rs::tests::sarif_marks_results_matched_by_a_path_glob_entry",
+  "crates/ripr/tests/cli_smoke.rs::check_sarif_suppression_policy_marks_path_glob_results",
+  "crates/ripr/src/output/suppressions.rs::tests::candidate_paths_keep_a_unix_literal_backslash",
   "crates/ripr/src/output/sarif.rs::tests::sarif_column_contract_ascii",
   "crates/ripr/src/output/sarif.rs::tests::sarif_column_contract_bmp",
   "crates/ripr/src/output/sarif.rs::tests::sarif_column_contract_non_bmp",
@@ -1603,6 +1610,7 @@ tests = [
   "crates/ripr/tests/sarif_uri_identity.rs::ordinary_escaping_controls",
   "crates/ripr/tests/sarif_uri_identity.rs::native_backslash_does_not_alias_directory",
   "crates/ripr/tests/sarif_uri_identity.rs::native_windows_separators_are_slashes",
+  "crates/ripr/tests/sarif_uri_identity.rs::suppression_policy_keeps_native_backslash_file_distinct",
   "crates/ripr/src/output/sarif.rs::tests::sarif_caps_observed_values_and_discloses_the_total",
   "crates/ripr/src/output/sarif.rs::tests::sarif_omits_observed_values_total_under_the_cap",
   "crates/ripr/src/output/sarif.rs::tests::sarif_run_with_only_not_current_findings_records_omitted_property",
@@ -4726,6 +4734,12 @@ fixtures = [
   "fixtures/python_bool_owner_fake_environment",
   "fixtures/python_truthiness_swap_no_exposed_credit",
   "fixtures/python_connective_swap_no_exposed_credit",
+  "fixtures/python_strip_side_no_exposed_credit",
+  "fixtures/python_round_digits_no_exposed_credit",
+  "fixtures/python_sort_direction_no_exposed_credit",
+  "fixtures/python_get_fallback_no_exposed_credit",
+  "fixtures/python_round_coarse_count_control",
+  "fixtures/python_round_tie_input_control",
   "fixtures/python_truthiness_swap_falsy_input_control",
   "fixtures/python_truthiness_swap_inline_rebind_control",
   "fixtures/python_truthiness_swap_indirect_call_control",
@@ -20120,6 +20134,21 @@ id = "RIPR-SPEC-0243"
 name = "TypeScript oracle and reach rules"
 spec = "docs/specs/RIPR-SPEC-0243-typescript-oracle-and-reach-rules.md"
 tests = [
+  "crates/ripr/src/analysis/language/typescript/tests/overwritten_method_tests.rs::an_overwritten_method_of_a_declared_class_relates_to_no_test",
+  "crates/ripr/src/analysis/language/typescript/tests/overwritten_method_tests.rs::an_overwritten_method_of_an_es_default_class_relates_to_no_test",
+  "crates/ripr/src/analysis/language/typescript/tests/overwritten_method_tests.rs::an_overwritten_method_of_an_inline_commonjs_class_relates_to_no_test",
+  "crates/ripr/src/analysis/language/typescript/tests/overwritten_method_tests.rs::a_getter_and_setter_of_one_key_keep_the_getter_relation",
+  "crates/ripr/src/analysis/language/typescript/tests/overwritten_method_tests.rs::overload_signatures_do_not_overwrite_the_implementation",
+  "crates/ripr/src/analysis/language/typescript/tests/overwritten_method_tests.rs::a_static_member_does_not_overwrite_the_instance_method",
+  "crates/ripr/src/analysis/language/typescript/tests/overwritten_method_tests.rs::an_overwritten_body_is_still_an_owner_marked_overwritten",
+  "crates/ripr/src/analysis/language/typescript/tests/overwritten_method_tests.rs::a_quoted_later_key_overwrites_the_earlier_method",
+  "crates/ripr/src/analysis/language/typescript/tests/overwritten_method_tests.rs::a_private_name_and_a_quoted_public_key_are_different_keys",
+  "crates/ripr/src/analysis/language/typescript/tests/overwritten_method_tests.rs::an_overwritten_body_points_at_the_definition_that_remains",
+  "crates/ripr/src/analysis/language/typescript/tests/commonjs_inline_class_tests.rs::a_changed_method_of_the_inline_class_is_reported_and_related",
+  "crates/ripr/src/analysis/language/typescript/tests/commonjs_inline_class_tests.rs::a_whole_module_require_of_the_inline_class_relates_under_any_local_name",
+  "crates/ripr/src/analysis/language/typescript/tests/commonjs_inline_class_tests.rs::a_named_export_beside_the_inline_class_unmarks_it_and_drops_its_name",
+  "crates/ripr/src/analysis/language/typescript/tests/commonjs_inline_class_tests.rs::a_static_method_relates_through_the_whole_module_require_only",
+  "crates/ripr/src/analysis/language/typescript/tests/commonjs_inline_class_tests.rs::an_instance_field_shadows_the_prototype_method_a_sibling_calls",
   "crates/ripr/tests/typescript_push_argument_observation.rs::jest_only_literal_timeout_distinguishes_value_from_cardinality",
   "crates/ripr/tests/typescript_push_argument_observation.rs::jest_only_timeout_witness_rejects_dynamic_and_extra_arguments",
   "fixtures/typescript_jest_only_literal_timeout_push_argument_length",
@@ -20638,6 +20667,7 @@ code = [
   "crates/ripr/src/analysis/language/typescript/helper_inline.rs",
   "crates/ripr/src/analysis/language/typescript/object_rows.rs",
   "crates/ripr/src/analysis/language/typescript/module_entries.rs",
+  "crates/ripr/src/analysis/language/typescript/overwritten_methods.rs",
 ]
 outputs = [
   "docs/specs/RIPR-SPEC-0243-typescript-oracle-and-reach-rules.md",
@@ -21112,6 +21142,7 @@ tests = [
   "crates/ripr/tests/cli_smoke.rs::diff_json_unresolvable_base_emits_refusal_envelope",
   "crates/ripr/tests/cli_smoke.rs::diff_json_outside_work_tree_emits_refusal_envelope",
   "crates/ripr/tests/cli_smoke.rs::rerun_json_unreadable_gap_ledger_emits_refusal_envelope",
+  "crates/ripr/tests/refusal_envelope_schemas.rs::context_json_refusals_conform_to_the_published_schema",
   "crates/ripr/tests/cli_smoke.rs::context_json_missing_artifact_emits_refusal_envelope",
   "crates/ripr/tests/cli_smoke.rs::context_json_fresh_analysis_preserves_base_failures",
   "crates/ripr/tests/cli_smoke.rs::context_json_fresh_analysis_preserves_repository_root_failure",

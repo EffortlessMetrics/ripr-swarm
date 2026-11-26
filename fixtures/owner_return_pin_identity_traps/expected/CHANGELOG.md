@@ -599,3 +599,15 @@ Command:
 
 Updated:
 - `expected/human.txt`
+
+## Pending — owner_return_pin_identity_traps (50)
+
+Reason:
+RIPR-SPEC-0197: a test whose every mention of the owner's name is a local closure or let binding of its body no longer relates by direct_owner_call (#14552)
+
+Command:
+`cargo xtask goldens bless owner_return_pin_identity_traps --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

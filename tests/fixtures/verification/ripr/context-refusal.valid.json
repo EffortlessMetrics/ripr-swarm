@@ -1,10 +1,10 @@
 {
   "analysis_scope": {
-    "basis": "analysis_failed",
+    "basis": "repository_root_unusable",
     "downstream_consumable": false,
-    "limitation": "analysis_failed",
-    "repair_route": "analysis/failure",
-    "run_status": "analysis_failed",
+    "limitation": "repository_root_unusable",
+    "repair_route": "analysis/repository-root",
+    "run_status": "repository_root_unusable",
     "scope": "diff"
   },
   "base": "main",
@@ -13,26 +13,24 @@
   "root": "./missing-context-root",
   "run_limitations": [
     {
-      "basis": "analysis_failed",
-      "category": "analysis_failed",
+      "basis": "repository_root_unusable",
+      "category": "repository_root_unusable",
       "downstream_consumable": false,
-      "message": "repository root ./missing-context-root does not exist or is not a directory; pass `--root <dir>` naming an existing repository",
+      "message": "context root ./missing-context-root is not a directory; pass the directory that contains the workspace (for a Cargo.toml path, its parent directory)",
       "remedy": {
         "alternatives": [],
         "command": null,
         "conditional": false,
         "env": [],
         "fill_in": [],
-        "flags": [
-          "--root"
-        ],
-        "kind": "flags",
+        "flags": [],
+        "kind": "none",
         "prose_has_more": false,
         "retry_stated": null,
         "tool": null
       },
-      "repair_route": "analysis/failure",
-      "run_status": "analysis_failed"
+      "repair_route": "analysis/repository-root",
+      "run_status": "repository_root_unusable"
     }
   ],
   "schema_version": "1.1",

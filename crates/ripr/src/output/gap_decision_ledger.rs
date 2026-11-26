@@ -5908,7 +5908,16 @@ mod tests {
         // #16203: `python_connective_swap_no_exposed_credit` keeps an `and`/`or`
         // swap whose operands agree on every related call weakly exposed; its
         // card names a call where they differ and stays direct-aligned.
-        if (direct, no_strong, orthogonal, family_selection) != (29, 37, 50, 2) {
+        // `python_strip_side_no_exposed_credit` keeps a `strip` -> `lstrip`
+        // edit no related call separates weakly exposed; its card names a
+        // string with trailing whitespace, one more direct-aligned card.
+        // `python_round_digits_no_exposed_credit` and
+        // `python_sort_direction_no_exposed_credit` do the same for a `round`
+        // digit count and a sort direction, two more direct-aligned cards.
+        // `python_get_fallback_no_exposed_credit` keeps a `get` fallback edit
+        // whose calls all hold the key weakly exposed; its card names a dict
+        // without the key, one more direct-aligned card.
+        if (direct, no_strong, orthogonal, family_selection) != (33, 37, 50, 2) {
             return Err(format!(
                 "corpus inventory drift: direct={direct}, unknown={no_strong}, orthogonal={orthogonal}, family_selection={family_selection}"
             ));

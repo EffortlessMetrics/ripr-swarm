@@ -573,10 +573,13 @@ pub(crate) struct AnalysisOutcome {
 /// Which new-side lines the analyzed diff added or modified, per changed
 /// file (#15039). Built by the diff pipeline from the same parsed diff the
 /// counts come from, so a consumer never re-derives it from Git. A file the
-/// diff only removed lines from is present with no lines.
+/// diff only removed lines from is present with no lines. It also names the
+/// changed files the operator's own configuration left out of analysis, with
+/// the setting that matched (#16250).
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub(crate) struct ChangedLineIndex {
     files: std::collections::BTreeMap<String, std::collections::BTreeSet<usize>>,
+    configured_exclusions: std::collections::BTreeMap<String, String>,
 }
 
 impl ChangedLineIndex {
@@ -589,6 +592,18 @@ impl ChangedLineIndex {
     /// not touch that file.
     pub(crate) fn lines_of(&self, path: &str) -> Option<&std::collections::BTreeSet<usize>> {
         self.files.get(path)
+    }
+
+    /// Record that `setting` in the operator's configuration left the
+    /// changed file `path` out of this run's analysis.
+    pub(crate) fn record_configured_exclusion(&mut self, path: String, setting: String) {
+        self.configured_exclusions.insert(path, setting);
+    }
+
+    /// The configuration setting that left `path` out of this run's
+    /// analysis, or `None` when no configured exclusion matched it.
+    pub(crate) fn configured_exclusion_of(&self, path: &str) -> Option<&str> {
+        self.configured_exclusions.get(path).map(String::as_str)
     }
 }
 

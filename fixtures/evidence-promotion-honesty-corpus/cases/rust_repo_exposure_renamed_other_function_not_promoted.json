@@ -1,0 +1,27 @@
+{
+  "id": "rust_repo_exposure_renamed_other_function_not_promoted",
+  "language": "rust",
+  "tier": "pure",
+  "source_report": "fixtures/evidence-promotion-honesty-corpus/reports/rust-repo-exposure-renamed-other-function.json",
+  "report_subject": "fixtures/evidence-promotion-honesty-corpus/repo-exposure-subjects/renamed-other-function",
+  "vector": "bare_call_renamed_to_another_function_cannot_credit_the_owner",
+  "assertions": [
+    {
+      "type": "expected_repo_seam_grip",
+      "owner": "src/lib.rs::discount",
+      "expression": "amount >= 100",
+      "grip_class": "activation_unknown",
+      "reach": "weak"
+    },
+    {
+      "type": "expected_repo_seam_related_test",
+      "owner": "src/lib.rs::discount",
+      "expression": "amount >= 100",
+      "test": "renamed_other",
+      "file": "src/lib.rs",
+      "line": 14,
+      "oracle_strength": "strong",
+      "relation_reason": "same_test_file"
+    }
+  ]
+}

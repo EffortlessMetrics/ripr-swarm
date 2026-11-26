@@ -276,6 +276,20 @@ is exact and fails closed: another file, another function in the same file, a
 missing owner, or an owner the producer disambiguated with a `#L<line>` suffix
 (duplicate owners) never matches. Expired entries still do not apply.
 
+**Stale id warning and suppression health (#14129).** An unmatched
+`finding_id` entry that is not a known ripr 0.10 id keeps its "did not match
+any current finding" warning and adds that finding ids hash the parsed
+expression and that `path` + `function` selects the owning function across
+edits, which covers every finding in that function and cannot select a
+changed `const` or `static`; `ripr review-comments` reports only expired
+entries, not unmatched ones. An unmatched path-glob or `path` + `function` entry keeps the plain
+warning. `ripr policy suppression-health` names a `path` + `function` entry
+`<path>::<function>`, the label the check matcher reports for it, and reports
+a rejected `function` entry as a `config_error` finding. A finding with no
+function owner (a changed `const` or `static`), a same-named function in
+another file, and a same-named function in a nested module of the same file
+are not matched by the selector.
+
 **Review-comments.** `ripr review-comments --suppression-policy PATH` loads
 the same file with the same loader as `ripr check` (relative paths resolve
 against `--root`; a missing or malformed file is an error; not combinable with
@@ -705,6 +719,14 @@ their regions, including regions a zero-context diff splits across hunks,
 records the `unresolved_conflict_markers` limitation and exits 2 instead of
 listing findings from rival source states. An unanswered Git probe never
 produces the advisory.
+
+With a resolved default base, doctor reports `git_base` and names the ref.
+A shared ancestor with HEAD passes. If none is available, a shallow clone gets
+the `git fetch --unshallow` and Actions `fetch-depth: 0` repairs. For unrelated
+histories in a full clone, choose a `--base` on HEAD's history. These advisories
+keep exit 0 when other checks pass. For an origin without a default-branch
+pointer, doctor suggests `git remote set-head origin --auto`. Doctor leaves
+fetching and ref changes to the user.
 
 ### Doctor separates analysis readiness from source-build prerequisites
 

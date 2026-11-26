@@ -1,0 +1,8 @@
+[[extend]]
+id = "RIPR-SPEC-0231"
+tests = [
+  "crates/ripr/tests/matches_bool_equality_strength.rs::a_matches_compared_with_true_is_only_as_strong_as_its_pattern",
+]
+code = [
+  "crates/ripr/src/analysis/extract/oracles/pattern_admission.rs",
+]

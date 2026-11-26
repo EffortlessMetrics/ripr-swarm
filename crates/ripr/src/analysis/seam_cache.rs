@@ -791,7 +791,21 @@ pub(crate) struct CachedSeamLimitInfo {
 /// uses reads as an unknown oracle for that owner (#16192).
 /// `1.196`: a check helper with `?` lends its assertion when every eager call
 /// is `check(..)?` (#14116).
-pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.196";
+/// `1.197`: an owner result unwrapped or chained into a local that only an untrusted
+/// inner macro uses reads as an unknown oracle for that owner (#16219).
+/// `1.198`: an owner call whose result a statement discards (`let _ = pick(0);`,
+/// `pick(0);`) is not a free observation beside a macro-held call (#16258).
+/// `1.199`: a helper wrapper reading `include_str!` or `include_bytes!` forwards
+/// its helper result unless either name is rebound (#10357).
+/// `1.200`: a `matches!` or-pattern whose alternatives all pin a value reads
+/// weak, not exact (#16286).
+/// `1.201`: a renamed call in a test's own module file (`src/tests.rs`) reads
+/// the enclosing module files, so a nested-block rename settles there too (#16277).
+/// pattern (#16290).
+/// `1.204`: a test whose every mention of the owner's name is bound by a
+/// local of its body (`let dt = |x| x + 1;`, a nested `fn dt`) no longer
+/// relates by `direct_owner_call` (#14552).
+pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.204";
 /// `0.2` → `0.3`: same semantic transition as the outer cache (#3273 /
 /// #3286) — sharded entries derive from the same facts and cannot bypass
 /// the outer generation bump.
@@ -1025,7 +1039,14 @@ pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.196";
 /// `0.196`: same non-empty array loop execution as full `1.194` (#14116).
 /// `0.197`: same macro-held owner-result local as full `1.195` (#16192).
 /// `0.198`: same propagated fallible check helper as full `1.196` (#14116).
-const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.198";
+/// `0.199`: same chained owner-result local as full `1.197` (#16219).
+/// `0.200`: same discarded owner call as full `1.198` (#16258).
+/// `0.201`: same include-reading wrapper forwarding as full `1.199` (#10357).
+/// `0.202`: same or-pattern oracle reading as full `1.200` (#16286).
+/// `0.203`: same file-module nested-block rename as full `1.201` (#16277).
+/// `0.204`: same compared-pattern oracle reading as full `1.202` (#16290).
+/// `0.206`: same local-binder refusal as full `1.204` (#14552).
+const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.206";
 
 /// Compact-classified seam cache schema. This cache stores the same
 /// `ClassifiedSeam` envelope shape as the full repo exposure cache, but
@@ -1261,7 +1282,14 @@ const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.198";
 /// `0.196`: same non-empty array loop execution as full `1.194` (#14116).
 /// `0.197`: same macro-held owner-result local as full `1.195` (#16192).
 /// `0.198`: same propagated fallible check helper as full `1.196` (#14116).
-pub(crate) const COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.198";
+/// `0.199`: same chained owner-result local as full `1.197` (#16219).
+/// `0.200`: same discarded owner call as full `1.198` (#16258).
+/// `0.201`: same include-reading wrapper forwarding as full `1.199` (#10357).
+/// `0.202`: same or-pattern oracle reading as full `1.200` (#16286).
+/// `0.203`: same file-module nested-block rename as full `1.201` (#16277).
+/// `0.204`: same compared-pattern oracle reading as full `1.202` (#16290).
+/// `0.206`: same local-binder refusal as full `1.204` (#14552).
+pub(crate) const COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.206";
 
 /// Compact class-count cache used by repo badge rendering. It keys off
 /// the same workspace state as the full fact cache, but stores only
@@ -5865,7 +5893,13 @@ mod tests {
         // 1.193 -> 1.194: a for over any non-empty array runs its assertion (#14116).
         // 1.194 -> 1.195: owner-result locals only an untrusted inner macro uses read unknown (#16192).
         // 1.195 -> 1.196: a propagated fallible check helper lends its assertion (#14116).
-        assert_eq!(CACHE_SCHEMA_VERSION, "1.196");
+        // 1.196 -> 1.197: chained owner-result locals only an untrusted inner macro uses read unknown (#16219).
+        // 1.197 -> 1.198: a discarded owner call is not a free observation beside a macro-held call (#16258).
+        // 1.198 -> 1.199: include_str!/include_bytes! wrappers forward their helper result (#10357).
+        // 1.199 -> 1.200: matches! or-patterns of values read weak (#16286).
+        // 1.200 -> 1.201: nested-block renames settle in a test's own module file (#16277).
+        // 1.202 -> 1.204: a test-local binder of the name withholds direct credit (#14552).
+        assert_eq!(CACHE_SCHEMA_VERSION, "1.204");
         // 1.168 -> 1.169: plain `assert_eq!` literal withhold in the audit (#13005).
         // 0.12 -> 0.13 through 0.14 / 0.15 / 0.16 / 0.17 / 0.18: same
         // #3731 semantic transition as the outer classified-seam cache,
@@ -6039,8 +6073,15 @@ mod tests {
         // 0.195 -> 0.196: same non-empty array loop execution as full 1.194 (#14116).
         // 0.196 -> 0.197: same macro-held owner-result local as full 1.195 (#16192).
         // 0.197 -> 0.198: same propagated fallible check helper as full 1.196 (#14116).
-        assert_eq!(SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.198");
-        assert_eq!(COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.198");
+        // 0.198 -> 0.199: same chained owner-result local as full 1.197 (#16219).
+        // 0.199 -> 0.200: same discarded owner call as full 1.198 (#16258).
+        // 0.200 -> 0.201: same include-reading wrapper forwarding as full 1.199 (#10357).
+        // 0.201 -> 0.202: same or-pattern oracle reading as full 1.200 (#16286).
+        // 0.202 -> 0.203: same file-module nested-block rename as full 1.201 (#16277).
+        // 0.203 -> 0.204: same compared-pattern oracle reading as full 1.202 (#16290).
+        // 0.204 -> 0.206: same local-binder refusal as full 1.204 (#14552).
+        assert_eq!(SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.206");
+        assert_eq!(COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.206");
         // 0.170 -> 0.171: same plain `assert_eq!` literal withhold as full 1.169 (#13005).
     }
 

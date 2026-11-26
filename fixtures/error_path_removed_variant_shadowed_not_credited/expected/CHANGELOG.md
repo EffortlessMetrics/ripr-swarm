@@ -67,3 +67,14 @@ Command:
 
 Updated:
 - `expected/check.json`
+
+## Pending — error_path_removed_variant_shadowed_not_credited (7)
+
+Reason:
+RIPR-SPEC-0106: a test whose every mention of the owner's name is a local closure or let binding of its body no longer relates by direct_owner_call (#14552)
+
+Command:
+`cargo xtask goldens bless error_path_removed_variant_shadowed_not_credited --reason "..."`
+
+Updated:
+- `expected/check.json`

@@ -486,6 +486,42 @@ route is claimed. Ordinary local `precommit` keeps formatting and selected Clipp
 format and numbering, and the policy surfaces that should fail quickly before
 review.
 
+The formatting step of `check-fast`, `ci-fast`, local `precommit` and `shape`
+is the `cargo fmt` obligation run as bounded `rustfmt` batches. `cargo fmt`
+passes every root on one command line, which Windows caps at 32,767
+characters; this workspace's 491 roots pass that, and the step failed with
+os error 206 before rustfmt started (#12004). The step makes the decisions
+the pinned `cargo fmt` makes without `--all`. It differs in batching, in
+reading an empty `CARGO` or `RUSTFMT` as unset, in reporting a failure as its
+own exit status, and in refusing a program path that is not UTF-8. It reads
+the metadata through the `cargo` that `CARGO` names, otherwise the first one
+on `PATH`, offline first, and a reply that parses but lacks a workspace root,
+a package list, a package's manifest path, a package's targets, a target's
+path or an edition is asked for again as a failed reply; it runs `RUSTFMT`
+when that is set and otherwise the `rustfmt` beside the `cargo-fmt` that
+`cargo fmt` runs, which cargo finds in its home `bin` directory unless
+`PATH` already holds that directory and then along `PATH`, skipping an empty
+`PATH` entry as cargo does (on Linux a
+`cargo-fmt` reached through a symbolic link is read beside the link's
+target, as cargo-fmt reads itself; on macOS and Windows, beside the link),
+never a `rustfmt` found on `PATH` on its own and never one
+tied to the `cargo` that answered the metadata; beside a `cargo-fmt` that is
+the rustup proxy only the same proxy counts as that `rustfmt`, because
+`cargo fmt` runs the toolchain's own rustfmt there, and any other, or none,
+is refused with `RUSTFMT` named; it formats every workspace member when
+started from the workspace root, only the member under the invocation
+directory when started inside one, the one package of a single-package
+workspace from any directory, and refuses from anywhere else in a workspace
+of more; it hands every target to rustfmt once, grouped by its edition; it
+passes no config, so `rustfmt` finds the nearest `rustfmt.toml` for each
+file; and it runs every batch before it reports the first failure, so one
+`--check` shows every diff, except that it stops at a formatter it cannot
+start, as `cargo fmt` does. Before the first batch starts it measures every
+batch's Windows command line, the formatter's path quoted and the terminating
+NUL included, and refuses the step with nothing formatted when one is over
+the 32,767 UTF-16 code units `CreateProcess` takes; it applies that limit on
+every host. The hosted workflow keeps its explicit `cargo fmt --check` step.
+
 Local `precommit` also runs `goldens check` when the diff against
 `origin/main` touches output-surface code (`crates/ripr/src/output/`,
 `crates/ripr-contract/src/domain/`, `lsp.rs`, `docs/OUTPUT_SCHEMA.md`,
