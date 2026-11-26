@@ -34,6 +34,7 @@
 mod cross_crate_hop;
 mod cross_crate_path;
 pub(super) use cross_crate_path::public_path;
+mod logging_roots;
 mod macro_argument;
 mod own_crate_test_hop;
 mod qualified_hop;
@@ -243,6 +244,12 @@ pub(crate) struct HelperHop {
     /// import, a glob or `#[macro_use]`), so no bare macro in the caller
     /// is trusted to be transparent (#10351).
     pub(crate) transparent_macros_rebound: bool,
+    /// The audited logging crate roots (`tracing`, `log`) the caller spells
+    /// as a macro path root and whose file names the registry crate by them
+    /// (#10357), so `tracing::info!(..)` there is transparent when its
+    /// arguments do not mention the callee. Empty when the caller spells
+    /// none or the proof fails.
+    pub(crate) verified_logging_roots: Vec<&'static str>,
     /// The `.unwrap_or_else(<path>)` handler paths in the caller's body whose
     /// target is one workspace function that only diverges (#9638), so an
     /// `Ok` value passes through that unwrap unchanged. Resolved once at hop
@@ -1155,6 +1162,7 @@ pub(crate) fn resolve_chain(
             module_qualified: false,
             crate_qualifier: None,
             transparent_macros_rebound: transparent_macro_name_rebound(&caller.body, index),
+            verified_logging_roots: logging_roots::verified_logging_roots(caller, index),
             diverging_handlers: diverging_handlers(caller, callee_name, index),
         };
         return extend_chain(hop, callee_name, index, workspace_complete, visited);
@@ -1366,6 +1374,7 @@ fn chain_through_caller(
         module_qualified: false,
         crate_qualifier: None,
         transparent_macros_rebound: transparent_macro_name_rebound(&caller.body, index),
+        verified_logging_roots: logging_roots::verified_logging_roots(caller, index),
         diverging_handlers: diverging_handlers(caller, callee_name, index),
     };
     extend_chain(hop, callee_name, index, workspace_complete, visited)
@@ -1752,6 +1761,7 @@ fn method_hop(caller: &FunctionSummary, callee_name: &str, index: &RustIndex) ->
         module_qualified: false,
         crate_qualifier: None,
         transparent_macros_rebound: transparent_macro_name_rebound(&caller.body, index),
+        verified_logging_roots: logging_roots::verified_logging_roots(caller, index),
         diverging_handlers: diverging_handlers(caller, callee_name, index),
     })
 }
@@ -3002,7 +3012,7 @@ fn hops_carry_owner_string_data(owner_name: &str, hops: &[HelperHop], index: &Ru
                 && format_placeholders_are_plain(&hop.caller.body)
                 && carried_value_stays_injective(&hop.caller.body, &callee.name)
                 && !caller_rebinds_parameter(&hop.caller.body, &callee.name)
-                && !caller_invokes_opaque_macro(&hop.caller.body, hop.transparent_macros_rebound)
+                && !hop_invokes_opaque_macro(hop, &callee.name)
         })
 }
 
@@ -3498,7 +3508,7 @@ fn hops_forward_owner_result_with(
                 // must not forward through a wrapper (`caller_rebinds_parameter`
                 // covers `let`/match only).
                 && !caller_body_rebinds_free_callee_name(&hop.caller.body, callee)
-                && !caller_invokes_opaque_macro(&hop.caller.body, hop.transparent_macros_rebound)
+                && !hop_invokes_opaque_macro(hop, callee)
                 && hop.arguments.iter().all(|argument| {
                     !is_identifier(argument.trim())
                         || !caller_rebinds_parameter(&hop.caller.body, argument.trim())
@@ -3613,6 +3623,7 @@ pub(super) fn body_has_unresolved_macro_bindings(body: &str, index: &RustIndex) 
             "debug_assert_ne",
             "vec",
         ],
+        None,
     )
 }
 
@@ -3623,10 +3634,32 @@ pub(super) fn body_has_unresolved_macro_bindings(body: &str, index: &RustIndex) 
 /// (`use crate as tracing;`) can route the path to an exported user macro,
 /// and ripr does not resolve path roots here (#10351).
 fn caller_invokes_opaque_macro(body: &str, transparent_macros_rebound: bool) -> bool {
-    macro_invocation_is_unestablished(body, transparent_macros_rebound, TRANSPARENT_STD_MACROS)
+    macro_invocation_is_unestablished(
+        body,
+        transparent_macros_rebound,
+        TRANSPARENT_STD_MACROS,
+        None,
+    )
 }
 
-fn macro_invocation_is_unestablished(body: &str, macros_rebound: bool, permitted: &[&str]) -> bool {
+/// [`caller_invokes_opaque_macro`] for a hop: a leveled logging macro under
+/// one of the hop's verified roots (`tracing::info!(..)`) is transparent
+/// when its arguments do not mention `callee` (#10357).
+fn hop_invokes_opaque_macro(hop: &HelperHop, callee: &str) -> bool {
+    macro_invocation_is_unestablished(
+        &hop.caller.body,
+        hop.transparent_macros_rebound,
+        TRANSPARENT_STD_MACROS,
+        Some((&hop.verified_logging_roots, callee)),
+    )
+}
+
+fn macro_invocation_is_unestablished(
+    body: &str,
+    macros_rebound: bool,
+    permitted: &[&str],
+    logging: Option<(&[&str], &str)>,
+) -> bool {
     // Expression keywords may precede a prefix `!` (`if !(a)`, `return !(b)`);
     // any other path before `!` and a delimiter is a macro path, even with
     // whitespace between (`bail ! (qty)` is valid Rust).
@@ -3641,6 +3674,15 @@ fn macro_invocation_is_unestablished(body: &str, macros_rebound: bool, permitted
             return false;
         }
         let (segments, global) = macro_path_before(masked.get(..at).unwrap_or_default());
+        if let Some((roots, callee)) = logging
+            && !global
+            && logging_roots::is_verified_logging_macro(&segments, roots)
+        {
+            let open = masked.get(at + 1..).map_or(0, |rest| {
+                at + 1 + (rest.len() - rest.trim_start_matches(is_rust_whitespace).len())
+            });
+            return logging_roots::arguments_mention(&masked, open, callee);
+        }
         let [name] = segments.as_slice() else {
             // No path is no macro; a qualified path (`dep :: r#println!`,
             // `::m!`) may name any crate's macro, so it is opaque.
@@ -5474,6 +5516,7 @@ mod tests {
                 module_qualified: false,
                 crate_qualifier: None,
                 transparent_macros_rebound: false,
+                verified_logging_roots: Vec::new(),
                 diverging_handlers: Vec::new(),
             }],
             stop_above: None,
@@ -5507,6 +5550,7 @@ mod tests {
                 module_qualified,
                 crate_qualifier: None,
                 transparent_macros_rebound: false,
+                verified_logging_roots: Vec::new(),
                 diverging_handlers: Vec::new(),
             })
         };
@@ -6061,6 +6105,7 @@ mod tests {
             module_qualified: false,
             crate_qualifier: None,
             transparent_macros_rebound: false,
+            verified_logging_roots: Vec::new(),
             diverging_handlers: Vec::new(),
         };
         let chain = HelperChain {
@@ -6148,6 +6193,7 @@ mod tests {
                     module_qualified: false,
                     crate_qualifier: None,
                     transparent_macros_rebound: false,
+                    verified_logging_roots: Vec::new(),
                     diverging_handlers: Vec::new(),
                 }],
                 stop_above: None,
