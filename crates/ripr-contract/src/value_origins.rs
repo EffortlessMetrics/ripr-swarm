@@ -108,7 +108,7 @@ impl ValueOrigins {
             files,
         })
     }
-    /// Add `receipt`, keeping any receipts already recorded for the same
+    /// Adds `receipt`, keeping any receipts already recorded for the same
     /// location.
     pub fn insert_receipt(&mut self, receipt: OriginReceipt) {
         // Location is only a routing bucket. Full probe and ordered facts
@@ -118,14 +118,14 @@ impl ValueOrigins {
             .or_default()
             .push(receipt);
     }
-    /// [`ValueOrigins::prepare`] and insert the receipt; does nothing when
+    /// Runs [`ValueOrigins::prepare`] and inserts the receipt; does nothing when
     /// `prepare` returns `None`.
     pub fn record(&mut self, finding: &domain::Finding, files: Vec<Option<PathBuf>>) {
         if let Some(receipt) = Self::prepare(finding, files) {
             self.insert_receipt(receipt);
         }
     }
-    /// Append every receipt from `other`. Receipts are never overwritten, so
+    /// Appends every receipt from `other`. Receipts are never overwritten, so
     /// conflicting ones stay ambiguous.
     pub fn extend(&mut self, other: Self) {
         for (location, mut receipts) in other.0 {
@@ -160,7 +160,7 @@ impl ValueOrigins {
             self.insert_receipt(receipt);
         }
     }
-    /// Rewrite every probe location file and value file through `rebase`.
+    /// Rewrites every probe location file and value file through `rebase`.
     pub fn rebase(&mut self, rebase: impl Fn(&Path) -> PathBuf) {
         let receipts = std::mem::take(&mut self.0).into_values().flatten();
         for mut receipt in receipts {
