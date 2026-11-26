@@ -1,4 +1,4 @@
-<!-- section: Fixed -->
+<!-- section: Internal / CI -->
 - `xtask windows-advisory-summary --expected-targets` now takes the workspace
   build's log and its captured exit status, and uses the build's executable
   list only when that status is `0`. A build stopped by its deadline or a
