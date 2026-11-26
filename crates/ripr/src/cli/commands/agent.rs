@@ -2829,8 +2829,37 @@ fn run_agent_repair_phase(
                 refusal.code =
                     Some(crate::app::task_first::RepairRefusalCode::StartRefusedUncommittedTarget);
                 return Err(crate::app::task_first::uncommitted_start_refusal_message(
-                    &root, &seam_id, &file,
+                    &crate::app::repair_attempt::seam_start_command(
+                        &seam_id,
+                        &root,
+                        store_ref,
+                        facade_start,
+                    ),
+                    &file,
                 ));
+            }
+            // #15265: the same hold for a selected external test file, so the
+            // refusal is typed (exit 3, `cli_refusal` under `--json`) and is
+            // given before any workflow artifact is written.
+            if let Some(file) = crate::app::task_first::held_external_test_start_file(
+                &root,
+                &seam_id,
+                &before_report.classified,
+            ) {
+                refusal.start_refused = true;
+                refusal.code =
+                    Some(crate::app::task_first::RepairRefusalCode::StartRefusedUncommittedTarget);
+                return Err(
+                    crate::app::task_first::uncommitted_test_start_refusal_message(
+                        &crate::app::repair_attempt::seam_start_command(
+                            &seam_id,
+                            &root,
+                            store_ref,
+                            facade_start,
+                        ),
+                        &file,
+                    ),
+                );
             }
             let mut policy = crate::app::repair_attempt::edit_cage_policy_from_packet_in(
                 &root, &packet, &seam_id,
