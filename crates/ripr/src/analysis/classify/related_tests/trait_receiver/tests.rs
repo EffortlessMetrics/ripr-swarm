@@ -520,42 +520,46 @@ fn only_distinct_unbounded_parameters_cover_the_type() -> Result<(), String> {
     Ok(())
 }
 
-/// A capitalised path segment on the impl's type is read as a variant
-/// constructor only when an `enum` of that name declares the variant.
-/// `Tile::Make(3)` names no variant of `Tile`, so it may be an associated
-/// function returning another type, and the relation is withheld; the
-/// declared `Tile::Square(3)` keeps it.
+/// A capitalised path segment on the impl's type counts as a variant
+/// constructor for the typed trait receiver only when an `enum` of that name
+/// declares the variant at variant position. `Tile::Make(3)` names no
+/// variant of `Tile`, so it may be an associated function returning another
+/// type, and the typed route withholds; a name used only as a field type
+/// declares nothing. The guard is read directly: the older text receiver
+/// route reads every capitalised segment as a variant on its own (#16040).
 #[test]
 fn a_variant_shaped_call_needs_a_declared_variant() -> Result<(), String> {
     let production = "pub trait Measure {\n    fn area(&self) -> u32;\n}\n\
-        pub enum Tile { Square(u32), Round(u32) }\n\
-        impl Measure for Tile {\n    fn area(&self) -> u32 { match self { Tile::Square(s) | Tile::Round(s) => s * s } }\n}\n";
-    let owner = "impl Measure for Tile::area";
-    assert!(direct(
-        production,
-        owner,
-        "let _ = Tile::Square(3).area();"
-    )?);
-    assert!(!direct(production, owner, "let _ = Tile::Make(3).area();")?);
-    // A name that is only a field type of a variant declares nothing.
-    let field_only = production.replace(
-        "pub enum Tile { Square(u32), Round(u32) }",
-        "pub struct Make(pub u32);\npub enum Tile { Square(u32), Round(Make) }",
-    );
-    assert!(!direct(
-        &field_only,
-        owner,
-        "let _ = Tile::Make(3).area();"
-    )?);
-    // A trait provides `Tile::Make`, which returns another type that
-    // implements the same trait; the call runs `Measure for Other`.
+        pub struct Make(pub u32);\n\
+        pub enum Tile { Square(u32), Round(Make) }\n\
+        impl Measure for Tile {\n    fn area(&self) -> u32 { match self { Tile::Square(s) => s * s, Tile::Round(m) => m.0 } }\n}\n";
     let provided = format!(
-        "{field_only}pub struct Other(pub u32);\n\
+        "{production}pub struct Other(pub u32);\n\
          impl Measure for Other {{\n    fn area(&self) -> u32 {{ self.0 }}\n}}\n\
          pub trait Build {{\n    fn Make(n: u32) -> Other {{ Other(n) }}\n}}\n\
          impl Build for Tile {{}}\n"
     );
-    assert!(!direct(&provided, owner, "let _ = Tile::Make(3).area();")?);
+    let withheld = |production: &str, body: &str| -> Result<bool, String> {
+        let index = parsed_index(production, body)?;
+        let tests = index.tests();
+        let Some(test) = tests.iter().next() else {
+            return Err("the test is indexed".to_string());
+        };
+        Ok(super::a_variant_shaped_path_names_no_declared_variant(
+            test, "Tile", &index,
+        ))
+    };
+    assert!(!withheld(production, "let _ = Tile::Square(3).area();")?);
+    assert!(!withheld(
+        production,
+        "let _ = Tile::Round(Make(3)).area();"
+    )?);
+    assert!(withheld(production, "let _ = Tile::Make(3).area();")?);
+    assert!(withheld(&provided, "let _ = Tile::Make(3).area();")?);
+    assert!(withheld(
+        production,
+        "let _ = Tile::Square(3).area(); let _ = Tile::Make(3).area();"
+    )?);
     Ok(())
 }
 
