@@ -43,33 +43,39 @@ pub(super) const AUDITED_MACRO_ROOTS: &[(&str, &[&str])] = &[
     ("serde_json", &["json"]),
 ];
 
-/// The [`AUDITED_MACRO_ROOTS`] that `caller` spells as a macro path root
-/// and that name the registry crate in its file. Empty for a caller that
-/// spells none, without reading any manifest.
+/// The [`AUDITED_MACRO_ROOTS`] that `caller` spells as the root of one of
+/// its audited macros and that name the registry crate in its file. A root
+/// spelled only for a type or function (`anyhow::Result`,
+/// `serde_json::Value`) is skipped, so a caller with no audited macro path
+/// reads no manifest and parses nothing. The cached manifest verdict runs
+/// before the file parse and the workspace alias scan.
 pub(super) fn verified_macro_roots(
     caller: &FunctionSummary,
     index: &RustIndex,
 ) -> Vec<&'static str> {
     let body: &str = &caller.body;
-    let spelled: Vec<&'static str> = AUDITED_MACRO_ROOTS
+    let candidates: Vec<&'static str> = AUDITED_MACRO_ROOTS
         .iter()
+        .filter(|(root, macros)| {
+            macros
+                .iter()
+                .any(|name| body.contains(&format!("{root}::{name}")))
+        })
         .map(|(root, _)| *root)
-        .filter(|root| body.contains(&format!("{root}::")))
+        .filter(|root| index.drop_in_manifests.verified(&caller.file, root))
         .collect();
-    if spelled.is_empty() {
-        return spelled;
+    if candidates.is_empty() {
+        return candidates;
     }
     let Some(file) = index.files().get(&caller.file) else {
         return Vec::new();
     };
     let source = file.source.clone();
     let parsed = ast::SourceFile::parse(&source, ra_ap_syntax::Edition::CURRENT).tree();
-    spelled
+    candidates
         .into_iter()
         .filter(|root| {
-            !root_may_be_rebound(parsed.syntax(), root)
-                && !extern_crate_alias_anywhere(index, root)
-                && index.drop_in_manifests.verified(&caller.file, root)
+            !root_may_be_rebound(parsed.syntax(), root) && !extern_crate_alias_anywhere(index, root)
         })
         .collect()
 }
