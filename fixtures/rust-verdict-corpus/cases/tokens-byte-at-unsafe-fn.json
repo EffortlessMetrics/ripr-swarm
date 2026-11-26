@@ -40,7 +40,7 @@
       "silent"
     ]
   },
-  "reasoning": "byte_at(b\"xyz\", 1) is pinned to b'y', so both mutants inside the unsafe fn body fail it. Spec cells: RIPR-SPEC-0168.",
+  "reasoning": "byte_at(b\"xyz\", 1) is pinned to b'y', so both mutants inside the unsafe fn body fail it. ripr credits the return_value probe as exposed; the `unsafe fn` around it adds no static_unknown finding beside that classified edit (#15348). Spec cells: RIPR-SPEC-0168.",
   "labeling_observation": {
     "ripr_commit": "b0c6ef6",
     "full_checkout_verdict": "gap",
