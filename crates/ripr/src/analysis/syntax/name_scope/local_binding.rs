@@ -249,7 +249,7 @@ fn item_name(item: &ast::Item) -> Option<String> {
         ast::Item::TypeAlias(item) => item.name(),
         _ => None,
     }?;
-    Some(unraw(&name.text()))
+    Some(unraw(name.text()))
 }
 
 /// Whether a parameter of `params` binds `name` by a plain pattern.
@@ -270,7 +270,7 @@ fn pattern_binds(pattern: &SyntaxNode, name: &str) -> bool {
         .any(|binding| {
             binding
                 .name()
-                .is_some_and(|ident| unraw(&ident.text()) == name)
+                .is_some_and(|ident| unraw(ident.text()) == name)
         })
 }
 
