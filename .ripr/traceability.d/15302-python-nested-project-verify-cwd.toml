@@ -1,0 +1,34 @@
+# A nested Python project's pytest verify route runs from that project's
+# directory, with interpreter and confidence from the same directory (#15302).
+[[extend]]
+id = "RIPR-SPEC-0028"
+tests = [
+  "crates/ripr/tests/python_nested_project_verify_cwd.rs::nested_project_verify_runs_from_the_project_directory_on_every_surface",
+  "crates/ripr/tests/python_nested_project_verify_cwd.rs::nested_project_resolves_its_own_venv_relative_to_the_project_directory",
+  "crates/ripr/tests/python_nested_project_verify_cwd.rs::root_level_project_keeps_the_root_relative_route_without_a_cwd",
+  "crates/ripr/tests/python_nested_project_verify_cwd.rs::nested_project_without_a_venv_does_not_inherit_the_root_venv_or_its_confidence",
+  "crates/ripr/tests/python_nested_project_verify_cwd.rs::nested_project_venv_without_pytest_lowers_confidence_despite_a_root_venv_with_pytest",
+  "crates/ripr/tests/python_nested_project_verify_cwd.rs::nested_project_sarif_card_names_the_project_cwd",
+  "crates/ripr/src/output/markdown.rs::python_verify_cwd_roots_verify_or_withholds_it",
+  "crates/ripr/tests/python_nested_project_verify_cwd.rs::tool_only_setup_cfg_in_tests_does_not_move_the_root_project_cwd",
+  "crates/ripr/src/output/pilot/tests.rs::pilot_surfaces_run_a_nested_python_verify_command_from_its_project",
+  "crates/ripr/src/output/agent_seam_packets.rs::gap_record_packet_and_queue_run_a_nested_verify_command_from_its_directory",
+  "crates/ripr/src/output/review_comments/mod.rs::review_comments_gap_ledger_card_runs_a_nested_verify_command_from_its_directory",
+  "crates/ripr/src/analysis/language/python/verify_interpreter.rs::project_ownership_needs_a_packaging_declaration",
+  "crates/ripr/src/app/agent_status.rs::agent_status_routes_a_pilot_python_repair_card_to_first_pr",
+  "crates/ripr/src/analysis/language/python/verify_interpreter.rs::nested_move_leaves_foreign_related_tests_root_relative_without_the_venv",
+  "crates/ripr/src/analysis/language/python/verify_interpreter.rs::nested_move_that_cannot_relativize_leaves_the_root_route",
+  "crates/ripr/src/analysis/language/python/verify_interpreter.rs::cap_confidence_only_lowers",
+]
+code = [
+  "crates/ripr/src/analysis/language/python/verify_interpreter.rs",
+  "crates/ripr/src/output/python_repair_card.rs",
+  "crates/ripr/src/output/markdown.rs",
+  "crates/ripr/src/output/pilot/render/complete.rs",
+  "crates/ripr/src/output/agent_seam_packets.rs",
+  "crates/ripr/src/output/review_comments/render.rs",
+  "crates/ripr/src/app/agent_status.rs",
+  "crates/ripr/src/output/gap_decision_ledger.rs",
+  "crates/ripr/src/output/github.rs",
+  "crates/ripr/src/output/json/report.rs",
+]

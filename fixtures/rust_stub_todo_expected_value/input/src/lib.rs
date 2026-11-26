@@ -22,3 +22,10 @@ fn boundary_discriminator() {
     assert_eq!(discounted_total(amount, threshold), expected);
 }
 }
+
+#[test]
+#[allow(unreachable_code)]
+fn raw_template_boundary() {
+    let expected: i32 = todo!("fill the boundary value");
+    assert_eq!(discounted_total(100, 100).to_string(), format!(r"{expected}"));
+}

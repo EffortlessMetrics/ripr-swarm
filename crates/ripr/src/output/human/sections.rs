@@ -269,7 +269,7 @@ pub(crate) fn render_finding_digest_with_config(
     let severity = display_severity(finding, config);
     out.push_str(&format!(
         "  File: {}:{}\n",
-        crate::analysis::finding_location_text(root, &finding.probe.location.file),
+        crate::output::path::human_location_text(root, &finding.probe.location.file),
         finding.probe.location.line
     ));
     if should_render_language_metadata(finding) {
@@ -321,7 +321,9 @@ pub(crate) fn render_finding_digest_with_config(
         .or(finding.probe.before.as_deref())
         .unwrap_or(&finding.probe.expression);
     let changed = crate::output::flow_sink_line::with_arm_result(finding, changed);
-    out.push_str(&format!("  Changed behavior: {}\n", one_line(&changed)));
+    let changed = evidence_value(finding, crate::domain::TYPESCRIPT_DEFAULT_CONTEXT_PREFIX)
+        .unwrap_or(&changed);
+    out.push_str(&format!("  Changed behavior: {}\n", one_line(changed)));
     if let Some((label, value)) = &digest_missing {
         let prefix = format!("  {label}: ");
         if prefix.chars().count() + value.chars().count() <= LINE_BUDGET {
@@ -666,7 +668,7 @@ fn match_arm_head_only_note(
     }
     Some(format!(
         "          (arm head only; open the arm at {}:{} to read its new body)\n",
-        crate::analysis::finding_location_text(root, &finding.probe.location.file),
+        crate::output::path::human_location_text(root, &finding.probe.location.file),
         finding.probe.location.line
     ))
 }
@@ -682,39 +684,8 @@ fn match_arm_head_only_note(
 /// so the row says it is the condition and where the new line is. The block
 /// is located on comment/string-masked text, so a `{` inside a literal is not
 /// a block. Display only: `before` and `after` are printed unchanged.
-fn condition_only_note(
-    finding: &Finding,
-    before: Option<&str>,
-    after: &str,
-    root: &Path,
-) -> Option<String> {
-    if finding.probe.family != ProbeFamily::Predicate {
-        return None;
-    }
-    let after = after.trim();
-    let before = before?.trim();
-    if before == after || crate::analysis::mask_comments_and_strings(after).contains('{') {
-        return None;
-    }
-    // A block opens at bracket depth zero; a `{` inside parentheses or
-    // brackets is a closure body or struct literal within a cut condition
-    // (`v.iter().any(|x| { x > 1 })`), not a whole line's block.
-    let mut depth = 0_usize;
-    let opens_block = crate::analysis::mask_comments_and_strings(before)
-        .bytes()
-        .any(|byte| match byte {
-            b'(' | b'[' => {
-                depth += 1;
-                false
-            }
-            b')' | b']' => {
-                depth = depth.saturating_sub(1);
-                false
-            }
-            b'{' => depth == 0,
-            _ => false,
-        });
-    if !opens_block {
+fn condition_only_note(finding: &Finding, root: &Path) -> Option<String> {
+    if !crate::analysis::before_is_whole_line_over_condition(finding) {
         return None;
     }
     Some(format!(
@@ -768,13 +739,18 @@ pub(super) fn render_finding_with_shared_sections(
     let before_text = finding.probe.before.as_deref();
     if let Some(before) = &finding.probe.before {
         out.push_str(&wrapped_fragment("  before: ", before));
+        // #15420: the old condition at the granularity of `after`, when the
+        // whole old line has one readable `if`/`while` head.
+        if let Some(condition) = crate::analysis::old_condition_of_whole_line(finding) {
+            out.push_str(&wrapped_fragment("          old condition: ", &condition));
+        }
     }
     if let Some(after) = &finding.probe.after {
         out.push_str(&wrapped_fragment("  after:  ", after));
         if let Some(note) = match_arm_head_only_note(finding, before_text, after, root) {
             out.push_str(&note);
         }
-        if let Some(note) = condition_only_note(finding, before_text, after, root) {
+        if let Some(note) = condition_only_note(finding, root) {
             out.push_str(&note);
         }
     } else {
@@ -1686,6 +1662,20 @@ fn unresolved_fixture_hint(finding: &Finding) -> Option<String> {
     ))
 }
 
+/// Whether a finding sits in a class whose plain name claims a reaching test
+/// ("partly noticed", "reached but not noticed") while its reach stage does
+/// not establish one. The per-finding hint and the Summary line both ask
+/// this, so they cannot disagree (#15295).
+pub(in crate::output::human) fn reach_claim_is_unsupported(
+    class: &ExposureClass,
+    ripr: &RiprEvidence,
+) -> bool {
+    matches!(
+        class,
+        ExposureClass::WeaklyExposed | ExposureClass::ReachableUnrevealed
+    ) && (ripr.reach.state != StageState::Yes || is_callee_only_reach(&ripr.reach))
+}
+
 fn classification_hint(
     class: &ExposureClass,
     ripr: &RiprEvidence,
@@ -1697,11 +1687,7 @@ fn classification_hint(
     // weak-discriminator shortcut (#7330). Callee-only evidence explicitly
     // disclaims owner invocation even if its state were inconsistent (#7003).
     let callee_only = is_callee_only_reach(&ripr.reach);
-    if matches!(
-        class,
-        ExposureClass::WeaklyExposed | ExposureClass::ReachableUnrevealed
-    ) && (ripr.reach.state != StageState::Yes || callee_only)
-    {
+    if reach_claim_is_unsupported(class, ripr) {
         return Some(
             if callee_only {
                 NO_CALLING_TEST_HINT

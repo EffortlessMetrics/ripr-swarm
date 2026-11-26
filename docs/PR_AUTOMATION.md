@@ -295,7 +295,7 @@ cargo xtask check-doc-artifacts
 cargo xtask check-doc-index
 cargo xtask check-doc-roles
 cargo xtask check-droid-review-config
-cargo xtask check-evidence-promotion-honesty [--pinned-external] [--clone] [--case <id>] [--checkout-root <path>] [--timeout-secs <n>]
+cargo xtask check-evidence-promotion-honesty [--pinned-external] [--clone] [--case <id>] [--checkout-root <path>] [--timeout-secs <n>] | --pre-label <PR> <target-branch>
 cargo xtask check-executable-files
 cargo xtask check-file-policy
 cargo xtask check-covered-by
@@ -356,6 +356,7 @@ cargo xtask lsp-cockpit-report
 cargo xtask lsp-performance-report
 cargo xtask markdown-links
 cargo xtask merge-queue capture [--repo <owner/name>] [--out <dir>] [--input <path>] [--prior <path>]
+cargo xtask merge-queue conflicts <new-output-directory> [--input <saved-queue-pages.json>]
 cargo xtask metrics
 cargo xtask module-health [--threshold <n>]
 cargo xtask mutation-calibration [root] --mutants-json <path>
@@ -375,6 +376,10 @@ cargo xtask release-readiness --version <version>
 cargo xtask release-server-archive --version <version> --target <triple> --executable <name> --archive <zip\|tar.gz>
 cargo xtask release-server-manifest --version <version> --repository <owner/repo>
 cargo xtask release-upload-assets --version <version>
+cargo xtask release-crates-io-transaction-observe --request <request.json>
+cargo xtask release-crates-io-transaction-plan --request <request.json> --authorization <authorization.json> --inventory <inventory.json>
+cargo xtask release-github-transaction-observe --request <request.json>
+cargo xtask release-github-transaction-plan --request <request.json> --authorization <authorization.json> --inventory <inventory.json>
 cargo xtask repo-badge-artifacts [--gap-ledger <path>]
 cargo xtask repo-contract-report
 cargo xtask repo-exposure-latency-report
@@ -481,6 +486,42 @@ route is claimed. Ordinary local `precommit` keeps formatting and selected Clipp
 format and numbering, and the policy surfaces that should fail quickly before
 review.
 
+The formatting step of `check-fast`, `ci-fast`, local `precommit` and `shape`
+is the `cargo fmt` obligation run as bounded `rustfmt` batches. `cargo fmt`
+passes every root on one command line, which Windows caps at 32,767
+characters; this workspace's 491 roots pass that, and the step failed with
+os error 206 before rustfmt started (#12004). The step makes the decisions
+the pinned `cargo fmt` makes without `--all`. It differs in batching, in
+reading an empty `CARGO` or `RUSTFMT` as unset, in reporting a failure as its
+own exit status, and in refusing a program path that is not UTF-8. It reads
+the metadata through the `cargo` that `CARGO` names, otherwise the first one
+on `PATH`, offline first, and a reply that parses but lacks a workspace root,
+a package list, a package's manifest path, a package's targets, a target's
+path or an edition is asked for again as a failed reply; it runs `RUSTFMT`
+when that is set and otherwise the `rustfmt` beside the `cargo-fmt` that
+`cargo fmt` runs, which cargo finds in its home `bin` directory unless
+`PATH` already holds that directory and then along `PATH`, skipping an empty
+`PATH` entry as cargo does (on Linux a
+`cargo-fmt` reached through a symbolic link is read beside the link's
+target, as cargo-fmt reads itself; on macOS and Windows, beside the link),
+never a `rustfmt` found on `PATH` on its own and never one
+tied to the `cargo` that answered the metadata; beside a `cargo-fmt` that is
+the rustup proxy only the same proxy counts as that `rustfmt`, because
+`cargo fmt` runs the toolchain's own rustfmt there, and any other, or none,
+is refused with `RUSTFMT` named; it formats every workspace member when
+started from the workspace root, only the member under the invocation
+directory when started inside one, the one package of a single-package
+workspace from any directory, and refuses from anywhere else in a workspace
+of more; it hands every target to rustfmt once, grouped by its edition; it
+passes no config, so `rustfmt` finds the nearest `rustfmt.toml` for each
+file; and it runs every batch before it reports the first failure, so one
+`--check` shows every diff, except that it stops at a formatter it cannot
+start, as `cargo fmt` does. Before the first batch starts it measures every
+batch's Windows command line, the formatter's path quoted and the terminating
+NUL included, and refuses the step with nothing formatted when one is over
+the 32,767 UTF-16 code units `CreateProcess` takes; it applies that limit on
+every host. The hosted workflow keeps its explicit `cargo fmt --check` step.
+
 Local `precommit` also runs `goldens check` when the diff against
 `origin/main` touches output-surface code (`crates/ripr/src/output/`,
 `crates/ripr-contract/src/domain/`, `lsp.rs`, `docs/OUTPUT_SCHEMA.md`,
@@ -492,6 +533,10 @@ prepared in the environment, `precommit` prints `goldens check: INCOMPLETE
 (environment gap, not a pass)` and continues; run `cargo xtask goldens prepare`
 to close the gap, and hosted CI still owns those fixtures. The step is not part
 of the hosted collect-all policy run, which has its own goldens job.
+
+Start `cargo xtask check-fast`, `ci-fast`, `precommit` and `shape` at the
+RIPR workspace root. A call from a member or documentation directory reports
+the resolved root and exits before formatting or writing gate reports.
 
 The strict `check-fast` receipt consumer requires all six unconditional `Ran`
 receipts (`fmt --check`, static-language, command-catalog, generated,
@@ -728,6 +773,9 @@ desired settings, live observation, apply-route capability, and rollback
 identity as separate facts under `--out` (default
 `target/ripr/reports/merge-queue`). Tests use `--input`; live mode uses GET-only
 `gh api` calls. It never applies settings or enables a queue.
+
+For conflicting queued PR heads, the operator can inspect a frozen
+[main-versus-head report](CI.md#inspect-queued-heads-against-main).
 
 `suggested-fixes` writes `target/ripr/reports/suggested-fixes.patch` and
 `target/ripr/reports/suggested-fixes.md` with safe deterministic repair

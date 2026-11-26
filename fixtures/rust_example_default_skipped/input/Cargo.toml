@@ -1,0 +1,6 @@
+[package]
+name = "rust_example_default_skipped_fixture"
+version = "0.0.0"
+edition = "2024"
+
+[workspace]

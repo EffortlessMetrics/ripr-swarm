@@ -1,0 +1,6 @@
+# Answers each module declaration cfg gate once per run scope (#15290) under RIPR-SPEC-0159.
+[[extend]]
+id = "RIPR-SPEC-0159"
+tests = [
+  "crates/ripr/src/analysis/syntax/owner_pin.rs::module_gate_memo_tests::a_run_scope_answers_repeated_module_gate_queries_once",
+]

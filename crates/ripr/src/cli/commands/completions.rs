@@ -7,11 +7,12 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
+use crate::accepted_value::edit_distance;
 use crate::cli::command_catalog::{
     CommandCatalogEntry, CommandClass, CommandRelation, DiscoveryPosture, catalog,
 };
 use crate::cli::help;
-use crate::cli::suggest::{unknown_argument, unknown_value};
+use crate::cli::suggest::unknown_argument;
 
 const SHELLS: &[&str] = &["bash", "zsh", "fish", "powershell"];
 
@@ -24,6 +25,17 @@ pub(in crate::cli) fn completions(args: &[String]) -> Result<(), String> {
             "--help" | "-h" => {
                 help::print_completions_help();
                 return Ok(());
+            }
+            flag if flag == "--shell" || flag.starts_with("--shell=") => {
+                let message = "completions takes the shell as a positional argument, not --shell; run `ripr completions bash` (or zsh, fish, powershell)".to_string();
+                // Keep the typed refusal for a JSON request, as the generic
+                // unknown-argument path did before this message (#15259).
+                crate::cli::usage_refusal::note_unknown_argument(
+                    "--shell",
+                    &message,
+                    &crate::cli::suggest::help_pointer("completions"),
+                );
+                return Err(message);
             }
             other if other.starts_with('-') => return Err(unknown_argument("completions", other)),
             other => {
@@ -44,10 +56,38 @@ pub(in crate::cli) fn completions(args: &[String]) -> Result<(), String> {
         ));
     };
     if !SHELLS.contains(&shell) {
-        return Err(unknown_value("completions shell", shell, SHELLS));
+        return Err(unknown_shell(shell));
     }
     print!("{}", render(shell, catalog()));
     Ok(())
+}
+
+/// Common spellings of a supported shell that the generator does not take
+/// directly.
+const SHELL_ALIASES: &[(&str, &str)] = &[("pwsh", "powershell"), ("ps", "powershell")];
+
+/// A near-miss shell suggestion only when one edit away; the wider flag/value
+/// budget turned `pwsh` into `bash` and `sh` into `zsh` (#15259).
+fn unknown_shell(shell: &str) -> String {
+    let alias = SHELL_ALIASES
+        .iter()
+        .find(|(from, _)| shell.eq_ignore_ascii_case(from))
+        .map(|(_, to)| *to);
+    let near = || {
+        SHELLS
+            .iter()
+            .copied()
+            .find(|candidate| shell.chars().count() >= 3 && edit_distance(shell, candidate) <= 1)
+    };
+    let accepted = SHELLS.join(", ");
+    let message = match alias.or_else(near) {
+        Some(suggestion) => format!(
+            "unknown completions shell {shell:?}. Did you mean `{suggestion}`? Accepted: {accepted}."
+        ),
+        None => format!("unknown completions shell {shell:?}. Accepted: {accepted}."),
+    };
+    crate::cli::usage_refusal::note_unknown_value(shell, &message, None);
+    message
 }
 
 /// Top-level names and their subcommands, from ordinary public catalog rows.

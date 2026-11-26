@@ -113,6 +113,10 @@ passes through untouched (#12420):
   back to the seam expression. A route can still have static target readiness
   without a finding witness; in that case the separate edit-cage admission
   below may supply a refusal as the blocker.
+- When the changed expression exceeds the inline JSON byte budget, the handoff
+  may point to `changed_expression` in the canonical packet. This requires the
+  selected seam's packet entry to contain the exact expression. Otherwise the
+  existing budget refusal applies (#15353).
 - The edit cage reuses the packet authority's exact derivation
   (`task_for(entry) == TASK_WRITE_TARGETED_TEST` and
   `recommended_test_for(entry)`): allowed files carry the recommended test
@@ -251,6 +255,11 @@ live caller (`git_output`, `task_for`, `TASK_WRITE_TARGETED_TEST`).
    with an error that names the packet route; no identity is invented.
 
 ## Test Mapping
+
+- `oversized_card_expression_needs_the_exact_current_packet` challenges the
+  detail reference with escaped text, a sibling row and a stale packet.
+  `long_literal_gap_round_trips_through_explain_repair_and_receipt` checks
+  the human repair handoff and the exact source in its packet.
 
 - `crates/ripr/src/app/repair_card_handoff.rs` unit tests cover the pure
   assembly over producer-owned facts: the nine-family projection with the

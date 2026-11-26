@@ -60,10 +60,16 @@ pub fn pytest_verify_interpreter(command: &str) -> Option<&'static str> {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum LanguageId {
+    /// Rust, the reference language.
     Rust,
+    /// TypeScript, analyzed by the TypeScript-family adapter.
     TypeScript,
+    /// JavaScript, analyzed by the TypeScript-family adapter and labeled
+    /// separately in output.
     JavaScript,
+    /// Python, a preview adapter.
     Python,
+    /// Perl, a preview adapter.
     Perl,
 }
 
@@ -121,6 +127,12 @@ impl LanguageId {
         }
     }
 
+    /// Whether this crate's `lang-*` Cargo feature for this language is
+    /// enabled; JavaScript shares `lang-typescript`. `ripr` forwards its
+    /// adapter features here, so inside `ripr` this matches whether the adapter
+    /// is compiled. In a standalone `ripr-contract` build the features are
+    /// markers only: its defaults enable Rust, TypeScript and Python without
+    /// any adapter.
     pub fn is_available(self) -> bool {
         match self {
             LanguageId::Rust => cfg!(feature = "lang-rust"),
@@ -131,6 +143,7 @@ impl LanguageId {
         }
     }
 
+    /// The Cargo feature that compiles this language's adapter.
     pub fn required_feature(self) -> &'static str {
         match self {
             LanguageId::Rust => "lang-rust",
@@ -229,6 +242,40 @@ pub fn rust_markers_at(root: &Path) -> bool {
     root.join("Cargo.toml").exists() || shallow_has_extension(root, "rs")
 }
 
+/// Whether an enablement tip's `[languages] enabled` list must name `rust`:
+/// the root has Rust markers ([`rust_markers_at`]), or a Cargo manifest sits
+/// one or two directories below it (`backend/Cargo.toml`,
+/// `crates/core/Cargo.toml`). The second form is the mixed-language
+/// repository whose root holds no Rust marker but whose Rust files `ripr
+/// check` analyzes all the same; following a list without `rust` switches
+/// that analysis off. Hidden directories and `target`, `node_modules` and
+/// `vendor` trees are not searched. Presence-only, and not adapter routing.
+pub fn enablement_tip_keeps_rust(root: &Path) -> bool {
+    rust_markers_at(root)
+        || searchable_child_dirs(root).iter().any(|child| {
+            child.join("Cargo.toml").is_file()
+                || searchable_child_dirs(child)
+                    .iter()
+                    .any(|grandchild| grandchild.join("Cargo.toml").is_file())
+        })
+}
+
+fn searchable_child_dirs(dir: &Path) -> Vec<std::path::PathBuf> {
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return Vec::new();
+    };
+    entries
+        .flatten()
+        .filter(|entry| entry.file_type().is_ok_and(|kind| kind.is_dir()))
+        .filter(|entry| {
+            entry.file_name().to_str().is_some_and(|name| {
+                !name.starts_with('.') && !["target", "node_modules", "vendor"].contains(&name)
+            })
+        })
+        .map(|entry| entry.path())
+        .collect()
+}
+
 /// Same shallow scan doctor uses for language markers: `root`, `root/src/`,
 /// and one level of child directories. Fail-closed on `read_dir` errors.
 fn shallow_has_extension(root: &Path, extension: &str) -> bool {
@@ -308,7 +355,9 @@ pub fn format_languages_enabled_toml(languages: &[&str]) -> String {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum LanguageStatus {
+    /// The reference implementation. Only Rust uses it.
     Stable,
+    /// A preview adapter.
     Preview,
 }
 
@@ -331,11 +380,26 @@ impl LanguageStatus {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum OwnerKind {
+    /// A free function declaration. The TypeScript adapter also uses it for a
+    /// function expression bound to a name.
     Function,
+    /// A method on a class. In Python, a function defined in a class body with
+    /// no decorator whose name ends in `classmethod` or `staticmethod`.
     Method,
+    /// A class-level method in the adapter's syntactic classification: a
+    /// `static` method in TypeScript, or, in Python, a method with a decorator
+    /// whose name ends in `classmethod` or `staticmethod`.
     ClassMethod,
+    /// An arrow function owner, named by its binding or, for an anonymous
+    /// default export, by the synthetic name `default`.
     ArrowFunction,
+    /// A function or arrow function in a `.tsx` or `.jsx` file whose name
+    /// starts with an uppercase letter and whose body looks like it returns
+    /// JSX.
     Component,
+    /// A module-level TypeScript binding whose initializer is not a function
+    /// or arrow function expression, such as a `const` value or a call result.
+    /// Despite the name, the bound value is not known to be a function.
     ModuleFunction,
 }
 
@@ -362,14 +426,37 @@ impl OwnerKind {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum StaticLimitKind {
+    /// A call goes through a dynamic shape, such as `getattr(...)` or a
+    /// registry lookup, so syntax alone cannot resolve which behavior runs.
     DynamicDispatch,
+    /// Metaprogramming, such as runtime-created behavior, that the adapter does
+    /// not infer.
     Metaprogramming,
+    /// A cross-module relationship, such as a dynamic import or a call into an
+    /// imported module, cannot be resolved because the adapter does not build
+    /// an import graph.
     MissingImportGraph,
+    /// A decorator, route registration or framework wrapper stands between the
+    /// tests and the changed code, a changed registration is not observed by
+    /// any related test, or such a wrapper controls whether a related test
+    /// runs, so reach, observation or activation could not be established. It
+    /// does not show that the changed code was reached.
     DecoratorIndirection,
+    /// A related test mocks, reloads, rebinds or substitutes a module or
+    /// fixture, so which object the test reads is not resolved. The mocked
+    /// target need not be the changed code's module.
     MockedModule,
+    /// A helper call whose body is not analyzed, such as a custom assertion
+    /// helper, so what it checks is unknown.
     OpaqueCustomAssertionHelper,
+    /// A related test is property-based, so its inputs come from a generator.
     PropertyBasedTest,
+    /// A related pytest test takes values from a fixture, and static analysis
+    /// cannot tell what the fixture supplies.
     UnresolvedPytestFixture,
+    /// The changed code or a related test's oracle uses a shape the adapter
+    /// does not model, such as a Python `approx` tolerance band or a `caplog`
+    /// read, or the source could not be parsed.
     UnsupportedSyntax,
     /// The changed Rust seam owner is FFI/binding-exposed; whether an
     /// external-language (e.g. TypeScript) test oracle discriminates this
@@ -543,6 +630,14 @@ pub enum StaticLimitKind {
     /// route, not by this label. This names the unresolved boundary input,
     /// not a coverage claim. See RIPR-SPEC-0068 (#13892, #14951).
     ActivationBoundaryInputUnresolved,
+    /// A Rust owner compiled only under a cfg ripr cannot evaluate
+    /// (`#[cfg(error_generic_member_access)]`) has no test seen calling it,
+    /// and a doc example in the same library is gated by the same cfg, so
+    /// the doctest admission did not read it. That example may check the
+    /// owner, so the producer withholds the gap as `static_unknown`. Nothing
+    /// is credited; this names the unread example, not a coverage claim.
+    /// See RIPR-SPEC-0240 (#14935).
+    RustGatedDoctestUnread,
 }
 
 impl StaticLimitKind {
@@ -625,6 +720,7 @@ impl StaticLimitKind {
             StaticLimitKind::ActivationBoundaryInputUnresolved => {
                 "activation_boundary_input_unresolved"
             }
+            StaticLimitKind::RustGatedDoctestUnread => "rust_gated_doctest_unread",
         }
     }
 
@@ -637,8 +733,8 @@ impl StaticLimitKind {
     pub fn describe(&self) -> &'static str {
         match self {
             StaticLimitKind::DynamicDispatch => {
-                "Dynamic dispatch (trait objects or virtual calls) hides which implementation runs, \
-                 so ripr cannot statically resolve whether a test reaches this change."
+                "Dynamic dispatch (the call target is chosen at runtime) hides which implementation \
+                 runs, so ripr cannot statically resolve whether a test reaches this change."
             }
             StaticLimitKind::Metaprogramming => {
                 "Metaprogramming (macros or code generation) produces calls ripr cannot see in the \
@@ -837,6 +933,12 @@ impl StaticLimitKind {
                  closure-derived operand that ripr cannot map to a test call's arguments, so it \
                  cannot tell which side of the boundary a test input lands on. The repair is \
                  withheld; this is a named limitation, not a coverage claim."
+            }
+            StaticLimitKind::RustGatedDoctestUnread => {
+                "Doc example not read: the changed Rust function is compiled only under a cfg \
+                 ripr cannot evaluate, and a doc example in the same library is gated by that \
+                 cfg, so ripr did not read the example that may check it. ripr does not claim \
+                 a gap; this is a named limitation, not a coverage claim."
             }
         }
     }
@@ -1090,6 +1192,52 @@ mod tests {
         Ok(())
     }
 
+    /// A crate one or two directories down keeps `rust` in an enablement
+    /// tip; a deeper, hidden, vendored or build-output manifest does not.
+    #[test]
+    fn enablement_tip_keeps_rust_for_a_nested_crate() -> Result<(), String> {
+        let root = std::env::temp_dir().join(format!(
+            "ripr-tip-keeps-rust-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|elapsed| elapsed.as_nanos())
+                .unwrap_or(0)
+        ));
+        let manifest = |relative: &str| -> Result<(), String> {
+            let dir = root.join(relative);
+            std::fs::create_dir_all(&dir).map_err(|err| format!("mkdir {relative}: {err}"))?;
+            std::fs::write(dir.join("Cargo.toml"), "[package]\nname = \"nested\"\n")
+                .map_err(|err| format!("write {relative}: {err}"))
+        };
+        std::fs::create_dir_all(&root).map_err(|err| format!("mkdir root: {err}"))?;
+        assert!(!enablement_tip_keeps_rust(&root), "empty root");
+        for skipped in [
+            "a/b/c",
+            ".hidden",
+            "target/package",
+            "node_modules/dep",
+            "vendor/dep",
+            "apps/.cache",
+        ] {
+            manifest(skipped)?;
+        }
+        assert!(
+            !enablement_tip_keeps_rust(&root),
+            "too deep, hidden, vendored and build-output manifests"
+        );
+        manifest("services/api")?;
+        assert!(enablement_tip_keeps_rust(&root), "a grandchild crate");
+        std::fs::remove_dir_all(root.join("services")).map_err(|err| err.to_string())?;
+        assert!(!enablement_tip_keeps_rust(&root), "control: removed again");
+        manifest("backend")?;
+        assert!(enablement_tip_keeps_rust(&root), "a child crate");
+        std::fs::remove_dir_all(root.join("backend")).map_err(|err| err.to_string())?;
+        manifest("")?;
+        assert!(enablement_tip_keeps_rust(&root), "root markers still count");
+        std::fs::remove_dir_all(&root).map_err(|err| err.to_string())
+    }
+
     #[test]
     fn language_status_wire_strings_are_stable() {
         assert_eq!(LanguageStatus::Stable.as_str(), "stable");
@@ -1238,6 +1386,10 @@ mod tests {
             StaticLimitKind::ActivationBoundaryInputUnresolved.as_str(),
             "activation_boundary_input_unresolved"
         );
+        assert_eq!(
+            StaticLimitKind::RustGatedDoctestUnread.as_str(),
+            "rust_gated_doctest_unread"
+        );
     }
 
     #[test]
@@ -1279,6 +1431,7 @@ mod tests {
             StaticLimitKind::TypescriptWorkspaceReadLimited,
             StaticLimitKind::RustFutureNeverPolled,
             StaticLimitKind::ActivationBoundaryInputUnresolved,
+            StaticLimitKind::RustGatedDoctestUnread,
         ];
         // Every variant has a non-empty, distinct explanation. Conservative
         // static-language vocabulary is enforced repo-wide by

@@ -4,7 +4,11 @@
 
 use super::{
     NameScopes,
-    name_scope::{TreeScopeIndex, name_scopes_for_test_caller},
+    name_scope::{
+        TreeScopeIndex, every_mention_bound_locally_in_fragment,
+        every_mention_bound_locally_in_tree, name_scopes_for_test_caller,
+        nested_block_renames_in_tree,
+    },
     parse_clean_source_file,
     ra::LineIndex,
 };
@@ -399,6 +403,62 @@ impl SourceSnapshot {
             Ok(mut memo) => *memo.entry(key).or_insert_with(compute),
             Err(_) => compute(),
         }
+    }
+
+    /// The paths nested blocks of the authored test `caller` rename to
+    /// `name` when every bare mention of `name` in its body sits in such a
+    /// block (#14069); see `nested_block_renames_in_tree`. `None` for a
+    /// macro-generated test, whose body the file does not spell.
+    /// `ancestors` are the enclosing module files, nearest first, up to the
+    /// crate root; `None` when that chain is not known.
+    pub(crate) fn nested_block_renames(
+        &self,
+        caller: &TestSummary,
+        ancestors: Option<&[SourceFile]>,
+        name: &str,
+    ) -> Option<Vec<Vec<String>>> {
+        if caller.generated.is_some() {
+            return None;
+        }
+        let tree = self.parse.as_ref()?.tree();
+        nested_block_renames_in_tree(
+            &tree,
+            ancestors,
+            &self.lines,
+            caller.start_line,
+            &caller.name,
+            name,
+        )
+    }
+
+    /// Whether every mention of `name` in the test `caller` is bound by a
+    /// local of its body (#14552); see `every_mention_bound_locally_in_tree`.
+    /// A macro-generated test, whose body the file does not spell, is read
+    /// from `generated_body`, its parsed expansion; without one it answers
+    /// `false`, as does an unparsed file.
+    pub(crate) fn every_mention_bound_locally(
+        &self,
+        caller: &TestSummary,
+        ancestors: Option<&[SourceFile]>,
+        generated_body: Option<&SourceFile>,
+        name: &str,
+    ) -> bool {
+        let Some(parse) = self.parse.as_ref() else {
+            return false;
+        };
+        if caller.generated.is_some() {
+            return generated_body.is_some_and(|fragment| {
+                every_mention_bound_locally_in_fragment(&parse.tree(), ancestors, fragment, name)
+            });
+        }
+        every_mention_bound_locally_in_tree(
+            &parse.tree(),
+            ancestors,
+            &self.lines,
+            caller.start_line,
+            &caller.name,
+            name,
+        )
     }
 
     /// Recover the unique full-source declaration, including qualifiers,

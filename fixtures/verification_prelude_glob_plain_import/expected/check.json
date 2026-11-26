@@ -36,24 +36,24 @@
         {"stage":"observe","state":"no","confidence":"medium"},
         {"stage":"discriminate","state":"no","confidence":"medium"}
       ],
-      "evidence_path": ["reach yes: Related tests appear to reach weight: weighs", "infection yes: Reachable tests can plausibly activate this changed behavior", "propagation yes: Complete propagation witness reaches returned value: input * 3", "observation no: No statically established oracle: assertion execution or macro binding is unestablished (rust_assertion_context_unestablished)", "discriminator no: No statically established assertion can discriminate the changed behavior; execution or macro binding is unestablished (rust_assertion_context_unestablished)", "local flow reaches returned value: input * 3 (line 9)", "related test src/lib.rs:13 weighs uses no oracle", "source assertion argument value 12 at line 14", "source function argument value input = 4 at line 14"],
+      "evidence_path": ["reach yes: Related tests appear to reach weight: weighs", "infection yes: Reachable tests can plausibly activate this changed behavior", "propagation yes: Complete propagation witness reaches returned value: input * 3", "observation no: No statically established oracle: assertion execution or macro binding is unestablished (rust_assertion_context_unestablished)", "discriminator no: No statically established assertion can discriminate the changed behavior; execution or macro binding is unestablished (rust_assertion_context_unestablished)", "local flow reaches returned value: input * 3 (line 9)", "related test src/lib.rs:13 weighs uses no oracle", "source assertion argument value 12 at line 15", "source function argument value input = 4 at line 15"],
       "flow_sinks": [
         {"kind":"return_value","text":"input * 3","line":9}
       ],
-      "evidence": ["Complete propagation witness reaches returned value: input * 3", "No statically established assertion can discriminate the changed behavior; execution or macro binding is unestablished (rust_assertion_context_unestablished)", "No statically established oracle: assertion execution or macro binding is unestablished (rust_assertion_context_unestablished)", "Reachable tests can plausibly activate this changed behavior", "Related tests appear to reach weight: weighs", "assertion not credited: `assert_eq!` in weighs at src/lib.rs:14: `use prusti_contracts::*;` at src/lib.rs:6 glob-imports from outside the workspace, which may bring in a different `assert_eq!`", "gap_withheld: reachable_unrevealed is not claimed; whether the refused related assertions run as the standard `assert_eq!` (rust_assertion_context_unresolved)", "limitation_last_established_edge: related tests `weighs` (src/lib.rs:13)", "limitation_first_unresolved_edge: whether the refused related assertions run as the standard `assert_eq!`", "limitation_analyzer_route: analysis/classify/gap-admission", "limitation_non_claim: no missing test, no weak oracle, and no test adequacy is established"],
+      "evidence": ["Complete propagation witness reaches returned value: input * 3", "No statically established assertion can discriminate the changed behavior; execution or macro binding is unestablished (rust_assertion_context_unestablished)", "No statically established oracle: assertion execution or macro binding is unestablished (rust_assertion_context_unestablished)", "Reachable tests can plausibly activate this changed behavior", "Related tests appear to reach weight: weighs", "assertion not credited: `assert_eq!` in weighs at src/lib.rs:15: `use prusti_contracts::*;` at src/lib.rs:6 glob-imports from outside the workspace, which may bring in a different `vec!`", "gap_withheld: reachable_unrevealed is not claimed; whether the refused related assertions run as the standard `assert_eq!` (rust_assertion_context_unresolved)", "limitation_last_established_edge: related tests `weighs` (src/lib.rs:13)", "limitation_first_unresolved_edge: whether the refused related assertions run as the standard `assert_eq!`", "limitation_analyzer_route: analysis/classify/gap-admission", "limitation_non_claim: no missing test, no weak oracle, and no test adequacy is established"],
       "missing": ["A related Rust test has an `assert_eq!`, but ripr could not read whether it runs as the standard macro on the path that reaches this change (for example the file did not parse, the test carries a feature `cfg`, or a glob import may rebind the macro). ripr does not claim a gap; this is a named limitation, not a coverage claim."],
       "assertion_texts": {
-        "14": "assert_eq!(weight(4), 12);"
+        "15": "assert_eq!(weight(4), 12);"
       },
       "activation": {
         "observed_values": [
           {
-            "line": 14,
+            "line": 15,
             "value": "12",
             "context": "assertion_argument"
           },
           {
-            "line": 14,
+            "line": 15,
             "value": "input = 4",
             "context": "function_argument"
           }
@@ -63,12 +63,12 @@
       },
       "observed_values": [
         {
-          "line": 14,
+          "line": 15,
           "value": "12",
           "context": "assertion_argument"
         },
         {
-          "line": 14,
+          "line": 15,
           "value": "input = 4",
           "context": "function_argument"
         }

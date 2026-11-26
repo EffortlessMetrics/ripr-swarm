@@ -57,7 +57,7 @@ owner under [the release transaction](RELEASE_TRANSACTION.md) and
 | R2 useful | People and agents finish the loop: gap, repair, verified. | Repair starts on at least 80% of gaps `check` reports. | `cargo xtask repair-start-page --ripr <binary>` (on-demand `Outcome Page` lane; dated receipts `repair-start-<date>.json`; per language on the pinned small-diff set, [#12903](https://github.com/EffortlessMetrics/ripr-swarm/issues/12903)). Real-repository repair start (click, the TypeScript set) has no checked-in instrument yet. |
 | | | Precision of "discriminator" claims at least 97% against real mutants, published by language and operator. | `cargo xtask mutation-spot-check`; receipt `metrics/public-proof/mutation-spot-check.json` ([#12900](https://github.com/EffortlessMetrics/ripr-swarm/issues/12900)). |
 | | | Recall of runtime survivors flagged as a gap or an honest unknown at least 80%, published by language. | `cargo xtask mutation-spot-check`, same receipt (`recall_of_missed`; [#12901](https://github.com/EffortlessMetrics/ripr-swarm/issues/12901)). |
-| | | Every verdict class has locked-in goldens per language. | Lock-in matrix ([#12922](https://github.com/EffortlessMetrics/ripr-swarm/issues/12922)). |
+| | | Every emitted verdict class has locked-in goldens per language; classes an adapter never emits have enforceable non-emission evidence instead (see the full-coverage definition). | Lock-in matrix ([#12922](https://github.com/EffortlessMetrics/ripr-swarm/issues/12922)). |
 | R3 critical | Nobody wants to be without it. | Agents with ripr beat agents without it by a statistically clear margin on a public task suite. | With/without cohort ([#12902](https://github.com/EffortlessMetrics/ripr-swarm/issues/12902)). |
 | | | Under a Kani or Verus harness, a changed line gets a source-bound answer that tells a strong harness from a vacuous one. | FV cohort ([#10745](https://github.com/EffortlessMetrics/ripr-swarm/issues/10745)). |
 | | | Installed users act on at least 30% of findings and suppress under 20%. | None: telemetry is an owner decision and is not started. |
@@ -78,7 +78,12 @@ adding a roadmap entry does not promote a tier.
 | `stable building block` | Fixture-backed inside its documented scope; the ladder does not apply. |
 
 The bars apply per language, not to the product average. Unmeasured is not
-met.
+met. Per-language "full coverage" (every emitted verdict class pinned by a
+golden, a `must_not_promote` honesty control, and a mapped discriminating
+test, with enforceable non-emission evidence for classes an adapter never
+emits, on top of these ladder bars) is defined in
+[Support Tiers](status/SUPPORT_TIERS.md#full-coverage-definition) and is
+currently adopted for Rust, TypeScript, and Python.
 
 ### Position on 2026-11-04
 

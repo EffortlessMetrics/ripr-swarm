@@ -8,8 +8,13 @@ Analysis outcome: findings below (analysis complete)
   Counts: 1 changed file(s), 2 changed line(s), 2 candidate line(s), 4 changed behavior(s) checked, 4 finding(s)
 
 Start here:
-  State: no gap selected for repair
-  Safe next action: all findings are base-side evidence, not candidate edit targets; rerun with --format human-full to inspect the full evidence before treating this run as actionable
+  State: every finding left is on removed code, which is never an edit target
+  Safe next action: the diff removes code, and removed code is never an edit target, so nothing is selected for repair; static evidence on the removed code: 1 appear noticed by tests, 1 partly noticed, 2 unclear. Rerun with --format human-full for the evidence on each removed line
+  Removed code (static evidence on the old lines, not a test result; each location is where the code stood in the current file):
+    - ./src/lib.rs:4 `if x == 0 { return Vec::new(); }` (kind: predicate): ripr could not tell whether a test checks it (analysis limited, not a verdict)
+    - ./src/lib.rs:4 `if x == 0 { return Vec::new(); }` (kind: return_value): tests reach it but check it only loosely
+    - ./src/lib.rs:8 `if x == 0 { return Vec::new(); }` (kind: predicate): ripr could not tell whether a test checks it (analysis limited, not a verdict)
+    - 1 more: rerun with --format human-full
 
 Hidden:
   All 4 finding(s) are base-side evidence, not candidate edit targets — rerun with --format human-full for the full evidence.

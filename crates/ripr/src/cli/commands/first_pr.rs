@@ -6,11 +6,30 @@ use crate::cli::suggest::unknown_argument;
 use crate::output::first_pr::{FIRST_PR_HELP, FirstPrOptions, first_pr_with_options};
 
 pub(crate) fn first_pr(args: &[String]) -> Result<(), String> {
+    run_named(args, "first-pr")
+}
+
+/// The `start-here` alias: identical behavior, but refusals name `start-here`.
+pub(crate) fn start_here(args: &[String]) -> Result<(), String> {
+    run_named(args, "start-here")
+}
+
+fn run_named(args: &[String], command: &'static str) -> Result<(), String> {
     if args.iter().any(|arg| arg == "--help" || arg == "-h") {
         print_help();
         return Ok(());
     }
-    first_pr_with_options(parse_options(args)?)
+    let options = parse_options(args)?;
+    // #15249: a missing or non-directory `--root` is the shared root refusal,
+    // naming the command actually run, before any disclosure or write.
+    // This is the directory check only: packet writes follow `--out-dir`, and
+    // `--check` writes nothing, so an unrelated external `target` link must
+    // not block composing a packet into an independent directory.
+    crate::cli::commands_context::ensure_command_root_dir(
+        std::path::Path::new(&options.root),
+        command,
+    )?;
+    first_pr_with_options(options)
 }
 
 pub(crate) fn parse_options(args: &[String]) -> Result<FirstPrOptions, String> {

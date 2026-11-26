@@ -881,7 +881,7 @@ pub(super) fn evidence_context_packet(
         // The repair start only for a seam `agent repair` would accept (the
         // fail-closed repair-packet flip, RIPR-SPEC-0087 §8, plus a
         // test-surface target); `null` otherwise (#3906).
-        "repair_command": repair_start_command_for(entry, &root),
+        "repair_command": crate::lsp::actions::seam_repair_start_command(entry, snapshot, &root),
         "agent_packet_command": loop_commands::agent_packet_command(
             &root,
             seam_id,

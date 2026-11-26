@@ -278,6 +278,7 @@ mod tests {
             id: "finding:guard".to_string(),
             canonical_gap: None,
             probe: Probe {
+                before_condition: None,
                 id: ProbeId("probe:weight".to_string()),
                 location: SourceLocation::new("src/lib.rs", 4, 5),
                 owner: None,

@@ -289,6 +289,27 @@ pub(crate) fn build_baseline_update_remove_resolved(
                     ));
                     kept_entries.push(entry.clone());
                 } else if input.remove_resolved
+                    && let Some(absence) = crate::output::baseline_delta::owner_opt_out_absence(
+                        &absence_scope,
+                        &crate::output::baseline_delta::AbsentBaselineEntry {
+                            path: string_field(entry.get("path"))
+                                .or_else(|| string_field(entry.pointer("/placement/path")))
+                                .as_deref(),
+                            seam_id: identity.seam_id.as_deref(),
+                            changed_owner: string_field(entry.get("changed_owner")).as_deref(),
+                        },
+                    )
+                {
+                    // #14898: delta reads this absence as withheld (or
+                    // not evaluated), so update must keep the live debt.
+                    preserved_stale += 1;
+                    warnings.push(format!(
+                        "preserved baseline entry {} because it is absent from current evidence because {}",
+                        identity.sort_key(),
+                        absence.reason(),
+                    ));
+                    kept_entries.push(entry.clone());
+                } else if input.remove_resolved
                     && let Some(reason) =
                         crate::output::baseline_delta::absence_not_evaluated_reason(
                             &absence_scope,
@@ -422,11 +443,11 @@ fn parse_json(
     expected_kind: &str,
 ) -> Result<Value, String> {
     let value = serde_json::from_str::<Value>(json_text)
-        .map_err(|err| format!("parse {label} {path} failed: {err}"))?;
+        .map_err(|err| format!("parse {label} {path} failed: {err}; regenerate the input with the command that wrote it, then rerun"))?;
     let schema_version = value
         .get("schema_version")
         .and_then(Value::as_str)
-        .ok_or_else(|| format!("{label} {path} missing schema_version"))?;
+        .ok_or_else(|| format!("{label} {path} missing schema_version; regenerate the input with the command that wrote it, then rerun"))?;
     if schema_version != SCHEMA_VERSION {
         return Err(format!(
             "{label} {path} has unsupported schema_version `{schema_version}`; expected `{SCHEMA_VERSION}`"

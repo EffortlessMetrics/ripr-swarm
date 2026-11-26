@@ -12,19 +12,17 @@ use crate::app::CheckOutput;
 use crate::config::{ConfigSeverity, RiprConfig};
 use crate::domain::{
     ExposureClass, Finding, LanguageId, LanguageStatus, MissingDiscriminatorFact, RelatedTest,
-    StageEvidence,
+    StageEvidence, StageState,
 };
 use crate::output::next_step::reconcile_next_step;
 use crate::output::observed_values::{bounded_observed_values, elided_observed_values_total};
-use crate::output::path::{display_path_text, path_display_lossy, repository_relative_path};
+use crate::output::path::{CheckoutAnchor, display_path_text, path_display_lossy};
 use crate::output::perl_preview_card::perl_preview_card_json;
 use crate::output::preview_actionability::{
     preview_actionability_for, preview_actionability_json_value,
 };
 use crate::output::python_repair_card::{python_repair_card, python_repair_card_json_value};
-use crate::output::suppressions::{
-    SuppressionEntry, SuppressionKind, current_iso_date, is_expired,
-};
+use crate::output::suppressions::{SuppressionEntry, current_iso_date};
 use crate::output::typescript_preview_card::{
     typescript_preview_card, typescript_preview_card_json_value,
 };
@@ -116,9 +114,11 @@ fn sarif_level_rank(result: &Value) -> u8 {
 
 /// Keep the highest-priority results that fit `budget` final-form bytes
 /// (plus separators), always keeping the first admitted result so a
-/// nonempty analysis never yields an empty bounded subset. Results are
-/// admitted by level rank (error, warning, note, anything else) with the
-/// original index as the tiebreak, so a cut drops notes before warnings
+/// nonempty analysis never yields an empty bounded subset. Unsuppressed
+/// results are admitted before results carrying `suppressions` metadata
+/// (#15377: a policy audit row never displaces a live alert, which CI policy
+/// readers would then never see); within each group, by level rank (error,
+/// warning, note, anything else) with the original index as the tiebreak, so a cut drops notes before warnings
 /// instead of dropping whatever happens to sit late in file order (a
 /// dropped warning would be closed as "fixed" by code scanning). Admission
 /// stops at the first result that does not fit (a strict priority prefix;
@@ -136,7 +136,13 @@ fn bound_sarif_results(
     };
     let total = results.len();
     let mut order: Vec<usize> = (0..total).collect();
-    order.sort_by_key(|&index| (sarif_level_rank(&results[index]), index));
+    order.sort_by_key(|&index| {
+        (
+            results[index].get("suppressions").is_some(),
+            sarif_level_rank(&results[index]),
+            index,
+        )
+    });
     let mut admitted: Vec<usize> = Vec::new();
     // Nonempty arrays add `[` + newline and newline + six spaces + `]`
     // around the indented results. Count that framing before admitting rows.
@@ -215,13 +221,16 @@ struct SarifRunDisclosures<'a> {
 }
 
 /// Render diff-scoped Findings as SARIF, keeping only the leading results
-/// that fit `results_budget` pretty-printed bytes (`None` renders all).
-/// Omitted results are disclosed in the run properties, never silently.
-pub(crate) fn render_findings_sarif_with_budget(
+/// that fit `results_budget` pretty-printed bytes (`None` renders all), with
+/// every `artifactLocation.uri` (and the fingerprint path) resolved from the checkout top level through
+/// `anchor`, the base code scanning resolves uris against. An unknown anchor
+/// keeps the root-relative spelling.
+pub(crate) fn render_findings_sarif_anchored(
     output: &CheckOutput,
     config: &RiprConfig,
     suppressions: &[SuppressionEntry],
     results_budget: Option<usize>,
+    anchor: &CheckoutAnchor,
 ) -> String {
     let today = current_iso_date();
     let rules = finding_rules();
@@ -257,7 +266,9 @@ pub(crate) fn render_findings_sarif_with_budget(
         // evidence and unresolved subjects stay visible on the check JSON
         // and human surfaces instead of becoming annotation obligations.
         .filter(|finding| finding.is_candidate_actionable())
-        .filter_map(|finding| finding_result(&output.root, finding, config, suppressions, &today))
+        .filter_map(|finding| {
+            finding_result(&output.root, anchor, finding, config, suppressions, &today)
+        })
         .collect::<Vec<_>>();
     let (results, folded_same_line) = fold_same_line_results(results);
     let (results, results_bound) = bound_sarif_results(results, results_budget);
@@ -363,6 +374,7 @@ pub(crate) fn render_repo_seams_sarif_with_budget(
     evidence_limitations: &[AnalysisLimitation],
     config: &RiprConfig,
     results_budget: Option<usize>,
+    anchor: &CheckoutAnchor,
 ) -> String {
     let rules = seam_rules();
     // Ordinals are assigned over every classified seam, before the severity
@@ -371,7 +383,7 @@ pub(crate) fn render_repo_seams_sarif_with_budget(
     let results = classified
         .iter()
         .zip(ordinals)
-        .filter_map(|(entry, ordinal)| seam_result(entry, ordinal, config))
+        .filter_map(|(entry, ordinal)| seam_result(entry, ordinal, config, anchor))
         .collect::<Vec<_>>();
     let (results, results_bound) = bound_sarif_results(results, results_budget);
     sarif_document_repo_seam(
@@ -386,31 +398,21 @@ pub(crate) fn render_repo_seams_sarif_with_budget(
 /// Render diff-scoped Findings as minified SARIF (#13195): the
 /// \RIPR_SARIF_RESULTS_BYTES\-bounded document (#13102) with insignificant
 /// whitespace removed, so parsed values match \--format sarif\ exactly,
-/// including its disclosed \limited_results_bound\ truncation.
-pub(crate) fn render_findings_sarif_compact(
-    output: &CheckOutput,
-    config: &RiprConfig,
-    suppressions: &[SuppressionEntry],
-) -> Result<String, String> {
-    Ok(render_findings_sarif_compact_with_budget(
-        output,
-        config,
-        suppressions,
-        sarif_results_byte_budget()?,
-    ))
-}
-
-fn render_findings_sarif_compact_with_budget(
+/// including its disclosed \limited_results_bound\ truncation, with uris
+/// anchored like [`render_findings_sarif_anchored`].
+pub(crate) fn render_findings_sarif_compact_anchored(
     output: &CheckOutput,
     config: &RiprConfig,
     suppressions: &[SuppressionEntry],
     results_budget: Option<usize>,
+    anchor: &CheckoutAnchor,
 ) -> String {
-    minify_sarif_document(&render_findings_sarif_with_budget(
+    minify_sarif_document(&render_findings_sarif_anchored(
         output,
         config,
         suppressions,
         results_budget,
+        anchor,
     ))
 }
 
@@ -432,6 +434,7 @@ pub(crate) fn render_repo_seams_sarif_compact(
     limit_info: Option<&SeamLimitInfo>,
     evidence_limitations: &[AnalysisLimitation],
     config: &RiprConfig,
+    anchor: &CheckoutAnchor,
 ) -> Result<String, String> {
     Ok(render_repo_seams_sarif_compact_with_budget(
         classified,
@@ -439,6 +442,7 @@ pub(crate) fn render_repo_seams_sarif_compact(
         evidence_limitations,
         config,
         sarif_results_byte_budget()?,
+        anchor,
     ))
 }
 
@@ -448,6 +452,7 @@ fn render_repo_seams_sarif_compact_with_budget(
     evidence_limitations: &[AnalysisLimitation],
     config: &RiprConfig,
     results_budget: Option<usize>,
+    anchor: &CheckoutAnchor,
 ) -> String {
     minify_sarif_document(&render_repo_seams_sarif_with_budget(
         classified,
@@ -455,6 +460,7 @@ fn render_repo_seams_sarif_compact_with_budget(
         evidence_limitations,
         config,
         results_budget,
+        anchor,
     ))
 }
 
@@ -846,6 +852,7 @@ fn render_refusal_sarif_scoped(
 
 fn finding_result(
     root: &Path,
+    anchor: &CheckoutAnchor,
     finding: &Finding,
     config: &RiprConfig,
     suppressions: &[SuppressionEntry],
@@ -860,8 +867,10 @@ fn finding_result(
     // an absolute root would otherwise leak the checkout path into the uri
     // and change every fingerprint between a local and a CI run. The text
     // stays `normalize_path` so existing fingerprints (a literal `%` in a
-    // file name, for instance) do not change for a relative root.
-    let file = normalize_path(repository_relative_path(root, &finding.probe.location.file));
+    // file name, for instance) do not change for a relative root. The
+    // anchor resolves it from the checkout top level, so a workspace-member
+    // root still names the file code scanning finds there.
+    let file = normalize_path(&anchor.relative_path(root, &finding.probe.location.file));
     let line = finding.probe.location.line;
     let mut result = Map::new();
     result.insert("ruleId".to_string(), json!(rule_id));
@@ -902,13 +911,20 @@ fn finding_result(
     Some(Value::Object(result))
 }
 
-fn seam_result(entry: &ClassifiedSeam, ordinal: usize, config: &RiprConfig) -> Option<Value> {
+fn seam_result(
+    entry: &ClassifiedSeam,
+    ordinal: usize,
+    config: &RiprConfig,
+    anchor: &CheckoutAnchor,
+) -> Option<Value> {
     let severity = config
         .severity_for_file(entry.seam.file())
         .for_seam(entry.class);
     let level = sarif_level(severity)?;
     let rule_id = seam_rule_id(entry.class);
-    let file = normalize_path(entry.seam.file());
+    // A seam's file is root-relative; the anchor resolves it from the
+    // checkout top level, the base code scanning resolves uris against.
+    let file = normalize_path(&anchor.root_relative_path(entry.seam.file()));
     let line = entry.seam.display_line();
     let mut result = Map::new();
     result.insert("ruleId".to_string(), json!(rule_id));
@@ -1406,39 +1422,20 @@ fn missing_discriminators(missing: &[MissingDiscriminatorFact]) -> Value {
     )
 }
 
+/// The policy entry that suppresses `finding`'s result, decided by the same
+/// rule `ripr check --suppression-policy` and the badges use (#15377), so a
+/// `path` glob or `static_class` entry marks a code-scanning alert too.
 fn active_exposure_suppression<'a>(
     root: &Path,
     finding: &Finding,
     suppressions: &'a [SuppressionEntry],
     today: &str,
 ) -> Option<&'a SuppressionEntry> {
-    // #13895: a `path` + `function` entry matches the same way it does for
-    // `ripr check` (exact root-relative file and exact owner function).
-    let file = &finding.probe.location.file;
-    let relative = crate::output::suppressions::root_relative_finding_path(root, file);
-    let owner_function = crate::output::suppressions::owner_function_of(
-        &relative,
-        file,
-        finding.probe.owner.as_ref().map(|owner| owner.0.as_str()),
-    );
-    suppressions.iter().find(|entry| {
-        if entry.kind != SuppressionKind::ExposureGap || is_expired(entry.expires.as_deref(), today)
-        {
-            return false;
-        }
-        match (&entry.finding_id, &entry.function) {
-            (Some(id), _) => id == &finding.id,
-            (None, Some(function)) => {
-                entry.path.as_deref() == Some(relative.as_str())
-                    && owner_function.as_deref() == Some(function.as_str())
-                    && entry
-                        .static_class
-                        .as_deref()
-                        .is_none_or(|class| class == finding.class.as_str())
-            }
-            (None, None) => false,
-        }
-    })
+    crate::output::suppressions::matching_exposure_entry(
+        &crate::output::suppressions::CheckSuppressionCandidate::for_finding(root, finding),
+        suppressions,
+        today,
+    )
 }
 
 fn suppression_metadata(entry: &SuppressionEntry) -> Value {
@@ -1455,62 +1452,154 @@ fn suppression_metadata(entry: &SuppressionEntry) -> Value {
     })
 }
 
+/// One-line alert text for GitHub code scanning, which shows `message.text`
+/// verbatim (#11219, #15374): the missing check (when the analyzer named one),
+/// what the static evidence suggests about the changed code in the same plain
+/// words the human summary uses, then the reconciled next step. Source text is
+/// whitespace-collapsed and length-bounded; the class token, probe family and
+/// the full evidence stay in `ruleId` and `properties`.
 fn finding_message(finding: &Finding) -> String {
-    let mut message = String::new();
-    // #11219: lead with the missing check when the analyzer named one, so the
-    // length bound can never cut it; the full list stays in
+    let mut parts = Vec::new();
+    // #11219: lead with the missing check when the analyzer named one, so no
+    // bound can drop it; the full list stays in
     // `properties.missing_discriminators`.
     if let Some(missing) = finding.activation.missing_discriminators.first() {
-        let reason = missing.reason.trim();
+        let reason = bounded_single_line(&missing.reason, MAX_MISSING_CHECK_CHARS);
         if !reason.is_empty() {
-            message.push_str("Missing check: ");
-            message.push_str(reason.trim_end_matches('.'));
-            message.push_str(". ");
+            parts.push(sentence(&format!("Missing check: {reason}")));
         }
     }
-    message.push_str(&format!(
-        "{} static exposure for {} probe",
-        finding.class.as_str(),
-        finding.probe.family.as_str()
+    let expression = bounded_single_line(&finding.probe.expression, MAX_EXPRESSION_CHARS);
+    let subject = if expression.is_empty() {
+        "The changed code".to_string()
+    } else {
+        format!("Changed code `{expression}`")
+    };
+    parts.push(format!(
+        "{subject} {}.",
+        finding_class_message_predicate(finding)
     ));
-    if !finding.probe.expression.is_empty() {
-        message.push_str(": ");
-        message.push_str(&finding.probe.expression);
-    }
-    // Bound the evidence head only; the reconciled next step below is
-    // appended whole so it keeps agreeing with the other surfaces.
-    let mut message = bound_message(message);
     // RIPR-SPEC-0088 §PR8: the SARIF message text is a machine-consumed surface.
     // Use the shared reconciliation fn (not the raw field) so the embedded
-    // "Next step" agrees with suggested_next_action and the other surfaces.
+    // "Next step" agrees with suggested_next_action and the other surfaces. It
+    // is never cut, so a blocked-state or complete-packet disclosure at its end
+    // survives; only whitespace and the internal analyzer-routing sentence go.
     if finding.recommended_next_step.is_some() {
-        message.push_str(". Next step: ");
-        message.push_str(&reconcile_next_step(finding));
+        let step = alert_next_step(&reconcile_next_step(finding));
+        if !step.is_empty() {
+            parts.push(format!("Next step: {step}"));
+        }
     }
-    message
+    parts.join(" ")
 }
 
-/// Longest evidence head (missing check, class, probe, expression) a finding
-/// message carries (#11219). The reconciled next step is appended whole
-/// (RIPR-SPEC-0088); the complete evidence stays in `properties`.
-const MAX_MESSAGE_CHARS: usize = 240;
-
-fn bound_message(message: String) -> String {
-    if message.chars().count() <= MAX_MESSAGE_CHARS {
-        return message;
+/// What the static evidence suggests about the changed code, completing
+/// "Changed code `x` ...". Mirrors the human summary vocabulary ("appear
+/// noticed by tests", "partly noticed", "reached but not noticed", "no test
+/// path", "unclear") and states no runtime verdict.
+///
+/// The two classes whose plain name claims a reaching test ("partly
+/// noticed", "reached") claim it only when reach is `yes` and not callee-only,
+/// the same guard the human hint and Summary apply (#7003, #7330, #15295).
+/// Owner reach alone does not reach the changed expression: when tests call
+/// the owner but infection is `no` (a skipped branch, a default every call
+/// overrides) or anything short of `yes`, the message stays at the owner
+/// level instead of saying the change is reached.
+fn finding_class_message_predicate(finding: &Finding) -> &'static str {
+    let reach_established = finding.ripr.reach.state == StageState::Yes
+        && !finding
+            .ripr
+            .reach
+            .summary
+            .starts_with(crate::domain::CALLEE_ONLY_REACH_PREFIX);
+    match &finding.class {
+        ExposureClass::ReachableUnrevealed if !reach_established => {
+            "has no assertion that appears to notice a change, and test reach to it is not established"
+        }
+        ExposureClass::WeaklyExposed if !reach_established => {
+            "has only a weak check that may notice a change, and test reach to it is not established"
+        }
+        ExposureClass::ReachableUnrevealed if finding.ripr.infect.state == StageState::No => {
+            "is in code tests call, but no test input appears to exercise it"
+        }
+        ExposureClass::ReachableUnrevealed if finding.ripr.infect.state != StageState::Yes => {
+            "is in code tests call, but whether a test input exercises it is not established"
+        }
+        ExposureClass::Exposed => "appears noticed by tests",
+        ExposureClass::WeaklyExposed => "is only partly noticed by tests",
+        ExposureClass::ReachableUnrevealed => {
+            "is reached by tests, but no assertion appears to notice a change"
+        }
+        ExposureClass::NoStaticPath => "has no test path that static analysis could find",
+        ExposureClass::InfectionUnknown => {
+            "may be reached by tests, but static analysis cannot tell whether their inputs exercise it"
+        }
+        ExposureClass::PropagationUnknown => {
+            "may be reached by tests, but static analysis cannot tell whether a wrong result reaches an assertion"
+        }
+        ExposureClass::StaticUnknown => "could not be judged by static analysis",
     }
-    let mut bounded: String = message.chars().take(MAX_MESSAGE_CHARS - 3).collect();
+}
+
+/// Longest changed-code excerpt a finding message quotes (#15374).
+const MAX_EXPRESSION_CHARS: usize = 120;
+/// Longest missing-check reason a finding message quotes (#15374).
+const MAX_MISSING_CHECK_CHARS: usize = 160;
+
+/// Collapses every whitespace run (newlines and source indentation included)
+/// to one space, trims the ends, and cuts to `max_chars` with a trailing
+/// `...` when longer. Display only: fingerprints never read this text.
+fn bounded_single_line(text: &str, max_chars: usize) -> String {
+    let collapsed = text.split_whitespace().collect::<Vec<_>>().join(" ");
+    if collapsed.chars().count() <= max_chars {
+        return collapsed;
+    }
+    let mut bounded: String = collapsed
+        .chars()
+        .take(max_chars.saturating_sub(3))
+        .collect();
+    // Drop trailing dots and joining punctuation too, so a cut after `self.`
+    // or `etc.` reads `self...`, never `self....`.
+    let kept = bounded
+        .trim_end_matches(|c: char| c.is_whitespace() || matches!(c, '.' | ',' | ':' | ';'))
+        .len();
+    bounded.truncate(kept);
     bounded.push_str("...");
     bounded
 }
 
+/// Ends `text` with exactly one sentence terminator: a text already ending in
+/// `.`, `!`, `?` or a `...` cut is kept, so a cut never reads `....`; a
+/// trailing `,`, `:` or `;` is dropped first, so it never reads `:.`.
+fn sentence(text: &str) -> String {
+    let text = text.trim_end_matches(|c: char| c.is_whitespace() || matches!(c, ',' | ':' | ';'));
+    if text.ends_with(['.', '!', '?']) {
+        text.to_string()
+    } else {
+        format!("{text}.")
+    }
+}
+
+/// The reconciled next step as alert text: one line. Only line breaks and the
+/// indentation around them become one space; spaces inside a line stay, so a
+/// quoted literal (an exact error message to assert) keeps its bytes. The
+/// internal analyzer route stays out of the next step itself (#15309).
+fn alert_next_step(step: &str) -> String {
+    step.lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty())
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
 fn seam_message(entry: &ClassifiedSeam) -> String {
-    format!(
-        "{} seam grip for {}: {}",
-        entry.class.as_str(),
-        entry.seam.kind().as_str(),
-        entry.seam.expression()
-    )
+    let title = seam_class_title(&entry.class);
+    let expression = bounded_single_line(entry.seam.expression(), MAX_EXPRESSION_CHARS);
+    if expression.is_empty() {
+        format!("{title}.")
+    } else {
+        format!("{title}: `{expression}`.")
+    }
 }
 
 /// Keep a supported native finding/probe identity across display-line moves.
@@ -1913,6 +2002,45 @@ fn escape_message(value: &str) -> String {
         .replace('\r', "\\r")
 }
 
+/// Render diff-scoped Findings as SARIF, keeping only the leading results
+/// that fit `results_budget` pretty-printed bytes (`None` renders all).
+/// Omitted results are disclosed in the run properties, never silently.
+/// Test-only unanchored form; production renders through
+/// [`render_findings_sarif_anchored`].
+#[cfg(test)]
+pub(crate) fn render_findings_sarif_with_budget(
+    output: &CheckOutput,
+    config: &RiprConfig,
+    suppressions: &[SuppressionEntry],
+    results_budget: Option<usize>,
+) -> String {
+    render_findings_sarif_anchored(
+        output,
+        config,
+        suppressions,
+        results_budget,
+        &CheckoutAnchor::unknown(),
+    )
+}
+
+/// Test-only unanchored `sarif-compact` rendering with an explicit budget;
+/// production renders through [`render_findings_sarif_compact_anchored`].
+#[cfg(test)]
+fn render_findings_sarif_compact_with_budget(
+    output: &CheckOutput,
+    config: &RiprConfig,
+    suppressions: &[SuppressionEntry],
+    results_budget: Option<usize>,
+) -> String {
+    render_findings_sarif_compact_anchored(
+        output,
+        config,
+        suppressions,
+        results_budget,
+        &CheckoutAnchor::unknown(),
+    )
+}
+
 /// Render diff-scoped Findings as SARIF with the default results budget.
 /// Test-only: production renders through
 /// [`render_findings_sarif_with_budget`] with the CLI-resolved budget.
@@ -1947,6 +2075,7 @@ pub(crate) fn render_repo_seams_sarif(
         &[],
         config,
         Some(DEFAULT_SARIF_RESULTS_BYTES),
+        &CheckoutAnchor::unknown(),
     )
 }
 
@@ -1970,6 +2099,7 @@ mod tests {
         ProbeId, RelatedTest, RevealEvidence, RiprEvidence, SourceLocation, StageEvidence,
         StageState, StaticLimitKind, StopReason, Summary, SymbolId, ValueContext,
     };
+    use crate::output::suppressions::SuppressionKind;
     use serde_json::Value;
     use std::path::PathBuf;
 
@@ -2116,6 +2246,29 @@ mod tests {
         // Error, then warnings by index; the note is cut. Original order kept.
         assert_eq!(bound_ids(&kept), vec![1, 2, 3]);
         assert_eq!(bound.map(|b| (b.rendered, b.total)), Some((3, 4)));
+    }
+
+    // #15377: a suppressed audit row never displaces a live alert, even a
+    // suppressed error ahead of an unsuppressed note.
+    #[test]
+    fn sarif_results_bound_admits_unsuppressed_before_suppressed() {
+        let suppressed = |level: &str, id: usize| {
+            let mut result = bound_probe(level, id);
+            result["suppressions"] = json!([{"kind": "external"}]);
+            result
+        };
+        let results = vec![
+            suppressed("error", 0),
+            suppressed("warning", 1),
+            bound_probe("warning", 2),
+            bound_probe("note", 3),
+        ];
+        let row =
+            nested_result_bytes(&serde_json::to_string_pretty(&results[0]).unwrap_or_default());
+        // Room for two rows, sized from the longest (a suppressed error).
+        let (kept, bound) = bound_sarif_results(results, Some(10 + 2 * row + 2));
+        assert_eq!(bound_ids(&kept), vec![2, 3]);
+        assert_eq!(bound.map(|b| (b.rendered, b.total)), Some((2, 4)));
     }
 
     #[test]
@@ -3340,6 +3493,61 @@ weakly_gripped = "note"
         Ok(())
     }
 
+    /// #15377: SARIF marks a result by the same rule `check
+    /// --suppression-policy` and the badges use, so a `path` glob entry
+    /// (optionally narrowed by `static_class`) suppresses the alert too. The
+    /// sample finding is `weakly_exposed` at `src/pricing.rs`.
+    #[test]
+    fn sarif_marks_results_matched_by_a_path_glob_entry() -> Result<(), String> {
+        let entry = |path: &str, static_class: Option<&str>| SuppressionEntry {
+            kind: SuppressionKind::ExposureGap,
+            finding_id: None,
+            test: None,
+            path: Some(path.to_string()),
+            function: None,
+            reason: format!("glob {path}"),
+            owner: "team-ripr".to_string(),
+            expires: Some("2099-01-01".to_string()),
+            scope: None,
+            created_at: None,
+            last_seen: None,
+            review_by: None,
+            expected_visibility: None,
+            static_class: static_class.map(str::to_string),
+            language: None,
+            language_status: None,
+            block_line: 4,
+        };
+        let marking = |entries: &[SuppressionEntry]| -> Result<Value, String> {
+            let rendered = render_findings_sarif(&sample_output(), &RiprConfig::default(), entries);
+            let sarif = parse_json(&rendered)?;
+            Ok(first_result(&sarif)?["suppressions"].clone())
+        };
+
+        let marked = marking(&[entry("src/**", None)])?;
+        assert_eq!(marked[0]["justification"], "glob src/**", "{marked}");
+        let narrowed = marking(&[entry("src/*.rs", Some("weakly_exposed"))])?;
+        assert_eq!(narrowed[0]["justification"], "glob src/*.rs", "{narrowed}");
+        // The first matching entry in manifest order supplies the marking.
+        let first = marking(&[entry("tests/**", None), entry("src/**", None)])?;
+        assert_eq!(first[0]["justification"], "glob src/**", "{first}");
+
+        for unmatched in [
+            vec![entry("tests/**", None)],
+            vec![entry("src/**", Some("exposed"))],
+        ] {
+            let marking = marking(&unmatched)?;
+            assert!(marking.is_null(), "{unmatched:?} must not mark: {marking}");
+        }
+        let mut expired = entry("src/**", None);
+        expired.expires = Some("2000-01-01".to_string());
+        assert!(
+            marking(&[expired])?.is_null(),
+            "an expired entry never marks"
+        );
+        Ok(())
+    }
+
     #[test]
     fn sarif_output_is_valid_json() -> Result<(), String> {
         let findings = render_findings_sarif(&sample_output(), &RiprConfig::default(), &[]);
@@ -3355,7 +3563,11 @@ weakly_gripped = "note"
     fn sarif_preserves_static_language() {
         let rendered = render_findings_sarif(&sample_output(), &RiprConfig::default(), &[]);
         assert!(rendered.contains("weakly_exposed"));
-        assert!(rendered.contains("static exposure"));
+        // #15374: the alert text reads in plain static wording; the class
+        // token stays in `ruleId`/`properties`, not the message.
+        assert!(rendered.contains("is only partly noticed by tests."));
+        assert!(rendered.contains("Static evidence only; no test was executed."));
+        assert!(!rendered.contains("static exposure for"));
         assert!(rendered.contains("equality boundary is absent"));
     }
 
@@ -3476,6 +3688,7 @@ weakly_gripped = "note"
             &failure,
             &config,
             Some(DEFAULT_SARIF_RESULTS_BYTES),
+            &CheckoutAnchor::unknown(),
         );
         let compact = render_repo_seams_sarif_compact_with_budget(
             &classified,
@@ -3483,6 +3696,7 @@ weakly_gripped = "note"
             &failure,
             &config,
             Some(DEFAULT_SARIF_RESULTS_BYTES),
+            &CheckoutAnchor::unknown(),
         );
         for (name, rendered) in [("repo-sarif", full), ("repo-sarif-compact", compact)] {
             let sarif = parse_json(&rendered)?;
@@ -3562,19 +3776,205 @@ weakly_gripped = "note"
         let mut long = sample_finding();
         long.recommended_next_step = Some("word ".repeat(100));
         let message = finding_message(&long);
-        assert!(message.ends_with(&reconcile_next_step(&long)), "{message}");
+        assert!(
+            message.ends_with(reconcile_next_step(&long).trim_end()),
+            "{message}"
+        );
         // A long expression is cut by the bound, never the leading missing check.
         let mut wide = sample_finding();
         wide.probe.expression = "x".repeat(2000);
         let message = finding_message(&wide);
         assert!(message.starts_with("Missing check: no related test calls the equality boundary"));
-        let head = message.split(". Next step:").next().unwrap_or_default();
-        assert_eq!(head.chars().count(), MAX_MESSAGE_CHARS);
-        assert!(head.ends_with("..."));
+        let quoted = format!("`{}...`", "x".repeat(MAX_EXPRESSION_CHARS - 3));
+        assert!(message.contains(&quoted), "{message}");
         // Control: without a missing discriminator no "Missing check" is invented.
         let mut none = sample_finding();
         none.activation.missing_discriminators.clear();
         assert!(!finding_message(&none).contains("Missing check"));
+        Ok(())
+    }
+
+    /// #15374: code scanning shows `message.text` verbatim, so it is one plain
+    /// line: source whitespace collapsed, no `....` at a cut, no class or probe
+    /// family tokens, and no internal analyzer-routing sentence.
+    #[test]
+    fn finding_message_is_one_plain_line_without_jargon_or_doubled_cut() {
+        let mut multi = sample_finding();
+        multi.probe.expression =
+            "if amount\n        >= discount_threshold\n\t&& tier.is_gold() {".to_string();
+        let message = finding_message(&multi);
+        assert!(
+            !message.contains('\n') && !message.contains('\t'),
+            "{message}"
+        );
+        assert!(
+            message.contains("Changed code `if amount >= discount_threshold && tier.is_gold() {`"),
+            "{message}"
+        );
+        assert!(
+            message.contains("is only partly noticed by tests."),
+            "{message}"
+        );
+        for jargon in [
+            "weakly_exposed",
+            "static exposure for",
+            "predicate probe",
+            "  ",
+        ] {
+            assert!(!message.contains(jargon), "{jargon:?} in {message}");
+        }
+
+        // A cut expression and a cut missing check never read `....`.
+        let mut cut = sample_finding();
+        cut.probe.expression = format!("call({})", "arg, ".repeat(60));
+        cut.activation.missing_discriminators[0].reason = "word ".repeat(80);
+        cut.recommended_next_step = Some("add an exact assertion".to_string());
+        let message = finding_message(&cut);
+        assert!(!message.contains("...."), "{message}");
+        assert!(message.contains("...` "), "{message}");
+        assert!(message.starts_with("Missing check: word"), "{message}");
+        assert!(message.contains("... Changed code"), "{message}");
+
+        // A cut landing right after a `.` (method chains, `etc.`) or a reason
+        // ending in joining punctuation still reads as one clean sentence.
+        let mut dotted = sample_finding();
+        dotted.probe.expression = "a.".repeat(100);
+        dotted.activation.missing_discriminators[0].reason = "x.".repeat(100);
+        let message = finding_message(&dotted);
+        assert!(!message.contains("...."), "{message}");
+        assert!(message.contains("a.a...`"), "{message}");
+        assert!(message.starts_with("Missing check: x.x.x"), "{message}");
+        let mut colon = sample_finding();
+        colon.activation.missing_discriminators[0].reason = "observed values:".to_string();
+        let message = finding_message(&colon);
+        assert!(
+            message.starts_with("Missing check: observed values. "),
+            "{message}"
+        );
+
+        // Every class reads in plain words; none leaks its wire token.
+        for class in all_exposure_classes() {
+            let mut finding = sample_finding();
+            finding.class = class.clone();
+            let message = finding_message(&finding);
+            assert!(!message.contains(class.as_str()), "{message}");
+            assert!(!message.contains('\n'), "{message}");
+        }
+
+        // #15374 review: reached-but-not-noticed claims a reaching test only
+        // when reach is established; weak or callee-only reach keeps the doubt.
+        let mut reached = sample_finding();
+        reached.class = ExposureClass::ReachableUnrevealed;
+        reached.ripr.reach = stage(StageState::Yes, "related tests call discounted_total");
+        reached.ripr.infect = stage(StageState::Yes, "a test input enters the changed code");
+        let message = finding_message(&reached);
+        assert!(
+            message.contains("is reached by tests, but no assertion"),
+            "{message}"
+        );
+        for reach in [
+            stage(StageState::Weak, "marker test only"),
+            stage(
+                StageState::Yes,
+                &format!(
+                    "{} discounted_total",
+                    crate::domain::CALLEE_ONLY_REACH_PREFIX
+                ),
+            ),
+        ] {
+            let mut unestablished = reached.clone();
+            unestablished.ripr.reach = reach;
+            let message = finding_message(&unestablished);
+            assert!(!message.contains("is reached by tests"), "{message}");
+            assert!(
+                message.contains("test reach to it is not established."),
+                "{message}"
+            );
+        }
+
+        // A weak finding without established reach does not claim that tests
+        // partly notice the change (#15374 review, same guard as #15295).
+        let mut weak_unreached = sample_finding();
+        weak_unreached.ripr.reach = stage(StageState::Weak, "same-file test link only");
+        let message = finding_message(&weak_unreached);
+        assert!(!message.contains("partly noticed by tests"), "{message}");
+        assert!(
+            message.contains("test reach to it is not established."),
+            "{message}"
+        );
+
+        // Tests call the owner but no input exercises the change: not "reached".
+        let mut skipped = reached.clone();
+        skipped.ripr.infect = stage(StageState::No, "no related test enters the branch");
+        let message = finding_message(&skipped);
+        assert!(!message.contains("is reached by tests"), "{message}");
+        assert!(
+            message.contains("is in code tests call, but no test input appears to exercise it."),
+            "{message}"
+        );
+
+        // Any infection short of `yes` also stays at the owner level.
+        for infect in [
+            StageState::Unknown,
+            StageState::Weak,
+            StageState::Opaque,
+            StageState::NotApplicable,
+        ] {
+            let mut uncertain = reached.clone();
+            uncertain.ripr.infect = stage(infect.clone(), "input not established");
+            let message = finding_message(&uncertain);
+            assert!(
+                !message.contains("is reached by tests"),
+                "{infect:?}: {message}"
+            );
+            assert!(
+                message.contains("whether a test input exercises it is not established."),
+                "{infect:?}: {message}"
+            );
+        }
+
+        // Empty expression: a plain subject, still one sentence.
+        let mut bare = sample_finding();
+        bare.probe.expression.clear();
+        bare.activation.missing_discriminators.clear();
+        bare.recommended_next_step = None;
+        assert_eq!(
+            finding_message(&bare),
+            "The changed code is only partly noticed by tests."
+        );
+    }
+
+    /// #15374: the analyzer route of a named unresolved edge is internal
+    /// routing and never reaches the alert; the plain guidance does.
+    #[test]
+    fn finding_message_carries_no_analyzer_route() -> Result<(), String> {
+        let mut finding = sample_finding();
+        finding.class = ExposureClass::StaticUnknown;
+        finding.activation.missing_discriminators.clear();
+        finding.static_limit_kind =
+            Some(crate::domain::StaticLimitKind::RustTransitiveReachUnresolved);
+        finding.evidence = vec![
+            "limitation_first_unresolved_edge: entry `parse` -> owner `unit`".to_string(),
+            "limitation_analyzer_route: analysis/rust-public-api-transitive-reach".to_string(),
+        ];
+        finding.recommended_next_step = Some("add a direct test".to_string());
+        let message = finding_message(&finding);
+        assert!(!message.contains("Route analyzer work"), "{message}");
+        assert!(!message.contains("analysis/rust-public-api"), "{message}");
+        assert!(
+            message.ends_with("This limitation does not establish a missing test."),
+            "{message}"
+        );
+        assert!(
+            message.contains("could not be judged by static analysis."),
+            "{message}"
+        );
+
+        let properties = finding_properties(&finding, ConfigSeverity::Note);
+        assert_eq!(
+            properties["suggested_next_action"].as_str(),
+            Some(reconcile_next_step(&finding).as_str())
+        );
         Ok(())
     }
 
@@ -3719,6 +4119,7 @@ weakly_gripped = "note"
             normalized_discriminator: "return_value".to_string(),
         });
         finding.probe = Probe {
+            before_condition: None,
             id: ProbeId("probe:lib_My_App_pm:8:perl_return".to_string()),
             location: SourceLocation::new("lib/My/App.pm", 8, 5),
             owner: Some(SymbolId(
@@ -3878,6 +4279,7 @@ weakly_gripped = "note"
             id: "finding:discount".to_string(),
             canonical_gap: None,
             probe: Probe {
+                before_condition: None,
                 id: ProbeId("probe:src/pricing.rs:88:predicate".to_string()),
                 location: SourceLocation::new("src/pricing.rs", 88, 9),
                 owner: Some(SymbolId("pricing::discounted_total".to_string())),
@@ -4131,6 +4533,56 @@ weakly_gripped = "note"
         Ok(())
     }
 
+    /// #15374 review: seam alerts are one bounded line led by the rule title.
+    #[test]
+    fn seam_message_is_one_bounded_line() {
+        let multi = classified_seam_at(
+            SeamGripClass::WeaklyGripped,
+            "src/pricing.rs",
+            "pricing::discounted_total",
+            SeamKind::PredicateBoundary,
+            (42, 88),
+            "amount\n        >= discount_threshold",
+        );
+        let message = seam_message(&multi);
+        assert!(!message.contains('\n'), "{message}");
+        assert!(
+            message.ends_with(": `amount >= discount_threshold`."),
+            "{message}"
+        );
+        assert!(!message.contains("weakly_gripped"), "{message}");
+
+        let long = classified_seam_at(
+            SeamGripClass::WeaklyGripped,
+            "src/pricing.rs",
+            "pricing::discounted_total",
+            SeamKind::PredicateBoundary,
+            (42, 88),
+            &"x + ".repeat(80),
+        );
+        let message = seam_message(&long);
+        assert!(message.contains("...`."), "{message}");
+        assert!(!message.contains("...."), "{message}");
+        let quoted = message
+            .split('`')
+            .nth(1)
+            .map_or(0, |quote| quote.chars().count());
+        assert!(quoted <= MAX_EXPRESSION_CHARS, "{message}");
+    }
+
+    /// #15374 review: the next step keeps spaces inside a quoted literal.
+    #[test]
+    fn alert_next_step_keeps_literal_spacing_and_joins_lines() {
+        assert_eq!(
+            alert_next_step("assert the error is \"too  low\""),
+            "assert the error is \"too  low\""
+        );
+        assert_eq!(
+            alert_next_step("first line\n    second  line\n"),
+            "first line second  line"
+        );
+    }
+
     fn weakly_gripped_classified() -> ClassifiedSeam {
         classified_seam(SeamGripClass::WeaklyGripped)
     }
@@ -4175,6 +4627,7 @@ weakly_gripped = "note"
         let evidence = TestGripEvidence {
             seam_id: seam.id().clone(),
             related_tests: vec![std::sync::Arc::new(RelatedTestGrip {
+                assertion_targets_non_function: None,
                 test_name: "below_threshold_has_no_discount".to_string(),
                 file: PathBuf::from("tests/pricing.rs"),
                 line: 12,
@@ -4596,6 +5049,83 @@ weakly_gripped = "note"
                 "refusal SARIF root must use display_path spelling, got {root:?}"
             ));
         }
+        Ok(())
+    }
+
+    #[test]
+    fn anchored_sarif_uris_name_member_root_files_from_the_checkout_top_level() -> Result<(), String>
+    {
+        // Code scanning resolves `artifactLocation.uri` against the
+        // repository root, so an absolute workspace-member root (or `--root .`
+        // inside the member) must not upload `src/...` uris.
+        let member_root = std::env::temp_dir()
+            .join("ripr_sarif_anchor_test")
+            .join("crates/app");
+        let mut output = sample_output();
+        output.root = member_root.clone();
+        output.findings[0].probe.location.file = member_root.join("src/pricing.rs");
+        let config = RiprConfig::default();
+        let anchor = CheckoutAnchor::below_top_level(PathBuf::from("crates/app"));
+        let uri = |document: &str| -> Result<(String, String), String> {
+            let sarif = parse_json(document)?;
+            let result = &sarif["runs"][0]["results"][0];
+            Ok((
+                result["locations"][0]["physicalLocation"]["artifactLocation"]["uri"]
+                    .as_str()
+                    .unwrap_or_default()
+                    .to_string(),
+                result["partialFingerprints"]["riprFingerprintV1"]
+                    .as_str()
+                    .unwrap_or_default()
+                    .to_string(),
+            ))
+        };
+        let (anchored, anchored_fingerprint) = uri(&render_findings_sarif_anchored(
+            &output,
+            &config,
+            &[],
+            None,
+            &anchor,
+        ))?;
+        assert_eq!(anchored, "crates/app/src/pricing.rs");
+        assert!(anchored_fingerprint.ends_with("|crates/app/src/pricing.rs"));
+        let compact = parse_json(&render_findings_sarif_compact_anchored(
+            &output,
+            &config,
+            &[],
+            None,
+            &anchor,
+        ))?;
+        assert_eq!(
+            compact["runs"][0]["results"][0]["locations"][0]["physicalLocation"]["artifactLocation"]
+                ["uri"],
+            "crates/app/src/pricing.rs"
+        );
+        // Control: the unanchored render keeps the root-relative uri.
+        let (unanchored, _) = uri(&render_findings_sarif(&output, &config, &[]))?;
+        assert_eq!(unanchored, "src/pricing.rs");
+
+        // Repo seams carry root-relative files; the anchor prefixes them.
+        let classified = [weakly_gripped_classified()];
+        let seams = parse_json(&render_repo_seams_sarif_with_budget(
+            &classified,
+            None,
+            &[],
+            &config,
+            None,
+            &anchor,
+        ))?;
+        assert_eq!(
+            seams["runs"][0]["results"][0]["locations"][0]["physicalLocation"]["artifactLocation"]
+                ["uri"],
+            "crates/app/src/pricing.rs"
+        );
+        let unanchored_seams = parse_json(&render_repo_seams_sarif(&classified, None, &config))?;
+        assert_eq!(
+            unanchored_seams["runs"][0]["results"][0]["locations"][0]["physicalLocation"]["artifactLocation"]
+                ["uri"],
+            "src/pricing.rs"
+        );
         Ok(())
     }
 }

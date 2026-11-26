@@ -187,12 +187,26 @@ When the missing ref already exists locally as a remote-tracking ref, the
 repair names that ref instead of re-prescribing the fetch that created it
 (#8652). Every configured remote is probed locally (no network) as the full
 `refs/remotes/<remote>/<ref>` ref — never the short `<remote>/<ref>`
-spelling, which a tag or local branch of that name can shadow — and the
-full ref is the suggested `--base`/`--head` value. Exactly one candidate
+spelling, which a tag or local branch of that name can shadow. The
+suggested `--base`/`--head` value is the short `<remote>/<ref>` when Git
+resolves that short name to exactly the probed ref, and the full ref when a
+tag or local branch shadows it (#15484). Exactly one candidate
 is named as the followable advice; several candidates are all named
 without picking one. A nested branch name (`feature/topic`) probes the
 same tracking forms before its first segment is treated as a remote
 qualifier; explicit `refs/...` paths and rev expressions never probe.
+
+A missing ref spelled as 7 to 64 hex digits, or as `v` followed by a digit,
+is answered before the shallow and branch arms, because no branch fetch brings
+in a bare commit or a tag (#15484). A full-length commit id names
+`git fetch <remote> <id>`; an abbreviated one names the full-id form, since
+Git fetches commits only by full id; in a shallow clone both also name
+`git fetch --unshallow <remote>`. A version tag names `git fetch --tags
+<remote>`. The remote is the only plain configured remote, else `origin` when
+configured, else a `<remote>` placeholder; a repository with no remote is told
+that no fetch can supply the ref. A name of either shape that already exists
+as a fetched remote-tracking ref (a branch called `v2`) keeps the
+remote-tracking advice below. Other names keep the branch advice.
 
 In a repository with no commits and no refs at all, no revision can resolve, so
 the repair says the repository has no commits yet and to commit once instead
@@ -225,8 +239,8 @@ type change, and resumes normal parsing at the next file boundary (#4577).
 no-merge-base cause and, in a shallow clone, offers `git fetch --unshallow`
 as its next command.
 
-The shared Git diff byte owner pins `--ignore-submodules=none` for committed,
-worktree, range and PR-evidence loads (#8209). Ambient `diff.ignoreSubmodules`
+The shared Git diff byte owner pins `--ignore-submodules=dirty` for committed,
+worktree, range and PR-evidence loads (#8209, #15101). Ambient `diff.ignoreSubmodules`
 and `submodule.<name>.ignore` settings cannot hide a changed gitlink before
 the existing skipped-submodule disclosure sees it. Submodule contents are
 still not analyzed; no source probes are invented for the pointer.
@@ -337,8 +351,17 @@ call and is not cached, runs inside the caller's deadline (a zero deadline
 starts no process), and an inherited `GIT_CONFIG` is removed so the listing
 reads the same configuration the call does. When the filter listing cannot be
 read, is ended by a signal, is truncated, or names a driver that cannot be reset on the command
-line, ripr does not run Git in that repository. A populated submodule's own
-repository configuration is outside this guarantee (Unix proof).
+line, ripr does not run Git in that repository (Unix proof).
+
+A populated submodule's own configuration is never read for a program to run
+(#15101): every diff and status call passes `--ignore-submodules=dirty`, so
+Git compares the submodule's checked-out commit with the recorded gitlink but
+starts no `git status` child inside the submodule. The alternative, extending
+the filter pins to each populated submodule, was rejected: it adds a
+configuration listing per submodule (recursively) to every call and still
+leaves any other helper class the child might read. The cost is that
+uncommitted edits inside a submodule are no longer disclosed as a skipped
+pointer; a moved submodule commit still is (Unix proof).
 
 ### Non-claims
 
@@ -457,6 +480,8 @@ repository configuration is outside this guarantee (Unix proof).
 - `crates/ripr/src/git_helper_pin_tests.rs::inherited_git_config_selector_is_removed_from_every_call`
 - `crates/ripr/src/git_helper_pin_tests.rs::clean_filter_added_to_an_included_file_does_not_run`
 - `crates/ripr/src/git_helper_pin_tests.rs::filter_listing_runs_inside_the_callers_deadline`
+- `crates/ripr/src/git_helper_pin_tests.rs::submodule_examining_calls_get_pointers_only`
+- `crates/ripr/tests/hostile_repos.rs::submodule_repository_helper_does_not_run`
 - `crates/ripr/tests/cli_smoke/offline_network.rs::offline_partial_clone_names_the_missing_download_not_object_damage`
 - `crates/ripr/tests/cli_smoke/offline_network.rs::everyday_commands_complete_with_the_network_sealed`
 

@@ -40,7 +40,13 @@ impl ConsumedInputHashes {
             }
         })?;
         let digest = format!("sha256:{:x}", Sha256::digest(&bytes));
-        let value = serde_json::from_slice(&bytes)
+        let text = crate::bounded_input::decode_artifact_text(&bytes).map_err(|err| {
+            format!(
+                "read {} failed: {err}; save the file as UTF-8, then rerun",
+                display_path(display)
+            )
+        })?;
+        let value = serde_json::from_str(&text)
             .map_err(|err| format!("parse {} failed: {err}; fix the JSON, or regenerate the input if a command wrote it (never regenerate a reviewed baseline), then rerun", display_path(display)))?;
         Ok((value, digest))
     }
@@ -52,12 +58,20 @@ impl ConsumedInputHashes {
         &self,
         resolved: &Path,
         display: &str,
+        flag: &str,
     ) -> Result<(String, String), String> {
-        let bytes = crate::bounded_input::read(resolved)
-            .map_err(|err| format!("failed to read exception policy `{display}`: {err}; check that the path exists and is readable, then rerun"))?;
+        let bytes = crate::bounded_input::read(resolved).map_err(|err| {
+            format!(
+                "failed to read {flag} `{display}`: {}",
+                crate::bounded_input::unreadable_input_phrase(
+                    &err,
+                    "check that the path exists and is a readable TOML file, then rerun"
+                )
+            )
+        })?;
         let digest = format!("sha256:{:x}", Sha256::digest(&bytes));
         let text = String::from_utf8(bytes)
-            .map_err(|err| format!("exception policy `{display}` is not valid UTF-8: {err}; save the policy file as UTF-8, then rerun"))?;
+            .map_err(|err| format!("{flag} `{display}` is not valid UTF-8: {err}; save the policy file as UTF-8, then rerun"))?;
         Ok((text, digest))
     }
 }
@@ -114,6 +128,7 @@ pub(super) fn read_gap_ledger_impl(
     consumed: &mut ConsumedInputHashes,
     coverage: &mut Option<Value>,
     refusal: &mut Vec<String>,
+    owner_opt_outs: &mut Option<Value>,
 ) -> Option<Vec<GapRecord>> {
     let path = input.gap_ledger.as_ref()?;
     let resolved = resolve_root_path(&input.root, path);
@@ -132,11 +147,11 @@ pub(super) fn read_gap_ledger_impl(
     };
     let consumed_hash = format!("sha256:{:x}", Sha256::digest(&bytes));
     consumed.gap_ledger = Some(consumed_hash);
-    let text = match String::from_utf8(bytes) {
+    let text = match crate::bounded_input::decode_artifact_text(&bytes) {
         Ok(text) => text,
         Err(error) => {
             config_errors.push(format!(
-                "required gap decision ledger input {} is invalid: not valid UTF-8: {error}",
+                "required gap decision ledger input {} is invalid: {error}",
                 display_path(path)
             ));
             return Some(Vec::new());
@@ -201,6 +216,10 @@ pub(super) fn read_gap_ledger_impl(
             // #9599: a producer coverage disclosure counts only while it still
             // describes exactly this record set.
             if let Ok(value) = serde_json::from_str::<Value>(&text) {
+                // #14898: seams the source withheld by an owner opt-out are
+                // absent from the records; the disclosure travels with them
+                // so a baseline consumer never reads them as resolved.
+                *owner_opt_outs = value.get("owner_opt_outs").cloned();
                 match gap_decision_ledger::verified_analysis_coverage(&value, &records) {
                     Some(verified) => {
                         let mismatched = ledger_coverage_mismatches(&input.root, &verified);

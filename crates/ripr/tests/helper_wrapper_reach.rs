@@ -74,6 +74,72 @@ fn family_finding(source: &str, diff: &str, family: &str) -> Result<Value, Strin
         .ok_or_else(|| format!("no {family} finding: {json}"))
 }
 
+/// [`family_finding`] in a crate whose `Cargo.toml` carries `dependencies`
+/// and whose `Cargo.lock` locks `locked` (`(name, version)` pairs from the
+/// crates.io registry).
+fn finding_with_dependencies(
+    dependencies: &str,
+    locked: &[(&str, &str)],
+    source: &str,
+    diff: &str,
+    family: &str,
+) -> Result<Value, String> {
+    finding_in_files(
+        dependencies,
+        locked,
+        &[("src/lib.rs", source)],
+        diff,
+        family,
+    )
+}
+
+/// [`finding_with_dependencies`] with every source file given as
+/// `(path, text)`.
+fn finding_in_files(
+    dependencies: &str,
+    locked: &[(&str, &str)],
+    sources: &[(&str, &str)],
+    diff: &str,
+    family: &str,
+) -> Result<Value, String> {
+    let scratch = Scratch::create()?;
+    let manifest = format!("{MANIFEST}\n[dependencies]\n{dependencies}\n");
+    let mut lock =
+        String::from("version = 3\n\n[[package]]\nname = \"wrapper_reach\"\nversion = \"0.1.0\"\n");
+    for (name, version) in locked {
+        lock.push_str(&format!(
+            "\n[[package]]\nname = \"{name}\"\nversion = \"{version}\"\nsource = \"registry+https://github.com/rust-lang/crates.io-index\"\n"
+        ));
+    }
+    for (relative, text) in [
+        ("Cargo.toml", manifest.as_str()),
+        ("Cargo.lock", lock.as_str()),
+        ("change.diff", diff),
+    ]
+    .into_iter()
+    .chain(sources.iter().copied())
+    {
+        std::fs::write(scratch.0.join(relative), text).map_err(|error| error.to_string())?;
+    }
+    let report = check_workspace(CheckInput {
+        root: scratch.0.clone(),
+        diff_file: Some(scratch.0.join("change.diff")),
+        mode: Mode::Fast,
+        format: OutputFormat::Json,
+        include_unchanged_tests: true,
+        ..CheckInput::default()
+    })?;
+    let json: Value = serde_json::from_str(&render_check(&report, &OutputFormat::Json)?)
+        .map_err(|error| error.to_string())?;
+    json["findings"]
+        .as_array()
+        .ok_or("missing findings")?
+        .iter()
+        .find(|finding| finding["probe"]["family"] == family)
+        .cloned()
+        .ok_or_else(|| format!("no {family} finding: {json}"))
+}
+
 fn relation_of<'a>(finding: &'a Value, test: &str) -> Option<&'a str> {
     finding["related_tests"]
         .as_array()?
@@ -353,6 +419,266 @@ fn shadowed_or_macro_guarded_wrappers_confirm_neither_twin() -> Result<(), Strin
             "exposed",
             "{call}"
         );
+    }
+    Ok(())
+}
+
+// #10357: `env!` and `option_env!` expand to a literal, so a wrapper that
+// reads one still forwards the helper's result. A local `macro_rules! env`
+// may return before the helper runs, so it keeps the wrapper opaque.
+#[test]
+fn env_reading_wrapper_forwards_unless_env_is_rebound() -> Result<(), String> {
+    for call in [
+        "let _name = env!(\"CARGO_PKG_NAME\");",
+        "let _flag = option_env!(\"RIPR_FLAG\");",
+    ] {
+        let source = bulk_source(
+            &format!("    {call}\n    if is_bulk(qty) {{ 5 }} else {{ 0 }}"),
+            BOUNDARY_TESTS,
+        );
+        for finding in [
+            predicate_finding(&source, BULK_DIFF)?,
+            family_finding(&source, BULK_DIFF, "return_value")?,
+        ] {
+            assert_eq!(finding["probe"]["line"], 2, "{call}\n{finding}");
+            assert_eq!(finding["classification"], "exposed", "{call}\n{finding}");
+        }
+    }
+    for (prelude, call) in [
+        (
+            "macro_rules! env { ($q:expr) => { if $q == 10 { return 5; } }; }",
+            "env!(qty);",
+        ),
+        (
+            "macro_rules! option_env { ($q:expr) => { if $q == 10 { return 5; } }; }",
+            "option_env!(qty);",
+        ),
+        // A foreign import of the name.
+        ("use dep::env;", "env!(qty);"),
+        // A qualified path may name any crate's macro.
+        ("", "std::env!(\"CARGO_PKG_NAME\");"),
+    ] {
+        let source = format!(
+            "{prelude}\n{}",
+            bulk_source(
+                &format!("    {call}\n    if is_bulk(qty) {{ 5 }} else {{ 0 }}"),
+                BOUNDARY_TESTS,
+            )
+        );
+        let first = source
+            .lines()
+            .position(|line| line.contains("10 <= qty"))
+            .ok_or("probe")?;
+        let diff = BULK_DIFF.replace("@@ -1,3 +1,3 @@", &format!("@@ -{0},3 +{0},3 @@", first));
+        for finding in [
+            predicate_finding(&source, &diff)?,
+            family_finding(&source, &diff, "return_value")?,
+        ] {
+            assert_eq!(finding["probe"]["line"], first + 1, "{call}\n{finding}");
+            assert_ne!(finding["classification"], "exposed", "{call}\n{finding}");
+        }
+    }
+    // A rebound `env` elsewhere cannot change a wrapper that only logs, so
+    // that wrapper keeps its credit.
+    let source = format!(
+        "{}\nmod other {{\n    macro_rules! env {{ () => {{ \"other\" }}; }}\n}}\n",
+        bulk_source(
+            "    println!(\"{qty}\");\n    if is_bulk(qty) { 5 } else { 0 }",
+            BOUNDARY_TESTS,
+        )
+    );
+    for finding in [
+        predicate_finding(&source, BULK_DIFF)?,
+        family_finding(&source, BULK_DIFF, "return_value")?,
+    ] {
+        assert_eq!(finding["probe"]["line"], 2, "{finding}");
+        assert_eq!(finding["classification"], "exposed", "{finding}");
+    }
+    Ok(())
+}
+
+#[test]
+fn include_reading_wrapper_forwards_unless_include_is_rebound() -> Result<(), String> {
+    for call in [
+        "let _text = include_str!(\"../Cargo.toml\");",
+        "let _bytes = include_bytes!(\"../Cargo.toml\");",
+    ] {
+        let source = bulk_source(
+            &format!("    {call}\n    if is_bulk(qty) {{ 5 }} else {{ 0 }}"),
+            BOUNDARY_TESTS,
+        );
+        for finding in [
+            predicate_finding(&source, BULK_DIFF)?,
+            family_finding(&source, BULK_DIFF, "return_value")?,
+        ] {
+            assert_eq!(finding["probe"]["line"], 2, "{call}\n{finding}");
+            assert_eq!(finding["classification"], "exposed", "{call}\n{finding}");
+        }
+    }
+    for (prelude, call) in [
+        (
+            "macro_rules! include_str { ($q:expr) => { if $q == 10 { return 5; } }; }",
+            "include_str!(qty);",
+        ),
+        (
+            "macro_rules! include_bytes { ($q:expr) => { if $q == 10 { return 5; } }; }",
+            "include_bytes!(qty);",
+        ),
+        // A foreign import of the name.
+        ("use dep::include_str;", "include_str!(qty);"),
+        // A qualified path may name any crate's macro.
+        ("", "std::include_str!(\"../Cargo.toml\");"),
+    ] {
+        let source = format!(
+            "{prelude}\n{}",
+            bulk_source(
+                &format!("    {call}\n    if is_bulk(qty) {{ 5 }} else {{ 0 }}"),
+                BOUNDARY_TESTS,
+            )
+        );
+        let first = source
+            .lines()
+            .position(|line| line.contains("10 <= qty"))
+            .ok_or("probe")?;
+        let diff = BULK_DIFF.replace("@@ -1,3 +1,3 @@", &format!("@@ -{0},3 +{0},3 @@", first));
+        for finding in [
+            predicate_finding(&source, &diff)?,
+            family_finding(&source, &diff, "return_value")?,
+        ] {
+            assert_eq!(finding["probe"]["line"], first + 1, "{call}\n{finding}");
+            assert_ne!(finding["classification"], "exposed", "{call}\n{finding}");
+        }
+    }
+    // A rebound `include_str` elsewhere cannot change a wrapper that only
+    // logs, so that wrapper keeps its credit.
+    let source = format!(
+        "{}\nmod other {{\n    macro_rules! include_str {{ () => {{ \"other\" }}; }}\n}}\n",
+        bulk_source(
+            "    println!(\"{qty}\");\n    if is_bulk(qty) { 5 } else { 0 }",
+            BOUNDARY_TESTS,
+        )
+    );
+    for finding in [
+        predicate_finding(&source, BULK_DIFF)?,
+        family_finding(&source, BULK_DIFF, "return_value")?,
+    ] {
+        assert_eq!(finding["probe"]["line"], 2, "{finding}");
+        assert_eq!(finding["classification"], "exposed", "{finding}");
+    }
+    Ok(())
+}
+
+/// #10357: a path-qualified leveled logging macro of an audited `tracing`
+/// or `log` release expands to no early exit, so a wrapper that logs through
+/// one forwards its helper result. Its root must be the registry crate,
+/// locked at an audited version and not rebound in the file, and its
+/// arguments must not hold the helper call, which runs only when the level
+/// is enabled.
+#[test]
+fn audited_qualified_logging_wrapper_forwards_the_helper_result() -> Result<(), String> {
+    const TRACING: &str = "tracing = \"0.1\"";
+    const LOG: &str = "log = \"0.4\"";
+    let wrapper = |call: &str| format!("    {call}\n    if is_bulk(qty) {{ 5 }} else {{ 0 }}");
+    for (dependency, locked, call) in [
+        (
+            TRACING,
+            ("tracing", "0.1.44"),
+            "tracing::info!(\"order of {qty}\");",
+        ),
+        (
+            TRACING,
+            ("tracing", "0.1.44"),
+            "tracing::debug!(qty, \"order\");",
+        ),
+        (LOG, ("log", "0.4.34"), "log::warn!(\"order of {}\", qty);"),
+        (LOG, ("log", "0.4.29"), "log::error!(\"order of {}\", qty);"),
+    ] {
+        let source = bulk_source(&wrapper(call), BOUNDARY_TESTS);
+        for family in ["predicate", "return_value"] {
+            let finding =
+                finding_with_dependencies(dependency, &[locked], &source, BULK_DIFF, family)?;
+            assert_eq!(finding["probe"]["line"], 2, "{call}\n{finding}");
+            assert_eq!(finding["classification"], "exposed", "{call}\n{finding}");
+        }
+    }
+    let info = "tracing::info!(\"order of {qty}\");";
+    for (label, dependency, locked, prelude, call) in [
+        // An unaudited release, and a lockfile that does not lock the crate.
+        ("unaudited", TRACING, &[("tracing", "0.1.43")][..], "", info),
+        ("unlocked", TRACING, &[][..], "", info),
+        // No manifest dependency, or one Cargo may route to another package.
+        ("undeclared", "", &[("tracing", "0.1.44")][..], "", info),
+        (
+            "renamed package",
+            "tracing = { package = \"other\", version = \"1\" }",
+            &[("other", "1.0.0")][..],
+            "",
+            info,
+        ),
+        // The file may rebind the root.
+        (
+            "local module",
+            TRACING,
+            &[("tracing", "0.1.44")][..],
+            "mod tracing {\n    macro_rules! info { ($($t:tt)*) => { return 5 }; }\n}",
+            info,
+        ),
+        (
+            "glob import",
+            TRACING,
+            &[("tracing", "0.1.44")][..],
+            "use std::collections::*;",
+            info,
+        ),
+        // The helper call sits in the arguments, which run only when the
+        // level is enabled. The wrapper then names the helper twice, which
+        // the one-call-site rule already refuses; the argument check keeps
+        // the logging route closed on its own.
+        (
+            "callee in arguments",
+            TRACING,
+            &[("tracing", "0.1.44")][..],
+            "",
+            "tracing::info!(\"bulk {}\", is_bulk(qty));",
+        ),
+        // Only the leveled leaves were audited.
+        (
+            "other leaf",
+            TRACING,
+            &[("tracing", "0.1.44")][..],
+            "",
+            "tracing::event!(tracing::Level::INFO, qty);",
+        ),
+    ] {
+        let source = format!("{prelude}\n{}", bulk_source(&wrapper(call), BOUNDARY_TESTS));
+        let first = source
+            .lines()
+            .position(|line| line.contains("10 <= qty"))
+            .ok_or("probe")?;
+        let diff = BULK_DIFF.replace("@@ -1,3 +1,3 @@", &format!("@@ -{0},3 +{0},3 @@", first));
+        for family in ["predicate", "return_value"] {
+            let finding = finding_with_dependencies(dependency, locked, &source, &diff, family)?;
+            assert_eq!(finding["probe"]["line"], first + 1, "{label}\n{finding}");
+            assert_ne!(finding["classification"], "exposed", "{label}\n{finding}");
+        }
+    }
+    // `extern crate self as tracing;` at the crate root puts the crate's own
+    // exported `info!` behind `tracing::` in every file of the crate, so a
+    // wrapper in another file stays opaque even though that file binds
+    // nothing.
+    let lib = "extern crate self as tracing;\n#[macro_export]\nmacro_rules! info { ($q:expr) => { if $q == 10 { return 5; } }; }\nmod pricing;\n";
+    let pricing = bulk_source(&wrapper("tracing::info!(qty);"), BOUNDARY_TESTS);
+    let diff = BULK_DIFF.replace("src/lib.rs", "src/pricing.rs");
+    for family in ["predicate", "return_value"] {
+        let finding = finding_in_files(
+            TRACING,
+            &[("tracing", "0.1.44")],
+            &[("src/lib.rs", lib), ("src/pricing.rs", &pricing)],
+            &diff,
+            family,
+        )?;
+        assert_eq!(finding["probe"]["line"], 2, "{finding}");
+        assert_ne!(finding["classification"], "exposed", "{finding}");
     }
     Ok(())
 }

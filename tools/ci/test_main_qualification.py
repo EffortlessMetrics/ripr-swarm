@@ -406,5 +406,248 @@ class MainQualificationTests(unittest.TestCase):
                 self.assertEqual(f"verdict={expected}\n", output.read_text())
 
 
+
+class HostedStackTests(unittest.TestCase):
+    """Exercise the actual Bash emitter and Result step against real Git trees."""
+
+    def setUp(self):
+        temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(temporary.cleanup)
+        self.root = Path(temporary.name)
+
+        def git(*args):
+            return subprocess.check_output(["git", "-C", self.root, "-c", "user.name=Fixture",
+                                            "-c", "user.email=fixture@example.invalid", *args], text=True).strip()
+
+        git("init", "-q")
+        git("commit", "-q", "--allow-empty", "-m", "trunk")
+        trunk = git("rev-parse", "HEAD")
+        members, commits = [], {}
+        git("remote", "add", "origin", str(self.root))
+        group = trunk
+        for number in (5, 6, 7):
+            git("checkout", "--detach", "-q", trunk)
+            path = self.root / str(number)
+            path.write_text(str(number))
+            git("add", "--", path.name)
+            git("commit", "-qm", f"source {number}")
+            head = git("rev-parse", "HEAD")
+            git("update-ref", f"refs/pull/{number}/head", head)
+            members.append(dict(pr=number, head=head, queue_entry=f"QE_{number}"))
+            git("checkout", "--detach", "-q", group)
+            git("merge", "--squash", "-q", head)
+            git("commit", "-qm", f"Independent change (#{number})")
+            group = git("rev-parse", "HEAD")
+            commits[f"git/commits/{group}"] = dict(sha=group, tree=dict(sha=git("rev-parse", "HEAD^{tree}")),
+                                                    parents=[dict(sha=git("rev-parse", "HEAD^"))],
+                                                    message=git("show", "-s", "--format=%s", "HEAD"))
+        self.group = group
+        self.facts = json.loads(json.dumps(fixture()).replace(SHA, group).replace(OTHER, head))
+        self.facts.update(commits)
+        pins = {}
+        for filename in ("routed-rust.yml", "rust-gates.yml"):
+            path = ".github/workflows/" + filename
+            pins[path] = git("hash-object", str(ROOT / path))
+            self.facts[f"contents/{path}?ref={group}"] = dict(path=path, type="file", sha=pins[path])
+        self.freeze = dict(trunk=trunk, members=members, workflow_blobs=pins)
+        gates = job(self.facts, OBSERVER.GATES)
+        result = job(self.facts, RESULT)
+        for row, linked in [(gates, 99001), (result, 99002)]:
+            row["check_run_url"] = f"https://api.github.com/repos/{REPO}/check-runs/{linked}"
+            check = dict(id=linked, name=row["name"], head_sha=group, status="completed", conclusion="success",
+                         check_suite=dict(id=456), app=dict(id=15368, slug="github-actions"), details_url=row["html_url"])
+            self.facts[f"check-runs/{linked}"] = check
+            if row is result:
+                self.facts[CHECKS.replace(SHA, group)]["check_runs"] = [check]
+        gates["steps"] = [self.step("Record hosted group checkout")]
+        self.env = dict(os.environ, GITHUB_SHA=group, GROUP=group, BASE=trunk, CHECK_ID="99001",
+                        GITHUB_REPOSITORY=REPO, GITHUB_RUN_ID=str(RUN), GITHUB_RUN_ATTEMPT="1",
+                        MEMBERS=json.dumps([dict(member, docs_only="false") for member in members]),
+                        GITHUB_OUTPUT=str(self.root / "out"), GITHUB_STEP_SUMMARY=str(self.root / "summary"))
+        producer = self.run_step("rust-gates.yml", "Record hosted group checkout", self.env)
+        self.assertEqual(0, producer.returncode, producer.stderr)
+        self.digest = (self.root / "out").read_text().strip().split("=")[1]
+        self.assertRegex(self.digest, "^[0-9a-f]{64}$")
+        marker = self.run_step("routed-rust.yml", "Hosted group receipt ${{ needs.rust-github.outputs.group_digest }}",
+                               dict(self.env, DIGEST=self.digest))
+        self.assertEqual(0, marker.returncode, marker.stderr)
+        self.assertIn(self.digest, marker.stdout)
+        result["steps"].append(self.step("Hosted group receipt " + self.digest))
+
+    @staticmethod
+    def step(name):
+        return dict(name=name, status="completed", conclusion="success")
+
+    def run_step(self, filename, name, env):
+        source = (ROOT / ".github/workflows" / filename).read_text()
+        body = source.split("      - name: " + name + "\n", 1)[1].split("        run: |\n", 1)[1]
+        lines = []
+        for line in body.splitlines():
+            if line and not line.startswith("          "):
+                break
+            lines.append(line[10:])
+        return subprocess.run(["bash", "-eo", "pipefail", "-c", "\n".join(lines)], env=env, cwd=self.root,
+                              capture_output=True, text=True)
+
+    def observe(self, facts=None, freeze=None):
+        api = NativeAPI(self.facts if facts is None else facts)
+        return OBSERVER.observe(REPO, self.group, api, self.freeze if freeze is None else freeze)
+
+    def test_exact_full_stack_with_distinct_job_and_check_ids(self):
+        observation = self.observe()
+        self.assertEqual("green", observation["verdict"], observation)
+        self.assertEqual(self.digest, observation["hosted_group_digest"])
+
+    def test_actual_admission_drives_hosted_producer_for_three_independent_heads(self):
+        # Only the network facts are stubbed. Git fetches real pull refs and
+        # production admission independently recomputes each successive tree.
+        gh = self.root / "gh"
+        gh.write_text("""#!/usr/bin/env python3
+import json, os, sys
+members = json.loads(os.environ["FIXTURE_MEMBERS"])
+args = sys.argv[1:]
+if args[:2] == ["api", "graphql"]:
+    member = next(m for m in members if args[-1] == f"number={m['pr']}")
+    value = {"data": {"repository": {"pullRequest": {"headRefOid": member["head"],
+             "mergeQueueEntry": {"id": member["queue_entry"]}}}}}
+elif args[:2] == ["api", "--paginate"] and "/files?" in args[-1]:
+    value = [{"filename": "src/change.rs"}]
+elif args[0] == "api" and "/pulls/" in args[-1]:
+    member = next(m for m in members if args[-1].endswith("/" + str(m["pr"])))
+    value = {"changed_files": 1, "head": {"sha": member["head"]}, "labels": []}
+else:
+    raise SystemExit(2)
+print(json.dumps(value))
+""")
+        gh.chmod(0o700)
+        path = self.root / "admission"
+        env = dict(self.env, PATH=str(self.root) + os.pathsep + self.env["PATH"], EVENT_NAME="merge_group",
+                   REPOSITORY=REPO, PR_NUMBER="", PR_HEAD_SHA="", PR_LABELS="", GITHUB_OUTPUT=str(path),
+                   GROUP_HEAD_REF=self.facts[RUN_PATH]["head_branch"], GROUP_BASE_SHA=self.freeze["trunk"],
+                   GROUP_HEAD_SHA=self.group, FIXTURE_MEMBERS=json.dumps(self.freeze["members"]))
+        admitted = self.run_step("routed-rust.yml", "Resolve queued PR", env)
+        self.assertEqual(0, admitted.returncode, admitted.stderr)
+        outputs = dict(line.split("=", 1) for line in path.read_text().splitlines())
+        produced = self.run_step("rust-gates.yml", "Record hosted group checkout",
+                                 dict(self.env, MEMBERS=outputs["constituents"]))
+        self.assertEqual(0, produced.returncode, produced.stderr)
+        self.assertEqual("digest=" + self.digest, (self.root / "out").read_text().splitlines()[-1])
+        self.assertEqual("green", self.observe()["verdict"])
+
+    def test_cli_requires_an_unambiguous_freeze_for_stack_observation(self):
+        path, output = self.root / "freeze.json", self.root / "observer.json"
+        valid = json.dumps(self.freeze)
+        for document, verdict in ((valid, "green"), ('{"trunk":null,' + valid[1:], "unknown"),
+                                  ("null", "unknown"), ("", "unknown")):
+            path.write_text(document)
+            argv = ["main-qualification.py", "--repository", REPO, "--sha", self.group,
+                    "--out", str(output), "--frozen-stack", str(path)]
+            with patch.object(sys, "argv", argv), patch.object(OBSERVER, "GitHub", return_value=NativeAPI(self.facts)), \
+                    patch("sys.stdout", new=io.StringIO()), patch.dict(os.environ, {}, clear=True):
+                status = OBSERVER.main()
+            observation = json.loads(output.read_text())
+            self.assertEqual(verdict, observation["verdict"])
+            self.assertEqual(verdict == "green", status == 0)
+            self.assertEqual(verdict == "green", "hosted_group_digest" in observation)
+
+    def test_workflow_handoff_and_selection(self):
+        # Like the Rust workflow contract tests, select the checked-in sections
+        # by indentation. Keep the observer suite runnable with isolated Python.
+        def section(text, header):
+            lines = text.splitlines()
+            start = lines.index(header)
+            indent = len(header) - len(header.lstrip())
+            selected = [header]
+            for line in lines[start+1:]:
+                if line.strip() and not line.lstrip().startswith("#") and len(line) - len(line.lstrip()) <= indent:
+                    break
+                selected.append(line)
+            return "\n".join(selected)
+
+        routed = (ROOT / ".github/workflows/routed-rust.yml").read_text()
+        gates = (ROOT / ".github/workflows/rust-gates.yml").read_text()
+        self.assertIn("types: [labeled]", section(routed, "  pull_request:"))
+        self.assertIn("types: [checks_requested]", section(routed, "  merge_group:"))
+        self.assertIn("constituents: ${{ steps.entry.outputs.constituents }}", section(routed, "  admission:"))
+        caller = section(routed, "  rust-github:")
+        self.assertIn("uses: ./.github/workflows/rust-gates.yml", caller)
+        self.assertIn("needs: [admission,", caller)
+        self.assertEqual(1, routed.count("      group-members:"))
+        self.assertIn("group-members: ${{ github.event_name == 'merge_group' && needs.admission.outputs.constituents || '' }}",
+                      caller)
+        self.assertIn("default: ''", section(gates, "      group-members:"))
+        self.assertIn("value: ${{ jobs.rust-gates.outputs.group_digest }}", section(gates, "      group_digest:"))
+        producer = section(gates, "  rust-gates:")
+        self.assertIn("group_digest: ${{ steps.group_receipt.outputs.digest }}", producer)
+        emitter = section(producer, "      - name: Record hosted group checkout")
+        for binding in ("id: group_receipt", "MEMBERS: ${{ inputs.group-members }}", "CHECK_ID: ${{ job.check_run_id }}",
+                        "if: success() && github.event_name == 'merge_group' && inputs.group-members != ''"):
+            self.assertIn(binding, emitter)
+        result = section(routed, "  result:")
+        self.assertIn("rust-github, rust-github-tests", next(line for line in result.splitlines() if "needs: [" in line))
+        marker = section(result, "      - name: Hosted group receipt ${{ needs.rust-github.outputs.group_digest }}")
+        for binding in ("DIGEST: ${{ needs.rust-github.outputs.group_digest }}", "success() && github.event_name == 'merge_group'",
+                        "needs.rust-github.result == 'success' && needs.rust-github.outputs.group_digest != ''"):
+            self.assertIn(binding, marker)
+        self.assertTrue(result.index(marker) < result.index("      - name: Summarize routed result"))
+
+    def test_membership_recomposition_and_tampering(self):
+        a, b, c = self.freeze["members"]
+        cases = [[a, b], [b, c], [b, a, c], [a, c], [a, b, b, c], [a, b, c, dict(a, pr=8)],
+                 [a, dict(b, head="d"*40), c], [a, dict(b, queue_entry="replacement"), c]]
+        for members in cases:
+            with self.subTest(members=members):
+                self.assertEqual("unknown", self.observe(freeze=dict(self.freeze, members=members))["verdict"])
+        # Event span starts at an earlier speculative G. A valid suffix receipt
+        # cannot satisfy the independent full freeze, even with the correct tip.
+        parent = self.facts[f"git/commits/{self.group}"]["parents"][0]["sha"]
+        produced = self.run_step("rust-gates.yml", "Record hosted group checkout",
+                                 dict(self.env, BASE=parent, MEMBERS=json.dumps([c])))
+        self.assertEqual(0, produced.returncode)
+        suffix = (self.root / "out").read_text().splitlines()[-1].split("=")[1]
+        job(self.facts, RESULT)["steps"][-1] = self.step("Hosted group receipt " + suffix)
+        self.assertEqual("unknown", self.observe()["verdict"])
+
+    def test_wrong_checkout_dirty_tracked_tree_and_empty_members_emit_nothing(self):
+        for overrides in (dict(GROUP=OTHER), dict(GITHUB_SHA=OTHER, GROUP=OTHER), dict(MEMBERS="[]"),
+                          dict(CHECK_ID=""), {}):
+            if not overrides:
+                (self.root / "5").write_text("different bytes")
+            (self.root / "out").unlink(missing_ok=True)
+            result = self.run_step("rust-gates.yml", "Record hosted group checkout", dict(self.env, **overrides))
+            self.assertNotEqual(0, result.returncode)
+            self.assertFalse((self.root / "out").exists())
+
+    def test_wrong_source_tree_issuer_attempt_and_marker(self):
+        def refuse(change):
+            facts = copy.deepcopy(self.facts)
+            change(facts)
+            observation = self.observe(facts=facts)
+            self.assertEqual("unknown", observation["verdict"], observation)
+            self.assertNotIn("hosted_group_digest", observation)
+        refuse(lambda f: f[f"git/commits/{self.group}"]["tree"].update(sha=OTHER))
+        refuse(lambda f: f[f"git/commits/{self.group}"]["parents"].append(dict(sha=OTHER)))
+        refuse(lambda f: f[f"contents/{OBSERVER.WORKFLOW_PATH}?ref={self.group}"].update(sha=OTHER))
+        refuse(lambda f: f["check-runs/99001"]["app"].update(id=42))
+        refuse(lambda f: job(f, OBSERVER.GATES).update(run_attempt=2))
+        refuse(lambda f: job(f, OBSERVER.GATES)["steps"].clear())
+        refuse(lambda f: job(f, RESULT)["steps"].pop())
+        refuse(lambda f: job(f, RESULT)["steps"].append(job(f, RESULT)["steps"][-1]))
+        refuse(lambda f: job(f, RESULT)["steps"][-1].update(conclusion="skipped"))
+        refuse(lambda f: job(f, RESULT).update(conclusion="cancelled"))
+        rerun = copy.deepcopy(self.facts)
+        run_list = RUNS.replace(SHA, self.group)
+        rerun[RUN_PATH]["run_attempt"] = rerun[run_list]["workflow_runs"][0]["run_attempt"] = 2
+        for entry in rerun[JOBS]["jobs"]:
+            entry["run_attempt"] = 2
+        rerun[JOBS.replace("/attempts/1", "/attempts/2")] = rerun.pop(JOBS)
+        self.assertEqual("unsupported_stack_attempt_or_route", self.observe(facts=rerun)["reason"])
+        # The API can advance after the receipt is read. Existing end fence
+        # discards both the verdict and the digest on that race.
+        api = NativeAPI(self.facts)
+        api.after[RUN_PATH] = dict(self.facts[RUN_PATH], run_attempt=2)
+        self.assertNotIn("hosted_group_digest", OBSERVER.observe(REPO, self.group, api, self.freeze))
+
+
 if __name__ == "__main__":
     unittest.main()

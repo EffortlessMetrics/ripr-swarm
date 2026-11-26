@@ -208,6 +208,13 @@ exercised boundary from a missing one.
   comparison's boundary can be observed there. Masking by a sibling operand
   stays with propagation: the predicate finding of `label == "beta" && on`
   called only with `on = false` reads `propagation_unknown`, not `exposed`.
+  For a whole returned Boolean chain consisting of one changed comparison
+  and one unchanged Boolean parameter, a direct assertion can witness a
+  difference only when the old and new results differ for that same call.
+  A masking or unreadable gate supplies no such witness. A spelling-only
+  operand reversal (such as `level >= 3` to `3 <= level`) keeps the existing
+  comparison-pin reading when the asserted call opens the gate. Constant
+  test tables use the arguments from the same row (#14709).
   A comparison joined by `&&` only to bare bool owner parameters
   (`order_cents >= FREE_OVER_CENTS && !express`) is read by the guarded
   boundary rule in RIPR-SPEC-0001 (#13037) instead: only a row that holds

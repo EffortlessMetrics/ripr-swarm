@@ -63,6 +63,10 @@ nonzero when any leaf returns an error or when aggregate report publication
 fails. If both happen, the returned error retains the leaf failures and adds
 the aggregate write error. Successful leaves cannot mask a reporting error.
 
+The allow-attribute leaf requires each unguarded source `allow` to carry its own
+reason, including inside conditional attributes. Detached fixture inputs are
+exempt from this rule. Guarded lint budgets retain their exact counts (#14679).
+
 The local-context leaf searches possible drive separators directly. It retains
 its existing ASCII drive-letter and token-boundary rules, consumes colons inside
 an accepted path as part of that path, and preserves Unicode path text and

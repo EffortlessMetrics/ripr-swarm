@@ -144,11 +144,24 @@ pub(crate) fn explain_finding_with_config_navigation_mode_and_progress(
         selector,
     ) {
         FindingSelection::Unique(finding) => {
+            let opt_out = output
+                .owner_opt_outs
+                .iter()
+                .find(|entry| entry.finding_id == finding.id);
+            let context_command = navigation.context_command(selector);
+            if let (ExplainFormat::Agent, Some(opt_out)) = (format, opt_out) {
+                return Ok(format.render_withheld(
+                    opt_out,
+                    finding,
+                    &output.root,
+                    &context_command,
+                ));
+            }
             let rendered = render_selected(
                 format,
                 finding,
                 config,
-                &navigation.context_command(selector),
+                &context_command,
                 &output.root,
                 output.source_value_files(finding),
                 output.suppression.as_ref().is_some_and(|outcome| {
@@ -158,18 +171,11 @@ pub(crate) fn explain_finding_with_config_navigation_mode_and_progress(
                         .any(|entry| entry.finding_id == finding.id)
                 }),
             );
-            // #13910: the check run's own withholding decision, read from the
-            // `owner_opt_outs` it kept (policy-suppressed findings are already
-            // excluded there), so explain never re-derives the opt-out.
-            let withheld = output
-                .owner_opt_outs
-                .iter()
-                .find(|opt_out| opt_out.finding_id == finding.id);
-            Ok(match (format, withheld) {
-                (ExplainFormat::Human, Some(opt_out)) => {
+            Ok(match opt_out {
+                Some(opt_out) => {
                     output::human::render_owner_opt_out_explain_line(opt_out) + &rendered
                 }
-                _ => rendered,
+                None => rendered,
             })
         }
         FindingSelection::Ambiguous(candidates) => Err(refuse_selector_miss(
@@ -693,8 +699,9 @@ const MAX_NEARBY_CHANGED_LINES: usize = 5;
 /// `index` is the complete run's own changed-line set. It holds added text
 /// lines only, so a binary or mode-only change is absent from it and the
 /// first sentence claims no more than that. Nor does a changed line without
-/// a finding establish why: a complete run can leave a file out by
-/// configuration, so that sentence lists the possible reasons.
+/// a finding establish why, so that sentence lists the possible reasons. A
+/// file the operator's configuration left out is named as such first
+/// (#16250).
 fn changed_line_reason(
     index: &crate::analysis_outcome::ChangedLineIndex,
     wanted_file: &str,
@@ -709,6 +716,13 @@ fn changed_line_reason(
         .filter(|component| matches!(component, std::path::Component::Normal(_)))
         .collect();
     let key = crate::analysis::stable_path_text(&respelled);
+    // #16250: a file the operator's own configuration left out was never
+    // analyzed, so no line-level reason applies to it.
+    if let Some(setting) = index.configured_exclusion_of(&key) {
+        return format!(
+            "That file is left out by the configured `{setting}` in ripr.toml, so this run did not analyze it; removing or narrowing that pattern lifts that exclusion, though a built-in generated-file rule can still leave the file out"
+        );
+    }
     let Some(lines) = index.lines_of(&key) else {
         return "This run's diff changes no text line of that file, and ripr reports a finding only on a changed line".to_string();
     };
@@ -842,35 +856,41 @@ pub(crate) fn explain_finding_from_artifact_with_navigation_mode(
     format: ExplainFormat,
 ) -> Result<String, String> {
     let navigation = super::finding_navigation(&input, Some(artifact_path), mode_explicit);
-    let findings = super::check_artifact::load_findings_for_reuse(
-        artifact_path,
-        &input,
-        config,
-        asserted_base,
-    )?;
+    let artifact =
+        super::check_artifact::load_for_reuse(artifact_path, &input, config, asserted_base)?;
     // The artifact path reuses the same seam-side reverse lookups as the
     // fresh path: seam IDs and hash-form canonical gap IDs bind through the
     // current root's classified seams, so one ID spells the same finding on
     // every explain surface (#8688).
     match super::selector::select_finding_with_seam_reverse(
-        &findings,
+        &artifact.findings,
         &input.root,
         config,
         selector,
     ) {
-        FindingSelection::Unique(finding) => Ok(render_selected(
-            format,
-            finding,
-            config,
-            &navigation.context_command(selector),
-            // The artifact was identity-verified against this root; the
-            // location renders against it like every fresh route (#5996).
-            &input.root,
-            None,
-            // `--from` replay applies no suppression policy; the CLI refuses
-            // the agent format when one is supplied (fail closed).
-            false,
-        )),
+        FindingSelection::Unique(finding) => {
+            let context_command = navigation.context_command(selector);
+            if let Some(opt_out) = artifact
+                .owner_opt_outs
+                .iter()
+                .find(|entry| entry.finding_id == finding.id)
+            {
+                return Ok(format.render_withheld(opt_out, finding, &input.root, &context_command));
+            }
+            Ok(render_selected(
+                format,
+                finding,
+                config,
+                &context_command,
+                // The artifact was identity-verified against this root; the
+                // location renders against it like every fresh route (#5996).
+                &input.root,
+                None,
+                // `--from` replay applies no suppression policy; the CLI refuses
+                // the agent format when one is supplied (fail closed).
+                false,
+            ))
+        }
         FindingSelection::Ambiguous(candidates) => Err(ambiguous_finding_match(
             selector,
             &candidates,
@@ -891,7 +911,7 @@ pub(crate) fn explain_finding_from_artifact_with_navigation_mode(
                 None,
             );
             if let Some(hint) = super::selector::location_miss_hint(
-                &findings,
+                &artifact.findings,
                 &input.root,
                 selector,
                 // #14440: the artifact records findings, not whether

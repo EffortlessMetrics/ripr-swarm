@@ -3,7 +3,7 @@ mode: fast
 root: fixtures/hidden_row_span_fallback/input
 config: <cwd>/fixtures/hidden_row_span_fallback/input/ripr.toml
 
-Summary: 12 changed behaviors checked: 0 appear noticed by tests, 12 partly noticed, 0 reached but not noticed, 0 no test path. 12 found, 0 suppressed by your settings
+Summary: 12 changed behaviors checked: 0 appear noticed by tests, 12 partly noticed (12 through a test link ripr could not confirm), 0 reached but not noticed, 0 no test path. 12 found, 0 suppressed by your settings
 
 Changed file(s) by language: typescript = 1
 

@@ -253,6 +253,7 @@ all renderers.
 - `crates/ripr/tests/cli_smoke.rs::diff_json_unresolvable_base_emits_refusal_envelope`
 - `crates/ripr/tests/cli_smoke.rs::diff_json_outside_work_tree_emits_refusal_envelope`
 - `crates/ripr/tests/cli_smoke.rs::rerun_json_unreadable_gap_ledger_emits_refusal_envelope`
+- `crates/ripr/tests/refusal_envelope_schemas.rs::context_json_refusals_conform_to_the_published_schema`
 - `crates/ripr/tests/cli_smoke.rs::context_json_missing_artifact_emits_refusal_envelope`
 - `crates/ripr/tests/cli_smoke.rs::context_json_fresh_analysis_preserves_base_failures`
 - `crates/ripr/tests/cli_smoke.rs::context_json_fresh_analysis_preserves_repository_root_failure`
@@ -292,7 +293,7 @@ all renderers.
 - `crates/ripr/src/cli/rerun.rs::run_refusing`
 - `crates/ripr/src/cli/commands/context.rs` (refusal wiring)
 - `crates/ripr/src/cli/commands/agent.rs::{refuse_agent_brief, refuse_agent_packet}`
-- `crates/ripr/src/app/check_artifact.rs::load_findings_for_reuse_core`
+- `crates/ripr/src/app/check_artifact.rs::load_for_reuse`
 - `crates/ripr/src/cli/rerun.rs::rerun_gap` (typed ledger errors)
 
 ## Amendment (#10720): preserve fresh context analysis failures

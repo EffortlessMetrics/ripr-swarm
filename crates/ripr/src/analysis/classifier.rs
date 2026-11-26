@@ -365,6 +365,20 @@ pub(in crate::analysis) fn classify_probe_with_candidate_index_and_origins_with_
                         probe.changed_const_name(),
                     )
             });
+    // #15933: an added line inside a split `compile_error!` (only its message
+    // changed) holds no macro name of its own; its line in the new file
+    // places it. A removed probe's line is where the deletion sits, so it is
+    // not read this way.
+    context.in_compile_error = owner_fn.is_none()
+        && probe.family == ProbeFamily::StaticUnknown
+        && probe.after.is_some()
+        && candidate_index
+            .probe_index_file(probe, index)
+            .and_then(|file| find_file_facts(index, &file))
+            .is_some_and(|facts| {
+                crate::analysis::probes::compile_error_lines(&facts.source)
+                    .contains(&probe.location.line)
+            });
     context.unmounted_build_script =
         candidate_index.probe_in_unmounted_build_script(probe, owner_fn, index);
     // #14815: a prefix `-`/`!` added to or removed from the owner's whole
@@ -385,6 +399,19 @@ pub(in crate::analysis) fn classify_probe_with_candidate_index_and_origins_with_
         super::classify::literal_condition_change(
             probe,
             owner,
+            changed,
+            index,
+            candidate_index.module_declarations(),
+        )
+    });
+    // #15272: the base-side owner for any one-line predicate or return-value
+    // change, so agreeing asserted inputs do not read as a discriminator.
+    context.owner_baseline = owner_fn.zip(changed_file).and_then(|(owner, changed)| {
+        let tests = context.related_test_summaries();
+        super::classify::sole_line_owner_baseline(
+            probe,
+            owner,
+            &tests,
             changed,
             index,
             candidate_index.module_declarations(),
@@ -1012,6 +1039,7 @@ pub(super) mod tests {
             ..Default::default()
         });
         let probe = Probe {
+            before_condition: None,
             id: ProbeId("probe:crate_a:score".to_string()),
             location: SourceLocation::new("crates/crate_a/src/lib.rs", 2, 1),
             owner: Some(SymbolId("crates/crate_a/src/lib.rs::score".to_string())),
@@ -1062,6 +1090,7 @@ pub(super) mod tests {
             ..Default::default()
         });
         let probe = Probe {
+            before_condition: None,
             id: ProbeId("probe:src_lib_rs:2:predicate".to_string()),
             location: SourceLocation::new("src/lib.rs", 2, 1),
             owner: Some(SymbolId("src/lib.rs::discounted_total".to_string())),
@@ -1198,6 +1227,7 @@ pub(super) mod tests {
 
     fn helper_probe(file: &str, owner: &str) -> Probe {
         Probe {
+            before_condition: None,
             id: ProbeId(format!("probe:{file}:{owner}")),
             location: SourceLocation::new(file, 2, 1),
             owner: Some(SymbolId(format!("{file}::{owner}"))),
@@ -1392,9 +1422,9 @@ pub(super) mod tests {
         );
     }
 
-    // #7532: withholding as `static_unknown` reports the misses `reveal`
-    // recorded, not the `no_call_path` the `no_static_path` annotation wrote,
-    // and not none.
+    // The two parse functions leave both callers' paths to op unresolved.
+    // Withholding clears the file-only no_call_path, including for the
+    // assertion-free caller (#7532, #14808).
     #[test]
     fn given_withheld_helper_uniqueness_finding_then_rows_keep_reveal_misses() {
         let unasserted = test_calling("src/op.rs", "accepts_wildcard", "parse", "parse(\">=1.0\")");
@@ -1425,11 +1455,7 @@ pub(super) mod tests {
             rows,
             vec![
                 ("accepts_caret", Some(RelationReason::SameTestFile), None),
-                (
-                    "accepts_wildcard",
-                    Some(RelationReason::SameTestFile),
-                    Some(RelatedTestMiss::NoAssertion)
-                ),
+                ("accepts_wildcard", Some(RelationReason::SameTestFile), None),
             ]
         );
     }
@@ -1982,6 +2008,7 @@ pub(super) mod tests {
             ..Default::default()
         });
         let probe = Probe {
+            before_condition: None,
             id: ProbeId("probe:src_lib_rs:2:predicate".to_string()),
             location: SourceLocation::new("src/lib.rs", 2, 1),
             owner: Some(SymbolId("src/lib.rs::tax_total".to_string())),
@@ -2021,6 +2048,7 @@ pub(super) mod tests {
             ..Default::default()
         });
         let probe = Probe {
+            before_condition: None,
             id: ProbeId("probe:src_lib_rs:2:predicate".to_string()),
             location: SourceLocation::new("src/lib.rs", 2, 1),
             owner: Some(SymbolId("src/lib.rs::price".to_string())),
@@ -2062,6 +2090,7 @@ pub(super) mod tests {
             ..Default::default()
         });
         let probe = Probe {
+            before_condition: None,
             id: ProbeId("probe:src_lib_rs:2:return_value".to_string()),
             location: SourceLocation::new("src/lib.rs", 2, 1),
             owner: Some(SymbolId("src/lib.rs::score".to_string())),
@@ -2098,6 +2127,7 @@ pub(super) mod tests {
             ..Default::default()
         });
         let probe = Probe {
+            before_condition: None,
             id: ProbeId("probe:src_lib_rs:2:static_unknown".to_string()),
             location: SourceLocation::new("src/lib.rs", 2, 1),
             owner: Some(SymbolId("src/lib.rs::score".to_string())),
@@ -2153,6 +2183,7 @@ pub(super) mod tests {
                 ..Default::default()
             });
             let probe = Probe {
+                before_condition: None,
                 id: ProbeId("probe:src_lib_rs:2:return_value".to_string()),
                 location: SourceLocation::new("src/lib.rs", 2, 1),
                 owner: Some(owner.id.clone()),
@@ -2223,6 +2254,7 @@ pub(super) mod tests {
             ..Default::default()
         });
         let probe = Probe {
+            before_condition: None,
             id: ProbeId("probe:src_lib_rs:1:static_unknown".to_string()),
             location: SourceLocation::new("src/lib.rs", 1, 1),
             owner: None,
@@ -2358,6 +2390,7 @@ pub(super) mod tests {
     #[test]
     fn given_static_unknown_probe_in_unreached_owner_then_next_step_discloses_reach_limit() {
         let probe = Probe {
+            before_condition: None,
             id: ProbeId("probe:src_lib_rs:2:static_unknown".to_string()),
             location: SourceLocation::new("src/lib.rs", 2, 1),
             owner: Some(SymbolId("src/lib.rs::score".to_string())),
@@ -2452,6 +2485,7 @@ pub(super) mod tests {
             ..Default::default()
         });
         let probe = Probe {
+            before_condition: None,
             id: ProbeId("probe:src_lib_rs:2:error_path".to_string()),
             location: SourceLocation::new("src/lib.rs", 2, 1),
             owner: Some(SymbolId("src/lib.rs::score".to_string())),
@@ -2494,6 +2528,7 @@ pub(super) mod tests {
             ..Default::default()
         });
         let probe = Probe {
+            before_condition: None,
             id: ProbeId("probe:src_lib_rs:2:error_path".to_string()),
             location: SourceLocation::new("src/lib.rs", 2, 1),
             owner: Some(SymbolId("src/lib.rs::score".to_string())),
@@ -2552,6 +2587,7 @@ pub(super) mod tests {
             ..Default::default()
         });
         let probe = Probe {
+            before_condition: None,
             id: ProbeId("probe:src_lib_rs:2:return_value".to_string()),
             location: SourceLocation::new("src/lib.rs", 2, 1),
             owner: Some(SymbolId("src/lib.rs::score".to_string())),
@@ -2606,6 +2642,7 @@ pub(super) mod tests {
             ..Default::default()
         });
         let probe = Probe {
+            before_condition: None,
             id: ProbeId("probe:src_lib_rs:2:call_deletion".to_string()),
             location: SourceLocation::new("src/lib.rs", 2, 1),
             owner: Some(SymbolId("src/lib.rs::score".to_string())),
@@ -2674,6 +2711,7 @@ pub(super) mod tests {
             ..Default::default()
         });
         let probe = Probe {
+            before_condition: None,
             id: ProbeId("probe:src_lib_rs:2:predicate".to_string()),
             location: SourceLocation::new("src/lib.rs", 2, 1),
             owner: Some(SymbolId("src/lib.rs::score".to_string())),
@@ -2715,6 +2753,7 @@ pub(super) mod tests {
             ..Default::default()
         });
         let probe = Probe {
+            before_condition: None,
             id: ProbeId("probe:src_lib_rs:2:error_path".to_string()),
             location: SourceLocation::new("src/lib.rs", 2, 1),
             owner: Some(SymbolId("src/lib.rs::score".to_string())),
@@ -2755,6 +2794,7 @@ pub fn compute(input: i32) -> Result<i32, CalcError> {
             parser_backed_index(&[("src/lib.rs", source), ("tests/errors.rs", &test_source)])
         };
         let probe = Probe {
+            before_condition: None,
             id: ProbeId("probe:src_lib_rs:5:error_path_alignment".to_string()),
             location: SourceLocation::new("src/lib.rs", 5, 1),
             owner: Some(SymbolId("src/lib.rs::compute".to_string())),
@@ -2810,6 +2850,7 @@ pub fn compute(input: i32) -> Result<i32, CalcError> {
             ..Default::default()
         });
         let probe = Probe {
+            before_condition: None,
             id: ProbeId("probe:src_lib_rs:2:side_effect".to_string()),
             location: SourceLocation::new("src/lib.rs", 2, 1),
             owner: Some(SymbolId("src/lib.rs::score".to_string())),
@@ -2842,6 +2883,7 @@ pub fn compute(input: i32) -> Result<i32, CalcError> {
             ..Default::default()
         });
         let probe = Probe {
+            before_condition: None,
             id: ProbeId("probe:src_lib_rs:2:field_construction".to_string()),
             location: SourceLocation::new("src/lib.rs", 2, 1),
             owner: Some(SymbolId("src/lib.rs::score".to_string())),
@@ -2878,6 +2920,7 @@ pub fn compute(input: i32) -> Result<i32, CalcError> {
             ..Default::default()
         });
         let probe = Probe {
+            before_condition: None,
             id: ProbeId("probe:src_lib_rs:2:field_construction".to_string()),
             location: SourceLocation::new("src/lib.rs", 2, 1),
             owner: Some(SymbolId("src/lib.rs::score".to_string())),
@@ -2918,6 +2961,7 @@ pub fn compute(input: i32) -> Result<i32, CalcError> {
             ..Default::default()
         });
         let probe = Probe {
+            before_condition: None,
             id: ProbeId("probe:src_lib_rs:2:match_arm".to_string()),
             location: SourceLocation::new("src/lib.rs", 2, 1),
             owner: Some(SymbolId("src/lib.rs::score".to_string())),
@@ -2959,6 +3003,7 @@ pub fn compute(input: i32) -> Result<i32, CalcError> {
             ..Default::default()
         });
         let probe = Probe {
+            before_condition: None,
             id: ProbeId("probe:src_lib_rs:1:return_value".to_string()),
             location: SourceLocation::new("src/lib.rs", 1, 1),
             owner: Some(SymbolId("src/lib.rs::score".to_string())),
@@ -3017,6 +3062,7 @@ pub fn compute(input: i32) -> Result<i32, CalcError> {
             ..Default::default()
         });
         let probe = Probe {
+            before_condition: None,
             id: ProbeId("probe:src_lib_rs:2:predicate".to_string()),
             location: SourceLocation::new("src/lib.rs", 2, 1),
             owner: Some(SymbolId("src/lib.rs::authenticate".to_string())),
@@ -3069,6 +3115,7 @@ pub fn compute(input: i32) -> Result<i32, CalcError> {
             ..Default::default()
         });
         let probe = Probe {
+            before_condition: None,
             id: ProbeId("probe:src_lib_rs:2:predicate".to_string()),
             location: SourceLocation::new("src/lib.rs", 2, 1),
             owner: Some(SymbolId("src/lib.rs::quote".to_string())),
@@ -3115,6 +3162,7 @@ pub fn compute(input: i32) -> Result<i32, CalcError> {
             ..Default::default()
         });
         let probe = Probe {
+            before_condition: None,
             id: ProbeId("probe:src_lib_rs:2:predicate".to_string()),
             location: SourceLocation::new("src/lib.rs", 2, 1),
             owner: Some(SymbolId("src/lib.rs::message".to_string())),
@@ -3161,6 +3209,7 @@ pub fn compute(input: i32) -> Result<i32, CalcError> {
             ..Default::default()
         });
         let probe = Probe {
+            before_condition: None,
             id: ProbeId("probe:src_lib_rs:2:predicate".to_string()),
             location: SourceLocation::new("src/lib.rs", 2, 1),
             owner: Some(SymbolId("src/lib.rs::score".to_string())),
@@ -3210,6 +3259,7 @@ pub fn compute(input: i32) -> Result<i32, CalcError> {
             ..Default::default()
         });
         let probe = Probe {
+            before_condition: None,
             id: ProbeId("probe:src_lib_rs:5:return_value".to_string()),
             location: SourceLocation::new("src/lib.rs", 5, 1),
             owner: Some(SymbolId("src/lib.rs::score".to_string())),
@@ -3242,6 +3292,7 @@ pub fn compute(input: i32) -> Result<i32, CalcError> {
             ..Default::default()
         });
         let probe = Probe {
+            before_condition: None,
             id: ProbeId("probe:src_lib_rs:2:call".to_string()),
             location: SourceLocation::new("src/lib.rs", 2, 1),
             owner: Some(SymbolId("src/lib.rs::score".to_string())),
@@ -3278,6 +3329,7 @@ pub fn compute(input: i32) -> Result<i32, CalcError> {
             ..Default::default()
         });
         let probe = Probe {
+            before_condition: None,
             id: ProbeId("probe:src_lib_rs:2:match_arm".to_string()),
             location: SourceLocation::new("src/lib.rs", 2, 1),
             owner: Some(SymbolId("src/lib.rs::authenticate".to_string())),
@@ -3314,6 +3366,7 @@ pub fn compute(input: i32) -> Result<i32, CalcError> {
             ..Default::default()
         });
         let probe = Probe {
+            before_condition: None,
             id: ProbeId("probe:src_lib_rs:2:return_value".to_string()),
             location: SourceLocation::new("src/lib.rs", 2, 1),
             owner: Some(SymbolId("src/lib.rs::score".to_string())),
@@ -3360,6 +3413,7 @@ fn far_above_threshold_discounts() {
 "#;
         let index = parser_backed_index(&[("src/lib.rs", source), ("tests/score.rs", tests)]);
         let probe = Probe {
+            before_condition: None,
             id: ProbeId("probe:src_lib_rs:2:predicate".to_string()),
             location: SourceLocation::new("src/lib.rs", 2, 1),
             owner: Some(SymbolId("src/lib.rs::score".to_string())),
@@ -3484,6 +3538,7 @@ fn far_above_threshold_discounts() {
         );
         let index = parser_backed_index(&[("src/lib.rs", source), ("tests/record.rs", &tests)]);
         let probe = Probe {
+            before_condition: None,
             id: ProbeId("probe:src_lib_rs:2:side_effect".to_string()),
             location: SourceLocation::new("src/lib.rs", 2, 5),
             owner: Some(SymbolId("src/lib.rs::record".to_string())),
@@ -3524,6 +3579,7 @@ fn far_above_threshold_discounts() {
             ..Default::default()
         });
         let probe = Probe {
+            before_condition: None,
             id: ProbeId("probe:src_lib_rs:2:predicate".to_string()),
             location: SourceLocation::new("src/lib.rs", 2, 1),
             owner: Some(SymbolId("src/lib.rs::score".to_string())),
@@ -3584,6 +3640,7 @@ fn far_above_threshold_discounts() {
             ..Default::default()
         });
         let probe = Probe {
+            before_condition: None,
             id: ProbeId("probe:src_lib_rs:3:error_path".to_string()),
             location: SourceLocation::new("src/lib.rs", 3, 1),
             owner: Some(SymbolId("src/lib.rs::score".to_string())),
@@ -3699,6 +3756,7 @@ fn far_above_threshold_discounts() {
             ..Default::default()
         });
         let probe = Probe {
+            before_condition: None,
             id: ProbeId("probe:tests_fragments_rs:2:predicate".to_string()),
             location: SourceLocation::new("tests/fragments.rs", 3, 1),
             owner: Some(SymbolId(
@@ -3792,6 +3850,7 @@ fn far_above_threshold_discounts() {
             ..Default::default()
         });
         let probe = Probe {
+            before_condition: None,
             id: ProbeId("probe:src_lib_rs:2:predicate".to_string()),
             location: SourceLocation::new("src/lib.rs", 2, 1),
             owner: Some(SymbolId("src/lib.rs::check_invariants".to_string())),
@@ -3885,6 +3944,7 @@ fn far_above_threshold_discounts() {
 
     fn probe(family: ProbeFamily, delta: DeltaKind, expression: &str) -> Probe {
         Probe {
+            before_condition: None,
             id: ProbeId("probe:test".to_string()),
             location: SourceLocation::new("crates/ripr/src/lib.rs", 1, 1),
             owner: None,
@@ -3933,6 +3993,7 @@ fn far_above_threshold_discounts() {
             ..Default::default()
         });
         let probe = Probe {
+            before_condition: None,
             id: ProbeId("probe:watchdog-reason".to_string()),
             location: SourceLocation::new(
                 PathBuf::from("/repo/ub-review/src/gate_watchdog.rs"),
@@ -3997,6 +4058,7 @@ fn far_above_threshold_discounts() {
             ..Default::default()
         });
         let probe = Probe {
+            before_condition: None,
             id: ProbeId("probe:watchdog-reason".to_string()),
             location: SourceLocation::new(
                 PathBuf::from("/repo/ub-review/src/gate_watchdog.rs"),
@@ -4072,6 +4134,7 @@ fn far_above_threshold_discounts() {
 
     fn fragile_fee_probe(family: ProbeFamily, owner: &str) -> Probe {
         Probe {
+            before_condition: None,
             id: ProbeId("probe:src_lib_rs:2:fragile_fee".to_string()),
             location: SourceLocation::new("src/lib.rs", 2, 1),
             owner: Some(SymbolId(format!("src/lib.rs::{owner}"))),
@@ -4540,6 +4603,7 @@ fn far_above_threshold_discounts() {
         tests.push_str("}\n");
         let index = parser_backed_index(&[("src/bytes.rs", &source), ("tests/trunc.rs", &tests)]);
         let probe = Probe {
+            before_condition: None,
             id: ProbeId("probe:src_bytes_rs:5:predicate".to_string()),
             location: SourceLocation::new("src/bytes.rs", 5, 1),
             owner: Some(SymbolId("src/bytes.rs::impl Bytes::truncate".to_string())),

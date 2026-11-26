@@ -1,0 +1,10 @@
+# Registers the string-length boundary inputs for `ripr agent stub` (#8361)
+# under RIPR-SPEC-0122.
+[[extend]]
+id = "RIPR-SPEC-0122"
+tests = [
+  "crates/ripr/src/analysis/test_stub/tests.rs::length_boundary_writes_a_string_of_the_boundary_length",
+]
+code = [
+  "crates/ripr/src/analysis/test_stub/length_inputs.rs",
+]

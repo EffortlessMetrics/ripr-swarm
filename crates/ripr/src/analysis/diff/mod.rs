@@ -18,11 +18,13 @@ pub(crate) use source::{reconstruct_old_lines_with_origins, reconstruct_old_sour
 pub mod records;
 
 pub(crate) use load::bare_repository_message;
+pub(crate) use load::load_ci_packet_diff_bytes;
 #[cfg(test)]
 pub(crate) use load::not_a_work_tree_message;
 pub(crate) use load::{
     AnalyzedRevisions, HeadRefState, LoadedDiff, default_base_unresolved_message,
-    probe_head_ref_state, resolve_analyzed_revisions, working_tree_has_uncommitted_changes,
+    doctor_base_history, git_operation_advisory, origin_lacks_head_pointer, probe_head_ref_state,
+    resolve_analyzed_revisions, working_tree_has_uncommitted_changes,
 };
 pub(crate) use load::{
     another_base_candidate, base_is_checked_out_head, base_is_checked_out_head_with_parent,

@@ -373,19 +373,22 @@ Options:
                            Apply a suppressions TOML (same schema as
                            .ripr/suppressions.toml) to the findings-based
                            formats (human, human-full, json, json-compact,
-                           github, missed-txt). exposure_gap
-                           entries select findings by finding_id or by a
-                           path glob (with optional static_class narrowing).
-                           Suppressed findings stay visible in JSON with
-                           suppressed: true; per-class summary counts cover
+                           github, missed-txt) and to sarif and
+                           sarif-compact. exposure_gap entries select
+                           findings by finding_id, by path + function, or by
+                           a path glob (with optional static_class
+                           narrowing). Suppressed findings stay visible in
+                           JSON with suppressed: true and in SARIF with a
+                           suppressions entry; per-class summary counts cover
                            unsuppressed findings only. Relative PATH
                            resolves against --root; a missing or malformed
-                           policy fails the run. Every other format (sarif,
-                           sarif-compact, agent, json-terse, badge and repo
-                           formats) refuses the flag as a usage error. sarif,
+                           policy fails the run. Every other format (agent,
+                           json-terse, badge and repo formats) refuses the
+                           flag as a usage error. Without the flag, sarif,
                            sarif-compact, badge-json, badge-shields and the
                            badge-plus formats read [suppressions] path from
-                           ripr.toml (default .ripr/suppressions.toml) instead.
+                           ripr.toml (default .ripr/suppressions.toml); the
+                           flag replaces that file for sarif.
   --output-dir DIR         With a named --diff file, write native badge.json,
                            detail.json and human.txt from one analysis. DIR must
                            be new (parent exists). Verify manifest.json and member
@@ -395,7 +398,7 @@ Options:
                            inventory refuses drift, nonregular files and external
                            module reads. See docs/OUTPUT_SCHEMA.md.
   --write-artifact PATH    Write a full-fidelity check artifact (schema
-                           ripr-check-artifact-v1) for later
+                           ripr-check-artifact-v2) for later
                            `ripr explain --from PATH` /
                            `ripr context --from PATH` reuse. The artifact
                            records the complete finding set plus the input

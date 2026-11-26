@@ -329,6 +329,11 @@ Field contract:
   `--seam-id`; otherwise `null`.
 - `limits.default` — always `3`.
 - `limits.hard_cap` — always `10`.
+- Successful empty file, diff and base briefs include `limits.cap_omitted_seams`,
+  `limits.omitted_by_policy`, and `limits.static_limited_omitted_seams`.
+  The static-limited count is included in the policy count. Zero describes
+  the inventory seen by selection. Assessed scope completeness remains unknown.
+  These measurements are absent on explicit-ID lookups, populated briefs and refusals.
 - `top_seams[]` — ranked seam summaries. Each entry is intentionally smaller
   than a full agent seam packet.
 - `top_seams[].why_now.reason` — one of the ranking reasons above.
@@ -498,7 +503,8 @@ counted in one warning per reason, so a large diff cannot flood `warnings`:
     "files": ["src/pricing.rs"],
     "changed_lines": []
   },
-  "limits": { "requested": 3, "returned": 0, "default": 3, "hard_cap": 10 },
+  "limits": { "requested": 3, "returned": 0, "default": 3, "hard_cap": 10,
+              "cap_omitted_seams": 0, "omitted_by_policy": 2, "static_limited_omitted_seams": 0 },
   "top_seams": [],
   "warnings": [
     "1 matching seam was hidden because configured severity is off",
@@ -519,6 +525,19 @@ focused next action without reading the full repo report:
   same-line rule (#14683). It is omitted when not read; `expression` stays
   the head;
 - `why_now` reason and confidence;
+- when any seam is named, one top-level `value_basis` note, in one of two
+  wordings. While a changed line reaches every named seam, it says
+  `expression` and `arm_result` are read from the changed code, so a new test
+  asserts what that code does now; that an input whose behavior did not
+  change keeps its value; and that `candidate_values` are inputs or values to
+  assert, not all of one kind (#15361). For any other named seam (a seam
+  asked for by its ID, a repository fallback after a comment-only or an
+  unrelated change, a seam chosen for its owner, its test or its file), it
+  says the values are the current source's behavior, that a seam counts as
+  changed code there only where its `why_now.reason` is
+  `changed_line_intersects_seam`, and the same two things about what to
+  assert (#15361 review). Each note says no more: it is spent against the
+  brief's byte ceiling;
 - RIPR stage evidence summary;
 - recommended test placement when available;
 - nearest strong test to imitate when available;
@@ -569,6 +588,12 @@ This spec does not require:
   badge, LSP, or calibration outputs.
 
 ## Acceptance Examples
+
+When two selected seams propose creating the same test function in the same
+file, the brief gives them distinct names. Reordering those seams preserves
+each name, including when their source lines match. Each suggested Cargo
+command uses the corresponding name as a substring filter. A filter can also
+select other tests whose names contain it (#14717).
 
 ### Diff-scoped brief ranks touched seam first
 
@@ -654,6 +679,7 @@ Planned tests:
 - `match_arm_seam_result_reads_the_heads_line` (#14683 head-only arm result)
 - `brief_names_a_head_only_arm_seam_result` (#14683)
 - `agent_brief_renders_arm_result_only_when_read` (#14683)
+- `agent_brief_names_seam_values_as_changed_behavior_to_pin` (#12078)
 
 ## Implementation Mapping
 

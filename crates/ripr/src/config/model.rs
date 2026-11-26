@@ -3,6 +3,7 @@
 use crate::analysis::seams::SeamGripClass;
 use crate::app::Mode;
 use crate::domain::{ExposureClass, LanguageId, OracleStrength};
+use crate::output::path::path_identity_key_on;
 use std::path::{Path, PathBuf};
 
 use super::overrides::{ConfigOverride, WorkspaceCrate};
@@ -369,7 +370,7 @@ impl LspDiagnosticProfile {
             "actionable" => Ok(Self::Actionable),
             "full" => Ok(Self::Full),
             other => Err(format!(
-                "invalid lsp.diagnostic_profile {other:?}; expected \"actionable\" or \"full\""
+                "invalid lsp.diagnostic_profile {other:?}; set it to \"actionable\" or \"full\""
             )),
         }
     }
@@ -1255,7 +1256,7 @@ impl RiprConfig {
                 value: Some(
                     executable
                         .as_ref()
-                        .map(|path| path.to_string_lossy().replace('\\', "/"))
+                        .map(|path| path_identity_key_on(path, cfg!(windows), false))
                         .unwrap_or_else(|| "none".to_string()),
                 ),
                 note: "which producer binary generates the Perl fact packet",

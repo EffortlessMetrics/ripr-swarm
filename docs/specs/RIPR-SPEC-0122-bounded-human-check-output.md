@@ -119,14 +119,28 @@ bullets' plain class words, and a summary that names classes in plain words
 reached but not noticed, 1 no test path. 4 found, 0 suppressed by your
 settings`; with zero changed behaviors, `Summary: 0 changed behaviors checked`, never
 "nothing to check", because a skipped language makes the run incomplete). The three unknown classes share the one plain word `unclear` and sum
-into a single bucket named only when non-zero. Limitation lines on this
+into a single bucket named only when non-zero. "Partly noticed" and "reached
+but not noticed" both say a test gets to the change, so when a finding in
+either bucket has a reach stage that is not `yes` (or callee-only reach), the
+bucket says how many: `2 partly noticed (1 through a test link ripr could not
+confirm)`. The count uses the same rule as the per-finding reason `test reach
+to this change is not established`, so the Summary and the finding under it
+cannot disagree (#15295); a bucket with no such finding is unchanged. A
+finding withheld by a suppression policy or an owner opt-out has left its
+bucket and is not counted in the note either.
+Limitation lines on this
 surface likewise drop their parenthesized kind/stage and recovery tokens; a
 `language_adapter_unavailable` limitation renders as one `Not analyzed:` pointer
 to the preview-language note, which carries the `ripr.toml` recovery block
 (#10691). The pointer is printed only when such a note follows for that
 limitation: with no preview-language advisory, or for Rust switched off in
 `[languages]` (which has no such note), the line drops the pointer and a
-`Fix:` line carries the limitation's own recovery (#14152). The static-limited `State:` line reads `ripr cannot tell from reading
+`Fix:` line carries the limitation's own recovery (#14152). When the
+pointer names languages that are off, one line names each of them
+(`1 changed TypeScript file and 1 changed Python file`), and with more than one
+off language a single `[languages] enabled = [...]` block after all notes
+enables every one of them (#15288). A limitation from an enabled adapter
+whose run was unavailable or invalid keeps its own pointer line. The static-limited `State:` line reads `ripr cannot tell from reading
 the code whether tests would notice this`, and the internal noun "observable
 sink" never appears (`something a test can check (a return value or side
 effect)`). The canonical gap id is labelled `Gap ID (for scripts)`; because the id
@@ -211,6 +225,15 @@ workspace-relative path. Outside-root paths, parent-traversal remainders and
 unrooted relative paths retain the shared renderer's fallback spelling and
 encoding. This presentation rule also applies when no finding is selected;
 it does not re-coordinate base-side findings or change their currentness.
+
+When `ripr check` runs from a directory strictly below an absolute analysis
+root, the human location rows (the `File:` digest row, the arm-head note,
+owner opt-out and suppression-selector rows, and triage rows) replace the
+leading `./` with one `../` per directory between the invocation directory and
+the root, so a copied path opens from where the command ran (#15473). At the
+root, with a relative root, or for a path outside the root, the text is the
+shared renderer's byte for byte. The finding header line, `--format agent`,
+JSON, MCP, LSP and selector identities keep the shared `./` spelling.
 
 When the hidden identity list exceeds its 20-row window, its remainder
 line names `--format json with RIPR_CHECK_FINDINGS_BYTES=0` for every identity.
@@ -503,10 +526,11 @@ limited to seams whose kind matches `--kind` (the one seam kind each of the
 four families names: `predicate` boundary, `return_value`, `error_path` error
 variant, `match_arm`), so a seam of another kind never answers for the
 finding. Two equally near seams of that kind whose source spans do not nest
-(`a > 10 && b > 20`) are refused with their seam IDs rather than guessed, and
-the stub is placed inline (integration-file placement needs classified
-evidence and stays with `--seam-id`). The block is printed only when the
-resolver produces a stub. When it refuses, the block is replaced by one line,
+(`a > 10 && b > 20`) are refused with their seam IDs rather than guessed.
+Concrete match arms use their parser ranges, so a long pattern cannot make
+its sibling arm on the same line appear nested. The stub is placed inline
+(integration-file placement needs classified evidence and stays with
+`--seam-id`). The block is printed only when the resolver produces a stub. When it refuses, the block is replaced by one line,
 `No test stub here: <reason>`, naming the producer's refusal. When that
 finding also prints no repair start, one further line follows (#10710):
 `Write this test by hand: <what to call and assert>. ripr has no repair
@@ -530,7 +554,10 @@ function has no seam of that kind, nothing is printed. When the location is
 ambiguous and ripr cannot narrow it to a validated stub (more than eight seams
 to check, an inventory that cannot be classified, or a seam missing from it),
 the block prints `No test stub here:` with a plain reason that lists no seam ID
-and no command. A seam that is not a reported gap is worded as a stub target
+and no command. For ambiguous choices in one scoped file, a check evaluates the
+union of eligible seam IDs from the displayed rows once against the full
+evidence corpus. Each row retains its candidate order and its own eight-seam
+limit after expression narrowing (#15682). A seam that is not a reported gap is worded as a stub target
 that is not a gap in the seam view, with a pointer to strengthen the existing
 test, and gets no hand-written step. The resolver reads the files on disk, so a check
 that analyzed other bytes (`--candidate-tree`, or a committed-history diff
@@ -539,6 +566,10 @@ does a finding whose expression is not on disk in the function holding its
 line (a `--diff` patch that disagrees with the checkout, or a removed line). Only the
 default human format runs the resolver; JSON and `human-full` output are
 unchanged.
+
+A direct `ripr agent stub --at` value with two numeric suffixes
+(`src/lib.rs:12:4`) is refused with the `FILE:LINE` form and an example rather
+than read as a path ending in `:12` (#15259).
 
 When the file has seams but the function has none of the requested family,
 a direct `ripr agent stub --at FILE:LINE --kind FAMILY` refusal names
@@ -594,6 +625,150 @@ fill in the old stub first. Human output also escapes control and bidi
 characters in the stub text and in the `Inputs`, `Receiver:` and `Fill in:`
 lines, since they carry repository text.
 
+A boundary stub on a string's length writes a string whose length sits on the
+boundary instead of a labelled `todo!()` for that `&str` parameter (#8361), for
+example `s = "xxx"` for `n <= MIN_LEN` after `let n = s.chars().count();` with
+`const MIN_LEN: usize = 3;`, or `a = "ab"`, `b = "cd"` for `a.len() > b.len()`.
+The string is `x` repeated (so its byte length and char count agree), and is
+written only when:
+
+- one side of the changed comparison is `p.len()` or `p.chars().count()` for
+  a `&str` parameter `p`, or a local the body binds exactly once, by an
+  immutable top-level `let` with no attribute before the comparison, to one
+  of those and never assigns;
+- the other side is a non-negative integer literal, a file-root `const` of
+  integer type whose value is such a literal (for an owner outside any inline
+  module, with no other item, import, rename or item macro of that name), or
+  the length of a different `&str` parameter, which gets the same length and
+  other text;
+- the length is at most 64;
+- the parameter is not declared `mut`, and nothing before the comparison
+  rebinds it, assigns it or names it inside a macro call;
+- the owner (and any enclosing function) calls no macro and declares no
+  `use` or nested item, since a macro may bind a local or emit an item of any
+  name and a block-level `use` or item shadows a name for its block; a
+  `const` bound also needs no attribute on the const (a `cfg` may remove it
+  from the test build) and no generic parameter of the owner or an enclosing
+  impl or trait that could shadow it.
+
+A boundary stub that writes the inputs its comparison reads copies the owner's
+other parameters from an existing test instead of leaving them as labelled
+`todo!()`s (#8361), for example `amount = 10_000` from `assert_eq!(tax_cents(10_000,
+825), Ok(825))` beside `rate_bps = 10_000` for `rate_bps >= 10_000`. A comment
+above the inputs and an `Other inputs:` line name the test they came from, and
+the expected value stays a `todo!()`. The values are copied only when:
+
+- the owner is a free function and the stub goes into an existing inline test
+  module;
+- the call is the first one in that module, in source order, that meets
+  every condition here: it goes through the owner's bare name with one
+  literal argument per parameter, and it is authored at the top level of the
+  test's own body, as a statement or `let` initializer or as an asserted
+  operand (not a message argument) of a statement `assert!`, `assert_eq!` or
+  `assert_ne!`;
+- it sits in a `#[test]` function that is not `should_panic`, `ignore` or a
+  ripr stub and carries only plain attributes (`test`, lint levels, `doc`),
+  outside closures, `async` blocks and `cfg`, with no `return` or `?` before
+  it in the test (an earlier macro's tokens included) or inside the
+  assertion holding it;
+- the owner and any module around it carry only plain attributes (lint
+  levels, `doc`, `inline`, `must_use`, `cfg`), since an attribute macro may
+  rewrite the body;
+- the owner has no `mut` parameter and the file never names
+  `overflowing_literals`, so no input is reassigned and no literal wraps;
+- each copied literal fits its parameter's declared type as written: an
+  in-range integer literal for an integer type, a float literal for `f32` or
+  `f64` that stays finite, `true`/`false`, a char literal, a string literal for `&str`, a byte
+  string for `&[u8]` (an alias or any other type takes no copy), and no name
+  the file declares or imports shadows that primitive type, or the primitive
+  of any other parameter, since a guard reads each parameter as its primitive;
+- the copied values do not steer the owner away from the statement holding
+  the changed comparison (an earlier guard on the written inputs alone is
+  outside this check, as it is for any boundary stub): each earlier statement that names a copied
+  parameter (including a `{name}` or `{:name$}` format capture, read after escapes are decoded) is an `if` without `else`
+  whose condition evaluates to false with every integer literal in it
+  fitting each integer type in play (a parameter it names or a literal's
+  suffix, plus `i32` when a literal is unsuffixed), no earlier statement binds the
+  name of a written or copied input, nothing before the
+  comparison calls `include!` or a macro other than a standard one (which
+  may read a copied value without naming it), and the comparison's own statement is not a
+  `let`, does not hold the comparison inside an assignment (a tail one included), a closure or an
+  `async` block, and names a copied value only after the comparison;
+- nothing in the module declares, binds, imports or renames another item of
+  the owner's name (a local inside a test ripr wrote cannot reach another
+  test's call, so it does not count);
+- the module calls only standard macros (`assert_eq!`, `vec!`, `println!` and
+  the like), since another macro or `include!` may emit a function of the
+  owner's name, and the file defines, imports or `#[macro_use]`s no macro of
+  a standard macro's name;
+- the test module, on it or inside it, carries no attribute other than the plain ones, `cfg`,
+  `should_panic`, `ignore` and standard `derive`s (and no import or rename
+  takes a standard macro, derive or attribute name such as `test`), since an attribute or
+  derive macro may emit a function of the owner's name; macros defined in
+  another file (a crate-root `#[macro_use]` or `macro_rules!`) are not seen,
+  and the type check above still keeps the stub compiling.
+
+The JSON document changes only in the stub `text` and `fill_ins`; the copied
+values appear on the human `Other inputs:` line.
+
+A match-arm stub writes the input the changed arm's own pattern names instead
+of a labelled `todo!()` for that parameter (#8361), for example `ev =
+Event::Fail` for `(State::Running, Event::Fail) => ..` on `match (self.state,
+ev)`, or `n = 2` for `2 => ..` on `match n`. The value is written only when:
+
+- the scrutinee is a bare parameter or a tuple of bare parameters and `self`
+  fields of the stub's owner function, the match is not inside a closure,
+  the seam sits on the arm's own pattern (not a nested `match` in its body),
+  neither the arm nor an earlier one carries an attribute such as `cfg`,
+  and the arm has no guard;
+- the parameter's sub-pattern (the first alternative of an or-pattern) is an
+  integer, char, bool or, for a `&str` parameter, string literal without
+  escapes or a raw prefix, written exactly as the arm spells it; or, in an
+  inline test module that sees the owner's items, a two-segment
+  `Type::Variant` path naming a unit variant of the one enum the file
+  declares under the parameter's declared (non-reference) type name, when no other item, rename, import other than through `super::`
+  or `self::`, or item-position macro gives that name another meaning;
+- every earlier arm differs from it at some position by a provably different
+  value: integers compared by parsed value, unescaped char and string literals
+  by text, distinct unit variants of that same enum. A constant, range,
+  binding or other pattern counts as possibly equal;
+- the owner's parameter is not declared `mut`, no `const`, `static` or `fn`
+  of its name sits in the body, and nothing before the match rebinds it
+  (`r#n` included), assigns it or names it inside a macro call.
+
+When the arm also constrains a `self` field (anything but `_` or a plain
+lowercase binding, since a bare `RUNNING` may be a constant), the receiver
+line names that state (for example "set it so `self.state` matches `State::Running`"),
+because a built receiver may start in another state. The input reaches the
+arm once the receiver is in that state; the expected value stays a `todo!()`.
+Human output lists the inputs on the `Inputs from the changed code:` line.
+
+The `expected` fill-in's label names what the owner returns for the stub's
+written inputs when a small evaluation decides it (#8361): "(the changed code
+returns `C`; with `>=` it returns `N`; keep the intended one)", where `N`,
+for a relational-boundary seam, is the result with the changed comparison's
+operator replaced by its neighbor (`>`/`>=`, `<`/`<=`). The stub never writes
+either value as `expected`, since the change may be the defect; it still
+stops at that `todo!()`. The evaluation applies only when the owner has no
+receiver, type generics, `async`, attributes or `mut` parameter type, its
+body holds no `let`, assignment, closure, macro call or nested item, and the
+path for the written inputs is decided by:
+
+- `if` statements and tails (with `else`/`else if`), `return` and blocks;
+  a statement-position block whose tail is not a `return`, or any statement
+  with an attribute, refuses;
+- a `match` on a written parameter whose arms up to the taken one are
+  literal, unit-variant or `_` patterns without guards or attributes;
+- conditions comparing a written parameter with an integer, bool, char or
+  string literal (`<`, `<=`, `>`, `>=`, `==`, `!=`), combined with `&&`,
+  `||`, `!` and parentheses;
+
+and the returned expression on that path is a constant: a literal, a unit
+variant of a file-local enum (inline test module only), `None`, a tuple of
+constants, `Some`/`Ok`/`Err` of one constant, or a written parameter. A file
+that redeclares, imports or renames `Some`, `Ok`, `Err` or `None` by name
+refuses.
+
 Direct JSON stub refusals distinguish an absent selector (`seam_not_found`)
 from a suffix naming several files or disjoint same-kind seams that tie
 (`selector_ambiguous`). Both remain decisions (exit 3), with the schema
@@ -648,7 +823,7 @@ literal the owner does not return are refused by name.
 | State | Meaning |
 | --- | --- |
 | `top_gap` | A non-preview, non-exposed finding was selected as the first safe repair or inspection candidate. The human action line points at the instruction the digest prints (#14173): `Safe next action: follow the Next step below; this is static advisory evidence only` when the digest carries a `Next step` line, and `Safe next action: look at the reason and related test below before changing a test; this is static advisory evidence only` when it carries none. |
-| `no_actionable_gap` | Only `exposed` visible findings were selected; the output is not runtime proof or test adequacy. The human lines split this state in two (#14080). When the shared check verification verdict is complete (the decision behind the agent format's `verify=complete`), no finding is suppressed or withheld, and every finding is `exposed`, they read `State: no test gap found` and `Safe next action: none needed; tests appear to notice every changed behavior ripr checked. This is a static reading of the code, not a test run`. Otherwise the state reads `no gap selected for repair` and the action line says none is needed for this change, counts the other findings that did not read as noticed, and ends with the same static-reading sentence. |
+| `no_actionable_gap` | Only `exposed` visible findings were selected; the output is not runtime proof or test adequacy. The human lines split this state in two (#14080). When the shared check verification verdict is complete (the decision behind the agent format's `verify=complete`), no finding is suppressed or withheld, and every finding is `exposed`, they read `State: no test gap found` and `Safe next action: none needed; tests appear to notice every changed behavior ripr checked. This is a static reading of the code, not a test run`. Otherwise the state reads `no gap selected for repair` (a run whose only findings are removed lines reads `every finding left is on removed code, which is never an edit target`; see Removed-code-only runs) and the action line says none is needed for this change, counts the other findings that did not read as noticed, and ends with the same static-reading sentence. |
 | `preview_limited` | The selected finding is from a preview-language adapter; evidence is advisory until the preview contract explicitly promotes it. |
 | `static_limited` | The selected finding is no-path, unknown, or carries a producer-owned typed static limitation. A typed limitation remains authoritative even when the retained classification is `reachable_unrevealed` or `weakly_exposed`; inspect the named limitation before treating it as repair-ready. When a selected `no_static_path` finding has no typed limitation, review the unresolved static path and existing tests instead. The finding classification does not change. |
 | `missing_scope` | The run produced no findings because no analysis scope was provided. This empty output is not an all-clear. |
@@ -817,10 +992,26 @@ edit reaches past the shape. When a predicate's block body changed too
 (`if total >= 100 { total - 10 }` to `if total > 200 { total - 25 }`), the
 human `Changed` block prints the whole old line and the new condition, with a
 note that the after side is the condition only and where the new line is
-(#15420), the same way a head-only match arm row does (#9244). The same
-`before` reaches the MCP `changed_behavior.before` field and the LSP
-diagnostic witness; `ripr check --format json` never serializes
-`probe.before`, so it is unchanged.
+(#15420), the same way a head-only match arm row does (#9244). For a Rust
+finding, the probe producer reads the old condition from the old and new
+lines together and carries it as `probe.before_condition`: the new line's one
+`if`/`while` head must hold the changed predicate as its condition, and the
+old line must have exactly one head with a plain condition. An
+`old condition:` row under `before:` then prints the old condition
+(`total >= 100`), so both sides can be read at one granularity. No row is
+printed when that pairing is not established: a second head anywhere on
+either line (also one nested in a call argument), an `if let` or `while let`,
+a match guard, a block expression inside the condition, a comparison or
+boolean operator outside the condition, a changed predicate that is not the
+new head's condition (a comparison the branch body gained), an old condition
+equal to the new one (only the branch bodies changed), or an old condition
+that does not start with the identifier the new one starts with. Display
+surfaces read the carried value and derive nothing from `before` themselves.
+The same `before` reaches the MCP `changed_behavior.before` field and the
+diagnostic witness (`ripr context`, LSP diagnostic data), unchanged; both add
+the old condition as an optional `before_condition` field under the same
+rule. `ripr check --format json` never serializes `probe.before` or
+`probe.before_condition`, so it is unchanged.
 
 ### Terminal safety
 
@@ -984,6 +1175,48 @@ lowering any gate:
 The wording reads existing evidence only. Readiness, `actionability_category`,
 `repair_packet_ready`, the shared validator and every eligibility guard are
 unchanged, and the lines claim no runtime outcome.
+
+### Removed-code-only runs (#15335)
+
+When no finding is selected and every omitted finding is a removed line
+(`source_currentness: base_deleted`), the `State:` line reads `every finding
+left is on removed code, which is never an edit target` instead of `no gap
+selected for repair`. It describes the findings left after suppression, not
+the whole diff: a policy-suppressed finding on added code is not counted, so
+the line does not claim the diff only removes code.
+
+The `Safe next action` line says that the diff removes code, that removed code is never an edit target, and so
+nothing is selected for repair. It then gives the static evidence on the
+removed code as class counts in the Summary line's plain words and order
+(`appear noticed by tests`, `partly noticed`, `reached but not noticed`,
+`no test path`, `unclear`), leaving out zero counts, and points to
+`--format human-full` for the evidence on each removed line. That rerun
+expands the same evidence; it does not settle an unclear class. It
+does not say "before treating this run as actionable", which read as
+"nothing to look at" for a removal that tests reach.
+
+Under that line the run lists what was removed (#15617). A
+`Removed code (static evidence on the old lines, not a test result; each
+location is where the code stood in the current file):` heading
+is followed by one row per finding on a removed line: its location, the code
+that stood there in a code span, the finding kind as `(kind: predicate)` so two
+findings on one line stay distinct, and what the class says about the old line
+(`a related test appears to check this behavior`, `tests reach it but check it
+only loosely`, `tests reach it but none appears to check it`, `no test path
+was found`, or `ripr could not tell whether a test checks it (analysis limited,
+not a verdict)`). At most three rows are listed; identical rows print once,
+and a final `N more: rerun with --format human-full` row counts the rest
+(the Hidden list is bounded too, so it is not named as holding them). A
+finding on removed code carries the position in the current file where the
+code stood, not the old line number, so several removed statements can share
+one location; the heading says so. The rows
+restate classes the findings already carry. They select nothing for repair
+and add no verdict.
+
+Any other no-selection mix (a moved or renamed line, unresolved currentness,
+or a mix of those) keeps the earlier wording on both lines. The State id
+(`no_actionable_gap`), the Hidden list, the counts, repair routing and every
+machine format are unchanged; the line and the rows claim no runtime outcome.
 
 ## Non-Claims
 
@@ -1229,6 +1462,9 @@ report with zero records still carries its route.
 
 ## Test Mapping
 
+- `crates/ripr/src/output/human/triage/removal_action.rs::tests::removed_lines_name_their_static_evidence` — #15335 positive: removed lines name their class counts.
+- `crates/ripr/src/output/human/triage/removal_action.rs::tests::a_moved_line_keeps_the_earlier_wording` — #15335 negative: a moved line keeps the generic base-side line.
+- `crates/ripr/src/output/human/triage/removal_action.rs::tests::unresolved_or_empty_sets_keep_the_earlier_wording` — #15335 negative: unresolved currentness and empty sets.
 - `crates/ripr/src/output/human/agent_tests.rs::agent_explain_navigation_preserves_scope_format_and_policy_compatibility` — three branches, source scopes, quoting and explicit-policy fallback.
 - `crates/ripr/tests/agent_compact_navigation.rs::compact_check_explain_context_journey_preserves_the_selected_subject` — literal built-binary check, explain and context journeys.
 - `crates/ripr/src/output/human/agent_tests.rs::static_limited_run_stops_and_names_the_limit_instead_of_a_gap` — #13594 negative: no `missing=-` record, `limits=` and drill-in kept.

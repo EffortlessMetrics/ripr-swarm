@@ -460,6 +460,98 @@ fn task_first_commands_resolve_workspace_root_from_a_member_directory() -> TestR
     Ok(())
 }
 
+/// #15473: from a subdirectory below the resolved workspace root, the human
+/// `File:` paths are relative to the invocation directory, so a path copied
+/// from the report opens from where the user ran `ripr`. JSON keeps the
+/// workspace-relative `./` form, and a run at the root is unchanged.
+#[cfg(unix)]
+#[test]
+fn human_file_paths_open_from_the_invocation_directory_below_the_root() -> TestResult {
+    let outer = unique_external_workspace("human-path-cwd")?;
+    let _cleanup = DeclaredHunkScratch(outer.clone());
+    let core = outer.join("crates/core");
+    let py = outer.join("py");
+    fs::create_dir_all(core.join("src"))?;
+    fs::create_dir_all(core.join("tests"))?;
+    fs::create_dir_all(&py)?;
+    fs::write(
+        outer.join("Cargo.toml"),
+        "[workspace]\nmembers = [\"crates/core\"]\n",
+    )?;
+    fs::write(
+        core.join("Cargo.toml"),
+        "[package]\nname = \"core\"\nversion = \"0.1.0\"\nedition = \"2024\"\n",
+    )?;
+    fs::write(
+        core.join("src/lib.rs"),
+        "pub fn discount(amount: u32) -> u32 {\n    if amount >= 100 { 10 } else { 0 }\n}\n",
+    )?;
+    fs::write(
+        core.join("tests/discount.rs"),
+        "#[test]\nfn below() {\n    assert_eq!(core::discount(99), 0);\n}\n",
+    )?;
+    let diff = "--- a/crates/core/src/lib.rs\n+++ b/crates/core/src/lib.rs\n@@ -1,3 +1,3 @@\n pub fn discount(amount: u32) -> u32 {\n-    if amount > 100 { 10 } else { 0 }\n+    if amount >= 100 { 10 } else { 0 }\n }\n";
+    fs::write(py.join("change.diff"), diff)?;
+    fs::write(outer.join("change.diff"), diff)?;
+    run_git(&outer, &["init", "-b", "main"])?;
+
+    let run = |dir: &Path, format: &str| -> TestResult<String> {
+        let output = run_command_with_env(
+            env!("CARGO_BIN_EXE_ripr"),
+            dir,
+            &[
+                "check",
+                "--diff",
+                "change.diff",
+                "--mode",
+                "fast",
+                "--format",
+                format,
+            ],
+            &[("RIPR_CACHE_DIR", "")],
+        )?;
+        assert!(
+            output.status.success(),
+            "check failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        Ok(String::from_utf8(output.stdout)?)
+    };
+    let file_paths = |text: &str| -> Vec<String> {
+        text.lines()
+            .filter_map(|line| line.trim_start().strip_prefix("File: "))
+            .filter_map(|rest| rest.rsplit_once(':').map(|(path, _)| path.to_string()))
+            .collect()
+    };
+
+    let from_subdir = file_paths(&run(&py, "human")?);
+    assert!(!from_subdir.is_empty(), "fixture must print a File: row");
+    for path in &from_subdir {
+        assert_eq!(path, "../crates/core/src/lib.rs");
+        assert!(
+            py.join(path).is_file(),
+            "`{path}` must resolve from the invocation directory"
+        );
+    }
+
+    // Negative control: at the root the shared `./` spelling is unchanged.
+    let at_root = file_paths(&run(&outer, "human")?);
+    assert_eq!(
+        at_root,
+        vec!["./crates/core/src/lib.rs".to_string(); from_subdir.len()]
+    );
+
+    // JSON keeps its workspace-relative contract from the subdirectory.
+    let json: Value = serde_json::from_str(&run(&py, "json")?)?;
+    assert_eq!(
+        json["findings"][0]["probe"]["file"],
+        "./crates/core/src/lib.rs"
+    );
+
+    fs::remove_dir_all(outer)?;
+    Ok(())
+}
+
 /// `cache status --json` refuses with the shared refusal document on stdout
 /// (#15260): code `input_unusable`, the human cause as the message and the
 /// command help as `next`.
