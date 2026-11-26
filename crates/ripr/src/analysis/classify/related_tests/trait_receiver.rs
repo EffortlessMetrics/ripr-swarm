@@ -268,12 +268,32 @@ fn an_enum_declares_the_variant(impl_type: &str, variant: &str, index: &RustInde
                     }
                     _ => false,
                 });
-                close.is_some_and(|close| {
-                    !super::super::owner_pin::whole_word_offsets(&after_name[open..close], variant)
-                        .is_empty()
-                })
+                close.is_some_and(|close| declares_a_variant(&after_name[open + 1..close], variant))
             })
     })
+}
+
+/// Whether the inside of an enum's braces declares `variant`: the name at
+/// the top level, right after the opening brace, a comma or an attribute.
+/// A field type (`Square(Make)`) or a discriminant expression is not a
+/// declaration.
+fn declares_a_variant(body: &str, variant: &str) -> bool {
+    super::super::owner_pin::whole_word_offsets(body, variant)
+        .into_iter()
+        .any(|offset| {
+            let bytes = body.as_bytes();
+            let mut depth = 0usize;
+            for at in 0..offset {
+                match bytes[at] {
+                    b'(' | b'[' | b'{' | b'<' => depth += 1,
+                    b'>' if at > 0 && bytes[at - 1] == b'-' => {}
+                    b')' | b']' | b'}' | b'>' => depth = depth.saturating_sub(1),
+                    _ => {}
+                }
+            }
+            let before = body[..offset].trim_end();
+            depth == 0 && (before.is_empty() || before.ends_with([',', ']']))
+        })
 }
 
 /// The top-level generic arguments of a self type (`Square<u32>` gives

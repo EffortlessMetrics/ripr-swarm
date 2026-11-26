@@ -537,6 +537,16 @@ fn a_variant_shaped_call_needs_a_declared_variant() -> Result<(), String> {
         "let _ = Tile::Square(3).area();"
     )?);
     assert!(!direct(production, owner, "let _ = Tile::Make(3).area();")?);
+    // A name that is only a field type of a variant declares nothing.
+    let field_only = production.replace(
+        "pub enum Tile { Square(u32), Round(u32) }",
+        "pub struct Make(pub u32);\npub enum Tile { Square(u32), Round(Make) }",
+    );
+    assert!(!direct(
+        &field_only,
+        owner,
+        "let _ = Tile::Make(3).area();"
+    )?);
     Ok(())
 }
 
