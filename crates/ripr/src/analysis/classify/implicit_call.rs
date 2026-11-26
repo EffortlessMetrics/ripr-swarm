@@ -1402,6 +1402,9 @@ pub(super) struct HiddenImpls {
     /// How many workspace traits declare each trait name. Names are read
     /// without paths, so `Measure` and `other::Measure` share one count.
     trait_declarations: std::collections::BTreeMap<String, usize>,
+    /// Names of workspace traits that declare type or const parameters
+    /// (`trait Measure<T = u8>`); an impl may name one without arguments.
+    generic_traits: std::collections::BTreeSet<String>,
 }
 
 /// What one macro definition's own text can put into its expansion.
@@ -1604,6 +1607,13 @@ impl HiddenImpls {
                         .trait_declarations
                         .entry(trait_name.clone())
                         .or_default() += 1;
+                    if it.generic_param_list().is_some_and(|params| {
+                        params
+                            .generic_params()
+                            .any(|param| !matches!(param, ast::GenericParam::LifetimeParam(_)))
+                    }) {
+                        self.generic_traits.insert(trait_name.clone());
+                    }
                     self.read_assoc_macro_calls(it.assoc_item_list(), "", &trait_name);
                 }
                 ast::Item::MacroCall(call) => {
@@ -2161,6 +2171,17 @@ pub(super) fn workspace_declares_type(name: &str, index: &RustIndex) -> bool {
 /// generic type's other instantiation (`type Tile = Square<u16>;`).
 pub(super) fn workspace_renames_type(name: &str, index: &RustIndex) -> bool {
     index.call_identity_memos.hidden_impls(index).renames(name)
+}
+
+/// Whether a workspace trait of this name declares a type or const
+/// parameter. A default (`trait Measure<T = u8>`) lets an impl name the
+/// trait with no arguments while a sibling impl names other ones.
+pub(super) fn workspace_trait_is_generic(name: &str, index: &RustIndex) -> bool {
+    index
+        .call_identity_memos
+        .hidden_impls(index)
+        .generic_traits
+        .contains(name)
 }
 
 /// An identifier without a raw `r#` prefix.

@@ -54,9 +54,12 @@ pub(super) fn typed_receiver_runs_trait_impl(
     // A generic trait (`Measure<u8>`) can be implemented for the type again
     // under other arguments, each with or without the method, and the call's
     // argument types select among them; the name-typed receiver reads none
-    // of that.
+    // of that. A defaulted parameter (`trait Measure<T = u8>`) lets the
+    // owner's impl name the trait with no arguments, so the declaration is
+    // read too.
     if a_standard_trait_names_the_method(owner.name.as_str())
         || generic_arguments(trait_path).is_some()
+        || super::super::implicit_call::workspace_trait_is_generic(owner_trait, index)
     {
         return false;
     }
