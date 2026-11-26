@@ -3813,6 +3813,7 @@ pub(crate) fn receiver_owner_call_relation(
         return receiver_names
             .iter()
             .any(|receiver| contains_member_read_name(&test.body_text, receiver, &owner.name))
+            || contains_inline_new_member_read(&test.body_text, &constructor_names, &owner.name)
             || receiver_matcher_key_getter_read(
                 test,
                 &receiver_names,
@@ -4994,6 +4995,37 @@ fn contains_inline_new_member_call(
     constructor_names: &[String],
     method_name: &str,
 ) -> bool {
+    inline_new_member_access(body_text, constructor_names, method_name, |after| {
+        after.starts_with('(')
+    })
+}
+
+/// Getter owner (#16353) read straight off a fresh instance:
+/// `expect(new Cart(50).total).toBe(45)` runs the `get total()` body like a
+/// read through a named receiver. The property must not be extended into a
+/// longer identifier and must not be called (the call needle covers a call).
+fn contains_inline_new_member_read(
+    body_text: &str,
+    constructor_names: &[String],
+    getter_name: &str,
+) -> bool {
+    inline_new_member_access(body_text, constructor_names, getter_name, |after| {
+        after
+            .chars()
+            .next()
+            .is_none_or(|ch| !is_javascript_identifier_char(ch) && ch != '(')
+    })
+}
+
+/// `true` when `body_text` accesses `member_name` directly on a `new C(...)`
+/// expression for one of `constructor_names`, and the text after the member
+/// name satisfies `tail_ok`.
+fn inline_new_member_access(
+    body_text: &str,
+    constructor_names: &[String],
+    method_name: &str,
+    tail_ok: impl Fn(&str) -> bool,
+) -> bool {
     if !is_safe_javascript_identifier(method_name) {
         return false;
     }
@@ -5023,7 +5055,7 @@ fn contains_inline_new_member_call(
             let rest = body_text[args_start + close + 1..].trim_start();
             let rest = rest.strip_prefix("?.").or_else(|| rest.strip_prefix('.'));
             rest.and_then(|rest| rest.strip_prefix(method_name))
-                .is_some_and(|after| after.starts_with('('))
+                .is_some_and(&tail_ok)
         })
     })
 }

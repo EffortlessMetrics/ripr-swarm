@@ -40,6 +40,7 @@ Linked issues:
 - #16252 (inline class expression as a CommonJS module's whole export)
 - #16261 (class method overwritten by a later same-key member; rule 26)
 - #16275 (class expression as a CommonJS named export; rule 27)
+- #16353 (getter read straight off `new Class(...)`)
 - #16306 (class method shadowed by a same-key field; rule 28)
 - #16314 (class method replaced by an assignment; rule 29)
 - #9435 (exact oracle ignored on five changed-line shapes)
@@ -932,8 +933,9 @@ Candidates come from the first non-empty tier:
      `expect(...)` actual, same file or through an import of the owner
      module;
    - method: `ReceiverOwnerCall`, a receiver bound by `new Class(...)` in
-     the body or in describe or `beforeEach` scope, a getter read, or a
-     constructor call;
+     the body or in describe or `beforeEach` scope, a getter read (on such a
+     receiver, or straight off `new Class(...)`, as in `expect(new
+     Cart(50).total)`, since #16353), or a constructor call;
    - static method: `ClassMethodCall` through the class name or an import;
    - function, arrow or component, in order: an owner-module mock or a
      spy fabrication blocks every relation; then `DirectOwnerCall` (a
@@ -3071,6 +3073,14 @@ keys); do not take the next number.
   property, a changed `#private` method of either CommonJS class shape yields a
   finding, and the field and repeated-name guards key the class by the
   property.
+- #16353 (getter read off a fresh instance):
+  `crates/ripr/src/analysis/language/typescript/tests/inline_new_getter_read_tests.rs`
+  runs `analyze_diff` on a changed getter read as `new Cart(50).total`, through
+  `?.`, wrapped across lines and chained (`.total.toFixed(0)`): each relates,
+  as does the named-receiver control. A longer property (`.totalPrice`),
+  another class's same-named getter, the read inside a comment or string, a
+  spied getter and an assignment through the fresh instance stay unrelated,
+  and so does a bare read of an ordinary method, which does not run it.
 - #16306 (rule 28, field-shadowed class method):
   `crates/ripr/src/analysis/language/typescript/tests/field_shadowed_method_tests.rs`
   runs `analyze_diff` on a method shadowed by an instance field before or after
