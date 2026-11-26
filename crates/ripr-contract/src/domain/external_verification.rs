@@ -37,8 +37,10 @@ pub enum SourceFileRole {
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct KaniSourceFile {
-    /// Path relative to the checked root. It must use `/` separators and have
-    /// no empty, `.` or `..` parts, backslashes or colons.
+    /// Path relative to the checked root. It must be nonempty, use `/`
+    /// separators, and have no empty, `.` or `..` parts, backslashes, colons
+    /// or control characters. It must name a regular file under the root,
+    /// reached without symlinks.
     pub path: String,
     /// Expected content digest, as `sha256:` followed by 64 lowercase hex
     /// characters.
