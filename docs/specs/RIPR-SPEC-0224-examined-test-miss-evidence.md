@@ -651,12 +651,14 @@ assertion than the strength-only pick surfaces
 reason, so no repair card becomes agent-packet eligible because of this
 selection.
 
-The human `Related test` headline row is one shared display pick: among the
-rows with the first row's oracle strength, the first row whose test file the
-same diff changed leads, and otherwise the first row stays, so the headline
-names the test the change extended rather than an untouched same-strength
-file that sorts earlier (#14027). The pick moves no row, class or oracle
-strength.
+The human `Related test` headline row is one shared display pick. The anchor
+is the first row of the best observation tier (#14483); among the rows with
+the anchor's oracle strength and tier, the first row whose test file the same
+diff changed leads, and otherwise the anchor stays, so the headline prefers a
+test file the change touched over an untouched same-strength file that sorts
+earlier (#14027). The match is by file, not by test: when the diff edits one
+test in a file, the headline can name another related test in that file that
+the diff left alone. The pick moves no row, class or oracle strength.
 
 ### Family-relevant assertion selection (TypeScript)
 
