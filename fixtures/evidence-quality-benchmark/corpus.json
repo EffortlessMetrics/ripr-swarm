@@ -4551,8 +4551,8 @@
           "evidence_class": "config_or_policy_constant",
           "gap_state": "static_limitation",
           "actionability": "inspect_config_flow",
-          "why": "Changed config label is routed through an unsupported lookup helper.",
-          "recommended_repair": "Add fixture-backed support for this lookup shape before claiming visibility or observer debt.",
+          "why": "The name or path suggests a config lookup. RIPR could not establish a lookup path for the changed constant.",
+          "recommended_repair": "Trace the constant and add fixture-backed support for any lookup found before claiming visibility or observer debt.",
           "verify_command": "cargo xtask evidence-quality-scorecard",
           "raw_findings": [
             {
@@ -4575,7 +4575,7 @@
             "actionability": "inspect_config_flow",
             "repair_kind": "inspect_config_flow",
             "target_test_type": "unknown",
-            "suggested_assertion": "Inspect the lookup path or add analyzer support before adding output-observer tests."
+            "suggested_assertion": "Establish whether the constant reaches a lookup before adding output-observer tests."
           },
           "static_limitation": {
             "repair_route": "add_fixture_backed_support_for_opaque_config_lookup",

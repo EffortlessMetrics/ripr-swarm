@@ -1096,11 +1096,11 @@ fn classify_config_policy_constant(
         return config_policy_limitation_classification(ConfigPolicyLimitation {
             category: OPAQUE_CONFIG_LOOKUP_CATEGORY,
             repair_route: OPAQUE_CONFIG_LOOKUP_REPAIR_ROUTE,
-            why: "Changed config or policy constant is routed through an unsupported lookup helper.",
-            recommended_repair: "Add fixture-backed support for this lookup shape before claiming visibility or observer debt.",
+            why: "The name or path suggests a config lookup. RIPR could not establish a lookup path for the changed constant.",
+            recommended_repair: "Trace the constant and add fixture-backed support for any lookup found before claiming visibility or observer debt.",
             user_actionability: "unknown_until_lookup_supported",
             role: "unknown",
-            suggested_assertion: "Inspect the lookup path or add analyzer support before adding output-observer tests.",
+            suggested_assertion: "Establish whether the constant reaches a lookup before adding output-observer tests.",
         });
     }
 
@@ -3219,6 +3219,11 @@ mod tests {
         assert_eq!(report.summary.config_policy_static_limitations, 1);
         assert_eq!(item.canonical_item_kind, "limitation");
         assert_eq!(item.gap_state, "static_limitation");
+        assert_eq!(
+            item.why,
+            "The name or path suggests a config lookup. RIPR could not establish a lookup path for the changed constant."
+        );
+        assert!(item.repair_route.is_none());
         assert_eq!(config_policy.visibility, "unknown");
         assert_eq!(
             item.static_limitations
