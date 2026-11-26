@@ -1850,10 +1850,8 @@ impl BeforeRepairAttemptIdentity {
         let canonical_root = root
             .canonicalize()
             .map_err(|error| format!("canonicalize repair attempt root failed: {error}"))?;
-        let repository_head =
-            crate::agent::artifact::current_git_head(&canonical_root).map_err(|error| {
-                format!("repair attempt requires a concrete repository HEAD: {error}; commit the repository at least once, then rerun")
-            })?;
+        let repository_head = crate::agent::artifact::current_git_head(&canonical_root)
+            .map_err(|error| concrete_head_refusal(&canonical_root, &error))?;
         let created_unix_ms = current_unix_ms()?;
         let nonce = ATTEMPT_NONCE.fetch_add(1, Ordering::Relaxed);
         let repair_attempt_id = repair_attempt_id_from_parts(
@@ -1942,7 +1940,7 @@ fn begin_repair_attempt_inner(
     // path re-verifies after staging, and an A-B-A swap inside that window
     // is undetectable by commit comparison alone (#6822).
     let repository_identity = crate::agent::artifact::current_git_head_identity(canonical_root)
-        .map_err(|error| format!("repair attempt requires a concrete repository HEAD: {error}; commit the repository at least once, then rerun"))?;
+        .map_err(|error| concrete_head_refusal(canonical_root, &error))?;
     let repository_head = repository_identity.head.clone();
     // Pre-publication head gate: compare the caller's verified pin against
     // the repository HEAD this publication would record, before the attempt
@@ -4950,6 +4948,32 @@ fn select_awaiting_repair_attempt_by_seam(
     matches.pop().ok_or_else(|| "missing attempt".to_string())
 }
 
+/// A missing manifest names what to check. The CLI selection boundary
+/// (`repair_attempt_input_error`) appends the read-only status command bound to
+/// the same `--root` and `--store`; naming an unscoped command here would
+/// suppress that follow-up and list a different store (#16345 review).
+fn missing_manifest_refusal(attempt_id: &RepairAttemptId, path: &Path) -> String {
+    format!(
+        "repair attempt manifest not found for {} at {}; check the --attempt ID and --store",
+        attempt_id.as_str(),
+        crate::output::path::human_path(path)
+    )
+}
+
+/// First-commit advice only when Git establishes an unborn HEAD; a committed
+/// checkout whose HEAD ripr cannot use (for example a SHA-256 object ID) keeps
+/// the underlying diagnosis without being told to commit again (#16345 review).
+fn concrete_head_refusal(root: &Path, error: &str) -> String {
+    match crate::analysis::probe_head_ref_state(root, None) {
+        crate::analysis::HeadRefState::Unborn => format!(
+            "repair attempt requires a concrete repository HEAD: {error}; commit the repository at least once, then rerun"
+        ),
+        _ => format!(
+            "repair attempt requires a concrete repository HEAD: {error}; fix the Git problem it names, then rerun"
+        ),
+    }
+}
+
 fn load_repair_attempt_by_id(
     store: &RepairAttemptStoreRef,
     attempt_id: &RepairAttemptId,
@@ -4958,11 +4982,7 @@ fn load_repair_attempt_by_id(
         .attempt_directory(attempt_id)
         .join(REPAIR_ATTEMPT_MANIFEST);
     if !path.is_file() {
-        return Err(format!(
-            "repair attempt manifest not found for {} at {}; check the --attempt ID and --store, or run `ripr agent status` to list attempts",
-            attempt_id.as_str(),
-            crate::output::path::human_path(&path)
-        ));
+        return Err(missing_manifest_refusal(attempt_id, &path));
     }
     let manifest = read_repair_attempt_manifest_at(store, &path)?;
     if manifest.repair_attempt_id != *attempt_id {
@@ -4984,11 +5004,7 @@ fn load_repair_attempt_snapshot_by_id(
         .attempt_directory(attempt_id)
         .join(REPAIR_ATTEMPT_MANIFEST);
     if !path.is_file() {
-        return Err(format!(
-            "repair attempt manifest not found for {} at {}; check the --attempt ID and --store, or run `ripr agent status` to list attempts",
-            attempt_id.as_str(),
-            crate::output::path::human_path(&path)
-        ));
+        return Err(missing_manifest_refusal(attempt_id, &path));
     }
     let raw =
         std::fs::read(&path).map_err(|error| format!("read {} failed: {error}", path.display()))?;
