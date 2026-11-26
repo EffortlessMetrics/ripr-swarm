@@ -358,7 +358,14 @@ fn a_standard_trait_method_of_the_name_withholds_the_relation() -> Result<(), St
              impl Stock for Shelf {{\n    fn {method}(&self) -> usize {{ if self.left > 3 {{ 1 }} else {{ 0 }} }}\n}}\n"
         )
     };
-    for method in ["count", "into_iter", "into", "to_string", "last"] {
+    for method in [
+        "count",
+        "into_iter",
+        "into",
+        "to_string",
+        "last",
+        "contains",
+    ] {
         let body = format!("let _ = Shelf::stocked(5).{method}();");
         assert!(
             !direct(
@@ -401,5 +408,72 @@ fn a_rival_on_another_type_and_an_unrelated_impl_macro_leave_the_relation() -> R
             "{addition}"
         );
     }
+    Ok(())
+}
+
+/// A specialization of a generic type (`impl Shape for Square<u32>`) beside
+/// a sibling impl that lists no method inherits the trait's default for
+/// `Square<u8>`, which the name-typed receiver cannot tell apart, so the
+/// relation is withheld. Without a default, every sibling impl lists the
+/// method and the one specialization keeps it.
+#[test]
+fn a_specialization_beside_an_inheriting_sibling_is_withheld() -> Result<(), String> {
+    let square = |declaration: &str, sibling: &str| {
+        format!(
+            "pub trait Shape {{\n    {declaration}\n}}\n\
+             pub struct Square<T>(pub T);\n\
+             impl<T> Square<T> {{\n    pub fn with_side(side: T) -> Square<T> {{ Square(side) }}\n}}\n\
+             impl Shape for Square<u32> {{\n    fn area(&self) -> u32 {{ self.0 * self.0 }}\n}}\n\
+             {sibling}"
+        )
+    };
+    let owner = "impl Shape for Square<u32>::area";
+    let body = "let _ = Square::with_side(3u32).area();";
+    assert!(!direct(
+        &square(
+            "fn area(&self) -> u32 { 0 }",
+            "impl Shape for Square<u8> {}\n"
+        ),
+        owner,
+        body
+    )?);
+    assert!(direct(&square("fn area(&self) -> u32;", ""), owner, body)?);
+    Ok(())
+}
+
+/// A type that dereferences to another type can run the target's method of
+/// the name when the test does not have the owner's trait in scope, which
+/// this does not read, so the relation is withheld.
+#[test]
+fn a_type_that_dereferences_withholds_the_relation() -> Result<(), String> {
+    let production = format!(
+        "{BUF}static EMPTY: Limit = Limit {{ left: 0 }};\n\
+         impl std::ops::Deref for BytesMut {{\n    type Target = Limit;\n    fn deref(&self) -> &Limit {{ &EMPTY }}\n}}\n"
+    );
+    assert!(!direct(&production, BYTES_MUT_ADVANCE, TYPED_CALL)?);
+    assert!(direct(BUF, BYTES_MUT_ADVANCE, TYPED_CALL)?);
+    Ok(())
+}
+
+/// An owner taking `self` by value called on a receiver written as a borrow
+/// starts probing at the borrow, where an impl for `&mut T` would take the
+/// call first, so the relation is withheld; the owned call keeps it.
+#[test]
+fn a_borrowed_receiver_of_a_by_value_owner_is_withheld() -> Result<(), String> {
+    let production = "pub trait Shape {\n    fn area(self) -> u32;\n}\n\
+        pub struct Square(pub u32);\n\
+        impl Square {\n    pub fn with_side(side: u32) -> Square { Square(side) }\n}\n\
+        impl Shape for Square {\n    fn area(self) -> u32 { self.0 * self.0 }\n}\n";
+    let owner = "impl Shape for Square::area";
+    assert!(!direct(
+        production,
+        owner,
+        "let _ = (&mut Square::with_side(3)).area();"
+    )?);
+    assert!(direct(
+        production,
+        owner,
+        "let _ = Square::with_side(3).area();"
+    )?);
     Ok(())
 }

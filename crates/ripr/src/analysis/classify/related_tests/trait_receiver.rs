@@ -57,6 +57,12 @@ pub(super) fn typed_receiver_runs_trait_impl(
     if super::super::implicit_call::unindexed_impl_may_take_method_call(owner, owner_trait, index) {
         return false;
     }
+    if a_sibling_specialization_may_inherit_the_default(owner, owner_trait, self_ty, index)
+        || the_type_derefs(impl_type, index)
+        || a_borrowed_receiver_meets_a_by_value_owner(test, owner)
+    {
+        return false;
+    }
     inherent_receiver_call_resolves_with(
         test,
         owner.name.as_str(),
@@ -78,6 +84,119 @@ fn self_type_is_a_named_type(self_ty: &str) -> bool {
         && !["dyn ", "impl ", "fn(", "fn ", "unsafe ", "extern "]
             .iter()
             .any(|prefix| ty.starts_with(prefix))
+}
+
+/// Whether the owner's impl is for one specialization of a generic type
+/// (`impl Shape for Square<u32>`) while its trait has a default the index
+/// can see, or a declaration it cannot. A sibling `impl Shape for
+/// Square<u8> {}` lists no method, so no indexed row names it, yet
+/// `Square::with_side(3u8).area()` runs the default. The receiver is typed
+/// by the type's name alone and cannot tell the two apart. An impl whose
+/// every generic argument is a lifetime or one of the impl's own type
+/// parameters (`impl<T, U> BufMut for Chain<T, U>`) covers the whole type,
+/// so coherence leaves it the only impl of the trait for that type.
+fn a_sibling_specialization_may_inherit_the_default(
+    owner: &FunctionSummary,
+    owner_trait: &str,
+    self_ty: &str,
+    index: &RustIndex,
+) -> bool {
+    let Some(arguments) = generic_arguments(self_ty) else {
+        return false;
+    };
+    let source = index
+        .files()
+        .get(&owner.file)
+        .map(|facts| facts.data().source.clone());
+    let covers_the_whole_type = arguments.iter().all(|argument| {
+        argument.starts_with('\'')
+            || (argument.chars().all(|ch| ch.is_alphanumeric() || ch == '_')
+                && source.as_deref().is_some_and(|source| {
+                    super::super::owner_pin::impl_generics_name(source, argument)
+                }))
+    });
+    if covers_the_whole_type {
+        return false;
+    }
+    let name = owner.name.strip_prefix("r#").unwrap_or(&owner.name);
+    let mut declarations = index.functions().iter().filter(|function| {
+        function.name.strip_prefix("r#").unwrap_or(&function.name) == name
+            && matches!(&function.item.container, FunctionContainer::Trait { trait_name }
+                if impl_trait_name_from_path(trait_name) == owner_trait)
+    });
+    match declarations.next() {
+        None => true,
+        Some(first) => first.item.has_body || declarations.any(|other| other.item.has_body),
+    }
+}
+
+/// The top-level generic arguments of a self type (`Square<u32>` gives
+/// `["u32"]`), or `None` when it has none.
+fn generic_arguments(self_ty: &str) -> Option<Vec<String>> {
+    let open = self_ty.find('<')?;
+    let close = self_ty.rfind('>')?;
+    let inner = self_ty.get(open + 1..close)?;
+    let mut arguments = Vec::new();
+    let mut depth = 0usize;
+    let mut start = 0usize;
+    for (at, ch) in inner.char_indices() {
+        match ch {
+            '<' | '(' | '[' => depth += 1,
+            '>' | ')' | ']' => depth = depth.saturating_sub(1),
+            ',' if depth == 0 => {
+                arguments.push(inner[start..at].trim().to_string());
+                start = at + 1;
+            }
+            _ => {}
+        }
+    }
+    arguments.push(inner[start..].trim().to_string());
+    arguments.retain(|argument| !argument.is_empty());
+    (!arguments.is_empty()).then_some(arguments)
+}
+
+/// Whether the workspace implements `Deref` for the type. Without the
+/// owner's trait in scope, method-call syntax keeps probing through the
+/// dereference target, whose own method of the name then runs; this does
+/// not read which traits the test has in scope.
+fn the_type_derefs(impl_type: &str, index: &RustIndex) -> bool {
+    index.functions().iter().any(|function| {
+        function.name == "deref"
+            && matches!(&function.item.container, FunctionContainer::TraitImpl { trait_path, self_ty }
+                if impl_trait_name_from_path(trait_path) == "Deref"
+                    && compact_impl_type_name(self_ty).as_deref() == Some(impl_type))
+    })
+}
+
+/// Whether the owner takes `self` by value and some call of its name has a
+/// receiver written as a borrow (`(&mut sq).area()`). Probing starts at the
+/// borrow, where an impl of the trait for `&mut T` takes `self` by value
+/// first, and such an impl may be written by a macro the index does not
+/// list.
+fn a_borrowed_receiver_meets_a_by_value_owner(test: &TestSummary, owner: &FunctionSummary) -> bool {
+    if super::dispatch_target::receiver_kind(&owner.body)
+        != Some(super::dispatch_target::ReceiverKind::Value)
+    {
+        return false;
+    }
+    let name = owner.name.strip_prefix("r#").unwrap_or(&owner.name);
+    let body = test.body.as_str();
+    let bytes = body.as_bytes();
+    body.match_indices(&format!(").{name}(")).any(|(close, _)| {
+        let mut depth = 0usize;
+        let open = (0..=close).rev().find(|&at| match bytes[at] {
+            b')' => {
+                depth += 1;
+                false
+            }
+            b'(' => {
+                depth = depth.saturating_sub(1);
+                depth == 0
+            }
+            _ => false,
+        });
+        open.is_some_and(|open| body[open + 1..close].trim_start().starts_with('&'))
+    })
 }
 
 /// Whether an indexed method named like `owner` could take a method call on
@@ -382,6 +501,7 @@ const STANDARD_TRAIT_METHODS: &[(&str, &[&str])] = &[
     ("ShlAssign", &["shl_assign"]),
     ("ShrAssign", &["shr_assign"]),
     ("Index", &["index"]),
+    ("RangeBounds", &["start_bound", "end_bound", "contains"]),
     ("IndexMut", &["index_mut"]),
 ];
 

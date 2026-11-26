@@ -425,3 +425,30 @@ fn an_enclosing_gate_or_private_twin_keeps_the_relation() -> Result<(), String> 
     }
     Ok(())
 }
+
+/// The earlier-step refusal takes only a twin every module can call: a
+/// restricted `pub(crate)` by-value twin may be invisible where the test
+/// calls, so the relation stays, while the plain `pub` twin refuses it.
+#[test]
+fn a_restricted_earlier_step_twin_keeps_the_relation() -> Result<(), String> {
+    let body = "assert_eq!(Square(3).area(), 9);";
+    let restricted = by_value_twin().replace("pub fn area(self)", "pub(crate) fn area(self)");
+    assert!(direct(&restricted, TRAIT_AREA, body)?);
+    assert!(!direct(&by_value_twin(), TRAIT_AREA, body)?);
+    Ok(())
+}
+
+/// With no indexed `default` on the type, `Square::default()` is read as the
+/// standard trait's owned `Self` only when no workspace trait provides an
+/// associated function of that name, which could return a borrow.
+#[test]
+fn a_workspace_trait_providing_the_constructor_keeps_the_relation() -> Result<(), String> {
+    let body = "assert_eq!(Square::default().area(), 9);";
+    let provided = format!(
+        "{}pub trait Make {{\n    fn default() -> &'static Square {{ &Square(3) }}\n}}\nimpl Make for Square {{}}\n",
+        by_value_twin()
+    );
+    assert!(direct(&provided, TRAIT_AREA, body)?);
+    assert!(!direct(&by_value_twin(), TRAIT_AREA, body)?);
+    Ok(())
+}

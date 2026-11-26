@@ -1597,7 +1597,7 @@ impl HiddenImpls {
                         .name()
                         .map(|name| name.text().to_string())
                         .unwrap_or_default();
-                    self.read_assoc_macro_calls(it.assoc_item_list(), String::new(), trait_name);
+                    self.read_assoc_macro_calls(it.assoc_item_list(), "", &trait_name);
                 }
                 ast::Item::MacroCall(call) => {
                     // Expression and statement macros (`assert_eq!`) are not items.
@@ -1758,14 +1758,14 @@ impl HiddenImpls {
             .trait_()
             .and_then(|t| referent_trait_name(&t))
             .unwrap_or_default();
-        self.read_assoc_macro_calls(imp.assoc_item_list(), self_type, trait_name);
+        self.read_assoc_macro_calls(imp.assoc_item_list(), &self_type, &trait_name);
     }
 
     fn read_assoc_macro_calls(
         &mut self,
         items: Option<ast::AssocItemList>,
-        self_type: String,
-        trait_name: String,
+        self_type: &str,
+        trait_name: &str,
     ) {
         let Some(items) = items else {
             return;
@@ -1778,8 +1778,8 @@ impl HiddenImpls {
                     .map(|text| words_of(&text).into_iter().map(String::from).collect())
                     .unwrap_or_default();
                 self.impl_macro_calls.push((
-                    self_type.clone(),
-                    trait_name.clone(),
+                    self_type.to_string(),
+                    trait_name.to_string(),
                     macro_call_name(&call).unwrap_or_default(),
                     words,
                 ));

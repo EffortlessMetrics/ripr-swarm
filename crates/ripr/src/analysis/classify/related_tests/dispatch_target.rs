@@ -168,7 +168,7 @@ pub(super) fn inherent_twin_takes_every_call(
     let Some(owner_receiver) = receiver_kind(&owner.body) else {
         return false;
     };
-    let twin_receivers: Vec<ReceiverKind> = index
+    let twins: Vec<&FunctionSummary> = index
         .functions()
         .iter()
         .filter(|function| {
@@ -182,10 +182,18 @@ pub(super) fn inherent_twin_takes_every_call(
                         if compact_spelling(other) == compact_spelling(self_ty)
                 )
         })
-        .filter_map(|function| receiver_kind(&function.body))
         .collect();
-    let at_the_owner_step = twin_receivers.contains(&owner_receiver);
-    let at_an_earlier_step = twin_receivers.iter().any(|twin| *twin < owner_receiver);
+    let at_the_owner_step = twins
+        .iter()
+        .any(|twin| receiver_kind(&twin.body) == Some(owner_receiver));
+    // A twin whose visibility is restricted (`pub(super)`, `pub(crate)`)
+    // may be invisible where the test calls, and then the trait method runs.
+    // The earlier-step reading is a new refusal, so it takes only a twin
+    // every module can call.
+    let at_an_earlier_step = twins.iter().any(|twin| {
+        receiver_kind(&twin.body).is_some_and(|kind| kind < owner_receiver)
+            && declared_unrestricted_pub(twin, index)
+    });
     if !(at_the_owner_step || at_an_earlier_step) || !declared_once(&base, index) {
         return false;
     }
@@ -331,7 +339,14 @@ fn returns_the_type_owned(base: &str, constructor: &str, index: &RustIndex) -> b
     if found {
         inherent <= 1
     } else {
+        // A workspace trait may provide an associated function of that name
+        // with a body (`fn default() -> &'static Square`), which the type
+        // inherits from an empty impl; its return is not read here.
         matches!(constructor, "default" | "from")
+            && !index.functions().iter().any(|function| {
+                function.name == constructor
+                    && matches!(function.item.container, FunctionContainer::Trait { .. })
+            })
     }
 }
 
@@ -373,6 +388,16 @@ fn enclosed_by_cfg(function: &FunctionSummary, index: &RustIndex) -> bool {
 /// inherent twin is skipped by such callers, and the trait impl runs.
 fn declared_pub(function: &FunctionSummary, index: &RustIndex) -> bool {
     parsed_fn(function, index).is_some_and(|found| found.visibility().is_some())
+}
+
+/// Whether `function` is declared plainly `pub`, with no `(crate)`,
+/// `(super)`, `(self)` or `(in ..)` restriction.
+fn declared_unrestricted_pub(function: &FunctionSummary, index: &RustIndex) -> bool {
+    parsed_fn(function, index).is_some_and(|found| {
+        found
+            .visibility()
+            .is_some_and(|visibility| visibility.syntax().text() == "pub")
+    })
 }
 
 /// The innermost `fn` named like `function` whose span covers its start
@@ -467,7 +492,7 @@ fn every_mention_is_a_call(text: &str, name: &str) -> bool {
 /// (`self`, `mut self`), shared (`&self`, `&'a self`) or exclusive
 /// (`&mut self`). `None` for a typed receiver (`self: Box<Self>`) or a
 /// signature this cannot read.
-fn receiver_kind(body: &str) -> Option<ReceiverKind> {
+pub(super) fn receiver_kind(body: &str) -> Option<ReceiverKind> {
     let open = body.find('(')?;
     let rest = &body[open + 1..];
     let end = rest.find([',', ')'])?;
@@ -489,7 +514,7 @@ fn receiver_kind(body: &str) -> Option<ReceiverKind> {
 
 /// Ordered as method probing tries the steps for an owned receiver.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
-enum ReceiverKind {
+pub(super) enum ReceiverKind {
     Value,
     Shared,
     Exclusive,
