@@ -121,7 +121,20 @@ fn every_mention_bound_locally_in_function(
         }
         let previous = std::iter::successors(token.prev_token(), |token| token.prev_token())
             .find(|token| !token.kind().is_trivia());
-        match previous.as_ref().map(|token| token.kind()) {
+        // Inside a macro's token tree `::` arrives as two adjacent `:`
+        // tokens, so `crate::name` there reads like the parsed path.
+        let previous_kind = previous.as_ref().map(|token| {
+            if token.kind() == T![:]
+                && token
+                    .prev_token()
+                    .is_some_and(|before| before.kind() == T![:])
+            {
+                T![::]
+            } else {
+                token.kind()
+            }
+        });
+        match previous_kind {
             // A method call or field access never names a local.
             Some(T![.]) => continue,
             Some(T![::]) => return false,
@@ -129,7 +142,19 @@ fn every_mention_bound_locally_in_function(
         }
         let mut following = std::iter::successors(token.next_token(), |token| token.next_token())
             .filter(|token| !token.kind().is_trivia());
-        match following.next().map(|token| token.kind()) {
+        let next_kind = match following.next() {
+            Some(colon)
+                if colon.kind() == T![:]
+                    && colon
+                        .next_token()
+                        .is_some_and(|after| after.kind() == T![:]) =>
+            {
+                following.next();
+                Some(T![::])
+            }
+            other => other.map(|token| token.kind()),
+        };
+        match next_kind {
             // A path prefix (`name::item`) names a module or type; a
             // turbofish (`name::<T>(..)`) still calls the name.
             Some(T![::]) if following.next().map(|token| token.kind()) != Some(T![<]) => {
@@ -401,6 +426,16 @@ mod tests {
                 "qualified call",
                 "let dt = other;\n    super::dt(1);",
                 false,
+            ),
+            (
+                "qualified call inside a std macro",
+                "let dt = other;\n    assert_eq!(crate::dt(1), 2);",
+                false,
+            ),
+            (
+                "path prefix inside a std macro",
+                "let dt = other;\n    assert_eq!(dt(1), dt::ONE);",
+                true,
             ),
             (
                 "block import beside the binding",
