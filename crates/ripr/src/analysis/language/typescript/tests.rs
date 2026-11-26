@@ -22744,6 +22744,7 @@ fn undercredit_4103_owner_extraction_records_default_export_fact() {
     assert!(!plain[0].exported_as_default);
 }
 
+mod anonymous_default_class_tests;
 mod async_matcher_completion_tests;
 mod ava_throws_message_tests;
 mod barrel_import_forward_tests;

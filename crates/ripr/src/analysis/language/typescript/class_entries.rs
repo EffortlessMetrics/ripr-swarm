@@ -653,6 +653,12 @@ fn expression_end(code: &str, start: usize) -> usize {
     code.len()
 }
 
+/// The class name the members of a default-exported class carry: its own id,
+/// or `default` when it is anonymous (#16349, `name_anonymous_default_class`).
+fn default_class_name<'c>(class: &'c Class<'_>) -> &'c str {
+    class.id.as_ref().map_or("default", |id| id.name.as_str())
+}
+
 /// Names of classes the program declares more than once, in any scope.
 pub(crate) fn repeated_class_names(program: &oxc_ast::ast::Program<'_>) -> BTreeSet<String> {
     use oxc_ast_visit::{Visit, walk};
@@ -677,6 +683,21 @@ pub(crate) fn repeated_class_names(program: &oxc_ast::ast::Program<'_>) -> BTree
     // as repeated, and `exports.A = class X {}; exports.B = class X {}` does
     // not repeat `X`.
     for statement in &program.body {
+        // An anonymous default-exported class is named `default` (#16349), so
+        // two of them in one file (an ES and a CommonJS one, or two
+        // `module.exports = class {}`) repeat that name.
+        let anonymous_default = match statement {
+            Statement::ExportDefaultDeclaration(export) => matches!(
+                &export.declaration,
+                oxc_ast::ast::ExportDefaultDeclarationKind::ClassDeclaration(class)
+                    if class.id.is_none()
+            ),
+            _ => super::owners::commonjs_whole_class_export(statement)
+                .is_some_and(|class| class.id.is_none()),
+        };
+        if anonymous_default {
+            *counter.seen.entry("default".to_string()).or_default() += 1;
+        }
         if let Some((property, class)) = super::owners::commonjs_named_class_export(statement) {
             if let Some(id) = class.id.as_ref() {
                 if id.name.as_str() == property {
@@ -747,16 +768,21 @@ pub(crate) fn class_instance_field_names(
                     visit_named(class.id.as_ref().map(|id| id.name.as_str()), class);
                 }
             }
+            // An anonymous `export default class {}` has members named
+            // `default` (#16349), so its fields are keyed by that name too.
             Statement::ExportDefaultDeclaration(export) => {
                 if let ExportDefaultDeclarationKind::ClassDeclaration(class) = &export.declaration {
-                    visit_named(class.id.as_ref().map(|id| id.name.as_str()), class);
+                    visit_named(Some(default_class_name(class)), class);
                 }
             }
             // `module.exports = class Cart { ... }` (#16252): its methods are
-            // owners, so its fields must shadow them here too.
-            Statement::ExpressionStatement(statement) => {
-                if let oxc_ast::ast::Expression::AssignmentExpression(assign) =
-                    &statement.expression
+            // owners, so its fields must shadow them here too. Anonymous, its
+            // members are named `default` (#16349).
+            Statement::ExpressionStatement(expression) => {
+                if let Some(class) = super::owners::commonjs_whole_class_export(statement) {
+                    visit_named(Some(default_class_name(class)), class);
+                } else if let oxc_ast::ast::Expression::AssignmentExpression(assign) =
+                    &expression.expression
                     && let oxc_ast::ast::Expression::ClassExpression(class) =
                         assign.right.get_inner_expression()
                 {
