@@ -39,6 +39,7 @@ Linked issues:
 - #15092 (class as a CommonJS module's whole export)
 - #16252 (inline class expression as a CommonJS module's whole export)
 - #16261 (class method overwritten by a later same-key member; rule 26)
+- #16275 (class expression as a CommonJS named export; rule 27)
 - #16306 (class method shadowed by a same-key field; rule 28)
 - #9435 (exact oracle ignored on five changed-line shapes)
 - #9497 (skipped or unexercised tests credited as exposed; rules 17 and 18)
@@ -1445,6 +1446,28 @@ setter of one key (one accessor property), a static and an instance member of
 one name (different objects), body-less TypeScript overload signatures, and a
 computed key other than a string literal (`[name]()`), which is never
 compared.
+
+**Rule 27. A class expression assigned to a CommonJS named export is a class
+named by the export property (#16275).** `exports.Cart = class { ... }` and
+`module.exports.Cart = class ... { ... }` are the inline twins of
+`class Cart {}` followed by `exports.Cart = Cart;`: their methods are owners
+whose class name is the property `Cart`, whatever the expression's own id
+says, since that id binds only inside the class body. A named `require` of
+`Cart` relates a changed method as it does for the declared class; a test that
+destructures the inner id or another export stays unrelated. The members of
+one class share the one export slot `Cart`: a later top-level assignment to the
+same slot (another class, a class with no method, or any other value) leaves the
+earlier class dead, so it yields no owner, the fail-closed rule of a reassigned
+function export (#4638), which now also counts a non-function value assigned to
+the slot after the definition. An earlier one, such as the hoisted
+`exports.Cart = void 0;` of compiled TypeScript and Babel output, is overwritten
+by the definition and does not drop it. A whole-module
+`module.exports = function NAME` has its own slot, apart from every property:
+a property write on it (`module.exports.NAME = ...`, a function or a class)
+leaves both live. Instance fields and the repeated-class-name guard read such a
+class under the property name, not its inner id, and its `#private` methods
+(like those of `module.exports = class`) are owners whose changed lines reach
+owner lookup, as for a declared class.
 
 **Rule 28. A class method that a field of the same key shadows relates to no
 test (#16306).** A class field is defined on each instance when it is
@@ -3007,6 +3030,18 @@ keys); do not take the next number.
   beside a static member of the same name, and an implementation after
   TypeScript overload signatures.
 
+- #16275 (rule 27, CommonJS named-export class expression):
+  `crates/ripr/src/analysis/language/typescript/tests/commonjs_named_class_export_tests.rs`
+  pins the owner shape (class name is the property, not the inner id) for
+  `exports.Cart = class` and `module.exports.Cart = class`, and runs
+  `analyze_diff` to show a named `require` relates a changed method while an
+  inner-id import and a sibling export stay unrelated. A later assignment of the
+  slot (class, empty class, `null`) drops the earlier class, a function export
+  reassigned to `null` drops as well, an earlier hoisted `exports.Cart = void 0;`
+  does not, a whole-module function keeps its owner beside a same-named class
+  property, a changed `#private` method of either CommonJS class shape yields a
+  finding, and the field and repeated-name guards key the class by the
+  property.
 - #16306 (rule 28, field-shadowed class method):
   `crates/ripr/src/analysis/language/typescript/tests/field_shadowed_method_tests.rs`
   runs `analyze_diff` on a method shadowed by an instance field before or after

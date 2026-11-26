@@ -50,6 +50,35 @@ pub(crate) fn reported_test_run_next_step(run: &ReportedTestRun) -> String {
     }
 }
 
+/// The finish's next step once the caller reported a focused run (#16263).
+///
+/// An `advisory` receipt whose static movement is `improved` asks the caller
+/// to run the focused test; that guidance is the receipt's static-only
+/// default and stays in its digest-bound bytes. When the finish recorded a
+/// run, the summary names what is left instead. The finish validated the
+/// file the reported tests ran in, not that they include the added or edited
+/// test, so a pass asks the caller to confirm that rather than crediting it.
+/// A failure means the patch must change, and a changed patch leaves this
+/// receipt stale. Any other receipt keeps its own step: only it decides
+/// whether it is review evidence.
+pub(crate) fn next_step_after_reported_run(
+    run: Option<&ReportedTestRun>,
+    receipt_status: Option<&str>,
+    movement: Option<&str>,
+    receipt_step: &str,
+) -> String {
+    match run {
+        Some(run) if receipt_status == Some("advisory") && movement == Some("improved") => {
+            if run.failed > 0 {
+                "Make the focused test pass before keeping it; ripr did not run it. A fix that edits the patch leaves this receipt stale, so do not include it in review; re-check the gap with `ripr check` after the fix.".to_string()
+            } else {
+                "Confirm the reported run included the test you added or edited (ripr checked the test file, not the test names, and ran nothing), then include this receipt in review.".to_string()
+            }
+        }
+        _ => receipt_step.to_string(),
+    }
+}
+
 /// The status line for the test-run axis of an issued receipt: the caller's
 /// reported run when the attempt retained one, otherwise that none is
 /// recorded. Both say ripr ran nothing.
@@ -131,6 +160,38 @@ mod tests {
             ran: passed + failed,
             passed,
             failed,
+        }
+    }
+
+    #[test]
+    fn a_reported_run_replaces_only_the_improved_advisory_run_the_test_step() {
+        let step = "Run the focused test and keep it only if it passes.";
+        let advisory = Some("advisory");
+        let improved = Some("improved");
+        let passed = run(1, 0);
+        let failed = run(0, 1);
+        assert_eq!(
+            next_step_after_reported_run(None, advisory, improved, step),
+            step
+        );
+        let kept = next_step_after_reported_run(Some(&passed), advisory, improved, step);
+        assert!(
+            kept.starts_with("Confirm the reported run included the test you added or edited"),
+            "{kept}"
+        );
+        assert!(!kept.contains("Run the focused test"), "{kept}");
+        let fix = next_step_after_reported_run(Some(&failed), advisory, improved, step);
+        assert!(fix.starts_with("Make the focused test pass"), "{fix}");
+        assert!(fix.contains("do not include it in review"), "{fix}");
+        for (status, movement) in [
+            (Some("limited"), improved),
+            (advisory, Some("unchanged")),
+            (None, improved),
+        ] {
+            assert_eq!(
+                next_step_after_reported_run(Some(&passed), status, movement, step),
+                step
+            );
         }
     }
 

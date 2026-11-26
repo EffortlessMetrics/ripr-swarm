@@ -131,7 +131,10 @@ pub(crate) fn read_metadata_toml_with_limit(
     String::from_utf8(bytes).map_err(|err| {
         std::io::Error::new(
             std::io::ErrorKind::InvalidData,
-            format!("stream did not contain valid UTF-8 ({err})"),
+            format!(
+                "not UTF-8 text (invalid byte at offset {}); pass a UTF-8 text file",
+                err.utf8_error().valid_up_to()
+            ),
         )
     })
 }
@@ -252,7 +255,10 @@ pub(crate) fn decode_artifact_text(bytes: &[u8]) -> std::io::Result<String> {
     let text = std::str::from_utf8(bytes).map_err(|err| {
         std::io::Error::new(
             std::io::ErrorKind::InvalidData,
-            format!("stream did not contain valid UTF-8 ({err})"),
+            format!(
+                "not UTF-8 text (invalid byte at offset {}); pass a UTF-8 text file",
+                err.valid_up_to()
+            ),
         )
     })?;
     Ok(text.strip_prefix('\u{feff}').unwrap_or(text).to_owned())
@@ -329,7 +335,10 @@ pub(crate) fn read_reader_to_string_with_limit(
     String::from_utf8(bytes).map_err(|err| {
         std::io::Error::new(
             std::io::ErrorKind::InvalidData,
-            format!("stream did not contain valid UTF-8 ({err})"),
+            format!(
+                "not UTF-8 text (invalid byte at offset {}); pass a UTF-8 text file",
+                err.utf8_error().valid_up_to()
+            ),
         )
     })
 }
@@ -352,7 +361,27 @@ pub(crate) fn read_failure_detail(err: &std::io::Error) -> String {
     if err.kind() == std::io::ErrorKind::NotFound {
         "not found".to_string()
     } else {
-        err.to_string()
+        let text = err.to_string();
+        // Drop the host errno suffix (`(os error N)`); the leading words keep
+        // the reason in plain language.
+        match text.find(" (os error ") {
+            Some(index) => text[..index].to_string(),
+            None => text,
+        }
+    }
+}
+
+/// Plain-words reason an explicitly named input path cannot be used, with the
+/// imperative next step kept literal. A missing file reads `does not exist`;
+/// any other failure keeps the OS reason without the `(os error N)` suffix.
+pub(crate) fn unreadable_input_phrase(err: &std::io::Error, next_step: &str) -> String {
+    if err.kind() == std::io::ErrorKind::NotFound {
+        format!("does not exist; {next_step}")
+    } else {
+        format!(
+            "cannot be read ({}); {next_step}",
+            crate::bounded_input::read_failure_detail(err)
+        )
     }
 }
 

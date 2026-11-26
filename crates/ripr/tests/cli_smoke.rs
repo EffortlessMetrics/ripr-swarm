@@ -97,6 +97,9 @@ mod init_ci_guidance;
 #[cfg(feature = "lang-rust")]
 #[path = "cli_smoke/init_followups.rs"]
 mod init_followups;
+#[cfg(feature = "lang-rust")]
+#[path = "cli_smoke/input_file_errors.rs"]
+mod input_file_errors;
 #[cfg(feature = "lang-typescript")]
 #[path = "cli_smoke/javascript_awaited_roots.rs"]
 mod javascript_awaited_roots;
@@ -4188,7 +4191,7 @@ fn gate_evaluate_exception_policy_missing_ledger_is_config_error() -> Result<(),
 
     let decision = std::fs::read_to_string(&out).map_err(|err| format!("read out: {err}"))?;
     assert!(
-        decision.contains("failed to read exception policy"),
+        decision.contains("failed to read --exception-policy"),
         "decision: {decision}"
     );
     Ok(())
@@ -6655,7 +6658,7 @@ fn check_rejects_an_invalid_dependent_scope_without_dependents() -> sample_outpu
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(
         stderr.contains(
-            "RIPR_DIFF_DEPENDENT_SCOPE must be `auto`, `named` or `full`, got `everything`"
+            "RIPR_DIFF_DEPENDENT_SCOPE must be `auto`, `named` or `full`, got `everything`; set one of those, or unset it to use `auto`"
         ),
         "stderr should name the invalid override: {stderr}"
     );
@@ -37948,6 +37951,14 @@ fn review_guidance_windows_preserve_output_and_bound_retained_payloads()
             &[("RIPR_REVIEW_EVIDENCE_WINDOW_SIZE", "0")],
         )?;
         assert!(!refused.status.success());
+        // The refusal names the repair the widths above just exercised.
+        let stderr = String::from_utf8_lossy(&refused.stderr);
+        assert!(
+            stderr.contains(
+                "RIPR_REVIEW_EVIDENCE_WINDOW_SIZE must be between 1 and 256; set it to a whole number in that range, or unset it to use the default of 32"
+            ),
+            "{stderr}"
+        );
         let receipt: serde_json::Value =
             serde_json::from_slice(&std::fs::read(root.join("target/window/run-receipt.json"))?)?;
         assert_eq!(receipt["status"], "failed");

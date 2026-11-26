@@ -55,6 +55,14 @@ const CASES: &[(&str, &str)] = &[
         "[languages.python]\nhandwritten_files = [\"src/app.txt\"]\n",
         "languages.python.handwritten_files must identify a Python `.py` file; remove `src/app.txt` or name a file with that extension",
     ),
+    (
+        "[lsp]\ndiagnostic_profile = \"quiet\"\n",
+        "invalid lsp.diagnostic_profile \"quiet\"; set it to \"actionable\" or \"full\"",
+    ),
+    (
+        "[[overrides]]\ncrate = \" \"\nseverity.findings.weakly_exposed = \"info\"\n",
+        "[[overrides]] crate must not be empty; give the Cargo package name the override applies to, or use `path` instead",
+    ),
 ];
 
 #[test]

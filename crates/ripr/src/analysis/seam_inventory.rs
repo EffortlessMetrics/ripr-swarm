@@ -2969,9 +2969,9 @@ fn review_evidence_window_size() -> Result<usize, String> {
     match std::env::var("RIPR_REVIEW_EVIDENCE_WINDOW_SIZE") {
         Ok(value) => value.parse::<usize>().ok()
             .filter(|size| (1..=MAX_REVIEW_EVIDENCE_WINDOW).contains(size))
-            .ok_or_else(|| format!("RIPR_REVIEW_EVIDENCE_WINDOW_SIZE must be between 1 and {MAX_REVIEW_EVIDENCE_WINDOW}")),
+            .ok_or_else(|| format!("RIPR_REVIEW_EVIDENCE_WINDOW_SIZE must be between 1 and {MAX_REVIEW_EVIDENCE_WINDOW}; set it to a whole number in that range, or unset it to use the default of {DEFAULT_REVIEW_EVIDENCE_WINDOW}")),
         Err(std::env::VarError::NotPresent) => Ok(DEFAULT_REVIEW_EVIDENCE_WINDOW),
-        Err(error) => Err(format!("invalid RIPR_REVIEW_EVIDENCE_WINDOW_SIZE: {error}")),
+        Err(error) => Err(format!("invalid RIPR_REVIEW_EVIDENCE_WINDOW_SIZE: {error}; set it to a whole number from 1 to {MAX_REVIEW_EVIDENCE_WINDOW}, or unset it to use the default of {DEFAULT_REVIEW_EVIDENCE_WINDOW}")),
     }
 }
 

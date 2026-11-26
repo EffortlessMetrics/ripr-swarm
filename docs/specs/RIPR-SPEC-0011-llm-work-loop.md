@@ -940,6 +940,21 @@ separate: the receipt's `verification.status` remains `verification_not_run`
 found, so a reported failure can sit beside `improved`. The receipt-owned
 `next:` line is unchanged. MCP receipt status projects it since #16251.
 
+## Amendment (#16263): the finish's next step reads the reported run back
+
+When `ripr agent repair --phase after --test-result FILE` records a caller's
+focused run and the receipt is `advisory` with movement `improved`, the
+after-phase summary's `Next:` line no longer forwards the receipt's "Run the
+focused test" step. After a reported pass it asks the caller to confirm that
+the run included the added or edited test before including the receipt in
+review: the finish validates the test file, not the test names. After a
+reported failure it says to make the test pass before keeping it, and that a
+fix which edits the patch leaves the receipt stale, so the gap is re-checked
+instead of submitting that receipt. Both say ripr ran nothing. The shared
+`app::agent_status::test_run` owner derives the line. The digest-bound receipt,
+its `recommended_action` and every other receipt status keep their own step
+unchanged.
+
 ## Amendment (#16251): MCP receipt status carries the same test-run reading
 
 `ripr_get_receipt_status` and `ripr://receipt/{receipt_id}` add an optional
@@ -1370,7 +1385,7 @@ is not decided here.
 - `crates/ripr/tests/repair_check_recommended_start.rs::open_spots_on_the_change_close_on_the_per_spot_reasons` (#12861)
 - `crates/ripr/tests/repair_check_recommended_start.rs::a_start_whose_card_cannot_be_produced_creates_no_attempt` (#12867)
 - `crates/ripr/tests/repair_check_recommended_start.rs::a_refused_field_seam_names_the_stub_or_why_there_is_none` (#12959)
-- `crates/ripr/tests/mcp_cli_repair_parity.rs::six_step_agent_contract_holds_through_cli_and_mcp` (#14079: gap, one unit, one test edit, re-recorded static evidence, the caller's run as a separate axis, durable read-back from a new MCP process; #16251: the MCP receipt `test_run` equals CLI status)
+- `crates/ripr/tests/mcp_cli_repair_parity.rs::six_step_agent_contract_holds_through_cli_and_mcp` (#14079: gap, one unit, one test edit, re-recorded static evidence, the caller's run as a separate axis, durable read-back from a new MCP process; #16251: the MCP receipt `test_run` equals CLI status; #16263: the finish's `Next:` line reads the reported run back)
 - `crates/ripr/src/app/focused_run.rs::tests::a_retained_record_reads_back_only_for_its_own_attempt_and_kind` (#14079)
 - `crates/ripr/src/cli/commands/agent.rs::repair_summary_tests::repair_summary_reports_a_recorded_caller_run_instead_of_none_recorded` (#14079)
 - `crates/ripr/src/app/agent_status/test_run.rs::tests::a_reported_run_is_read_back_with_its_counts_and_a_failure_is_named` (#14079)

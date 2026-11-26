@@ -1669,6 +1669,12 @@ fn six_step_agent_contract(reported: ReportedRun) -> Result<(), String> {
                 assert!(text.contains("Test run: none recorded."), "{text}");
                 assert!(!text.contains("reported by the caller"), "{text}");
             }
+            // #16263: with no reported run, the receipt's own step stands.
+            assert!(
+                finish_stdout
+                    .contains("\nNext: Run the focused test and keep it only if it passes"),
+                "{finish_stdout}"
+            );
         }
         ReportedRun::Passed | ReportedRun::Failed => {
             let (passed, failed) = if reported == ReportedRun::Passed {
@@ -1696,6 +1702,18 @@ fn six_step_agent_contract(reported: ReportedRun) -> Result<(), String> {
                     "{text}"
                 );
             }
+            // #16263: the finish's next step reads the reported run back
+            // instead of asking for the run it just recorded.
+            let expected_next = if reported == ReportedRun::Passed {
+                "\nNext: Confirm the reported run included the test you added or edited (ripr checked the test file, not the test names, and ran nothing), then include this receipt in review.\n"
+            } else {
+                "\nNext: Make the focused test pass before keeping it; ripr did not run it. A fix that edits the patch leaves this receipt stale, so do not include it in review; re-check the gap with `ripr check` after the fix.\n"
+            };
+            assert!(finish_stdout.contains(expected_next), "{finish_stdout}");
+            assert!(
+                !finish_stdout.contains("Next: Run the focused test"),
+                "{finish_stdout}"
+            );
         }
     }
 

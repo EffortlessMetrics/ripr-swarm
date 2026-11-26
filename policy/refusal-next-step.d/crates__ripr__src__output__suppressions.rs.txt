@@ -1,2 +1,1 @@
-crates/ripr/src/output/suppressions.rs|failed to read suppression policy `{display}`: {err}
 crates/ripr/src/output/suppressions.rs|suppression policy `{display}` is invalid:\n{} \n
