@@ -368,13 +368,15 @@ fn generic_arguments(self_ty: &str) -> Option<Vec<String>> {
 /// Whether the workspace implements `Deref` for the type. Without the
 /// owner's trait in scope, method-call syntax keeps probing through the
 /// dereference target, whose own method of the name then runs; this does
-/// not read which traits the test has in scope.
+/// not read which traits the test has in scope. A `Deref` impl whose self
+/// type name the workspace does not declare as one type may name the type
+/// through an alias (`type View = Square; impl Deref for View`).
 fn the_type_derefs(impl_type: &str, index: &RustIndex) -> bool {
     index.functions().iter().any(|function| {
         function.name == "deref"
             && matches!(&function.item.container, FunctionContainer::TraitImpl { trait_path, self_ty }
                 if impl_trait_name_from_path(trait_path) == "Deref"
-                    && compact_impl_type_name(self_ty).as_deref() == Some(impl_type))
+                    && on_the_same_type(self_ty, impl_type, index))
     })
 }
 

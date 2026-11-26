@@ -453,6 +453,12 @@ fn a_type_that_dereferences_withholds_the_relation() -> Result<(), String> {
          impl std::ops::Deref for BytesMut {{\n    type Target = Limit;\n    fn deref(&self) -> &Limit {{ &EMPTY }}\n}}\n"
     );
     assert!(!direct(&production, BYTES_MUT_ADVANCE, TYPED_CALL)?);
+    let through_an_alias = format!(
+        "{BUF}static EMPTY: Limit = Limit {{ left: 0 }};\n\
+         pub type View = BytesMut;\n\
+         impl std::ops::Deref for View {{\n    type Target = Limit;\n    fn deref(&self) -> &Limit {{ &EMPTY }}\n}}\n"
+    );
+    assert!(!direct(&through_an_alias, BYTES_MUT_ADVANCE, TYPED_CALL)?);
     assert!(direct(BUF, BYTES_MUT_ADVANCE, TYPED_CALL)?);
     Ok(())
 }
