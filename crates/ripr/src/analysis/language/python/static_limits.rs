@@ -30,6 +30,9 @@ use super::{
 use crate::domain::{OracleStrength, OwnerKind, StaticLimitKind};
 use rustpython_parser::ast::{self, Expr};
 
+pub(super) const IMPORTED_NAME_LIMIT_EVIDENCE: &str =
+    "static_limit missing_import_graph: changed line uses an imported name";
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(super) struct PythonStaticLimit {
     pub(super) kind: StaticLimitKind,
@@ -435,9 +438,8 @@ pub(super) fn static_limit_for_focused_change(
     {
         return Some(PythonStaticLimit {
             kind: StaticLimitKind::MissingImportGraph,
-            evidence: "static_limit missing_import_graph: changed line calls an imported symbol"
-                .to_string(),
-            missing: "Static limit `missing_import_graph`: the changed line calls an imported symbol; the Python preview adapter does not build an import graph or resolve imported implementation semantics.".to_string(),
+            evidence: IMPORTED_NAME_LIMIT_EVIDENCE.to_string(),
+            missing: "Static limit `missing_import_graph`: the changed line uses an imported name. The Python preview adapter does not build an import graph or resolve imported implementation semantics.".to_string(),
         });
     }
     if let Some(limit) = super::range_activation::changed_range_limit(

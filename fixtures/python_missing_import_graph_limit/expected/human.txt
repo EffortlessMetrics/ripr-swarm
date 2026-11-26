@@ -20,8 +20,8 @@ Start here:
   Why capped: preview adapter: infection/propagation not modeled (Python); syntax-first, no type or import resolution; whether a test checks this behavior is not established. Preview score, not on the same scale as Rust confidence.
   Why unknown: the analysis could not determine a static exposure state
   Changed behavior: return remote_total(client, include_tax=True)
-  Analyzer limit: Static limit `missing_import_graph`: the changed line calls an imported symbol;
-    the Python preview adapter does not build an import graph or resolve imported implementation
+  Analyzer limit: Static limit `missing_import_graph`: the changed line uses an imported name. The
+    Python preview adapter does not build an import graph or resolve imported implementation
     semantics
   Related test: tests/test_totals.py:4 test_total_includes_tax
   Evidence: reach yes · infection unknown · propagation unknown · observation yes · assertion unknown

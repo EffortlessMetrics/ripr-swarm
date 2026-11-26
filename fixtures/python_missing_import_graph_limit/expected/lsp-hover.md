@@ -18,7 +18,7 @@ Action: advisory only
 
 ## Static Limit
 
-RIPR saw a changed line that calls an imported symbol.
+RIPR saw a changed line that uses an imported name.
 
 RIPR could not establish imported implementation semantics because Python
 preview mode does not build an import graph.

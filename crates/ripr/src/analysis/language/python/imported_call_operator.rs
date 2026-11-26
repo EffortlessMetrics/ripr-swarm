@@ -39,10 +39,6 @@ use crate::domain::OwnerKind;
 use rustpython_parser::ast::{self, Expr, Mod, Stmt};
 use std::path::Path;
 
-/// The limit evidence this credit replaces.
-pub(super) const IMPORTED_CALL_LIMIT_EVIDENCE: &str =
-    "static_limit missing_import_graph: changed line calls an imported symbol";
-
 /// Methods that let a workspace type answer `+`, `-` or `*` with something
 /// other than the number the assertion pins, so the call result is not a
 /// number the old operator can be solved for.
