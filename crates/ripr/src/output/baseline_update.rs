@@ -436,31 +436,42 @@ fn disclosed_analyzer_version(version: Option<&str>) -> String {
 
 pub(crate) use crate::output::path::display_path;
 
+/// The command that writes each `baseline update` input, so a refusal for
+/// an unreadable or foreign file names where a usable one comes from.
+fn input_source(expected_kind: &str) -> &'static str {
+    if expected_kind == BASELINE_KIND {
+        "the reviewed baseline ledger that `ripr baseline create` writes"
+    } else {
+        "the gate-decision JSON that `ripr gate evaluate` writes"
+    }
+}
+
 fn parse_json(
     label: &str,
     path: &str,
     json_text: &str,
     expected_kind: &str,
 ) -> Result<Value, String> {
+    let source = input_source(expected_kind);
     let value = serde_json::from_str::<Value>(json_text)
-        .map_err(|err| format!("parse {label} {path} failed: {err}; regenerate the input with the command that wrote it, then rerun"))?;
+        .map_err(|err| format!("parse {label} {path} failed: {err}; pass {source}"))?;
     let schema_version = value
         .get("schema_version")
         .and_then(Value::as_str)
-        .ok_or_else(|| format!("{label} {path} missing schema_version; regenerate the input with the command that wrote it, then rerun"))?;
+        .ok_or_else(|| format!("{label} {path} missing schema_version; pass {source}"))?;
     if schema_version != SCHEMA_VERSION {
         return Err(format!(
-            "{label} {path} has unsupported schema_version `{schema_version}`; expected `{SCHEMA_VERSION}`"
+            "{label} {path} has unsupported schema_version `{schema_version}`; expected `{SCHEMA_VERSION}`; pass {source}"
         ));
     }
     if !expected_kind.is_empty() {
         let kind = value
             .get("kind")
             .and_then(Value::as_str)
-            .ok_or_else(|| format!("{label} {path} missing kind"))?;
+            .ok_or_else(|| format!("{label} {path} missing kind; pass {source}"))?;
         if kind != expected_kind {
             return Err(format!(
-                "{label} {path} has unsupported kind `{kind}`; expected `{expected_kind}`"
+                "{label} {path} has unsupported kind `{kind}`; expected `{expected_kind}`; pass {source}"
             ));
         }
     }

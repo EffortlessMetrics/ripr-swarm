@@ -1,0 +1,2 @@
+<!-- section: Changed -->
+- `ripr baseline update` refusals for a broken, foreign or wrong-version input name the command that writes it: `ripr baseline create` for the baseline ledger and `ripr gate evaluate` for the gate decision. `ripr calibrate cargo-mutants` refusals for a repo-exposure file without seams or seam fields say to pass a file written by `ripr check --format repo-exposure-json`. An invalid `--suppression-policy` file says to fix each listed problem, then rerun (#16019).

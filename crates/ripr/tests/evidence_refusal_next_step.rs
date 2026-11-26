@@ -1,6 +1,7 @@
-//! `ripr pr-evidence --check` and `ripr impacted-evidence --check` refusals
-//! for a missing or broken packet name the command that writes it, not just
-//! the read error. Each case runs the real binary in a scratch directory and
+//! Refusals for a missing or broken input file name where a usable one comes
+//! from, not just the read error: `ripr pr-evidence --check`,
+//! `ripr impacted-evidence --check`, `ripr baseline update`,
+//! `ripr calibrate cargo-mutants` and `ripr check --suppression-policy`. Each case runs the real binary in a scratch directory and
 //! pins the next-step clause, so a regression that drops it fails here rather
 //! than only in the looser action-word floor (`refusal_next_step.rs`).
 
@@ -167,4 +168,106 @@ fn success(dir: &Path, args: &[&str]) -> Result<(), String> {
             String::from_utf8_lossy(&output.stderr)
         ))
     }
+}
+
+/// Following the baseline refusal's advice (`ripr baseline create`) yields a
+/// ledger the same update accepts; a broken gate decision names the command
+/// that writes one.
+#[test]
+fn baseline_update_refusals_name_the_command_that_writes_each_input() -> Result<(), String> {
+    let dir = scratch()?;
+    let write = |name: &str, text: &str| {
+        std::fs::write(dir.0.join(name), text).map_err(|error| format!("write {name}: {error}"))
+    };
+    write("current.json", r#"{"schema_version":"0.1","decisions":[]}"#)?;
+    write("baseline.json", "{ not json")?;
+    let update = [
+        "baseline",
+        "update",
+        "--baseline",
+        "baseline.json",
+        "--current",
+        "current.json",
+        "--remove-resolved",
+    ];
+    let stderr = refusal(&dir.0, &update)?;
+    stderr_has_all(
+        &stderr,
+        &[
+            "parse baseline baseline.json failed: ",
+            "; pass the reviewed baseline ledger that `ripr baseline create` writes",
+        ],
+    )?;
+    success(
+        &dir.0,
+        &[
+            "baseline",
+            "create",
+            "--from",
+            "current.json",
+            "--out",
+            "baseline.json",
+            "--force",
+        ],
+    )?;
+    success(&dir.0, &update)?;
+
+    write("current.json", r#"{"decisions":[]}"#)?;
+    let stderr = refusal(&dir.0, &update)?;
+    stderr_has_all(
+        &stderr,
+        &[
+            "current gate-decision current.json missing schema_version; pass the gate-decision JSON that `ripr gate evaluate` writes",
+        ],
+    )
+}
+
+#[test]
+fn calibrate_refusal_names_the_snapshot_command() -> Result<(), String> {
+    let dir = scratch()?;
+    std::fs::write(dir.0.join("repo.json"), r#"{"seams":[{"seam_id":"a"}]}"#)
+        .map_err(|error| format!("write repo.json: {error}"))?;
+    std::fs::write(dir.0.join("mutants.json"), "[]")
+        .map_err(|error| format!("write mutants.json: {error}"))?;
+    let stderr = refusal(
+        &dir.0,
+        &[
+            "calibrate",
+            "cargo-mutants",
+            "--repo-exposure-json",
+            "repo.json",
+            "--mutants-json",
+            "mutants.json",
+        ],
+    )?;
+    stderr_has_all(
+        &stderr,
+        &[
+            "repo exposure seam is missing string field `kind`; pass a file written by `ripr check --format repo-exposure-json`",
+        ],
+    )
+}
+
+#[test]
+fn suppression_policy_refusals_name_the_fix() -> Result<(), String> {
+    let repo = committed_repo()?;
+    let stderr = refusal(&repo.0, &["check", "--suppression-policy", "nope.toml"])?;
+    stderr_has_all(
+        &stderr,
+        &[
+            "failed to read suppression policy `",
+            "nope.toml`: ",
+            "; pass an existing TOML file as `--suppression-policy`",
+        ],
+    )?;
+    std::fs::write(repo.0.join("bad.toml"), "[[suppressions]]\nbogus = 1\n")
+        .map_err(|error| format!("write bad.toml: {error}"))?;
+    let stderr = refusal(&repo.0, &["check", "--suppression-policy", "bad.toml"])?;
+    stderr_has_all(
+        &stderr,
+        &[
+            "bad.toml` is invalid; fix each problem listed below, then rerun:\n",
+            "unsupported `[[suppressions]]` field `bogus`",
+        ],
+    )
 }
