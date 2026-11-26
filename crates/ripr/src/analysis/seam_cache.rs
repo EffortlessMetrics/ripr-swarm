@@ -801,7 +801,10 @@ pub(crate) struct CachedSeamLimitInfo {
 /// weak, not exact (#16286).
 /// `1.201`: a renamed call in a test's own module file (`src/tests.rs`) reads
 /// the enclosing module files, so a nested-block rename settles there too (#16277).
-pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.201";
+/// `1.203`: a test whose every mention of the owner's name is bound by a
+/// local of its body (`let dt = |x| x + 1;`, a nested `fn dt`) no longer
+/// relates by `direct_owner_call` (#14552).
+pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.203";
 /// `0.2` → `0.3`: same semantic transition as the outer cache (#3273 /
 /// #3286) — sharded entries derive from the same facts and cannot bypass
 /// the outer generation bump.
@@ -1040,7 +1043,8 @@ pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.201";
 /// `0.201`: same include-reading wrapper forwarding as full `1.199` (#10357).
 /// `0.202`: same or-pattern oracle reading as full `1.200` (#16286).
 /// `0.203`: same file-module nested-block rename as full `1.201` (#16277).
-const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.203";
+/// `0.205`: same local-binder refusal as full `1.203` (#14552).
+const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.205";
 
 /// Compact-classified seam cache schema. This cache stores the same
 /// `ClassifiedSeam` envelope shape as the full repo exposure cache, but
@@ -1281,7 +1285,8 @@ const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.203";
 /// `0.201`: same include-reading wrapper forwarding as full `1.199` (#10357).
 /// `0.202`: same or-pattern oracle reading as full `1.200` (#16286).
 /// `0.203`: same file-module nested-block rename as full `1.201` (#16277).
-pub(crate) const COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.203";
+/// `0.205`: same local-binder refusal as full `1.203` (#14552).
+pub(crate) const COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.205";
 
 /// Compact class-count cache used by repo badge rendering. It keys off
 /// the same workspace state as the full fact cache, but stores only
@@ -5890,7 +5895,8 @@ mod tests {
         // 1.198 -> 1.199: include_str!/include_bytes! wrappers forward their helper result (#10357).
         // 1.199 -> 1.200: matches! or-patterns of values read weak (#16286).
         // 1.200 -> 1.201: nested-block renames settle in a test's own module file (#16277).
-        assert_eq!(CACHE_SCHEMA_VERSION, "1.201");
+        // 1.201 -> 1.203: a test-local binder of the name withholds direct credit (#14552).
+        assert_eq!(CACHE_SCHEMA_VERSION, "1.203");
         // 1.168 -> 1.169: plain `assert_eq!` literal withhold in the audit (#13005).
         // 0.12 -> 0.13 through 0.14 / 0.15 / 0.16 / 0.17 / 0.18: same
         // #3731 semantic transition as the outer classified-seam cache,
@@ -6069,8 +6075,9 @@ mod tests {
         // 0.200 -> 0.201: same include-reading wrapper forwarding as full 1.199 (#10357).
         // 0.201 -> 0.202: same or-pattern oracle reading as full 1.200 (#16286).
         // 0.202 -> 0.203: same file-module nested-block rename as full 1.201 (#16277).
-        assert_eq!(SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.203");
-        assert_eq!(COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.203");
+        // 0.203 -> 0.205: same local-binder refusal as full 1.203 (#14552).
+        assert_eq!(SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.205");
+        assert_eq!(COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.205");
         // 0.170 -> 0.171: same plain `assert_eq!` literal withhold as full 1.169 (#13005).
     }
 
