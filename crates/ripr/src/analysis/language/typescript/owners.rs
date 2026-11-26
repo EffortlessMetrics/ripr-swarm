@@ -54,12 +54,18 @@ pub(crate) fn owners_from_program(
     // `(index, 0)`, while each entry of `module.exports = { f, f }` is its own
     // value, so a duplicated object key still reads as two assignments.
     let mut owners = Vec::new();
+    let replaced = super::overwritten_methods::top_level_replaced_members(&program.body);
     for (index, stmt) in program.body.iter().enumerate() {
         let named_class = commonjs_named_class_export(stmt).map(|(property, _)| property);
         let commonjs = matches!(stmt, Statement::ExpressionStatement(_));
+        let declared_class = super::overwritten_methods::declared_class_name(stmt);
         owners.extend(
             owners_from_statement(stmt, file, source, &imports)
                 .into_iter()
+                .map(|mut owner| {
+                    mark_replaced_by_assignment(&mut owner, declared_class, &replaced);
+                    owner
+                })
                 .enumerate()
                 // Members of an inline `module.exports = class ...` are not
                 // export names: two accessors or overloads sharing a name
@@ -95,7 +101,6 @@ pub(crate) fn owners_from_program(
     // #7812: keep the original owner when `export default ident`
     // snapshots the binding before that reassignment.
     owners = without_reassigned_esm_bindings(&program.body, owners);
-    mark_top_level_replaced_methods(&program.body, source, &mut owners);
     let (entries, outbound, value_names) = module_entries_and_outbound(
         &program.body,
         source,
@@ -1813,48 +1818,26 @@ pub(crate) fn owner_from_arrow(
 /// Marks an ordinary method [`TypeScriptMethodKind::ReplacedByAssignment`]
 /// when a top-level `Class.prototype.NAME = ...` (instance) or
 /// `Class.NAME = ...` (static) statement of the file replaces it (#16314,
-/// RIPR-SPEC-0243 rule 29). Only a class a top-level declaration binds in
-/// module scope is matched: the class name of an inline
-/// `exports.Cart = class {}` is an export property, and a `Cart` written in
-/// that file is some other binding.
-fn mark_top_level_replaced_methods(
-    body: &[Statement<'_>],
-    source: &SourceText<'_>,
-    owners: &mut [TypeScriptOwner],
+/// RIPR-SPEC-0243 rule 29). `declared_class` is the class name the owner's
+/// own statement declares in module scope: an owner of an inline
+/// `exports.Cart = class {}` has none, so a same-named declaration or local
+/// never marks it.
+fn mark_replaced_by_assignment(
+    owner: &mut TypeScriptOwner,
+    declared_class: Option<&str>,
+    replaced: &std::collections::BTreeSet<(String, String, bool)>,
 ) {
-    let replaced = super::overwritten_methods::top_level_replaced_members(body);
-    if replaced.is_empty() {
-        return;
-    }
-    // `(name, first line, last line)` of each declared class.
-    let declared: Vec<(String, usize, usize)> =
-        super::overwritten_methods::module_class_bindings(body)
-            .into_iter()
-            .map(|(name, span)| {
-                (
-                    name,
-                    source.line_for_offset(span.start as usize),
-                    source.line_for_offset(span.end as usize),
-                )
-            })
-            .collect();
-    for owner in owners {
-        let is_static = match owner.owner_kind {
-            OwnerKind::Method => false,
-            OwnerKind::ClassMethod => true,
-            _ => continue,
-        };
-        if owner.method_kind == TypeScriptMethodKind::Ordinary
-            && let Some(class_name) = &owner.class_name
-            // The owner sits in the declared class itself, not in an inline
-            // `exports.Cart = class {}` that shares its name.
-            && declared.iter().any(|(name, first, last)| {
-                name == class_name && (*first..=*last).contains(&owner.start_line)
-            })
-            && replaced.contains(&(class_name.clone(), owner.name.clone(), is_static))
-        {
-            owner.method_kind = TypeScriptMethodKind::ReplacedByAssignment;
-        }
+    let is_static = match owner.owner_kind {
+        OwnerKind::Method => false,
+        OwnerKind::ClassMethod => true,
+        _ => return,
+    };
+    if owner.method_kind == TypeScriptMethodKind::Ordinary
+        && let Some(class_name) = declared_class
+        && owner.class_name.as_deref() == Some(class_name)
+        && replaced.contains(&(class_name.to_string(), owner.name.clone(), is_static))
+    {
+        owner.method_kind = TypeScriptMethodKind::ReplacedByAssignment;
     }
 }
 

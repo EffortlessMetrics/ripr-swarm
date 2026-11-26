@@ -24,7 +24,6 @@ use oxc_ast::ast::{
     PropertyKey, ReturnStatement, Statement, StaticMemberExpression,
 };
 use oxc_ast_visit::{Visit, walk};
-use oxc_span::Span;
 use oxc_syntax::scope::ScopeFlags;
 
 /// Span starts of the methods in `class` whose key a later member overwrites.
@@ -266,10 +265,16 @@ pub(super) fn constructor_replaced_method_starts(class: &Class<'_>) -> BTreeSet<
 /// kept when any top-level statement reads the same member, outside the
 /// assignment's own target (`Cart.prototype.total =
 /// wrap(Cart.prototype.total)`, `const original = Cart.prototype.total;`),
-/// since the replacement may still call it.
+/// since the replacement may still call it. Only receivers a top-level class
+/// declaration binds are considered, so `exports.NAME = ...` statements cost
+/// no scope scan.
 pub(super) fn top_level_replaced_members(
     body: &[Statement<'_>],
 ) -> BTreeSet<(String, String, bool)> {
+    let declared: BTreeSet<&str> = body.iter().filter_map(declared_class_name).collect();
+    if declared.is_empty() {
+        return BTreeSet::new();
+    }
     body.iter()
         .filter_map(|statement| {
             let (object, key, _) = member_assignment(statement)?;
@@ -285,6 +290,9 @@ pub(super) fn top_level_replaced_members(
                 }
                 _ => return None,
             };
+            if !declared.contains(class_name) {
+                return None;
+            }
             let object = if is_static {
                 MemberObject::Class(class_name)
             } else {
@@ -296,30 +304,25 @@ pub(super) fn top_level_replaced_members(
         .collect()
 }
 
-/// The name and span of each top-level class declaration of `body`, which
-/// binds that name in module scope: `class Cart {}`, `export class Cart {}`
-/// and `export default class Cart {}`. An inline `exports.Cart = class {}`
-/// binds no `Cart`, so a top-level `Cart.total = ...` writes some other
-/// binding, even when a declared `Cart` sits beside it.
-pub(super) fn module_class_bindings(body: &[Statement<'_>]) -> Vec<(String, Span)> {
-    body.iter()
-        .filter_map(|statement| match statement {
-            Statement::ClassDeclaration(class) => Some(class),
-            Statement::ExportNamedDeclaration(export) => match &export.declaration {
-                Some(Declaration::ClassDeclaration(class)) => Some(class),
-                _ => None,
-            },
-            Statement::ExportDefaultDeclaration(export) => match &export.declaration {
-                ExportDefaultDeclarationKind::ClassDeclaration(class) => Some(class),
-                _ => None,
-            },
-            _ => None,
-        })
-        .filter_map(|class| {
-            let identifier = class.id.as_ref()?;
-            Some((identifier.name.to_string(), class.span))
-        })
-        .collect()
+/// The name a top-level class declaration statement binds in module scope:
+/// `class Cart {}`, `export class Cart {}` and `export default class Cart {}`.
+/// An inline `exports.Cart = class {}` binds no `Cart`, so a top-level
+/// `Cart.total = ...` writes some other binding, even when a declared `Cart`
+/// sits beside it.
+pub(super) fn declared_class_name<'s>(statement: &'s Statement<'_>) -> Option<&'s str> {
+    let class = match statement {
+        Statement::ClassDeclaration(class) => class,
+        Statement::ExportNamedDeclaration(export) => match &export.declaration {
+            Some(Declaration::ClassDeclaration(class)) => class,
+            _ => return None,
+        },
+        Statement::ExportDefaultDeclaration(export) => match &export.declaration {
+            ExportDefaultDeclarationKind::ClassDeclaration(class) => class,
+            _ => return None,
+        },
+        _ => return None,
+    };
+    class.id.as_ref().map(|identifier| identifier.name.as_str())
 }
 
 /// `(object, NAME, value)` of a plain `object.NAME = value;` expression

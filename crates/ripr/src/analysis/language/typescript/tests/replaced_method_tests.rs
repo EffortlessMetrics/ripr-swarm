@@ -351,6 +351,23 @@ fn a_write_to_a_declared_class_leaves_an_inline_export_class_of_that_name() -> R
     {
         return Err(format!("unexpected owners {owners:?}"));
     }
+    // Both classes on one line: the owner's own declaration decides, not
+    // its line.
+    let one_line = "class Cart { static total() { return 1; } } exports.Cart = class { static total() { return 80; } };\nCart.total = () => 0;\n";
+    let one_line_owners = extract_owners(Path::new("src/cart.js"), one_line);
+    let one_line_kinds: Vec<_> = one_line_owners
+        .iter()
+        .filter(|owner| owner.name == "total")
+        .map(|owner| owner.method_kind)
+        .collect();
+    if one_line_kinds
+        != [
+            TypeScriptMethodKind::ReplacedByAssignment,
+            TypeScriptMethodKind::Ordinary,
+        ]
+    {
+        return Err(format!("unexpected one-line owners {one_line_owners:?}"));
+    }
     case(
         "declared-and-inline-export",
         &owner_text,

@@ -1502,8 +1502,8 @@ is read through parentheses and TypeScript casts (`(Cart.prototype as
 any).total = ...`, `(this as any).total = ...`), and a top-level assignment
 counts only for a class a top-level declaration binds in module scope (the
 class name of an inline `exports.Cart = class {}` is an export property, not a
-binding), and only for a method of that declared class, not of an inline
-`exports.Cart = class {}` sharing its name. Such an ordinary method (not a getter, setter or constructor) stays
+binding), and only for a method of that declaration itself, not of an
+inline `exports.Cart = class {}` sharing its name, even on the same line. Such an ordinary method (not a getter, setter or constructor) stays
 an owner (a changed line is still reported) but relates to no test, so it
 reads `no_static_path`, and its guidance names the assignment it found. Not a
 replacement: any read of the same member in the same scope (the constructor
