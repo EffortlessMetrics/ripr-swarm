@@ -12,9 +12,10 @@
 //! - the drop-in manifest authority verifies the caller's file: a plain
 //!   registry dependency, locked at an audited version;
 //! - the caller's file has no `use` that binds the root name to anything
-//!   else, no module or `extern crate .. as` of that name, no item-position
-//!   macro call that could emit one, and no glob import that could bring one
-//!   in;
+//!   else, no module of that name, no item-position macro call that could
+//!   emit one, and no glob import that could bring one in, and no indexed
+//!   file renames a crate to that name (`extern crate self as tracing;` at a
+//!   crate root reaches every file of the crate);
 //! - the macro's arguments do not mention the callee. A logging macro
 //!   evaluates its arguments only when its level is enabled, so a call in
 //!   them may not run.
@@ -56,9 +57,34 @@ pub(super) fn verified_logging_roots(
         .into_iter()
         .filter(|root| {
             !root_may_be_rebound(parsed.syntax(), root)
+                && !extern_crate_alias_anywhere(index, root)
                 && index.drop_in_manifests.verified(&caller.file, root)
         })
         .collect()
+}
+
+/// Whether any indexed file renames a crate to `root` with `extern crate ..
+/// as root;`. At a crate root such a rename (`extern crate self as tracing;`)
+/// enters the extern prelude, so `tracing::` names it in every file of that
+/// crate, not only the one that declares it. The scan does not work out
+/// which crate a file belongs to: any such rename in the workspace refuses.
+fn extern_crate_alias_anywhere(index: &RustIndex, root: &str) -> bool {
+    index.files().values().any(|file| {
+        let source = &file.source;
+        source.contains("extern") && source.contains(root) && {
+            let parsed = ast::SourceFile::parse(source, ra_ap_syntax::Edition::CURRENT).tree();
+            parsed
+                .syntax()
+                .descendants()
+                .filter_map(ast::ExternCrate::cast)
+                .any(|krate| {
+                    krate
+                        .rename()
+                        .and_then(|rename| rename.name())
+                        .is_some_and(|name| name.text().trim_start_matches("r#") == root)
+                })
+        }
+    })
 }
 
 /// Whether `root::` in `file` may name something other than the extern

@@ -84,6 +84,24 @@ fn finding_with_dependencies(
     diff: &str,
     family: &str,
 ) -> Result<Value, String> {
+    finding_in_files(
+        dependencies,
+        locked,
+        &[("src/lib.rs", source)],
+        diff,
+        family,
+    )
+}
+
+/// [`finding_with_dependencies`] with every source file given as
+/// `(path, text)`.
+fn finding_in_files(
+    dependencies: &str,
+    locked: &[(&str, &str)],
+    sources: &[(&str, &str)],
+    diff: &str,
+    family: &str,
+) -> Result<Value, String> {
     let scratch = Scratch::create()?;
     let manifest = format!("{MANIFEST}\n[dependencies]\n{dependencies}\n");
     let mut lock =
@@ -96,9 +114,11 @@ fn finding_with_dependencies(
     for (relative, text) in [
         ("Cargo.toml", manifest.as_str()),
         ("Cargo.lock", lock.as_str()),
-        ("src/lib.rs", source),
         ("change.diff", diff),
-    ] {
+    ]
+    .into_iter()
+    .chain(sources.iter().copied())
+    {
         std::fs::write(scratch.0.join(relative), text).map_err(|error| error.to_string())?;
     }
     let report = check_workspace(CheckInput {
@@ -641,6 +661,24 @@ fn audited_qualified_logging_wrapper_forwards_the_helper_result() -> Result<(), 
             assert_eq!(finding["probe"]["line"], first + 1, "{label}\n{finding}");
             assert_ne!(finding["classification"], "exposed", "{label}\n{finding}");
         }
+    }
+    // `extern crate self as tracing;` at the crate root puts the crate's own
+    // exported `info!` behind `tracing::` in every file of the crate, so a
+    // wrapper in another file stays opaque even though that file binds
+    // nothing.
+    let lib = "extern crate self as tracing;\n#[macro_export]\nmacro_rules! info { ($q:expr) => { if $q == 10 { return 5; } }; }\nmod pricing;\n";
+    let pricing = bulk_source(&wrapper("tracing::info!(qty);"), BOUNDARY_TESTS);
+    let diff = BULK_DIFF.replace("src/lib.rs", "src/pricing.rs");
+    for family in ["predicate", "return_value"] {
+        let finding = finding_in_files(
+            TRACING,
+            &[("tracing", "0.1.44")],
+            &[("src/lib.rs", lib), ("src/pricing.rs", &pricing)],
+            &diff,
+            family,
+        )?;
+        assert_eq!(finding["probe"]["line"], 2, "{finding}");
+        assert_ne!(finding["classification"], "exposed", "{finding}");
     }
     Ok(())
 }
