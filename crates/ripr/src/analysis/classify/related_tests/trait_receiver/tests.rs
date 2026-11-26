@@ -547,6 +547,15 @@ fn a_variant_shaped_call_needs_a_declared_variant() -> Result<(), String> {
         owner,
         "let _ = Tile::Make(3).area();"
     )?);
+    // A trait provides `Tile::Make`, which returns another type that
+    // implements the same trait; the call runs `Measure for Other`.
+    let provided = format!(
+        "{field_only}pub struct Other(pub u32);\n\
+         impl Measure for Other {{\n    fn area(&self) -> u32 {{ self.0 }}\n}}\n\
+         pub trait Build {{\n    fn Make(n: u32) -> Other {{ Other(n) }}\n}}\n\
+         impl Build for Tile {{}}\n"
+    );
+    assert!(!direct(&provided, owner, "let _ = Tile::Make(3).area();")?);
     Ok(())
 }
 
