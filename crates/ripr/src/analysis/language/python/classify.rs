@@ -2316,7 +2316,9 @@ fn classify_change_for_owner_inner<'a>(
         } else if boundary_downgraded || missing_alternative {
             // The boundary downgrade names the equality that would activate the
             // changed predicate, with the reason listing the operand values the
-            // strong related calls actually bind.
+            // strong related calls actually bind. For a changed `case a | b`
+            // alternative the reason names the match subject, the discriminator
+            // is the missing value, and the observed list is empty.
             boundary_gap
                 .and_then(|gap| {
                     gap.discriminator

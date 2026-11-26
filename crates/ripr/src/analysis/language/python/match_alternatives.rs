@@ -341,9 +341,11 @@ pub(super) fn missing(
         .chain(new.alternatives.iter().filter(|a| changed(a, &old)))
         .peekable();
     let any_change = altered.peek().is_some();
-    if !any_change && old.alternatives.len() == new.alternatives.len() {
-        // The arm's suite or guard can change on the same line while the
-        // literal alternatives stay the same. Its existing gate owns that edit.
+    if !any_change {
+        // The arm's suite or guard can change on the same line, or a repeated
+        // alternative can be dropped, while the literal values stay the same.
+        // No input selects the arm differently, so the arm's existing gate
+        // owns that edit.
         return None;
     }
     let mut inputs = Vec::new();

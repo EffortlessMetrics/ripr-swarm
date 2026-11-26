@@ -405,6 +405,17 @@ fn literal_or_edit_requires_each_alternative_to_change_the_selected_arm() -> Res
         );
         assert_eq!(classify_case(old, new, "", &y)?.class, Exposed);
     }
+    // A repeated alternative accepts no input the others do not. Dropping or
+    // adding one changes no selected arm, so the edit gets no card.
+    let repeated = r#""yes" | "y" | "y""#;
+    for (old, new) in [(repeated, both), (both, repeated)] {
+        let finding = classify_case(old, new, "", &misses)?;
+        assert_eq!(finding.class, Exposed, "{old} to {new}");
+        assert!(
+            finding.activation.missing_discriminators.is_empty(),
+            "{old} to {new}: {finding:?}"
+        );
+    }
     for (old, new) in [(three, yes), (yes, three)] {
         let partial = classify_case(old, new, "", &y)?;
         assert_eq!(partial.class, WeaklyExposed);
