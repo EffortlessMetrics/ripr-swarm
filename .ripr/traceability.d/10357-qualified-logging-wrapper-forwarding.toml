@@ -4,7 +4,7 @@ tests = [
   "crates/ripr/tests/helper_wrapper_reach.rs::audited_qualified_logging_wrapper_forwards_the_helper_result",
 ]
 code = [
-  "crates/ripr/src/analysis/classify/helper_transfer/logging_roots.rs",
+  "crates/ripr/src/analysis/classify/helper_transfer/audited_macro_roots.rs",
   "crates/ripr/src/analysis/classify/helper_transfer.rs",
   "crates/ripr/src/analysis/facts/drop_in.rs",
 ]
