@@ -20,6 +20,18 @@ pub(super) fn issued_reading(
     reading
 }
 
+/// The `test_run` object for the receipt issued to `manifest`'s attempt, for
+/// a transport that projects one attempt (#16251). It is the object `ripr agent
+/// status --attempt` emits, built from the same retained record, and is `None`
+/// when the receipt does not record that ripr ran no test.
+pub(crate) fn issued_test_run_json(
+    manifest: &RepairAttemptManifest,
+    value: &Value,
+) -> Option<Value> {
+    let reading = issued_reading(manifest, value);
+    reading.test_not_run().then(|| test_run_json(&reading))
+}
+
 /// The counts of a caller-reported run, in the words the finish printed.
 pub(crate) fn reported_test_run_counts(run: &ReportedTestRun) -> String {
     format!(
@@ -53,6 +65,37 @@ pub(super) fn test_run_line(reading: &AgentReceiptReading) -> String {
             test_not_run_next_step(reading)
         ),
     }
+}
+
+/// The same line for one of several finished attempts in the aggregate
+/// status (#14146): it names the attempt it speaks for.
+pub(super) fn attempt_test_run_line(attempt_id: &str, reading: &AgentReceiptReading) -> String {
+    let line = test_run_line(reading);
+    match line.strip_prefix("Test run: ") {
+        Some(rest) => format!("Test run (attempt `{attempt_id}`): {rest}"),
+        None => line,
+    }
+}
+
+/// How telling a reading is for the aggregate status (#14146), lowest first:
+/// a caller-reported failure, then no recorded run, then a caller-reported
+/// pass. A failure must never sit behind another attempt's reading.
+pub(super) fn aggregate_rank(reading: &AgentReceiptReading) -> u8 {
+    match &reading.reported_test_run {
+        Some(run) if run.failed > 0 => 0,
+        None => 1,
+        Some(_) => 2,
+    }
+}
+
+/// The aggregate JSON `test_run` object: the per-attempt object plus the
+/// `attempt_id` it speaks for (#14146).
+pub(super) fn aggregate_test_run_json(attempt_id: &str, reading: &AgentReceiptReading) -> Value {
+    let mut value = test_run_json(reading);
+    if let Some(object) = value.as_object_mut() {
+        object.insert("attempt_id".to_string(), Value::from(attempt_id));
+    }
+    value
 }
 
 /// The JSON `test_run` object for the same axis. `not_recorded` keeps its

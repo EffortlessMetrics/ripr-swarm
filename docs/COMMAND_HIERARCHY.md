@@ -22,12 +22,13 @@ see [installation](QUICKSTART.md#installation) for published and source builds.
 | Read detailed help | `ripr help <command>`, `ripr help workflow [name]`, or `ripr help --all` | Options for one command, one bounded workflow's steps, or the full reference. |
 
 The bare `cache`, `baseline`, `policy`, `reports`, `calibrate`, `zero`,
-`assistant-loop`, `config`, `pr-ledger`, `pr-review`, `coverage-grip`, and `gate`
-groups print their own help and exit successfully. For example, `ripr cache`
-shows the same help as `ripr help cache`, without reading configuration or
+`assistant-loop`, `config`, `pr-ledger`, `pr-review`, `pr-comments`,
+`coverage-grip`, and `gate` groups print their own help and exit successfully.
+For example, `ripr cache` shows the same help as `ripr help cache`, without reading configuration or
 writing reports. Choose a subcommand to perform an operation; its required
 inputs still apply. `ripr gate --pr-guidance PATH` also accepts the flag-first
-evaluation shorthand. `ripr pr-comments` retains its default `plan` action.
+evaluation shorthand. `ripr pr-comments` no longer implies `plan`: run
+`ripr pr-comments plan` to write the comment plan.
 
 Mistyped `agent` subcommands list the accepted children and suggest a nearby
 spelling when one exists: `ripr agent brief2` suggests `brief`. Suggestions

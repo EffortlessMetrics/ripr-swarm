@@ -179,8 +179,24 @@ fn write_sample_artifact(
         return Err("sample diff must produce findings".to_string());
     }
     let path = dir.join("artifact.json");
-    write_check_artifact(&path, &input, &config, &output.findings, false)?;
+    write_check_artifact(
+        &path,
+        &input,
+        &config,
+        &output.findings,
+        &output.owner_opt_outs,
+        false,
+    )?;
     Ok((path, input, config, output.findings))
+}
+
+fn load_findings_for_reuse(
+    path: &Path,
+    input: &CheckInput,
+    config: &RiprConfig,
+    asserted_base: Option<&str>,
+) -> Result<Vec<Finding>, String> {
+    Ok(load_for_reuse(path, input, config, asserted_base)?.findings)
 }
 
 fn require_err_containing(
@@ -234,8 +250,8 @@ fn live_truthiness_admission_cannot_be_reused_from_an_artifact() -> Result<(), S
             .first_mut()
             .ok_or("sample must produce a finding")?;
         first.alignment_reason = Some(crate::domain::LIVE_PYTHON_TRUTHINESS_ALIGNMENT.to_string());
-        write_check_artifact(&path, &input, &config, &findings, false)?;
-        let error = load_findings_for_reuse_core(&path, &input, &config, None)
+        write_check_artifact(&path, &input, &config, &findings, &[], false)?;
+        let error = load_for_reuse(&path, &input, &config, None)
             .err()
             .ok_or("live admission must refuse artifact reuse")?;
         assert_eq!(
@@ -460,7 +476,7 @@ fn context_from_artifact_honors_max_related_tests_beyond_json_render_cap() -> Re
                 role: crate::domain::RelatedTestRole::Contributing,
             })
             .collect();
-        write_check_artifact(&path, &input, &config, &[finding.clone()], false)?;
+        write_check_artifact(&path, &input, &config, &[finding.clone()], &[], false)?;
         let packet =
             collect_context_from_artifact(input, &finding.id, 12, &config, &path, None, false)?;
         if !packet.contains("reuse_cap_test_11") {
@@ -540,7 +556,14 @@ fn load_fails_closed_on_diff_bytes_change() -> Result<(), String> {
         let config = RiprConfig::default();
         let output = check_workspace_with_config(input.clone(), &config)?;
         let path = dir.join("artifact.json");
-        write_check_artifact(&path, &input, &config, &output.findings, false)?;
+        write_check_artifact(
+            &path,
+            &input,
+            &config,
+            &output.findings,
+            &output.owner_opt_outs,
+            false,
+        )?;
 
         let mut bytes =
             std::fs::read_to_string(&diff_copy).map_err(|err| format!("read: {err}"))?;
@@ -568,7 +591,14 @@ fn load_fails_closed_when_recorded_diff_source_is_missing() -> Result<(), String
         let config = RiprConfig::default();
         let output = check_workspace_with_config(input.clone(), &config)?;
         let path = dir.join("artifact.json");
-        write_check_artifact(&path, &input, &config, &output.findings, false)?;
+        write_check_artifact(
+            &path,
+            &input,
+            &config,
+            &output.findings,
+            &output.owner_opt_outs,
+            false,
+        )?;
 
         std::fs::remove_file(&diff_copy).map_err(|err| format!("remove diff: {err}"))?;
 
@@ -746,7 +776,7 @@ fn perl_facts_packet_content_is_part_of_the_identity() -> Result<(), String> {
         let path = dir.join("artifact.json");
         // Write directly: the artifact write path does not run the analysis,
         // so a synthetic packet exercises the identity without a Perl adapter.
-        write_check_artifact(&path, &input, &config, &[], false)?;
+        write_check_artifact(&path, &input, &config, &[], &[], false)?;
 
         let loaded = load_findings_for_reuse(&path, &input, &config, None)?;
         if !loaded.is_empty() {
@@ -786,12 +816,12 @@ fn repeated_write_replaces_artifact_atomically() -> Result<(), String> {
     let dir = unique_temp_dir("rewrite")?;
     let result = (|| {
         let (path, input, config, findings) = write_sample_artifact(&dir)?;
-        write_check_artifact(&path, &input, &config, &[], false)?;
+        write_check_artifact(&path, &input, &config, &[], &[], false)?;
         let loaded = load_findings_for_reuse(&path, &input, &config, None)?;
         if !loaded.is_empty() {
             return Err("last writer must win on a repeated --write-artifact".to_string());
         }
-        write_check_artifact(&path, &input, &config, &findings, false)?;
+        write_check_artifact(&path, &input, &config, &findings, &[], false)?;
         let loaded = load_findings_for_reuse(&path, &input, &config, None)?;
         if loaded != findings {
             return Err("re-written artifact must round-trip the finding set".to_string());
@@ -811,7 +841,7 @@ fn artifact_re_resolution_honors_git_timeout() -> Result<(), String> {
         let config = RiprConfig::default();
         let path = dir.join("artifact.json");
 
-        write_check_artifact(&path, &input, &config, &[], true)?;
+        write_check_artifact(&path, &input, &config, &[], &[], true)?;
         input.git_timeout = Some(std::time::Duration::ZERO);
 
         let error = load_findings_for_reuse(&path, &input, &config, None)
@@ -850,7 +880,7 @@ fn concurrent_writers_never_leave_a_torn_artifact() -> Result<(), String> {
                 };
                 handles.push(scope.spawn(move || -> Result<(), String> {
                     for _ in 0..10 {
-                        write_check_artifact(&path, &input, &config, &findings, false)?;
+                        write_check_artifact(&path, &input, &config, &findings, &[], false)?;
                     }
                     Ok(())
                 }));
@@ -868,7 +898,7 @@ fn concurrent_writers_never_leave_a_torn_artifact() -> Result<(), String> {
         }
         // The final artifact parses as one complete envelope from one writer.
         let text = std::fs::read_to_string(&path).map_err(|err| format!("read: {err}"))?;
-        let artifact: CheckArtifactV1 =
+        let artifact: CheckArtifactV2 =
             serde_json::from_str(&text).map_err(|err| format!("torn artifact: {err}"))?;
         if !artifact.findings.is_empty() && artifact.findings.len() != output.findings.len() {
             return Err(format!(
@@ -998,7 +1028,14 @@ fn worktree_artifact_round_trip_reuses_recorded_findings() -> Result<(), String>
             return Err("worktree fixture diff must produce findings".to_string());
         }
         let path = dir.join("artifact.json");
-        write_check_artifact(&path, &input, &config, &output.findings, true)?;
+        write_check_artifact(
+            &path,
+            &input,
+            &config,
+            &output.findings,
+            &output.owner_opt_outs,
+            true,
+        )?;
         let text = std::fs::read_to_string(&path).map_err(|err| format!("read artifact: {err}"))?;
         if !text.contains("\"worktree\"") {
             return Err("artifact must record the worktree diff source".to_string());
@@ -1022,7 +1059,7 @@ fn worktree_artifact_fails_closed_when_worktree_drifts() -> Result<(), String> {
         let input = worktree_input(&repo);
         let config = RiprConfig::default();
         let path = dir.join("artifact.json");
-        write_check_artifact(&path, &input, &config, &[], true)?;
+        write_check_artifact(&path, &input, &config, &[], &[], true)?;
 
         // A further tracked edit between write and reuse changes the diff
         // bytes; reuse must fail closed naming diff_bytes_hash.
@@ -1048,7 +1085,7 @@ fn worktree_artifact_scope_flags_alongside_from_are_assertions() -> Result<(), S
         let input = worktree_input(&repo);
         let config = RiprConfig::default();
         let path = dir.join("artifact.json");
-        write_check_artifact(&path, &input, &config, &[], true)?;
+        write_check_artifact(&path, &input, &config, &[], &[], true)?;
 
         // A matching --base assertion against a worktree recording loads.
         load_findings_for_reuse(&path, &input, &config, Some("HEAD"))?;

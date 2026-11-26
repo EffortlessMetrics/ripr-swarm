@@ -62,6 +62,8 @@ fn has_typescript_or_javascript_markers(root: &Path) -> bool {
     shallow_has_file(root, "package.json")
         || shallow_has_file(root, "tsconfig.json")
         || shallow_has_file(root, "jsconfig.json")
+        || shallow_has_file(root, "deno.json")
+        || shallow_has_file(root, "deno.jsonc")
         || analysis::TYPESCRIPT_SOURCE_EXTENSIONS
             .iter()
             .chain(analysis::JAVASCRIPT_SOURCE_EXTENSIONS.iter())
@@ -85,6 +87,8 @@ pub(crate) fn detect_languages(root: &Path) -> Vec<LanguageId> {
     // extension families consume the shared TS/JS extension authority.
     if shallow_has_file(root, "package.json")
         || shallow_has_file(root, "tsconfig.json")
+        || shallow_has_file(root, "deno.json")
+        || shallow_has_file(root, "deno.jsonc")
         || analysis::TYPESCRIPT_SOURCE_EXTENSIONS
             .iter()
             .any(|extension| shallow_has_extension(root, extension))

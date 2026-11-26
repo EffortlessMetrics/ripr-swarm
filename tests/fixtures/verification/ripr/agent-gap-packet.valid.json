@@ -1,0 +1,392 @@
+{
+  "analysis_outcome": null,
+  "analysis_outcome_error": null,
+  "analysis_outcome_status": "not_applicable",
+  "inputs": {
+    "gap_ledger": "target/gap-ledger.json"
+  },
+  "packets": [
+    {
+      "allowed_edit_surface": [
+        "tests/main.rs"
+      ],
+      "allowed_files": [
+        "tests/main.rs"
+      ],
+      "anchor": {
+        "dedupe_fingerprint": "gap:54c07ec8eeadf203",
+        "file": "src/lib.rs",
+        "line": 2,
+        "owner": "src/lib.rs::discounted_total"
+      },
+      "assertion_shape": "assert_eq!(discounted_total(100, 100), 90)",
+      "assignment": {
+        "eligible": true,
+        "reason": "producer-validated live-current packet"
+      },
+      "canonical_gap_id": "gap:54c07ec8eeadf203",
+      "changed_behavior": "amount >= threshold",
+      "command_specs": {
+        "receipt": [
+          {
+            "args": [
+              "agent",
+              "receipt",
+              "--root",
+              ".",
+              "--verify-json",
+              "target/ripr/workflow/agent-verify.json",
+              "--seam-id",
+              "67f9714ba37b3967",
+              "--json",
+              "--out",
+              "target/ripr/reports/agent-receipt.json"
+            ],
+            "authority_boundary": "receipt_route_only",
+            "cancellation": "allowed",
+            "command_id": "ripr:agent:receipt",
+            "cost_class": "unknown",
+            "env_passthrough": [],
+            "env_set": [],
+            "environment": "clean",
+            "execution_mode": "direct",
+            "expected_exit_codes": [
+              0
+            ],
+            "expected_result_parser": "declared_json",
+            "expected_writes": [
+              "target/ripr/reports/agent-receipt.json"
+            ],
+            "human_display": "ripr agent receipt --root . --verify-json target/ripr/workflow/agent-verify.json --seam-id 67f9714ba37b3967 --json --out target/ripr/reports/agent-receipt.json",
+            "network": "forbidden",
+            "platforms": [
+              "linux",
+              "macos",
+              "windows"
+            ],
+            "program": "ripr",
+            "role": "receipt",
+            "schema_version": "1",
+            "stdin": "null",
+            "timeout_ms": 120000,
+            "working_directory": "."
+          }
+        ],
+        "verify": [
+          {
+            "args": [
+              "agent",
+              "verify",
+              "--root",
+              ".",
+              "--before",
+              "target/ripr/pilot/repo-exposure.json",
+              "--after",
+              "target/ripr/pilot/after.repo-exposure.json",
+              "--json"
+            ],
+            "authority_boundary": "verification_route_only",
+            "cancellation": "allowed",
+            "command_id": "ripr:agent:verify",
+            "cost_class": "unknown",
+            "env_passthrough": [],
+            "env_set": [],
+            "environment": "clean",
+            "execution_mode": "direct",
+            "expected_exit_codes": [
+              0
+            ],
+            "expected_result_parser": "declared_json",
+            "expected_writes": [],
+            "human_display": "ripr agent verify --root . --before target/ripr/pilot/repo-exposure.json --after target/ripr/pilot/after.repo-exposure.json --json",
+            "network": "forbidden",
+            "platforms": [
+              "linux",
+              "macos",
+              "windows"
+            ],
+            "program": "ripr",
+            "role": "verify",
+            "schema_version": "1",
+            "stdin": "null",
+            "timeout_ms": 120000,
+            "working_directory": "."
+          }
+        ]
+      },
+      "conflict_group": "file:tests/main.rs",
+      "current_evidence_strength": "predicate_boundary / actionable",
+      "discriminator_guidance": {
+        "basis": null,
+        "reason": "producer_fact_absent",
+        "recovery": "inspect_fix_site",
+        "state": "not_produced",
+        "static_limit_kind": null,
+        "text": null
+      },
+      "evidence_class": "predicate_boundary",
+      "evidence_ids": [
+        "67f9714ba37b3967"
+      ],
+      "file": "src/lib.rs",
+      "forbidden_files": [
+        "src/lib.rs"
+      ],
+      "gap_id": "gap:repo:gap:54c07ec8eeadf203",
+      "gap_kind": "MissingBoundaryAssertion",
+      "gap_state": "actionable",
+      "language": "rust",
+      "language_status": "stable",
+      "line": 2,
+      "llm_guidance": {
+        "copyable_packet": {
+          "authority_boundary": "gate_decision_artifact_only",
+          "context": [
+            "Gap kind: MissingBoundaryAssertion; state: actionable; policy: new.",
+            "Language: rust (stable).",
+            "Current evidence strength: predicate_boundary / actionable.",
+            "Anchor: src/lib.rs:2 in `src/lib.rs::discounted_total`.",
+            "Changed behavior: `amount >= threshold`.",
+            "Missing discriminator unavailable: state `not_produced`; reason `producer_fact_absent`; recovery `inspect_fix_site`.",
+            "Receipt command: `ripr agent receipt --root . --verify-json target/ripr/workflow/agent-verify.json --seam-id 67f9714ba37b3967 --json --out target/ripr/reports/agent-receipt.json`.",
+            "Repair target: tests/main.rs.",
+            "Allowed edit surface: tests/main.rs.",
+            "Related test or proof target: `far_above`.",
+            "Evidence IDs: 67f9714ba37b3967.",
+            "Static evidence boundary: static advisory evidence only; not runtime proof, coverage adequacy, mutation confirmation, gate approval, or merge approval..",
+            "Source artifact: target/gap-ledger.json."
+          ],
+          "do_not_do": [
+            "Do not edit production code unless the focused proof exposes a real product defect.",
+            "Do not broaden the change beyond this GapRecord and its repair route.",
+            "Do not treat static evidence as runtime mutation, coverage, or correctness proof.",
+            "Do not generate tests or call external providers from this packet."
+          ],
+          "markdown": "## Task\nRepair the `MissingBoundaryAssertion` gap `gap:repo:gap:54c07ec8eeadf203` using the bounded `AddBoundaryAssertion` route.\n\n## Context\n- Gap kind: MissingBoundaryAssertion; state: actionable; policy: new.\n- Language: rust (stable).\n- Current evidence strength: predicate_boundary / actionable.\n- Anchor: src/lib.rs:2 in `src/lib.rs::discounted_total`.\n- Changed behavior: `amount >= threshold`.\n- Missing discriminator unavailable: state `not_produced`; reason `producer_fact_absent`; recovery `inspect_fix_site`.\n- Receipt command: `ripr agent receipt --root . --verify-json target/ripr/workflow/agent-verify.json --seam-id 67f9714ba37b3967 --json --out target/ripr/reports/agent-receipt.json`.\n- Repair target: tests/main.rs.\n- Allowed edit surface: tests/main.rs.\n- Related test or proof target: `far_above`.\n- Evidence IDs: 67f9714ba37b3967.\n- Static evidence boundary: static advisory evidence only; not runtime proof, coverage adequacy, mutation confirmation, gate approval, or merge approval..\n- Source artifact: target/gap-ledger.json.\n\n## Repair\n- Use repair route `AddBoundaryAssertion`.\n- Focused proof intent: Inspect the fix site before adding a targeted assertion; the producer did not supply a discriminator.\n- Do not write or promote a targeted test until the producer supplies a discriminator; inspect the fix site instead.\n- Keep the repair focused on the selected gap and its related test target.\n\n## Verification\n- ripr agent verify --root . --before target/ripr/pilot/repo-exposure.json --after target/ripr/pilot/after.repo-exposure.json --json\n- ripr agent receipt --root . --verify-json target/ripr/workflow/agent-verify.json --seam-id 67f9714ba37b3967 --json --out target/ripr/reports/agent-receipt.json\n\n## Receipt\n- Run `ripr agent receipt --root . --verify-json target/ripr/workflow/agent-verify.json --seam-id 67f9714ba37b3967 --json --out target/ripr/reports/agent-receipt.json` after verification.\n\n## Stop Conditions\n- Stop if the related test is outside the current workspace.\n- Stop if the suggested assertion would require changing production behavior first.\n\n## Do Not Do\n- Do not edit production code unless the focused proof exposes a real product defect.\n- Do not broaden the change beyond this GapRecord and its repair route.\n- Do not treat static evidence as runtime mutation, coverage, or correctness proof.\n- Do not generate tests or call external providers from this packet.\n\n## Authority\ngate_decision_artifact_only",
+          "receipt": [
+            "Run `ripr agent receipt --root . --verify-json target/ripr/workflow/agent-verify.json --seam-id 67f9714ba37b3967 --json --out target/ripr/reports/agent-receipt.json` after verification."
+          ],
+          "repair": [
+            "Use repair route `AddBoundaryAssertion`.",
+            "Focused proof intent: Inspect the fix site before adding a targeted assertion; the producer did not supply a discriminator.",
+            "Do not write or promote a targeted test until the producer supplies a discriminator; inspect the fix site instead.",
+            "Keep the repair focused on the selected gap and its related test target."
+          ],
+          "stop_conditions": [
+            "Stop if the related test is outside the current workspace.",
+            "Stop if the suggested assertion would require changing production behavior first."
+          ],
+          "task": "Repair the `MissingBoundaryAssertion` gap `gap:repo:gap:54c07ec8eeadf203` using the bounded `AddBoundaryAssertion` route.",
+          "verification": [
+            "ripr agent verify --root . --before target/ripr/pilot/repo-exposure.json --after target/ripr/pilot/after.repo-exposure.json --json",
+            "ripr agent receipt --root . --verify-json target/ripr/workflow/agent-verify.json --seam-id 67f9714ba37b3967 --json --out target/ripr/reports/agent-receipt.json"
+          ]
+        },
+        "prompt": "The producer did not provide a discriminator; inspect the fix site and do not promote this to a targeted-test repair. assert_eq!(discounted_total(100, 100), 90) Use the supplied GapRecord fields as the repair boundary. Verify with `ripr agent verify --root . --before target/ripr/pilot/repo-exposure.json --after target/ripr/pilot/after.repo-exposure.json --json`.",
+        "stop_conditions": [
+          "Stop if the related test is outside the current workspace.",
+          "Stop if the suggested assertion would require changing production behavior first."
+        ],
+        "verify_command": "ripr agent verify --root . --before target/ripr/pilot/repo-exposure.json --after target/ripr/pilot/after.repo-exposure.json --json"
+      },
+      "missing_discriminator": null,
+      "must_not_change": [
+        "Do not edit production code unless the focused proof exposes a real product defect.",
+        "Do not broaden the change beyond this GapRecord and its repair route.",
+        "Do not treat static evidence as runtime mutation, coverage, or correctness proof.",
+        "Do not generate tests or call external providers from this packet."
+      ],
+      "owner": "src/lib.rs::discounted_total",
+      "policy_state": "new",
+      "queue_state": "queued",
+      "receipt_command": "ripr agent receipt --root . --verify-json target/ripr/workflow/agent-verify.json --seam-id 67f9714ba37b3967 --json --out target/ripr/reports/agent-receipt.json",
+      "receipt_status": "available",
+      "recommended_test": {
+        "file": null,
+        "name": null,
+        "reason": "producer discriminator was not produced; inspect the fix site before editing tests"
+      },
+      "repair_card": {
+        "authority_boundary": "gate_decision_artifact_only",
+        "changed_behavior": "amount >= threshold",
+        "command_specs": {
+          "receipt": [
+            {
+              "args": [
+                "agent",
+                "receipt",
+                "--root",
+                ".",
+                "--verify-json",
+                "target/ripr/workflow/agent-verify.json",
+                "--seam-id",
+                "67f9714ba37b3967",
+                "--json",
+                "--out",
+                "target/ripr/reports/agent-receipt.json"
+              ],
+              "authority_boundary": "receipt_route_only",
+              "cancellation": "allowed",
+              "command_id": "ripr:agent:receipt",
+              "cost_class": "unknown",
+              "env_passthrough": [],
+              "env_set": [],
+              "environment": "clean",
+              "execution_mode": "direct",
+              "expected_exit_codes": [
+                0
+              ],
+              "expected_result_parser": "declared_json",
+              "expected_writes": [
+                "target/ripr/reports/agent-receipt.json"
+              ],
+              "human_display": "ripr agent receipt --root . --verify-json target/ripr/workflow/agent-verify.json --seam-id 67f9714ba37b3967 --json --out target/ripr/reports/agent-receipt.json",
+              "network": "forbidden",
+              "platforms": [
+                "linux",
+                "macos",
+                "windows"
+              ],
+              "program": "ripr",
+              "role": "receipt",
+              "schema_version": "1",
+              "stdin": "null",
+              "timeout_ms": 120000,
+              "working_directory": "."
+            }
+          ],
+          "verify": [
+            {
+              "args": [
+                "agent",
+                "verify",
+                "--root",
+                ".",
+                "--before",
+                "target/ripr/pilot/repo-exposure.json",
+                "--after",
+                "target/ripr/pilot/after.repo-exposure.json",
+                "--json"
+              ],
+              "authority_boundary": "verification_route_only",
+              "cancellation": "allowed",
+              "command_id": "ripr:agent:verify",
+              "cost_class": "unknown",
+              "env_passthrough": [],
+              "env_set": [],
+              "environment": "clean",
+              "execution_mode": "direct",
+              "expected_exit_codes": [
+                0
+              ],
+              "expected_result_parser": "declared_json",
+              "expected_writes": [],
+              "human_display": "ripr agent verify --root . --before target/ripr/pilot/repo-exposure.json --after target/ripr/pilot/after.repo-exposure.json --json",
+              "network": "forbidden",
+              "platforms": [
+                "linux",
+                "macos",
+                "windows"
+              ],
+              "program": "ripr",
+              "role": "verify",
+              "schema_version": "1",
+              "stdin": "null",
+              "timeout_ms": 120000,
+              "working_directory": "."
+            }
+          ]
+        },
+        "current_evidence_strength": "predicate_boundary / actionable",
+        "discriminator_guidance": {
+          "basis": null,
+          "reason": "producer_fact_absent",
+          "recovery": "inspect_fix_site",
+          "state": "not_produced",
+          "static_limit_kind": null,
+          "text": null
+        },
+        "gap_kind": "MissingBoundaryAssertion",
+        "missing_discriminator": null,
+        "receipt_command": "ripr agent receipt --root . --verify-json target/ripr/workflow/agent-verify.json --seam-id 67f9714ba37b3967 --json --out target/ripr/reports/agent-receipt.json",
+        "receipt_status": "available",
+        "repair": "assert_eq!(discounted_total(100, 100), 90)",
+        "repair_route": {
+          "assertion_shape": "assert_eq!(discounted_total(100, 100), 90)",
+          "changed_behavior": "amount >= threshold",
+          "related_test": "far_above",
+          "route_kind": "AddBoundaryAssertion",
+          "stop_conditions": [
+            "Stop if the related test is outside the current workspace.",
+            "Stop if the suggested assertion would require changing production behavior first."
+          ],
+          "target_file": "tests/main.rs",
+          "target_line": 4
+        },
+        "source_artifact": "target/gap-ledger.json",
+        "static_evidence_boundary": "static advisory evidence only; not runtime proof, coverage adequacy, mutation confirmation, gate approval, or merge approval.",
+        "verification_commands": [
+          "ripr agent verify --root . --before target/ripr/pilot/repo-exposure.json --after target/ripr/pilot/after.repo-exposure.json --json"
+        ],
+        "verify_command": "ripr agent verify --root . --before target/ripr/pilot/repo-exposure.json --after target/ripr/pilot/after.repo-exposure.json --json"
+      },
+      "repair_kind": "AddBoundaryAssertion",
+      "repair_route": {
+        "assertion_shape": "assert_eq!(discounted_total(100, 100), 90)",
+        "changed_behavior": "amount >= threshold",
+        "related_test": "far_above",
+        "route_kind": "AddBoundaryAssertion",
+        "stop_conditions": [
+          "Stop if the related test is outside the current workspace.",
+          "Stop if the suggested assertion would require changing production behavior first."
+        ],
+        "target_file": "tests/main.rs",
+        "target_line": 4
+      },
+      "repairability": "repairable",
+      "runtime_confirmation": "optional cargo-mutants confirmation; ripr reports static evidence only",
+      "source": "gap_decision_ledger",
+      "source_currentness": {
+        "queue_state": "queued",
+        "reason": "producer-validated repo-exposure source matches the selected canonical root, exact clean HEAD, snapshot identity, content commitment, and persisted GapRecords",
+        "refresh_commands": [
+          "ripr check --root . --mode draft --format repo-exposure-json > target/repo-exposure.json",
+          "ripr reports gap-ledger --repo-exposure target/repo-exposure.json --root . --out target/gap-ledger.json"
+        ],
+        "refresh_replayable": true,
+        "source_kind": "repo_exposure",
+        "source_path": "target/repo-exposure.json",
+        "status": "current"
+      },
+      "staleness_reason": "producer-validated repo-exposure source matches the selected canonical root, exact clean HEAD, snapshot identity, content commitment, and persisted GapRecords",
+      "staleness_status": "current",
+      "static_evidence_boundary": "static advisory evidence only; not runtime proof, coverage adequacy, mutation confirmation, gate approval, or merge approval.",
+      "stop_conditions": [
+        "Stop if the related test is outside the current workspace.",
+        "Stop if the suggested assertion would require changing production behavior first."
+      ],
+      "task": "inspect_static_limitation",
+      "verification_commands": [
+        "ripr agent verify --root . --before target/ripr/pilot/repo-exposure.json --after target/ripr/pilot/after.repo-exposure.json --json"
+      ],
+      "verify_command": "ripr agent verify --root . --before target/ripr/pilot/repo-exposure.json --after target/ripr/pilot/after.repo-exposure.json --json"
+    }
+  ],
+  "packets_total": 1,
+  "schema_version": "0.5",
+  "scope": "repo",
+  "source": "gap_decision_ledger",
+  "source_currentness": {
+    "queue_state": "queued",
+    "reason": "producer-validated repo-exposure source matches the selected canonical root, exact clean HEAD, snapshot identity, content commitment, and persisted GapRecords",
+    "refresh_commands": [
+      "ripr check --root . --mode draft --format repo-exposure-json > target/repo-exposure.json",
+      "ripr reports gap-ledger --repo-exposure target/repo-exposure.json --root . --out target/gap-ledger.json"
+    ],
+    "refresh_replayable": true,
+    "source_kind": "repo_exposure",
+    "source_path": "target/repo-exposure.json",
+    "status": "current"
+  },
+  "status": "advisory"
+}

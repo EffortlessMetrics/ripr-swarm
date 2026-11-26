@@ -75,7 +75,7 @@ pub(super) fn run(options: Options) -> Result<(), String> {
         )
     })?;
     let result_path = validate_result_path(&root, &options.result)?;
-    let contents = crate::bounded_input::read_to_string(&result_path).map_err(|err| {
+    let contents = crate::bounded_input::read_artifact_text(&result_path).map_err(|err| {
         format!(
             "read swarm ingest --result {} failed: {err}",
             options.result.display()

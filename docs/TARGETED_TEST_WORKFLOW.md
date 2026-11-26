@@ -95,7 +95,7 @@ target/ripr/pilot/pilot-summary.md
 ```
 
 Use `pilot-summary.md` as the front panel: it lists the top actionable seam,
-why RIPR ranked it, the targeted test brief, and the after-snapshot command.
+why RIPR ranked it, the targeted test brief, and the repair-start command.
 If analysis exceeds the pilot budget, the summary is still written with
 `status: partial` and a retry command so the first-run path is explicit.
 If you want a custom workflow directory or stronger mode:
@@ -236,6 +236,14 @@ prints (with `--json`, `repair_attempt.next_command` carries the equivalent
 `ripr agent repair ... --attempt <repair-attempt-id> --phase after`). The transaction
 captures its own before evidence. A manual snapshot or a CI packet alone does
 not prepare that attempt. See [Repair attempt identity](REPAIR_ATTEMPT.md).
+
+When the attempt follows a **new-test proposal** (the test file does not exist
+yet), it prints `ripr agent repair ... --phase after --test-result FILE`
+instead of `ripr continue`, because finishing needs a focused result. Run the
+new test on a nightly toolchain for its own package and target
+(`cargo +nightly test -p PACKAGE --test TARGET -- -Z unstable-options --format json`, or `--lib` for an inline test), save the events
+as the `focused_test_result` document the start describes, and pass that file. For a Rust
+integration file whose target resolves, the start prints that exact command.
 
 ## 4. Add One Focused Test
 

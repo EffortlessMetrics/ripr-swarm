@@ -141,8 +141,13 @@ not credited: the same test, but the barrel is export * from './other'
   `export type * as ns from`) and non-relative package specifiers
   (node_modules) are NOT followed. `export * as ns from` is followed only as
   a namespace (see above): it never forwards named exports.
-- Default imports and `import * as ns from './barrel'` namespace imports of
-  the barrel itself are NOT followed through re-export chains.
+- A call through a default import can reach the original default-exported
+  function when the barrel explicitly forwards its default binding. For example,
+  `export { default, default as pick } from './owner.js'` exposes the same
+  function through both imports. The default call carries
+  `re_export_chain_followed` when the bounded chain identifies the owner.
+- An `import * as ns from './barrel'` namespace import of the barrel itself
+  is not followed through re-export chains.
 - A test body that redeclares the imported local name (`const N = ...`) calls
   the shadow, not the owner, and is not credited.
 
@@ -205,8 +210,8 @@ involves indirection that ripr cannot verify at runtime.
 - Chains beyond `MAX_REEXPORT_HOPS`.
 - Following a module's own `import { x } from './a'; export { x }` re-binding
   (under-credited, fail-closed).
-- Default-import tracing through barrels, and `import * as ns` of a barrel
-  (`ns.units.f(...)`).
+- Inferring a default binding from a star export or computed import, and
+  following `import * as ns` of a barrel (`ns.units.f(...)`).
 - Package-graph resolution (no node_modules, no tsc, no package.json
   `exports`/`main` lookups).
 

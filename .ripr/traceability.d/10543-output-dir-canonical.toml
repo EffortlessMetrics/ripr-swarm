@@ -1,0 +1,10 @@
+[[extend]]
+id = "RIPR-SPEC-0009"
+tests = [
+  "crates/ripr/src/cli/commands/first_pr.rs::tests::output_dir_and_its_out_dir_alias_set_the_same_directory",
+  "crates/ripr/src/cli/suggest.rs::tests::the_out_dir_alias_spelling_names_check_output_dir",
+]
+code = [
+  "crates/ripr/src/cli/commands/first_pr.rs::parse_options",
+  "crates/ripr/src/cli/commands/pr_comments_github.rs",
+]
