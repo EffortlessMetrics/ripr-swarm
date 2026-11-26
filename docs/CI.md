@@ -425,7 +425,7 @@ remain in their producing workflows.
 | Workflow / artifact | Consumer and retained evidence |
 | --- | --- |
 | `future-clippy.yml` / `ripr-future-clippy` | Maintainer investigation of lint readiness and instrumentation failures. Native status and identity are also printed in the job summary; the scan log is streamed to the job log. |
-| `macos-advisory.yml` / `macos-advisory-logs-clippy`, `macos-advisory-logs-lib-tests` | Maintainer investigation of native Clippy and library-test outcomes. The job judges its local logs and statuses before upload and retains the verdict in its summary. |
+| `macos-advisory.yml` / `macos-advisory-logs-clippy`, `macos-advisory-logs-lib-build`, `macos-advisory-logs-lib-tests` (and the one-day `macos-advisory-lib-test-binary` handover) | Maintainer investigation of native Clippy and library-test outcomes. The job judges its local logs and statuses before upload and retains the verdict in its summary. |
 | `windows-gate.yml` / `ripr-windows-gate-subset` | Maintainer investigation of the subset logs and statuses. `Ripr Windows Gate Result` consumes job outputs, not the uploaded artifact. |
 | `kani.yml` / `ripr-kani` | Maintainer inspection of the per-harness report. `cargo xtask kani` prints the same report to the job log and judges the run before upload. |
 
@@ -872,19 +872,21 @@ printed commands, so macOS-only dead code behind `cfg(target_os = "linux")`
 gating (#8055, #8060), `/var` -> `/private/var` temp paths and APFS case or
 normalization behavior surfaced only on a maintainer's local run.
 
-- **What runs.** On `macos-15`: `cargo clippy -p ripr -p xtask --all-targets
-  -- -D warnings` and `cargo test -p ripr --lib --no-fail-fast`, each in its
-  own job (`macos-advisory-clippy`, `macos-advisory-lib-tests`) under the same
-  40-minute limit: as steps of one job they were cancelled by it every night
-  from 2026-11-12, before the tests had finished compiling. Clippy now
-  fits (25 to 30 minutes cold). The library tests do not yet: the `ripr` test
-  build alone takes about 30 minutes and its tests about 14, so that job
-  fails at its 34-minute step deadline as missing evidence until the build
-  and the run are separate jobs (#8391). The integration suites are not part
-  of this lane.
+- **What runs.** On `macos-15`, three jobs under the same 40-minute limit:
+  `macos-advisory-clippy` (`cargo clippy -p ripr -p xtask --all-targets -- -D
+  warnings`), `macos-advisory-lib-build` (`cargo test -p ripr --lib --no-run`,
+  which hands the test executable over as an artifact) and
+  `macos-advisory-lib-tests`, which runs that executable from the package
+  directory. As steps of one job they were cancelled by the limit every night
+  from 2026-11-12, and the library tests did not fit a job of their own
+  either: the `ripr` test build takes 24 to 36 minutes (one `rustc` that
+  needs about 14 GB on a 7 GB runner) and the tests about 9 (#8391). Clippy
+  takes 18 to over 34. The clippy and build steps may each run for 37
+  minutes; a slower night fails that job as missing evidence. The integration suites are not part of this lane.
 - **Contract.** Clippy and test outcomes are advisory and appear in the job
-  summary. A missing log or exit status, or a library run that executed zero
-  tests, fails the job. It is not a required check.
+  summary. A missing log or exit status, a missing test executable, or a
+  library run whose last result line does not account for every test it
+  started, fails the job. It is not a required check.
 - **Selection.** A daily schedule and explicit `workflow_dispatch` only.
   The retained job predicates do not restore a PR or label subscription.
 
@@ -1756,6 +1758,59 @@ atomic write fence or a detection-latency promise.
 
 `main_health_sentinel_contract.rs` runs the real reader and tracker against API
 fixtures, including late competing runs, attempt changes and main movement.
+
+#### Observe a frozen native stack
+
+For a frozen-stack observation, record the trunk commit and the ordered PR numbers and head commits
+before enrollment. Once GitHub creates the queue entries, record their native
+IDs against those same PRs and heads. Seal this file independently of the
+workflow that will produce the observation. An arrival after the freeze belongs
+to a subsequent cohort. Obtain the two workflow blob IDs from independently
+reviewed source.
+
+The JSON file has three required fields. The placeholders below show where to
+put full 40-character lowercase hexadecimal Git object IDs and native queue-entry IDs.
+
+```json
+{
+  "trunk": "<trunk-commit>",
+  "members": [
+    {"pr": 105, "head": "<first-pr-head>", "queue_entry": "<first-entry-id>"},
+    {"pr": 108, "head": "<second-pr-head>", "queue_entry": "<second-entry-id>"}
+  ],
+  "workflow_blobs": {
+    ".github/workflows/routed-rust.yml": "<reviewed-caller-blob>",
+    ".github/workflows/rust-gates.yml": "<reviewed-producer-blob>"
+  }
+}
+```
+
+Include every member in order (2–100). Each PR number, head and queue entry
+must be distinct. While the landed group commit is still the tip of main, run
+
+```bash
+python3 -I tools/ci/main-qualification.py \
+  --repository EffortlessMetrics/ripr-swarm --sha "$LANDED_GROUP_SHA" \
+  --frozen-stack freeze.json --out observed.json
+```
+
+A green verdict with `hosted_group_digest` records a match to the first-attempt
+hosted Rust gates job's terminal checkout and clean tracked tree. The existing
+Result owns qualification. A stale attempt, suffix-only event, changed source,
+or missing receipt yields unknown for a previously green qualification. The
+reader preserves an authenticated red Result. The digest grants no authority
+to merge and makes no claim about individual shard binaries.
+
+The #14500 contract maps to `HostedStackTests` in
+`tools/ci/test_main_qualification.py`.
+`test_actual_admission_drives_hosted_producer_for_three_independent_heads`
+runs the admission and receipt scripts.
+`test_membership_recomposition_and_tampering` and
+`test_wrong_source_tree_issuer_attempt_and_marker` exercise refusals in
+`hosted_stack` in `tools/ci/main-qualification.py`. The workflow steps are
+`Record hosted group checkout` in `rust-gates.yml` and
+`Hosted group receipt …` in `routed-rust.yml`. The API fixture supplies the
+resolved step name. Confirming its actual rendering requires a native receipt.
 
 ### Golden Re-bless
 

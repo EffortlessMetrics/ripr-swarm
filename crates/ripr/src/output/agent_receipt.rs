@@ -65,6 +65,10 @@ pub(crate) struct ReportedTestRun {
     pub(crate) ran: usize,
     pub(crate) passed: usize,
     pub(crate) failed: usize,
+    /// Whether a ran test is one the attempt's edit added or changed
+    /// (#16311): `covered`, `not_covered` or `unknown`; `None` for a record
+    /// retained before that reading existed.
+    pub(crate) edited_test: Option<&'static str>,
 }
 
 impl AgentReceiptReading {
