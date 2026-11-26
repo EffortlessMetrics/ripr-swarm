@@ -658,7 +658,10 @@ diff changed leads, and otherwise the anchor stays, so the headline prefers a
 test file the change touched over an untouched same-strength file that sorts
 earlier (#14027). The match is by file, not by test: when the diff edits one
 test in a file, the headline can name another related test in that file that
-the diff left alone. The pick moves no row, class or oracle strength.
+the diff left alone. The Python adapter writes no changed-file marks when the
+first listed row is already in a changed file, so if that row ranks below an
+untouched anchor, the anchor stays even when a later changed-file row shares
+its strength and tier. The pick moves no row, class or oracle strength.
 
 ### Family-relevant assertion selection (TypeScript)
 
