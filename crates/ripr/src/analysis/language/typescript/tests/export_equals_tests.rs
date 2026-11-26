@@ -223,3 +223,91 @@ fn export_equals_target_reads_only_one_identifier_export() {
     );
     assert_eq!(parse("const a = 1;\nexport default a;\n"), None);
 }
+
+/// Whether the finding on the changed `if` line of `src/current.ts` reaches a
+/// test through the re-export graph, given the barrel `src/index.ts` and a
+/// test that loads the barrel.
+fn chained_through_barrel(label: &str, barrel: &str, preamble: &str) -> Result<bool, String> {
+    let owner = format!("{FUNCTION_BODY}export = total;\n");
+    let line = owner
+        .lines()
+        .position(|line| line.trim_start() == CHANGED)
+        .map(|index| index + 1)
+        .ok_or_else(|| format!("{label}: the changed line is missing from the owner"))?;
+    let text = owner
+        .lines()
+        .nth(line - 1)
+        .ok_or_else(|| format!("{label}: no line {line}"))?;
+    let root = ts_unique_tempdir(label)?;
+    ts_write_file(&root.join("src/current.ts"), &owner)?;
+    ts_write_file(
+        &root.join("src/other.ts"),
+        "function other(n: number): number {\n  return n;\n}\nexport = other;\n",
+    )?;
+    ts_write_file(&root.join("src/index.ts"), barrel)?;
+    ts_write_file(
+        &root.join("tests/index.test.ts"),
+        &test_file(preamble, FUNCTION_CALL),
+    )?;
+    let result = TypeScriptAdapter.analyze_diff(
+        &ts_analysis_options(root.clone()),
+        &OraclePolicy::default(),
+        &[changed_with_lines("src/current.ts", &[(line, text)])],
+    );
+    let _ = std::fs::remove_dir_all(&root);
+    let finding = result?
+        .findings
+        .into_iter()
+        .next()
+        .ok_or_else(|| format!("{label}: expected a finding"))?;
+    assert!(
+        finding.evidence.iter().any(|line| line == "owner: total"),
+        "{label}: {:?}",
+        finding.evidence
+    );
+    Ok(finding.related_tests.iter().any(|test| {
+        test.relation_reason == Some(crate::domain::RelationReason::ReExportChainFollowed)
+    }))
+}
+
+#[test]
+fn an_export_equals_barrel_forwards_like_module_exports() -> Result<(), String> {
+    // `export = <import x = require(...) local>` forwards the whole module,
+    // as `module.exports = require(...)` does (review of #16368).
+    for (label, barrel) in [
+        (
+            "eq-barrel-import-equals",
+            "import total = require('./current');\nexport = total;\n",
+        ),
+        (
+            "eq-barrel-const-require",
+            "const total = require('./current');\nexport = total;\n",
+        ),
+        ("eq-barrel-inline", "export = require('./current');\n"),
+    ] {
+        assert!(
+            chained_through_barrel(label, barrel, "import total = require('../src/index');")?,
+            "{label}: the barrel forwards `current`"
+        );
+    }
+    // A barrel that writes `module.exports` too has two whole writes, so no
+    // forward from it is safe: TypeScript emits the `export =` write last, so
+    // the earlier `module.exports` forward to `current` is overwritten. One
+    // that forwards another module never links.
+    for (label, barrel) in [
+        (
+            "eq-barrel-mixed-writes",
+            "import total = require('./other');\nmodule.exports = require('./current');\nexport = total;\n",
+        ),
+        (
+            "eq-barrel-other-module",
+            "import other = require('./other');\nexport = other;\n",
+        ),
+    ] {
+        assert!(
+            !chained_through_barrel(label, barrel, "import total = require('../src/index');")?,
+            "{label}: no forward to `current`"
+        );
+    }
+    Ok(())
+}

@@ -20174,6 +20174,7 @@ tests = [
   "crates/ripr/src/analysis/language/typescript/tests/export_equals_tests.rs::an_import_equals_require_is_a_namespace_binding",
   "crates/ripr/src/analysis/language/typescript/tests/export_equals_tests.rs::other_export_equals_shapes_stay_unrelated",
   "crates/ripr/src/analysis/language/typescript/tests/export_equals_tests.rs::export_equals_target_reads_only_one_identifier_export",
+  "crates/ripr/src/analysis/language/typescript/tests/export_equals_tests.rs::an_export_equals_barrel_forwards_like_module_exports",
   "crates/ripr/src/analysis/language/typescript/tests/commonjs_named_class_export_tests.rs::a_named_export_class_expression_yields_owners_named_by_the_property",
   "crates/ripr/src/analysis/language/typescript/tests/commonjs_named_class_export_tests.rs::a_changed_method_of_a_named_export_class_relates_to_a_named_require",
   "crates/ripr/src/analysis/language/typescript/tests/commonjs_named_class_export_tests.rs::the_inner_class_id_and_a_sibling_export_stay_unrelated",
@@ -20719,6 +20720,7 @@ code = [
   "crates/ripr/src/analysis/language/typescript/object_rows.rs",
   "crates/ripr/src/analysis/language/typescript/module_entries.rs",
   "crates/ripr/src/analysis/language/typescript/overwritten_methods.rs",
+  "crates/ripr/src/analysis/language/typescript/export_equals.rs",
 ]
 outputs = [
   "docs/specs/RIPR-SPEC-0243-typescript-oracle-and-reach-rules.md",
