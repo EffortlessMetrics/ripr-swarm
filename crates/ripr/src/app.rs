@@ -22,6 +22,7 @@ pub mod pr_evidence;
 mod progress;
 pub(crate) mod verbose_trace;
 pub use pr_evidence::reject_pr_evidence_error_packet;
+pub(crate) mod change_verification_plan;
 pub(crate) mod feedback;
 /// Shared PR-evidence summary projection used by the `ripr` binary and the
 /// compatibility `xtask` route.
