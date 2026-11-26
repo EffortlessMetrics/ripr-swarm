@@ -705,35 +705,58 @@ fn current_offenders(src: &Path) -> Result<BTreeMap<String, BTreeSet<String>>, S
         }
     }
     // Include standalone sources when identifying the declared module trees.
-    let named: BTreeSet<_> = modules
-        .values()
-        .flat_map(|children| {
-            children
-                .test
-                .iter()
-                .chain(&children.ordinary)
-                .map(|child| &child.path)
-        })
-        .collect();
-    // Only scanned files can be standalone roots; an unscanned test file
-    // must not make the files it declares look like production.
-    let files: Vec<PathBuf> = all_files
+    // Only scanned files can be standalone roots; an unscanned test file must
+    // not make the files it declares look like production. Its declarations
+    // count only once it is itself reached, so a dangling test file cannot
+    // hide a real root by naming it (#16361 review).
+    let scanned: BTreeSet<&PathBuf> = all_files
         .iter()
         .filter(|(_, scan)| *scan)
-        .map(|(path, _)| path.clone())
+        .map(|(path, _)| path)
         .collect();
-    let mut roots: Vec<_> = files
-        .iter()
-        .filter(|file| !named.contains(file))
-        .map(|path| ModuleFile {
-            path: path.clone(),
+    let named_by = |parents: &dyn Fn(&ModuleFile) -> bool| -> BTreeSet<PathBuf> {
+        modules
+            .iter()
+            .filter(|(file, _)| parents(file))
+            .flat_map(|(_, children)| {
+                children
+                    .test
+                    .iter()
+                    .chain(&children.ordinary)
+                    .map(|child| child.path.clone())
+            })
+            .collect()
+    };
+    let roots_for = |named: &BTreeSet<PathBuf>| -> Vec<ModuleFile> {
+        let mut roots: Vec<_> = scanned
+            .iter()
+            .filter(|file| !named.contains(**file))
+            .map(|path| ModuleFile {
+                path: (*path).clone(),
+                by_path: false,
+            })
+            .collect();
+        roots.extend(["lib.rs", "main.rs"].map(|name| ModuleFile {
+            path: src.join(name),
             by_path: false,
-        })
-        .collect();
-    roots.extend(["lib.rs", "main.rs"].map(|name| ModuleFile {
-        path: src.join(name),
-        by_path: false,
-    }));
+        }));
+        roots
+    };
+    let mut named = named_by(&|file| scanned.contains(&file.path));
+    let mut roots = roots_for(&named);
+    loop {
+        let reached: BTreeSet<PathBuf> = reachable_modules(&roots, &modules, true)
+            .into_iter()
+            .map(|file| file.path)
+            .collect();
+        // `named` only grows, so this reaches a fixed point.
+        let next = named_by(&|file| scanned.contains(&file.path) || reached.contains(&file.path));
+        if next.is_subset(&named) {
+            break;
+        }
+        named.extend(next);
+        roots = roots_for(&named);
+    }
     let all = reachable_modules(&roots, &modules, true);
     // A conventionally declared test-only module owns its directory, including
     // fixture files without a mod declaration. A literal #[path] owns just the
@@ -1236,6 +1259,28 @@ fn scan_follows_modules_declared_by_an_unscanned_test_file()
         shared,
         BTreeSet::from(["crates/ripr/src/helper.rs|fixture widget is missing".into()])
     );
+    Ok(())
+}
+
+#[test]
+fn scan_keeps_a_root_named_only_by_an_unreached_test_file() -> Result<(), Box<dyn std::error::Error>>
+{
+    // An unreferenced test file names a real binary; that dangling edge must
+    // not demote the binary from root, or its test-only child looks
+    // undeclared and gets scanned.
+    let keys = scan_module_fixture(&[
+        ("lib.rs", ""),
+        ("driver_tests.rs", r#"#[path = "bin/tool.rs"] mod dormant;"#),
+        (
+            "bin/tool.rs",
+            r#"fn main() {} #[cfg(test)] #[path = "tool/probe.rs"] mod probe;"#,
+        ),
+        (
+            "bin/tool/probe.rs",
+            r#"fn f() -> Result<(), &'static str> { Err("fixture widget is missing") }"#,
+        ),
+    ])?;
+    assert_eq!(keys, BTreeSet::new());
     Ok(())
 }
 
