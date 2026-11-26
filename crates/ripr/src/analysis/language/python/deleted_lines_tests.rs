@@ -1785,9 +1785,36 @@ fn stamping_changed_related_rows_is_exact_and_skips_a_changed_first_row() -> Res
     stamp_related_tests_changed_in_diff(&mut none, &changed(&["tests/c.py"]));
     assert!(stamps(&none).is_empty(), "no related row changed");
 
-    let mut empty = base;
+    let mut empty = base.clone();
     stamp_related_tests_changed_in_diff(&mut empty, &BTreeSet::new());
     assert!(stamps(&empty).is_empty(), "no changed files");
+
+    // #14083 B5a: row 0 is in a changed file but cannot observe the change,
+    // so the headline anchor is the untouched observing row 1. The skip reads
+    // that anchor, not row 0, so changed observing row 2 is stamped and leads.
+    let mut blind_first = base;
+    blind_first.related_tests[0].miss = Some(crate::domain::RelatedTestMiss::NoCallPath);
+    assert_eq!(
+        blind_first.related_tests[1].observation_tier(),
+        blind_first.related_tests[2].observation_tier(),
+        "rows 1 and 2 share the anchor's tier"
+    );
+    assert!(
+        blind_first.related_tests[0].observation_tier()
+            < blind_first.related_tests[1].observation_tier(),
+        "row 0 ranks below the anchor"
+    );
+    stamp_related_tests_changed_in_diff(&mut blind_first, &changed(&["tests/a.py", "tests/bb.py"]));
+    assert_eq!(
+        stamps(&blind_first),
+        vec!["tests/a.py:1", "tests/bb.py:3"],
+        "a changed row 0 below the anchor does not suppress the marks"
+    );
+    assert_eq!(
+        crate::domain::python_headline_related_test(&blind_first).map(|row| row.file.clone()),
+        Some(PathBuf::from("tests/bb.py")),
+        "the changed row sharing the anchor's tier leads"
+    );
     Ok(())
 }
 

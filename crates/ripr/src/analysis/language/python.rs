@@ -561,14 +561,18 @@ pub(in crate::analysis::language::python) fn publish_production_finding(
 
 /// Record which related rows live in a test file the diff changed (#14027) so
 /// the one shared headline pick can prefer them. Nothing is stamped when the
-/// first row already is one (the default pick already names it) or no row is.
+/// headline anchor (the first row of the best observation tier, #14483)
+/// already is one (the default pick already names it) or no row is.
 /// Display evidence only: row order, class and oracle strength are untouched.
 fn stamp_related_tests_changed_in_diff(finding: &mut Finding, changed_files: &BTreeSet<PathBuf>) {
+    // The headline anchors on the first row of the best observation tier
+    // (#14483), not on row 0, so the skip asks whether that anchor is already
+    // in a changed file. Reading row 0 here let a changed, non-observing row 0
+    // suppress the marks a later changed row needed to displace an untouched
+    // anchor (#14083 B5a).
     if changed_files.is_empty()
-        || finding
-            .related_tests
-            .first()
-            .is_none_or(|first| changed_files.contains(&first.file))
+        || crate::domain::first_observing_related_test(&finding.related_tests)
+            .is_none_or(|anchor| changed_files.contains(&anchor.file))
     {
         return;
     }
