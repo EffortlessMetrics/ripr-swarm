@@ -6294,6 +6294,28 @@ fn test_local_module_shadow_covers_project_names_import_forms_and_conftest_dirs(
     ];
     let unit = "svc/a/tests/unit/test_x.py";
     assert!(identifies(&nested, "svc/a/core.py", unit).0);
+    // #14083 A5: a module pytest collects in `tests` inserts that basedir too,
+    // ahead of the subdirectory's own import (checked under pytest 9.2: a run
+    // of the whole tree resolves `core` in `unit/test_x.py` to the helper,
+    // while a run of `tests/unit` alone reaches the project module).
+    let with_collected = [
+        "svc/a/pyproject.toml",
+        "svc/a/core.py",
+        "svc/a/tests/core.py",
+        "svc/a/tests/test_a.py",
+        "svc/a/tests/unit/test_x.py",
+    ];
+    assert!(!identifies(&with_collected, "svc/a/core.py", unit).0);
+    // A helper module pytest does not collect (`tests/helpers.py`, under a
+    // `tests` directory) inserts nothing: the layout stays identifying.
+    let uncollected = [
+        "svc/a/pyproject.toml",
+        "svc/a/core.py",
+        "svc/a/tests/core.py",
+        "svc/a/tests/helpers.py",
+        "svc/a/tests/unit/test_x.py",
+    ];
+    assert!(identifies(&uncollected, "svc/a/core.py", unit).0);
     let with_conftest = [
         "svc/a/pyproject.toml",
         "svc/a/core.py",
