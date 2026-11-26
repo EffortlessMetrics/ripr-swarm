@@ -74,7 +74,7 @@ product lanes. The Result also requires admission and the applicable VS Code
 checks.
 The [staged route](MERGE_FLOW.md#staged-admission-and-group-qualification)
 keeps the deliberate label for one metadata-only job and reserves product CI
-for G. Its admission check has not been installed.
+for the merge group. Its admission check has not been installed.
 
 The terminal Result now pins the initially admitted PR/head and native
 run/attempt. After the children finish, it rechecks the open, non-draft,
@@ -239,7 +239,7 @@ Native activation remains incomplete; these event edges are bootstrap debt:
 | Retained source | Event and purpose | Retirement condition |
 | --- | --- | --- |
 | `routed-rust.yml` | `pull_request: labeled` requests the current protected qualification; other labels still start its nonrequest wrapper | Truthful H admission and enforced queue-only landing, with actual G proof |
-| `merge-ready-conflict-notice.yml` | `pull_request_target: labeled` reports the legacy request's conflict | Fold conflict refusal into the single staged admission path and verify conflicted PRs stay blocked |
+| `merge-ready-conflict-notice.yml` | `pull_request_target: labeled` reports the installed request's conflict | Fold conflict refusal into the single staged admission path and verify conflicted PRs stay blocked |
 | `hard-cut-watch.yml` | Every main push allocates its release-cut observer, even when it only reports an inactive cut | Transitional debt: retire the automatic trigger after protected G/cut enforcement replaces it, or move its selected release purpose to an explicit operation |
 | `main-health-sentinel.yml` | Existing `9,39 * * * *` timer and manual observation; exact landed native qualification, no build/test | Further timer retirement remains with #4842; no replacement cadence or product warmer is introduced |
 
@@ -588,7 +588,7 @@ implement and validate the lane-selection logic.
 
 | Label | Effect |
 | --- | --- |
-| `merge-ready` | Installed request for the protected PR Result using the selected docs or product lanes. The staged generation retains the label for bounded Ready-PR admission. |
+| `merge-ready` | Installed request for the protected PR Result using the selected docs or product lanes. Once installed, the staged generation retains the label for bounded Ready-PR admission. |
 | `full-ci` | Select broader proof in the retained protected caller, including extension e2e. It must be present when `merge-ready` is applied; adding it afterward does not rerun the lanes or start retired auxiliary workflows. Demotes `ripr-waive` for this PR. |
 | `release-check` | Target vocabulary for release-surface selection; it does not start the retired auxiliary CI route. Callable CI uses `run_release_proof`. |
 | `vscode` | Run editor extension lanes even when no editor path changed. |

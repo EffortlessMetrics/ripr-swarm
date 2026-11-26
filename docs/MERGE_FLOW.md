@@ -43,7 +43,7 @@ not share a compiled artifact or select one build for the whole cohort.
 
 ## Staged admission and group qualification
 
-Keep using the installed procedure within its authorized budget. The proposed
+Keep using the installed procedure. The proposed
 route gives one read-only job five minutes to verify a deliberate `merge-ready`
 request on a Ready PR, the current head H, and its source review. It receives no
 credentials, executes no PR code and has no write permissions. Ordinary Draft,
@@ -54,7 +54,9 @@ per accepted change including preparation, transfers, failed attempts and retrie
 Before switching, use an authorized synthetic-only repository to observe the
 Actions issuer and check-run ID on H. Have a maintainer explicitly apply
 `merge-ready` to the selected Ready PR. GitHub suppresses `labeled` workflow
-events originating from a workflow's `GITHUB_TOKEN`. [GitHub trigger semantics](https://docs.github.com/en/actions/how-tos/write-workflows/choose-when-workflows-run/trigger-a-workflow). After a successful admission, remove the
+events originating from a workflow's `GITHUB_TOKEN`
+([GitHub trigger semantics](https://docs.github.com/en/actions/how-tos/write-workflows/choose-when-workflows-run/trigger-a-workflow)).
+After a successful admission, remove the
 label at the same SHA, edit the title at that SHA, and replace H in separate
 controls. Record whether GitHub allows enqueue in each case. A retained SHA
 check can outlive its inputs. Before product allocation and again at final
@@ -74,11 +76,12 @@ and that no skipped, neutral or legacy result satisfies the requirement. A
 failing middle must be ejected and the recomposed group must earn its own
 qualification. On full G, independently fail, conditionally skip and omit a
 required product job. In each case the terminal Result must refuse and the
-group must stay unmerged. A conditionally skipped job can itself report success.
-[GitHub required-check behavior](https://docs.github.com/en/pull-requests/how-tos/merge-and-close-pull-requests/troubleshooting-required-status-checks). Preserve the installed
+group must stay unmerged. A conditionally skipped job can itself report success
+([GitHub required-check behavior](https://docs.github.com/en/pull-requests/how-tos/merge-and-close-pull-requests/troubleshooting-required-status-checks)).
+Preserve the installed
 protected route until the replacement passes and enforcement is read back.
-First installation must itself fit the authorized budget. A longer legacy run
-requires a separate decision. Keep other Ready PRs out of the migration. For
+First installation must itself fit the authorized budget. A longer run of the
+legacy route requires a separate decision. Keep other Ready PRs out of the migration. For
 rollback, pause new requests and restore the protected H/G producer before
 reopening intake.
 
@@ -95,7 +98,7 @@ requires that check before enqueue, each delivery owner may request its
 `merge-ready` qualification for the selected, reviewed candidate. Native queue
 activation alone does not replace H qualification with cheap admission. The
 final caller cutover must qualify and enforce that replacement before retiring
-the full PR product run. Keep the explicit label as the staged admission request.
+the full PR product run. Keep the explicit label; the staged admission route reuses it once installed.
 
 The PR's owning lead carries review, repair, qualification and landing through
 the applicable protected route without asking for routine repo permission again.
@@ -406,9 +409,10 @@ Sequence the rollout:
 4. Apply/read back queue enforcement through #4838. Demonstrate an actual native
    queue transaction before changing protected PR success to cheap admission.
 5. Keep the deliberate `merge-ready` admission trigger. Retire its old PR-side
-   product work and the duplicate child routes after the protected rehearsal. The bounded
-   main-push retirement already keeps full H/G authority, cold recomputation and
-   cheap landed observation. Distinct incident/deep/release obligations remain.
+   product work and the duplicate child routes only after the step-4 enforcement
+   readback and the protected rehearsal. The bounded main-push retirement already
+   keeps full H/G authority, cold recomputation and cheap landed observation.
+   Distinct incident/deep/release obligations remain.
 6. Observe a real operating cohort before declaring economics or adoption accepted.
 
 Rollback restores and verifies full PR qualification before queue-only protection
