@@ -35,8 +35,8 @@ use ra_ap_syntax::{
 /// or a mention sits inside a macro whose expansion may add bindings (any
 /// macro other than a bare std expression macro, or such a macro when the
 /// file chain may redefine it, which `ancestors` settles as for
-/// `nested_block_renames_in_tree`, or a macro operand that spells `use` or
-/// `mod`). A method call or field access of the name, a field label
+/// `nested_block_renames_in_tree`, or a macro operand that spells `use`,
+/// `mod` or a nested macro call). A method call or field access of the name, a field label
 /// (`name: value`) and a path prefix (`name::item`) are not mentions.
 pub(crate) fn every_mention_bound_locally_in_tree(
     tree: &ast::SourceFile,
@@ -150,13 +150,13 @@ fn every_mention_bound_locally_in_function(
             };
             // A macro operand is unparsed tokens, so a block inside it
             // (`assert_eq!({ use crate::{dt}; dt(1) }, 0)`) hides its own
-            // imports and modules from the walk below.
-            if call.token_tree().is_some_and(|tokens| {
-                tokens
-                    .syntax()
-                    .descendants_with_tokens()
-                    .any(|element| matches!(element.kind(), T![use] | T![mod]))
-            }) {
+            // imports and modules from the walk below, and a nested macro
+            // (`assert_eq!(route!(dt(1)), 2)`) may transcribe the name into
+            // a path.
+            if call
+                .token_tree()
+                .is_some_and(|tokens| operand_may_rebind(tokens.syntax()))
+            {
                 return false;
             }
             if let Some(macro_name) = call.path().and_then(|path| path.segment()) {
@@ -185,6 +185,30 @@ fn every_mention_bound_locally_in_function(
         }
     }
     mentions > 0
+}
+
+/// Whether a macro operand's tokens spell `use`, `mod` or a nested macro
+/// invocation (`name!`, not `name != ..`), any of which may bind or move a
+/// name the unparsed operand hides.
+fn operand_may_rebind(tokens: &SyntaxNode) -> bool {
+    let tokens: Vec<_> = tokens
+        .descendants_with_tokens()
+        .filter_map(|element| element.into_token())
+        .filter(|token| !token.kind().is_trivia())
+        .collect();
+    tokens
+        .iter()
+        .enumerate()
+        .any(|(at, token)| match token.kind() {
+            T![use] | T![mod] => true,
+            SyntaxKind::IDENT => {
+                tokens.get(at + 1).is_some_and(|next| next.kind() == T![!])
+                    && tokens
+                        .get(at + 2)
+                        .is_none_or(|after| !matches!(after.kind(), T![=]))
+            }
+            _ => false,
+        })
 }
 
 /// Whether the innermost binding of `name` seen from `start` is a local:
@@ -415,6 +439,23 @@ mod tests {
                 "let dt = |x: i32| x + 1;\n    assert_eq!({ use super::{dt}; dt(100) }, 90);",
                 false,
             ),
+            (
+                "nested macro in an assertion operand",
+                "let dt = |x: i32| x;\n    assert_eq!(route!(dt(1)), 2);",
+                false,
+            ),
+            (
+                "inequality in an assertion operand",
+                "let dt = |x: i32| x;\n    assert!(dt(1) != 2);",
+                true,
+            ),
+            (
+                "named field pattern",
+                "let Pair { callback: dt } = Pair { callback: other };\n    assert_eq!(dt(1), 1);",
+                true,
+            ),
+            ("reference pattern", "let &dt = &other;\n    dt(1);", true),
+            ("slice pattern", "let [dt] = [other];\n    dt(1);", true),
             (
                 "shorthand field pattern",
                 "let Pair { dt } = Pair { dt: other };\n    dt(1);",

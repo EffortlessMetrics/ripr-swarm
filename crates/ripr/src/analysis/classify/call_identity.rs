@@ -4176,7 +4176,8 @@ pub(in crate::analysis) fn test_calls_only_a_local_binding(
 
 /// Text prefilter for [`test_calls_only_a_local_binding`]: whether `body`
 /// spells `name` where a binder may stand (after `let`, `mut`, `ref`, `fn`,
-/// `|`, `,`, `(` or `{`, as in a tuple or shorthand field pattern), not
+/// `|`, `,`, `(`, `{`, `[`, `&` or `:`, as in tuple, field, slice and
+/// reference patterns), not
 /// followed by a call or path. Most tests spell their owner only as a call
 /// and stop here.
 fn spells_a_local_binder(body: &str, name: &str) -> bool {
@@ -4193,7 +4194,7 @@ fn spells_a_local_binder(body: &str, name: &str) -> bool {
         }
         let tail = masked[end..].trim_start();
         let binder_head = matches!(head_word(head), "let" | "mut" | "ref")
-            || head.ends_with(['|', ',', '(', '{']);
+            || head.ends_with(['|', ',', '(', '{', '[', '&', ':']);
         binder_head && !tail.starts_with('(') && !tail.starts_with("::")
     })
 }
@@ -5295,6 +5296,25 @@ fn qualifier_before(head: &str) -> Option<Vec<String>> {
 mod tests {
     use super::*;
     use crate::analysis::rust_index::summarize_file;
+
+    #[test]
+    fn the_local_binder_prefilter_admits_every_supported_pattern_spelling() {
+        for body in [
+            "let dt = |x: i32| x; dt(1);",
+            "let mut dt = other; dt(1);",
+            "let (a, dt) = (1, other); dt(a);",
+            "let Pair { dt } = pair; dt(1);",
+            "let Pair { callback: dt } = pair; dt(1);",
+            "let [dt] = [other]; dt(1);",
+            "let &dt = &other; dt(1);",
+            "let apply = |dt: fn(i32) -> i32| dt(1);",
+            "fn dt(x: i32) -> i32 { x } dt(1);",
+        ] {
+            assert!(spells_a_local_binder(body, "dt"), "{body}");
+        }
+        assert!(!spells_a_local_binder("assert_eq!(dt(1), 2);", "dt"));
+        assert!(!spells_a_local_binder("let x = super::dt(1);", "dt"));
+    }
 
     #[test]
     fn std_impl_source_computes_each_trait_and_head_once() {
