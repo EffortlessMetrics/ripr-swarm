@@ -1404,7 +1404,12 @@ the relation, since it could reach the sibling outside `local.member(` calls
 (`u2.extend()`, `ns.default.extend()`, `extend()`); this is a blanket
 fail-closed rule, not a check of which names the second binding uses (#13750).
 Known limits: a second binding whose source the import resolver cannot match
-to the owner module, and a sibling that reaches the module only through a
+to the owner module (for example a named import through a barrel,
+`import { extend } from '../src/index'` where the index has
+`export * from './utils'`, which resolves to the barrel and not to the owner's
+module), an inline loader call such as
+`createRequire(import.meta.url)('../src/utils')` (only the callees `import`,
+`require`, `requireActual` and `importActual` are read as loads), and a sibling that reaches the module only through a
 path alias such as `@/utils` (only sources starting with `.` count as possibly
 self-reachable), are not covered. The test file must use `local` for nothing but direct
 calls `local.member(` (any number of distinct members, each credited only to
