@@ -84,6 +84,8 @@ fn a_compared_bool_local_is_only_as_strong_as_its_initializer() -> Result<(), St
         "let ok = matches!(demo::discount(100), 90);\n    assert_eq!(ok, true);",
         "let value = demo::discount(100);\n    assert_eq!(value, 90);",
         "let state_ok = demo::discount(100) == 90;\n    assert_eq!(state_ok, true); // pinned",
+        // An upper-case initial is still a local the binding table knows.
+        "let Ok_state = demo::discount(100) == 90;\n    assert_eq!(Ok_state, true);",
     ] {
         assert_eq!(class_with(body)?, ExposureClass::Exposed, "{body}");
     }
@@ -103,6 +105,11 @@ fn a_compared_bool_local_is_only_as_strong_as_its_initializer() -> Result<(), St
         // nothing.
         "let ok = demo::discount(100) > 0;\n    assert_eq!(ok, /* expected */ true);",
         "let state_ok = demo::discount(100) > 0;\n    assert_eq!(state_ok, true); // boundary check",
+        // An upper-case initial resolves through the binding table too. Raw
+        // and non-ASCII spellings are covered by the unit rows: the
+        // test-to-call pairing check already reads those workspaces weak
+        // with an exact initializer, so they cannot discriminate here.
+        "let Ok_state = demo::discount(100) > 0;\n    assert_eq!(Ok_state, true);",
     ] {
         assert_eq!(
             class_with(body)?,

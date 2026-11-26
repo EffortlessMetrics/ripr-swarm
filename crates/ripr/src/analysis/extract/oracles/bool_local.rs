@@ -96,7 +96,7 @@ fn inlined_assertion(
     };
     let left = transparent_operand(&left);
     let right = transparent_operand(&right);
-    let local = |operand: &str| is_local_name(operand).then(|| operand.to_string());
+    let local = |operand: &str| local_key(operand).map(str::to_string);
     let (left, right) = if boolean_literal_value(right).is_some() {
         (initializer(&local(left)?)?, right.to_string())
     } else if boolean_literal_value(left).is_some() {
@@ -112,16 +112,19 @@ fn inlined_assertion(
     Some(format!("{name}({left}, {right});"))
 }
 
-/// A lower-case identifier that is not a keyword or boolean literal.
-fn is_local_name(text: &str) -> bool {
-    let mut chars = text.chars();
-    chars
-        .next()
-        .is_some_and(|first| first == '_' || first.is_ascii_lowercase())
-        && text
-            .chars()
-            .all(|ch| ch == '_' || ch.is_ascii_alphanumeric())
-        && !matches!(text, "_" | "true" | "false" | "self")
+/// The binding key of a bare identifier operand: any Rust identifier
+/// spelling (Unicode or upper-case initials included), with a raw `r#`
+/// prefix removed so `r#ok` and `ok` name the same local. Anything else, such
+/// as a path, call or field access, gives `None`; whether the name is a local
+/// at all is decided by the function's binding table, not by its spelling.
+fn local_key(text: &str) -> Option<&str> {
+    let name = text.strip_prefix("r#").unwrap_or(text);
+    let mut chars = name.chars();
+    let first = chars.next()?;
+    ((first == '_' || first.is_alphabetic())
+        && chars.all(|ch| ch == '_' || ch.is_alphanumeric())
+        && !matches!(name, "_" | "true" | "false" | "self"))
+    .then_some(name)
 }
 
 /// Every name an identifier pattern binds in `function`, with its
@@ -129,7 +132,10 @@ fn is_local_name(text: &str) -> bool {
 fn let_initializers(function: &SyntaxNode) -> BTreeMap<String, Option<String>> {
     let mut bindings = BTreeMap::new();
     for pattern in function.descendants().filter_map(ast::IdentPat::cast) {
-        let Some(name) = pattern.name().map(|name| name.text().to_string()) else {
+        let Some(name) = pattern
+            .name()
+            .and_then(|name| local_key(name.text()).map(str::to_string))
+        else {
             continue;
         };
         let initializer = plain_let_initializer(&pattern);
@@ -211,6 +217,18 @@ mod tests {
                 "let ok = value(100) > 0;",
                 "assert_eq!(/* got */ ok, true);",
             ),
+            // Any identifier spelling resolves through the binding table, and
+            // a raw identifier names the same local as its plain spelling.
+            (
+                "let résultat = value(100) > 0;",
+                "assert_eq!(résultat, true);",
+            ),
+            (
+                "let Ok_state = value(100) > 0;",
+                "assert_eq!(Ok_state, true);",
+            ),
+            ("let r#ok = value(100) > 0;", "assert_eq!(ok, true);"),
+            ("let ok = value(100) > 0;", "assert_eq!(r#ok, true);"),
         ] {
             let reading = read(body, assertion)?;
             if reading.strength == OracleStrength::Strong {
@@ -243,6 +261,11 @@ mod tests {
                 "assert_eq!(ok, true);",
             ),
             ("let mut ok = value(100) > 0;", "assert_eq!(ok, true);"),
+            // `r#ok` rebinds `ok`, so the name is bound twice.
+            (
+                "let ok = value(100) > 0; let r#ok = value(100) == 90;",
+                "assert_eq!(ok, true);",
+            ),
             (
                 "let (ok, _) = (value(100) > 0, 1);",
                 "assert_eq!(ok, true);",
