@@ -411,6 +411,30 @@ fn code_positions(source: &str) -> Vec<bool> {
 
 const TEST_ATTRIBUTE: &str = "#[cfg(test)]";
 
+/// `#[cfg(test)]` compared by its tokens, so comments and spacing inside it
+/// do not hide a test-only item, and `cfg(not(test))` never matches.
+fn is_test_attr(attr: &ast::Attr) -> bool {
+    let tokens: String = attr
+        .syntax()
+        .descendants_with_tokens()
+        .filter_map(|element| element.into_token())
+        .filter(|token| !token.kind().is_trivia())
+        .map(|token| token.text().to_string())
+        .collect();
+    tokens == TEST_ATTRIBUTE
+}
+
+/// True when `node` or any enclosing item carries `#[cfg(test)]`, including
+/// a module declared inside a test-only function body.
+fn under_test_gate(node: &ra_ap_syntax::SyntaxNode) -> bool {
+    node.ancestors().any(|ancestor| {
+        ancestor
+            .children()
+            .filter_map(ast::Attr::cast)
+            .any(|attr| is_test_attr(&attr))
+    })
+}
+
 /// Cut at the syntax item's boundary. Braces in types and expressions within
 /// its signature do not terminate the item. Copy a space so adjacent tokens
 /// cannot become a new trigger at the cut.
@@ -418,7 +442,7 @@ fn without_test_items(source: &str, tree: &ast::SourceFile) -> String {
     let mut out = String::new();
     let mut copied = 0;
     for attr in tree.syntax().descendants().filter_map(ast::Attr::cast) {
-        if attr.syntax().text() == TEST_ATTRIBUTE
+        if is_test_attr(&attr)
             && let Some(item) = attr.syntax().parent()
         {
             let range = item.text_range();
@@ -613,11 +637,7 @@ fn module_children(file: &ModuleFile, tree: &ast::SourceFile) -> ModuleChildren 
         let Some((target, explicit)) = module_target(&file.path, file.by_path, &module) else {
             continue;
         };
-        let test_only = module
-            .syntax()
-            .ancestors()
-            .filter_map(ast::Module::cast)
-            .any(|item| item.attrs().any(|a| a.syntax().text() == TEST_ATTRIBUTE));
+        let test_only = under_test_gate(module.syntax());
         let dest = if test_only {
             &mut children.test
         } else {
@@ -685,8 +705,10 @@ fn current_offenders(src: &Path) -> Result<BTreeMap<String, BTreeSet<String>>, S
                 .to_string_lossy()
                 .replace('\\', "/")
         );
-        let source = std::fs::read_to_string(path)
-            .map_err(|error| format!("read {}: {error}", path.display()))?;
+        // Lossy, so an invalid-UTF-8 fixture cannot abort the floor.
+        let bytes =
+            std::fs::read(path).map_err(|error| format!("read {}: {error}", path.display()))?;
+        let source = String::from_utf8_lossy(&bytes).into_owned();
         let tree = SourceFile::parse(&source, Edition::CURRENT).tree();
         for by_path in [false, true] {
             let file = ModuleFile {
@@ -742,15 +764,16 @@ fn current_offenders(src: &Path) -> Result<BTreeMap<String, BTreeSet<String>>, S
         }));
         roots
     };
-    let mut named = named_by(&|file| scanned.contains(&file.path));
+    // A standalone file is loaded conventionally, so only that mode's
+    // declarations count before the walk; a `#[path]` loading mode counts once
+    // the walk actually reaches it.
+    let standalone = |file: &ModuleFile| scanned.contains(&file.path) && !file.by_path;
+    let mut named = named_by(&standalone);
     let mut roots = roots_for(&named);
     loop {
-        let reached: BTreeSet<PathBuf> = reachable_modules(&roots, &modules, true)
-            .into_iter()
-            .map(|file| file.path)
-            .collect();
+        let reached = reachable_modules(&roots, &modules, true);
         // `named` only grows, so this reaches a fixed point.
-        let next = named_by(&|file| scanned.contains(&file.path) || reached.contains(&file.path));
+        let next = named_by(&|file| standalone(file) || reached.contains(file));
         if next.is_subset(&named) {
             break;
         }
@@ -1281,6 +1304,85 @@ fn scan_keeps_a_root_named_only_by_an_unreached_test_file() -> Result<(), Box<dy
         ),
     ])?;
     assert_eq!(keys, BTreeSet::new());
+    Ok(())
+}
+
+#[test]
+fn scan_matches_cfg_test_by_tokens_not_spelling() {
+    let source = r#"
+#[cfg(/* tests only */ test)]
+fn helper() { Err("commented test widget is missing"); }
+#[cfg(not(test))]
+fn negated() { Err("negated widget is missing"); }
+fn live() { Err("production widget is missing"); }
+"#;
+    assert_eq!(
+        offender_messages(source),
+        ["negated widget is missing", "production widget is missing"]
+    );
+}
+
+#[test]
+fn scan_keeps_a_module_inside_a_test_only_function_out_of_production()
+-> Result<(), Box<dyn std::error::Error>> {
+    let fixture = r#"fn f() { Err("fixture widget is missing"); }"#;
+    let gated = scan_module_fixture(&[
+        (
+            "lib.rs",
+            r#"#[cfg(test)] fn setup() { #[path = "fixture.rs"] mod fixture; }"#,
+        ),
+        ("fixture.rs", fixture),
+    ])?;
+    assert_eq!(gated, BTreeSet::new());
+    // Control: the same declaration in an ordinary function is production.
+    let ordinary = scan_module_fixture(&[
+        (
+            "lib.rs",
+            r#"fn setup() { #[path = "fixture.rs"] mod fixture; }"#,
+        ),
+        ("fixture.rs", fixture),
+    ])?;
+    assert_eq!(
+        ordinary,
+        BTreeSet::from(["crates/ripr/src/fixture.rs|fixture widget is missing".into()])
+    );
+    Ok(())
+}
+
+#[test]
+fn scan_ignores_an_unused_path_loading_mode() -> Result<(), Box<dyn std::error::Error>> {
+    // `host.rs` is loaded conventionally, so its `mod entry;` is
+    // `host/entry.rs`. Its unused `#[path]` mode would name the standalone
+    // `src/entry.rs`, which must stay a root so its test module is excluded.
+    let keys = scan_module_fixture(&[
+        ("lib.rs", "mod host;"),
+        ("host.rs", "mod entry;"),
+        ("host/entry.rs", ""),
+        ("entry.rs", "#[cfg(test)] mod fixtures;"),
+        (
+            "entry/fixtures.rs",
+            r#"fn f() { Err("test fixture widget is missing"); }"#,
+        ),
+    ])?;
+    assert_eq!(keys, BTreeSet::new());
+    Ok(())
+}
+
+#[test]
+fn scan_survives_an_invalid_utf8_test_fixture() -> Result<(), Box<dyn std::error::Error>> {
+    let fixture = tempfile::tempdir()?;
+    let src = fixture.path().join("src");
+    std::fs::create_dir_all(src.join("tests"))?;
+    std::fs::write(
+        src.join("lib.rs"),
+        r#"fn f() { Err("production widget is missing"); }"#,
+    )?;
+    std::fs::write(src.join("tests/bad_utf8.rs"), [0xff, 0xfe, b'\n'])?;
+    let keys: BTreeSet<String> = current_offenders(&src)?.into_values().flatten().collect();
+    assert_eq!(
+        keys,
+        BTreeSet::from(["crates/ripr/src/lib.rs|production widget is missing".into()])
+    );
     Ok(())
 }
 
