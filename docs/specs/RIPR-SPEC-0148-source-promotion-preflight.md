@@ -99,7 +99,11 @@ roster, complete required-row denominator and full qualification-bundle digest.
 Every selected required row is present, positive and nonzero; native-accepted
 configured exclusions/deferred subjects are separately retained and cannot
 silently become skipped selected subjects. No fixed seven-owner template list
-is imposed. Missing/refused live inputs never fall back to historical custody.
+is imposed. The required `ledger-range-touched` row references the manifest's
+accepted #2768 packet. The swarm bundle reader checks its ledger range base, cut,
+path-record count, NUL digest, and recipe against the bound manifest before
+retaining it in the handoff. Missing/refused live inputs never fall back to
+historical custody.
 
 The strict payload and count contracts are specified in
 [SOURCE_PROMOTION_PREFLIGHT.md](../SOURCE_PROMOTION_PREFLIGHT.md#native-selection-and-complete-qualification-admission).

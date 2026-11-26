@@ -49,18 +49,55 @@ fn body(payload: &Value) -> Result<String, String> {
 
 impl Fixture {
     fn new() -> Result<Self, String> {
+        Self::with_range_evidence(true, |_| Ok(()))
+    }
+
+    fn with_range_evidence(
+        include_row: bool,
+        change_ledger: impl FnOnce(&mut Value) -> Result<(), String>,
+    ) -> Result<Self, String> {
         let mut manifest = super::super::tests::Fixture::new()?;
+        // SHA-256 of the two records "a\nb" and "c", each followed by NUL.
+        let path_digest = "b70e7c54ca7944e385a0bf09cd9a8f0822d5e99f06d8ec11fef7cf1a8abcbd10";
+        manifest.document["range"]["path_record_sha256"] = json!(path_digest);
+        let mut ledger = json!({
+            "source": {
+                "base_sha": manifest.document["range"]["last_integrated_swarm_parent"],
+                "cut_sha": manifest.document["candidate"]["sha"],
+            },
+            "path_inventories": { "range_touched": {
+                "path_record_count": 2,
+                "path_record_sha256": format!("sha256:{path_digest}"),
+                "path_record_recipe": manifest.document["range"]["path_record_recipe"],
+            }},
+        });
+        change_ledger(&mut ledger)?;
+        let ledger_bytes = serde_json::to_vec(&ledger).map_err(|error| error.to_string())?;
+        std::fs::write(manifest.root.join("denominator.json"), &ledger_bytes)
+            .map_err(|error| error.to_string())?;
+        let denominator = &mut manifest.document["prerequisites"]["denominator"];
+        denominator["packet"]["sha256"] = json!(digest(&ledger_bytes));
+        denominator["acceptance"]["reviewed_packet_sha256"] =
+            denominator["packet"]["sha256"].clone();
+        let ledger_packet = denominator["packet"].clone();
+        if include_row {
+            manifest.document["qualification"]["required_execution_owners"] =
+                json!([2769, 4508, 4604, 2768]);
+        }
         manifest.document["prerequisites"]["selected_claims"]["acceptance"]["decision_ref"] =
             json!(reference(2766));
         let approved = manifest.write()?;
         let subject = json!({"candidate_sha": manifest.document["candidate"]["sha"],
             "candidate_tree": manifest.document["candidate"]["tree"],
             "candidate_ref": manifest.document["candidate"]["ref"], "manifest_sha256": approved});
-        let rows = json!([
-            {"id": "complete-matrix", "owner_issue": 2769},
-            {"id": "selected-installed-journey", "owner_issue": 4508},
-            {"id": "blind-execution", "owner_issue": 4604}
-        ]);
+        let mut rows = vec![
+            json!({"id": "complete-matrix", "owner_issue": 2769}),
+            json!({"id": "selected-installed-journey", "owner_issue": 4508}),
+            json!({"id": "blind-execution", "owner_issue": 4604}),
+        ];
+        if include_row {
+            rows.push(json!({"id": "ledger-range-touched", "owner_issue": 2768}));
+        }
         let claims_body = "Accepted exact terminal selection packet after review.";
         let selection = json!({"schema_version": 1, "kind": "ripr_native_selection_acceptance",
             "status": "accepted", "subject": subject,
@@ -81,6 +118,11 @@ impl Fixture {
             result_rows.push(json!({"id": id, "owner_issue": owner, "status": "passed",
                 "selected": 3, "executed": 3, "failed": 0, "skipped": 0,
                 "packet": {"owner_issue": owner, "path": path, "sha256": digest(bytes.as_bytes())}}));
+        }
+        if include_row {
+            result_rows.push(json!({"id": "ledger-range-touched", "owner_issue": 2768,
+                "status": "passed", "selected": 1, "executed": 1, "failed": 0, "skipped": 0,
+                "packet": ledger_packet}));
         }
         let bundle = json!({"schema_version": 1, "kind": "ripr_complete_qualification_bundle",
             "status": "qualified", "subject": subject, "selection_decision": reference(1609),
@@ -153,11 +195,95 @@ impl Fixture {
 fn native_handoff_accepts_independently_selected_applicable_subset() -> Result<(), String> {
     let fixture = Fixture::new()?;
     let admitted = fixture.admit()?;
-    if admitted.receipt.rows.len() != 3
-        || admitted.receipt.required_execution_owners != [2769, 4508, 4604]
+    if admitted.receipt.rows.len() != 4
+        || admitted.receipt.required_execution_owners != [2769, 4508, 4604, 2768]
         || admitted.manifest.manifest.qualification.state != "required_not_run"
     {
         return Err("applicable subset or immutable freeze-time state changed".to_string());
+    }
+    Ok(())
+}
+
+#[test]
+fn native_handoff_requires_bound_ledger_range_touched() -> Result<(), String> {
+    let fixture = Fixture::new()?;
+    let accepted = fixture.admit()?;
+    let row = accepted
+        .receipt
+        .rows
+        .iter()
+        .find(|row| row.id == "ledger-range-touched")
+        .ok_or("range_touched row is not retained")?;
+    let packet = accepted
+        .receipt
+        .packet_inputs
+        .iter()
+        .find(|packet| packet.path == row.packet.path)
+        .ok_or("range_touched ledger is not retained")?;
+    assert_eq!(row.packet.sha256, packet.sha256);
+    let ledger: Value = serde_json::from_slice(&packet.bytes).map_err(|error| error.to_string())?;
+    assert_eq!(
+        ledger["path_inventories"]["range_touched"]["path_record_count"],
+        2
+    );
+    assert_eq!(
+        ledger["path_inventories"]["range_touched"]["path_record_sha256"],
+        "sha256:b70e7c54ca7944e385a0bf09cd9a8f0822d5e99f06d8ec11fef7cf1a8abcbd10"
+    );
+
+    Fixture::with_range_evidence(false, |_| Ok(()))?.refuses("missing ledger-range-touched")?;
+    let mut inflated = Fixture::new()?;
+    inflated.bundle["rows"][3]["selected"] = json!(2);
+    inflated.bundle["rows"][3]["executed"] = json!(2);
+    inflated.publish_bundle()?;
+    inflated.refuses("must check exactly one retained ledger")?;
+    let mut wrong_packet = Fixture::new()?;
+    let path = "another-ledger.json";
+    let bytes = std::fs::read(wrong_packet.manifest.root.join("denominator.json"))
+        .map_err(|error| error.to_string())?;
+    std::fs::write(wrong_packet.manifest.root.join(path), bytes)
+        .map_err(|error| error.to_string())?;
+    wrong_packet.bundle["rows"][3]["packet"]["path"] = json!(path);
+    wrong_packet.publish_bundle()?;
+    wrong_packet.refuses("does not reference the accepted #2768 ledger")
+}
+
+#[test]
+fn native_handoff_refuses_wrong_or_missing_ledger_path_identity() -> Result<(), String> {
+    let cases = [
+        ("/path_inventories", Value::Null, "missing is not empty"),
+        (
+            "/source/base_sha",
+            json!("b".repeat(40)),
+            "another range base",
+        ),
+        ("/source/cut_sha", json!("b".repeat(40)), "another cut"),
+        (
+            "/path_inventories/range_touched/path_record_count",
+            json!(1),
+            "differs from the retained",
+        ),
+        (
+            "/path_inventories/range_touched/path_record_sha256",
+            json!("sha256:f8a091d5894fe986dab2e2f0335d27f4165b2f556ab9c301ed4451983a13d5ab"),
+            "differs from the retained",
+        ),
+        (
+            "/path_inventories/range_touched/path_record_recipe",
+            json!("other role"),
+            "authority recipe",
+        ),
+    ];
+    for (pointer, replacement, reason) in cases {
+        // Bind all raw hashes to the changed bytes. Only the typed comparison
+        // against the still-exact manifest should refuse these substitutions.
+        let fixture = Fixture::with_range_evidence(true, |ledger| {
+            *ledger
+                .pointer_mut(pointer)
+                .ok_or_else(|| format!("bad ledger test pointer {pointer}"))? = replacement;
+            Ok(())
+        })?;
+        fixture.refuses(reason)?;
     }
     Ok(())
 }

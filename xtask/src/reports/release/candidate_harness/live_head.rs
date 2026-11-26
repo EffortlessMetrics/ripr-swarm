@@ -237,6 +237,15 @@ impl LiveHeadSnapshot {
                     .to_string(),
             );
         }
+        self.verify_range_path_inventory()
+    }
+
+    fn verify_range_path_inventory(&self) -> Result<(), String> {
+        let expected = self
+            .manifest
+            .range
+            .as_ref()
+            .ok_or_else(|| "direct manifest range missing".to_string())?;
         // #4006 item 6: the manifest's path-record identity must equal the
         // retained #2768 ledger's `range_touched` inventory, compared as typed
         // fields against the exact retained packet bytes (raw-digest bound in
@@ -262,7 +271,7 @@ impl LiveHeadSnapshot {
         let packet_cut = ledger["source"]["cut_sha"]
             .as_str()
             .ok_or_else(|| "retained #2768 packet names no source.cut_sha".to_string())?;
-        if packet_cut != sha {
+        if packet_cut != self.candidate_sha()? {
             return Err(
                 "retained #2768 packet covers another cut than the manifest candidate".to_string(),
             );
