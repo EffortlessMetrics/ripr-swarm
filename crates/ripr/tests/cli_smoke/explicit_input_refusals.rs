@@ -253,7 +253,12 @@ fn required_input_commands_refuse_missing_inputs() -> Result<(), String> {
     assert_refusal(
         &root,
         &["first-action", "--pr-guidance", "nope.json"],
-        &["--pr-guidance", "nope.json", "Pass an existing file"],
+        &[
+            "--pr-guidance",
+            "nope.json",
+            "failed: not found",
+            "Pass an existing file",
+        ],
     )?;
     assert_refusal(
         &root,
