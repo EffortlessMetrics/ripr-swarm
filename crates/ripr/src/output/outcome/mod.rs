@@ -305,8 +305,8 @@ pub(crate) fn targeted_test_outcome_report_from_json(
     after_path: String,
 ) -> Result<TargetedTestOutcomeReport, String> {
     let heads = OutcomeHeadIdentity::from_snapshots(before_json, after_json);
-    let before = parse_repo_exposure_static_snapshot(before_json)?;
-    let after = parse_repo_exposure_static_snapshot(after_json)?;
+    let before = parse_repo_exposure_static_snapshot(before_json, "before", &before_path)?;
+    let after = parse_repo_exposure_static_snapshot(after_json, "after", &after_path)?;
     build_targeted_test_outcome_report_from_snapshots(before, after, before_path, after_path, heads)
 }
 
@@ -329,8 +329,8 @@ pub(crate) fn targeted_test_outcome_report_from_json_with_heads(
         before_repository_head: before_head,
         after_repository_head: after_head,
     };
-    let before = parse_repo_exposure_static_snapshot(before_json)?;
-    let after = parse_repo_exposure_static_snapshot(after_json)?;
+    let before = parse_repo_exposure_static_snapshot(before_json, "before", &before_path)?;
+    let after = parse_repo_exposure_static_snapshot(after_json, "after", &after_path)?;
     build_targeted_test_outcome_report_from_snapshots(before, after, before_path, after_path, heads)
 }
 
@@ -434,7 +434,7 @@ pub(crate) fn targeted_rerun_movement_from_json(
 
 fn parse_rerun_before_static_seams(json: &str) -> Result<Vec<StaticSeamRecord>, String> {
     let value: Value = serde_json::from_str(json)
-        .map_err(|err| format!("failed to parse explicit before JSON: {err}"))?;
+        .map_err(|err| format!("--before file is not valid JSON ({err}); pass a file written by `ripr rerun --json` or `ripr check --format repo-exposure-json`"))?;
     if value.get("schema_version").and_then(Value::as_str) == Some("ripr-targeted-rerun-v1") {
         let seams = value
             .get("seams")
@@ -478,7 +478,7 @@ fn parse_rerun_before_static_seams(json: &str) -> Result<Vec<StaticSeamRecord>, 
     }
     // A seam the before snapshot withheld is absent from it, so a selected
     // current seam with that id is refused below as missing, never matched.
-    parse_repo_exposure_static_snapshot(json).map(|snapshot| snapshot.seams)
+    parse_repo_exposure_static_snapshot(json, "before", "--before").map(|snapshot| snapshot.seams)
 }
 
 /// One parsed static snapshot: its comparable seams, each repo seam's
@@ -493,9 +493,9 @@ struct StaticSnapshot {
 
 /// The ids and owners one snapshot withheld by an owner opt-out.
 #[derive(Default)]
-struct SnapshotOwnerOptOuts {
-    seam_ids: BTreeSet<String>,
-    owners: BTreeSet<String>,
+pub(crate) struct SnapshotOwnerOptOuts {
+    pub(crate) seam_ids: BTreeSet<String>,
+    pub(crate) owners: BTreeSet<String>,
 }
 
 fn json_string_set(value: Option<&Value>) -> Option<BTreeSet<String>> {
@@ -507,6 +507,18 @@ fn json_string_set(value: Option<&Value>) -> Option<BTreeSet<String>> {
     })
 }
 
+/// The one reader of an `owner_opt_outs` disclosure (#14139), shared by
+/// `ripr outcome` and the baseline delta (#14898). `None` unless it names
+/// every withheld seam (`withheld` equals the `seam_ids` count) and at least
+/// one owner: otherwise a withheld seam cannot be told from a removed one.
+pub(crate) fn owner_opt_out_disclosure(disclosure: &Value) -> Option<SnapshotOwnerOptOuts> {
+    let withheld = disclosure.get("withheld").and_then(Value::as_u64)?;
+    let seam_ids = json_string_set(disclosure.get("seam_ids"))?;
+    let owners = json_string_set(disclosure.get("owners"))?;
+    (u64::try_from(seam_ids.len()).ok() == Some(withheld) && !owners.is_empty())
+        .then_some(SnapshotOwnerOptOuts { seam_ids, owners })
+}
+
 /// What a repo-exposure snapshot withheld by an owner opt-out (#14139), read
 /// from `owner_opt_outs`. Fail closed: a disclosure that does not name every
 /// withheld seam id and at least one withheld owner cannot tell a withheld
@@ -515,16 +527,9 @@ fn repo_exposure_owner_opt_outs(value: &Value) -> Result<SnapshotOwnerOptOuts, S
     let Some(disclosure) = value.get("owner_opt_outs") else {
         return Ok(SnapshotOwnerOptOuts::default());
     };
-    let withheld = disclosure.get("withheld").and_then(Value::as_u64);
-    let ids = json_string_set(disclosure.get("seam_ids"));
-    let owners = json_string_set(disclosure.get("owners"));
-    match (withheld, ids, owners) {
-        (Some(withheld), Some(seam_ids), Some(owners))
-            if u64::try_from(seam_ids.len()).ok() == Some(withheld) && !owners.is_empty() =>
-        {
-            Ok(SnapshotOwnerOptOuts { seam_ids, owners })
-        }
-        _ => Err(
+    match owner_opt_out_disclosure(disclosure) {
+        Some(opt_outs) => Ok(opt_outs),
+        None => Err(
             "static snapshot withholds seams by owner opt-out (`owner_opt_outs`) without naming every withheld seam in `owner_opt_outs.seam_ids` and its owners in `owner_opt_outs.owners`, so a withheld seam cannot be told from a removed one; regenerate the snapshot with this ripr's `ripr check --format repo-exposure-json`, then compare"
                 .to_string(),
         ),
@@ -548,9 +553,16 @@ fn repo_exposure_seam_owners(seams: &[Value]) -> BTreeMap<String, String> {
         .collect()
 }
 
-fn parse_repo_exposure_static_snapshot(json: &str) -> Result<StaticSnapshot, String> {
-    let value: Value = serde_json::from_str(json)
-        .map_err(|err| format!("failed to parse repo exposure JSON: {err}"))?;
+fn parse_repo_exposure_static_snapshot(
+    json: &str,
+    role: &str,
+    path: &str,
+) -> Result<StaticSnapshot, String> {
+    let value: Value = serde_json::from_str(json).map_err(|err| {
+        format!(
+            "{role} snapshot {path} is not valid JSON: {err}; regenerate it with the same command as the other snapshot, either `ripr check --format repo-exposure-json` or `ripr check --json`, so both sides use one format"
+        )
+    })?;
     if let Some(seams) = value.get("seams").and_then(Value::as_array) {
         // #12108: a pilot file whose seams[] the byte budget cut lists only
         // some seams, so a seam missing from it would read as removed or
@@ -596,7 +608,7 @@ fn parse_repo_exposure_static_snapshot(json: &str) -> Result<StaticSnapshot, Str
         });
     }
 
-    Err("static snapshot JSON is missing repo-exposure `seams` array or check-output `findings` array".to_string())
+    Err("static snapshot JSON is missing repo-exposure `seams` array or check-output `findings` array; regenerate it with the same command as the other snapshot, either `ripr check --format repo-exposure-json` or `ripr check --json`, so both sides use one format".to_string())
 }
 
 fn parse_repo_exposure_seams(seams: &[Value]) -> Result<Vec<StaticSeamRecord>, String> {
@@ -610,20 +622,20 @@ fn parse_repo_exposure_seams(seams: &[Value]) -> Result<Vec<StaticSeamRecord>, S
             .filter(|value| value.is_object());
         let seam_id = optional_json_string(evidence_record, "seam_id")
             .or_else(|| optional_json_string(Some(seam), "seam_id"))
-            .ok_or_else(|| "repo exposure seam is missing string field `seam_id`".to_string())?;
+            .ok_or_else(|| "repo exposure seam is missing string field `seam_id`; regenerate the snapshot with `ripr check --format repo-exposure-json`".to_string())?;
         let seam_kind = optional_json_string(evidence_record, "seam_kind")
             .or_else(|| optional_json_string(Some(seam), "kind"))
-            .ok_or_else(|| "repo exposure seam is missing string field `kind`".to_string())?;
+            .ok_or_else(|| "repo exposure seam is missing string field `kind`; regenerate the snapshot with `ripr check --format repo-exposure-json`".to_string())?;
         let file = optional_json_string(location, "file")
             .or_else(|| optional_json_string(Some(seam), "file"))
             .map(|path| normalize_report_path(&path))
-            .ok_or_else(|| "repo exposure seam is missing string field `file`".to_string())?;
+            .ok_or_else(|| "repo exposure seam is missing string field `file`; regenerate the snapshot with `ripr check --format repo-exposure-json`".to_string())?;
         let line = optional_json_usize(location, "line")
             .or_else(|| optional_json_usize(Some(seam), "line"))
-            .ok_or_else(|| "repo exposure seam is missing numeric field `line`".to_string())?;
+            .ok_or_else(|| "repo exposure seam is missing numeric field `line`; regenerate the snapshot with `ripr check --format repo-exposure-json`".to_string())?;
         let seam_grip_class = optional_json_string(evidence_record, "grip_class")
             .or_else(|| optional_json_string(Some(seam), "grip_class"))
-            .ok_or_else(|| "repo exposure seam is missing string field `grip_class`".to_string())?;
+            .ok_or_else(|| "repo exposure seam is missing string field `grip_class`; regenerate the snapshot with `ripr check --format repo-exposure-json`".to_string())?;
         let oracle_source = match evidence_record {
             Some(record) if record.get("related_tests").is_some() => record,
             _ => seam,
@@ -916,7 +928,7 @@ fn build_targeted_test_outcome_report_from_snapshots(
 
 /// The base key of an owner id that `disambiguate_duplicate_symbol_ids`
 /// suffixed with `#L<start_line>`, or `None` when the id carries no suffix.
-fn duplicate_owner_base(owner: &str) -> Option<&str> {
+pub(crate) fn duplicate_owner_base(owner: &str) -> Option<&str> {
     let (base, line) = owner.rsplit_once("#L")?;
     (!base.is_empty() && !line.is_empty() && line.bytes().all(|b| b.is_ascii_digit()))
         .then_some(base)

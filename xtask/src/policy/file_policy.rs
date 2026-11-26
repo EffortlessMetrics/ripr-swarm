@@ -133,7 +133,7 @@ pub(crate) enum CoverageEnumeration {
 
 /// Disclosure row published in place of coverage observations when the
 /// enumeration is skipped. It must never read as an enumerated selector.
-const COVERAGE_NOT_ENUMERATED_DISCLOSURE: &str = "not_enumerated; the local change set touches no Rust source, manifest, workspace-wide Rust control file or `policy/` path, so no test-valued selector was built or listed in this run. Hosted qualification and `cargo xtask check-file-policy` enumerate every applicable selector.";
+const COVERAGE_NOT_ENUMERATED_DISCLOSURE: &str = "not_enumerated; the local change set touches no Rust source, manifest, workspace-wide Rust control file or `policy/` path, so no test-valued selector was built or listed in this run. Hosted qualification and `cargo xtask check-file-policy` enumerate every applicable selector after source validation succeeds.";
 
 pub(crate) fn check_file_policy() -> Result<(), String> {
     check_file_policy_with(CoverageEnumeration::Enumerate)
@@ -141,12 +141,23 @@ pub(crate) fn check_file_policy() -> Result<(), String> {
 
 pub(crate) fn check_file_policy_with(enumeration: CoverageEnumeration) -> Result<(), String> {
     let policy_path = "policy/non-rust-allowlist.toml";
-    let allowlist = read_file_policy_allowlist(policy_path)?;
     let mut diagnostics = Vec::new();
-    let enumerated = coverage_for(
-        enumeration,
-        read_file_policy_test_commands(policy_path),
-        |commands| {
+    let report_input_error = |phase: &str, error: &str| {
+        file_policy_failure_report(phase, error, &[], |body| {
+            crate::write_report("file-policy.md", body)
+        })
+    };
+    let allowlist = match read_file_policy_allowlist(policy_path) {
+        Ok(allowlist) => allowlist,
+        Err(error) => return report_input_error("policy declarations", &error),
+    };
+    let violations = match file_policy_path_violations(&allowlist) {
+        Ok(violations) => violations,
+        Err(error) => return report_input_error("file enumeration", &error),
+    };
+    let commands = read_file_policy_test_commands(policy_path);
+    let enumerated = if violations.is_empty() {
+        coverage_for(enumeration, commands, |commands| {
             let in_source =
                 |command: &str| super::library_selector::resolve_in_source(Path::new("."), command);
             validate_test_covered_by_recorded(
@@ -156,8 +167,10 @@ pub(crate) fn check_file_policy_with(enumeration: CoverageEnumeration) -> Result
                 (enumeration == CoverageEnumeration::EnumerateResolvingLibrarySelectorsInSource)
                     .then_some(&in_source),
             )
-        },
-    );
+        })
+    } else {
+        commands.map(|_| None)
+    };
     let coverage = match enumerated {
         Ok(coverage) => coverage,
         Err(error) => {
@@ -169,39 +182,6 @@ pub(crate) fn check_file_policy_with(enumeration: CoverageEnumeration) -> Result
             );
         }
     };
-    let mut violations = Vec::new();
-
-    let files = match collect_files(Path::new(".")) {
-        Ok(files) => files,
-        Err(error) => {
-            return file_policy_failure_report("file enumeration", &error, &diagnostics, |body| {
-                crate::write_report("file-policy.md", body)
-            });
-        }
-    };
-    for path in files {
-        let normalized = normalize_path(&path);
-        if !is_file_policy_candidate(&normalized) {
-            continue;
-        }
-        if normalized.ends_with(".rs") {
-            continue;
-        }
-        if !matches_any_glob(&allowlist, &normalized) {
-            violations.push(format!(
-                "unapproved non-Rust programming/declarative file: {normalized}\n  preferred: implement automation in Rust/xtask or add a policy allowlist entry with owner and reason"
-            ));
-            continue;
-        }
-        if is_non_rust_programming_candidate(&normalized)
-            && non_rust_programming_retention_reason(&normalized).is_none()
-        {
-            violations.push(format!(
-                "non-Rust programming file lacks a keep-non-Rust retention rule: {normalized}\n  preferred: convert implementation/test automation to Rust/xtask unless the file is bound to an approved non-Rust runtime surface"
-            ));
-        }
-    }
-
     let result = finish_policy_report_with_disclosures(
         PolicyReportSpec {
             report_file: "file-policy.md",
@@ -221,7 +201,11 @@ pub(crate) fn check_file_policy_with(enumeration: CoverageEnumeration) -> Result
         &[PolicyDisclosure {
             heading: "Test-valued coverage applicability".to_string(),
             intro: "Applicable selectors must enumerate nonzero tests. Enumeration is not test execution. Host-inapplicable selectors are not enumerated and confer no coverage on this host.".to_string(),
-            items: coverage_disclosure_items(coverage.as_deref()),
+            items: if violations.is_empty() {
+                coverage_disclosure_items(coverage.as_deref())
+            } else {
+                vec!["not_enumerated; source paths violate file policy. No covered_by build or listing ran.".to_string()]
+            },
         }, PolicyDisclosure {
             heading: "Cargo child command diagnostics".to_string(),
             intro: format!("{COMMAND_DIAGNOSTIC_DISCLOSURE} Capture scope: actual covered-by warmup/list calls only. Reused listings, skipped warmups and host-inapplicable selectors add no executed rows."),
@@ -241,6 +225,34 @@ pub(crate) fn check_file_policy_with(enumeration: CoverageEnumeration) -> Result
         super::file_policy_retained_evidence::remove_retained_subject();
     }
     result
+}
+
+fn file_policy_path_violations(allowlist: &[crate::GlobAllow]) -> Result<Vec<String>, String> {
+    let mut violations = Vec::new();
+    let files = collect_files(Path::new("."))?;
+    for path in files {
+        let normalized = normalize_path(&path);
+        if !is_file_policy_candidate(&normalized) {
+            continue;
+        }
+        if normalized.ends_with(".rs") {
+            continue;
+        }
+        if !matches_any_glob(allowlist, &normalized) {
+            violations.push(format!(
+                "unapproved non-Rust programming/declarative file: {normalized}\n  preferred: implement automation in Rust/xtask or add a policy allowlist entry with owner and reason"
+            ));
+            continue;
+        }
+        if is_non_rust_programming_candidate(&normalized)
+            && non_rust_programming_retention_reason(&normalized).is_none()
+        {
+            violations.push(format!(
+                "non-Rust programming file lacks a keep-non-Rust retention rule: {normalized}\n  preferred: convert implementation/test automation to Rust/xtask unless the file is bound to an approved non-Rust runtime surface"
+            ));
+        }
+    }
+    Ok(violations)
 }
 
 fn file_policy_failure_report(
@@ -362,7 +374,9 @@ fn validate_packet_coverage(coverage: &[TestCoverageObservation]) -> Result<(), 
         );
     }
     match native.host {
-        FilePolicyHost::Unix => validate_packet_subjects(native, &PACKET_NATIVE_SUBJECTS),
+        FilePolicyHost::Unix | FilePolicyHost::Linux | FilePolicyHost::Macos => {
+            validate_packet_subjects(native, &PACKET_NATIVE_SUBJECTS)
+        }
         FilePolicyHost::Windows if native.selected.is_none() => Ok(()),
         FilePolicyHost::Windows => {
             Err("Windows native packet coverage must remain not enumerated".to_string())
@@ -479,7 +493,11 @@ fn partition_resolved_in_source(
     let mut resolved = Vec::new();
     for selector in commands {
         let tests = in_source
-            .filter(|_| selector.host.is_none_or(|declared| declared == host))
+            .filter(|_| {
+                selector
+                    .host
+                    .is_none_or(|declared| declared.applies_to(host))
+            })
             .and_then(|resolve| resolve(&selector.command))
             .filter(|tests| !tests.is_empty());
         match tests {
@@ -622,7 +640,9 @@ fn combined_preparation_builds(
     }
     let mut groups = BTreeMap::<BTreeSet<String>, Group>::new();
     for selector in commands {
-        if selector.host.is_some_and(|declared| declared != host)
+        if selector
+            .host
+            .is_some_and(|declared| !declared.applies_to(host))
             || !is_cargo_test_command(&selector.command)
         {
             continue;
@@ -906,7 +926,10 @@ fn validate_test_covered_by_with(
                 "{path}:{line} unsupported test-valued `covered_by`: {command}"
             ));
         }
-        if selector.host.is_some_and(|declared| declared != host) {
+        if selector
+            .host
+            .is_some_and(|declared| !declared.applies_to(host))
+        {
             observations.push(TestCoverageObservation {
                 selector: selector.clone(),
                 host,
@@ -2129,7 +2152,7 @@ mod tests {
                 if observation
                     .selector
                     .host
-                    .is_some_and(|declared| declared != host)
+                    .is_some_and(|declared| !declared.applies_to(host))
                 {
                     assert!(observation.selected.is_none());
                     assert!(rendered.contains("not_applicable; selected=not_enumerated;"));
@@ -2171,7 +2194,7 @@ mod tests {
             FilePolicyHost::parse("windows"),
             Ok(FilePolicyHost::Windows)
         );
-        for unsupported in ["", "linux", "Windows", "wasm", "unix,windows"] {
+        for unsupported in ["", "Linux", "Windows", "wasm", "unix,windows"] {
             assert_eq!(
                 FilePolicyHost::parse(unsupported),
                 Err(format!(
@@ -2179,6 +2202,134 @@ mod tests {
                 ))
             );
         }
+    }
+
+    #[test]
+    fn test_covered_by_native_host_uses_os_not_only_family() -> Result<(), String> {
+        if cfg!(target_os = "linux") {
+            assert_eq!(FilePolicyHost::current()?, FilePolicyHost::Linux);
+        } else if cfg!(target_os = "macos") {
+            assert_eq!(FilePolicyHost::current()?, FilePolicyHost::Macos);
+        } else if cfg!(windows) {
+            assert_eq!(FilePolicyHost::current()?, FilePolicyHost::Windows);
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn test_covered_by_os_scope_matrix_has_no_false_credit() -> Result<(), String> {
+        use FilePolicyHost::{Linux, Macos, Unix, Windows};
+        // Simulated hosts challenge selection, preparation and source resolution.
+        // They do not represent native Windows/macOS test execution.
+        for (host, eligible) in [
+            (Linux, [true, true, false, true, false]),
+            (Macos, [true, true, false, false, true]),
+            (Windows, [true, false, true, false, false]),
+            (Unix, [true, true, false, false, false]),
+        ] {
+            for (declared, eligible) in [None, Some(Unix), Some(Windows), Some(Linux), Some(Macos)]
+                .into_iter()
+                .zip(eligible)
+            {
+                let commands = [FilePolicyTestCommand {
+                    host: declared,
+                    ..common(1, "cargo test -p xtask --bin xtask scoped_case")
+                }];
+                let mut enumerations = 0;
+                let rows = validate_test_covered_by_with("policy.toml", &commands, host, |_| {
+                    enumerations += 1;
+                    Ok((true, "scoped_case: test\n".to_string(), String::new()))
+                })?;
+                assert_eq!(enumerations, usize::from(eligible), "{host:?}/{declared:?}");
+                assert_eq!(rows[0].selected.is_some(), eligible);
+                let rendered = rows[0].render();
+                assert!(rendered.contains(&format!("host={};", host.name())));
+                if !eligible {
+                    assert!(rendered.contains("not_applicable; selected=not_enumerated;"));
+                    assert!(!rendered.contains("tests=["));
+                }
+                let (to_list, resolved) = super::partition_resolved_in_source(
+                    &commands,
+                    host,
+                    Some(&|_| Some(vec!["scoped_case".to_string()])),
+                );
+                assert_eq!(resolved.len(), usize::from(eligible));
+                assert_eq!(to_list.len(), usize::from(!eligible));
+
+                // Two mergeable selectors make any accidental build visible.
+                let paired = [commands[0].clone(), commands[0].clone()];
+                assert_eq!(
+                    super::combined_preparation_builds(&paired, host).len(),
+                    usize::from(eligible)
+                );
+                for success in [true, false] {
+                    let empty =
+                        validate_test_covered_by_with("policy.toml", &commands, host, |_| {
+                            Ok((success, String::new(), String::new()))
+                        });
+                    assert_eq!(
+                        empty.is_err(),
+                        eligible,
+                        "empty/failed {host:?}/{declared:?}"
+                    );
+                }
+            }
+        }
+        assert_eq!(FilePolicyHost::parse("linux")?, Linux);
+        assert_eq!(FilePolicyHost::parse("macos")?, Macos);
+        Ok(())
+    }
+
+    #[test]
+    fn test_covered_by_contabo_ledger_is_linux_only() -> Result<(), String> {
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../policy/non-rust-allowlist.toml");
+        let all_commands = crate::read_file_policy_test_commands(&path.to_string_lossy())?;
+        let commands = all_commands
+            .iter()
+            .filter(|row| row.command.contains("contabo_product_proof"))
+            .cloned()
+            .collect::<Vec<_>>();
+        assert_eq!(
+            commands.len(),
+            3,
+            "both shims and contract selector must remain present"
+        );
+        assert!(
+            commands
+                .iter()
+                .all(|row| row.host == Some(FilePolicyHost::Linux))
+        );
+        let result_policy = all_commands
+            .iter()
+            .find(|row| row.command.contains("contabo_result_policy"))
+            .ok_or("result-policy selector missing")?;
+        assert_eq!(result_policy.host, Some(FilePolicyHost::Unix));
+        for host in [
+            FilePolicyHost::Linux,
+            FilePolicyHost::Macos,
+            FilePolicyHost::Windows,
+        ] {
+            let mut calls = 0;
+            let result = validate_test_covered_by_with("policy.toml", &commands, host, |_| {
+                calls += 1;
+                Ok((true, String::new(), String::new()))
+            });
+            if host == FilePolicyHost::Linux {
+                assert_eq!(calls, 1);
+                assert!(result.is_err_and(|error| error.contains("selects zero tests")));
+            } else {
+                assert_eq!(calls, 0);
+                for row in result? {
+                    assert!(row.selected.is_none());
+                    assert!(
+                        row.render()
+                            .contains("declared=linux; not_applicable; selected=not_enumerated;")
+                    );
+                }
+            }
+        }
+        Ok(())
     }
 
     #[test]

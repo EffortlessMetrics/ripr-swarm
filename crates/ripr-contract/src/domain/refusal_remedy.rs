@@ -888,4 +888,253 @@ mod tests {
             "17th distinct flag must not appear when cap is full"
         );
     }
+
+    fn strings(values: &[&str]) -> Vec<String> {
+        values.iter().map(|value| (*value).to_string()).collect()
+    }
+
+    fn tick(span: &str) -> String {
+        format!("`{span}`")
+    }
+
+    fn flags(prose: &str) -> Vec<String> {
+        RefusalRemedy::from_prose(prose).flags
+    }
+
+    #[test]
+    fn remedy_kinds_use_their_wire_tokens() {
+        assert_eq!(
+            [
+                RemedyKind::Command,
+                RemedyKind::McpTool,
+                RemedyKind::Flags,
+                RemedyKind::None
+            ]
+            .map(RemedyKind::as_str),
+            ["command", "mcp_tool", "flags", "none"]
+        );
+    }
+
+    #[test]
+    fn a_command_span_needs_a_subcommand_shaped_first_word() {
+        let command = |prose: &str| RefusalRemedy::from_prose(prose).command;
+        assert_eq!(
+            command("run `ripr --help` first").as_deref(),
+            Some("ripr --help")
+        );
+        assert_eq!(
+            command("run `ripr check2_x now`").as_deref(),
+            Some("ripr check2_x now")
+        );
+        // Built at runtime so the source-literal corpus does not read these
+        // non-commands as stated commands.
+        for span in ["ripr c.toml", "ripr Check", "ripr 2fast", "ripr.toml"] {
+            let prose = format!("run {} first", tick(span));
+            assert_eq!(command(&prose), None, "{prose}");
+        }
+    }
+
+    #[test]
+    fn a_period_inside_a_command_span_does_not_end_the_conditional_clause() {
+        let remedy = RefusalRemedy::from_prose(
+            "If the id is stale, run `ripr fix --note a. b` then `ripr doctor`",
+        );
+        assert_eq!(remedy.kind, RemedyKind::Command);
+        assert!(remedy.conditional);
+        assert_eq!(remedy.command.as_deref(), Some("ripr fix --note a. b"));
+        assert_eq!(remedy.alternatives, strings(&["ripr doctor"]));
+    }
+
+    #[test]
+    fn a_sentence_end_or_semicolon_closes_an_earlier_condition() {
+        for prose in [
+            "If it persists, see the log. Run `ripr doctor`.",
+            "If it persists, see the log; run `ripr doctor`.",
+        ] {
+            let remedy = RefusalRemedy::from_prose(prose);
+            assert_eq!(remedy.command.as_deref(), Some("ripr doctor"), "{prose}");
+            assert!(!remedy.conditional, "{prose}");
+        }
+        // A period that does not end a sentence keeps the condition open.
+        let remedy = RefusalRemedy::from_prose("If ripr.toml is stale, run `ripr doctor`");
+        assert!(remedy.conditional);
+    }
+
+    #[test]
+    fn a_mention_after_a_copula_is_an_instruction_only_with_an_imperative_word() {
+        let explanatory = RefusalRemedy::from_prose(&format!(
+            "{} is a {} finding ID",
+            tick("gap:1"),
+            tick("ripr check")
+        ));
+        assert_eq!(explanatory.kind, RemedyKind::None);
+        let instructed = RefusalRemedy::from_prose("The fix is a rerun: run `ripr check` again");
+        assert_eq!(instructed.kind, RemedyKind::Command);
+        assert_eq!(instructed.command.as_deref(), Some("ripr check"));
+    }
+
+    #[test]
+    fn a_tool_name_needs_identifier_boundaries_and_a_name_after_the_prefix() {
+        let tool = |prose: &str| RefusalRemedy::from_prose(prose).tool;
+        assert_eq!(
+            tool("ripr_check the workspace").as_deref(),
+            Some("ripr_check")
+        );
+        assert_eq!(tool("call ripr_gaps_v2.").as_deref(), Some("ripr_gaps_v2"));
+        assert_eq!(
+            tool("call ripr_status_ now").as_deref(),
+            Some("ripr_status")
+        );
+        for prose in [
+            "call xripr_check now",
+            "call ripr_ now",
+            "call ripr_Check now",
+            "call ripr_check9X now",
+        ] {
+            assert_eq!(tool(prose), None, "{prose}");
+        }
+    }
+
+    #[test]
+    fn a_flag_must_start_at_a_word_boundary_with_a_lowercase_letter() {
+        assert_eq!(flags("pass --json"), strings(&["--json"]));
+        assert_eq!(
+            flags("--json is required; pass --json"),
+            strings(&["--json"])
+        );
+        for prose in [
+            "pass a--flag",
+            "pass _--flag",
+            "pass .--flag",
+            "pass --9x",
+            "pass --Json",
+            "pass ---",
+        ] {
+            assert_eq!(flags(prose), Vec::<String>::new(), "{prose}");
+        }
+    }
+
+    #[test]
+    fn flags_inside_a_command_span_belong_to_the_command() {
+        let remedy = RefusalRemedy::from_prose("Run `ripr check --base main` and pass --json.");
+        assert_eq!(remedy.flags, strings(&["--json"]));
+        assert!(remedy.prose_has_more);
+        // Right after the closing tick is outside the span.
+        let adjacent = RefusalRemedy::from_prose("Run `ripr check`--json");
+        assert_eq!(adjacent.flags, strings(&["--json"]));
+        let bare = RefusalRemedy::from_prose("Run `ripr check --base main`.");
+        assert_eq!(bare.flags, Vec::<String>::new());
+        assert!(!bare.prose_has_more);
+    }
+
+    #[test]
+    fn without_a_step_only_instructed_or_listed_flags_count() {
+        assert_eq!(
+            flags("pass --before, --after"),
+            strings(&["--before", "--after"])
+        );
+        assert_eq!(
+            flags("pass `--before` and `--after`"),
+            strings(&["--before", "--after"])
+        );
+        assert_eq!(
+            flags("pass --before, and --after"),
+            strings(&["--before", "--after"])
+        );
+        // A joiner far from the last counted flag does not continue the list.
+        assert_eq!(
+            flags("pass --before then x y z and --after"),
+            strings(&["--before"])
+        );
+        assert_eq!(
+            flags("pass --before; 3 and --after"),
+            strings(&["--before"])
+        );
+        // A flag that is only described is not a remedy.
+        assert_eq!(flags("the --before value is stale"), Vec::<String>::new());
+        assert_eq!(flags("and --after"), Vec::<String>::new());
+    }
+
+    #[test]
+    fn a_flag_after_the_original_counts_only_when_told_to_keep_or_repeat_it() {
+        for prose in [
+            "repeat the original --base",
+            "repeated the original --base",
+            "repeating the original --base",
+            "keep the original --base",
+            "keeping the original --base",
+        ] {
+            assert_eq!(flags(prose), strings(&["--base"]), "{prose}");
+        }
+        assert_eq!(
+            flags("this differs from the original --base"),
+            Vec::<String>::new()
+        );
+    }
+
+    #[test]
+    fn environment_prerequisites_are_upper_snake_assignments_outside_the_command() {
+        let remedy = RefusalRemedy::from_prose(
+            "set RIPR_CACHE=off (and ABC=1, again RIPR_CACHE=off.) then run `ripr check RIPR_IN_SPAN=1`",
+        );
+        assert_eq!(remedy.env, strings(&["RIPR_CACHE=off", "ABC=1"]));
+        assert!(remedy.prose_has_more);
+        for prose in [
+            "set AB=1 then run `ripr check`",
+            "set aBC=1 then run `ripr check`",
+            "set A-B=1 then run `ripr check`",
+            "set ABC= then run `ripr check`",
+            "set 1BC=1 then run `ripr check`",
+        ] {
+            assert_eq!(
+                RefusalRemedy::from_prose(prose).env,
+                Vec::<String>::new(),
+                "{prose}"
+            );
+        }
+    }
+
+    #[test]
+    fn placeholders_are_angled_braced_or_upper_case_tokens() {
+        let remedy = RefusalRemedy::from_prose(
+            "run `ripr check <ref> {root} BASE V2 A 123 <open main BASE`",
+        );
+        assert_eq!(remedy.fill_in, strings(&["<ref>", "{root}", "BASE", "V2"]));
+    }
+
+    #[test]
+    fn placeholders_need_both_delimiters_and_no_lowercase() {
+        let span = tick("ripr check {base x} Base <ref BASE_2");
+        let remedy = RefusalRemedy::from_prose(&format!("run {span}"));
+        assert_eq!(remedy.fill_in, strings(&["BASE_2"]));
+    }
+
+    #[test]
+    fn listed_placeholders_and_env_stop_at_the_cap() {
+        let names: Vec<String> = (0..MAX_LISTED + 1).map(|n| format!("NAME_{n}")).collect();
+        let span = tick(&format!("ripr check {}", names.join(" ")));
+        let remedy = RefusalRemedy::from_prose(&format!("run {span}"));
+        assert_eq!(remedy.fill_in, names[..MAX_LISTED].to_vec());
+
+        let pairs: Vec<String> = names.iter().map(|name| format!("{name}=1")).collect();
+        let remedy = RefusalRemedy::from_prose(&format!("set {} first", pairs.join(" ")));
+        assert_eq!(remedy.env, pairs[..MAX_LISTED].to_vec());
+    }
+
+    #[test]
+    fn a_dash_pair_inside_a_word_is_not_a_flag() {
+        let span = tick("ripr check");
+        for joined in ["x--json", "a_--json", "9--json", "v.--json"] {
+            assert_eq!(
+                flags(&format!("Run {span} with {joined}")),
+                Vec::<String>::new(),
+                "{joined}"
+            );
+        }
+        assert_eq!(
+            flags(&format!("Run {span} with --json")),
+            strings(&["--json"]),
+            "harness sanity: an ungated flag after a step counts"
+        );
+    }
 }

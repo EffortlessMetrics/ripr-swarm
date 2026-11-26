@@ -407,3 +407,14 @@ Command:
 
 Updated:
 - `expected/human.txt`
+
+## Pending — ts_domock_relation_gate (35)
+
+Reason:
+RIPR-SPEC-0122: the Summary names findings whose reach is a test link ripr could not confirm (#15295)
+
+Command:
+`cargo xtask goldens bless ts_domock_relation_gate --reason "..."`
+
+Updated:
+- `expected/human.txt`

@@ -135,13 +135,17 @@ fn a_readable_miss_cannot_hide_an_unreadable_call_row() -> Result<(), String> {
         "[]\n    opaque = int(\"-2\")\n    assert list(countdown(opaque)) == []",
     ] {
         let finding = classify_loop(DOWN, 2, "    while start > 0:", "-2", suffix)?;
+        // #15287: the unread row is test-side input, so the rebound loop
+        // counter fails closed to weak. The readable miss still cannot turn
+        // it into a repair target: none is named.
+        assert_eq!(finding.class, ExposureClass::WeaklyExposed, "{finding:?}");
         assert!(
-            finding
-                .evidence
-                .iter()
-                .any(|line| line.starts_with("boundary_activation_unresolved: ")),
-            "{:?}",
-            finding.evidence
+            finding.activation.missing_discriminators.is_empty(),
+            "{finding:?}"
+        );
+        assert!(
+            format!("{finding:?}").contains("`start` is rebound inside `countdown`"),
+            "{finding:?}"
         );
     }
     Ok(())

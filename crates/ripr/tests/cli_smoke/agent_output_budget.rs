@@ -165,6 +165,158 @@ fn agent_brief_states_workflow_commands_once() -> TestResult {
     Ok(())
 }
 
+/// #15361: through the real `ripr agent brief --json`, a brief that names a
+/// seam states `value_basis` once, as one string. The note calls the values
+/// changed code only while the brief names each seam as reached by a changed
+/// line: the ranged form of a diff that changes five predicates does; the
+/// file form, which names seams through their changed tests, and the seam
+/// form, which asks for one seam by its ID, do not, and their note calls the
+/// values the current source's behavior. A brief that names no seam leaves
+/// the property out. The published schema 0.2 does not declare the property
+/// (its root accepts extra properties), so these assertions hold the
+/// producer to the extension that `docs/OUTPUT_SCHEMA.md` documents, until a
+/// schema version declares it.
+#[test]
+fn agent_brief_json_states_the_value_basis_as_one_string_or_leaves_it_out() -> TestResult {
+    // The wording that tells the two notes apart, as `docs/OUTPUT_SCHEMA.md`
+    // states them.
+    const CHANGED_CODE: &str = "changed code, so assert what it does now";
+    const CURRENT_SOURCE: &str = "current source behavior";
+    let (project, _cleanup) = workspace("agent-value-basis")?;
+    let ranged = ["agent", "brief", "--diff", "change.diff", "--json"];
+    let brief: serde_json::Value = serde_json::from_str(&run(&project, &ranged)?)?;
+    let seam_id = brief["top_seams"][0]["seam_id"]
+        .as_str()
+        .ok_or("the ranged brief names no seam with an id")?
+        .to_owned();
+    let forms = [
+        ("ranged", ranged.to_vec(), true),
+        (
+            "file",
+            vec!["agent", "brief", "--files", "src/lib.rs", "--json"],
+            false,
+        ),
+        (
+            "seam",
+            vec!["agent", "brief", "--seam-id", seam_id.as_str(), "--json"],
+            false,
+        ),
+    ];
+    for (label, args, on_changed_lines) in forms {
+        let brief = run(&project, &args)?;
+        let value: serde_json::Value = serde_json::from_str(&brief)?;
+        let seams = value["top_seams"]
+            .as_array()
+            .filter(|seams| !seams.is_empty())
+            .ok_or_else(|| format!("{label}: the brief names no seam:\n{brief}"))?;
+        let basis = value["value_basis"]
+            .as_str()
+            .ok_or_else(|| format!("{label}: value_basis is not one string:\n{brief}"))?;
+        // The note follows the seams' own reasons.
+        let reached = seams
+            .iter()
+            .all(|seam| seam["why_now"]["reason"] == "changed_line_intersects_seam");
+        assert_eq!(
+            reached, on_changed_lines,
+            "{label}: the seams a changed line reaches:\n{brief}"
+        );
+        assert_eq!(
+            basis.contains(CHANGED_CODE),
+            on_changed_lines,
+            "{label}: value_basis against its seams' reasons: {basis}"
+        );
+        assert_eq!(
+            basis.contains(CURRENT_SOURCE),
+            !on_changed_lines,
+            "{label}: value_basis against its seams' reasons: {basis}"
+        );
+        // Both notes say what to assert and what the candidates are.
+        for phrase in [
+            "assert what it does now",
+            "`candidate_values`: inputs or values to assert",
+            "not all of one kind",
+        ] {
+            assert!(
+                basis.contains(phrase),
+                "{label}: value_basis lacks {phrase:?}: {basis}"
+            );
+        }
+        assert_eq!(
+            brief.matches("\"value_basis\"").count(),
+            1,
+            "{label}: the note is stated once, at the top level:\n{brief}"
+        );
+        if label == "seam" {
+            // The seam form names the seam asked for and no other.
+            assert_eq!(
+                seams.len(),
+                1,
+                "the seam form names one seam, the one asked for:\n{brief}"
+            );
+            assert_eq!(
+                seams[0]["seam_id"].as_str(),
+                Some(seam_id.as_str()),
+                "the seam form names the seam asked for:\n{brief}"
+            );
+        }
+    }
+    // A comment-only change reaches no seam. The file holds the comment too,
+    // as a developer's would: given only the patch, the brief would read the
+    // file's unshifted lines against the patch's shifted ones. The brief then
+    // names no seam and leaves the property out, or names seams no changed
+    // line reaches, and then calls their values the current source's
+    // behavior, not changed code (#15361 review).
+    let lib = fs::read_to_string(project.join("src/lib.rs"))?;
+    fs::write(
+        project.join("comment.diff"),
+        "--- a/src/lib.rs\n+++ b/src/lib.rs\n@@ -1,1 +1,2 @@\n+// a comment, and nothing else\n pub fn can_vote(age: u32) -> bool { age >= 18 }\n",
+    )?;
+    fs::write(
+        project.join("src/lib.rs"),
+        format!("// a comment, and nothing else\n{lib}"),
+    )?;
+    let text = run(
+        &project,
+        &["agent", "brief", "--diff", "comment.diff", "--json"],
+    )?;
+    let value: serde_json::Value = serde_json::from_str(&text)?;
+    let seams = value["top_seams"]
+        .as_array()
+        .ok_or("top_seams is not an array")?;
+    let reached = seams
+        .iter()
+        .any(|seam| seam["why_now"]["reason"] == "changed_line_intersects_seam");
+    assert!(
+        !reached,
+        "a comment-only change reaches no seam by a changed line:\n{text}"
+    );
+    if seams.is_empty() {
+        assert!(value.get("value_basis").is_none(), "{text}");
+    } else {
+        let basis = value["value_basis"]
+            .as_str()
+            .ok_or("value_basis is not one string")?;
+        assert!(
+            basis.contains(CURRENT_SOURCE) && !basis.contains(CHANGED_CODE),
+            "a value no changed line reaches is not changed code: {basis}"
+        );
+    }
+    // A brief that names no seam leaves the property out.
+    let none = run(
+        &project,
+        &["agent", "brief", "--seam-id", "no-such-seam", "--json"],
+    )?;
+    let value: serde_json::Value = serde_json::from_str(&none)?;
+    assert!(
+        value["top_seams"]
+            .as_array()
+            .is_some_and(|seams| seams.is_empty()),
+        "an unknown seam id names no seam:\n{none}"
+    );
+    assert!(value.get("value_basis").is_none(), "{none}");
+    Ok(())
+}
+
 /// #13803: the human `agent repair --phase before` start prints the next
 /// command once (stdout), keeps the fields an agent acts on (target, edit
 /// boundary with its terminality, redirect stop condition), and stays inside

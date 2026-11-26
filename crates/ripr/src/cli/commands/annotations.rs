@@ -28,6 +28,7 @@ pub(crate) fn parse_options(args: &[String]) -> Result<AnnotationOptions, String
                     NonEmptyPlaceholder::Path,
                 )?
                 .to_string();
+                options.comments_explicit = true;
             }
             "--out" => {
                 i += 1;

@@ -1,0 +1,8 @@
+[package]
+name = "repo_exposure_integration_test_nested_block_renamed_other_function_sibling_mount_control_subject"
+version = "0.0.0"
+edition = "2024"
+
+[lib]
+name = "repo_exposure_integration_test_nested_block_renamed_other_function_sibling_mount_control_subject"
+path = "src/lib.rs"

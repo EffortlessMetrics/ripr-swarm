@@ -3798,7 +3798,14 @@ mod tests {
             }),
             generated_at: "2026-05-09T12:00:00Z".to_string(),
             out_md_path: fixture_path(repo_root, expected_md_path),
-            pr_guidance_json: read_optional_fixture(repo_root, pr_guidance.as_deref())?,
+            pr_guidance_json: pr_guidance.as_deref().map(|path| {
+                crate::bounded_input::read_to_string(repo_root.join(path)).map_err(|err| {
+                    format!(
+                        "read PR guidance {path} failed: {}",
+                        crate::bounded_input::read_failure_detail(&err)
+                    )
+                })
+            }),
             first_action_json: read_optional_fixture(repo_root, first_action.as_deref())?,
             assistant_proof_json: read_optional_fixture_typed(
                 repo_root,

@@ -13,7 +13,7 @@ inputs:
     required: false
     default: '0.10.0'
   mode:
-    description: 'Analysis mode: draft, deep, or ready'
+    description: 'Analysis mode: instant, draft, fast, deep, or ready'
     required: false
     default: 'draft'
   format:
@@ -23,7 +23,11 @@ inputs:
   base:
     description: >-
       Base ref for the diff. Empty (default) uses the pull request base branch
-      on pull_request events and ripr's own default-branch detection elsewhere.
+      on pull_request events; on push events, the commit before the push for
+      the default branch and the default branch for any other branch; and
+      ripr's own default-branch detection elsewhere. A shallow checkout is
+      fetched and deepened until it meets a branch or full-SHA base. A value
+      starting with '-' is refused.
     required: false
     default: ''
   cache:
@@ -142,30 +146,56 @@ runs:
         restore-keys: ripr-check-${{ inputs.version }}-${{ runner.os }}-${{ runner.arch }}-
 
     # A pull_request checkout often lacks the base branch, and actions/checkout's
-    # default `fetch-depth: 1` has no merge base with it. Fetch just that branch
+    # default `fetch-depth: 1` has no merge base with it. Fetch just that ref
     # and deepen both sides in doubling steps until they meet (then fetch the
-    # rest), so the default checkout works. The report goes to the job log, a
-    # file (output `report`) and the job summary; a run that could not complete
-    # fails the step with an error annotation that names why.
-    - name: Run ripr check
-      id: check
+    # rest), so the default checkout works. A push has no base branch: use the
+    # commit before the push on the default branch, else the default branch.
+    - name: Pick the ripr check base
+      id: base
       if: inputs.install-only != 'true'
       shell: bash
       env:
         RIPR_INPUT_BASE: ${{ inputs.base }}
-        RIPR_INPUT_MODE: ${{ inputs.mode }}
-        RIPR_INPUT_FORMAT: ${{ inputs.format }}
-        RIPR_CACHE_DIR: ${{ runner.temp }}/ripr-cache
+        RIPR_DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+        RIPR_EVENT_BEFORE: ${{ github.event.before }}
       run: |
-        base="$RIPR_INPUT_BASE"
-        if [ -z "$base" ] && [ -n "${GITHUB_BASE_REF:-}" ]; then
-          branch="$GITHUB_BASE_REF"; base="origin/$branch"
-          refspec="+refs/heads/$branch:refs/remotes/origin/$branch"
+        base="$RIPR_INPUT_BASE"; refspec=""; what="base '$base'"
+        safe='^[A-Za-z0-9_][A-Za-z0-9._/-]*$'
+        case "$base" in
+          -* | *$'\n'* | *$'\r'*)
+            echo "::error title=ripr check input::base starts with '-' or spans lines; name a branch or commit, for example origin/main"
+            exit 2 ;;
+        esac
+        if [ -n "$base" ]; then
+          if [[ "$base" =~ ^[0-9a-f]{40}$ ]]; then
+            refspec="$base"
+          elif [[ "$base" == origin/* && "${base#origin/}" =~ $safe ]]; then
+            refspec="+refs/heads/${base#origin/}:refs/remotes/$base"
+          elif [[ "$base" =~ $safe ]] && ! git rev-parse --verify --quiet "$base^{commit}" >/dev/null; then
+            refspec="+refs/heads/$base:refs/remotes/origin/$base"; bare="$base"; base="origin/$base"
+          fi
+        elif [ -n "${GITHUB_BASE_REF:-}" ]; then
+          base="origin/$GITHUB_BASE_REF"; what="pull request base branch '$GITHUB_BASE_REF'"
+          refspec="+refs/heads/$GITHUB_BASE_REF:refs/remotes/$base"
+        elif [ "${GITHUB_EVENT_NAME:-}" = push ] && [[ "${RIPR_DEFAULT_BRANCH:-}" =~ $safe ]]; then
+          # A push has no base branch. On the default branch, compare with the
+          # commit before the push (comparing the branch with itself finds
+          # nothing); elsewhere, with the default branch.
+          if [ "${GITHUB_REF:-}" = "refs/heads/$RIPR_DEFAULT_BRANCH" ]; then
+            if [[ "${RIPR_EVENT_BEFORE:-}" =~ ^[0-9a-f]{40}$ && ! "$RIPR_EVENT_BEFORE" =~ ^0+$ ]]; then
+              base="$RIPR_EVENT_BEFORE"; refspec="$base"; what="commit before this push"
+            fi
+          else
+            base="origin/$RIPR_DEFAULT_BRANCH"; what="default branch '$RIPR_DEFAULT_BRANCH'"
+            refspec="+refs/heads/$RIPR_DEFAULT_BRANCH:refs/remotes/$base"
+          fi
+        fi
+        if [ -n "$refspec" ]; then
           shallow="$(git rev-parse --is-shallow-repository 2>/dev/null || echo false)"
           if ! git rev-parse --verify --quiet "$base^{commit}" >/dev/null; then
             depth=(); [ "$shallow" != true ] || depth=(--depth=50)
             git fetch --no-tags --quiet "${depth[@]}" origin "$refspec" \
-              || echo "::warning::could not fetch the pull request base branch '$branch'; ripr will report the missing base"
+              || { echo "::warning::could not fetch the $what; ripr will report the missing base"; base="${bare:-$base}"; }
           fi
           step=50
           while [ "$shallow" = true ] && git rev-parse --verify --quiet "$base^{commit}" >/dev/null \
@@ -178,6 +208,25 @@ runs:
             step=$((step * 2))
           done
         fi
+        [ -z "${GITHUB_OUTPUT:-}" ] || printf 'base=%s\n' "$base" >> "$GITHUB_OUTPUT"
+
+    # The report goes to the job log, a file (output `report`) and the job
+    # summary; a run that could not complete fails the step with an error
+    # annotation that names why.
+    - name: Run ripr check
+      id: check
+      if: inputs.install-only != 'true'
+      shell: bash
+      env:
+        RIPR_BASE: ${{ steps.base.outputs.base }}
+        RIPR_INPUT_MODE: ${{ inputs.mode }}
+        RIPR_INPUT_FORMAT: ${{ inputs.format }}
+        RIPR_CACHE_DIR: ${{ runner.temp }}/ripr-cache
+        # Progress lines would crowd the failure reason out; `RIPR_QUIET`
+        # (not `--quiet`) so a pinned release without the switch still runs.
+        RIPR_QUIET: '1'
+      run: |
+        base="$RIPR_BASE"
         case "$RIPR_INPUT_FORMAT" in json | json-compact) ext=json ;; sarif | sarif-compact) ext=sarif ;; *) ext=txt ;; esac
         out="$(mktemp -d "$RUNNER_TEMP/ripr-check.XXXXXX")"; report="$out/report.$ext"; errors="$out/stderr.txt"
         set -- --root . --mode "$RIPR_INPUT_MODE" --format "$RIPR_INPUT_FORMAT"
@@ -198,8 +247,10 @@ runs:
           3) meaning="ripr declined the request" ;;
           *) meaning="ripr stopped before finishing" ;;
         esac
-        reason="$(awk 'NF && n < 3 { print; n++ }' "$errors")"
-        [ -n "$reason" ] || reason="$(awk 'NF && n < 3 { print; n++ }' "$report")"
+        # Up to eight lines keep a refusal's fix hint (a bad ripr.toml names
+        # the key, then the repair); progress lines carry no reason.
+        reason="$(awk 'NF && !/^ripr progress:/ && n < 8 { print; n++ }' "$errors")"
+        [ -n "$reason" ] || reason="$(awk 'NF && n < 8 { print; n++ }' "$report")"
         if [ -n "${GITHUB_STEP_SUMMARY:-}" ]; then
           {
             echo "### ripr check"

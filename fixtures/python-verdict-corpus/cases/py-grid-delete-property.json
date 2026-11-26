@@ -54,5 +54,8 @@
       "weakly_exposed"
     ],
     "excerpt_parity": "matched"
-  }
+  },
+  "axes": [
+    "partially_discriminated"
+  ]
 }

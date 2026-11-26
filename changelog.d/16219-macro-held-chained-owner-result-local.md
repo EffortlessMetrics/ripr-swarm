@@ -1,0 +1,2 @@
+<!-- section: Fixed -->
+- A Rust test that unwraps a function's result into a local and then passes that local only to a macro the analyzer does not trust, such as `let r = pick(0).unwrap(); assert_eq!(check_ok!(r), Mode::A)` with a test-local `macro_rules! check_ok` that never expands its operand, no longer gives that function `strongly_gripped` exact-value credit in the repo view. Only the `.unwrap()` smoke check remains. A local that is also used outside the macro keeps its credit (#16219).

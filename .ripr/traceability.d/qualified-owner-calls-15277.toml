@@ -1,0 +1,17 @@
+[[extend]]
+id = "RIPR-SPEC-0197"
+tests = [
+  "crates/ripr/src/analysis/classify/owner_pin/tests.rs::a_turbofish_call_has_the_plain_call_shape",
+]
+code = [
+  "crates/ripr/src/analysis/classify/owner_pin.rs",
+]
+
+[[extend]]
+id = "RIPR-SPEC-0108"
+tests = [
+  "crates/ripr/src/analysis/classify/related_tests.rs::tests::given_fully_qualified_call_to_a_function_without_self_then_only_the_named_impl_is_direct",
+]
+code = [
+  "crates/ripr/src/analysis/classify/related_tests.rs",
+]

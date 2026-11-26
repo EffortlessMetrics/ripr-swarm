@@ -764,6 +764,7 @@ jobs:
       admission-head: ${{ needs.admission.outputs.head }}
       history-sync-source: ${{ needs.admission.outputs.history_sync_source }}
       history-sync-base: ${{ needs.admission.outputs.history_sync_destination_base }}
+      group-members: ${{ github.event_name == 'merge_group' && needs.admission.outputs.constituents || '' }}
       artifact-name: ripr-rust-small-github
       # 120min hard deadline: the rust-gates PR-evidence producer itself
       # allows 3600s (#3731), so the job envelope must exceed it.
@@ -799,7 +800,7 @@ jobs:
   # #12252: the extension e2e is a job of this run, so the Result reads it as a
   # `needs` result bound to this run id and request, with no cross-workflow
   # correlation. PR selection uses the admitted head; queue selection uses the
-  # complete event base-to-group diff, including earlier constituents. Admission
+  # destination's common ancestor with G, including unlanded prefixes. Admission
   # supplies the union of constituent labels. Anything unclassifiable selects.
   vscode-select:
     name: vscode surface
@@ -825,6 +826,7 @@ jobs:
           LABELS: ${{ needs.admission.outputs.labels }}
           EVENT_NAME: ${{ github.event_name }}
           GROUP_BASE_SHA: ${{ github.event.merge_group.base_sha }}
+          GROUP_BASE_REF: ${{ github.event.merge_group.base_ref }}
           GROUP_HEAD_SHA: ${{ github.event.merge_group.head_sha }}
         run: |
           if [ "$EVENT_NAME" = merge_group ]; then
@@ -843,6 +845,19 @@ jobs:
             reason=unavailable_history
             if ! git cat-file -e "$BASE_SHA^{commit}" 2>/dev/null || ! git cat-file -e "$HEAD_SHA^{commit}" 2>/dev/null; then
               git fetch --no-tags origin "$BASE_SHA" "$HEAD_SHA" 2>/dev/null || return 0
+            fi
+            if [ "$EVENT_NAME" = merge_group ]; then
+              # The event base may be an unlanded prefix G. Freeze the actual
+              # destination tip; its unique merge base with G includes that
+              # prefix until it settles into the destination with the same SHA.
+              reason=invalid_destination_ref
+              [[ "$GROUP_BASE_REF" == refs/heads/* ]] && git check-ref-format "$GROUP_BASE_REF" >/dev/null 2>&1 || return 0
+              reason=unavailable_destination
+              git fetch --no-tags origin "$GROUP_BASE_REF" 2>/dev/null || return 0
+              destination_sha="$(git rev-parse --verify 'FETCH_HEAD^{commit}' 2>/dev/null)" || return 0
+              [[ "$destination_sha" =~ ^[0-9a-f]{40}$ ]] || return 0
+              [ "$(git rev-parse --is-shallow-repository)" = false ] || return 0
+              BASE_SHA="$destination_sha"
             fi
             # A three-dot diff picks one merge base. With several (criss-cross
             # history) it can miss an extension change, so select instead.
@@ -900,6 +915,8 @@ jobs:
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
         with:
           shared-key: ripr-docs-gate
+          # A queue ref's cache cannot warm the next merge group.
+          save-if: ${{ github.event_name != 'merge_group' }}
       - name: Prepare locked workspace and fixture dependencies
         run: |
           cargo fetch --locked --manifest-path Cargo.toml
@@ -1247,6 +1264,16 @@ jobs:
             [ "$(git -C "$trusted" rev-parse "HEAD:$path")" = "$(git hash-object --no-filters "$trusted/$path")" ]
           done
           python3 "$trusted/.github/actions/pr-candidate-admission/history_sync_live.py" --repository "$REPOSITORY" --pr "$PR_NUMBER" --head "$EXPECTED_HEAD" --base "$EXPECTED_BASE" --integration "$EXPECTED_G" --source "$SYNC_SOURCE" --destination-base "$SYNC_BASE" --expect-digest "$EXPECTED_DIGEST"
+      # The optional observer reads the resolved step name from this attempt's
+      # Result job. Missing telemetry must never change the protected decision.
+      - name: Hosted group receipt ${{ needs.rust-github.outputs.group_digest }}
+        if: >-
+          success() && github.event_name == 'merge_group' &&
+          needs.rust-github.result == 'success' && needs.rust-github.outputs.group_digest != ''
+        env:
+          DIGEST: ${{ needs.rust-github.outputs.group_digest }}
+        run: |
+          printf 'Hosted group checkout receipt: %s\n' "$DIGEST"
       - name: Summarize routed result
         if: always()
         env:

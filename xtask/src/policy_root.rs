@@ -40,7 +40,11 @@ pub(crate) fn collect_clippy_debt_violations(
             return violations;
         }
     };
-    let (lints, _) = parse_clippy_lints_ledger(lints_text);
+    let (lints, ledger_violations) = parse_clippy_lints_ledger(lints_text);
+    if !ledger_violations.is_empty() {
+        violations.extend(ledger_violations);
+        return violations;
+    }
 
     let mut seen_ids = BTreeSet::new();
     let mut seen_lints = BTreeSet::new();
@@ -289,6 +293,9 @@ pub(crate) fn collect_lint_policy_violations(cargo_text: &str, ledger_text: &str
         Err(err) => return vec![err],
     };
     let (entries, mut violations) = parse_clippy_lints_ledger(ledger_text);
+    if !violations.is_empty() {
+        return violations;
+    }
     let workspace_msrv = parse_workspace_package_rust_version(cargo_text);
     let workspace_triple = workspace_msrv.as_deref().and_then(parse_msrv_triple);
 
@@ -359,16 +366,13 @@ pub(crate) fn collect_lint_policy_violations(cargo_text: &str, ledger_text: &str
         })
         .collect();
 
-    for (name, level) in cargo_clippy.iter().chain(cargo_rust.iter()) {
-        let group = if cargo_clippy.contains_key(name) {
-            "clippy"
-        } else {
-            "rust"
-        };
-        if !active_lookup.contains(&(group.to_string(), name.clone())) {
-            violations.push(format!(
-                "Cargo.toml `[workspace.lints.{group}]` configures `{name}` at level `{level}` but policy/clippy-lints.toml has no matching `[[active.<group>]]` entry. Add the lint to the ledger or remove it from Cargo.toml."
-            ));
+    for (group, cargo_lints) in [("clippy", &cargo_clippy), ("rust", &cargo_rust)] {
+        for (name, level) in cargo_lints {
+            if !active_lookup.contains(&(group.to_string(), name.clone())) {
+                violations.push(format!(
+                    "Cargo.toml `[workspace.lints.{group}]` configures `{name}` at level `{level}` but policy/clippy-lints.toml has no matching `[[active.<group>]]` entry. Add the lint to the ledger or remove it from Cargo.toml."
+                ));
+            }
         }
     }
 

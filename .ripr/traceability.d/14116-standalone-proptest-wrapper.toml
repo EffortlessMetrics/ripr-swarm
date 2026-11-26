@@ -1,0 +1,10 @@
+# A proptest wrapper outside proptest! confines its arguments too (#14116).
+[[extend]]
+id = "RIPR-SPEC-0369"
+tests = [
+  "crates/ripr/src/analysis/classify/owner_pin/tests/standalone_proptest_wrapper.rs::a_standalone_wrapper_confines_its_arguments_to_the_call",
+  "crates/ripr/src/analysis/classify/owner_pin/tests/standalone_proptest_wrapper.rs::a_standalone_wrapper_without_the_audited_path_keeps_the_site",
+]
+code = [
+  "crates/ripr/src/analysis/syntax/owner_pin.rs",
+]

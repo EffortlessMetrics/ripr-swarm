@@ -362,6 +362,8 @@ mod bool_oracle;
 mod boundary;
 mod call_chain;
 mod caplog_text;
+mod class_attr_pin;
+mod class_attr_reader;
 mod classify;
 mod coarse_projection;
 mod conditional_defs;
@@ -381,11 +383,13 @@ mod import_identity;
 mod imported_call_operator;
 mod known_equality_helpers;
 mod loop_walk;
+mod math_infinity;
 // The may-reach graph is built and measured by tests and the corpus report
 // only; no verdict reads it yet (#11425), so it is not part of the shipped
 // build.
 #[cfg(test)]
 mod may_reach;
+mod membership_activation;
 mod message_pin;
 mod module_value;
 mod range_activation;
@@ -400,6 +404,9 @@ use classify::{
     classify_change, classify_change_with_context, classify_change_with_old,
     classify_change_with_source,
 };
+mod call_variant;
+mod connective_swap;
+mod default_equal_keyword;
 mod discriminators;
 mod effect_alignment;
 #[cfg(test)]
@@ -410,6 +417,8 @@ mod exception_variant;
 #[cfg(test)]
 mod exception_variant_tests;
 mod hypothesis;
+#[cfg(test)]
+mod imported_raise_class_tests;
 mod module_constants;
 mod nested_result;
 mod no_behavior;
@@ -421,7 +430,9 @@ mod package_aliases;
 mod param_fixtures;
 mod parametrize;
 mod parse_budget;
+mod positional_only_marker;
 mod probe_shape;
+mod property_read;
 mod reexports;
 mod related_tests;
 mod repo;
@@ -436,6 +447,7 @@ mod sink_alignment;
 mod source_facts;
 mod table_reads;
 mod table_rows;
+mod value_helpers;
 #[cfg(test)]
 use discriminators::{
     first_python_keyword_argument, is_literal_python_model_field_value,
@@ -656,6 +668,14 @@ struct PythonOwner {
     /// Dotted package paths whose `__init__.py` re-exports this owner under
     /// its own name (`reexports.rs`). Empty until the workspace pass fills it.
     reexport_modules: Vec<String>,
+    /// For a method owner whose class is defined at module top level: dotted
+    /// package paths whose `__init__.py` re-exports that class under its own
+    /// name (`reexports.rs`). With the owner's own module paths these are the
+    /// only modules a `from M import Class` may name and still mean the
+    /// owner's class. Empty for other owners and until the workspace pass
+    /// fills it.
+    #[serde(default)]
+    class_reexport_modules: Vec<String>,
     /// Whether a `from <owner module> import *` binds this owner: the name is
     /// public and the module's `__all__` is absent or lists it. `false` until
     /// the workspace pass fills it, and when the module source is unavailable
@@ -689,6 +709,19 @@ struct PythonOwner {
     /// parameters and names it rebinds. Used only to relate a test that calls
     /// a same-module caller of a changed helper (`helper_owner_call`, #4568).
     module_callees: Vec<String>,
+    /// Names a routed handler's own scope calls as bare `name(` calls: the
+    /// same reading as `module_callees`, with nested `def` blocks and
+    /// `lambda` tails removed. The route-helper relation (#14150) claims the
+    /// handler calls the helper itself, so a call that runs only if the
+    /// handler invokes a nested scope does not count. Empty for other owners.
+    route_scope_callees: Vec<String>,
+    /// The names among `route_scope_callees` that the handler awaits a call
+    /// of: an `await` of a call of that bare name in the handler's own code.
+    /// The body of a coroutine function runs through such a call, and through
+    /// others that are not read, so the route-helper relation follows an
+    /// `async def` helper only through an awaited one (#15882 review). Empty
+    /// for other owners.
+    route_scope_awaited_callees: Vec<String>,
     /// Dotted path of the enclosing classes of a method owner, outermost
     /// first (`Outer.Inner` for `Outer.Inner.__init__`). Empty for other
     /// owners. `qualified_name` keeps only the innermost class.
@@ -737,6 +770,12 @@ struct PythonOwner {
     /// `false` by default, which grants no response-read credit.
     #[serde(default)]
     route_returns_body: bool,
+    /// Whether another route can answer the same request, so the registered
+    /// handler is not established (#14150). Separate from
+    /// `route_returns_body`: a shadowed handler may return no body and still
+    /// not be the one that runs.
+    #[serde(default)]
+    route_dispatch_ambiguous: bool,
     /// The route handler's return annotation is a bare `dict` (#13869). The
     /// workspace post-pass withdraws `route_returns_body` from such an owner
     /// when any source may rebind `dict`, which would make the annotation a
@@ -841,6 +880,9 @@ struct PythonTest {
     /// or a `conftest.py` up its directory chain. Filled by the workspace
     /// pass (`fixtures.rs`); empty until then.
     fixture_defs: Vec<PythonFixtureDef>,
+    /// Same-file value helpers the body calls by bare name (#15350); filled
+    /// by `value_helpers.rs` and read only as reach-only relations.
+    value_helpers: Vec<value_helpers::PythonValueHelper>,
     parametrized: bool,
     /// The original single parametrization is a plain two-argument literal call.
     simple_literal_parametrize: bool,
@@ -916,6 +958,12 @@ struct PythonFixtureDef {
     /// Set when attached: the `from` imports of the test's module and its
     /// conftest chain, by importing file; each must be the owner's module.
     scope_imports: Vec<(PathBuf, PythonImport)>,
+    /// Fixture definitions a route-client fixture's application parameter
+    /// resolves through, in order, when attached (#14141). Kept apart from
+    /// the test's own `fixture_defs` so following them earns no
+    /// `fixture_owner_call` relation.
+    #[serde(default)]
+    client_fixture_chain: Vec<PythonFixtureDef>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
@@ -2177,13 +2225,53 @@ impl PythonAdapter {
                 .sources
                 .get(&changed.path)
                 .and_then(|source| reconstruct_old_source(source, changed));
+            // Lines inside a multi-line string are string content, not
+            // statements; an unreadable or unlexable file is treated as all
+            // string so the trailing-comment guard fails closed (#10706).
+            let string_line_ranges = workspace_read
+                .sources
+                .get(&changed.path)
+                .and_then(|source| no_behavior::multi_line_string_line_ranges(source));
+            // Every removed line of a replacement block shares the new-side
+            // line where the added run starts, so matching on that coordinate
+            // alone finds an old line only for the run's first added line
+            // (#7556, #7524 for TypeScript). Every old-line reader below takes
+            // it from one pairing: by position in an even block, by content in
+            // an uneven one, by coordinate where a removed line interrupts the
+            // run. An added run that holds no code (comments, blank lines,
+            // imports) replaced nothing: the code it stands on was deleted,
+            // and reading the pair as an edit reported the comment text as the
+            // changed behavior (#15913). Its lines pair with nothing, so the
+            // removed line keeps its own base-side record.
+            let (old_docstring_ranges, old_import_ranges, old_owners) = old_source
+                .as_deref()
+                .map(|source| {
+                    let old_facts = extract_source_facts(&changed.path, source);
+                    (
+                        old_facts.docstring_line_ranges,
+                        old_facts.import_line_ranges,
+                        old_facts.owners,
+                    )
+                })
+                .unwrap_or_default();
+            let import_ranges = import_ranges_by_file
+                .get(&changed.path)
+                .map(Vec::as_slice)
+                .unwrap_or_default();
+            let mut counterparts = changed.aligned_counterparts();
+            no_behavior::unpair_runs_without_code(
+                changed,
+                string_line_ranges.as_deref(),
+                no_behavior::ImportLines {
+                    added: import_ranges,
+                    removed: &old_import_ranges,
+                },
+                &mut counterparts,
+            );
+            let counterparts = counterparts;
             // Never mint an ID from a fragment without source-verified string
             // boundaries. Paired deletions do not become deleted findings.
-            let paired_old: BTreeSet<usize> = changed
-                .aligned_counterparts()
-                .values()
-                .map(|line| line.line)
-                .collect();
+            let paired_old: BTreeSet<usize> = counterparts.values().map(|line| line.line).collect();
             let old_identity = old_source.as_deref().and_then(PythonIdentityContext::new);
             let valid_new = identity_context.as_ref().is_some_and(|context| {
                 changed
@@ -2209,17 +2297,6 @@ impl PythonAdapter {
                 }
                 continue;
             }
-            let (old_docstring_ranges, old_import_ranges, old_owners) = old_source
-                .as_deref()
-                .map(|source| {
-                    let old_facts = extract_source_facts(&changed.path, source);
-                    (
-                        old_facts.docstring_line_ranges,
-                        old_facts.import_line_ranges,
-                        old_facts.owners,
-                    )
-                })
-                .unwrap_or_default();
             let compound_loop_owners = workspace_read
                 .sources
                 .get(&changed.path)
@@ -2233,13 +2310,6 @@ impl PythonAdapter {
                     )
                 })
                 .unwrap_or_default();
-            // Lines inside a multi-line string are string content, not
-            // statements; an unreadable or unlexable file is treated as all
-            // string so the trailing-comment guard fails closed (#10706).
-            let string_line_ranges = workspace_read
-                .sources
-                .get(&changed.path)
-                .and_then(|source| no_behavior::multi_line_string_line_ranges(source));
             // The paired old line gets the same test against the
             // reconstructed old source, so a delimiter edit that turns old
             // string content into code is not read as a spacing edit.
@@ -2266,22 +2336,10 @@ impl PythonAdapter {
                 })
                 .unwrap_or_default();
             let brackets = BracketEvidence::of(&workspace_read, &changed.path, &old_source);
-            let import_ranges = import_ranges_by_file
-                .get(&changed.path)
-                .map(Vec::as_slice)
-                .unwrap_or_default();
             // An import line that replaces an import line re-points a name
             // (`from a import x` -> `from b import x`, or `old as x,` inside a
             // parenthesized import), so it is behavior of its own; any other
             // added import line is not.
-            // Every removed line of a replacement block shares the new-side
-            // line where the added run starts, so matching on that coordinate
-            // alone finds an old line only for the run's first added line
-            // (#7556, #7524 for TypeScript). Every old-line reader below takes
-            // it from one pairing: by position in an even block, by content in
-            // an uneven one, by coordinate where a removed line interrupts the
-            // run.
-            let counterparts = changed.aligned_counterparts();
             let is_added_import = |added: &crate::analysis::diff::ChangedLine| {
                 line_is_in_ranges(added.line, import_ranges)
                     && counterparts.get(&added.line).is_none_or(|removed| {
@@ -2500,7 +2558,7 @@ impl PythonAdapter {
         teardown::free_in_background(facts);
         // #13801: the interpreter and confidence of the pytest verify route
         // are decided once here, from static facts at the root.
-        verify_interpreter::PytestVerifyInterpreter::at(&options.root).apply(&mut findings);
+        verify_interpreter::apply_at(&options.root, &mut findings);
         Ok(LanguageDiffResult {
             value_origins,
             findings,
@@ -2536,7 +2594,7 @@ impl PythonAdapter {
     ) -> Result<LanguageRepoResult, String> {
         let input = repo::select_repo_input_with_limit(root, working_set_limit);
         let mut evidence = repo::build_repo_evidence(&input, root);
-        verify_interpreter::PytestVerifyInterpreter::at(root).apply(&mut evidence.findings);
+        verify_interpreter::apply_at(root, &mut evidence.findings);
         let partial_reason = repo::partial_disclosure(&evidence);
         let production_files = input.production_files.len();
         let skipped_files = evidence.counts.skipped;
@@ -2623,6 +2681,9 @@ mod unreachable_assertion_tests;
 mod arm_activation_tests;
 
 #[cfg(test)]
+mod membership_activation_tests;
+
+#[cfg(test)]
 mod nested_result_tests;
 
 #[cfg(test)]
@@ -2651,7 +2712,15 @@ mod conftest_admission_tests;
 mod source_facts_tests;
 
 #[cfg(test)]
+mod call_variant_tests;
+#[cfg(test)]
+mod connective_swap_tests;
+#[cfg(test)]
+mod default_equal_keyword_tests;
+#[cfg(test)]
 mod deleted_lines_tests;
+#[cfg(test)]
+mod positional_only_marker_tests;
 
 #[cfg(test)]
 mod fixtures_tests;
@@ -2708,10 +2777,13 @@ mod cross_module_caller_tests;
 mod dunder_helper_reach_tests;
 #[cfg(test)]
 mod helper_owner_call_tests;
+
 #[cfg(test)]
 mod imported_literal_tests;
 #[cfg(test)]
 mod owner_result_field_tests;
+#[cfg(test)]
+mod property_read_tests;
 #[cfg(test)]
 mod repo_module_identity_tests;
 #[cfg(test)]
@@ -2722,6 +2794,8 @@ mod test_local_literal_tests;
 mod test_module_constant_tests;
 #[cfg(test)]
 mod trailing_comment_tests;
+#[cfg(test)]
+mod value_helper_tests;
 
 #[cfg(test)]
 mod call_chain_tests;
@@ -2747,6 +2821,8 @@ mod new_declaration_tests;
 mod python_tests;
 
 #[cfg(test)]
+mod class_identity_tests;
+#[cfg(test)]
 mod layout_tests;
 #[cfg(test)]
 mod package_alias_tests;
@@ -2756,6 +2832,8 @@ mod reexport_tests;
 #[cfg(test)]
 mod replaced_block_tests;
 
+#[cfg(test)]
+mod route_helper_tests;
 #[cfg(test)]
 mod route_identity_tests;
 
