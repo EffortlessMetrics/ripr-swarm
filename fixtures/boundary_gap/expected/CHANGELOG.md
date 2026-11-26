@@ -1,5 +1,15 @@
 # Golden Output Changes
 
+## Pending — corpus cache generation 1.203 for compared boolean locals (#16296)
+
+A boolean local compared with `true` (`let ok = value > 0; assert_eq!(ok,
+true);`) now reads as its initializer, which bumps the analyzer cache schema
+to 1.203. Move the portable unchanged-attempt snapshots to 1.203, recompute
+the `raw_json_placeholder_v1` artifact content commitment, then the dependent
+verify commitments and receipt byte hashes. Weak grip, unchanged movement,
+historical currentness, incomplete receipt status and fail-closed
+first-action routing remain the same. No other fixture output is regenerated.
+
 ## Pending — corpus cache generation 1.202 for compared pattern oracles (#16290)
 
 `assert_eq!(matches!(value, PATTERN), true)` now reads only as strong as its
