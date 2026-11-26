@@ -1,5 +1,17 @@
 # Golden Output Changes
 
+## Pending — corpus cache generation 1.205 for constructed trait receivers (#15956, #15428)
+
+A trait impl method on a receiver built by an indexed constructor now relates
+by `direct_owner_call` unless another method of the name may take the call,
+and an inherent by-value twin withholds the relation, which bumps the
+analyzer cache schema to 1.205. Move the portable unchanged-attempt snapshots
+to 1.205, recompute the `raw_json_placeholder_v1` artifact content commitment,
+then the dependent verify commitments and receipt byte hashes. Weak grip,
+unchanged movement, historical currentness, incomplete receipt status and
+fail-closed first-action routing remain the same. No other fixture output is
+regenerated.
+
 ## Pending — corpus cache generation 1.204 for test-local binders (#14552)
 
 A test whose every mention of the owner's name is bound by a local of its
