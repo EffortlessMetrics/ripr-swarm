@@ -1603,16 +1603,17 @@ impl HiddenImpls {
                         .name()
                         .map(|name| name.text().to_string())
                         .unwrap_or_default();
+                    // `r#Measure` and `Measure` name one trait.
                     *self
                         .trait_declarations
-                        .entry(trait_name.clone())
+                        .entry(plain_name(&trait_name))
                         .or_default() += 1;
                     if it.generic_param_list().is_some_and(|params| {
                         params
                             .generic_params()
                             .any(|param| !matches!(param, ast::GenericParam::LifetimeParam(_)))
                     }) {
-                        self.generic_traits.insert(trait_name.clone());
+                        self.generic_traits.insert(plain_name(&trait_name));
                     }
                     self.read_assoc_macro_calls(it.assoc_item_list(), "", &trait_name);
                 }
@@ -1897,8 +1898,11 @@ impl HiddenImpls {
     fn may_define_method(&self, self_type: &str, name: &str, owner_trait: &str) -> bool {
         // A trait name stands for the owner's trait only when no other
         // workspace trait shares it: `other::Measure` records `Measure` too.
+        // A raw identifier (`r#Measure`) names the same trait as the plain one.
+        let owner_trait = plain_name(owner_trait);
         let is_the_owner_trait = |recorded: &str| {
-            recorded == owner_trait && self.trait_declarations.get(owner_trait).copied() == Some(1)
+            plain_name(recorded) == owner_trait
+                && self.trait_declarations.get(&owner_trait).copied() == Some(1)
         };
         self.unreadable_source
             || self.blanket_methods.contains(name)
@@ -2181,7 +2185,7 @@ pub(super) fn workspace_trait_is_generic(name: &str, index: &RustIndex) -> bool 
         .call_identity_memos
         .hidden_impls(index)
         .generic_traits
-        .contains(name)
+        .contains(&plain_name(name))
 }
 
 /// An identifier without a raw `r#` prefix.

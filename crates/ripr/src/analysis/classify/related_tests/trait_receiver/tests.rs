@@ -448,6 +448,12 @@ fn a_generic_trait_withholds_the_typed_receiver() -> Result<(), String> {
         "for Square::area",
         "let _ = Square::with_side(3).area(0u16);"
     )?);
+    // A raw identifier declares the same trait the plain impl names.
+    assert!(!direct(
+        &defaulted.replacen("pub trait Measure", "pub trait r#Measure", 1),
+        "for Square::area",
+        "let _ = Square::with_side(3).area(0u16);"
+    )?);
     Ok(())
 }
 
@@ -526,7 +532,8 @@ fn a_type_that_dereferences_withholds_the_relation() -> Result<(), String> {
 
 /// An owner taking `self` by value called on a receiver written as a borrow
 /// starts probing at the borrow, where an impl for `&mut T` would take the
-/// call first, so the relation is withheld; the owned call keeps it.
+/// call first, so the relation is withheld, whatever whitespace or comment
+/// sits between the tokens; the owned call keeps it.
 #[test]
 fn a_borrowed_receiver_of_a_by_value_owner_is_withheld() -> Result<(), String> {
     let production = "pub trait Shape {\n    fn area(self) -> u32;\n}\n\
@@ -543,6 +550,16 @@ fn a_borrowed_receiver_of_a_by_value_owner_is_withheld() -> Result<(), String> {
         production,
         owner,
         "let _ = (&mut Square::with_side(3))\n        . area ();"
+    )?);
+    assert!(!direct(
+        production,
+        owner,
+        "let _ = (&mut Square::with_side(3)) /* the borrow */ .area();"
+    )?);
+    assert!(!direct(
+        production,
+        owner,
+        "let _ = (&mut Square::with_side(3)). // the borrow\n        area();"
     )?);
     assert!(direct(
         production,

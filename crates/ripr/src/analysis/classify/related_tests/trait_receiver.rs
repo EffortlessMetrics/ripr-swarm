@@ -401,9 +401,13 @@ fn a_borrowed_receiver_meets_a_by_value_owner(test: &TestSummary, owner: &Functi
         return false;
     }
     let name = owner.name.strip_prefix("r#").unwrap_or(&owner.name);
-    let body = test.body.as_str();
+    // Comments and literals become spaces at the same offsets, so a comment
+    // between the tokens reads as whitespace and a quoted `&` or paren does
+    // not count.
+    let masked = crate::analysis::extract::mask_comments_and_strings(&test.body);
+    let body = masked.as_str();
     let bytes = body.as_bytes();
-    // `).name(`, with any whitespace or line break between the tokens.
+    // `).name(`, with any whitespace, comment or line break between the tokens.
     let closes = body.match_indices(name).filter_map(|(at, _)| {
         let word = |ch: char| ch.is_ascii_alphanumeric() || ch == '_';
         let before = &body[..at];
