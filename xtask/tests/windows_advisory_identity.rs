@@ -564,6 +564,39 @@ fn a_failed_build_is_named_even_when_both_samples_are_unusable() -> Result<(), S
     )
 }
 
+/// Both samples already carry more provenance errors than the report shows
+/// per sample; the failed build is listed first, so the bound cannot hide it.
+#[test]
+fn a_failed_build_is_named_past_the_provenance_display_limit() -> Result<(), String> {
+    let mut flooded = (0..1000)
+        .map(|index| format!("Running malformed_{index}\ntest orphan_{index} ... ok\n"))
+        .collect::<String>();
+    flooded.push_str("test result: ok. 1000 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s\n");
+    let output = invoke_with_build(&flooded, &flooded, &[], "124\n")?;
+    let stdout = String::from_utf8_lossy(&output.stdout).to_string();
+    for label in ["Run 1", "Run 2"] {
+        let shown = stdout.matches(&format!("- {label} provenance:")).count();
+        if shown != 20 {
+            return Err(format!(
+                "{label} shows {shown} provenance lines, not the bound of 20: {stdout}"
+            ));
+        }
+    }
+    verify_output(
+        output,
+        1,
+        &[
+            "Run 1: `incomplete_evidence`",
+            "Run 2: `incomplete_evidence`",
+            "- Run 1 provenance: the workspace build exited 124 (",
+            "- Run 2 provenance: the workspace build exited 124 (",
+            "- Run 1: 1983 additional provenance errors omitted (2003 total).",
+            "- Run 2: 1983 additional provenance errors omitted (2003 total).",
+        ],
+        &["completed_clean"],
+    )
+}
+
 #[test]
 fn completion_requires_matching_each_outcome_and_an_announced_owner() -> Result<(), String> {
     let clean = controls(None);

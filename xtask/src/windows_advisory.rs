@@ -788,7 +788,9 @@ fn require_expected_targets(
     let expected = match expected {
         Ok(expected) => expected,
         Err(error) => {
-            outcome.provenance_errors.push(error.clone());
+            // First, so the bounded rendering shows it even when the sample's
+            // own errors already exceed the display limit.
+            outcome.provenance_errors.insert(0, error.clone());
             if outcome.state.is_usable() {
                 outcome.state = RunState::IncompleteEvidence;
             }
