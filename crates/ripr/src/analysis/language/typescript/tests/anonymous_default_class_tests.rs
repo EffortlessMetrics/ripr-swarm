@@ -160,14 +160,26 @@ fn members_of_an_anonymous_default_class_are_named_default() -> Result<(), Strin
         Path::new("src/cart.js"),
         &format!("export const make = () => class {BODY};\n"),
     );
-    if !named
+    let named_total: Vec<_> = named
         .iter()
-        .any(|owner| owner.name == "total" && owner.class_name.as_deref() == Some("Cart"))
+        .filter(|owner| owner.name == "total")
+        .map(|owner| owner.class_name.as_deref())
+        .collect();
+    if named_total != [Some("Cart")] {
+        return Err(format!(
+            "expected the named class's `total` as `Cart`, got {named:?}"
+        ));
+    }
+    // The factory itself is an owner, so the check below reads a non-empty
+    // set; none of its owners may take the default class's name.
+    if !local.iter().any(|owner| owner.name == "make")
         || local
             .iter()
             .any(|owner| owner.class_name.as_deref() == Some("default"))
     {
-        return Err(format!("named {named:?} / local {local:?}"));
+        return Err(format!(
+            "expected the `make` owner and no `default` name, got {local:?}"
+        ));
     }
     Ok(())
 }
