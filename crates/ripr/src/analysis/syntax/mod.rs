@@ -10,6 +10,7 @@ mod local_assertion_macros;
 mod local_test_macros;
 pub(crate) mod loop_accumulator;
 mod macro_scope;
+mod module_ancestors;
 mod module_tree;
 mod mut_parameter;
 mod name_scope;
@@ -25,6 +26,7 @@ pub(crate) mod run_memo;
 mod source_snapshot;
 pub(crate) use constant_return::returns_only_a_literal;
 pub(crate) use fn_cfg_gates::unestablished_cfg_gates_of_fn;
+pub(crate) use module_ancestors::{declares_module_named, enclosing_module_files};
 pub(crate) use mut_parameter::mut_parameter_unwritten_at;
 #[cfg(test)]
 pub(crate) use owner_pin::COMPARISON_NESTED_MACROS;
@@ -73,9 +75,9 @@ pub(crate) use macro_scope::{
 };
 pub(crate) use module_tree::{RustModuleTreeEdge, RustModuleTreeScan, rust_module_tree_scan};
 pub(crate) use name_scope::{
-    NameScope, NameScopes, UseBinding, expansion_declares_items, fn_call_has_local_binding,
-    function_type_param_names, name_scope_for_file, name_scope_for_items, name_scopes_for_fn,
-    use_item_bindings,
+    NameScope, NameScopes, UseBinding, expansion_declares_items, file_exports_a_std_macro,
+    fn_call_has_local_binding, function_type_param_names, name_scope_for_file,
+    name_scope_for_items, name_scopes_for_fn, use_item_bindings,
 };
 #[cfg(test)]
 pub(crate) use nesting::nesting_parse_calls;
