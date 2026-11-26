@@ -561,6 +561,11 @@ fn a_borrowed_receiver_of_a_by_value_owner_is_withheld() -> Result<(), String> {
         owner,
         "let _ = (&mut Square::with_side(3)). // the borrow\n        area();"
     )?);
+    assert!(!direct(
+        production,
+        owner,
+        "let _ = (( &mut Square::with_side(3) )).area();"
+    )?);
     assert!(direct(
         production,
         owner,

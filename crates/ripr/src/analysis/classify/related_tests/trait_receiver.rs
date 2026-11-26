@@ -431,7 +431,14 @@ fn a_borrowed_receiver_meets_a_by_value_owner(test: &TestSummary, owner: &Functi
             }
             _ => false,
         });
-        open.is_some_and(|open| body[open + 1..close].trim_start().starts_with('&'))
+        // Grouping parentheses (`((&mut x)).name()`) wrap the same borrow.
+        open.is_some_and(|open| {
+            let mut inner = body[open + 1..close].trim_start();
+            while let Some(rest) = inner.strip_prefix('(') {
+                inner = rest.trim_start();
+            }
+            inner.starts_with('&')
+        })
     })
 }
 
