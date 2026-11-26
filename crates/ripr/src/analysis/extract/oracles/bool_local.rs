@@ -112,17 +112,21 @@ fn inlined_assertion(
     Some(format!("{name}({left}, {right});"))
 }
 
-/// The binding key of a bare identifier operand: any Rust identifier
-/// spelling (Unicode or upper-case initials included), with a raw `r#`
-/// prefix removed so `r#ok` and `ok` name the same local. Anything else, such
-/// as a path, call or field access, gives `None`; whether the name is a local
-/// at all is decided by the function's binding table, not by its spelling.
+/// The binding key of a bare identifier operand, with a raw `r#` prefix
+/// removed so `r#ok` and `ok` name the same local. The text only has to be
+/// one word: no ASCII punctuation (other than `_`), space or leading digit, so
+/// a path, call or field access gives `None`. Non-ASCII characters are
+/// accepted as they are (Unicode letters and combining marks such as
+/// `x\u{301}`), because whether the word is a local at all is decided by the
+/// function's binding table, which holds only names the parser bound.
 fn local_key(text: &str) -> Option<&str> {
     let name = text.strip_prefix("r#").unwrap_or(text);
-    let mut chars = name.chars();
-    let first = chars.next()?;
-    ((first == '_' || first.is_alphabetic())
-        && chars.all(|ch| ch == '_' || ch.is_alphanumeric())
+    let word = |ch: char| ch == '_' || ch.is_ascii_alphanumeric() || !ch.is_ascii();
+    (name
+        .chars()
+        .next()
+        .is_some_and(|first| !first.is_ascii_digit())
+        && name.chars().all(word)
         && !matches!(name, "_" | "true" | "false" | "self"))
     .then_some(name)
 }
@@ -234,6 +238,24 @@ mod tests {
             if reading.strength == OracleStrength::Strong {
                 return Err(format!("{body} {assertion}: still strong: {reading:?}"));
             }
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn a_local_named_with_a_combining_mark_reads_as_its_relational_initializer()
+    -> Result<(), String> {
+        // `x\u{301}` is a Rust identifier whose mark is not alphanumeric.
+        let reading = read(
+            "let x\u{301} = value(100) > 0;",
+            "assert_eq!(x\u{301}, true);",
+        )?;
+        let relational = OracleClassification {
+            kind: OracleKind::RelationalCheck,
+            strength: OracleStrength::Weak,
+        };
+        if reading != relational {
+            return Err(format!("expected a weak relational check, got {reading:?}"));
         }
         Ok(())
     }
