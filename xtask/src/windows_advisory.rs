@@ -778,22 +778,26 @@ fn hashless(target: &TargetIdentity) -> (TargetKind, String, String) {
 /// A split is only as complete as its selectors. A test target that no part
 /// selects is absent from every part's log, so nothing in the logs themselves
 /// can show it is missing; the unsplit build's own list is the denominator.
-/// An unusable sample is already refused and is not reported again per target.
+/// An unusable sample is already refused and is not reported again per target,
+/// but an unusable build list is still named on it: the verdict must show a
+/// failed build even when both samples failed for their own reasons too.
 fn require_expected_targets(
     outcome: &mut RunOutcome,
     expected: &Result<Vec<(TargetKind, String, String)>, String>,
 ) {
-    if !outcome.state.is_usable() {
-        return;
-    }
     let expected = match expected {
         Ok(expected) => expected,
         Err(error) => {
             outcome.provenance_errors.push(error.clone());
-            outcome.state = RunState::IncompleteEvidence;
+            if outcome.state.is_usable() {
+                outcome.state = RunState::IncompleteEvidence;
+            }
             return;
         }
     };
+    if !outcome.state.is_usable() {
+        return;
+    }
     let mut started: BTreeMap<(TargetKind, String, String), usize> = BTreeMap::new();
     for target in &outcome.targets {
         *started.entry(hashless(target)).or_default() += 1;

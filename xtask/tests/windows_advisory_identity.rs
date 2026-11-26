@@ -236,6 +236,61 @@ fn invoke_artifacts(
     .map_err(|error| format!("launch summarizer: {error}"))
 }
 
+/// Run the summarizer with a `--expected-targets` build list derived from the
+/// first sample's own targets, so the list matches both samples and only the
+/// build's captured status decides whether it is admitted. `missing` removes
+/// sample artifacts, as in [`invoke_artifacts`].
+fn invoke_with_build(
+    first: &str,
+    second: &str,
+    missing: &[&str],
+    build_status: &str,
+) -> Result<Output, String> {
+    let nonce = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_err(|e| e.to_string())?
+        .as_nanos();
+    let root = TempRoot::create(corpus_root(nonce)).map_err(|e| e.to_string())?;
+    for (label, log) in [("run1", first), ("run2", second)] {
+        fs::write(root.0.join(format!("{label}.log")), log).map_err(|e| e.to_string())?;
+        let status = if log.contains(" ... FAILED") { 101 } else { 0 };
+        fs::write(
+            root.0.join(format!("{label}.status")),
+            format!("{status}\n"),
+        )
+        .map_err(|e| e.to_string())?;
+    }
+    for name in missing {
+        fs::remove_file(root.0.join(name)).map_err(|e| e.to_string())?;
+    }
+    let build_log = first
+        .lines()
+        .filter_map(|line| line.strip_prefix("Running "))
+        .map(|rest| format!("  Executable {rest}\n"))
+        .collect::<String>();
+    if build_log.is_empty() {
+        return Err("fixture names no target for the build list".to_string());
+    }
+    fs::write(root.0.join("build.log"), build_log).map_err(|e| e.to_string())?;
+    fs::write(root.0.join("build.status"), build_status).map_err(|e| e.to_string())?;
+    xtask_bin::output(|command| {
+        command
+            .arg("windows-advisory-summary")
+            .arg("--run1")
+            .arg(root.0.join("run1.log"))
+            .arg("--run1-status")
+            .arg(root.0.join("run1.status"))
+            .arg("--run2")
+            .arg(root.0.join("run2.log"))
+            .arg("--run2-status")
+            .arg(root.0.join("run2.status"))
+            .arg("--expected-targets")
+            .arg(root.0.join("build.log"))
+            .arg(root.0.join("build.status"));
+    })
+    .map_err(|error| format!("launch summarizer: {error}"))
+}
+
 fn verify(
     first: String,
     second: String,
@@ -459,6 +514,54 @@ fn unusable_observed_failures_keep_diagnostics_without_any_verdict() -> Result<(
         )?;
     }
     Ok(())
+}
+
+/// #14083 B4: the build list is admitted through its status file. The same
+/// samples and the same list pass with status `0` and are refused with `124`
+/// (the prebuild's deadline), so a summarizer that skipped the status read
+/// would pass both.
+#[test]
+fn a_build_list_counts_only_when_its_build_finished() -> Result<(), String> {
+    let clean = controls(None);
+    verify_output(
+        invoke_with_build(&clean, &clean, &[], "0\n")?,
+        0,
+        &["Run 1: `completed_clean`", "Run 2: `completed_clean`"],
+        &["Evidence failure", "the workspace build exited"],
+    )?;
+    let deadline = "the workspace build exited 124 (";
+    verify_output(
+        invoke_with_build(&clean, &clean, &[], "124\n")?,
+        1,
+        &[
+            "Run 1: `incomplete_evidence`",
+            "Run 2: `incomplete_evidence`",
+            "Evidence failure",
+            deadline,
+            "so its executable list may be incomplete",
+            "No verdict: see the evidence failure above.",
+        ],
+        &["completed_clean"],
+    )
+}
+
+/// Both samples are already unusable for their own reasons; the failed build
+/// is still named rather than hidden behind them.
+#[test]
+fn a_failed_build_is_named_even_when_both_samples_are_unusable() -> Result<(), String> {
+    let clean = controls(None);
+    verify_output(
+        invoke_with_build(&clean, &clean, &["run1.status", "run2.status"], "124\n")?,
+        1,
+        &[
+            "Run 1: `status_missing`",
+            "Run 2: `status_missing`",
+            "Run 1 provenance: the workspace build exited 124 (",
+            "Run 2 provenance: the workspace build exited 124 (",
+            "No verdict: see the evidence failure above.",
+        ],
+        &["Run 1: `incomplete_evidence`", "completed_clean"],
+    )
 }
 
 #[test]
