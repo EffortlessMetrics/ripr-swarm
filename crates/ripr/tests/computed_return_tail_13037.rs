@@ -425,3 +425,6 @@ fn a_compound_assignment_to_the_compared_binding_is_not_a_bare_pin() -> Result<(
 
 #[path = "computed_return_tail/tuple_guard.rs"]
 mod tuple_guard;
+
+#[path = "computed_return_tail/bare_name_tail.rs"]
+mod bare_name_tail;

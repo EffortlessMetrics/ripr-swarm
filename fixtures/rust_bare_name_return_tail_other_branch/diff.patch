@@ -1,0 +1,11 @@
+diff --git a/src/lib.rs b/src/lib.rs
+index 1111111..2222222 100644
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -3,5 +3,5 @@ pub fn discounted(amount: u32, member: bool) -> u32 {
+         amount - 10
+     } else {
+-        amount + 5
++        amount
+     }
+ }

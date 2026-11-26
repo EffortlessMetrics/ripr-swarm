@@ -229,7 +229,7 @@
       },
       "classification": "no_static_path",
       "severity": "warning",
-      "confidence": 0.35,
+      "confidence": 0.48,
       "probe": {
         "id": "probe:src_lib.rs:return_value:93054610",
         "family": "return_value",
@@ -241,22 +241,22 @@
       "ripr": {
         "reach": {"state":"no","confidence":"medium","summary":"No static test path found for the changed owner (unreferenced in workspace)"},
         "infect": {"state":"unknown","confidence":"low","summary":"No reachable tests were found, so infection cannot be established"},
-        "propagate": {"state":"unknown","confidence":"low","summary":"Propagation is not statically obvious from syntax-first analysis"},
+        "propagate": {"state":"yes","confidence":"high","summary":"Complete propagation witness reaches returned value: z"},
         "observe": {"state":"no","confidence":"medium","summary":"No reachable test oracle found"},
         "discriminate": {"state":"no","confidence":"medium","summary":"No assertion can discriminate the changed behavior without a reachable test"}
        },
       "evidence_stages": [
         {"stage":"reach","state":"no","confidence":"medium"},
         {"stage":"infect","state":"unknown","confidence":"low"},
-        {"stage":"propagate","state":"unknown","confidence":"low"},
+        {"stage":"propagate","state":"yes","confidence":"high"},
         {"stage":"observe","state":"no","confidence":"medium"},
         {"stage":"discriminate","state":"no","confidence":"medium"}
       ],
-      "evidence_path": ["reach no: No static test path found for the changed owner (unreferenced in workspace)", "infection unknown: No reachable tests were found, so infection cannot be established", "propagation unknown: Propagation is not statically obvious from syntax-first analysis", "observation no: No reachable test oracle found", "discriminator no: No assertion can discriminate the changed behavior without a reachable test", "local flow reaches unknown sink (line 4)"],
+      "evidence_path": ["reach no: No static test path found for the changed owner (unreferenced in workspace)", "infection unknown: No reachable tests were found, so infection cannot be established", "propagation yes: Complete propagation witness reaches returned value: z", "observation no: No reachable test oracle found", "discriminator no: No assertion can discriminate the changed behavior without a reachable test", "local flow reaches returned value: z (line 4)"],
       "flow_sinks": [
-        {"kind":"unknown","text":"unknown sink","line":4}
+        {"kind":"return_value","text":"z","line":4}
       ],
-      "evidence": ["No assertion can discriminate the changed behavior without a reachable test", "No reachable test oracle found", "No reachable tests were found, so infection cannot be established", "No static test path found for the changed owner (unreferenced in workspace)", "Propagation is not statically obvious from syntax-first analysis"],
+      "evidence": ["Complete propagation witness reaches returned value: z", "No assertion can discriminate the changed behavior without a reachable test", "No reachable test oracle found", "No reachable tests were found, so infection cannot be established", "No static test path found for the changed owner (unreferenced in workspace)"],
       "missing": ["No relevant oracle was detected", "No static test path reaches the changed owner", "No strong discriminator was detected"],
       "assertion_texts": {
       },

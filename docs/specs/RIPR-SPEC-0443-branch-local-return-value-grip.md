@@ -346,6 +346,53 @@ spelled through the package's own library path) and
 file declares a module with the library's name) pin the own-crate spelling
 there too.
 
+## Amendment (#13037): a bare parameter or local returned as the changed tail
+
+A changed tail that is one bare name (`amount + 5` changed to `amount` in
+the `else` of the owner's tail `if`, or a local such as `fee`) read
+`propagation_unknown`: the return-value sink accepted only text that spells a
+literal, a call or arithmetic, so the name had no sink and the reached-tail
+pin above never applied.
+
+The name now reaches the return sink (`bare_name_returned_tail` in
+`classify/flow.rs`) when the owner declares a non-unit return type, the probe
+is one snake_case identifier before and after the edit, and the parser places
+that identifier, once on its line, at a position whose value the owner
+returns: the body's tail, or the tail of a plain block or of either `if`
+branch in such a position. `self`, paths, generics, labelled or
+`async`/`unsafe` blocks, `match` arms, loops, closures and a `let`
+initializer add no sink.
+
+The reader also needs syntactic binding evidence at that position
+(`owner_binding_visible_at`): a preceding `let` in a block enclosing the
+tail, or else a parameter, that names the identifier. A `let` in a disjoint
+scope, such as the other `if` branch, does not count. The reader declines
+when it sees an item declared in an enclosing block that mentions the name,
+or a preceding `let .. else` that names it (a refutable pattern, where a
+bare name may be a constant pattern).
+
+This is not name resolution. Syntax alone cannot tell a binding from a path
+pattern: `let Fallback = x;` is a unit-struct pattern when
+`struct Fallback;` is in scope, and a module-level
+`use defaults::Fallback as fallback;` gives a unit constructor a lowercase
+spelling this reader cannot see. The snake_case rule and the item and
+let-else declines withhold the item-like spellings and ambiguous patterns the
+reader sees; they do not claim to rule out every item. The reading admits
+only the sink, so it can withhold credit but not add it: credit still comes
+from the reached-tail pin (or the other existing readers).
+
+A bare owner name is the one token the changed text offers, and a test that
+spells it names its own binding (`let amount = discounted(100, true);`), so
+in `classify/reveal.rs` such a token never confirms observation, even in an
+assertion bound to the owner's result. The same coincidence on a computed
+tail (`amount + 6` with that test) is unchanged by this amendment.
+
+Fixtures `fixtures/rust_bare_name_return_tail_reached` (promoted),
+`fixtures/rust_bare_name_return_tail_other_branch` (not promoted) and
+`fixtures/rust_bare_name_return_tail_test_local_same_name` (not promoted:
+the test's local shares the tail's name and the call takes the other branch)
+pin both sides in the evidence-promotion honesty corpus.
+
 ## Test Mapping
 
 - `crates/ripr/src/analysis/test_grip_evidence/tests.rs::branch_local_return_value_seam_is_not_strongly_gripped_by_an_else_branch_test`
@@ -396,6 +443,16 @@ there too.
 - `crates/ripr/tests/computed_return_tail_crate_qualified.rs::an_explicit_library_name_is_the_spelling_that_counts`
 - `crates/ripr/tests/computed_return_tail_crate_qualified.rs::an_expected_name_bound_twice_resolves_to_the_binding_in_scope`
 - `crates/ripr/tests/computed_return_tail_crate_qualified.rs::a_let_bound_qualified_call_reads_like_the_bare_let_bound_call`
+- `crates/ripr/tests/computed_return_tail/bare_name_tail.rs::an_exact_pin_of_the_branch_returning_a_bare_parameter_is_exposed`
+- `crates/ripr/tests/computed_return_tail/bare_name_tail.rs::a_bare_local_tail_reached_by_the_pin_is_exposed`
+- `crates/ripr/tests/computed_return_tail/bare_name_tail.rs::a_pin_of_the_other_branch_or_a_far_input_is_not_credited`
+- `crates/ripr/tests/computed_return_tail/bare_name_tail.rs::a_test_binding_named_like_the_tail_does_not_confirm_it`
+- `crates/ripr/tests/computed_return_tail/bare_name_tail.rs::a_bare_name_whose_value_is_not_returned_gets_no_return_sink`
+- `crates/ripr/tests/computed_return_tail/bare_name_tail.rs::only_a_name_the_owner_binds_gets_the_return_sink`
+- `crates/ripr/tests/computed_return_tail/bare_name_tail.rs::a_same_named_local_in_a_disjoint_scope_does_not_bind_the_tail`
+- `crates/ripr/tests/computed_return_tail/bare_name_tail.rs::a_bare_name_in_a_preceding_let_else_is_not_read_as_a_local`
+- `crates/ripr/tests/computed_return_tail/bare_name_tail.rs::a_name_spelled_like_an_item_is_not_read_as_a_local`
+- `crates/ripr/tests/computed_return_tail/bare_name_tail.rs::an_item_in_an_enclosing_block_shadows_an_outer_local`
 
 ## Implementation Mapping
 
@@ -415,6 +472,10 @@ there too.
 - `crates/ripr/src/analysis/classifier/evidence.rs`: the `reached_tail_pin`
   admission; `crates/ripr/src/analysis/classify/reveal.rs`: its use in
   observation confirmation.
+- `crates/ripr/src/analysis/classify/flow.rs`: `bare_name_returned_tail`, the
+  return sink of a bare returned name, and `owner_binding_visible_at`, its
+  lexical binding check; `crates/ripr/src/analysis/classify/reveal.rs`:
+  `bare_owner_name_tail`, which keeps that name from confirming by token (#13037).
 
 ## Metrics
 

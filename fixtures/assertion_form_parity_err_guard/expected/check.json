@@ -3,7 +3,7 @@
   "tool": "ripr",
   "mode": "fast",
   "root": "fixtures/assertion_form_parity_err_guard/input",
-  "summary": {"changed_rust_files":2,"probes":3,"findings":3,"exposed":0,"weakly_exposed":2,"reachable_unrevealed":0,"no_static_path":0,"infection_unknown":0,"propagation_unknown":1,"static_unknown":0,"changed_files_by_language":[{"language":"rust","files":2}]},
+  "summary": {"changed_rust_files":2,"probes":3,"findings":3,"exposed":0,"weakly_exposed":3,"reachable_unrevealed":0,"no_static_path":0,"infection_unknown":0,"propagation_unknown":0,"static_unknown":0,"changed_files_by_language":[{"language":"rust","files":2}]},
   "analysis_outcome": {
     "analysis_complete": true,
     "outcome": {"schema_version":"0.1","kind":"complete_with_findings","identity":{"repository_identity":null,"root_identity":null,"config_identity":null,"base_revision":null,"input_identity":"sha256:162786730ebb6949db763185218e2e45d7020188bbe0af601a4a0430c40bf694","snapshot_identity":null,"git_candidate_subject":null},"counts":{"changed_file_count":2,"changed_line_count":18,"candidate_line_count":3,"probe_count":3,"finding_count":3},"limitations":[],"claim_boundary":"Static analysis outcome only; no correctness, test-adequacy, runtime-execution, or merge-readiness claim."}
@@ -259,9 +259,9 @@
         "normalized_discriminator": "amount"
 
       },
-      "classification": "propagation_unknown",
-      "severity": "note",
-      "confidence": 0.66,
+      "classification": "weakly_exposed",
+      "severity": "warning",
+      "confidence": 0.92,
       "probe": {
         "id": "probe:src_lib.rs:return_value:5beb132c",
         "family": "return_value",
@@ -273,23 +273,23 @@
       "ripr": {
         "reach": {"state":"yes","confidence":"medium","summary":"Related tests appear to reach discounted_total: boundary_matches_expected"},
         "infect": {"state":"yes","confidence":"medium","summary":"Reachable tests can plausibly activate this changed behavior"},
-        "propagate": {"state":"unknown","confidence":"low","summary":"Propagation is not statically obvious from syntax-first analysis"},
+        "propagate": {"state":"yes","confidence":"high","summary":"Complete propagation witness reaches returned value: amount"},
         "observe": {"state":"yes","confidence":"medium","summary":"A related test observes a value or effect near the changed behavior"},
         "discriminate": {"state":"weak","confidence":"medium","summary":"Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)"}
        },
       "evidence_stages": [
         {"stage":"reach","state":"yes","confidence":"medium"},
         {"stage":"infect","state":"yes","confidence":"medium"},
-        {"stage":"propagate","state":"unknown","confidence":"low"},
+        {"stage":"propagate","state":"yes","confidence":"high"},
         {"stage":"observe","state":"yes","confidence":"medium"},
         {"stage":"discriminate","state":"weak","confidence":"medium"}
       ],
-      "evidence_path": ["reach yes: Related tests appear to reach discounted_total: boundary_matches_expected", "infection yes: Reachable tests can plausibly activate this changed behavior", "propagation unknown: Propagation is not statically obvious from syntax-first analysis", "observation yes: A related test observes a value or effect near the changed behavior", "discriminator weak: Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)", "local flow reaches unknown sink (line 5)", "related test tests/pricing.rs:4 boundary_matches_expected uses weak relational check oracle: if actual != expected {\nreturn Err(format!(\"actual={actual:?}\"));\n}", "source function argument value amount = 100 at line 5", "source function argument value discount_threshold = 100 at line 5", "source assertion argument value \"actual={actual:?}\" at line 7"],
+      "evidence_path": ["reach yes: Related tests appear to reach discounted_total: boundary_matches_expected", "infection yes: Reachable tests can plausibly activate this changed behavior", "propagation yes: Complete propagation witness reaches returned value: amount", "observation yes: A related test observes a value or effect near the changed behavior", "discriminator weak: Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)", "local flow reaches returned value: amount (line 5)", "related test tests/pricing.rs:4 boundary_matches_expected uses weak relational check oracle: if actual != expected {\nreturn Err(format!(\"actual={actual:?}\"));\n}", "source function argument value amount = 100 at line 5", "source function argument value discount_threshold = 100 at line 5", "source assertion argument value \"actual={actual:?}\" at line 7"],
       "flow_sinks": [
-        {"kind":"unknown","text":"unknown sink","line":5}
+        {"kind":"return_value","text":"amount","line":5}
       ],
-      "evidence": ["A related test observes a value or effect near the changed behavior", "Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)", "Propagation is not statically obvious from syntax-first analysis", "Reachable tests can plausibly activate this changed behavior", "Related tests appear to reach discounted_total: boundary_matches_expected"],
-      "missing": ["No clear propagation path from changed behavior to an observable sink", "No strong discriminator was detected"],
+      "evidence": ["A related test observes a value or effect near the changed behavior", "Complete propagation witness reaches returned value: amount", "Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)", "Reachable tests can plausibly activate this changed behavior", "Related tests appear to reach discounted_total: boundary_matches_expected"],
+      "missing": ["No strong discriminator was detected"],
       "assertion_texts": {
         "5": "let actual = discounted_total(100, 100);",
         "7": "if actual != expected {\nreturn Err(format!(\"actual={actual:?}\"));\n}"
@@ -344,14 +344,16 @@
           "oracle_kind": "relational_check",
           "oracle": "if actual != expected {\nreturn Err(format!(\"actual={actual:?}\"));\n}",
           "relation_reason": "direct_owner_call",
-          "relation_confidence": "high"
+          "relation_confidence": "high",
+          "miss": "weak_assertion",
+          "why": "assertion too weak to tell the old behavior from the new"
         }
       ],
-      "stop_reasons": ["propagation_evidence_unknown"],
+      "stop_reasons": [],
       "oracle_kind": "relational_check",
       "oracle_strength": "weak",
-      "recommended_next_step": "Trace the changed value to its output or effect, and inspect what the related test actually checks. If it has an assertion, inspect exactly what that assertion observes. Add or tighten a test only if this finds a gap; compare old and new code with the project's configured test runner (`cargo test` for ordinary Cargo tests). The static class may remain unknown.",
-      "suggested_next_action": "Trace the changed value to its output or effect, and inspect what the related test actually checks. If it has an assertion, inspect exactly what that assertion observes. Add or tighten a test only if this finds a gap; compare old and new code with the project's configured test runner (`cargo test` for ordinary Cargo tests). The static class may remain unknown.",
+      "recommended_next_step": "Replace broad assertions with exact equality or a property that constrains the changed returned value.",
+      "suggested_next_action": "Replace broad assertions with exact equality or a property that constrains the changed returned value.",
       "language": "rust",
       "source_currentness": "candidate_current"
     }

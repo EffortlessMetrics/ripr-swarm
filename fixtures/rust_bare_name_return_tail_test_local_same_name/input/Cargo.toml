@@ -1,0 +1,8 @@
+[package]
+name = "rust_bare_name_return_tail_test_local_same_name_fixture"
+version = "0.1.0"
+edition = "2024"
+
+[lib]
+name = "rust_bare_name_return_tail_test_local_same_name_fixture"
+path = "src/lib.rs"

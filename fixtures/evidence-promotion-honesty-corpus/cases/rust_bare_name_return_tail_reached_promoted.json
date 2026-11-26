@@ -1,0 +1,14 @@
+{
+  "id": "rust_bare_name_return_tail_reached_promoted",
+  "language": "rust",
+  "tier": "pure",
+  "source_fixture": "fixtures/rust_bare_name_return_tail_reached",
+  "vector": "exact_pin_of_a_call_that_statically_reaches_a_changed_bare_parameter_tail",
+  "probe_family": "return_value",
+  "assertions": [
+    { "type": "expected_finding_count", "count": 1 },
+    { "type": "must_promote" },
+    { "type": "must_not_report_clean" },
+    { "type": "expected_class", "class": "exposed" }
+  ]
+}
