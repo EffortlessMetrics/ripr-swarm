@@ -7,6 +7,8 @@
 //!
 //! This is not the Maturin adapter (#4490), admitted payload qualification
 //! (#4489), or CI orchestration (#4493).
+//! The project environment test (#4492) stages the test binary in a local
+//! install layout and uses interpreter stand-ins to check command routing.
 
 #![cfg(feature = "lang-python")]
 
@@ -15,6 +17,8 @@ mod isolation;
 #[cfg(unix)]
 mod live;
 mod oracles;
+#[cfg(unix)]
+mod project_environment;
 #[cfg(unix)]
 mod support;
 
