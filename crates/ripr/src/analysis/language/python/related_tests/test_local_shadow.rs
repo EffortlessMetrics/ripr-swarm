@@ -10,6 +10,7 @@
 //! non-test files, so this records the modules that precede on a test's path.
 
 use super::super::source_utils::is_test_file;
+use super::project_names::PYTHON_PROJECT_MARKERS;
 use super::{PythonOwner, owner_module_paths};
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
@@ -33,11 +34,14 @@ pub(in crate::analysis::language::python) struct TestLocalShadow {
 /// - the same basedir for every directory at or above the test that holds a
 ///   `conftest.py`, since a collected conftest inserts its basedir into the
 ///   process-wide `sys.path` too;
-/// - the same basedir for every directory above the test that holds a file
-///   pytest collects by default (`test_*.py`, `*_test.py`): any run that
-///   collects the test's directory from there collects that module first and
-///   inserts its basedir (#14083 A5). A run of the subdirectory alone does not,
-///   and sibling directories collected in the same run are not modelled;
+/// - the same basedir for every directory above the test, up to and including
+///   the test's nearest project root (a directory with a project marker such
+///   as `pyproject.toml`), that holds a file pytest collects by default
+///   (`test_*.py`, `*_test.py`): a run that collects that directory imports
+///   the module and inserts its basedir into the process-wide `sys.path`
+///   (#14083 A5). Collection order, a run of the subdirectory alone and sibling
+///   directories collected in the same run are not modelled, and test modules
+///   above the project root belong to another project's run;
 /// - the repository root (a root conftest, `python -m pytest` or an editable
 ///   install reach it).
 fn prepend_path_dirs(
@@ -56,10 +60,13 @@ fn prepend_path_dirs(
     };
     let mut dirs = vec![basedir(dir)];
     let mut ancestor = dir.to_path_buf();
+    // Collected modules count only inside the test's own project; the
+    // repository root's modules count only when no nearer project root exists.
+    let mut within_project = true;
     loop {
-        if files.contains(ancestor.join("conftest.py").as_path())
-            || (ancestor != dir && collected_dirs.contains(&ancestor))
-        {
+        let collected_here =
+            within_project && ancestor != dir && collected_dirs.contains(&ancestor);
+        if files.contains(ancestor.join("conftest.py").as_path()) || collected_here {
             let base = basedir(&ancestor);
             if !dirs.contains(&base) {
                 dirs.push(base);
@@ -67,6 +74,12 @@ fn prepend_path_dirs(
         }
         if ancestor.as_os_str().is_empty() {
             break;
+        }
+        if PYTHON_PROJECT_MARKERS
+            .iter()
+            .any(|marker| files.contains(ancestor.join(marker).as_path()))
+        {
+            within_project = false;
         }
         ancestor = ancestor.parent().unwrap_or(Path::new("")).to_path_buf();
     }

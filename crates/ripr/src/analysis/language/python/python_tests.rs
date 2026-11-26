@@ -6316,6 +6316,28 @@ fn test_local_module_shadow_covers_project_names_import_forms_and_conftest_dirs(
         "svc/a/tests/unit/test_x.py",
     ];
     assert!(identifies(&uncollected, "svc/a/core.py", unit).0);
+    // A collected test module above the test's own project root belongs to
+    // the outer project's run, not to `svc/a`'s: the nested project's tests
+    // keep their credit (`svc/test_health.py` beside the outer `svc/core.py`).
+    let nested_project = [
+        "svc/pyproject.toml",
+        "svc/core.py",
+        "svc/test_health.py",
+        "svc/a/pyproject.toml",
+        "svc/a/core.py",
+        "svc/a/tests/test_core.py",
+    ];
+    assert!(identifies(&nested_project, "svc/a/core.py", "svc/a/tests/test_core.py").0);
+    // The project root itself is inside the project: a collected module in
+    // `svc/a` puts `svc/a` on the path, where the owner lives anyway.
+    let at_root = [
+        "svc/a/pyproject.toml",
+        "svc/a/core.py",
+        "svc/a/test_root.py",
+        "svc/a/tests/core.py",
+        "svc/a/tests/unit/test_x.py",
+    ];
+    assert!(identifies(&at_root, "svc/a/core.py", unit).0);
     let with_conftest = [
         "svc/a/pyproject.toml",
         "svc/a/core.py",
