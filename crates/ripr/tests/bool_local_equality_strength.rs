@@ -83,6 +83,7 @@ fn a_compared_bool_local_is_only_as_strong_as_its_initializer() -> Result<(), St
         "let ok = demo::discount(100) == 90;\n    assert_eq!(ok, true);",
         "let ok = matches!(demo::discount(100), 90);\n    assert_eq!(ok, true);",
         "let value = demo::discount(100);\n    assert_eq!(value, 90);",
+        "let state_ok = demo::discount(100) == 90;\n    assert_eq!(state_ok, true); // pinned",
     ] {
         assert_eq!(class_with(body)?, ExposureClass::Exposed, "{body}");
     }
@@ -98,6 +99,10 @@ fn a_compared_bool_local_is_only_as_strong_as_its_initializer() -> Result<(), St
         "let ok = matches!(demo::discount(100), 90 | 100);\n    assert_eq!(ok, true);",
         "let ok = matches!(demo::discount(100), _);\n    assert_eq!(ok, true);",
         "let ok = matches!(Some(demo::discount(100)), Some(_));\n    assert_eq!(ok, true);",
+        // A comment around an operand, or after the statement, changes
+        // nothing.
+        "let ok = demo::discount(100) > 0;\n    assert_eq!(ok, /* expected */ true);",
+        "let state_ok = demo::discount(100) > 0;\n    assert_eq!(state_ok, true); // boundary check",
     ] {
         assert_eq!(
             class_with(body)?,

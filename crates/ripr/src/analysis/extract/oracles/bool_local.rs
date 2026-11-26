@@ -13,21 +13,52 @@
 //! same assertion with the initializer written in place. Any other binding
 //! shape keeps the line's own reading.
 
+use std::cell::OnceCell;
+use std::collections::BTreeMap;
+
 use ra_ap_syntax::{AstNode, SyntaxNode, ast, ast::HasName};
 
 use super::arguments::{AssertionComparison, assertion_comparison};
 use super::classify::{OracleClassification, classify_assertion_with};
 use super::pattern_admission::LocalDecls;
-use super::patterns::{boolean_literal_value, unwrap_parentheses};
+use super::patterns::{boolean_literal_value, transparent_operand};
 use crate::domain::OracleStrength;
 
+/// One test function's local bindings, read once on the first assertion that
+/// needs them, so a test with many compared locals walks its tree once.
+pub(crate) struct BoolLocals<'a> {
+    function: &'a SyntaxNode,
+    initializers: OnceCell<BTreeMap<String, Option<String>>>,
+}
+
+impl<'a> BoolLocals<'a> {
+    pub(crate) fn new(function: &'a SyntaxNode) -> Self {
+        Self {
+            function,
+            initializers: OnceCell::new(),
+        }
+    }
+
+    /// The initializer of the one binding of `name`, when that binding is a
+    /// plain immutable `let name = ..;` (an optional type is allowed). Two
+    /// bindings, a pattern, closure or match binding of the name, `mut`,
+    /// `ref`, `@`, `let .. else` or a missing initializer give `None`.
+    fn initializer(&self, name: &str) -> Option<String> {
+        self.initializers
+            .get_or_init(|| let_initializers(self.function))
+            .get(name)
+            .cloned()
+            .flatten()
+    }
+}
+
 /// `classification` for `assertion`, lowered to the reading of the local's
-/// defining expression when `assertion` compares a local boolean that
-/// `function` binds once with a boolean literal.
+/// defining expression when `assertion` compares a local boolean that the
+/// function binds once with a boolean literal.
 pub(crate) fn with_bool_local_inlined(
     classification: OracleClassification,
     assertion: &str,
-    function: &SyntaxNode,
+    locals: &BoolLocals<'_>,
     decls: &LocalDecls,
 ) -> OracleClassification {
     if !matches!(
@@ -36,8 +67,7 @@ pub(crate) fn with_bool_local_inlined(
     ) {
         return classification;
     }
-    let Some(inlined) = inlined_assertion(assertion, |name| single_let_initializer(function, name))
-    else {
+    let Some(inlined) = inlined_assertion(assertion, |name| locals.initializer(name)) else {
         return classification;
     };
     let reading = classify_assertion_with(&inlined, decls);
@@ -50,7 +80,8 @@ pub(crate) fn with_bool_local_inlined(
 
 /// The equality assertion with the compared local replaced by its
 /// initializer, when one operand is a bare local `initializer` resolves and
-/// the other is a boolean literal.
+/// the other is a boolean literal. Comments, grouping parentheses and a block
+/// around either operand are transparent (`assert_eq!(ok, /* want */ true)`).
 fn inlined_assertion(
     assertion: &str,
     initializer: impl Fn(&str) -> Option<String>,
@@ -63,14 +94,13 @@ fn inlined_assertion(
     else {
         return None;
     };
-    let local = |operand: &str| {
-        let operand = unwrap_parentheses(operand.trim());
-        is_local_name(operand).then(|| operand.to_string())
-    };
-    let (left, right) = if boolean_literal_value(&right).is_some() {
-        (initializer(&local(&left)?)?, right)
-    } else if boolean_literal_value(&left).is_some() {
-        (left, initializer(&local(&right)?)?)
+    let left = transparent_operand(&left);
+    let right = transparent_operand(&right);
+    let local = |operand: &str| is_local_name(operand).then(|| operand.to_string());
+    let (left, right) = if boolean_literal_value(right).is_some() {
+        (initializer(&local(left)?)?, right.to_string())
+    } else if boolean_literal_value(left).is_some() {
+        (left.to_string(), initializer(&local(right)?)?)
     } else {
         return None;
     };
@@ -94,24 +124,28 @@ fn is_local_name(text: &str) -> bool {
         && !matches!(text, "_" | "true" | "false" | "self")
 }
 
-/// The initializer of the one binding of `name` in `function`, when that
-/// binding is a plain immutable `let name = ..;` (an optional type is
-/// allowed). Two bindings, a pattern, closure or match binding of the name,
-/// `mut`, `ref` or a missing initializer give `None`.
-fn single_let_initializer(function: &SyntaxNode, name: &str) -> Option<String> {
-    let mut bindings = function
-        .descendants()
-        .filter_map(ast::IdentPat::cast)
-        .filter(|pattern| pattern.name().is_some_and(|found| found.text() == name));
-    let binding = bindings.next()?;
-    if bindings.next().is_some()
-        || binding.mut_token().is_some()
-        || binding.ref_token().is_some()
-        || binding.pat().is_some()
-    {
+/// Every name an identifier pattern binds in `function`, with its
+/// initializer when it is bound exactly once by a plain immutable `let`.
+fn let_initializers(function: &SyntaxNode) -> BTreeMap<String, Option<String>> {
+    let mut bindings = BTreeMap::new();
+    for pattern in function.descendants().filter_map(ast::IdentPat::cast) {
+        let Some(name) = pattern.name().map(|name| name.text().to_string()) else {
+            continue;
+        };
+        let initializer = plain_let_initializer(&pattern);
+        bindings
+            .entry(name)
+            .and_modify(|seen: &mut Option<String>| *seen = None)
+            .or_insert(initializer);
+    }
+    bindings
+}
+
+fn plain_let_initializer(pattern: &ast::IdentPat) -> Option<String> {
+    if pattern.mut_token().is_some() || pattern.ref_token().is_some() || pattern.pat().is_some() {
         return None;
     }
-    let statement = binding.syntax().parent().and_then(ast::LetStmt::cast)?;
+    let statement = pattern.syntax().parent().and_then(ast::LetStmt::cast)?;
     if statement.let_else().is_some() {
         return None;
     }
@@ -149,7 +183,7 @@ mod tests {
         Ok(with_bool_local_inlined(
             classify_assertion_with(assertion, &decls),
             assertion,
-            function.syntax(),
+            &BoolLocals::new(function.syntax()),
             &decls,
         ))
     }
@@ -167,6 +201,15 @@ mod tests {
             (
                 "let ok = matches!(value(100), _);",
                 "debug_assert_eq!(ok, true);",
+            ),
+            // Comments around either operand are transparent.
+            (
+                "let ok = value(100) > 0;",
+                "assert_eq!(ok, /* expected */ true);",
+            ),
+            (
+                "let ok = value(100) > 0;",
+                "assert_eq!(/* got */ ok, true);",
             ),
         ] {
             let reading = read(body, assertion)?;
