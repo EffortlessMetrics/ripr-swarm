@@ -5231,9 +5231,16 @@ pub(crate) mod tests {
             "cold over-ceiling repair classifies exactly the ordinary prefix"
         );
 
-        // Plain inventory: cut by the default cap.
+        // The lower ceiling has written the ordinary prefix. Read it back
+        // without reclassifying, so repair faces two healthy cache entries.
+        let before_plain_hit = crate::analysis::WORKSPACE_SEAMS_CLASSIFIED.get();
         let (_, plain) =
             crate::analysis::inventory_classified_seams_at_with_config(&root, &config)?;
+        assert_eq!(
+            crate::analysis::WORKSPACE_SEAMS_CLASSIFIED.get(),
+            before_plain_hit,
+            "plain inventory reuses the healthy capped ordinary entry"
+        );
         let plain = plain.ok_or("expected a limit fact")?;
         assert!(plain.is_truncated(), "fixture must exceed the default cap");
         assert_eq!(plain.analyzed, DEFAULT_REPO_EXPOSURE_SEAM_LIMIT);
@@ -5241,6 +5248,22 @@ pub(crate) mod tests {
         assert!(plain.total <= REPAIR_SEAM_CEILING, "fixture stays in range");
 
         assert_eq!(classified.len(), plain.total);
+
+        let before_widened_hit = crate::analysis::WORKSPACE_SEAMS_CLASSIFIED.get();
+        let (widened, widened_limit) = inventory_for_repair(&root, &config)?;
+        assert_eq!(
+            crate::analysis::WORKSPACE_SEAMS_CLASSIFIED.get(),
+            before_widened_hit,
+            "a healthy capped ordinary entry must not force widened repair to reclassify"
+        );
+        assert!(widened_limit.is_none());
+        assert!(
+            widened
+                .iter()
+                .map(|entry| entry.seam.id())
+                .eq(classified.iter().map(|entry| entry.seam.id())),
+            "repair must return the full widened entry rather than the ordinary prefix"
+        );
 
         // Agent-status gate: same answer, not withheld as truncated.
         let gate = load_gate_state(&root, false);
