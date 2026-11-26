@@ -3943,11 +3943,7 @@ fn bare_name_renamed_in_nested_blocks(
     else {
         return false;
     };
-    let tree_of = |path: &std::path::Path| index.source_syntax.get(index, path)?.tree();
-    let ancestors = crate::analysis::syntax::enclosing_module_files(&test.file, tree_of, |root| {
-        manifest_confirms_crate_root(index, root)
-    })
-    .filter(|_| !crate_may_export_a_std_macro(index));
+    let ancestors = macro_scope_ancestors(index, test);
     let Some(paths) = index
         .source_syntax
         .get(index, &test.file)
@@ -3972,6 +3968,21 @@ fn bare_name_renamed_in_nested_blocks(
                 &test_scope.crate_names,
             )
         })
+}
+
+/// The files of the modules enclosing `test`'s file, nearest first, up to
+/// the crate root, for settling which macros reach its body; `None` when
+/// that chain is not known or a crate file may export a macro under a std
+/// macro's name.
+fn macro_scope_ancestors(
+    index: &RustIndex,
+    test: &TestSummary,
+) -> Option<Vec<ra_ap_syntax::ast::SourceFile>> {
+    let tree_of = |path: &std::path::Path| index.source_syntax.get(index, path)?.tree();
+    crate::analysis::syntax::enclosing_module_files(&test.file, tree_of, |root| {
+        manifest_confirms_crate_root(index, root)
+    })
+    .filter(|_| !crate_may_export_a_std_macro(index))
 }
 
 /// Whether the module scope a bare call of the owner's name resolves in
@@ -4117,6 +4128,75 @@ pub(in crate::analysis) fn test_calls_only_a_renamed_other_function(
         && value_mentions(&test.body, &owner.name)
             .iter()
             .all(|qualifier| matches!(qualifier, Some(segments) if segments.is_empty()))
+}
+
+/// #14552: whether every mention of the free owner's name in `test` is
+/// bound by a local of the test body (`let dt = |x| x + 1;`, `let dt =
+/// other;`, a closure parameter, a nested `fn dt`), so the test never calls
+/// the owner. The parsed tree decides each mention block by block; anything
+/// it cannot settle as a local (a qualified call, an import or glob in an
+/// enclosing block, a mention before the binding or past its block, a
+/// non-std macro) keeps the prior relation.
+pub(in crate::analysis) fn test_calls_only_a_local_binding(
+    index: &RustIndex,
+    owner: &FunctionSummary,
+    test: &TestSummary,
+) -> bool {
+    if owner.item.container != FunctionContainer::Free {
+        return false;
+    }
+    let name = owner.name.trim_start_matches("r#");
+    if !spells_a_local_binder(&test.body, name) {
+        return false;
+    }
+    // A generated test is read from its expanded body, so it reads as its
+    // hand-written twin does; an expansion that declares its own items may
+    // import the name and keeps the earlier reading.
+    let generated_body = match test.generated.as_ref() {
+        None => None,
+        Some(origin) if origin.body_declares_items => return false,
+        Some(_) => match index.source_syntax.parse_fragment(&test.body) {
+            Some(parse) => Some(parse.tree()),
+            None => return false,
+        },
+    };
+    let ancestors = macro_scope_ancestors(index, test);
+    index
+        .source_syntax
+        .get(index, &test.file)
+        .is_some_and(|snapshot| {
+            snapshot.every_mention_bound_locally(
+                test,
+                ancestors.as_deref(),
+                generated_body.as_ref(),
+                name,
+            )
+        })
+}
+
+/// Text prefilter for [`test_calls_only_a_local_binding`]: whether `body`
+/// spells `name` where a binder may stand (after `let`, `mut`, `ref`, `fn`,
+/// `|`, `,`, `(`, `{`, `[`, `&` or `:`, as in tuple, field, slice and
+/// reference patterns), not
+/// followed by a call or path. Most tests spell their owner only as a call
+/// and stop here.
+fn spells_a_local_binder(body: &str, name: &str) -> bool {
+    let masked = mask_comments_and_strings(body);
+    masked.match_indices(name).any(|(start, _)| {
+        let end = start + name.len();
+        if ident_char_before(&masked, start) || ident_char_at(&masked, end) {
+            return false;
+        }
+        let before = &masked[..start];
+        let head = before.strip_suffix("r#").unwrap_or(before).trim_end();
+        if head_word(head) == "fn" {
+            return true;
+        }
+        let tail = masked[end..].trim_start();
+        let binder_head = matches!(head_word(head), "let" | "mut" | "ref")
+            || head.ends_with(['|', ',', '(', '{', '[', '&', ':']);
+        binder_head && !tail.starts_with('(') && !tail.starts_with("::")
+    })
 }
 
 /// RIPR-SPEC-0186: a boundary oracle must observe the changed definition,
@@ -5216,6 +5296,25 @@ fn qualifier_before(head: &str) -> Option<Vec<String>> {
 mod tests {
     use super::*;
     use crate::analysis::rust_index::summarize_file;
+
+    #[test]
+    fn the_local_binder_prefilter_admits_every_supported_pattern_spelling() {
+        for body in [
+            "let dt = |x: i32| x; dt(1);",
+            "let mut dt = other; dt(1);",
+            "let (a, dt) = (1, other); dt(a);",
+            "let Pair { dt } = pair; dt(1);",
+            "let Pair { callback: dt } = pair; dt(1);",
+            "let [dt] = [other]; dt(1);",
+            "let &dt = &other; dt(1);",
+            "let apply = |dt: fn(i32) -> i32| dt(1);",
+            "fn dt(x: i32) -> i32 { x } dt(1);",
+        ] {
+            assert!(spells_a_local_binder(body, "dt"), "{body}");
+        }
+        assert!(!spells_a_local_binder("assert_eq!(dt(1), 2);", "dt"));
+        assert!(!spells_a_local_binder("let x = super::dt(1);", "dt"));
+    }
 
     #[test]
     fn std_impl_source_computes_each_trait_and_head_once() {

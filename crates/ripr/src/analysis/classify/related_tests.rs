@@ -8797,6 +8797,12 @@ fn owner_call_relation_reason_gated(
         if super::call_identity::test_calls_only_a_renamed_other_function(index, owner, test) {
             return RelationReason::WeakTokenSubstring;
         }
+        // #14552: a test whose every mention of the name is bound by a
+        // local of its body (`let dt = |x| x + 1;`, a nested `fn dt`) calls
+        // that local, not the owner.
+        if super::call_identity::test_calls_only_a_local_binding(index, owner, test) {
+            return RelationReason::WeakTokenSubstring;
+        }
         // RIPR-SPEC-0005: a free function whose name another module also
         // defines is not reached when the test's own `use` binds the bare
         // name to that other module's twin.
