@@ -132,9 +132,15 @@ fn other_reads_off_a_fresh_instance_stay_unrelated() -> Result<(), String> {
             "    jest.spyOn(Cart.prototype, 'total', 'get').mockReturnValue(45);\n    expect(new Cart(50).total).toBe(45);",
         ),
         // A `delete` of the member does not run the getter, through a fresh
-        // instance or a receiver (review of #16360).
+        // instance or a receiver (review of #16360). The literal inline form
+        // is the one the inline read matcher sees, so only the delete guard
+        // keeps it unrelated; the cast form never reaches that matcher.
         (
             "inline-deleted",
+            "    // @ts-expect-error the getter is not optional\n    expect(delete new Cart(100).total).toBe(true);",
+        ),
+        (
+            "inline-deleted-cast",
             "    expect(delete (new Cart(100) as any).total).toBe(true);",
         ),
         (
