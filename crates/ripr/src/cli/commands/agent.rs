@@ -5355,13 +5355,14 @@ fn gap_bound_rejected_attempt_message(
 /// typed not-started refusal on `refusal`. Called at the early admission and
 /// again immediately before the first shared workflow write (#13452), so both
 /// share one mapping.
-/// A dirty production premise is a typed not-started start hold (#15265):
-/// `ripr repair` exits `3` with `start_refused_uncommitted_source` (and the
+/// A dirty premise (tracked changes outside the allowed edit surface, usually
+/// production source) is a typed not-started start hold (#15265):
+/// `ripr repair` exits `3` with `start_refused_dirty_premise` (and the
 /// `cli_refusal` document under `--json`) instead of an operational exit `2`
 /// with empty stdout. The prose is unchanged.
 fn dirty_premise_hold(refusal: &mut AfterPhaseRefusalContext, message: String) -> String {
     refusal.start_refused = true;
-    refusal.code = Some(crate::app::task_first::RepairRefusalCode::StartRefusedUncommittedSource);
+    refusal.code = Some(crate::app::task_first::RepairRefusalCode::StartRefusedDirtyPremise);
     message
 }
 

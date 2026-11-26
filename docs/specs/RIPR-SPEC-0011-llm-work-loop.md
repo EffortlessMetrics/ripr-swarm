@@ -1307,6 +1307,17 @@ a stray positional argument) under `--json` keeps exit 2 and its stderr prose
 and writes the standalone `cli_refusal` document to stdout (#6834 decision);
 other argv usage errors keep empty stdout.
 
+## Amendment (#14931, #15265): typed start refusals print `cli_refusal` under `--json`
+
+The empty-stdout rule above holds for untyped refusals and operational errors.
+A `ripr repair` or `ripr continue` refusal that carries a typed
+`ripr: refusal code=` line at exit `3` (see `docs/EXIT_CODES.md`) also writes
+the `cli_refusal` document with that `code` and its `disposition` on stdout
+under `--json`. That includes the not-started start holds: an uncommitted
+focused test target (`start_refused_uncommitted_target`) and uncommitted
+changes outside the allowed edit surface (`start_refused_dirty_premise`).
+Their stderr prose is unchanged.
+
 ## Amendment (#15282): continue on a complete attempt prints a short summary
 
 Without `--json`, `ripr continue` on a confirmed-complete attempt prints a

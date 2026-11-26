@@ -4397,9 +4397,10 @@ pub(crate) enum RepairRefusalCode {
     RepairNeedsItem,
     /// The start was refused: the focused test file has uncommitted changes.
     StartRefusedUncommittedTarget,
-    /// The start was refused: tracked source outside the test surface has
+    /// The start was refused: tracked files outside the repair's allowed edit
+    /// surface (usually production source, or another test file) have
     /// uncommitted changes, so a new test could not be told apart (#15265).
-    StartRefusedUncommittedSource,
+    StartRefusedDirtyPremise,
     /// Cargo's build directory is not Git-ignored, so a Rust repair cannot
     /// start: the same not-started shape as the uncommitted-target hold.
     BuildOutputNotIgnored,
@@ -4469,7 +4470,7 @@ impl RepairRefusalCode {
         Self::SeveralEligibleSeams,
         Self::RepairNeedsItem,
         Self::StartRefusedUncommittedTarget,
-        Self::StartRefusedUncommittedSource,
+        Self::StartRefusedDirtyPremise,
         Self::BuildOutputNotIgnored,
         Self::NoTestRoute,
         Self::AwaitingEdit,
@@ -4495,7 +4496,7 @@ impl RepairRefusalCode {
             Self::SeveralEligibleSeams => "several_eligible_seams",
             Self::RepairNeedsItem => "repair_needs_item",
             Self::StartRefusedUncommittedTarget => "start_refused_uncommitted_target",
-            Self::StartRefusedUncommittedSource => "start_refused_uncommitted_source",
+            Self::StartRefusedDirtyPremise => "start_refused_dirty_premise",
             Self::BuildOutputNotIgnored => "build_output_not_ignored",
             Self::NoTestRoute => "no_test_route",
             Self::AwaitingEdit => "awaiting_edit",
@@ -4530,7 +4531,7 @@ impl RepairRefusalCode {
             | Self::SeamNotRepairEligible
             | Self::NoEligibleSeam
             | Self::StartRefusedUncommittedTarget
-            | Self::StartRefusedUncommittedSource
+            | Self::StartRefusedDirtyPremise
             | Self::BuildOutputNotIgnored
             | Self::NoTestRoute
             | Self::NoCurrentAttempt
@@ -4590,7 +4591,7 @@ impl RepairRefusalCode {
             "several_eligible_seams" => Self::SeveralEligibleSeams,
             "repair_needs_item" => Self::RepairNeedsItem,
             "start_refused_uncommitted_target" => Self::StartRefusedUncommittedTarget,
-            "start_refused_uncommitted_source" => Self::StartRefusedUncommittedSource,
+            "start_refused_dirty_premise" => Self::StartRefusedDirtyPremise,
             "build_output_not_ignored" => Self::BuildOutputNotIgnored,
             "no_test_route" => Self::NoTestRoute,
             "awaiting_edit" => Self::AwaitingEdit,
