@@ -166,6 +166,7 @@ fn the_reader_prefers_the_call_row_over_a_constant_it_is_handed() -> Result<(), 
             },
         )]),
         elements: BTreeMap::new(),
+        dict_keys: BTreeMap::new(),
     };
     let constant = |value: &str| {
         vec![PythonModuleConstant {

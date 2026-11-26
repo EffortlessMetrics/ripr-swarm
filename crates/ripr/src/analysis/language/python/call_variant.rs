@@ -5,14 +5,16 @@
 //! with trailing whitespace; `round(x, 2)` to `round(x, 3)` only for a
 //! number the two counts round differently; `sorted(xs)` to
 //! `sorted(xs, reverse=True)` only for a list holding two different
-//! elements. A strong exact-value assertion whose
+//! elements; `d.get("k", 0)` to `d.get("k", 5)` only for a dict without the
+//! key. A strong exact-value assertion whose
 //! every call passes a value outside that set passes before and after the
 //! edit.
 //!
 //! The rule reads the changed token in place: `<param>.strip()`,
 //! `.lstrip()` or `.rstrip()` with no arguments, or `round(<param>, <int>)`
 //! with a literal digit count, its sign included, or one `sorted(<param>)` or `<param>.sort()`
-//! whose literal `reverse` flag alone flips, where `<param>` is an owner parameter the body
+//! whose literal `reverse` flag alone flips, or one `<param>.get(<key>, <lit>)`
+//! whose literal fallback alone changes, where `<param>` is an owner parameter the body
 //! never rebinds. Each strong related call (`boundary.rs`) must bind that
 //! parameter to a literal the rule can evaluate both ways; any other call, or
 //! no call at all, leaves the verdict to the other rules.
@@ -20,12 +22,15 @@
 use super::PythonOwner;
 use super::arm_activation::builtin_names_intact;
 use super::assertion_selection::PythonAssertionFocus;
-use super::boundary::{PARAMETRIZE_ROW_MARKER, literals_equal, strong_owner_call_values};
+use super::boundary::{
+    PARAMETRIZE_ROW_MARKER, literal_value, literals_equal, strong_owner_call_values,
+};
 use super::discriminators::python_string_literal_value;
 use super::related_tests::PythonRelatedCandidate;
 use super::term_activation::code_mention_count;
 use crate::domain::OwnerKind;
-use rustpython_parser::{Mode, Tok, lexer::lex};
+use rustpython_parser::ast::{Expr, Mod, Ranged};
+use rustpython_parser::{Mode, Tok, lexer::lex, parse};
 
 /// The changed call, and the input that would tell its versions apart.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -55,12 +60,21 @@ pub(super) enum CallVariant {
         old_call: String,
         new_call: String,
     },
+    /// `param.get(key, old)` to `param.get(key, new)`: another literal
+    /// fallback for one literal key.
+    GetFallback {
+        param: String,
+        key: String,
+        old: String,
+        new: String,
+    },
 }
 
 type Token = (Tok, String);
 
-/// The changed call when the only edit between the lines is a strip side or
-/// a `round` digit count on a bare name; None for anything else.
+/// The changed call when the only edit between the lines is a strip side, a
+/// `round` digit count, a sort direction or a `get` fallback on a bare name;
+/// None for anything else.
 pub(super) fn call_variant(old_line: &str, new_line: &str) -> Option<CallVariant> {
     // A line that also changes its block changes which code runs around it.
     let indent = |line: &str| line.len() - line.trim_start().len();
@@ -90,6 +104,44 @@ pub(super) fn call_variant(old_line: &str, new_line: &str) -> Option<CallVariant
             .and_then(|index| new.get(index))
     };
     let not_attribute = |offset: isize| !matches!(at(offset), Some((Tok::Dot, _)));
+    // An f-string runs its expressions even when the key is present, so it
+    // is never an inert fallback or a readable key.
+    let scalar = |tok: &Tok| {
+        matches!(
+            tok,
+            Tok::Int { .. } | Tok::Float { .. } | Tok::None | Tok::True | Tok::False
+        ) || matches!(tok, Tok::String { kind, .. } if !kind.is_any_fstring())
+    };
+    let get_shape = matches!(at(-6), Some((Tok::Name { .. }, _)))
+        && not_attribute(-7)
+        && matches!(at(-5), Some((Tok::Dot, _)))
+        && matches!(at(-4), Some((Tok::Name { .. }, text)) if text == "get")
+        && matches!(at(-3), Some((Tok::Lpar, _)))
+        && at(-2).is_some_and(|(tok, _)| {
+            matches!(tok, Tok::Int { .. })
+                || matches!(tok, Tok::String { kind, .. } if !kind.is_any_fstring())
+        })
+        && matches!(at(-1), Some((Tok::Comma, _)))
+        && matches!(at(1), Some((Tok::Rpar, _)));
+    // Two spellings of one value (`1000` and `1_000`) are not a fallback
+    // change a missing key could reveal. A string, a number or bool, and
+    // `None` never compare equal to one another.
+    let unseparated = |text: &str| literal_value(text).unwrap_or_else(|| text.to_string());
+    let kind = |tok: &Tok| match tok {
+        Tok::String { .. } => 0,
+        Tok::None => 1,
+        _ => 2,
+    };
+    let differ = kind(&old[i].0) != kind(&new[i].0)
+        || literals_equal(&unseparated(&old[i].1), &unseparated(&new[i].1)) == Some(false);
+    if get_shape && scalar(&old[i].0) && scalar(&new[i].0) && differ {
+        return Some(CallVariant::GetFallback {
+            param: at(-6).map(|(_, text)| text.clone())?,
+            key: at(-2).map(|(_, text)| text.clone())?,
+            old: old[i].1.clone(),
+            new: new[i].1.clone(),
+        });
+    }
     match (&old[i].0, &new[i].0) {
         (Tok::Name { .. }, Tok::Name { .. }) => {
             let strip = |text: &str| matches!(text, "strip" | "lstrip" | "rstrip");
@@ -302,7 +354,8 @@ pub(super) fn python_call_variant_evidence(
     let param = match &variant {
         CallVariant::Strip { param, .. }
         | CallVariant::Round { param, .. }
-        | CallVariant::Sort { param, .. } => param,
+        | CallVariant::Sort { param, .. }
+        | CallVariant::GetFallback { param, .. } => param,
     };
     if !owner
         .parameters
@@ -312,12 +365,14 @@ pub(super) fn python_call_variant_evidence(
     {
         return None;
     }
-    // A list is mutable: the body must not reach it before the changed line,
-    // and the line must name it once, so the sort sees the list the test
-    // passed.
-    if matches!(variant, CallVariant::Sort { .. })
-        && (owner.term_facts.first_mention_line(param) != Some(line)
-            || code_mention_count(new_line, param) != 1)
+    // A list or dict is mutable: the body must not reach it before the
+    // changed line, and the line must name it once, so the call sees the
+    // collection the test passed.
+    if matches!(
+        variant,
+        CallVariant::Sort { .. } | CallVariant::GetFallback { .. }
+    ) && (owner.term_facts.first_mention_line(param) != Some(line)
+        || code_mention_count(new_line, param) != 1)
     {
         return None;
     }
@@ -326,15 +381,18 @@ pub(super) fn python_call_variant_evidence(
         return None;
     }
     for row in &rows {
-        let agrees = if matches!(variant, CallVariant::Sort { .. }) {
-            // A parametrized list may be changed in place by the test body
-            // before the call, so only a list the call spells is read.
-            if row.text.contains(PARAMETRIZE_ROW_MARKER) {
+        let agrees = match &variant {
+            // A parametrized list or dict may be changed in place by the test
+            // body before the call, so only a display the call spells is read.
+            CallVariant::Sort { .. } | CallVariant::GetFallback { .. }
+                if row.text.contains(PARAMETRIZE_ROW_MARKER) =>
+            {
                 return None;
             }
-            elements_agree(row.elements.get(param)?)?
-        } else {
-            variant_agrees(&variant, row.values.get(param)?)?
+            CallVariant::Sort { .. } => elements_agree(row.elements.get(param)?)?,
+            // A present key never reaches the fallback.
+            CallVariant::GetFallback { key, .. } => key_present(row.dict_keys.get(param)?, key)?,
+            _ => variant_agrees(&variant, row.values.get(param)?)?,
         };
         if !agrees {
             return None;
@@ -345,6 +403,16 @@ pub(super) fn python_call_variant_evidence(
             old_call: format!("{param}.{old}()"),
             new_call: format!("{param}.{new}()"),
             discriminator: format!("`{param}` with {}", strip_discriminator(&old, &new)),
+        },
+        CallVariant::GetFallback {
+            param,
+            key,
+            old,
+            new,
+        } => PythonCallVariantEvidence {
+            old_call: format!("{param}.get({key}, {old})"),
+            new_call: format!("{param}.get({key}, {new})"),
+            discriminator: format!("`{param}` without the key {key}"),
         },
         CallVariant::Round { param, old, new } => PythonCallVariantEvidence {
             old_call: format!("round({param}, {old})"),
@@ -402,6 +470,66 @@ pub(super) fn elements_agree(elements: &[String]) -> Option<bool> {
     Some(true)
 }
 
+/// Whether a dict with these literal keys holds `key`; None when an equality
+/// cannot be read.
+pub(super) fn key_present(keys: &[String], key: &str) -> Option<bool> {
+    // A number key is read only as an int: an int and a float that print
+    // alike can be different keys once the float is rounded to binary.
+    let float = |text: &str| {
+        let text = text.trim();
+        text.starts_with(|ch: char| ch.is_ascii_digit() || ch == '-' || ch == '.')
+            && text.replace('_', "").parse::<i128>().is_err()
+    };
+    if float(key) {
+        return None;
+    }
+    // One definite match decides; an unreadable comparison with another key
+    // does not, whatever the order of the keys.
+    let mut unread = false;
+    for candidate in keys {
+        if float(candidate) {
+            unread = true;
+            continue;
+        }
+        // Digit separators are spelling only (`1_000 == 1000`).
+        let unseparated = |text: &str| literal_value(text).unwrap_or_else(|| text.to_string());
+        match literals_equal(&unseparated(candidate), &unseparated(key)) {
+            Some(true) => return Some(true),
+            Some(false) => {}
+            None => unread = true,
+        }
+    }
+    (!unread).then_some(false)
+}
+
+/// The key literals of a dict display whose every key is a scalar literal
+/// (`{"k": 2, 3: x}`); None for anything else, including a `**` unpack or a
+/// computed key, whose keys are not all known.
+pub(super) fn literal_dict_keys(text: &str) -> Option<Vec<String>> {
+    let text = text.trim();
+    if !text.starts_with('{') {
+        return None;
+    }
+    let Mod::Expression(expression) = parse(text, Mode::Expression, "<argument>").ok()? else {
+        return None;
+    };
+    let Expr::Dict(dict) = expression.body.as_ref() else {
+        return None;
+    };
+    dict.keys
+        .iter()
+        .map(|key| {
+            let key = key.as_ref()?;
+            if !matches!(key, Expr::Constant(_)) {
+                return None;
+            }
+            let start = usize::from(key.range().start());
+            let end = usize::from(key.range().end());
+            literal_value(text.get(start..end)?)
+        })
+        .collect()
+}
+
 /// Whether both versions of the call give the same result for one literal
 /// argument; None when the rule cannot evaluate it.
 pub(super) fn variant_agrees(variant: &CallVariant, value: &str) -> Option<bool> {
@@ -418,8 +546,8 @@ pub(super) fn variant_agrees(variant: &CallVariant, value: &str) -> Option<bool>
             Some(strip(&text, old)? == strip(&text, new)?)
         }
         CallVariant::Round { old, new, .. } => round_agrees(value, *old, *new),
-        // A sort reads a collection, never a scalar binding.
-        CallVariant::Sort { .. } => None,
+        // A sort or a lookup reads a collection, never a scalar binding.
+        CallVariant::Sort { .. } | CallVariant::GetFallback { .. } => None,
     }
 }
 
