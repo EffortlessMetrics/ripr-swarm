@@ -2825,11 +2825,13 @@ pub(crate) fn related_test_candidates<'a>(
 ) -> Vec<TypeScriptRelatedCandidate<'a>> {
     #[cfg(test)]
     RELATED_CANDIDATE_SCANS.with(|count| count.set(count.get() + 1));
-    // A later same-key member replaced this body, or a same-key field
-    // shadows it: no test call runs it.
+    // A later same-key member replaced this body, a same-key field shadows
+    // it, or an assignment replaces it: no test call runs it.
     if matches!(
         owner.method_kind,
-        TypeScriptMethodKind::Overwritten | TypeScriptMethodKind::FieldShadowed
+        TypeScriptMethodKind::Overwritten
+            | TypeScriptMethodKind::FieldShadowed
+            | TypeScriptMethodKind::Replaced
     ) {
         return Vec::new();
     }

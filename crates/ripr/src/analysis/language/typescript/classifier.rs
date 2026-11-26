@@ -9194,12 +9194,15 @@ pub(crate) fn classify_resolved_owner(
         .iter()
         .map(|c| c.test.file.clone())
         .collect();
-    // A method no call can reach (overwritten by a later member, rule 26, or
-    // shadowed by a same-named field, rule 28) has its own no-reach cause; a
-    // same-named package import in some test must not replace it (#16306).
+    // A method no call can reach (overwritten by a later member, rule 26,
+    // shadowed by a same-named field, rule 28, or replaced by an assignment,
+    // rule 29) has its own no-reach cause; a same-named package import in
+    // some test must not replace it (#16306).
     let unreachable_method = matches!(
         owner.method_kind,
-        TypeScriptMethodKind::Overwritten | TypeScriptMethodKind::FieldShadowed
+        TypeScriptMethodKind::Overwritten
+            | TypeScriptMethodKind::FieldShadowed
+            | TypeScriptMethodKind::Replaced
     );
     let alias_gap: Option<TsAliasGapDisclosure> = if unreachable_method {
         None
@@ -13059,6 +13062,21 @@ pub(crate) fn cross_module_fan_in_limit_missing(owner: &TypeScriptOwner) -> Stri
 }
 
 pub(crate) fn no_static_path_missing(owner: &TypeScriptOwner) -> String {
+    if owner.method_kind == TypeScriptMethodKind::Replaced {
+        let assignment = if owner.owner_kind == OwnerKind::ClassMethod {
+            format!("`{}.{} = ...`", replaced_member_target(owner), owner.name)
+        } else {
+            format!(
+                "`this.{0} = ...` in the constructor or `{1}.{0} = ...`",
+                owner.name,
+                replaced_member_target(owner)
+            )
+        };
+        return format!(
+            "An assignment in this file ({assignment}) replaces this body, so a call of `{}` runs the assigned value, not the changed code (RIPR-SPEC-0243 rule 29).",
+            owner.name
+        );
+    }
     if owner.method_kind == TypeScriptMethodKind::FieldShadowed {
         return format!(
             "A field of the same class is also named `{}` and shadows this body, so a call of `{}` runs the field's value, not the changed code (RIPR-SPEC-0243 rule 28).",
@@ -13095,7 +13113,27 @@ pub(crate) fn no_static_path_missing(owner: &TypeScriptOwner) -> String {
     }
 }
 
+/// `Class.prototype` (instance) or `Class` (static), the receiver a top-level
+/// assignment replacing `owner` writes to.
+fn replaced_member_target(owner: &TypeScriptOwner) -> String {
+    let class_name = owner.class_name.as_deref().unwrap_or("Class");
+    if owner.owner_kind == OwnerKind::ClassMethod {
+        class_name.to_string()
+    } else {
+        format!("{class_name}.prototype")
+    }
+}
+
 pub(crate) fn no_static_path_recommendation(owner: &TypeScriptOwner) -> String {
+    if owner.method_kind == TypeScriptMethodKind::Replaced {
+        // #16314: a direct receiver call runs the assigned value, so the
+        // usual "add a direct call" advice would point at code that never
+        // runs.
+        return format!(
+            "TypeScript preview advisory: an assignment to `{0}` in this file replaces the method, so a test calling `{0}` runs the assigned value, not the changed body. Remove the assignment, bind the method itself (`this.{0} = this.{0}.bind(this)`), or make the change in the assigned function, then rerun `ripr check`.",
+            owner.name
+        );
+    }
     if owner.method_kind == TypeScriptMethodKind::FieldShadowed {
         // #16306: a direct receiver call reaches the field, so the usual
         // "add a direct call" advice would point at code that never runs.

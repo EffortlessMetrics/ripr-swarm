@@ -9,13 +9,19 @@
 //! [`super::owners::owners_from_class`] marks it
 //! [`TypeScriptMethodKind::Overwritten`] and the relation funnel gives it no
 //! related test.
+//!
+//! The same module finds methods a same-key field shadows (rule 28) and
+//! methods an assignment replaces (rule 29: `this.total = ...` in the
+//! constructor, `Cart.prototype.total = ...` or `Cart.total = ...` at the top
+//! level).
 
 use std::collections::BTreeSet;
 
 use oxc_ast::ast::{
-    Class, ClassElement, Expression, MethodDefinition, MethodDefinitionKind, PropertyDefinition,
-    PropertyKey,
+    AssignmentOperator, AssignmentTarget, Class, ClassElement, Expression, MethodDefinition,
+    MethodDefinitionKind, PropertyDefinition, PropertyKey, Statement, StaticMemberExpression,
 };
+use oxc_ast_visit::{Visit, walk};
 
 /// Span starts of the methods in `class` whose key a later member overwrites.
 ///
@@ -181,4 +187,166 @@ fn accessor_pair(earlier: MethodDefinitionKind, later: MethodDefinitionKind) -> 
         (MethodDefinitionKind::Get, MethodDefinitionKind::Set)
             | (MethodDefinitionKind::Set, MethodDefinitionKind::Get)
     )
+}
+
+/// Span starts of the ordinary instance methods of `class` that an
+/// unconditional `this.NAME = ...` statement of its constructor replaces
+/// (#16314, RIPR-SPEC-0243 rule 29).
+///
+/// The assignment defines an own property on each instance when it is
+/// constructed, so `new Cart().total()` calls the assigned value, never the
+/// prototype method. Only a plain `=` expression statement at the top level
+/// of the constructor body counts: one inside an `if`, a loop or a callback
+/// may not run. A right-hand side that reads the same member
+/// (`this.total = this.total.bind(this)`) keeps the method running and does
+/// not count. Getters, setters and static methods are never marked: an
+/// assignment to an accessor calls its setter, and `this` in a constructor is
+/// the instance.
+pub(super) fn constructor_replaced_method_starts(class: &Class<'_>) -> BTreeSet<u32> {
+    let Some(body) = class.body.body.iter().find_map(|element| match element {
+        ClassElement::MethodDefinition(method)
+            if method.kind == MethodDefinitionKind::Constructor =>
+        {
+            method.value.body.as_ref()
+        }
+        _ => None,
+    }) else {
+        return BTreeSet::new();
+    };
+    let replaced: BTreeSet<String> = body
+        .statements
+        .iter()
+        .filter_map(|statement| {
+            let (object, key, value) = member_assignment(statement)?;
+            (matches!(object, Expression::ThisExpression(_))
+                && !reads_member(value, MemberObject::This, key))
+            .then(|| format!("public:{key}"))
+        })
+        .collect();
+    if replaced.is_empty() {
+        return BTreeSet::new();
+    }
+    class
+        .body
+        .body
+        .iter()
+        .filter_map(|element| match element {
+            ClassElement::MethodDefinition(method)
+                if method.kind == MethodDefinitionKind::Method
+                    && !method.r#static
+                    && method.value.body.is_some() =>
+            {
+                let key = runtime_key(method)?;
+                replaced.contains(&key).then_some(method.span.start)
+            }
+            _ => None,
+        })
+        .collect()
+}
+
+/// The `(class name, member name, static)` triples that an unconditional
+/// top-level statement of `body` replaces on a class (#16314, RIPR-SPEC-0243
+/// rule 29): `Cart.prototype.total = ...` replaces the instance method
+/// `total` of `Cart`, `Cart.total = ...` its static method. A right-hand side
+/// that reads the same member (`Cart.prototype.total =
+/// wrap(Cart.prototype.total)`) keeps the method running and does not count.
+pub(super) fn top_level_replaced_members(
+    body: &[Statement<'_>],
+) -> BTreeSet<(String, String, bool)> {
+    body.iter()
+        .filter_map(|statement| {
+            let (object, key, value) = member_assignment(statement)?;
+            let (class_name, is_static) = match object.without_parentheses() {
+                Expression::Identifier(class) => (class.name.as_str(), true),
+                Expression::StaticMemberExpression(prototype)
+                    if prototype.property.name == "prototype" =>
+                {
+                    match prototype.object.without_parentheses() {
+                        Expression::Identifier(class) => (class.name.as_str(), false),
+                        _ => return None,
+                    }
+                }
+                _ => return None,
+            };
+            let object = if is_static {
+                MemberObject::Class(class_name)
+            } else {
+                MemberObject::Prototype(class_name)
+            };
+            (!reads_member(value, object, key))
+                .then(|| (class_name.to_string(), key.to_string(), is_static))
+        })
+        .collect()
+}
+
+/// `(object, NAME, value)` of a plain `object.NAME = value;` expression
+/// statement.
+fn member_assignment<'s, 'a>(
+    statement: &'s Statement<'a>,
+) -> Option<(&'s Expression<'a>, &'s str, &'s Expression<'a>)> {
+    let Statement::ExpressionStatement(statement) = statement else {
+        return None;
+    };
+    let Expression::AssignmentExpression(assign) = statement.expression.without_parentheses()
+    else {
+        return None;
+    };
+    if assign.operator != AssignmentOperator::Assign {
+        return None;
+    }
+    let AssignmentTarget::StaticMemberExpression(target) = &assign.left else {
+        return None;
+    };
+    Some((&target.object, target.property.name.as_str(), &assign.right))
+}
+
+/// The receiver a replaced member is read from.
+#[derive(Clone, Copy)]
+enum MemberObject<'n> {
+    /// `this`.
+    This,
+    /// `NAME`, for a static member.
+    Class(&'n str),
+    /// `NAME.prototype`, for an instance member.
+    Prototype(&'n str),
+}
+
+impl MemberObject<'_> {
+    fn matches(self, object: &Expression<'_>) -> bool {
+        match (self, object.without_parentheses()) {
+            (Self::This, Expression::ThisExpression(_)) => true,
+            (Self::Class(name), Expression::Identifier(identifier)) => identifier.name == name,
+            (Self::Prototype(name), Expression::StaticMemberExpression(prototype)) => {
+                prototype.property.name == "prototype"
+                    && matches!(
+                        prototype.object.without_parentheses(),
+                        Expression::Identifier(identifier) if identifier.name == name
+                    )
+            }
+            _ => false,
+        }
+    }
+}
+
+/// Whether `value` reads `object.key` anywhere, so the original member is
+/// captured (bound, wrapped or kept) by the value that replaces it.
+fn reads_member(value: &Expression<'_>, object: MemberObject<'_>, key: &str) -> bool {
+    struct Reads<'n> {
+        object: MemberObject<'n>,
+        key: &'n str,
+        found: bool,
+    }
+    impl<'a> Visit<'a> for Reads<'_> {
+        fn visit_static_member_expression(&mut self, member: &StaticMemberExpression<'a>) {
+            self.found |= member.property.name == self.key && self.object.matches(&member.object);
+            walk::walk_static_member_expression(self, member);
+        }
+    }
+    let mut reads = Reads {
+        object,
+        key,
+        found: false,
+    };
+    reads.visit_expression(value);
+    reads.found
 }

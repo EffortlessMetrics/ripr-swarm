@@ -41,6 +41,7 @@ Linked issues:
 - #16261 (class method overwritten by a later same-key member; rule 26)
 - #16275 (class expression as a CommonJS named export; rule 27)
 - #16306 (class method shadowed by a same-key field; rule 28)
+- #16314 (class method replaced by an assignment; rule 29)
 - #9435 (exact oracle ignored on five changed-line shapes)
 - #9497 (skipped or unexercised tests credited as exposed; rules 17 and 18)
 - #11196 (start rate: a conditional assertion in an unconsulted test no longer
@@ -1489,6 +1490,24 @@ method has its own no-reach cause, a test importing a same-named package symbol
 does not replace this guidance with an unresolved-alias disclosure; the same
 holds for an overwritten method (rule 26). Sibling reach already treated such a
 field as shadowing.
+
+**Rule 29. A class method that an assignment replaces relates to no test
+(#16314).** An unconditional `this.NAME = ...` statement at the top level of a
+class's constructor defines `NAME` on each instance, and an unconditional
+top-level `Class.prototype.NAME = ...` statement of the same file overwrites the
+method on the prototype, so in either case `new Class().NAME()` runs the
+assigned value; a top-level `Class.NAME = ...` replaces a static method the same
+way. Such an ordinary method (not a getter, setter or constructor) stays an
+owner (a changed line is still reported) but relates to no test, so it reads
+`no_static_path`, and its guidance names the assignment. Not a replacement: an
+assignment whose right-hand side reads the same member (`this.total =
+this.total.bind(this)`, `Class.prototype.total = wrap(Class.prototype.total)`,
+`Class.total = wrap(Class.total)`), which keeps the method running; an
+assignment nested in a condition, loop or callback; an assignment of the other
+placement (`Class.total = ...` beside an instance method, `Class.prototype.total
+= ...` beside a static method); and an assignment to an accessor, which calls
+its setter. As for rules 26 and 28, a same-named package import in a test does
+not replace this guidance with an unresolved-alias disclosure.
 
 ### Observation guard
 
@@ -3054,6 +3073,18 @@ keys); do not take the next number.
   same-named package symbol keeps the field guidance. Each test body asserts
   the runtime value (the field's for a shadowed case, the method's for a
   control).
+- #16314 (rule 29, replaced class method):
+  `crates/ripr/src/analysis/language/typescript/tests/replaced_method_tests.rs`
+  runs `analyze_diff` on a method replaced by a constructor `this.total = ...`
+  (an arrow, or a read of another object's member), a top-level
+  `Cart.prototype.total = ...`, a static `Cart.total = ...` and a constructor
+  replacement in an ES-exported class: each relates to no test, and the guidance
+  names the assignment. Controls that keep their relation: no assignment, a
+  constructor self-bind, a prototype or static wrap of the same member, a
+  conditional constructor assignment, assignments of another name, and
+  assignments of the other placement. The owner is marked `Replaced`, while a
+  constructor assignment to an accessor leaves the setter and getter as they
+  are. Each test body asserts the runtime value.
 
 - #11196 (rule 11, object rows): `tests/object_row_tests.rs` pins the per-row
   literal assertions for the `for...of` and `test.each` object-row forms and

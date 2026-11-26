@@ -95,6 +95,7 @@ pub(crate) fn owners_from_program(
     // #7812: keep the original owner when `export default ident`
     // snapshots the binding before that reassignment.
     owners = without_reassigned_esm_bindings(&program.body, owners);
+    mark_top_level_replaced_methods(&program.body, &mut owners);
     let (entries, outbound, value_names) = module_entries_and_outbound(
         &program.body,
         source,
@@ -1809,6 +1810,30 @@ pub(crate) fn owner_from_arrow(
     }
 }
 
+/// Marks an ordinary method [`TypeScriptMethodKind::Replaced`] when a
+/// top-level `Class.prototype.NAME = ...` (instance) or `Class.NAME = ...`
+/// (static) statement of the file replaces it (#16314, RIPR-SPEC-0243 rule
+/// 29).
+fn mark_top_level_replaced_methods(body: &[Statement<'_>], owners: &mut [TypeScriptOwner]) {
+    let replaced = super::overwritten_methods::top_level_replaced_members(body);
+    if replaced.is_empty() {
+        return;
+    }
+    for owner in owners {
+        let is_static = match owner.owner_kind {
+            OwnerKind::Method => false,
+            OwnerKind::ClassMethod => true,
+            _ => continue,
+        };
+        if owner.method_kind == TypeScriptMethodKind::Ordinary
+            && let Some(class_name) = &owner.class_name
+            && replaced.contains(&(class_name.clone(), owner.name.clone(), is_static))
+        {
+            owner.method_kind = TypeScriptMethodKind::Replaced;
+        }
+    }
+}
+
 pub(crate) fn owners_from_class(
     class: &Class<'_>,
     file: &Path,
@@ -1823,6 +1848,7 @@ pub(crate) fn owners_from_class(
         .map(|identifier| identifier.name.as_str().to_string());
     let overwritten = super::overwritten_methods::overwritten_method_starts(class);
     let shadowed = super::overwritten_methods::field_shadowed_method_starts(class);
+    let replaced = super::overwritten_methods::constructor_replaced_method_starts(class);
     for element in &class.body.body {
         if let ClassElement::MethodDefinition(method) = element
             && let Some(mut owner) = owner_from_method(
@@ -1838,6 +1864,8 @@ pub(crate) fn owners_from_class(
                 owner.method_kind = TypeScriptMethodKind::Overwritten;
             } else if shadowed.contains(&method.span.start) {
                 owner.method_kind = TypeScriptMethodKind::FieldShadowed;
+            } else if replaced.contains(&method.span.start) {
+                owner.method_kind = TypeScriptMethodKind::Replaced;
             }
             owners.push(owner);
         }
