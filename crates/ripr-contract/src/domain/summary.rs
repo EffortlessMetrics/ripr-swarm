@@ -8,10 +8,14 @@ use crate::domain::ExposureClass;
 /// (`"rust"`, `"typescript"`, `"javascript"`, `"python"`, `"perl"`).
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct LanguageFileCount {
+    /// Stable language wire string, such as `"rust"`.
     pub language: String,
+    /// Changed files counted for this language.
     pub files: usize,
 }
 
+/// Run-level counts for one analysis result: changed files, findings, and
+/// findings per exposure class.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Summary {
     /// Changed files attributed to the Rust adapter only (#2103). Preview
@@ -23,14 +27,24 @@ pub struct Summary {
     /// whose adapter produced none (#10719). Sorted by language wire string for
     /// deterministic serialization.
     pub changed_files_by_language: Vec<LanguageFileCount>,
+    /// Probe count. The analysis sets it from the finding list, one finding
+    /// per probe, so it starts equal to `findings`.
     pub probes: usize,
+    /// Findings in the result, including suppressed and withheld ones.
     pub findings: usize,
+    /// Findings classed `exposed`, not counting suppressed or withheld ones.
     pub exposed: usize,
+    /// Findings classed `weakly_exposed`, not counting suppressed or withheld ones.
     pub weakly_exposed: usize,
+    /// Findings classed `reachable_unrevealed`, not counting suppressed or withheld ones.
     pub reachable_unrevealed: usize,
+    /// Findings classed `no_static_path`, not counting suppressed or withheld ones.
     pub no_static_path: usize,
+    /// Findings classed `infection_unknown`, not counting suppressed or withheld ones.
     pub infection_unknown: usize,
+    /// Findings classed `propagation_unknown`, not counting suppressed or withheld ones.
     pub propagation_unknown: usize,
+    /// Findings classed `static_unknown`, not counting suppressed or withheld ones.
     pub static_unknown: usize,
     /// Distinct analysed (file, line, expression) keys that carry unsuppressed
     /// findings of more than one class (#11554): changed expressions in diff
@@ -68,6 +82,7 @@ impl Summary {
         }
     }
 
+    /// Adds one finding of `class` to its per-class bucket.
     pub fn increment_exposure_class(&mut self, class: &ExposureClass) {
         match class {
             ExposureClass::Exposed => self.exposed += 1,
