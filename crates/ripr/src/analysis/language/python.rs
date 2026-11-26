@@ -383,6 +383,7 @@ mod import_identity;
 mod imported_call_operator;
 mod known_equality_helpers;
 mod loop_walk;
+mod match_alternatives;
 mod math_infinity;
 // The may-reach graph is built and measured by tests and the corpus report
 // only; no verdict reads it yet (#11425), so it is not part of the shipped
@@ -2467,6 +2468,8 @@ impl PythonAdapter {
                         (changed.added_lines.as_slice(), changed.removed_lines.as_slice()),
                         ([added_line], [removed_line]) if added_line.line == removed_line.line
                     ),
+                    sole_unpaired_line: changed.added_lines.len() == 1
+                        && changed.removed_lines.is_empty(),
                     module_import_unshadowed: unshadowed_modules.contains(&changed.path),
                     pytest_import_unshadowed,
                     imported_raise_class_sole_site: pytest_import_unshadowed

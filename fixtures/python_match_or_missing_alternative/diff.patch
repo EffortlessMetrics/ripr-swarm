@@ -1,0 +1,11 @@
+diff --git a/src/answer.py b/src/answer.py
+--- a/src/answer.py
++++ b/src/answer.py
+@@ -1,6 +1,6 @@
+ def to_bool(val):
+     match val:
+-        case "yes" | "y":
++        case "yes":
+             return True
+         case _:
+             return False
