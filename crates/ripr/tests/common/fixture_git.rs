@@ -23,12 +23,11 @@ pub const FIXTURE_GIT_DEADLINE: Duration = Duration::from_secs(30);
 /// noisy child can never block on a full pipe; only retention stops.
 const FIXTURE_GIT_STREAM_CAP: usize = 1024 * 1024;
 
-/// Fixture git subcommands whose re-execution cannot change fixture state.
-/// `commit` is deliberately absent (reconciled, never re-run) and
-/// `checkout` is deliberately absent as a blanket entry (see
-/// `is_retryable_checkout`).
-const RETRYABLE_FIXTURE_GIT: &[&str] =
-    &["init", "config", "add", "update-ref", "rev-parse", "status"];
+/// Fixture git subcommands eligible for one retry after a timeout.
+/// A killed `add` can leave `index.lock`, so return its original timeout.
+/// `commit` is reconciled against HEAD, and `checkout` is handled by
+/// `is_retryable_checkout`.
+const RETRYABLE_FIXTURE_GIT: &[&str] = &["init", "config", "update-ref", "rev-parse", "status"];
 
 /// Configuration every fixture invocation carries so a returned `git` leaves
 /// nothing running in the fixture. Since Git 2.47 a `commit` detaches
