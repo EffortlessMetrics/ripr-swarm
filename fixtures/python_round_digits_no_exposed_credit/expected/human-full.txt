@@ -39,7 +39,7 @@ Static exposure
 
 Evidence
   - reach yes: 1 related Python test(s) found for owner `money`
-  - infection weak: Related tests reach the changed call, but no strong related test call passes `x` with more than 2 decimal places, so `round(x, 2)` and `round(x, 3)` return the same value
+  - infection weak: Related tests reach the changed call, but no strong related test call is seen to pass `x` with a value that `round(x, 2)` and `round(x, 3)` round differently, such as `1.234`, so whether `round(x, 2)` and `round(x, 3)` return different values there is not established
   - propagation yes: Changed Python return value is already at the owner output boundary
   - observation weak: Strongest extracted Python oracle kind: `exact_value` (rank 5)
   - discriminator weak: Related Python test uses an `exact_value` oracle, but static evidence does not establish discrimination of the changed behavior
@@ -47,11 +47,11 @@ Evidence
   - related test tests/test_lib.py:4 test_money uses strong exact value oracle: assert money(1.5) == 1.5
 
 Weakness
-  - A strong Python oracle reaches `money`, but the edit only changes `round(x, 2)` to `round(x, 3)`, and no strong related call passes `x` with more than 2 decimal places; both versions return the same value for every related input, so static evidence cannot confirm the change is discriminated. Add a test that calls `money` with `x` with more than 2 decimal places
-  - missing discriminator call `money` with `x` with more than 2 decimal places: the change at line 2 only changes `round(x, 2)` to `round(x, 3)`, and no related call passes `x` with more than 2 decimal places
+  - A strong Python oracle reaches `money`, but the edit only changes `round(x, 2)` to `round(x, 3)`, and no strong related call is seen to pass `x` with a value that `round(x, 2)` and `round(x, 3)` round differently, such as `1.234`; whether these tests would notice the change is not established, so static evidence cannot confirm the change is discriminated. Add a test that calls `money` with `x` with a value that `round(x, 2)` and `round(x, 3)` round differently, such as `1.234`
+  - missing discriminator call `money` with `x` with a value that `round(x, 2)` and `round(x, 3)` round differently, such as `1.234`: the change at line 2 only changes `round(x, 2)` to `round(x, 3)`, and no related call is seen to pass `x` with a value that `round(x, 2)` and `round(x, 3)` round differently, such as `1.234`; whether the current tests would notice the change is not established
 
 Next step
-  Python preview: strengthen the existing related test with an exact return-value assertion for the missing check `call `money` with `x` with more than 2 decimal places`
+  Python preview: strengthen the existing related test with an exact return-value assertion for the missing check `call `money` with `x` with a value that `round(x, 2)` and `round(x, 3)` round differently, such as `1.234``
 
 Python repair card (preview/advisory)
   card version: python_repair_card.v1
@@ -61,8 +61,8 @@ Python repair card (preview/advisory)
   changed owner: money
   changed behavior: return_value changed at src/lib.py:2: `return round(x, 3)`
   current test evidence: tests/test_lib.py:4 test_money currently has oracle_strength=strong, oracle_kind=exact_value: assert money(1.5) == 1.5
-  missing discriminator: call `money` with `x` with more than 2 decimal places
-  recommended test shape: Strengthen the existing pytest exact return-value assertion for `call `money` with `x` with more than 2 decimal places`.
+  missing discriminator: call `money` with `x` with a value that `round(x, 2)` and `round(x, 3)` round differently, such as `1.234`
+  recommended test shape: Strengthen the existing pytest exact return-value assertion for `call `money` with `x` with a value that `round(x, 2)` and `round(x, 3)` round differently, such as `1.234``.
   suggested assertion: Assert the returned value equals the expected value for the changed inputs.
   suggested file: tests/test_lib.py
   suggested test: test_money

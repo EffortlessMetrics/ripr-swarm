@@ -39,7 +39,7 @@ Static exposure
 
 Evidence
   - reach yes: 1 related Python test(s) found for owner `top`
-  - infection weak: Related tests reach the changed call, but no strong related test call passes `xs` holding two or more different elements, so `sorted(xs)` and `sorted(xs, reverse=True)` return the same value
+  - infection weak: Related tests reach the changed call, but no strong related test call is seen to pass `xs` holding two or more different elements, so whether `sorted(xs)` and `sorted(xs, reverse=True)` return different values there is not established
   - propagation yes: Changed Python return value is already at the owner output boundary
   - observation weak: Strongest extracted Python oracle kind: `exact_value` (rank 5)
   - discriminator weak: Related Python test uses an `exact_value` oracle, but static evidence does not establish discrimination of the changed behavior
@@ -47,8 +47,8 @@ Evidence
   - related test tests/test_lib.py:4 test_top uses strong exact value oracle: assert top([4]) == 4
 
 Weakness
-  - A strong Python oracle reaches `top`, but the edit only changes `sorted(xs)` to `sorted(xs, reverse=True)`, and no strong related call passes `xs` holding two or more different elements; both versions return the same value for every related input, so static evidence cannot confirm the change is discriminated. Add a test that calls `top` with `xs` holding two or more different elements
-  - missing discriminator call `top` with `xs` holding two or more different elements: the change at line 2 only changes `sorted(xs)` to `sorted(xs, reverse=True)`, and no related call passes `xs` holding two or more different elements
+  - A strong Python oracle reaches `top`, but the edit only changes `sorted(xs)` to `sorted(xs, reverse=True)`, and no strong related call is seen to pass `xs` holding two or more different elements; whether these tests would notice the change is not established, so static evidence cannot confirm the change is discriminated. Add a test that calls `top` with `xs` holding two or more different elements
+  - missing discriminator call `top` with `xs` holding two or more different elements: the change at line 2 only changes `sorted(xs)` to `sorted(xs, reverse=True)`, and no related call is seen to pass `xs` holding two or more different elements; whether the current tests would notice the change is not established
 
 Next step
   Python preview: strengthen the existing related test with an exact return-value assertion for the missing check `call `top` with `xs` holding two or more different elements`
