@@ -1,6 +1,8 @@
+use super::super::dispatch_target::ReceiverKind;
 use super::super::owner_call_is_direct;
-use super::calls_through_the_trait_path;
+use super::{calls_through_the_trait_path, every_method_call_borrows_its_receiver};
 use crate::analysis::RustIndex;
+use crate::analysis::extract::mask_comments_and_strings;
 use crate::analysis::syntax::{RaRustSyntaxAdapter, RustSyntaxAdapter};
 use std::path::{Path, PathBuf};
 
@@ -134,6 +136,7 @@ fn a_call_through_the_trait_path_keeps_the_relation() -> Result<(), String> {
         "let _ = Peeky::into_iter(&Foo::new(5));",
         "let _ = crate::Peeky :: into_iter (&Foo::new(5));",
         "let _ = <Foo as Peeky>::into_iter(&Foo::new(5));",
+        "let _ = <Foo as crate::Peeky>::into_iter(&Foo::new(5));",
     ] {
         assert!(direct(&peeky, owner, body)?, "{body}");
     }
@@ -149,9 +152,13 @@ fn only_the_owner_traits_path_counts() {
         "x = self::Peeky::into_iter(&foo)",
         "<Foo as Peeky>::into_iter(&foo)",
         "< Foo as r#Peeky > :: r#into_iter (&foo)",
+        "<Foo as crate::Peeky>::into_iter(&foo)",
+        "<Foo as crate::inner::Peeky<u8>>::into_iter(&foo)",
+        "<Foo as Peeky<fn() -> u8>>::into_iter(&foo)",
+        "Peeky::<u8>::into_iter(&foo)",
     ] {
         assert!(
-            calls_through_the_trait_path(body, "into_iter", "Peeky"),
+            calls_through_the_trait_path(&mask_comments_and_strings(body), "into_iter", "Peeky"),
             "{body}"
         );
     }
@@ -163,9 +170,86 @@ fn only_the_owner_traits_path_counts() {
         "// Peeky::into_iter(&foo)\nfoo.into_iter()",
         "let s = \"Peeky::into_iter(&foo)\"; foo.into_iter()",
         "Peeky::into_iter",
+        "<Peeky as Other>::into_iter(&foo)",
+        "<Foo as crate::Peeky::Inner>::into_iter(&foo)",
     ] {
         assert!(
-            !calls_through_the_trait_path(body, "into_iter", "Peeky"),
+            !calls_through_the_trait_path(&mask_comments_and_strings(body), "into_iter", "Peeky"),
+            "{body}"
+        );
+    }
+}
+
+/// A receiver written as a borrow of the owner's kind starts probing at the
+/// owner's step, so the owner takes the call.
+#[test]
+fn a_borrowed_receiver_keeps_the_relation() -> Result<(), String> {
+    let owner = "impl Peeky for Foo::into_iter";
+    let shared = production("&self", "into_iter");
+    assert!(direct(
+        &shared,
+        owner,
+        "let _ = (&Foo::new(5)).into_iter();"
+    )?);
+    assert!(!direct(
+        &shared,
+        owner,
+        "let foo = &Foo::new(5);\n    let _ = foo.into_iter();"
+    )?);
+    let exclusive = production("&mut self", "into_iter");
+    assert!(direct(
+        &exclusive,
+        owner,
+        "let mut foo = Foo::new(5);\n    let _ = (&mut foo).into_iter();"
+    )?);
+    assert!(!direct(
+        &exclusive,
+        owner,
+        "let foo = Foo::new(5);\n    let _ = (&foo).into_iter();"
+    )?);
+    Ok(())
+}
+
+/// Every method call of the name needs a borrowed receiver of the owner's
+/// kind; a call's parentheses are not a borrow.
+#[test]
+fn only_every_borrowed_receiver_counts() {
+    let shared = ReceiverKind::Shared;
+    let exclusive = ReceiverKind::Exclusive;
+    for (body, kind) in [
+        ("(&foo).into_iter()", shared),
+        ("( & foo ).into_iter(); (&bar).into_iter()", shared),
+        ("(&mut foo).into_iter()", exclusive),
+        ("(& mut foo) . r#into_iter ()", exclusive),
+    ] {
+        assert!(
+            every_method_call_borrows_its_receiver(
+                &mask_comments_and_strings(body),
+                "into_iter",
+                kind
+            ),
+            "{body}"
+        );
+    }
+    for (body, kind) in [
+        ("", shared),
+        ("foo.into_iter()", shared),
+        ("(&foo).into_iter(); foo.into_iter()", shared),
+        ("(&mut foo).into_iter()", shared),
+        ("(&&foo).into_iter()", shared),
+        ("(&foo).into_iter()", exclusive),
+        ("(&mutable).into_iter()", exclusive),
+        ("wrap(&foo).into_iter()", shared),
+        ("id!(&foo).into_iter()", shared),
+        ("(&foo).into_iter_all()", shared),
+        ("Peeky::into_iter(&foo)", shared),
+    ] {
+        assert!(
+            !every_method_call_borrows_its_receiver(
+                &mask_comments_and_strings(body),
+                "into_iter",
+                kind
+            ),
             "{body}"
         );
     }

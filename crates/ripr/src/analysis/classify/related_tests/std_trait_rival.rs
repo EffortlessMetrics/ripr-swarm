@@ -31,8 +31,14 @@ use super::{FunctionSummary, TestSummary, owner_trait_name};
 ///   another standard trait shares its name only for a type implementing
 ///   both, which this does not read.
 /// - A call through the owner's trait path (`Peeky::into_iter(&foo)`,
-///   `<Foo as Peeky>::into_iter(&foo)`) names the owner's trait, so a test
-///   with one keeps the relation.
+///   `<Foo as crate::Peeky>::into_iter(&foo)`) names the owner's trait, so a
+///   test with one keeps the relation.
+/// - A method call whose receiver is written borrowed, `(&foo).into_iter()`
+///   for a `&self` owner or `(&mut foo).into_iter()` for a `&mut self` owner,
+///   starts probing at the owner's own step, where a standard method of the
+///   name would be ambiguous. A test whose every method call of the name is
+///   written so keeps the relation; a borrow bound earlier (`let r = &foo;`)
+///   is not read and still withholds it.
 pub(super) fn a_standard_trait_method_may_take_the_call(
     test: &TestSummary,
     owner: &FunctionSummary,
@@ -41,10 +47,13 @@ pub(super) fn a_standard_trait_method_may_take_the_call(
     if !owner.item.has_self_param {
         return false;
     }
-    let earlier: &[&[(&str, &[&str])]] = match receiver_kind(&owner.body) {
-        Some(ReceiverKind::Shared) => &[BY_VALUE],
-        Some(ReceiverKind::Exclusive) => &[BY_VALUE, BY_SHARED_REFERENCE],
-        Some(ReceiverKind::Value) | None => return false,
+    let Some(kind) = receiver_kind(&owner.body) else {
+        return false;
+    };
+    let earlier: &[&[(&str, &[&str])]] = match kind {
+        ReceiverKind::Shared => &[BY_VALUE],
+        ReceiverKind::Exclusive => &[BY_VALUE, BY_SHARED_REFERENCE],
+        ReceiverKind::Value => return false,
     };
     let Some(owner_trait) = owner_trait_name(&owner.id.0) else {
         return false;
@@ -62,9 +71,12 @@ pub(super) fn a_standard_trait_method_may_take_the_call(
     let own_standard_method = [BY_VALUE, BY_SHARED_REFERENCE]
         .into_iter()
         .any(|table| lists(table, false));
-    !own_standard_method
-        && earlier.iter().any(|table| lists(table, true))
-        && !calls_through_the_trait_path(&test.body, name, owner_trait)
+    if own_standard_method || !earlier.iter().any(|table| lists(table, true)) {
+        return false;
+    }
+    let masked = crate::analysis::extract::mask_comments_and_strings(&test.body);
+    !calls_through_the_trait_path(&masked, name, owner_trait)
+        && !every_method_call_borrows_its_receiver(&masked, name, kind)
 }
 
 /// Standard trait methods taking `self` by value, by the trait's last path
@@ -202,54 +214,180 @@ const BY_SHARED_REFERENCE: &[(&str, &[&str])] = &[
     ),
 ];
 
-/// Whether the body calls `name` through a path ending in `owner_trait`:
-/// `Trait::name(`, `path::Trait::name(` or `<T as Trait>::name(`, with any
-/// whitespace between the tokens. Comments and literals do not count.
-fn calls_through_the_trait_path(body: &str, name: &str, owner_trait: &str) -> bool {
-    let masked = crate::analysis::extract::mask_comments_and_strings(body);
-    fn plain(ident: &str) -> &str {
-        ident.strip_prefix("r#").unwrap_or(ident)
-    }
-    let name = plain(name);
-    let owner_trait = plain(owner_trait);
-    let word = |ch: char| ch.is_alphanumeric() || ch == '_';
-    masked.match_indices(name).any(|(at, _)| {
+fn is_word(ch: char) -> bool {
+    ch.is_alphanumeric() || ch == '_'
+}
+
+fn plain(ident: &str) -> &str {
+    ident.strip_prefix("r#").unwrap_or(ident)
+}
+
+/// The text before each call of `name` in the masked body: `name` as a whole
+/// word (raw or not) followed by `(`.
+fn calls_of<'a>(masked: &'a str, name: &'a str) -> impl Iterator<Item = &'a str> + 'a {
+    masked.match_indices(name).filter_map(move |(at, _)| {
         let after = &masked[at + name.len()..];
-        if after.starts_with(word) || !after.trim_start().starts_with('(') {
-            return false;
+        if after.starts_with(is_word) || !after.trim_start().starts_with('(') {
+            return None;
         }
         let before = &masked[..at];
         let before = before.strip_suffix("r#").unwrap_or(before);
-        if before.ends_with(word) {
-            return false;
-        }
-        let Some(path) = before.trim_end().strip_suffix("::") else {
-            return false;
-        };
-        let path = path.trim_end();
-        let (path, qualified) = match path.strip_suffix('>') {
-            Some(inner) => (inner.trim_end(), true),
-            None => (path, false),
-        };
-        let ident_start = path
-            .char_indices()
-            .rev()
-            .find(|(_, ch)| !word(*ch))
-            .map_or(0, |(index, ch)| index + ch.len_utf8());
-        let ident = &path[ident_start..];
-        let rest = path[..ident_start]
-            .strip_suffix("r#")
-            .unwrap_or(&path[..ident_start]);
-        if ident.is_empty() || plain(ident) != owner_trait {
-            return false;
-        }
-        // `<T as Trait>::name(`: a bare `Type<Trait>::name(` names no trait.
-        !qualified
-            || rest
-                .trim_end()
-                .strip_suffix("as")
-                .is_some_and(|head| !head.ends_with(word))
+        (!before.ends_with(is_word)).then_some(before)
     })
+}
+
+/// Whether the masked body calls `name` through a path naming `owner_trait`:
+/// `Trait::name(`, `path::Trait::name(`, `Trait::<U>::name(`,
+/// `<T as Trait>::name(` or `<T as path::Trait<U>>::name(`, with any
+/// whitespace between the tokens.
+fn calls_through_the_trait_path(masked: &str, name: &str, owner_trait: &str) -> bool {
+    let name = plain(name);
+    let owner_trait = plain(owner_trait);
+    calls_of(masked, name).any(|before| {
+        before
+            .trim_end()
+            .strip_suffix("::")
+            .is_some_and(|path| path_names_trait(path, owner_trait))
+    })
+}
+
+/// Whether the path before a call's last `::` names `owner_trait`.
+fn path_names_trait(path: &str, owner_trait: &str) -> bool {
+    let path = path.trim_end();
+    if !path.ends_with('>') {
+        return last_segment_is(path, owner_trait);
+    }
+    let Some(open) = matching_open_angle(path) else {
+        return false;
+    };
+    let head = path[..open].trim_end();
+    if let Some(trait_path) = head.strip_suffix("::") {
+        // `Trait::<U>::name(`
+        return last_segment_is(trait_path, owner_trait);
+    }
+    if head.ends_with(is_word) {
+        // `Type<Trait>::name(` names no trait.
+        return false;
+    }
+    // `<T as path::Trait<U>>::name(`
+    let inner = &path[open + 1..path.len() - 1];
+    let Some(at) = inner
+        .rmatch_indices("as")
+        .map(|(at, _)| at)
+        .find(|&at| !inner[..at].ends_with(is_word) && !inner[at + 2..].starts_with(is_word))
+    else {
+        return false;
+    };
+    let trait_path = inner[at + 2..].trim_end();
+    let trait_path = match trait_path.ends_with('>') {
+        true => match matching_open_angle(trait_path) {
+            Some(open) => trait_path[..open].trim_end(),
+            None => return false,
+        },
+        false => trait_path,
+    };
+    last_segment_is(trait_path, owner_trait)
+}
+
+/// Whether the path's last identifier, raw or not, is `owner_trait`.
+fn last_segment_is(path: &str, owner_trait: &str) -> bool {
+    let start = path
+        .char_indices()
+        .rev()
+        .find(|(_, ch)| !is_word(*ch))
+        .map_or(0, |(index, ch)| index + ch.len_utf8());
+    let ident = &path[start..];
+    !ident.is_empty() && plain(ident) == owner_trait
+}
+
+/// The byte index of the `<` matching the `>` that ends `text`, skipping the
+/// `>` of `->`.
+fn matching_open_angle(text: &str) -> Option<usize> {
+    let mut depth = 0usize;
+    let mut previous = None;
+    for (index, ch) in text.char_indices().rev() {
+        let arrow = ch == '-' && previous == Some('>');
+        match ch {
+            '>' => depth += 1,
+            '-' if arrow => depth = depth.saturating_sub(1),
+            '<' => {
+                depth = depth.checked_sub(1)?;
+                if depth == 0 {
+                    return Some(index);
+                }
+            }
+            _ => {}
+        }
+        previous = Some(ch);
+    }
+    None
+}
+
+/// Whether the masked body makes at least one `.name(` method call and every
+/// one has a parenthesized receiver written as a borrow of the owner's kind:
+/// `(&foo)` for a `&self` owner, `(&mut foo)` for a `&mut self` owner.
+fn every_method_call_borrows_its_receiver(masked: &str, name: &str, kind: ReceiverKind) -> bool {
+    let name = plain(name);
+    let mut receivers = calls_of(masked, name).filter_map(|before| {
+        let before = before.trim_end();
+        before
+            .strip_suffix('.')
+            .filter(|receiver| !receiver.ends_with('.'))
+    });
+    let mut any = false;
+    let all = receivers.all(|receiver| {
+        any = true;
+        borrowed_receiver(receiver.trim_end(), kind)
+    });
+    any && all
+}
+
+/// Whether `receiver` ends in a parenthesized borrow of the owner's kind.
+fn borrowed_receiver(receiver: &str, kind: ReceiverKind) -> bool {
+    let Some(open) = matching_open_paren(receiver) else {
+        return false;
+    };
+    let head = receiver[..open].trim_end();
+    if head.ends_with(is_word) || head.ends_with('!') || head.ends_with(')') {
+        // `call(x).name(`, `mac!(x).name(`: the parentheses are a call.
+        return false;
+    }
+    let Some(borrowed) = receiver[open + 1..receiver.len() - 1]
+        .trim_start()
+        .strip_prefix('&')
+    else {
+        return false;
+    };
+    let borrowed = borrowed.trim_start();
+    let exclusive = borrowed
+        .strip_prefix("mut")
+        .is_some_and(|rest| !rest.starts_with(is_word));
+    match kind {
+        ReceiverKind::Shared => !exclusive && !borrowed.starts_with('&'),
+        ReceiverKind::Exclusive => exclusive,
+        ReceiverKind::Value => false,
+    }
+}
+
+/// The byte index of the `(` matching the `)` that ends `text`.
+fn matching_open_paren(text: &str) -> Option<usize> {
+    if !text.ends_with(')') {
+        return None;
+    }
+    let mut depth = 0usize;
+    for (index, ch) in text.char_indices().rev() {
+        match ch {
+            ')' => depth += 1,
+            '(' => {
+                depth = depth.checked_sub(1)?;
+                if depth == 0 {
+                    return Some(index);
+                }
+            }
+            _ => {}
+        }
+    }
+    None
 }
 
 #[cfg(test)]
