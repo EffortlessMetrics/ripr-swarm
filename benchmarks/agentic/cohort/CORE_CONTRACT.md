@@ -95,6 +95,18 @@ quality deltas require verified evidence for the whole paired population.
 Even fully matched observations are descriptive, not a significance test or an
 automatic efficiency win. Lower token use with worse quality is a tradeoff.
 
+Each paired comparison also emits `per_task` economics alongside the pooled
+totals (#13517). The pairing stratum is the task within the cohort, model and
+turn-cap group; each entry retains the same pairing rules (same task and
+replicate, agreed task/protocol digests, equal mutant denominators), its own
+arm/control denominators (failures included), measured-pair counts, observed
+token totals and delta mean, and headline token/success/escape deltas that are
+null unless pairing and measurement are complete for that task. Unknown token
+or quality measurements remain null, never zero. `per_task_*_direction_mixed`
+flags when per-task deltas point in opposing directions, so a neutral pooled
+delta cannot silently hide a per-task regression. The Markdown report renders
+the same per-task table; pooled fields are unchanged.
+
 ## Qualification and remaining experiment
 
 The selftest runs the real loader, scorer, report generation and process controls,
