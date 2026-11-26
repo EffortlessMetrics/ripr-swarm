@@ -1500,6 +1500,7 @@ mod tests {
             line: 1,
             text: "quote(..)".to_string(),
             elements: std::collections::BTreeMap::new(),
+            dict_keys: std::collections::BTreeMap::new(),
             bindings: bindings
                 .iter()
                 .map(|(parameter, value)| {

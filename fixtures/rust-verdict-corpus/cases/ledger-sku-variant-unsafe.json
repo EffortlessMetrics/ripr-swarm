@@ -39,7 +39,7 @@
       "limited"
     ]
   },
-  "reasoning": "dashed_skus_have_a_variant only asserts !sku_variant(\"BOLT-M8\").is_empty(), so keeping the dash passes and an empty slice fails. ripr credits the return_value probe as exposed with a 'whole-object equality' oracle, a false exposed verdict.",
+  "reasoning": "dashed_skus_have_a_variant only asserts !sku_variant(\"BOLT-M8\").is_empty(), so keeping the dash passes and an empty slice fails. ripr reads the return_value probe as weakly_exposed, because the test checks only that the variant is nonempty: no credit, the gap this case is labeled for. The enclosing unsafe block adds no static_unknown finding beside that classified edit (#15348).",
   "labeling_observation": {
     "ripr_commit": "62fb7aaa5",
     "full_checkout_verdict": "credited",
