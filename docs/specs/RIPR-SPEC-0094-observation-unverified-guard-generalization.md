@@ -327,6 +327,11 @@ effect; this slice neither rules out that dispatch nor resolves value flow.
 This is separate from #7778's predicate/string-literal guard and preserves
 #3161's broader propagation limits.
 
+For an implicit shared-sink assertion, an empty destructor on a different bare
+type in a separate leaf file may coexist with credit (#9407). A destructor in
+the owner, dispatch or test file, a possible parent module, a nonempty or
+unresolved destructor, or an unknown expansion still withholds that credit.
+
 Proof: `sibling_effect_oracle` public API metamorphic and direct-effect controls,
 loop/operator preservation and free/inherent-name refusal controls,
 the exact consumer fixture `rust_sibling_effect_oracle`, the compiling review

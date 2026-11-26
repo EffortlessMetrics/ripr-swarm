@@ -1,0 +1,6 @@
+[[extend]]
+id = "RIPR-SPEC-0094"
+tests = [
+  "crates/ripr/tests/sibling_effect_oracle.rs::implicit_observer_distinguishes_an_unrelated_drop_from_receiver_cleanup",
+  "crates/ripr/src/analysis/classify/implicit_effect.rs::empty_drop_exception_is_limited_to_independent_leaf_files",
+]

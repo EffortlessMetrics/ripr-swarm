@@ -11,6 +11,7 @@ use ra_ap_syntax::{
     ast::{self, HasArgList, HasAttrs, HasName},
 };
 use std::collections::HashSet;
+use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
 
 mod scope_end;
@@ -103,8 +104,15 @@ impl<'a> ImplicitExpansionContext<'a> {
         Self { index, memo }
     }
 
-    fn admits(&self, receiver: &str) -> bool {
-        self.memo.admits(self.index, receiver)
+    fn admits(&self, receiver: &str, evidence_files: [&Path; 3]) -> bool {
+        let surface = self.memo.surface_of(self.index);
+        !surface.excluded_receivers.contains(receiver)
+            && (surface.bounded
+                || (surface.bounded_apart_from_drop
+                    && surface.empty_drop_leaves.as_ref().is_some_and(|leaves| {
+                        !leaves.is_empty()
+                            && evidence_files.iter().all(|file| !leaves.contains(*file))
+                    })))
     }
 }
 
@@ -119,17 +127,20 @@ struct ExpansionSurface {
     excluded_apart_from_drop: HashSet<String>,
     /// The last self-type segment of every `Drop` impl, one entry per impl.
     drop_impl_types: Vec<String>,
+    /// Leaf files whose explicit destructors all have empty bodies. One
+    /// unbounded destructor or possible parent module disables this exception.
+    empty_drop_leaves: Option<HashSet<PathBuf>>,
     scanned_sources: usize,
 }
 
 impl ImplicitExpansionMemo {
     fn surface_of(&self, index: &RustIndex) -> &ExpansionSurface {
         self.surface.get_or_init(|| {
-            ExpansionSurface::scan(
+            ExpansionSurface::scan_files(
                 index
                     .files()
-                    .values()
-                    .map(|facts| std::sync::Arc::clone(&facts.source)),
+                    .iter()
+                    .map(|(path, facts)| (path.as_path(), &*facts.data().source)),
             )
         })
     }
@@ -164,7 +175,16 @@ impl ImplicitExpansionMemo {
 }
 
 impl ExpansionSurface {
+    #[cfg(test)]
     fn scan<S: AsRef<str>>(sources: impl IntoIterator<Item = S>) -> Self {
+        Self::scan_files(
+            sources
+                .into_iter()
+                .map(|source| (Path::new("fixture.rs"), source)),
+        )
+    }
+
+    fn scan_files<'a, S: AsRef<str>>(sources: impl IntoIterator<Item = (&'a Path, S)>) -> Self {
         const BUILTIN_MACROS: &[&str] = &[
             "assert",
             "assert_eq",
@@ -213,9 +233,10 @@ impl ExpansionSurface {
         let mut surface = Self {
             bounded: true,
             bounded_apart_from_drop: true,
+            empty_drop_leaves: Some(HashSet::new()),
             ..Self::default()
         };
-        for source in sources {
+        for (path, source) in sources {
             let source = source.as_ref();
             surface.scanned_sources += 1;
             let Some(parse) = parse_clean_source_file(source) else {
@@ -349,11 +370,26 @@ impl ExpansionSurface {
             // A `Drop` impl makes the general bounded proof unknown, since a
             // destructor runs when the consumed receiver leaves scope and may
             // write the same sink. Only the scope-end carrier admits one.
-            let has_drop_impl = tree
+            let mut drops = tree
                 .syntax()
                 .descendants()
                 .filter_map(ast::Impl::cast)
-                .any(|item| impl_trait_text(&item).as_deref().is_some_and(is_drop_trait));
+                .filter(|item| impl_trait_text(item).as_deref().is_some_and(is_drop_trait))
+                .peekable();
+            let has_drop_impl = drops.peek().is_some();
+            if has_drop_impl && let Some(leaves) = &mut surface.empty_drop_leaves {
+                if drops.all(|item| empty_drop_body(&item))
+                    && !tree
+                        .syntax()
+                        .descendants()
+                        .filter_map(ast::Module::cast)
+                        .any(|module| module.item_list().is_none())
+                {
+                    leaves.insert(path.to_path_buf());
+                } else {
+                    surface.empty_drop_leaves = None;
+                }
+            }
             surface.bounded &= bounded && !has_drop_impl;
             surface.bounded_apart_from_drop &= bounded;
         }
@@ -367,6 +403,33 @@ impl ExpansionSurface {
         }
     }
 }
+/// Only an explicit, empty destructor on a bare type can be discounted.
+fn empty_drop_body(item: &ast::Impl) -> bool {
+    let Some(ast::Type::PathType(ty)) = item.self_ty() else {
+        return false;
+    };
+    let Some(path) = ty.path() else { return false };
+    if path
+        .as_single_name_ref()
+        .is_none_or(|name| name.syntax().text() != path.syntax().text())
+    {
+        return false;
+    }
+    let Some(list) = item.assoc_item_list() else {
+        return false;
+    };
+    let mut items = list.assoc_items();
+    let Some(ast::AssocItem::Fn(method)) = items.next() else {
+        return false;
+    };
+    items.next().is_none()
+        && method.name().is_some_and(|name| name.text() == "drop")
+        && method
+            .body()
+            .and_then(|body| body.stmt_list())
+            .is_some_and(|body| body.statements().next().is_none() && body.tail_expr().is_none())
+}
+
 fn name(expr: &ast::Expr) -> Option<String> {
     let ast::Expr::PathExpr(path) = expr else {
         return None;
@@ -665,10 +728,11 @@ fn local_dispatch_type(
     source: &str,
     self_ty: &str,
     expansion: &ImplicitExpansionContext<'_>,
+    evidence_files: [&Path; 3],
 ) -> bool {
     // Keep the bounded observer proof inside source forms whose expansions
     // cannot add hidden Drop implementations.
-    plain_receiver_type(source, self_ty, |ty| expansion.admits(ty))
+    plain_receiver_type(source, self_ty, |ty| expansion.admits(ty, evidence_files))
 }
 
 /// The receiver type is one attribute-free struct of the source file that no
@@ -909,7 +973,12 @@ pub(super) fn assertion_observes_dispatch(
     let FunctionContainer::TraitImpl { self_ty, .. } = &dispatch.item.container else {
         return false;
     };
-    if !local_dispatch_type(source, self_ty, expansion) {
+    if !local_dispatch_type(
+        source,
+        self_ty,
+        expansion,
+        [&dispatch.file, &owner.file, &test.file],
+    ) {
         return false;
     }
     let Some(field) = shared_field(dispatch, owner, expression) else {
@@ -977,7 +1046,6 @@ mod tests {
     use super::*;
     use crate::analysis::facts::OracleFact;
     use crate::analysis::rust_index::{RustIndex, summarize_file};
-    use std::path::PathBuf;
 
     #[test]
     fn workspace_expansion_scan_is_once_per_immutable_run() {
@@ -1012,6 +1080,48 @@ mod tests {
             let successor_memo = ImplicitExpansionMemo::default();
             assert!(!successor_memo.admits(&successor, "Counter"), "{source}");
             assert!(memo.admits(&index, "Counter"));
+        }
+    }
+
+    #[test]
+    fn empty_drop_exception_is_limited_to_independent_leaf_files() {
+        let owner = Path::new("src/owner.rs");
+        let dispatch = Path::new("src/dispatch.rs");
+        let test = Path::new("src/checks.rs");
+        let sibling = Path::new("src/bookkeeping.rs");
+        let empty = "struct Marker; impl Drop for Marker { fn drop(&mut self) {} }";
+        for (path, source, expected) in [
+            (sibling, empty.to_owned(), true),
+            (owner, empty.to_owned(), false),
+            (dispatch, empty.to_owned(), false),
+            (test, empty.to_owned(), false),
+            (sibling, format!("{empty} mod child;"), false),
+            (sibling, empty.replace("Marker", "Counter"), false),
+            (
+                sibling,
+                empty.replace("self) {}", "self) { work(); }"),
+                false,
+            ),
+        ] {
+            let mut index = RustIndex::default();
+            for entry in [owner, dispatch, test, sibling] {
+                let text = if entry == path { source.as_str() } else { "" };
+                index.insert_file_only(
+                    entry.to_owned(),
+                    summarize_file(entry.to_owned(), text.to_owned()),
+                );
+            }
+            let memo = ImplicitExpansionMemo::default();
+            let context = ImplicitExpansionContext::new(&index, &memo);
+            assert_eq!(
+                context.admits("Counter", [owner, dispatch, test]),
+                expected,
+                "{path:?}: {source}"
+            );
+            assert!(
+                !memo.admits(&index, "Counter"),
+                "other consumers retain the strict veto"
+            );
         }
     }
 
