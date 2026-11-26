@@ -1747,6 +1747,11 @@ impl HiddenImpls {
         self.declared_types.contains(name) && !self.renamed_types.contains(name)
     }
 
+    /// Whether an alias or renamed import takes `name`.
+    fn renames(&self, name: &str) -> bool {
+        self.renamed_types.contains(name)
+    }
+
     /// Macro calls that write associated items of an impl. The arguments need
     /// not name the type: the impl block supplies it.
     fn read_impl_macro_calls(&mut self, imp: &ast::Impl) {
@@ -2137,6 +2142,13 @@ pub(super) fn workspace_declares_type(name: &str, index: &RustIndex) -> bool {
         .call_identity_memos
         .hidden_impls(index)
         .names_only_a_declared_type(name)
+}
+
+/// Whether a type alias or renamed import in the workspace takes this name.
+/// An impl written for such a name may be an impl for any type, including a
+/// generic type's other instantiation (`type Tile = Square<u16>;`).
+pub(super) fn workspace_renames_type(name: &str, index: &RustIndex) -> bool {
+    index.call_identity_memos.hidden_impls(index).renames(name)
 }
 
 /// An identifier without a raw `r#` prefix.

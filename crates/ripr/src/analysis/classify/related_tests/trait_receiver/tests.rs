@@ -413,6 +413,29 @@ fn a_rival_on_another_type_and_an_unrelated_impl_macro_leave_the_relation() -> R
     Ok(())
 }
 
+/// An impl of the owner's trait under an alias may be for another
+/// instantiation of the receiver's type, which the name-typed receiver cannot
+/// tell apart, so the relation is withheld. The same impl under another
+/// declared type's name leaves it.
+#[test]
+fn a_same_trait_impl_under_an_alias_withholds_the_relation() -> Result<(), String> {
+    let other = "pub struct Other;\n\
+        impl BufMut for Other {\n    fn advance_mut(&mut self, _cnt: usize) {}\n}\n";
+    let aliased = "pub struct Other;\npub type Tail = Other;\n\
+        impl BufMut for Tail {\n    fn advance_mut(&mut self, _cnt: usize) {}\n}\n";
+    assert!(direct(
+        &format!("{BUF}{other}"),
+        BYTES_MUT_ADVANCE,
+        TYPED_CALL
+    )?);
+    assert!(!direct(
+        &format!("{BUF}{aliased}"),
+        BYTES_MUT_ADVANCE,
+        TYPED_CALL
+    )?);
+    Ok(())
+}
+
 /// A specialization of a generic type (`impl Shape for Square<u32>`) beside
 /// a sibling impl that lists no method inherits the trait's default for
 /// `Square<u8>`, which the name-typed receiver cannot tell apart, so the

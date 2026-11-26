@@ -452,12 +452,18 @@ fn another_method_may_take_the_call(
             FunctionContainer::Free | FunctionContainer::Local => false,
             FunctionContainer::Unknown => true,
             // Coherence allows the owner's trait one impl per type, so its
-            // impl under another name is for another type, renamed or not.
+            // impl under another declared type's name is for another type. An
+            // alias may name another instantiation of the owner's generic type
+            // (`type Tile = Square<u16>; impl Measure for Tile`), which the
+            // name-typed receiver cannot tell apart.
             FunctionContainer::TraitImpl {
                 trait_path,
                 self_ty,
             } if impl_trait_name_from_path(trait_path) == owner_trait => {
-                compact_impl_type_name(self_ty).is_none_or(|rival| rival == impl_type)
+                compact_impl_type_name(self_ty).is_none_or(|rival| {
+                    rival == impl_type
+                        || super::super::implicit_call::workspace_renames_type(&rival, index)
+                })
             }
             FunctionContainer::Inherent { self_ty }
             | FunctionContainer::TraitImpl { self_ty, .. } => {
