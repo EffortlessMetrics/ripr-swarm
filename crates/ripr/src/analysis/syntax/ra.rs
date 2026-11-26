@@ -2971,6 +2971,7 @@ fn extract_parser_oracles(
         usize::from(function_offset),
     );
 
+    let bool_locals = crate::analysis::extract::BoolLocals::new(function.syntax());
     let mut assertions = Vec::new();
     for macro_call in function
         .syntax()
@@ -3008,6 +3009,13 @@ fn extract_parser_oracles(
             classification,
             &assertion_text,
             &scope.at(usize::from(range.start() - function_offset)),
+        );
+        // #16296: `let ok = value > 0; assert_eq!(ok, true)` asserts `value > 0`.
+        let classification = crate::analysis::extract::with_bool_local_inlined(
+            classification,
+            &assertion_text,
+            &bool_locals,
+            decls.get(),
         );
         assertions.push(OracleFact {
             line: line_index.line(range.start()),
@@ -3212,8 +3220,17 @@ fn extract_parser_oracles(
             &oracle.text,
             &scope.on_line(&function_text, oracle.line - function_start, &oracle.text),
         );
-        oracle.kind = kind;
-        oracle.strength = strength;
+        // #16296: the scanned copy of a compared bool local is lowered the
+        // same way, so a trailing comment that keeps the two texts apart
+        // cannot restore the exact reading.
+        let lowered = crate::analysis::extract::with_bool_local_inlined(
+            crate::analysis::extract::OracleClassification { kind, strength },
+            &oracle.text,
+            &bool_locals,
+            decls.get(),
+        );
+        oracle.kind = lowered.kind;
+        oracle.strength = lowered.strength;
         assertions.push(oracle);
     }
     for oracle in guarded_matches.oracles {
