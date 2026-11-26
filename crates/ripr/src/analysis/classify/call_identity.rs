@@ -173,6 +173,13 @@ pub(crate) struct CallIdentityMemos {
     /// Test-only scaling probe: repeated probes must not rescan.
     #[cfg(test)]
     rebound_scans: std::sync::atomic::AtomicUsize,
+    /// #16277: whether any indexed file exports a macro under a std macro's
+    /// name, read once per index rather than once per renamed-call query.
+    std_macro_export: std::sync::OnceLock<bool>,
+    /// #16277: how many workspace `macro_export` inventory scans ran on this
+    /// index. Test-only: repeated queries must reuse the first scan.
+    #[cfg(test)]
+    std_macro_export_scans: std::sync::atomic::AtomicUsize,
     /// #8917: whether a type name carries a unique workspace `Default` derive.
     pub(in crate::analysis) type_derives_default: Mutex<BTreeMap<String, bool>>,
     /// Exact-source, requested-name binding scans used by the closed assertion
@@ -3829,6 +3836,72 @@ fn renamed_path_places_another_function(
     })
 }
 
+/// Whether the package manifest confirms that `root`, which the module
+/// chain's path shape already admits, is a Cargo target root: `src/lib.rs`
+/// or `src/main.rs` as a default target root, a binary target root, or a
+/// file directly under `tests/`, `benches/` or `examples/` that automatic
+/// target discovery alone makes a root and no sibling root mounts. A synthetic index without manifest authority keeps the path
+/// shape alone, as the other crate-identity checks do (#7097).
+fn manifest_confirms_crate_root(index: &RustIndex, root: &Path) -> bool {
+    let members = &index.member_crates;
+    if !members.has_manifest_root() {
+        return true;
+    }
+    let in_src = root
+        .parent()
+        .and_then(Path::file_name)
+        .is_some_and(|name| name == "src");
+    if in_src && members.is_default_target_root_in_selected_epoch(root) {
+        return true;
+    }
+    members.is_binary_target_root(root)
+        || (members.auto_discovers_target_root(root) && !sibling_mounts_as_module(index, root))
+}
+
+/// Whether another indexed file in the root's directory may declare it as a
+/// module: every file directly under `tests/` is a root of its own, and
+/// `mod it;` in `tests/all.rs` mounts `tests/it.rs` beneath it, with any
+/// textual macro `tests/all.rs` defines. An unparsed sibling that spells the
+/// name counts too.
+fn sibling_mounts_as_module(index: &RustIndex, root: &Path) -> bool {
+    let (Some(directory), Some(stem)) = (root.parent(), root.file_stem().and_then(|s| s.to_str()))
+    else {
+        return true;
+    };
+    index.files().iter().any(|(path, facts)| {
+        path != root
+            && path.parent() == Some(directory)
+            && facts.source.contains(stem.trim_start_matches("r#"))
+            && index
+                .source_syntax
+                .get(index, path)
+                .and_then(|snapshot| snapshot.tree())
+                .is_none_or(|tree| crate::analysis::syntax::declares_module_named(&tree, stem))
+    })
+}
+
+/// Whether any indexed file defines a `#[macro_export]` macro under a std
+/// macro's name. Such a macro sits at its crate root, where a `super` glob
+/// can import it from a file the module chain does not read, so the chain
+/// is not trusted to settle which macro a test invokes.
+fn crate_may_export_a_std_macro(index: &RustIndex) -> bool {
+    let memos = &index.call_identity_memos;
+    *memos.std_macro_export.get_or_init(|| {
+        #[cfg(test)]
+        memos
+            .std_macro_export_scans
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        index.files().iter().any(|(path, facts)| {
+            facts.source.contains("macro_export")
+                && index
+                    .source_syntax
+                    .get(index, path)
+                    .and_then(|snapshot| snapshot.tree())
+                    .is_none_or(|tree| crate::analysis::syntax::file_exports_a_std_macro(&tree))
+        })
+    })
+}
+
 /// Whether every bare mention of the owner's name in `test` sits inside a
 /// nested block whose own renaming `use` binds that name to another
 /// function of the owner's package (`{ use super::other as discount;
@@ -3870,10 +3943,15 @@ fn bare_name_renamed_in_nested_blocks(
     else {
         return false;
     };
+    let tree_of = |path: &std::path::Path| index.source_syntax.get(index, path)?.tree();
+    let ancestors = crate::analysis::syntax::enclosing_module_files(&test.file, tree_of, |root| {
+        manifest_confirms_crate_root(index, root)
+    })
+    .filter(|_| !crate_may_export_a_std_macro(index));
     let Some(paths) = index
         .source_syntax
         .get(index, &test.file)
-        .and_then(|snapshot| snapshot.nested_block_renames(test, name))
+        .and_then(|snapshot| snapshot.nested_block_renames(test, ancestors.as_deref(), name))
     else {
         return false;
     };
@@ -7356,6 +7434,227 @@ mod tests {
                 bare_name_renamed_in_nested_blocks(&globbed, owner, test),
                 refused,
                 "{glob}"
+            );
+        }
+        Ok(())
+    }
+
+    /// #16277: a test module file's `use super::*;` reaches the file that
+    /// declares it, so the nested-block reading inside `assert_eq!` follows
+    /// the plain `mod tests;` declaration and reads that file's macros,
+    /// imports and globs. A parent that defines or imports such a macro, a
+    /// foreign glob in it, or a `#[path]` declaration keeps the prior
+    /// reading.
+    #[test]
+    fn a_file_module_super_glob_reads_the_declaring_file_inside_a_std_macro() -> Result<(), String>
+    {
+        const LIB: &str = "\
+pub fn discount(amount: u32) -> u32 {
+    if amount > 100 { 10 } else { 0 }
+}
+
+pub fn other(a: u32) -> u32 {
+    if a >= 100 { 10 } else { 0 }
+}
+
+pub mod helpers {
+    pub fn unrelated() {}
+}
+
+#[cfg(test)]
+mod tests;
+";
+        const TESTS: &str = "\
+use super::*;
+
+#[test]
+fn file_module_case() {
+    {
+        use super::other as discount;
+        assert_eq!(discount(100), 10);
+    }
+}
+";
+        for (lib, tests_path, refused, label) in [
+            (LIB.to_string(), "src/tests.rs", true, "plain declaration"),
+            (
+                format!("macro_rules! assert_eq {{ ($a:expr, $b:expr) => {{}}; }}\n{LIB}"),
+                "src/tests.rs",
+                false,
+                "parent defines assert_eq",
+            ),
+            (
+                format!("use other_crate::assert_eq;\n{LIB}"),
+                "src/tests.rs",
+                false,
+                "parent imports assert_eq",
+            ),
+            (
+                format!("use crate::helpers::*;\n{LIB}"),
+                "src/tests.rs",
+                false,
+                "parent holds a foreign glob",
+            ),
+            (
+                LIB.replace("mod tests;", "#[path = \"t.rs\"]\nmod tests;"),
+                "src/t.rs",
+                false,
+                "path declaration",
+            ),
+            (
+                format!("#[macro_use]\nmod macros;\n{LIB}"),
+                "src/tests.rs",
+                false,
+                "parent brings in macros through macro_use",
+            ),
+            (
+                format!("#[cfg_attr(test, macro_use)]\nmod macros;\n{LIB}"),
+                "src/tests.rs",
+                false,
+                "parent may bring in macros through a cfg_attr macro_use",
+            ),
+            (
+                format!("#[r#macro_use]\nmod macros;\n{LIB}"),
+                "src/tests.rs",
+                false,
+                "a raw macro_use spelling is the same attribute",
+            ),
+            (
+                format!("mod sibling {{ use crate::helpers::*; }}\n{LIB}"),
+                "src/tests.rs",
+                true,
+                "a foreign glob inside a sibling module is not imported by super::*",
+            ),
+            (
+                format!("#[doc = \"happy path\"]\n{LIB}")
+                    .replace("mod tests;", "#[doc = \"path\"]\nmod tests;"),
+                "src/tests.rs",
+                true,
+                "a doc attribute keeps default resolution",
+            ),
+        ] {
+            let files = index(&[("src/lib.rs", lib.as_str()), (tests_path, TESTS)]);
+            let (owner, test) = renamed_other_parts(&files, "file_module_case")?;
+            assert_eq!(
+                bare_name_renamed_in_nested_blocks(&files, owner, test),
+                refused,
+                "{label}"
+            );
+            assert_eq!(
+                test_calls_only_a_renamed_other_function(&files, owner, test),
+                refused,
+                "{label}"
+            );
+        }
+        // A `#[macro_export]` macro named like a std macro sits at the crate
+        // root, where `super::*` can import it from a file the chain does
+        // not read; an export of another name changes nothing.
+        for (macros, refused) in [
+            (
+                "#[macro_export]\nmacro_rules! assert_eq { ($a:expr, $b:expr) => {}; }\n",
+                false,
+            ),
+            (
+                "#[cfg_attr(test, macro_export)]\nmacro_rules! assert_eq { ($a:expr, $b:expr) => {}; }\n",
+                false,
+            ),
+            (
+                "#[macro_export]\nmacro_rules! check { ($a:expr) => {}; }\n",
+                true,
+            ),
+        ] {
+            let lib = format!("mod macros;\n{LIB}");
+            let files = index(&[
+                ("src/lib.rs", lib.as_str()),
+                ("src/macros.rs", macros),
+                ("src/tests.rs", TESTS),
+            ]);
+            let (owner, test) = renamed_other_parts(&files, "file_module_case")?;
+            assert_eq!(
+                bare_name_renamed_in_nested_blocks(&files, owner, test),
+                refused,
+                "{macros}"
+            );
+            // Repeated queries on one index reuse the first inventory scan,
+            // whichever way it answered.
+            assert_eq!(
+                bare_name_renamed_in_nested_blocks(&files, owner, test),
+                refused,
+                "{macros}"
+            );
+            assert_eq!(
+                files
+                    .call_identity_memos
+                    .std_macro_export_scans
+                    .load(std::sync::atomic::Ordering::Relaxed),
+                1,
+                "{macros}"
+            );
+        }
+        // An unknown module chain (here a `#[path]` declaration) may hide a
+        // textual macro in an unread enclosing module, so even a test file
+        // with no glob keeps the prior reading inside a macro.
+        let moved = index(&[
+            (
+                "src/lib.rs",
+                LIB.replace("mod tests;", "#[path = \"t.rs\"]\nmod tests;")
+                    .as_str(),
+            ),
+            (
+                "src/t.rs",
+                TESTS
+                    .replace("use super::*;", "use super::discount;")
+                    .as_str(),
+            ),
+        ]);
+        let (owner, test) = renamed_other_parts(&moved, "file_module_case")?;
+        assert!(!bare_name_renamed_in_nested_blocks(&moved, owner, test));
+        // A `std` glob beside `super::*` is trusted only when no file of
+        // the chain rebinds `std` (`use self::shim as std;`).
+        let std_globbed = TESTS.replace("use super::*;", "use super::*;\nuse std::*;");
+        for (lib, refused, label) in [
+            (LIB.to_string(), true, "ordinary std glob"),
+            (
+                format!("pub mod shim {{}}\nuse self::shim as std;\n{LIB}"),
+                false,
+                "parent rebinds std",
+            ),
+        ] {
+            let files = index(&[
+                ("src/lib.rs", lib.as_str()),
+                ("src/tests.rs", std_globbed.as_str()),
+            ]);
+            let (owner, test) = renamed_other_parts(&files, "file_module_case")?;
+            assert_eq!(
+                bare_name_renamed_in_nested_blocks(&files, owner, test),
+                refused,
+                "{label}"
+            );
+        }
+        // Without a glob leaving the test file, the declaring file's globs
+        // are not read at all; its macro definitions still are.
+        let named = TESTS.replace("use super::*;", "use super::discount;");
+        for (lib, refused, label) in [
+            (
+                format!("use crate::helpers::*;\n{LIB}"),
+                true,
+                "parent glob unread",
+            ),
+            (
+                format!("macro_rules! assert_eq {{ ($a:expr, $b:expr) => {{}}; }}\n{LIB}"),
+                false,
+                "parent macro_rules still read",
+            ),
+        ] {
+            let files = index(&[
+                ("src/lib.rs", lib.as_str()),
+                ("src/tests.rs", named.as_str()),
+            ]);
+            let (owner, test) = renamed_other_parts(&files, "file_module_case")?;
+            assert_eq!(
+                bare_name_renamed_in_nested_blocks(&files, owner, test),
+                refused,
+                "{label}"
             );
         }
         Ok(())
