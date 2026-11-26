@@ -51,8 +51,10 @@ struct CancellationState {
 }
 
 /// Shared cancellation state for one analysis attempt. Clones share the same
-/// state, and two tokens are equal only when they share it. Work sees an abort
-/// only at cooperative checkpoints.
+/// state, and two tokens are equal only when they share it. A checkpoint hands
+/// a recorded abort to the running work and marks it observed;
+/// [`abort_kind`](Self::abort_kind) and [`current_abort_kind`] read the
+/// recorded reason without marking it observed.
 #[derive(Clone)]
 pub struct AnalysisCancellationToken(Arc<CancellationState>);
 
@@ -196,6 +198,7 @@ impl AnalysisCancellationToken {
         })
     }
 
+    /// Returns the recorded abort reason, if any, without marking it observed.
     /// Pure query: classifying an ordinary source failure must not advance
     /// the clock and replace it with a later deadline failure.
     pub fn abort_kind(&self) -> Option<AnalysisAbortKind> {
@@ -482,7 +485,8 @@ pub fn remaining_budget() -> Option<Duration> {
 }
 
 /// Pure query for the active token's recorded abort. Unlike [`checkpoint`],
-/// this never expires a budget or writes a deadline reason.
+/// this never expires a budget, writes a deadline reason, or marks the abort
+/// observed.
 pub fn current_abort_kind() -> Option<AnalysisAbortKind> {
     CURRENT_TOKEN.with(|slot| slot.borrow().as_ref().and_then(|token| token.abort_kind()))
 }
