@@ -46,7 +46,11 @@ use std::path::PathBuf;
 fn is_preview_language(language: LanguageId) -> bool {
     matches!(
         language,
-        LanguageId::TypeScript | LanguageId::JavaScript | LanguageId::Python | LanguageId::Perl
+        LanguageId::TypeScript
+            | LanguageId::JavaScript
+            | LanguageId::Python
+            | LanguageId::Perl
+            | LanguageId::Go
     )
 }
 
@@ -1884,6 +1888,7 @@ fn run_pipeline_for_diff_text_with_language_config(
             LanguageId::Perl => contain_adapter_panic(options, *language, || {
                 analyze_perl_diff(options, oracle_policy, preview_changed_files)
             }),
+            LanguageId::Go => unavailable_language(LanguageId::Go),
             LanguageId::Rust => {
                 continue;
             }
@@ -2839,6 +2844,7 @@ pub(crate) fn run_repo_pipeline_with_oracle_policy_and_rust_config(
             LanguageId::Perl => contain_adapter_panic(options, *language, || {
                 analyze_perl_repo(options, oracle_policy)
             }),
+            LanguageId::Go => unavailable_language(LanguageId::Go),
             LanguageId::Rust => {
                 continue;
             }
@@ -3243,7 +3249,7 @@ fn preview_skip_generated_name(language: LanguageId, path: &std::path::Path) -> 
             crate::config::is_detectable_generated_typescript_path(path)
         }
         LanguageId::Python => crate::config::is_detectable_generated_python_path(path),
-        LanguageId::Rust | LanguageId::Perl => false,
+        LanguageId::Rust | LanguageId::Perl | LanguageId::Go => false,
     }
 }
 
@@ -3251,9 +3257,11 @@ fn preview_skip_generated_name(language: LanguageId, path: &std::path::Path) -> 
 fn preview_skip_generated_name(language: LanguageId, path: &std::path::Path) -> bool {
     match language {
         LanguageId::Python => crate::config::is_detectable_generated_python_path(path),
-        LanguageId::Rust | LanguageId::Perl | LanguageId::TypeScript | LanguageId::JavaScript => {
-            false
-        }
+        LanguageId::Rust
+        | LanguageId::Perl
+        | LanguageId::TypeScript
+        | LanguageId::JavaScript
+        | LanguageId::Go => false,
     }
 }
 
@@ -3273,7 +3281,7 @@ fn preview_skip_configured_pattern(
                 path,
             )
         }
-        LanguageId::Rust | LanguageId::Perl => false,
+        LanguageId::Rust | LanguageId::Perl | LanguageId::Go => false,
     }
 }
 
@@ -3475,7 +3483,7 @@ fn is_excluded_from_preview_analysis(
                         path,
                     ))
         }
-        LanguageId::Rust | LanguageId::Perl => false,
+        LanguageId::Rust | LanguageId::Perl | LanguageId::Go => false,
     }
 }
 
@@ -3714,11 +3722,6 @@ fn analyze_perl_repo(
     unavailable_language(LanguageId::Perl)
 }
 
-#[cfg(any(
-    not(feature = "lang-typescript"),
-    not(feature = "lang-python"),
-    not(feature = "lang-perl")
-))]
 fn unavailable_language<T>(language: LanguageId) -> Result<T, String> {
     Err(format!(
         "language `{}` is not available in this ripr binary; {}",
