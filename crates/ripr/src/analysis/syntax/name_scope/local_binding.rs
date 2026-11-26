@@ -35,8 +35,9 @@ use ra_ap_syntax::{
 /// or a mention sits inside a macro whose expansion may add bindings (any
 /// macro other than a bare std expression macro, or such a macro when the
 /// file chain may redefine it, which `ancestors` settles as for
-/// `nested_block_renames_in_tree`). A method call or field access of the
-/// name, and a path prefix (`name::item`), are not mentions.
+/// `nested_block_renames_in_tree`, or a macro operand that spells `use` or
+/// `mod`). A method call or field access of the name, a field label
+/// (`name: value`) and a path prefix (`name::item`) are not mentions.
 pub(crate) fn every_mention_bound_locally_in_tree(
     tree: &ast::SourceFile,
     ancestors: Option<&[ast::SourceFile]>,
@@ -101,10 +102,15 @@ pub(crate) fn every_mention_bound_locally_in_tree(
         }
         let mut following = std::iter::successors(token.next_token(), |token| token.next_token())
             .filter(|token| !token.kind().is_trivia());
-        if following.next().map(|token| token.kind()) == Some(T![::])
-            && following.next().map(|token| token.kind()) != Some(T![<])
-        {
-            continue;
+        match following.next().map(|token| token.kind()) {
+            // A path prefix (`name::item`) names a module or type; a
+            // turbofish (`name::<T>(..)`) still calls the name.
+            Some(T![::]) if following.next().map(|token| token.kind()) != Some(T![<]) => {
+                continue;
+            }
+            // A field label (`Pair { dt: other }`) names a field.
+            Some(T![:]) => continue,
+            _ => {}
         }
         mentions += 1;
         let mut macro_names = Vec::new();
@@ -112,10 +118,21 @@ pub(crate) fn every_mention_bound_locally_in_tree(
             if opaque_macro_call(&node) {
                 return false;
             }
-            if let Some(macro_name) = ast::MacroCall::cast(node)
-                .and_then(|call| call.path())
-                .and_then(|path| path.segment())
-            {
+            let Some(call) = ast::MacroCall::cast(node) else {
+                continue;
+            };
+            // A macro operand is unparsed tokens, so a block inside it
+            // (`assert_eq!({ use crate::{dt}; dt(1) }, 0)`) hides its own
+            // imports and modules from the walk below.
+            if call.token_tree().is_some_and(|tokens| {
+                tokens
+                    .syntax()
+                    .descendants_with_tokens()
+                    .any(|element| matches!(element.kind(), T![use] | T![mod]))
+            }) {
+                return false;
+            }
+            if let Some(macro_name) = call.path().and_then(|path| path.segment()) {
                 macro_names.push(macro_name.to_string());
             }
         }
@@ -188,24 +205,33 @@ fn bound_by_a_local(start: &SyntaxNode, name: &str) -> bool {
 /// `child`), `Some(false)` for a binding that is not settled as a local, and
 /// `None` when the block does not bind the name.
 fn block_binding(list: &ast::StmtList, child: &SyntaxNode, name: &str) -> Option<bool> {
-    let items: Vec<ast::Item> = list
-        .statements()
-        .filter_map(|statement| match statement {
-            ast::Stmt::Item(item) => Some(item),
-            _ => None,
-        })
-        .collect();
+    let mut items = Vec::new();
+    let mut bound = None;
+    let mut before_child = true;
+    for statement in list.statements() {
+        if statement.syntax() == child {
+            before_child = false;
+        }
+        match statement {
+            ast::Stmt::Item(item) => items.push(item),
+            ast::Stmt::LetStmt(binding)
+                if before_child
+                    && binding
+                        .pat()
+                        .is_some_and(|pattern| pattern_binds(pattern.syntax(), name)) =>
+            {
+                bound = Some(binding.attrs().next().is_none());
+            }
+            _ => {}
+        }
+    }
     if !items.is_empty() {
         let scope = name_scope_for_items(&items);
         if scope.imports_of(name).next().is_some() || !scope.globs.is_empty() {
             return Some(false);
         }
         let mut local_fn = false;
-        for item in &items {
-            let named = item_name(item).is_some_and(|item_name| item_name == name);
-            if !named {
-                continue;
-            }
+        for item in items.iter().filter(|item| item_has_name(item, name)) {
             match item {
                 ast::Item::Fn(function) if function.attrs().next().is_none() => local_fn = true,
                 _ => return Some(false),
@@ -215,28 +241,12 @@ fn block_binding(list: &ast::StmtList, child: &SyntaxNode, name: &str) -> Option
             return Some(true);
         }
     }
-    let mut bound = None;
-    for statement in list.statements() {
-        if statement.syntax() == child {
-            break;
-        }
-        let ast::Stmt::LetStmt(binding) = statement else {
-            continue;
-        };
-        if !binding
-            .pat()
-            .is_some_and(|pattern| pattern_binds(pattern.syntax(), name))
-        {
-            continue;
-        }
-        bound = Some(binding.attrs().next().is_none());
-    }
     bound
 }
 
-/// The declared name of an item, when it has one.
-fn item_name(item: &ast::Item) -> Option<String> {
-    let name = match item {
+/// Whether the item declares `name`.
+fn item_has_name(item: &ast::Item, name: &str) -> bool {
+    let declared = match item {
         ast::Item::Fn(item) => item.name(),
         ast::Item::Const(item) => item.name(),
         ast::Item::Static(item) => item.name(),
@@ -248,8 +258,8 @@ fn item_name(item: &ast::Item) -> Option<String> {
         ast::Item::Trait(item) => item.name(),
         ast::Item::TypeAlias(item) => item.name(),
         _ => None,
-    }?;
-    Some(unraw(name.text()))
+    };
+    declared.is_some_and(|declared| declared.text().trim_start_matches("r#") == name)
 }
 
 /// Whether a parameter of `params` binds `name` by a plain pattern.
@@ -373,6 +383,16 @@ mod tests {
                 false,
             ),
             ("method call only", "let s = S;\n    s.dt();", false),
+            (
+                "import inside a macro operand block",
+                "let dt = |x: i32| x + 1;\n    assert_eq!({ use super::{dt}; dt(100) }, 90);",
+                false,
+            ),
+            (
+                "shorthand field pattern",
+                "let Pair { dt } = Pair { dt: other };\n    dt(1);",
+                true,
+            ),
         ];
         for (label, body, expected) in cases {
             let source = format!("fn other(x: i32) -> i32 {{ x }}\nfn t() {{\n    {body}\n}}\n");

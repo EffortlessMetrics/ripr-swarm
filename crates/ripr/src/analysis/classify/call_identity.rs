@@ -4160,8 +4160,9 @@ pub(in crate::analysis) fn test_calls_only_a_local_binding(
 
 /// Text prefilter for [`test_calls_only_a_local_binding`]: whether `body`
 /// spells `name` where a binder may stand (after `let`, `mut`, `ref`, `fn`,
-/// `|` or `,`, or in a pattern, not followed by a call or path). Most tests
-/// spell their owner only as a call and stop here.
+/// `|`, `,`, `(` or `{`, as in a tuple or shorthand field pattern), not
+/// followed by a call or path. Most tests spell their owner only as a call
+/// and stop here.
 fn spells_a_local_binder(body: &str, name: &str) -> bool {
     let masked = mask_comments_and_strings(body);
     masked.match_indices(name).any(|(start, _)| {
@@ -4175,8 +4176,8 @@ fn spells_a_local_binder(body: &str, name: &str) -> bool {
             return true;
         }
         let tail = masked[end..].trim_start();
-        let binder_head =
-            matches!(head_word(head), "let" | "mut" | "ref") || head.ends_with(['|', ',', '(']);
+        let binder_head = matches!(head_word(head), "let" | "mut" | "ref")
+            || head.ends_with(['|', ',', '(', '{']);
         binder_head && !tail.starts_with('(') && !tail.starts_with("::")
     })
 }
