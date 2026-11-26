@@ -2373,9 +2373,14 @@ pub(super) fn literal_value(text: &str) -> Option<String> {
 
 /// Literal equality as Python compares scalar values: decimals by value
 /// (`100 == 100.0`), bools against numbers (`True == 1`, `False == 0`),
-/// strings by decoded content, and `True`/`False`/`None` by identity.
+/// strings by decoded content, and `True`/`False`/`None` by identity. An int
+/// spelling is the exact number and a float spelling is the nearest double,
+/// so above `2^53` an int spelling and a `.0` spelling can be unequal
+/// (`9007199254740993 != 9007199254740993.0`) or equal to a neighbour
+/// (`9007199254740992 == 9007199254740993.0`).
 /// Returns `None` when static evidence cannot read the comparison (mixed
-/// unreadable kinds, escapes, prefixes) rather than a definite inequality.
+/// unreadable kinds, escapes, prefixes, a float that is not finite) rather
+/// than a definite inequality.
 pub(super) fn literals_equal(left: &str, right: &str) -> Option<bool> {
     match (bool_as_decimal(left), bool_as_decimal(right)) {
         (Some(left), Some(right)) => return Some(left == right),
@@ -2392,7 +2397,14 @@ pub(super) fn literals_equal(left: &str, right: &str) -> Option<bool> {
         (None, None) => {}
     }
     match (canonical_decimal(left), canonical_decimal(right)) {
-        (Some(left), Some(right)) => return Some(left == right),
+        (Some(canonical_left), Some(canonical_right)) => {
+            return decimal_spellings_equal(
+                &canonical_left,
+                left.contains('.'),
+                &canonical_right,
+                right.contains('.'),
+            );
+        }
         (Some(_), None) | (None, Some(_)) => return None,
         (None, None) => {}
     }
@@ -2461,6 +2473,59 @@ pub(super) fn canonical_decimal(text: &str) -> Option<String> {
     })
 }
 
+/// Whether Python finds two canonical decimal spellings equal. Two int
+/// spellings compare by their digits; two float spellings name a double each
+/// and are equal when it is one double (`0.1` and the full decimal of the
+/// double it names). An int spelling is exact and a float spelling is the
+/// nearest double, so above `2^53` that double can be a neighbour of the
+/// digits it spells: `9007199254740993.0` is `...992`, which equals the int
+/// `9007199254740992` and not the int `9007199254740993`. `None` when a float
+/// is not finite.
+fn decimal_spellings_equal(
+    left: &str,
+    left_is_float: bool,
+    right: &str,
+    right_is_float: bool,
+) -> Option<bool> {
+    match (left_is_float, right_is_float) {
+        (false, false) => Some(left == right),
+        (true, true) => {
+            let left: f64 = left.parse().ok()?;
+            let right: f64 = right.parse().ok()?;
+            if !left.is_finite() || !right.is_finite() {
+                return None;
+            }
+            // Compared as doubles, as Python compares them, not by a margin.
+            Some(left.partial_cmp(&right) == Some(std::cmp::Ordering::Equal))
+        }
+        (true, false) => int_equals_float(right, left),
+        (false, true) => int_equals_float(left, right),
+    }
+}
+
+/// Whether the int spelled by `int_text` equals the double spelled by
+/// `float_text`, as Python compares an int with a float: exactly, with the
+/// int unrounded.
+fn int_equals_float(int_text: &str, float_text: &str) -> Option<bool> {
+    let float = float_text.parse::<f64>().ok()?;
+    if !float.is_finite() {
+        return None;
+    }
+    if float.fract() != 0.0 {
+        return Some(false);
+    }
+    // Printed with no fraction digits, a double shows the exact integer it
+    // holds, whatever its size (`1e30` is `1000000000000000019884624838656`).
+    let spelled = format!("{float:.0}");
+    let (negative, digits) = spelled
+        .strip_prefix('-')
+        .map_or((false, spelled.as_str()), |rest| (true, rest));
+    if digits == "0" {
+        return Some(int_text == "0");
+    }
+    Some(negative == int_text.starts_with('-') && digits == int_text.trim_start_matches('-'))
+}
+
 /// Whether a parametrize argname may name something other than the case
 /// value where the owner call reads it, beyond the statement bindings the
 /// recorded cases already exclude (`parametrize.rs`, #4612 review): a
@@ -2525,6 +2590,81 @@ mod literals_equal_tests {
         assert_eq!(literals_equal("0", "False"), Some(true));
         assert_eq!(literals_equal("True", "2"), Some(false));
         assert_eq!(literals_equal("2", "True"), Some(false));
+    }
+
+    #[test]
+    fn an_int_spelling_its_float_spelling_above_two_to_the_53rd() {
+        // Python stores `9007199254740993.0` as `...992`, so the int spelling
+        // and the float spelling are unequal; `...994.0` is exact.
+        assert_eq!(
+            literals_equal("9007199254740993", "9007199254740993.0"),
+            Some(false)
+        );
+        assert_eq!(
+            literals_equal("9007199254740994", "9007199254740994.0"),
+            Some(true)
+        );
+        assert_eq!(
+            literals_equal("9007199254740992", "9007199254740992.0"),
+            Some(true)
+        );
+        assert_eq!(literals_equal("4", "4.0"), Some(true));
+    }
+
+    #[test]
+    fn a_float_spelling_is_the_nearest_double_not_its_digits() {
+        // Python: `9007199254740992 == 9007199254740993.0` is True, because
+        // the float spelling is the double `...992`, and the int is exact.
+        assert_eq!(
+            literals_equal("9007199254740992", "9007199254740993.0"),
+            Some(true)
+        );
+        assert_eq!(
+            literals_equal("9007199254740993.0", "9007199254740992"),
+            Some(true)
+        );
+        assert_eq!(
+            literals_equal("9007199254740996", "9007199254740995.0"),
+            Some(true)
+        );
+        assert_eq!(
+            literals_equal("-9007199254740992", "-9007199254740993.0"),
+            Some(true)
+        );
+        assert_eq!(
+            literals_equal("9007199254740993", "9007199254740993.0"),
+            Some(false)
+        );
+        assert_eq!(literals_equal("4", "4.5"), Some(false));
+        assert_eq!(literals_equal("0", "-0.0"), Some(true));
+        // Two float spellings of one double are equal, and two doubles are
+        // not. A float spelling past the last double is not compared, whether
+        // the two differ or are spelled alike: each names the same double,
+        // infinity.
+        let beyond = |digit: char| format!("1{}{digit}.0", "0".repeat(308));
+        assert_eq!(literals_equal(&beyond('1'), &beyond('2')), None);
+        assert_eq!(literals_equal(&beyond('1'), &beyond('1')), None);
+        assert_eq!(
+            literals_equal("0.1", "0.1000000000000000055511151231257827"),
+            Some(true)
+        );
+        assert_eq!(literals_equal("-0.0", "0.0"), Some(true));
+        assert_eq!(literals_equal("0.1", "0.2"), Some(false));
+        // Past every `u128`, the double is still compared exactly.
+        assert_eq!(
+            literals_equal(
+                "1000000000000000019884624838656",
+                "1000000000000000000000000000000.0"
+            ),
+            Some(true)
+        );
+        assert_eq!(
+            literals_equal(
+                "1000000000000000000000000000000",
+                "1000000000000000000000000000000.0"
+            ),
+            Some(false)
+        );
     }
 }
 

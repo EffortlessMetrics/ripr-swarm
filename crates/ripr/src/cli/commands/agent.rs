@@ -1227,14 +1227,19 @@ pub(super) fn classify_incomparable_pair_error(error: String) -> AgentVerifyErro
 
 /// #14021: the no-movement refusal classifies from the producer's typed
 /// `AgentVerifyMovementError`, not a substring of the rendered message. The
-/// producer carries exactly one variant, so every movement error it reports
-/// is the named refusal; the rendered text stays byte-identical to the prose
-/// the old `format!` added.
+/// producer carries exactly one variant today; the match is exhaustive so a
+/// new variant must choose its own refusal class here instead of being read
+/// as no-movement. The rendered text stays byte-identical to the prose the
+/// old `format!` added.
 pub(super) fn classify_verify_movement_error(
     error: crate::agent::artifact::AgentVerifyMovementError,
 ) -> AgentVerifyError {
+    use crate::agent::artifact::AgentVerifyMovementError;
+    let kind = match &error {
+        AgentVerifyMovementError::NoMovement { .. } => AgentVerifyRefusalKind::NoMovement,
+    };
     AgentVerifyError::Refusal {
-        kind: AgentVerifyRefusalKind::NoMovement,
+        kind,
         message: format!("agent verify {error}"),
     }
 }
@@ -8309,7 +8314,7 @@ mod before_phase_stdout_tests {
         );
         assert!(
             summary.contains(
-                "    (replace each /* ... */ comment with a real value from your test before using it)"
+                "    (replace each /* ... */ comment with a real value from your test before using it; the expected value is what the changed code produces now)"
             ),
             "{summary}"
         );

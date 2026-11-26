@@ -14,10 +14,11 @@ calls `money(1.5)`, a number with one decimal place, where both versions return
 
 ## Then
 
-The finding is `weakly_exposed`, not `exposed`: no observed call passes a number
-with more than two decimal places, so the suite passes with either digit count.
-The missing discriminator names that input. This is a #16203 false-exposed
-correction.
+The finding is `weakly_exposed`, not `exposed`: the only call passes a number both
+counts round alike, so the suite passes with either digit count. The missing
+discriminator names an input the two counts round differently, `1.234` among
+them, and not merely a number with more than two decimal places: `1.0001` is one
+and both counts round it to `1.0`. This is a #16203 false-exposed correction.
 
 ## Must Not
 

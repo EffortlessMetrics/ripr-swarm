@@ -1165,7 +1165,7 @@ text report for coding agents. It is not JSON and carries no `schema_version`;
 its stability contract is the line grammar below. It is a pure projection of
 the same triage selector, candidate-actionable filter and scope-bound drill-in
 commands `--format human` uses, so it adds no verdict, class or ranking. It is
-diff-scoped, refuses `--suppression-policy` like SARIF and the badge formats,
+diff-scoped, refuses `--suppression-policy` like the badge formats,
 and has no legend or repeated disclaimers.
 
 ```text
@@ -1189,7 +1189,31 @@ verify=complete|outcome=O|findings=N|exposed=N
   (#14452).
 - The last line is always the verification record (#13516):
   `verify=complete|outcome=O|findings=N|exposed=N` or
-  `verify=refused|outcome=O|findings=N|exposed=N|reason=R,...`. It is projected
+  `verify=refused|outcome=O|findings=N|exposed=N|reason=R,...`, or (#14821)
+  `verify=complete_with_limits|outcome=O|findings=N|exposed=E|limits=CLASS:COUNT,...`
+  when `unexposed_findings_remain` is the only unmet condition and every
+  unexposed finding is an analyzer limit no test edit can close: a
+  candidate-current, non-preview, non-withheld `static_unknown`,
+  `infection_unknown` or `propagation_unknown` finding with no contributing
+  related test of `weak` or `smoke` oracle strength other than a
+  proximity-only one (`same_test_file`, `same_module`,
+  `weak_token_substring`; a row with no recorded relation counts as bound),
+  and with positive evidence: some related test whose relation establishes
+  reach (direct or helper owner call, re-export chain, or assertion-target
+  affinity for a non-function owner) is either contributing with `strong` or
+  `medium` strength, or is an examined-only row (selected by row role, never
+  by `miss`) of a test that is a contributing, reaching `strong`/`medium` row
+  on another finding
+  of the same owner function in the run (a test that pins one function
+  never vouches for an unasserted call to another). The vouching test is
+  matched by its full identity (file, name and start line), and the
+  vouching finding must itself be candidate-current, non-preview and not
+  withheld. A finding whose related-test rows were packed past the bounded
+  list (`related_tests_total` above the rows listed) never completes, since
+  a dropped row could be weak. The listed counts must reconcile to the full summary. `limits`
+  lists those classes in vocabulary order. It upgrades no finding: the limits
+  stay unproven, and `no_static_path`, `weakly_exposed` and
+  `reachable_unrevealed` findings always refuse. It is projected
   from the producer's `analysis_outcome` and the full `summary` counts, not the
   displayed or triaged subset. Its `findings`/`exposed` equal the header's
   `findings=`/`exposed=` except under `--suppression-policy`: the header
@@ -1935,8 +1959,11 @@ and
 [`schemas/ripr/agent-packet-refusal.schema.json`](../schemas/ripr/agent-packet-refusal.schema.json).
 The [context operational refusal](../schemas/ripr/context-refusal.schema.json)
 carries `schema_version: "1.1"`, a diff scope, the effective mode and a base
-when one was supplied. An explicitly empty `--root` is echoed as the empty
-string. Both JSON presentations use this schema. A successful
+when one was supplied. A missing, non-directory or explicitly empty `--root`
+is the shared `repository_root_unusable` refusal, as for `check`, `diff`,
+`rerun` and the agent commands, and it is checked before a `--from` artifact
+is read; an empty root is echoed as the empty string. Both JSON presentations
+use this schema. A successful
 context packet uses its top-level `version` field. An explicit JSON selector
 miss uses the `cli_refusal` contract described below.
 `crates/ripr/tests/refusal_envelope_schemas.rs` checks each sibling against
@@ -5071,8 +5098,8 @@ ripr check --format repo-sarif-compact
 `sarif-compact` and `repo-sarif-compact` (#13195) render the same documents
 minified: parsed values are identical to `sarif`/`repo-sarif`, including the
 `RIPR_SARIF_RESULTS_BYTES` results bound (#13102, default 1,000,000 pretty
-bytes; `0` removes the cap; results are kept by level, errors then warnings
-then notes; an unparseable value fails the run) and its in-band disclosure (`limited_results_bound`, `document_complete: false`,
+bytes; `0` removes the cap; unsuppressed results are kept before suppressed
+ones, then by level, errors then warnings then notes; an unparseable value fails the run) and its in-band disclosure (`limited_results_bound`, `document_complete: false`,
 `results_rendered`/`results_total`/`results_omitted`). A bounded document
 stays valid SARIF 2.1.0 and is incomplete, never a clean run.
 The pretty `sarif` and `repo-sarif` bytes are unchanged.
@@ -5218,7 +5245,10 @@ Every result carries:
   authority.
 
 Suppressed exposure-gap Findings remain visible with SARIF suppression metadata
-when their configured severity is visible. Results whose configured severity is
+when their configured severity is visible. Entries match by the same rule as
+`check --suppression-policy` (`finding_id`, `path` + `function`, or a `path`
+glob, with optional `static_class`), and an explicit `--suppression-policy`
+replaces `[suppressions] path` for a SARIF run (#15377). Results whose configured severity is
 `off` are omitted. See RIPR-SPEC-0008 for the full suppression and baseline
 policy contract.
 
@@ -5258,7 +5288,7 @@ The JSON report is repo automation output with schema version `"0.1"`:
       "fingerprint": "ripr.seam.weakly_gripped|src/lib.rs|0123456789abcdef0123456789abcdef|0",
       "uri": "src/lib.rs",
       "line": 42,
-      "message": "weakly_gripped seam grip for predicate_boundary"
+      "message": "Tests only weakly grip this code: `amount >= discount_threshold`."
     }
   ]
 }
@@ -19032,6 +19062,23 @@ Field contract:
 - `working_set.source` — `"diff"`, `"base"`, `"files"`, or `"seam_id"`.
 - `limits.default` — always `3`.
 - `limits.hard_cap` — always `10`.
+- `value_basis` — optional top-level note, present only when `top_seams` is
+  non-empty. While a changed line reaches every named seam (each
+  `why_now.reason` is `changed_line_intersects_seam`), it says `expression`
+  and `arm_result` are read from the changed code, so a new test asserts what
+  that code does now (an input whose behavior did not change keeps its
+  value), and that `candidate_values` are inputs or values to assert, not
+  all of one kind (#15361). For any other named seam (a seam asked for by
+  its ID, a repository fallback after a comment-only or an unrelated change,
+  a seam chosen for its owner, its test or its file), it says the values are
+  the current source's behavior, that a seam counts as changed code there
+  only where its `why_now.reason` is `changed_line_intersects_seam`, and the
+  same about `candidate_values` (#15361 review). The published
+  schema does not declare this property: its
+  root object accepts extra properties, and a newly declared property with a
+  constraint counts as a breaking change under the schema-compatibility
+  check unless the schema version is bumped. Declaring it belongs with that
+  bump, not with the note.
 - `top_seams[]` — ranked seam summaries, intentionally smaller than full agent
   seam packets.
 - `top_seams[].why_now.reason` — one of
@@ -19594,8 +19641,12 @@ Field contract:
   `file_count`, `language_status` (`preview` when this binary includes the
   adapter, otherwise `unavailable`), `enabled` (listed in the effective
   `[languages] enabled`; JavaScript follows `typescript`), `route`
-  (`check_diff_first` or `unavailable_in_this_binary`), `command` (the diff-first
-  `ripr check --root <root>`, which resolves the default base itself, or `null`),
+  (`check_diff_first`, `needs_git_work_tree` or `unavailable_in_this_binary`),
+  `command` (the diff-first `ripr check --root <root>`, which resolves the default
+  base itself, or `null`; `null` with `needs_git_work_tree` when the root is not a
+  Git work tree, is a bare repository, or Git is not on `PATH`, where `ripr check`
+  would refuse and `guidance` names `git init` plus a commit, `--diff PATH`,
+  `git worktree add`, or installing Git),
   and `guidance_category`/`guidance`: the existing `typescript_diff_first`
   repair route for TypeScript and JavaScript, the `python_diff_first` repair
   route for Python, the unavailable-adapter notice for a language this binary
@@ -21108,7 +21159,7 @@ top-level `source_subject`:
 
 - `digest_algorithm`: always `"sha256"`.
 - `corpus` (additive, full Rust inventory only): the analysis-owned
-  `{ "scope": "rust_workspace", "cache_schema_version": "1.196",
+  `{ "scope": "rust_workspace", "cache_schema_version": "1.201",
   "files_content_hash": "<16 lowercase hex digits>" }` from the actual
   classified inventory cache key, including both production and test Rust
   files after the existing generated-file exclusions. Repo-exposure producers
@@ -21912,7 +21963,7 @@ targeted-rerun receipt shape:
     "recomputation_reasons": ["selected_test_scope_recomputed"],
     "invalidation_status": "not_available",
     "input_fingerprint": {
-      "schema_version": "1.196",
+      "schema_version": "1.201",
       "analyzer_version": "0.11.0+0123456789abcdef0123456789abcdef01234567+languages:rust=1,typescript=1,python=1,perl=0",
       "workspace_root_hash": "…",
       "files_content_hash": "…",

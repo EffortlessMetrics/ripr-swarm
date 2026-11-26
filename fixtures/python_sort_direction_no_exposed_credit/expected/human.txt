@@ -22,10 +22,10 @@ Start here:
   Gap ID (for scripts): gap:python:src/lib.py:top:return_value:return_value:sorted_xs_reverse=true[0]
   Changed behavior: return sorted(xs, reverse=True)[0]
   Missing check (1 of 2): A strong Python oracle reaches `top`, but the edit only changes
-    `sorted(xs)` to `sorted(xs, reverse=True)`, and no strong related call passes `xs` holding two
-    or more different elements; both versions return the same value for every related input, so
-    static evidence cannot confirm the change is discriminated. Add a test that calls `top` with
-    `xs` holding two or more different elements
+    `sorted(xs)` to `sorted(xs, reverse=True)`, and no strong related call is seen to pass `xs`
+    holding two or more different elements; whether these tests would notice the change is not
+    established, so static evidence cannot confirm the change is discriminated. Add a test that
+    calls `top` with `xs` holding two or more different elements
   Related test: tests/test_lib.py:4 test_top
   Suggested test file: tests/test_lib.py
   Suggested test: test_top
@@ -45,7 +45,7 @@ Start here:
       found = listed for review; suppressed by your settings = hidden by your suppression policy;
       base-side = evidence from the old code, not an edit target; candidate line = changed line ripr considers
     - reach yes: 1 related Python test(s) found for owner `top`
-    - infection weak: Related tests reach the changed call, but no strong related test call passes `xs` holding two or more different elements, so `sorted(xs)` and…
+    - infection weak: Related tests reach the changed call, but no strong related test call is seen to pass `xs` holding two or more different elements, so whether `sorted(xs)` and…
     - 5 more detail line(s) in --format human-full
 
 Next: drill into the top finding:

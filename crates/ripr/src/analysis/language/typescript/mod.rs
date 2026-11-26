@@ -140,6 +140,7 @@ mod loop_bound_guard;
 mod match_object_guard;
 mod method_replacement_guard;
 mod mock_payload_guard;
+mod module_class_nodes;
 mod module_entries;
 mod module_value_reads;
 #[cfg(test)]
@@ -149,6 +150,7 @@ mod new_declaration_tests;
 mod nullish_chain_guard;
 mod object_rows;
 mod oracle;
+mod overwritten_methods;
 #[cfg(test)]
 mod owner_path_tests;
 mod owners;

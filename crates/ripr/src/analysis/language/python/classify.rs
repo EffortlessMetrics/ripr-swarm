@@ -1883,8 +1883,9 @@ fn classify_change_for_owner_inner<'a>(
         && alignment.observes()
         && let Some(variant) = &call_variant_gap
     {
-        // Every strong related call passes an argument both versions of the
-        // changed call treat alike (#16203).
+        // Every strong related call is read to pass an argument both
+        // versions of the changed call treat alike (#16203); the message
+        // claims only what was read, not what the suite would observe.
         call_variant_downgraded = true;
         (
             ExposureClass::WeaklyExposed,
@@ -1892,7 +1893,7 @@ fn classify_change_for_owner_inner<'a>(
             StageState::Weak,
             StageState::Weak,
             vec![format!(
-                "A strong Python oracle reaches `{}`, but the edit only changes `{}` to `{}`, and no strong related call passes {}; both versions return the same value for every related input, so static evidence cannot confirm the change is discriminated. Add a test that calls `{}` with {}.",
+                "A strong Python oracle reaches `{}`, but the edit only changes `{}` to `{}`, and no strong related call is seen to pass {}; whether these tests would notice the change is not established, so static evidence cannot confirm the change is discriminated. Add a test that calls `{}` with {}.",
                 owner.name,
                 variant.old_call,
                 variant.new_call,
@@ -2215,7 +2216,7 @@ fn classify_change_for_owner_inner<'a>(
             .filter(|_| call_variant_downgraded)
         {
             format!(
-                "Related tests reach the changed call, but no strong related test call passes {}, so `{}` and `{}` return the same value.",
+                "Related tests reach the changed call, but no strong related test call is seen to pass {}, so whether `{}` and `{}` return different values there is not established.",
                 variant.discriminator, variant.old_call, variant.new_call
             )
         } else if guarded_arm_downgraded
@@ -2417,7 +2418,7 @@ fn classify_change_for_owner_inner<'a>(
             vec![MissingDiscriminatorFact {
                 value: format!("call `{}` with {}", owner.name, variant.discriminator),
                 reason: format!(
-                    "the change at line {line} only changes `{}` to `{}`, and no related call passes {}",
+                    "the change at line {line} only changes `{}` to `{}`, and no related call is seen to pass {}; whether the current tests would notice the change is not established",
                     variant.old_call, variant.new_call, variant.discriminator
                 ),
                 flow_sink: flow_sink.clone(),
@@ -2779,7 +2780,9 @@ fn classify_change_for_owner_inner<'a>(
         {
             evidence.push(format!(
                 "{}: {} calls {} ({})",
-                if helper.cross_module {
+                if helper.candidate.relation == PythonRelationKind::RouteHelperCall {
+                    "route_helper_call"
+                } else if helper.cross_module {
                     "cross_module_caller_call"
                 } else {
                     "helper_owner_call"

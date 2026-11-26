@@ -818,13 +818,25 @@ pub struct SuppressionApplication {
 /// Root-relative `/`-separated finding path for suppression matching.
 /// Finding locations may be emitted root-joined (for example, `./src/lib.rs`
 /// for `--root .`); policy globs are written root-relative (`src/**`).
+/// Only the platform's own separator becomes `/` (#16271): on Unix a `\` is
+/// an ordinary filename character, so a file named `a\b.rs` must not match a
+/// `src/a/**` glob, matching the distinct URI SARIF publishes for it.
 pub(crate) fn root_relative_finding_path(root: &Path, file: &Path) -> String {
     let relative = file.strip_prefix(root).unwrap_or(file);
-    let display = relative.display().to_string();
-    display
-        .trim_start_matches("./")
-        .replace('\\', "/")
-        .to_string()
+    native_separators_to_slash(&relative.display().to_string(), std::path::MAIN_SEPARATOR)
+}
+
+/// `display` with `separator` rewritten to `/` (a no-op where the separator
+/// already is `/`), then any leading `./` dropped, so a Windows `.\src\x.rs`
+/// and a Unix `./src/x.rs` both become `src/x.rs`. Split out so both
+/// platforms' rules are testable anywhere.
+fn native_separators_to_slash(display: &str, separator: char) -> String {
+    let slashed = if separator == '/' {
+        display.to_string()
+    } else {
+        display.replace(separator, "/")
+    };
+    slashed.trim_start_matches("./").to_string()
 }
 
 /// Applies exact-ID exposure-gap suppressions against a slice of finding ids
@@ -1002,6 +1014,26 @@ impl CheckSuppressionCandidate {
                 }
             })
             .collect()
+    }
+
+    /// One finding's candidate for matching alone: no 0.10 id, which only
+    /// names a replacement in an unmatched-selector warning. SARIF uses it
+    /// to mark a result (#15377).
+    pub(crate) fn for_finding(root: &Path, finding: &crate::domain::Finding) -> Self {
+        let file = finding.probe.location.file.as_path();
+        let path = root_relative_finding_path(root, file);
+        Self {
+            finding_id: finding.id.clone(),
+            owner_function: owner_function_of(
+                &path,
+                file,
+                finding.probe.owner.as_ref().map(|owner| owner.0.as_str()),
+            ),
+            path,
+            class: finding.class.as_str().to_string(),
+            legacy_finding_id: None,
+            finding_aliases: Vec::new(),
+        }
     }
 
     /// Builds matcher candidates for diff-scoped review-comments seams
@@ -1223,33 +1255,7 @@ pub fn apply_check_suppressions(
         }
         let mut hit = false;
         for candidate in candidates {
-            let entry_matches = match &entry.finding_id {
-                Some(id) => id == &candidate.finding_id || candidate.finding_aliases.contains(id),
-                None if entry.function.is_some() => {
-                    // Exact file plus exact owner function (#13895); the
-                    // finding id is deliberately ignored so an expression
-                    // edit keeps the suppression. Unknown owners never match.
-                    entry.path.as_deref() == Some(candidate.path.as_str())
-                        && entry.function.is_some()
-                        && entry.function == candidate.owner_function
-                        && entry
-                            .static_class
-                            .as_deref()
-                            .map(|class| class == candidate.class)
-                            .unwrap_or(true)
-                }
-                None => {
-                    entry
-                        .path
-                        .as_deref()
-                        .is_some_and(|glob| path_glob_matches(glob, &candidate.path))
-                        && entry
-                            .static_class
-                            .as_deref()
-                            .map(|class| class == candidate.class)
-                            .unwrap_or(true)
-                }
-            };
+            let entry_matches = exposure_entry_matches(entry, candidate);
             if entry_matches {
                 hit = true;
                 matched
@@ -1287,6 +1293,54 @@ pub fn apply_check_suppressions(
         }
     }
     (matched, warnings)
+}
+
+/// Whether one `exposure_gap` entry's selector names `candidate`: the one
+/// matching rule every surface shares (#15377). A `finding_id` matches the id
+/// or an alias; `path` + `function` matches the exact file and owner function
+/// (#13895), ignoring the id so an expression edit keeps the suppression;
+/// a bare `path` is a glob. `static_class` narrows the last two. Kind and
+/// expiry are the caller's to check.
+fn exposure_entry_matches(entry: &SuppressionEntry, candidate: &CheckSuppressionCandidate) -> bool {
+    let class_matches = || {
+        entry
+            .static_class
+            .as_deref()
+            .is_none_or(|class| class == candidate.class)
+    };
+    match (&entry.finding_id, &entry.function) {
+        (Some(id), _) => id == &candidate.finding_id || candidate.finding_aliases.contains(id),
+        // Unknown owners never match.
+        (None, Some(function)) => {
+            entry.path.as_deref() == Some(candidate.path.as_str())
+                && candidate.owner_function.as_deref() == Some(function.as_str())
+                && class_matches()
+        }
+        (None, None) => {
+            entry
+                .path
+                .as_deref()
+                .is_some_and(|glob| path_glob_matches(glob, &candidate.path))
+                && class_matches()
+        }
+    }
+}
+
+/// The first live `exposure_gap` entry, in manifest order, that names
+/// `candidate` under [`apply_check_suppressions`]'s rule. SARIF marks a
+/// result with this entry's justification, so code scanning suppresses
+/// exactly what the findings formats and badges suppress (#15377).
+pub(crate) fn matching_exposure_entry<'a>(
+    candidate: &CheckSuppressionCandidate,
+    entries: &'a [SuppressionEntry],
+    today: &str,
+) -> Option<&'a SuppressionEntry> {
+    entries.iter().find(|entry| {
+        entry.kind == SuppressionKind::ExposureGap
+            && (entry.finding_id.is_some() || entry.path.is_some())
+            && !is_expired(entry.expires.as_deref(), today)
+            && exposure_entry_matches(entry, candidate)
+    })
 }
 
 /// Appended to the unmatched-`finding_id` warning (#14129): the owner
@@ -1345,9 +1399,54 @@ mod tests {
         CheckSuppressionCandidate, SUPPRESSIONS_PATH, SuppressionApplication, SuppressionEntry,
         SuppressionKind, apply_check_suppressions, apply_exposure_suppressions,
         apply_test_efficiency_suppressions, current_iso_date, days_to_civil_date, is_expired,
-        is_iso_date, load_check_suppression_policy, owner_function_of, parse_suppressions_manifest,
-        path_glob_matches,
+        is_iso_date, load_check_suppression_policy, native_separators_to_slash, owner_function_of,
+        parse_suppressions_manifest, path_glob_matches, root_relative_finding_path,
     };
+
+    /// #16271: only the platform separator becomes `/`. On Unix a literal
+    /// backslash stays part of the file name, so a directory glob cannot
+    /// reach a sibling file whose name contains one; on Windows both
+    /// spellings are the same directory separator.
+    #[test]
+    fn candidate_paths_keep_a_unix_literal_backslash() {
+        assert_eq!(
+            native_separators_to_slash("src\\a\\b.rs", '\\'),
+            "src/a/b.rs"
+        );
+        // Windows `--root .` display: the separator is rewritten before the
+        // `./` trim, so an exact `path` + `function` entry still matches.
+        assert_eq!(
+            native_separators_to_slash(".\\src\\lib.rs", '\\'),
+            "src/lib.rs"
+        );
+        assert_eq!(
+            native_separators_to_slash("./src/lib.rs", '/'),
+            "src/lib.rs"
+        );
+        assert_eq!(
+            native_separators_to_slash("src/a\\b.rs", '/'),
+            "src/a\\b.rs"
+        );
+        assert!(!path_glob_matches(
+            "src/a/**",
+            &native_separators_to_slash("src/a\\b.rs", '/')
+        ));
+        assert!(path_glob_matches(
+            "src/a/**",
+            &native_separators_to_slash("src/a/b.rs", '/')
+        ));
+        if std::path::MAIN_SEPARATOR == '/' {
+            let root = Path::new("repo");
+            assert_eq!(
+                root_relative_finding_path(root, Path::new("repo/src/a\\b.rs")),
+                "src/a\\b.rs"
+            );
+            assert_eq!(
+                root_relative_finding_path(root, Path::new("./src/a/b.rs")),
+                "src/a/b.rs"
+            );
+        }
+    }
 
     #[test]
     fn parse_accepts_well_formed_manifest_with_both_kinds() {

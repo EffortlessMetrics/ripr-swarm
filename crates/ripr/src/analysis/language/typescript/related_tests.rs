@@ -2825,6 +2825,10 @@ pub(crate) fn related_test_candidates<'a>(
 ) -> Vec<TypeScriptRelatedCandidate<'a>> {
     #[cfg(test)]
     RELATED_CANDIDATE_SCANS.with(|count| count.set(count.get() + 1));
+    // A later same-key member replaced this body: no test can run it.
+    if owner.method_kind == TypeScriptMethodKind::Overwritten {
+        return Vec::new();
+    }
     let package_scope = workspace_root.map(|root| OwnerPackageScope::new(&owner.file, root));
     let in_owner_package = |test: &&TypeScriptTest| {
         package_scope
@@ -4618,10 +4622,31 @@ pub(crate) fn class_names_for_class_method_owner(
     {
         push_unique_string(&mut names, class_name.to_string());
     }
+    // A class that is a CommonJS module's whole export (`module.exports =
+    // Cart;` or `module.exports = class Cart {...}`) is the value a
+    // whole-module `require` binds, under any local name; a named binding
+    // reads a static property of it, not the class (#16252).
+    let commonjs_whole_class = owner.class_default_export && owner.commonjs_default_export;
     for import in &test.imports_in_file {
-        if import.namespace
+        if import.namespace != commonjs_whole_class
             || !import_source_matches_owner(import, &test.file, owner, alias_map, workspace_root)
         {
+            continue;
+        }
+        if commonjs_whole_class {
+            if import.imported.as_deref() == Some("default")
+                && !test.written_locals_in_file.contains(&import.local)
+                && !test.imports_in_file.iter().any(|other| {
+                    other.local == import.local
+                        && (other.imported != import.imported
+                            || other.namespace != import.namespace)
+                })
+                && !local_identifier_declared_in_test_body(&test.body_text, &import.local)
+                && !body_declares_class_named(&test.body_text, &import.local)
+                && !enclosing_scope_shadows(test, &import.local)
+            {
+                push_unique_string(&mut names, import.local.clone());
+            }
             continue;
         }
         if import.imported.as_deref() == Some(class_name)

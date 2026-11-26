@@ -3546,12 +3546,19 @@ const TRANSPARENT_STD_MACROS: &[&str] = &[
     // local `macro_rules! env` or a foreign import of either (#10357).
     "env",
     "option_env",
+    // `include_str!` and `include_bytes!` expand to a literal read from a
+    // file at compile time; their argument is a path, never code. Both are
+    // trusted names (#14116), so the binding scan sees a rebinding (#10357).
+    "include_str",
+    "include_bytes",
 ];
 
 /// The [`TRANSPARENT_STD_MACROS`] names the binding scan reads only for a
-/// caller whose body mentions them, so that a rebinding of `env` elsewhere
-/// does not withhold credit from a wrapper that never reads it (#10357).
-const BODY_SCOPED_TRANSPARENT_MACROS: &[&str] = &["env", "option_env"];
+/// caller whose body mentions them, so that a rebinding of `env` or
+/// `include_str` elsewhere does not withhold credit from a wrapper that
+/// never reads it (#10357).
+const BODY_SCOPED_TRANSPARENT_MACROS: &[&str] =
+    &["env", "option_env", "include_str", "include_bytes"];
 
 /// Whether any indexed file binds a [`TRANSPARENT_STD_MACROS`] name to
 /// something other than the standard macro, by the parser-backed binding
@@ -3559,13 +3566,15 @@ const BODY_SCOPED_TRANSPARENT_MACROS: &[&str] = &["env", "option_env"];
 /// unresolved, which only withholds forwarding credit. A caller with no
 /// `!` invokes no macro, so the index scan is skipped for it. The
 /// [`BODY_SCOPED_TRANSPARENT_MACROS`] join the scan only when the caller's
-/// body mentions `env`; any rebinding found still refuses every bare macro.
+/// body mentions them (`env` also covers `option_env`); any rebinding found
+/// still refuses every bare macro.
 fn transparent_macro_name_rebound(caller_body: &str, index: &RustIndex) -> bool {
     let names: Vec<&str> = TRANSPARENT_STD_MACROS
         .iter()
         .copied()
         .filter(|name| {
-            !BODY_SCOPED_TRANSPARENT_MACROS.contains(name) || caller_body.contains("env")
+            !BODY_SCOPED_TRANSPARENT_MACROS.contains(name)
+                || caller_body.contains(name.trim_start_matches("option_"))
         })
         .collect();
     caller_body.contains('!')
@@ -5588,6 +5597,8 @@ mod tests {
             "file!(); column!(); module_path!(); if is_bulk(qty) { 5 } else { 0 }",
             "let _n = env!(\"CARGO_PKG_NAME\"); if is_bulk(qty) { 5 } else { 0 }",
             "let _x = option_env!(\"X\"); if is_bulk(qty) { 5 } else { 0 }",
+            "let _t = include_str!(\"t.txt\"); if is_bulk(qty) { 5 } else { 0 }",
+            "let _b = include_bytes!(\"b.bin\"); if is_bulk(qty) { 5 } else { 0 }",
         ] {
             assert!(
                 !caller_invokes_opaque_macro(body, false),
@@ -5598,6 +5609,7 @@ mod tests {
             "std::env!(\"X\"); if is_bulk(qty) { 5 } else { 0 }",
             "core::cfg!(debug_assertions); if is_bulk(qty) { 5 } else { 0 }",
             "std::line!(); if is_bulk(qty) { 5 } else { 0 }",
+            "std::include_str!(\"t.txt\"); if is_bulk(qty) { 5 } else { 0 }",
         ] {
             assert!(
                 caller_invokes_opaque_macro(body, false),

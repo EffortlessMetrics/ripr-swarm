@@ -1769,7 +1769,7 @@ golden fixtures/python_factor_reorder_rebound/expected human-full.txt human.txt
 golden fixtures/python_fallthrough_return_early_exit/expected human-full.txt human.txt
 golden fixtures/python_field_assignment_shape/expected human.txt
 golden fixtures/python_fixture_name_relation/expected human.txt
-golden fixtures/python_full_list_selector_integer_pin_no_exposed_credit/expected human-full.txt human.txt
+golden fixtures/python_full_list_selector_integer_pin_no_exposed_credit/expected github.txt human-full.txt human.txt sarif.json
 golden fixtures/python_functools_memoization_not_indirection/expected human.txt
 golden fixtures/python_generated_file_excluded/expected human.txt
 golden fixtures/python_guarded_field_value_untaken/expected human-full.txt human.txt
@@ -1849,6 +1849,7 @@ golden fixtures/python_parametrize_collection_error/expected human-full.txt huma
 golden fixtures/python_parametrize_tuple_unpack/expected human-full.txt human.txt
 golden fixtures/python_parametrized_boundary_repair_gap/expected human.txt
 golden fixtures/python_patched_callee_reachable_h/expected human-full.txt human.txt
+golden fixtures/python_patched_callee_reachable_unrevealed/expected github.txt human.txt sarif.json
 golden fixtures/python_property_based_limit/expected human.txt
 golden fixtures/python_protocol_entry_augmented_bracket_rebind_no_exposed_credit/expected human-full.txt human.txt
 golden fixtures/python_protocol_entry_bracketed_rebind_no_exposed_credit/expected human-full.txt human.txt

@@ -632,3 +632,14 @@ Command:
 Updated:
 - `expected/sarif.json`
 - `expected/github.txt`
+
+## Pending — ts_already_observed (37)
+
+Reason:
+RIPR-SPEC-0008: SARIF alert messages are one plain line (#15374)
+
+Command:
+`cargo xtask goldens bless ts_already_observed --reason "..."`
+
+Updated:
+- `expected/sarif.json`

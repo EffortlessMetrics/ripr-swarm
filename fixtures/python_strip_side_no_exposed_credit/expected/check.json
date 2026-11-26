@@ -44,7 +44,7 @@
        },
       "ripr": {
         "reach": {"state":"yes","confidence":"low","summary":"1 related Python test(s) found for owner `clean`"},
-        "infect": {"state":"weak","confidence":"low","summary":"Related tests reach the changed call, but no strong related test call passes `s` with text followed by trailing whitespace, so `s.strip()` and `s.lstrip()` return the same value."},
+        "infect": {"state":"weak","confidence":"low","summary":"Related tests reach the changed call, but no strong related test call is seen to pass `s` with text followed by trailing whitespace, so whether `s.strip()` and `s.lstrip()` return different values there is not established."},
         "propagate": {"state":"yes","confidence":"low","summary":"Changed Python return value is already at the owner output boundary."},
         "observe": {"state":"weak","confidence":"low","summary":"Strongest extracted Python oracle kind: `exact_value` (rank 5)"},
         "discriminate": {"state":"weak","confidence":"low","summary":"Related Python test uses an `exact_value` oracle, but static evidence does not establish discrimination of the changed behavior."}
@@ -56,12 +56,12 @@
         {"stage":"observe","state":"weak","confidence":"low","basis":[{"code":"observation_not_confirmed","summary":"the assertion is not confirmed to observe the changed value"}]},
         {"stage":"discriminate","state":"weak","confidence":"low"}
       ],
-      "evidence_path": ["reach yes: 1 related Python test(s) found for owner `clean`", "infection weak: Related tests reach the changed call, but no strong related test call passes `s` with text followed by trailing whitespace, so `s.strip()` and `s.lstrip()` return the same value.", "propagation yes: Changed Python return value is already at the owner output boundary.", "observation weak: Strongest extracted Python oracle kind: `exact_value` (rank 5)", "discriminator weak: Related Python test uses an `exact_value` oracle, but static evidence does not establish discrimination of the changed behavior.", "local flow reaches returned value: return s.lstrip() (line 2)", "related test tests/test_lib.py:4 test_clean uses strong exact value oracle: assert clean(\"  a\") == \"a\"", "missing discriminator call `clean` with `s` with text followed by trailing whitespace: the change at line 2 only changes `s.strip()` to `s.lstrip()`, and no related call passes `s` with text followed by trailing whitespace"],
+      "evidence_path": ["reach yes: 1 related Python test(s) found for owner `clean`", "infection weak: Related tests reach the changed call, but no strong related test call is seen to pass `s` with text followed by trailing whitespace, so whether `s.strip()` and `s.lstrip()` return different values there is not established.", "propagation yes: Changed Python return value is already at the owner output boundary.", "observation weak: Strongest extracted Python oracle kind: `exact_value` (rank 5)", "discriminator weak: Related Python test uses an `exact_value` oracle, but static evidence does not establish discrimination of the changed behavior.", "local flow reaches returned value: return s.lstrip() (line 2)", "related test tests/test_lib.py:4 test_clean uses strong exact value oracle: assert clean(\"  a\") == \"a\"", "missing discriminator call `clean` with `s` with text followed by trailing whitespace: the change at line 2 only changes `s.strip()` to `s.lstrip()`, and no related call is seen to pass `s` with text followed by trailing whitespace; whether the current tests would notice the change is not established"],
       "flow_sinks": [
         {"kind":"return_value","text":"return s.lstrip()","line":2}
       ],
       "evidence": ["owner: clean", "owner_kind: function", "missing_discriminator: call `clean` with `s` with text followed by trailing whitespace", "suggested_repair_action: strengthen_existing_test", "suggested_test_file: tests/test_lib.py", "suggested_test_name: test_clean", "suggested_test_node_id: tests/test_lib.py::test_clean", "suggested_verify_command: python -m pytest tests/test_lib.py::test_clean", "suggested_verify_command_confidence: high", "suggested_test_location_reason: strengthen existing weak pytest relation", "test_framework: pytest (test_clean)", "test_verify_command: python -m pytest tests/test_lib.py::test_clean (test_clean)", "related_test_relation: syntactic_call (test_clean)", "test_oracle: exact_value strong (test_clean)"],
-      "missing": ["A strong Python oracle reaches `clean`, but the edit only changes `s.strip()` to `s.lstrip()`, and no strong related call passes `s` with text followed by trailing whitespace; both versions return the same value for every related input, so static evidence cannot confirm the change is discriminated. Add a test that calls `clean` with `s` with text followed by trailing whitespace."],
+      "missing": ["A strong Python oracle reaches `clean`, but the edit only changes `s.strip()` to `s.lstrip()`, and no strong related call is seen to pass `s` with text followed by trailing whitespace; whether these tests would notice the change is not established, so static evidence cannot confirm the change is discriminated. Add a test that calls `clean` with `s` with text followed by trailing whitespace."],
       "assertion_texts": {
       },
       "activation": {
@@ -70,7 +70,7 @@
         "missing_discriminators": [
           {
             "value": "call `clean` with `s` with text followed by trailing whitespace",
-            "reason": "the change at line 2 only changes `s.strip()` to `s.lstrip()`, and no related call passes `s` with text followed by trailing whitespace",
+            "reason": "the change at line 2 only changes `s.strip()` to `s.lstrip()`, and no related call is seen to pass `s` with text followed by trailing whitespace; whether the current tests would notice the change is not established",
             "flow_sink": {"kind":"return_value","text":"return s.lstrip()","line":2}
           }
         ]
@@ -80,7 +80,7 @@
       "missing_discriminators": [
         {
           "value": "call `clean` with `s` with text followed by trailing whitespace",
-          "reason": "the change at line 2 only changes `s.strip()` to `s.lstrip()`, and no related call passes `s` with text followed by trailing whitespace",
+          "reason": "the change at line 2 only changes `s.strip()` to `s.lstrip()`, and no related call is seen to pass `s` with text followed by trailing whitespace; whether the current tests would notice the change is not established",
           "flow_sink": {"kind":"return_value","text":"return s.lstrip()","line":2}
         }
       ],

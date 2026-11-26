@@ -60,7 +60,7 @@ pub(crate) const STATIC_EVIDENCE_BOUNDARY: &str = "static advisory evidence only
 pub(crate) const VERIFY_AFTER_EDIT_LABEL: &str = "Verify after the test edit";
 pub(crate) const RECEIPT_AFTER_VERIFY_LABEL: &str = "Receipt after verify";
 pub(crate) const REPAIR_AFTER_PHASE_LABEL: &str = "After the test edit";
-pub(crate) const REPAIR_AFTER_PHASE_STEP: &str = "run the `--attempt ... --phase after` command the before phase prints; it verifies movement and writes the receipt.";
+pub(crate) const REPAIR_AFTER_PHASE_STEP: &str = "run the after-phase command the before phase prints; it verifies movement and writes the receipt.";
 // The manual pair names its prerequisites (F60-2(c)): the low-level verify
 // reads a before snapshot taken before the test edit and an after snapshot
 // taken after it, so on a checkout without them it fails as printed. The
