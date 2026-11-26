@@ -146,6 +146,14 @@ Exit code `2`. The message names the ref. Check its spelling with
 `git branch --list`, fetch it, or pass `--base <ref>` for a ref the
 repository has.
 
+With a resolved default base, doctor reports `git_base` and names the ref.
+A shared ancestor with HEAD passes. If none is available, a shallow clone gets
+the `git fetch --unshallow` and Actions `fetch-depth: 0` repairs. For unrelated
+histories in a full clone, choose a `--base` on HEAD's history. These advisories
+keep exit 0 when other checks pass. For an origin without a default-branch
+pointer, doctor suggests `git remote set-head origin --auto`. Doctor leaves
+fetching and ref changes to the user.
+
 In CI the usual cause is a shallow clone. A `--depth` clone also tracks only
 the branch it cloned, so ripr asks you to widen `origin` before fetching:
 
