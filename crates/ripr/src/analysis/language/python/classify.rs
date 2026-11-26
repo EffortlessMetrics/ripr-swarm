@@ -1184,10 +1184,10 @@ fn classify_change_for_owner_inner<'a>(
             &focus,
         )
     });
-    // A strip side, `round` digit count or sort direction edit (#16203)
-    // differs only for an argument with whitespace on the dropped side, more
-    // decimal places, or two different elements. A line inside a multiline
-    // string is data, not a call.
+    // A strip side, `round` digit count, sort direction or `get` fallback
+    // edit (#16203) differs only for an argument with whitespace on the
+    // dropped side, more decimal places, two different elements, or no such
+    // key. A line inside a multiline string is data, not a call.
     let call_variant_gap = old_line_text
         .filter(|_| !no_behavior.new_line_in_multiline_string)
         .and_then(|old| {

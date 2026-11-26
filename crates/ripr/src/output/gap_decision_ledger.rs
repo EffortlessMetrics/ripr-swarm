@@ -5914,7 +5914,10 @@ mod tests {
         // `python_round_digits_no_exposed_credit` and
         // `python_sort_direction_no_exposed_credit` do the same for a `round`
         // digit count and a sort direction, two more direct-aligned cards.
-        if (direct, no_strong, orthogonal, family_selection) != (32, 37, 50, 2) {
+        // `python_get_fallback_no_exposed_credit` keeps a `get` fallback edit
+        // whose calls all hold the key weakly exposed; its card names a dict
+        // without the key, one more direct-aligned card.
+        if (direct, no_strong, orthogonal, family_selection) != (33, 37, 50, 2) {
             return Err(format!(
                 "corpus inventory drift: direct={direct}, unknown={no_strong}, orthogonal={orthogonal}, family_selection={family_selection}"
             ));

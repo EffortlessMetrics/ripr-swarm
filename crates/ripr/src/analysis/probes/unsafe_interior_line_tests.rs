@@ -65,12 +65,13 @@ fn an_interior_line_of_an_unsafe_block_shows_the_edited_line() -> Result<(), Str
 }
 
 /// Negative: a changed line that opens the boundary itself keeps the label as
-/// its changed text, and a mid-line block in a safe fn still gets no unsafe
-/// boundary probe (the shared-edge rule fails closed).
+/// its changed text, a mid-line block in a safe fn still gets no unsafe
+/// boundary probe (the shared-edge rule fails closed), and a one-line block
+/// whose opener the edit leaves unchanged is not kept beside the edit.
 #[test]
 fn the_boundary_opening_line_and_a_safe_fn_mid_line_block_are_unchanged() -> Result<(), String> {
-    let before = "pub fn first(p: *const u8) -> u8 {\n    unsafe { p.read() }\n}\n";
-    let after = "pub fn first(p: *const u8) -> u8 {\n    unsafe { p.add(1).read() }\n}\n";
+    let before = "pub fn first(value: i32) -> i32 {\n    value + 1\n}\n";
+    let after = "pub fn first(value: i32) -> i32 {\n    unsafe { value + 1 }\n}\n";
     let probes = git_probes(before, after)?;
     let probe = &unsafe_probe_at(&probes, 2)?.probe;
     assert_eq!(probe.expression, "unsafe block");
@@ -87,6 +88,23 @@ fn the_boundary_opening_line_and_a_safe_fn_mid_line_block_are_unchanged() -> Res
     assert!(
         probes.iter().any(|seeded| seeded.probe.location.line == 2),
         "the changed line keeps its ordinary probe: {probes:?}"
+    );
+
+    // #15348: an edit inside a one-line block leaves the opener unchanged, so
+    // the block is that edit's enclosing context, not an edit of the boundary.
+    // The classified edit is the one row for the line; the boundary probe,
+    // which only restates the enclosing obligation, is not kept beside it.
+    let before = "pub fn first(p: *const u8) -> u8 {\n    unsafe { p.read() }\n}\n";
+    let after = "pub fn first(p: *const u8) -> u8 {\n    unsafe { p.add(1).read() }\n}\n";
+    let probes = git_probes(before, after)?;
+    assert!(
+        unsafe_probe_at(&probes, 2).is_err(),
+        "an enclosing boundary is not kept beside the classified edit: {probes:?}"
+    );
+    assert!(
+        probes.iter().any(|seeded| seeded.probe.location.line == 2
+            && seeded.probe.family != ProbeFamily::StaticUnknown),
+        "the changed line keeps its classified probe: {probes:?}"
     );
     Ok(())
 }

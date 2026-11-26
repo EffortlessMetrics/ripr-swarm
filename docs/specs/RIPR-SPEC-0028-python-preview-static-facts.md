@@ -2289,6 +2289,19 @@ the same rule finds one the counts round differently inside the bounds
 above. A call the reader cannot resolve, an unreadable literal, or no
 resolved call at all, leaves the reading to the other rules.
 
+The same gate reads a one-line edit that changes only the literal fallback of
+`<parameter>.get(<literal key>, <literal>)` (#16203): the result differs only
+for a dict without the key. As for a sort, the changed line must start the
+first top-level body statement that names the parameter and name it once, and
+a parametrize case value is not read. When every strong related call binds the
+parameter to a dict display the call spells whose keys are all scalar
+literals, and each such dict holds the key, the edit reads `weakly_exposed`
+and the missing discriminator names a dict without the key. A key matches by
+Python equality in any key order; a float key, or a comparison the reader
+cannot settle with no other key matching, leaves the call unread. The key and
+both fallbacks must be literals other than f-strings, and the two fallbacks
+must differ in value.
+
 Tests: `call_variant_tests.rs::inputs_without_trailing_whitespace_do_not_expose_strip_to_lstrip`,
 `call_variant_tests.rs::an_input_with_trailing_whitespace_keeps_strip_to_lstrip_exposed`,
 `call_variant_tests.rs::inputs_within_the_smaller_digit_count_do_not_expose_a_round_change`,
@@ -2326,7 +2339,14 @@ Tests: `call_variant_tests.rs::inputs_without_trailing_whitespace_do_not_expose_
 `call_variant_tests.rs::a_count_past_the_leading_digit_keeps_a_round_change_exposed`,
 `call_variant_tests.rs::a_float_on_a_decimal_tie_keeps_a_round_change_exposed`,
 `boundary.rs::an_int_spelling_its_float_spelling_above_two_to_the_53rd`,
-`boundary.rs::a_float_spelling_is_the_nearest_double_not_its_digits`.
+`boundary.rs::a_float_spelling_is_the_nearest_double_not_its_digits`,
+`call_variant_tests.rs::dicts_holding_the_key_do_not_expose_a_get_fallback_change`,
+`call_variant_tests.rs::a_dict_without_the_key_keeps_a_get_fallback_change_exposed`,
+`call_variant_tests.rs::an_unpacked_dict_keeps_a_get_fallback_change_exposed`,
+`call_variant_tests.rs::only_a_lone_literal_fallback_edit_on_a_named_get_is_read`,
+`call_variant_tests.rs::dict_keys_are_read_only_from_a_literal_display`,
+`call_variant_tests.rs::a_held_key_is_read_whatever_the_dict_key_order`,
+`call_variant_tests.rs::a_parametrized_dict_keeps_a_get_fallback_change_exposed`.
 
 ## Changed Range Header Amendment (#12948)
 
