@@ -14113,7 +14113,7 @@ fn impl_receiver_type(function: &FunctionSummary, index: &RustIndex) -> Option<S
 
 /// Whether any `impl<..>` header in `source` lists `name` among its generic
 /// parameters (or anywhere in its angle brackets, which fails closed).
-fn impl_generics_name(source: &str, name: &str) -> bool {
+pub(super) fn impl_generics_name(source: &str, name: &str) -> bool {
     if !source.contains(name) {
         return false;
     }

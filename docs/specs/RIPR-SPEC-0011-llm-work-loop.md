@@ -1336,6 +1336,17 @@ a stray positional argument) under `--json` keeps exit 2 and its stderr prose
 and writes the standalone `cli_refusal` document to stdout (#6834 decision);
 other argv usage errors keep empty stdout.
 
+## Amendment (#14931, #15265): typed start refusals print `cli_refusal` under `--json`
+
+The empty-stdout rule above holds for untyped refusals and operational errors.
+A `ripr repair` or `ripr continue` refusal that carries a typed
+`ripr: refusal code=` line at exit `3` (see `docs/EXIT_CODES.md`) also writes
+the `cli_refusal` document with that `code` and its `disposition` on stdout
+under `--json`. That includes the not-started start holds: an uncommitted
+focused test target (`start_refused_uncommitted_target`) and uncommitted
+changes outside the allowed edit surface (`start_refused_dirty_premise`).
+Their stderr prose is unchanged.
+
 ## Amendment (#15282): continue on a complete attempt prints a short summary
 
 Without `--json`, `ripr continue` on a confirmed-complete attempt prints a
@@ -1415,6 +1426,7 @@ is not decided here.
 - `crates/ripr/tests/repair_check_recommended_start.rs::a_start_whose_card_cannot_be_produced_creates_no_attempt` (#12867)
 - `crates/ripr/tests/repair_check_recommended_start.rs::a_refused_field_seam_names_the_stub_or_why_there_is_none` (#12959)
 - `crates/ripr/tests/mcp_cli_repair_parity.rs::six_step_agent_contract_holds_through_cli_and_mcp` (#14079: gap, one unit, one test edit, re-recorded static evidence, the caller's run as a separate axis, durable read-back from a new MCP process; #16251: the MCP receipt `test_run` equals CLI status; #16263: the finish's `Next:` line reads the reported run back; #16311: a sibling-only run reads `edited_test: not_covered`)
+- `crates/ripr/tests/focused_test_result.rs::a_legacy_pending_claim_without_edited_test_resumes` (#16320: a simulated legacy pending record without `edited_test` resumes before receipt publication; a changed claim refuses)
 - `crates/ripr/src/app/focused_run.rs::tests::a_retained_record_reads_back_only_for_its_own_attempt_and_kind` (#14079)
 - `crates/ripr/src/cli/commands/agent.rs::repair_summary_tests::repair_summary_reports_a_recorded_caller_run_instead_of_none_recorded` (#14079)
 - `crates/ripr/src/app/agent_status/test_run.rs::tests::a_reported_run_is_read_back_with_its_counts_and_a_failure_is_named` (#14079)

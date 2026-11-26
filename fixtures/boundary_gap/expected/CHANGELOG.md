@@ -1,15 +1,27 @@
 # Golden Output Changes
 
-## Pending — corpus cache generation 1.207 for audited value-macro wrappers (#10357)
+## Pending — corpus cache generation 1.208 for audited value-macro wrappers (#10357)
 
 A helper wrapper that builds a value through a path-qualified
 `anyhow::anyhow!` or `serde_json::json!` of an audited release now forwards
-its helper result, which bumps the analyzer cache schema to 1.207. Move the
-portable unchanged-attempt snapshots to 1.207, recompute the
+its helper result, which bumps the analyzer cache schema to 1.208. Move the
+portable unchanged-attempt snapshots to 1.208, recompute the
 `raw_json_placeholder_v1` artifact content commitment, then the dependent
 verify commitments and receipt byte hashes. Weak grip, unchanged movement,
 historical currentness, incomplete receipt status and fail-closed
 first-action routing remain the same. No other fixture output is regenerated.
+
+## Pending — corpus cache generation 1.207 for constructed trait receivers (#15956, #15428)
+
+A trait impl method on a receiver built by an indexed constructor now relates
+by `direct_owner_call` unless another method of the name may take the call,
+and an inherent by-value twin withholds the relation, which bumps the
+analyzer cache schema to 1.207. Move the portable unchanged-attempt snapshots
+to 1.207, recompute the `raw_json_placeholder_v1` artifact content commitment,
+then the dependent verify commitments and receipt byte hashes. Weak grip,
+unchanged movement, historical currentness, incomplete receipt status and
+fail-closed first-action routing remain the same. No other fixture output is
+regenerated.
 
 ## Pending — corpus cache generation 1.206 for audited logging wrappers (#10357)
 
