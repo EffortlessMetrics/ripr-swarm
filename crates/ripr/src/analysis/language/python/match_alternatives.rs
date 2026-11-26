@@ -201,9 +201,39 @@ impl Case {
     }
 }
 
+/// The literal an expression spells, read from its source text.
+fn literal_text(text: &str) -> Option<Constant> {
+    parse_expression(text).and_then(|expr| literal(&expr))
+}
+
+// The value of a test-local name bound once to a literal the shared reader
+// does not read, such as the complex number `y = 1+2j`.
+fn bound_local(
+    candidate: &PythonRelatedCandidate<'_>,
+    line: usize,
+    name: &str,
+) -> Option<Constant> {
+    let test = candidate.test;
+    let source = test.body_text.lines().nth(line.checked_sub(test.line)?)?;
+    let call_start = source.as_ptr().addr() - test.body_text.as_ptr().addr();
+    let text = super::test_local_literal::test_local_value(test, name, call_start, |text| {
+        literal_text(text).is_some().then(|| text.to_string())
+    })?;
+    literal_text(&text)
+}
+
 enum PinnedInput {
     Literal(Constant),
-    RowBinding,
+    /// The call leaves the subject to its declared default.
+    Default,
+    /// The subject arrives through a value the shared row reader binds, or,
+    /// when the argument is a bare name, through that name.
+    RowBinding {
+        name: Option<String>,
+    },
+    /// The asserted call cannot run as written: the owner refuses its
+    /// arguments, or the expected value is one the test does not establish.
+    Refused,
 }
 
 // Read an actual direct assertion on the owner. An unrelated strong assert
@@ -263,14 +293,27 @@ fn pinned_input(
     if let Expr::Name(name) = expected {
         let name = name.id.as_str();
         let assertion_start = source.as_ptr().addr() - test.body_text.as_ptr().addr();
-        if !test
+        let parametrized = test
             .parametrize
             .as_ref()
-            .is_some_and(|cases| cases.binds(name))
+            .is_some_and(|cases| cases.binds(name));
+        if !parametrized
             && super::test_local_literal::test_local_literal(test, name, assertion_start).is_none()
             && super::test_local_literal::test_module_constant(test, name).is_none()
         {
-            return None;
+            return Some(PinnedInput::Refused);
+        }
+        // A parametrized expected value the shared reader cannot read in
+        // every case (a cell that names another name) collects nowhere.
+        if parametrized
+            && test.parametrize.as_ref().is_some_and(|cases| {
+                cases.cases.iter().any(|case| {
+                    case.get(name)
+                        .is_none_or(|value| super::boundary::literal_value(value).is_none())
+                })
+            })
+        {
+            return Some(PinnedInput::Refused);
         }
     } else if literal(expected).is_none() {
         return None;
@@ -280,7 +323,7 @@ fn pinned_input(
     let literal_or_plain =
         |value: &Expr| super::range_activation::plain_argument(value) || literal(value).is_some();
     if !super::range_activation::valid_owner_call_with(owner, call, literal_or_plain) {
-        return None;
+        return Some(PinnedInput::Refused);
     }
     let callee = expr_full_name(&call.func)?;
     let is_owner = owner_module_callees(test, owner).contains(&callee)
@@ -310,12 +353,28 @@ fn pinned_input(
     });
     // The shared row reader binds names, parametrization and defaults. A
     // literal written directly in the observed call is also native evidence,
-    // including byte strings and non-decimal numerals outside that reader.
-    Some(
-        argument
-            .and_then(literal)
-            .map_or(PinnedInput::RowBinding, PinnedInput::Literal),
-    )
+    // including byte strings and non-decimal numerals outside that reader,
+    // and so is the default the call leaves the subject to.
+    Some(if let Some(argument) = argument {
+        if let Some(value) = literal(argument) {
+            PinnedInput::Literal(value)
+        } else {
+            PinnedInput::RowBinding {
+                name: match argument {
+                    Expr::Name(name) => Some(name.id.to_string()),
+                    _ => None,
+                },
+            }
+        }
+    } else if owner
+        .parameters
+        .iter()
+        .any(|p| p.name == subject && p.default.as_deref().and_then(literal_text).is_some())
+    {
+        PinnedInput::Default
+    } else {
+        PinnedInput::RowBinding { name: None }
+    })
 }
 
 pub(super) fn missing(
@@ -359,35 +418,69 @@ pub(super) fn missing(
     // Before this first statement a bare parameter still has its call value
     // and no enclosing guard or early exit can have diverted the call.
     if isolated && new.entered_directly && old.entered_directly {
+        let skip = super::range_activation::receiver_skip(owner)?;
         let constants = unrebound_constants(owner, candidates);
         for candidate in candidates {
-            let (rows, _) = strong_owner_call_rows_with_gaps(
+            let (rows, gaps) = strong_owner_call_rows_with_gaps(
                 owner,
                 &constants,
                 std::slice::from_ref(candidate),
                 focus,
             );
+            // A test witnesses only when each of its calls to the owner can
+            // run: the shared reader bound every other parameter and lost no
+            // call (an unpack or a comment in an argument list), the asserted
+            // call is one the owner takes, and the subject is a literal, a
+            // default, a bound local, or a value that reader bound. An
+            // argument the test does not bind raises before or after the
+            // asserted call, and the test then fails on both versions.
+            let mut runs = !gaps;
+            let mut witnessed = Vec::new();
             let mut observed_lines = std::collections::BTreeMap::new();
             for row in rows {
+                runs &= owner
+                    .parameters
+                    .iter()
+                    .skip(skip)
+                    .filter(|parameter| parameter.name != new.subject)
+                    .all(|parameter| row.bindings.contains_key(&parameter.name));
                 let pin = observed_lines.entry(row.line).or_insert_with(|| {
                     pinned_input(owner, candidate, row.line, &new.subject, focus)
                 });
+                let bound_local = |name: &str| bound_local(candidate, row.line, name);
                 let value = match pin {
                     Some(PinnedInput::Literal(value)) => Some(value.clone()),
-                    Some(PinnedInput::RowBinding) => row
+                    Some(PinnedInput::Default) => owner
+                        .parameters
+                        .iter()
+                        .find(|p| p.name == new.subject)
+                        .and_then(|p| p.default.as_deref())
+                        .and_then(literal_text),
+                    Some(PinnedInput::RowBinding { name }) => row
                         .bindings
                         .get(&new.subject)
-                        .and_then(|binding| parse_expression(&binding.value))
-                        .and_then(|expr| literal(&expr)),
-                    None => None,
+                        .and_then(|binding| literal_text(&binding.value))
+                        .or_else(|| name.as_deref().and_then(bound_local)),
+                    Some(PinnedInput::Refused) | None => None,
+                };
+                runs &= match pin {
+                    Some(PinnedInput::Literal(_) | PinnedInput::Default) => true,
+                    Some(PinnedInput::RowBinding { .. }) => {
+                        value.is_some() || row.bindings.contains_key(&new.subject)
+                    }
+                    Some(PinnedInput::Refused) => false,
+                    None => row.bindings.contains_key(&new.subject),
                 };
                 if let Some(value) = value
                     && new.reaches(&value)
                     && old.reaches(&value)
                     && new.selects(&value) != old.selects(&value)
                 {
-                    inputs.push(value);
+                    witnessed.push(value);
                 }
+            }
+            if runs {
+                inputs.extend(witnessed);
             }
         }
     }

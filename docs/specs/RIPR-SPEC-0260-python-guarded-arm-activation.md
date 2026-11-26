@@ -159,8 +159,21 @@ arm. A row must get past earlier arms and match the changed alternative under
 Python's pattern rules. Numeric patterns use equality and singleton patterns
 use identity: dropping `True` from `case 1 | True` changes no selected arm and
 gets no card, while dropping it from `case 2 | True` does. A row may pass its
-input as a literal expression, `1+2j` included. An unrelated assertion or an
-unbound input cannot supply a row.
+input as a literal expression, `1+2j` included, leave it to the parameter's
+default, or bind it once in the test to such a literal. An unrelated
+assertion or an unbound input cannot supply a row. A test supplies a row only
+when each of its calls to the owner can run: the shared test reader binds
+every other argument, the subject is a literal, a default, a bound local or a
+value that reader bound, and a parametrized expected value is a literal that
+reader reads in every case. A name the test does not bind raises before or
+after the asserted call, and the test then fails on both versions. The rule
+reads what the shared test reader binds: an argument bound to a list, tuple or
+dictionary display, a `*args` or `**kwargs` parameter, a complex number
+through a module constant, a parametrize cell or a sibling default, and a
+parametrized expected value that is a tuple are not read, and the rule
+withholds there. A test that fails to collect for a reason that reader does
+not see, such as an undefined `id=` value in a parametrize decorator, keeps
+the verdict the generic reader gives.
 When a witness is missing, the finding withholds strong credit and names the
 first missing case. An altered alternative that an earlier arm or a guard
 keeps every input from reaching withholds strong credit without naming a

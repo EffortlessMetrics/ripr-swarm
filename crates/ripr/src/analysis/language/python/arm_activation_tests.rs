@@ -520,6 +520,117 @@ fn literal_or_edit_requires_each_alternative_to_change_the_selected_arm() -> Res
     Ok(())
 }
 
+/// `def kind({params})` whose `case {new}:` line replaced `case {old}:`,
+/// classified against `tests`, built the way the workspace pass builds a
+/// workspace that holds no other file.
+fn classify_owner(params: &str, old: &str, new: &str, tests: &str) -> Result<Finding, String> {
+    let source = format!(
+        "def kind({params}):\n    match val:\n        case {new}:\n            return True\n        case _:\n            return False\n"
+    );
+    let test_file = format!("{KIND_IMPORT}\nimport pytest\n\n{tests}");
+    let (owners, tests) = super::fixtures_tests::workspace(&[
+        (OWNER_FILE, source.as_str()),
+        (TEST_FILE, test_file.as_str()),
+    ]);
+    classify_change_with_context(
+        Path::new(OWNER_FILE),
+        3,
+        &format!("        case {new}:"),
+        Some(&format!("        case {old}:")),
+        &owners,
+        &tests,
+        PythonNoBehaviorContext {
+            sole_line_replacement: true,
+            ..Default::default()
+        },
+        Some(&source),
+    )
+    .ok_or_else(|| "missing Python case finding".to_string())
+}
+
+/// The cases this rule names as missing: empty when it found a witness or
+/// has none to name.
+fn missing_cases(finding: &Finding) -> Vec<String> {
+    finding
+        .activation
+        .missing_discriminators
+        .iter()
+        .map(|discriminator| discriminator.value.clone())
+        .collect()
+}
+
+#[test]
+fn a_row_the_test_cannot_run_supplies_no_witness() -> Result<(), String> {
+    use ExposureClass::{Exposed, WeaklyExposed};
+    // `kind("y", ...)` would flip arms, but an argument the test does not bind
+    // raises before the owner runs, so the row distinguishes nothing.
+    for test in [
+        "def test_kind():\n    assert kind(\"y\", undefined_name) == True\n",
+        "def test_kind():\n    assert kind(\"y\", obj.attr) == True\n",
+        "def test_kind():\n    assert kind(\"y\", spare=none_here) == True\n",
+        "def test_kind():\n    assert kind(\"y\", make()) == True\n    assert kind(\"yes\", 1) == True\n",
+        "@pytest.mark.parametrize('expected', [nope])\ndef test_kind(expected):\n    assert kind(\"y\") == expected\n",
+        // Another call of the same test cannot run: before the asserted one,
+        // or after it, where the old version would reach it. A starred call
+        // is one the shared reader records as a gap, not as a row.
+        "def test_kind():\n    kind(undefined_name)\n    assert kind(\"y\") == True\n",
+        "def test_kind():\n    assert kind(\"y\") == True\n    kind(undefined_name)\n",
+        "def test_kind():\n    kind(*undefined_name)\n    assert kind(\"y\") == True\n",
+        // A call the owner refuses: an argument it does not take.
+        "def test_kind():\n    assert kind(\"y\", extra=1) == True\n    assert kind(\"y\") == True\n",
+        "def test_kind():\n    assert kind(\"y\", 1, 2) == True\n    assert kind(\"y\") == True\n",
+        // An expected value the test does not establish.
+        "def test_kind():\n    assert kind(\"y\") == expected\n    assert kind(\"yes\") == True\n",
+    ] {
+        let finding = classify_owner("val, spare=None", "\"yes\" | \"y\"", "\"yes\"", test)?;
+        assert_eq!(finding.class, WeaklyExposed, "{test}");
+        assert_eq!(missing_cases(&finding), ["val == \"y\""], "{test}");
+    }
+    // A sibling the test establishes, and other calls the reader binds,
+    // leave the row a witness.
+    for test in [
+        "def test_kind():\n    assert kind(\"y\", \"x\") == True\n",
+        "def test_kind():\n    spare = 1\n    assert kind(\"y\", spare) == True\n",
+        "@pytest.mark.parametrize('expected', [pytest.param(True, id='ok')])\ndef test_kind(expected):\n    assert kind(\"y\") == expected\n",
+        "def test_kind():\n    assert kind(\"y\") == True\n    assert kind(\"yes\") == True\n",
+    ] {
+        let finding = classify_owner("val, spare=None", "\"yes\" | \"y\"", "\"yes\"", test)?;
+        assert_eq!(finding.class, Exposed, "{test}");
+    }
+    Ok(())
+}
+
+#[test]
+fn a_complex_number_reaches_the_rule_through_a_default_and_a_local() -> Result<(), String> {
+    use ExposureClass::Exposed;
+    let old = "1+2j | 3";
+    let new = "3";
+    // The call leaves `val` to its default, or the test binds it once. Either
+    // row flips arms, so the rule names no missing case and the edit reads
+    // `exposed`.
+    for (params, test) in [
+        ("val=1+2j", "def test_kind():\n    assert kind() == True\n"),
+        (
+            "val",
+            "def test_kind():\n    y = 1+2j\n    assert kind(y) == True\n",
+        ),
+    ] {
+        let finding = classify_owner(params, old, new, test)?;
+        assert!(missing_cases(&finding).is_empty(), "{test}: {finding:?}");
+        assert_eq!(finding.class, Exposed, "{test}");
+    }
+    // A second binding of the name, or a parametrize cell, holds a value the
+    // shared reader does not read; the rule names the missing case.
+    for test in [
+        "def test_kind():\n    y = 3\n    y = 1+2j\n    assert kind(y) == True\n",
+        "@pytest.mark.parametrize('val, expected', [(1+2j, True)])\ndef test_kind(val, expected):\n    assert kind(val) == expected\n",
+    ] {
+        let finding = classify_owner("val", old, new, test)?;
+        assert_eq!(missing_cases(&finding), ["val == 1+2j"], "{test}");
+    }
+    Ok(())
+}
+
 #[test]
 fn changing_an_inline_case_suite_keeps_its_existing_evidence() -> Result<(), String> {
     let source = "def kind(val):\n    match val:\n        case 'yes' | 'y': return False\n        case _: return False\n";
