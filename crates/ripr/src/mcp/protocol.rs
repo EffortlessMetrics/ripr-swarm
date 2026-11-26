@@ -2242,7 +2242,8 @@ fn receipt_status_output_schema() -> Value {
                             "file": { "type": "string" },
                             "ran": { "type": "integer", "minimum": 0 },
                             "passed": { "type": "integer", "minimum": 0 },
-                            "failed": { "type": "integer", "minimum": 0 }
+                            "failed": { "type": "integer", "minimum": 0 },
+                            "edited_test": { "type": "string", "enum": ["covered", "not_covered", "unknown"] }
                         },
                         "required": ["status", "test_changed", "next_step"]
                     },

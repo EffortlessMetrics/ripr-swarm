@@ -3050,7 +3050,10 @@ fn run_agent_repair_phase(
                         let supplied =
                             validate_focused_run_input(&root, store_ref, &parsed_id, &policy, path)
                                 .map_err(|error| format!("{error}; inspect `{status}`"))?;
-                        if supplied.identity.record != pending.record {
+                        if !crate::app::focused_run::same_focused_claim(
+                            &supplied.identity.record,
+                            &pending.record,
+                        ) {
                             return Err(format!(
                                 "the supplied focused result differs from the finished proposal; use a --test-result FILE matching the retained normalized claim, or inspect `{status}` before starting a new attempt"
                             ));
@@ -3122,7 +3125,7 @@ fn run_agent_repair_phase(
                         result_path,
                     );
                     let mismatch = match checked {
-                        Ok(supplied) if supplied.identity.record == pending.record => None,
+                        Ok(supplied) if crate::app::focused_run::same_focused_claim(&supplied.identity.record, &pending.record) => None,
                         Ok(_) => Some("the supplied focused result differs from the interrupted finish; retry with the original --test-result FILE".to_string()),
                         Err(error) => Some(format!("the interrupted focused result was refused: {error}; retry with the original --test-result FILE")),
                     };
@@ -3181,7 +3184,10 @@ fn run_agent_repair_phase(
                                 refusal.typed = true;
                                 format!("the finished focused result was refused: {error}; retry with the original --test-result FILE")
                             })?;
-                            if supplied.identity.record != pending.record {
+                            if !crate::app::focused_run::same_focused_claim(
+                                &supplied.identity.record,
+                                &pending.record,
+                            ) {
                                 refusal.typed = true;
                                 return Err("the supplied focused result differs from the finished attempt; retry with the original --test-result FILE".to_string());
                             }
@@ -3310,7 +3316,10 @@ fn run_agent_repair_phase(
                                 refusal.typed = true;
                                 format!("the finished focused result was refused: {error}; retry with the original --test-result FILE")
                             })?;
-                                if supplied.identity.record != pending.record {
+                                if !crate::app::focused_run::same_focused_claim(
+                                    &supplied.identity.record,
+                                    &pending.record,
+                                ) {
                                     refusal.typed = true;
                                     return Err("the supplied focused result differs from the finished attempt; retry with the original --test-result FILE".to_string());
                                 }
@@ -3404,7 +3413,10 @@ fn run_agent_repair_phase(
                             refusal.typed = true;
                             format!("the finished focused result was refused: {error}; retry with the original --test-result FILE")
                         })?;
-                                if supplied.identity.record != pending.record {
+                                if !crate::app::focused_run::same_focused_claim(
+                                    &supplied.identity.record,
+                                    &pending.record,
+                                ) {
                                     refusal.typed = true;
                                     return Err("the supplied focused result differs from the finished attempt; retry with the original --test-result FILE".to_string());
                                 }
@@ -3539,7 +3551,10 @@ fn run_agent_repair_phase(
                         refusal.typed = true;
                         format!("the interrupted focused result was refused: {error}; retry with the original --test-result FILE")
                     })?;
-                    if supplied.identity.record != pending.record {
+                    if !crate::app::focused_run::same_focused_claim(
+                        &supplied.identity.record,
+                        &pending.record,
+                    ) {
                         refusal.typed = true;
                         return Err("the supplied focused result differs from the interrupted finish; retry with the original --test-result FILE".to_string());
                     }
@@ -7668,6 +7683,7 @@ mod repair_summary_tests {
             ran: passed + failed,
             passed,
             failed,
+            edited_test: None,
         };
         let line = |run: Option<&ReportedTestRun>| {
             repair_receipt_summary_lines(receipt, run)
@@ -8742,6 +8758,10 @@ fn validate_focused_run_input(
             file,
             file_source: &source,
             inline_module,
+            baseline_source: crate::app::focused_run::edit_coverage::baseline_source(
+                root, &baseline, file,
+            )
+            .as_deref(),
         },
     )?;
     let rendered = String::from_utf8(record.render()?)
