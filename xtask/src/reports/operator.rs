@@ -1136,8 +1136,16 @@ mod tests {
 
     #[test]
     fn operator_cockpit_reports_missing_inputs_with_commands() -> Result<(), String> {
-        let report =
-            build_operator_cockpit_report_at(Path::new("target/ripr/missing-operator-test"));
+        // The report and the expected commands resolve redirect paths from the process cwd.
+        let _cwd_guard = crate::acquire_test_cwd_read_guard();
+        let root = crate::tests::temp_dir("operator-cockpit-missing");
+        let report = build_operator_cockpit_report_at(&root);
+        fs::remove_dir(&root).map_err(|err| {
+            format!(
+                "failed to remove empty report root {}: {err}",
+                root.display()
+            )
+        })?;
         assert_eq!(report.status, "warn");
         assert!(report.inputs.iter().any(|input| {
             input.name == "repo exposure"
@@ -1151,6 +1159,12 @@ mod tests {
         assert!(report.next_commands.iter().any(|command| {
             command.command == BEFORE_SNAPSHOT_COMMAND && command.reason.contains("before snapshot")
         }));
+        assert!(
+            report
+                .inputs
+                .iter()
+                .any(|input| { input.name == "after snapshot" && input.state == "missing" })
+        );
         assert!(report.next_commands.iter().any(|command| {
             command.command == after_snapshot_command() && command.reason.contains("after snapshot")
         }));
