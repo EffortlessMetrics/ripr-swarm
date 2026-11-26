@@ -813,9 +813,11 @@ pub(crate) struct CachedSeamLimitInfo {
 /// `1.207`: a trait impl method on a receiver built by an indexed constructor
 /// relates by `direct_owner_call` unless another method of the name may take
 /// the call, and an inherent by-value twin withholds it (#15956, #15428).
+/// `1.208`: a helper wrapper that builds a value through an
+/// audited `anyhow::anyhow!` or `serde_json::json!` forwards (#10357).
 /// `1.209`: a `&self` or `&mut self` trait impl method is name-only when a
 /// standard trait's method of the name comes at an earlier probing step
-/// (#16040). `1.208` is left to a concurrent bump (#16332).
+/// (#16040).
 pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.209";
 /// `0.2` → `0.3`: same semantic transition as the outer cache (#3273 /
 /// #3286) — sharded entries derive from the same facts and cannot bypass
@@ -1060,6 +1062,7 @@ pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.209";
 /// `0.207`: same compared-bool-local oracle reading as full `1.205` (#16296).
 /// `0.208`: same audited logging-wrapper forwarding as full `1.206` (#10357).
 /// `0.209`: same constructed trait receiver reading as full `1.207` (#15956).
+/// `0.210`: same audited value-macro wrapper forwarding as full `1.208` (#10357).
 /// `0.211`: same standard trait rival reading as full `1.209` (#16040).
 const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.211";
 
@@ -1307,6 +1310,7 @@ const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.211";
 /// `0.207`: same compared-bool-local oracle reading as full `1.205` (#16296).
 /// `0.208`: same audited logging-wrapper forwarding as full `1.206` (#10357).
 /// `0.209`: same constructed trait receiver reading as full `1.207` (#15956).
+/// `0.210`: same audited value-macro wrapper forwarding as full `1.208` (#10357).
 /// `0.211`: same standard trait rival reading as full `1.209` (#16040).
 pub(crate) const COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.211";
 
@@ -5926,7 +5930,8 @@ mod tests {
         // 1.204 -> 1.205: a compared bool local follows its initializer (#16296).
         // 1.205 -> 1.206: an audited qualified logging macro is transparent (#10357).
         // 1.206 -> 1.207: constructed trait receivers and by-value twins (#15956, #15428).
-        // 1.207 -> 1.209: a standard trait method at an earlier probing step (#16040).
+        // 1.207 -> 1.208: an audited qualified value macro is transparent (#10357).
+        // 1.208 -> 1.209: a standard trait method at an earlier probing step (#16040).
         assert_eq!(CACHE_SCHEMA_VERSION, "1.209");
         // 1.168 -> 1.169: plain `assert_eq!` literal withhold in the audit (#13005).
         // 0.12 -> 0.13 through 0.14 / 0.15 / 0.16 / 0.17 / 0.18: same
@@ -6111,7 +6116,8 @@ mod tests {
         // 0.206 -> 0.207: same compared-bool-local oracle reading as full 1.205 (#16296).
         // 0.207 -> 0.208: same audited logging-wrapper forwarding as full 1.206 (#10357).
         // 0.208 -> 0.209: same constructed trait receiver reading as full 1.207 (#15956).
-        // 0.209 -> 0.211: same standard trait rival reading as full 1.209 (#16040).
+        // 0.209 -> 0.210: same audited value-macro wrapper forwarding as full 1.208 (#10357).
+        // 0.210 -> 0.211: same standard trait rival reading as full 1.209 (#16040).
         assert_eq!(SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.211");
         assert_eq!(COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.211");
         // 0.170 -> 0.171: same plain `assert_eq!` literal withhold as full 1.169 (#13005).

@@ -684,6 +684,98 @@ fn audited_qualified_logging_wrapper_forwards_the_helper_result() -> Result<(), 
 }
 
 #[test]
+fn audited_qualified_value_macro_wrapper_forwards_the_helper_result() -> Result<(), String> {
+    const ANYHOW: &str = "anyhow = \"1\"";
+    const SERDE_JSON: &str = "serde_json = \"1\"";
+    let wrapper = |call: &str| format!("    {call}\n    if is_bulk(qty) {{ 5 }} else {{ 0 }}");
+    for (dependency, locked, call) in [
+        (
+            ANYHOW,
+            ("anyhow", "1.0.104"),
+            "let _ = anyhow::anyhow!(\"order of {}\", qty);",
+        ),
+        (
+            ANYHOW,
+            ("anyhow", "1.0.100"),
+            "let _ = anyhow::anyhow!(\"order\");",
+        ),
+        (
+            SERDE_JSON,
+            ("serde_json", "1.0.154"),
+            "let _ = serde_json::json!({ \"qty\": qty });",
+        ),
+        (
+            SERDE_JSON,
+            ("serde_json", "1.0.150"),
+            "let _ = serde_json::json!([qty, null]);",
+        ),
+    ] {
+        let source = bulk_source(&wrapper(call), BOUNDARY_TESTS);
+        for family in ["predicate", "return_value"] {
+            let finding =
+                finding_with_dependencies(dependency, &[locked], &source, BULK_DIFF, family)?;
+            assert_eq!(finding["probe"]["line"], 2, "{call}\n{finding}");
+            assert_eq!(finding["classification"], "exposed", "{call}\n{finding}");
+        }
+    }
+    let json = "let _ = serde_json::json!({ \"qty\": qty });";
+    for (label, dependency, locked, call) in [
+        // Releases outside the audit, and a lockfile that does not lock the
+        // crate.
+        (
+            "unaudited anyhow",
+            ANYHOW,
+            &[("anyhow", "1.0.99")][..],
+            "let _ = anyhow::anyhow!(\"order\");",
+        ),
+        (
+            "unaudited serde_json",
+            SERDE_JSON,
+            &[("serde_json", "1.0.149")][..],
+            json,
+        ),
+        ("unlocked", SERDE_JSON, &[][..], json),
+        ("undeclared", "", &[("serde_json", "1.0.154")][..], json),
+        // anyhow's bail! and ensure! return, so they were never audited.
+        (
+            "bail",
+            ANYHOW,
+            &[("anyhow", "1.0.104")][..],
+            "if qty == 10 { anyhow::bail!(\"ten\"); }",
+        ),
+        (
+            "ensure",
+            ANYHOW,
+            &[("anyhow", "1.0.104")][..],
+            "anyhow::ensure!(qty != 10, \"ten\");",
+        ),
+        // A leaf audited under another root is not audited under this one.
+        (
+            "other root's leaf",
+            ANYHOW,
+            &[("anyhow", "1.0.104")][..],
+            "let _ = anyhow::json!({ \"qty\": qty });",
+        ),
+        // The helper call sits in the arguments.
+        (
+            "callee in arguments",
+            SERDE_JSON,
+            &[("serde_json", "1.0.154")][..],
+            "let _ = serde_json::json!({ \"bulk\": is_bulk(qty) });",
+        ),
+    ] {
+        let source = bulk_source(&wrapper(call), BOUNDARY_TESTS);
+        for family in ["predicate", "return_value"] {
+            let finding =
+                finding_with_dependencies(dependency, locked, &source, BULK_DIFF, family)?;
+            assert_eq!(finding["probe"]["line"], 2, "{label}\n{finding}");
+            assert_ne!(finding["classification"], "exposed", "{label}\n{finding}");
+        }
+    }
+    Ok(())
+}
+
+#[test]
 fn boolean_return_twin_does_not_borrow_other_calls_or_short_circuit_gates() -> Result<(), String> {
     let split = bulk_source(FORWARDING, "        let _ = order_discount(10);");
     let split = split.replace(

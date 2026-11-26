@@ -4,13 +4,23 @@
 
 A `&self` or `&mut self` trait impl method on the text receiver path is now
 name-only when a standard trait's method of the name comes at an earlier
-probing step, which bumps the analyzer cache schema to 1.209 (1.208 is left
-to a concurrent bump). Move the portable unchanged-attempt snapshots to 1.209,
+probing step, which bumps the analyzer cache schema to 1.209. Move the portable unchanged-attempt snapshots to 1.209,
 recompute the `raw_json_placeholder_v1` artifact content commitment, then the
 dependent verify commitments and receipt byte hashes. Weak grip, unchanged
 movement, historical currentness, incomplete receipt status and fail-closed
 first-action routing remain the same. No other fixture output is
 regenerated.
+
+## Pending — corpus cache generation 1.208 for audited value-macro wrappers (#10357)
+
+A helper wrapper that builds a value through a path-qualified
+`anyhow::anyhow!` or `serde_json::json!` of an audited release now forwards
+its helper result, which bumps the analyzer cache schema to 1.208. Move the
+portable unchanged-attempt snapshots to 1.208, recompute the
+`raw_json_placeholder_v1` artifact content commitment, then the dependent
+verify commitments and receipt byte hashes. Weak grip, unchanged movement,
+historical currentness, incomplete receipt status and fail-closed
+first-action routing remain the same. No other fixture output is regenerated.
 
 ## Pending — corpus cache generation 1.207 for constructed trait receivers (#15956, #15428)
 

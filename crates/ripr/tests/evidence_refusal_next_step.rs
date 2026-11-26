@@ -1,6 +1,7 @@
-//! `ripr pr-evidence --check` and `ripr impacted-evidence --check` refusals
-//! for a missing or broken packet name the command that writes it, not just
-//! the read error. Each case runs the real binary in a scratch directory and
+//! Refusals for a missing or broken input file name where a usable one comes
+//! from, not just the read error: `ripr pr-evidence --check`,
+//! `ripr impacted-evidence --check`, `ripr baseline update`,
+//! `ripr calibrate cargo-mutants` and `ripr check --suppression-policy`. Each case runs the real binary in a scratch directory and
 //! pins the next-step clause, so a regression that drops it fails here rather
 //! than only in the looser action-word floor (`refusal_next_step.rs`).
 
@@ -167,4 +168,150 @@ fn success(dir: &Path, args: &[&str]) -> Result<(), String> {
             String::from_utf8_lossy(&output.stderr)
         ))
     }
+}
+
+/// Every `baseline update` input refusal names that input's source: the
+/// reviewed ledger (restored, since `ripr baseline create` starts an
+/// unreviewed one) or `ripr gate evaluate` output. A `baseline create`
+/// ledger is still accepted, so the fallback the advice names works.
+#[test]
+fn baseline_update_refusals_name_the_command_that_writes_each_input() -> Result<(), String> {
+    let dir = scratch()?;
+    let write = |name: &str, text: &str| {
+        std::fs::write(dir.0.join(name), text).map_err(|error| format!("write {name}: {error}"))
+    };
+    write("current.json", r#"{"schema_version":"0.1","decisions":[]}"#)?;
+    write("baseline.json", "{ not json")?;
+    let update = [
+        "baseline",
+        "update",
+        "--baseline",
+        "baseline.json",
+        "--current",
+        "current.json",
+        "--remove-resolved",
+    ];
+    const BASELINE_SOURCE: &str = "; pass the reviewed baseline ledger, restored from version control if this copy is damaged (`ripr baseline create` starts a new, unreviewed one)";
+    const GATE_SOURCE: &str = "; pass the gate-decision JSON that `ripr gate evaluate` writes";
+    let stderr = refusal(&dir.0, &update)?;
+    stderr_has_all(
+        &stderr,
+        &["parse baseline baseline.json failed: ", BASELINE_SOURCE],
+    )?;
+    for (baseline, current, first) in [
+        (
+            r#"{"schema_version":"9","kind":"gate_baseline","entries":[]}"#,
+            r#"{"schema_version":"0.1","decisions":[]}"#,
+            "baseline baseline.json has unsupported schema_version `9`; expected `0.1`",
+        ),
+        (
+            r#"{"schema_version":"0.1","entries":[]}"#,
+            r#"{"schema_version":"0.1","decisions":[]}"#,
+            "baseline baseline.json missing kind",
+        ),
+        (
+            r#"{"schema_version":"0.1","kind":"other","entries":[]}"#,
+            r#"{"schema_version":"0.1","decisions":[]}"#,
+            "baseline baseline.json has unsupported kind `other`; expected `gate_baseline`",
+        ),
+    ] {
+        write("baseline.json", baseline)?;
+        write("current.json", current)?;
+        stderr_has_all(&refusal(&dir.0, &update)?, &[first, BASELINE_SOURCE])?;
+    }
+    write("current.json", r#"{"schema_version":"0.1","decisions":[]}"#)?;
+    success(
+        &dir.0,
+        &[
+            "baseline",
+            "create",
+            "--from",
+            "current.json",
+            "--out",
+            "baseline.json",
+            "--force",
+        ],
+    )?;
+    success(&dir.0, &update)?;
+
+    write("current.json", r#"{"schema_version":"9","decisions":[]}"#)?;
+    stderr_has_all(
+        &refusal(&dir.0, &update)?,
+        &[
+            "current gate-decision current.json has unsupported schema_version `9`; expected `0.1`",
+            GATE_SOURCE,
+        ],
+    )?;
+    write("current.json", r#"{"decisions":[]}"#)?;
+    stderr_has_all(
+        &refusal(&dir.0, &update)?,
+        &[
+            "current gate-decision current.json missing schema_version",
+            GATE_SOURCE,
+        ],
+    )
+}
+
+#[test]
+fn calibrate_refusal_names_the_snapshot_command() -> Result<(), String> {
+    let dir = scratch()?;
+    std::fs::write(dir.0.join("mutants.json"), "[]")
+        .map_err(|error| format!("write mutants.json: {error}"))?;
+    let calibrate = [
+        "calibrate",
+        "cargo-mutants",
+        "--repo-exposure-json",
+        "repo.json",
+        "--mutants-json",
+        "mutants.json",
+    ];
+    for (repo, first) in [
+        (
+            r#"{"seams":[{"seam_id":"a"}]}"#,
+            "repo exposure seam is missing string field `kind`",
+        ),
+        (
+            r#"{"seams":[{"seam_id":"a","kind":"k","file":"src/a.rs"}]}"#,
+            "repo exposure seam is missing numeric field `line`",
+        ),
+        (
+            r#"{"schema_version":"0.1"}"#,
+            "repo exposure JSON is missing `seams` array",
+        ),
+    ] {
+        std::fs::write(dir.0.join("repo.json"), repo)
+            .map_err(|error| format!("write repo.json: {error}"))?;
+        stderr_has_all(
+            &refusal(&dir.0, &calibrate)?,
+            &[
+                first,
+                "; pass a file written by `ripr check --format repo-exposure-json`",
+            ],
+        )?;
+    }
+    Ok(())
+}
+
+#[test]
+fn suppression_policy_refusals_name_the_fix() -> Result<(), String> {
+    let repo = committed_repo()?;
+    let stderr = refusal(&repo.0, &["check", "--suppression-policy", "nope.toml"])?;
+    stderr_has_all(
+        &stderr,
+        &[
+            "failed to read suppression policy `",
+            "nope.toml`: ",
+            "; pass an existing TOML file as `--suppression-policy`",
+        ],
+    )?;
+    std::fs::write(repo.0.join("bad.toml"), "[[suppressions]]\nbogus = 1\n")
+        .map_err(|error| format!("write bad.toml: {error}"))?;
+    let stderr = refusal(&repo.0, &["check", "--suppression-policy", "bad.toml"])?;
+    stderr_has_all(
+        &stderr,
+        &[
+            "bad.toml` is invalid; fix each problem listed below, then rerun:\n",
+            "unsupported `[[suppressions]]` field `bogus`",
+        ],
+    )
 }
