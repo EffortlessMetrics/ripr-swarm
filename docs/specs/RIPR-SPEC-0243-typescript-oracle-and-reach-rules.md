@@ -42,6 +42,7 @@ Linked issues:
 - #16275 (class expression as a CommonJS named export; rule 27)
 - #16306 (class method shadowed by a same-key field; rule 28)
 - #16314 (class method replaced by an assignment; rule 29)
+- #16349 (methods of an anonymous default-exported class; rule 19)
 - #9435 (exact oracle ignored on five changed-line shapes)
 - #9497 (skipped or unexercised tests credited as exposed; rules 17 and 18)
 - #11196 (start rate: a conditional assertion in an unconsulted test no longer
@@ -1920,8 +1921,16 @@ or declared) relates through the whole-module `require` binding
 (`Local.method()`), never through a named binding, which reads a static
 property of the class. An instance field of an inline class shadows the
 prototype method of the same name for sibling calls, as for a declared class.
-An anonymous `module.exports = class { ... }` yields
-owners that stay unrelated, as `export default class {}` does. Named property
+Amended 2026-11-26 (#16349): an anonymous `module.exports = class { ... }`
+and an anonymous ES `export default class { ... }` are default exports like
+their named twins, reached under any local name, so a missing class name is
+no reason to withhold the relation. Their members carry the class name
+`default` (the ES class's runtime name; a reserved word, so no same-file
+construction or static call can spell it) and relate through the whole-module
+`require` or the default import respectively; every other gate above is
+unchanged (a named import or `require`, a default-named `require` of the
+CommonJS form, and a named export beside the inline class stay unrelated).
+Before, both read `no_static_path`. Named property
 exports of a class expression (`exports.Name = class ...`) and `const Name =
 class ...; module.exports = Name;` are not read.
 
@@ -3043,7 +3052,7 @@ keys); do not take the next number.
   whole-module `require` under any local name as related, beside the controls
   that stay unrelated: named, default-named and ES imports, another module, a
   named export beside the class, an ambiguous whole export, a rebound or
-  shadowed require local, and an anonymous class. End-to-end `analyze_diff`
+  shadowed require local (an anonymous class relates since #16349). End-to-end `analyze_diff`
   cases pin that a changed method yields a finding, a static method relates
   only through the whole-module binding, and an instance field shadows a
   sibling-called method.
@@ -3104,6 +3113,15 @@ keys); do not take the next number.
   whose own method the write does replace. The owner is marked `Replaced`, while a
   constructor assignment to an accessor leaves the setter and getter as they
   are. Each test body asserts the runtime value.
+- #16349 (rule 19, anonymous default class):
+  `crates/ripr/src/analysis/language/typescript/tests/anonymous_default_class_tests.rs`
+  runs `analyze_diff` on a method of `export default class {}` (also
+  `extends Base`) and `module.exports = class {}`: a default import or
+  whole-module `require` under any local name relates, while a named import or
+  `require`, a default-named `require` and a named export beside the inline
+  class stay unrelated; owner extraction names the members `default` and leaves
+  a named or non-default anonymous class alone. `commonjs_inline_class_tests.rs`
+  now credits the anonymous inline class through a whole-module `require`.
 
 - #11196 (rule 11, object rows): `tests/object_row_tests.rs` pins the per-row
   literal assertions for the `for...of` and `test.each` object-row forms and

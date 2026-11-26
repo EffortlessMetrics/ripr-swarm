@@ -15,8 +15,10 @@
 //! * A default-named binding (`const { default: Cart } = require(...)`,
 //!   `import Cart from`) and a named `require` stay unrelated, as for the
 //!   declared class.
-//! * An anonymous `module.exports = class { ... }` yields owners and is not
-//!   related (no name to construct it by), like `export default class {}`.
+//! * An anonymous `module.exports = class { ... }` is the whole export too:
+//!   its members are named `default` and relate through a whole-module
+//!   `require`, like `export default class {}` through a default import
+//!   (#16349).
 //!
 //! * A static method relates through the whole-module `require` binding
 //!   (`Basket.make()`), not through a named binding, which reads a static
@@ -289,20 +291,28 @@ fn a_rebound_or_shadowed_require_local_stays_unrelated() -> Result<(), String> {
     Ok(())
 }
 
+/// An anonymous inline class is the whole export as well: its members are
+/// named `default` and a whole-module `require` relates them (#16349); a
+/// named `require` still reads a property the class does not have.
 #[test]
-fn an_anonymous_inline_class_has_owners_and_stays_unrelated() -> Result<(), String> {
+fn an_anonymous_inline_class_relates_through_a_whole_module_require() -> Result<(), String> {
     let text = owner_source("class", "");
     let members = inline_members(&text);
-    if members.len() != 3 || members.iter().any(|owner| owner.class_name.is_some()) {
+    if members.len() != 3
+        || members
+            .iter()
+            .any(|owner| owner.class_name.as_deref() != Some("default"))
+    {
         return Err(format!(
-            "expected three unnamed members, got {:?}",
+            "expected three members named `default`, got {:?}",
             members
                 .iter()
                 .map(|owner| (&owner.name, &owner.class_name))
                 .collect::<Vec<_>>()
         ));
     }
-    assert_withheld(&text, REQUIRE, "Cart")
+    assert_credited(&text, REQUIRE, "Cart")?;
+    assert_withheld(&text, NAMED_REQUIRE, "Cart")
 }
 
 #[test]

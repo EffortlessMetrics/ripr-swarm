@@ -310,6 +310,7 @@ fn owners_from_commonjs_export(
         // when the export is not provably this class.
         Expression::ClassExpression(class) => {
             let mut owners = owners_from_class(class, file, source, imports);
+            name_anonymous_default_class(class, &mut owners);
             for owner in &mut owners {
                 owner.class_default_export = true;
                 owner.commonjs_default_export = true;
@@ -1564,7 +1565,9 @@ pub(crate) fn owners_from_default_export(
             )]
         }
         ExportDefaultDeclarationKind::ClassDeclaration(class) => {
-            owners_from_class(class, file, source, imports)
+            let mut owners = owners_from_class(class, file, source, imports);
+            name_anonymous_default_class(class, &mut owners);
+            owners
         }
         ExportDefaultDeclarationKind::ArrowFunctionExpression(arrow) => vec![owner_from_arrow(
             file,
@@ -1838,6 +1841,24 @@ fn mark_replaced_by_assignment(
         && replaced.contains(&(class_name.to_string(), owner.name.clone(), is_static))
     {
         owner.method_kind = TypeScriptMethodKind::ReplacedByAssignment;
+    }
+}
+
+/// The class name an anonymous default-exported class carries: an ES
+/// `export default class {}` is named `default` at runtime, and an inline
+/// `module.exports = class {}` is the module's whole export under any local
+/// name. Its members get that name so the class-method relation, which needs
+/// one, can credit a default import or a whole-module `require` (#16349).
+/// `default` is a reserved word, so no same-file `new default()` or
+/// `default.member()` can match it; a named class keeps its own name.
+fn name_anonymous_default_class(class: &Class<'_>, owners: &mut [TypeScriptOwner]) {
+    if class.id.is_some() {
+        return;
+    }
+    for owner in owners {
+        if owner.class_name.is_none() {
+            owner.class_name = Some("default".to_string());
+        }
     }
 }
 
