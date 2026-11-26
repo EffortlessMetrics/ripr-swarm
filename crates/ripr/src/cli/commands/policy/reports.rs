@@ -4,7 +4,8 @@ use std::path::Path;
 
 use super::super::{
     SuppliedInputReads, maybe_append_jsonl, policy_readiness_generated_at,
-    read_optional_manifest_for_report, read_optional_text_for_report, write_text_file,
+    read_optional_manifest_for_report, read_optional_text_for_report,
+    read_optional_text_with_errno_for_report, write_text_file,
 };
 use super::parse::{
     parse_policy_history_options, parse_policy_operations_options,
@@ -167,38 +168,37 @@ pub(crate) fn policy_operations(args: &[String]) -> Result<(), String> {
         policy_readiness_json: options
             .policy_readiness
             .as_ref()
-            .map(|path| reads.read("--policy-readiness", "policy readiness", path)),
+            .map(|path| reads.read_with_errno("--policy-readiness", "policy readiness", path)),
         waiver_aging_json: options
             .waiver_aging
             .as_ref()
-            .map(|path| reads.read("--waiver-aging", "waiver aging", path)),
+            .map(|path| reads.read_with_errno("--waiver-aging", "waiver aging", path)),
         suppression_health_json: options
             .suppression_health
             .as_ref()
-            .map(|path| reads.read("--suppression-health", "suppression health", path)),
+            .map(|path| reads.read_with_errno("--suppression-health", "suppression health", path)),
         baseline_delta_json: options
             .baseline_delta
             .as_ref()
-            .map(|path| reads.read("--baseline-delta", "baseline debt delta", path)),
+            .map(|path| reads.read_with_errno("--baseline-delta", "baseline debt delta", path)),
         gate_decision_json: options
             .gate_decision
             .as_ref()
-            .map(|path| reads.read("--gate-decision", "gate decision", path)),
+            .map(|path| reads.read_with_errno("--gate-decision", "gate decision", path)),
         recommendation_calibration_json: options.recommendation_calibration.as_ref().map(|path| {
-            reads.read(
+            reads.read_with_errno(
                 "--recommendation-calibration",
                 "recommendation calibration",
                 path,
             )
         }),
-        mutation_calibration_json: options
-            .mutation_calibration
-            .as_ref()
-            .map(|path| reads.read("--mutation-calibration", "mutation calibration", path)),
+        mutation_calibration_json: options.mutation_calibration.as_ref().map(|path| {
+            reads.read_with_errno("--mutation-calibration", "mutation calibration", path)
+        }),
         preview_boundary_json: options
             .preview_boundary
             .as_ref()
-            .map(|path| reads.read("--preview-boundary", "preview boundary", path)),
+            .map(|path| reads.read_with_errno("--preview-boundary", "preview boundary", path)),
     };
     let report = output::policy_operations::build_policy_operations_report(input);
     let rendered_json = output::policy_operations::render_policy_operations_json(&report)?;
@@ -230,11 +230,11 @@ pub(crate) fn policy_history(args: &[String]) -> Result<(), String> {
             .map(|path| output::policy_history::display_path(path)),
         commit: options.commit,
         pr_number: options.pr_number,
-        current_json: reads.read("--current", "policy operations", &options.current),
+        current_json: reads.read_with_errno("--current", "policy operations", &options.current),
         history_jsonl: options
             .history
             .as_ref()
-            .map(|path| read_optional_text_for_report("policy history", path)),
+            .map(|path| read_optional_text_with_errno_for_report("policy history", path)),
     };
     let report = output::policy_history::build_policy_history_report(input);
     let rendered_json = output::policy_history::render_policy_history_json(&report)?;
@@ -277,11 +277,15 @@ pub(crate) fn policy_promotion(args: &[String]) -> Result<(), String> {
             .history
             .as_ref()
             .map(|path| output::policy_promotion::display_path(path)),
-        operations_json: reads.read("--operations", "policy operations", &options.operations),
+        operations_json: reads.read_with_errno(
+            "--operations",
+            "policy operations",
+            &options.operations,
+        ),
         history_json: options
             .history
             .as_ref()
-            .map(|path| reads.read("--history", "policy history", path)),
+            .map(|path| reads.read_with_errno("--history", "policy history", path)),
     };
     let report = output::policy_promotion::build_policy_promotion_report(input);
     let rendered_json = output::policy_promotion::render_policy_promotion_json(&report)?;
@@ -315,7 +319,7 @@ pub(crate) fn policy_preview_promotion(args: &[String]) -> Result<(), String> {
         evidence_json: options
             .evidence
             .as_ref()
-            .map(|path| reads.read("--evidence", "preview promotion evidence", path)),
+            .map(|path| reads.read_with_errno("--evidence", "preview promotion evidence", path)),
     };
     let report = output::policy_preview_promotion::build_preview_promotion_report(input);
     let rendered_json = output::policy_preview_promotion::render_preview_promotion_json(&report)?;
@@ -351,7 +355,7 @@ pub(crate) fn policy_waiver_aging(args: &[String]) -> Result<(), String> {
         ledger_json: options
             .ledger
             .as_ref()
-            .map(|path| reads.read("--ledger", "PR evidence ledger", path)),
+            .map(|path| reads.read_with_errno("--ledger", "PR evidence ledger", path)),
         history_json: options
             .history
             .as_ref()

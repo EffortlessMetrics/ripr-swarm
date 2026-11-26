@@ -472,7 +472,12 @@ Two pattern terms are used below.
    asserts the pattern, so it takes this rule's reading as the whole
    condition of `assert!` does (#16290). `assert_ne!` stays an inequality
    macro whatever the literal, so rule 1 keeps
-   `assert_ne!(matches!(..), false)` weak even for a pinned pattern. Any other pattern
+   `assert_ne!(matches!(..), false)` weak even for a pinned pattern. An
+   equality assertion that compares a boolean local with a boolean literal
+   (`let ok = value > 0; assert_eq!(ok, true);`) asserts the local's
+   initializer, so it takes the weaker of its own reading and the reading of
+   the same assertion with the initializer written in place, when the test
+   binds the name once with a plain immutable `let` (#16296). Any other pattern
    stays `exact_value` only when it pins a value: it contains a literal
    outside a range, a constant, or a variant of an enum shown to have more
    than one variant (the `Option` and `Result` constructors are read as

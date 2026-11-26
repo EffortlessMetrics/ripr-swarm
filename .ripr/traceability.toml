@@ -2204,6 +2204,8 @@ tests = [
   "crates/ripr/tests/repair_check_recommended_start.rs::a_start_whose_card_cannot_be_produced_creates_no_attempt",
   "crates/ripr/tests/repair_refused_production_edit_recovery.rs::refused_production_edit_recovery_points_at_a_start_that_then_works",
   "crates/ripr/src/app/task_first.rs::tests::held_by_uncommitted_target_reads_only_the_held_inline_reason",
+  "crates/ripr/tests/task_first_facade.rs::repair_refuses_an_uncommitted_external_test_file_before_starting",
+  "crates/ripr/src/edit_cage/mod.rs::tests::external_test_uncommitted_predicate_leaves_new_files_to_the_attempt",
   "crates/ripr/tests/check_repair_agree.rs::no_assertion_gap_is_not_offered_a_start_the_before_phase_refuses",
   "crates/ripr/tests/check_repair_agree.rs::weak_assertion_gap_start_offered_by_check_starts",
   "crates/ripr/tests/check_repair_agree.rs::unclear_finding_on_a_withheld_seam_adds_no_repair_advisory",
@@ -20142,6 +20144,17 @@ id = "RIPR-SPEC-0243"
 name = "TypeScript oracle and reach rules"
 spec = "docs/specs/RIPR-SPEC-0243-typescript-oracle-and-reach-rules.md"
 tests = [
+  "crates/ripr/src/analysis/language/typescript/tests/commonjs_named_class_export_tests.rs::a_named_export_class_expression_yields_owners_named_by_the_property",
+  "crates/ripr/src/analysis/language/typescript/tests/commonjs_named_class_export_tests.rs::a_changed_method_of_a_named_export_class_relates_to_a_named_require",
+  "crates/ripr/src/analysis/language/typescript/tests/commonjs_named_class_export_tests.rs::the_inner_class_id_and_a_sibling_export_stay_unrelated",
+  "crates/ripr/src/analysis/language/typescript/tests/commonjs_named_class_export_tests.rs::two_named_export_classes_with_one_method_name_keep_their_owners",
+  "crates/ripr/src/analysis/language/typescript/tests/commonjs_named_class_export_tests.rs::a_reassigned_named_export_class_yields_no_owner",
+  "crates/ripr/src/analysis/language/typescript/tests/commonjs_named_class_export_tests.rs::a_function_export_reassigned_to_a_value_yields_no_owner",
+  "crates/ripr/src/analysis/language/typescript/tests/commonjs_named_class_export_tests.rs::a_named_export_class_reads_under_its_property_for_fields_and_repeats",
+  "crates/ripr/src/analysis/language/typescript/tests/commonjs_named_class_export_tests.rs::a_duplicated_key_in_one_export_object_still_reads_as_reassigned",
+  "crates/ripr/src/analysis/language/typescript/tests/commonjs_named_class_export_tests.rs::a_changed_private_method_of_a_commonjs_class_is_reported_and_related",
+  "crates/ripr/src/analysis/language/typescript/tests/commonjs_named_class_export_tests.rs::a_whole_module_function_and_a_same_named_class_property_keep_their_owners",
+  "crates/ripr/src/analysis/language/typescript/tests/commonjs_named_class_export_tests.rs::an_earlier_hoisted_export_initializer_does_not_drop_the_definition",
   "crates/ripr/src/analysis/language/typescript/tests/overwritten_method_tests.rs::an_overwritten_method_of_a_declared_class_relates_to_no_test",
   "crates/ripr/src/analysis/language/typescript/tests/overwritten_method_tests.rs::an_overwritten_method_of_an_es_default_class_relates_to_no_test",
   "crates/ripr/src/analysis/language/typescript/tests/overwritten_method_tests.rs::an_overwritten_method_of_an_inline_commonjs_class_relates_to_no_test",
