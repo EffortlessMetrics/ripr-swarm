@@ -7897,3 +7897,118 @@ fn repair_refuses_an_uncommitted_external_test_file_before_starting() -> Result<
     );
     Ok(())
 }
+
+/// #15265: uncommitted production source is a typed not-started start hold
+/// too. `ripr repair --json` exits 3 with one `cli_refusal` document coded
+/// `start_refused_dirty_premise` and keeps the commit-first prose,
+/// instead of an operational exit 2 with empty stdout.
+#[test]
+fn repair_refuses_uncommitted_source_with_a_typed_json_refusal() -> Result<(), String> {
+    let fixture = Fixture::boundary("facade-uncommitted-source")?;
+    let root = &fixture.root;
+    let root_arg = root.to_string_lossy().into_owned();
+    std::fs::write(
+        root.join("src/lib.rs"),
+        format!("{FIXTURE_LIB}// an unrelated note\n"),
+    )
+    .map_err(|e| e.to_string())?;
+
+    let refused = run_ripr(
+        root,
+        &["repair", FIXTURE_SEAM, "--root", &root_arg, "--json"],
+    )?;
+    assert_exit(&refused, 3, "repair over uncommitted production source");
+    assert_refusal_code(
+        &refused,
+        "start_refused_dirty_premise",
+        "not_started",
+        "uncommitted production source",
+    );
+    let document: serde_json::Value = serde_json::from_str(&stdout_text(&refused))
+        .map_err(|error| format!("stdout must be one cli_refusal document: {error}"))?;
+    assert_eq!(document["status"], "refused", "{document:#}");
+    assert_eq!(
+        document["error"]["code"], "start_refused_dirty_premise",
+        "{document:#}"
+    );
+    assert_eq!(
+        document["error"]["disposition"], "not_started",
+        "{document:#}"
+    );
+    let message = document["error"]["message"]
+        .as_str()
+        .ok_or("refusal message missing")?;
+    assert!(
+        message.contains("Uncommitted: src/lib.rs")
+            && message.contains(&format!("ripr repair {FIXTURE_SEAM} --root ")),
+        "the refusal names the file and the facade rerun:\n{message}"
+    );
+    assert!(attempt_ids(root).is_empty(), "no attempt may be created");
+    assert!(
+        !root.join("target/ripr/workflow/workflow.json").exists(),
+        "a refused start writes no workflow artifact"
+    );
+
+    // Control: committing the source lets the same start proceed.
+    run_git(root, &["add", "src/lib.rs"])?;
+    git_commit(root, "commit the source note")?;
+    let started = run_ripr(root, &["repair", FIXTURE_SEAM, "--root", &root_arg])?;
+    assert_exit(&started, 0, "repair over committed source");
+    assert_eq!(
+        attempt_ids(root).len(),
+        1,
+        "the clean start creates one attempt"
+    );
+    Ok(())
+}
+
+/// #15265: the dirty-premise hold also covers the exact premise check, which
+/// the git-time preflight leaves test paths to. An uncommitted edit to a test
+/// file other than the focused one is outside the allowed edit surface, so
+/// the start refuses with the same typed code before writing anything.
+#[test]
+fn repair_refuses_an_off_target_test_edit_with_the_dirty_premise_code() -> Result<(), String> {
+    let fixture = Fixture::boundary("facade-off-target-test-edit")?;
+    let root = &fixture.root;
+    let root_arg = root.to_string_lossy().into_owned();
+    let other = "#[test]\nfn unrelated_smoke() {\n    assert_eq!(1 + 1, 2);\n}\n";
+    std::fs::write(root.join("tests/shipping.rs"), other).map_err(|e| e.to_string())?;
+    run_git(root, &["add", "tests/shipping.rs"])?;
+    git_commit(root, "an unrelated test file")?;
+    std::fs::write(
+        root.join("tests/shipping.rs"),
+        format!("{other}// an unrelated note\n"),
+    )
+    .map_err(|e| e.to_string())?;
+
+    let refused = run_ripr(
+        root,
+        &["repair", FIXTURE_SEAM, "--root", &root_arg, "--json"],
+    )?;
+    assert_exit(&refused, 3, "repair over an off-target test edit");
+    assert_refusal_code(
+        &refused,
+        "start_refused_dirty_premise",
+        "not_started",
+        "off-target test edit",
+    );
+    let document: serde_json::Value = serde_json::from_str(&stdout_text(&refused))
+        .map_err(|error| format!("stdout must be one cli_refusal document: {error}"))?;
+    assert_eq!(
+        document["error"]["code"], "start_refused_dirty_premise",
+        "{document:#}"
+    );
+    let message = document["error"]["message"]
+        .as_str()
+        .ok_or("refusal message missing")?;
+    assert!(
+        message.contains("tests/shipping.rs"),
+        "the refusal names the off-target file:\n{message}"
+    );
+    assert!(attempt_ids(root).is_empty(), "no attempt may be created");
+    assert!(
+        !root.join("target/ripr/workflow/workflow.json").exists(),
+        "a refused start writes no workflow artifact"
+    );
+    Ok(())
+}

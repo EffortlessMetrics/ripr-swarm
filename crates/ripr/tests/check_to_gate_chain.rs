@@ -641,8 +641,12 @@ fn write_policy(root: &Path, relative: &str, entries: &str) -> Result<(), String
 }
 
 fn function_entry(function: &str) -> String {
+    function_entry_at("src/retry.rs", function)
+}
+
+fn function_entry_at(path: &str, function: &str) -> String {
     format!(
-        "\n[[suppressions]]\nkind = \"exposure_gap\"\npath = \"src/retry.rs\"\nfunction = \"{function}\"\nreason = \"accepted retry debt\"\nowner = \"team-retry\"\n"
+        "\n[[suppressions]]\nkind = \"exposure_gap\"\npath = \"{path}\"\nfunction = \"{function}\"\nreason = \"accepted retry debt\"\nowner = \"team-retry\"\n"
     )
 }
 
@@ -1404,7 +1408,7 @@ struct PolicyRun {
     warnings: Vec<String>,
 }
 
-fn run_check_with_policy(root: &Path, policy: &str) -> Result<PolicyRun, String> {
+fn run_check_with_policy_json(root: &Path, policy: &str) -> Result<Value, String> {
     let dest = root.join("target/ripr/pr/check-policy.json");
     let output = run_ripr_to(
         root,
@@ -1424,7 +1428,15 @@ fn run_check_with_policy(root: &Path, policy: &str) -> Result<PolicyRun, String>
     if !output.status.success() {
         return Err(diagnose("check --suppression-policy", &output));
     }
-    let check = read_json(&dest)?;
+    read_json(&dest)
+}
+
+fn run_check_with_policy(root: &Path, policy: &str) -> Result<PolicyRun, String> {
+    let check = run_check_with_policy_json(root, policy)?;
+    summarize_policy_run(&check)
+}
+
+fn summarize_policy_run(check: &Value) -> Result<PolicyRun, String> {
     let mut run = PolicyRun {
         suppressed: Vec::new(),
         reported: Vec::new(),
@@ -1555,10 +1567,22 @@ fn stale_finding_id_warning_names_the_owner_selector() -> Result<(), String> {
     mkdir_chain_dirs(root)?;
     let before = run_check_json(root, &root.join(CHECK_JSON))?;
     let stale_id = predicate_finding_id(&before, RETRY_LINE)?;
-    edit_retry_expressions(root)?;
+    // Changing the owner as well as the expression makes copying the old
+    // report's function a real failure when the migrated policy is applied.
+    let edited =
+        retry_source("attempts <= 4", "attempts > 4").replace("retry_allowed", "can_retry");
+    write_retry_source(root, &edited)?;
+    fixture_git_ok(root, &["add", "src/retry.rs"]).map_err(|error| error.to_string())?;
+    commit_fixture(root, "rename retry owner and edit expressions")?;
 
-    write_policy(root, "policy-id.toml", &id_entry(&stale_id))?;
-    let run = run_check_with_policy(root, "policy-id.toml")?;
+    let invalid_class = "static_class = \"retired_label\"\n";
+    write_policy(
+        root,
+        "policy-id.toml",
+        &format!("{}{invalid_class}", id_entry(&stale_id)),
+    )?;
+    let current = run_check_with_policy_json(root, "policy-id.toml")?;
+    let run = summarize_policy_run(&current)?;
     assert!(run.suppressed.is_empty(), "{:?}", run.suppressed);
     assert_eq!(run.warnings.len(), 1, "{:?}", run.warnings);
     let warning = &run.warnings[0];
@@ -1568,6 +1592,94 @@ fn stale_finding_id_warning_names_the_owner_selector() -> Result<(), String> {
         )) && warning.contains("select it with `path` + `function` instead of `finding_id`"),
         "the stale-id warning must name the owner selector: {warning}"
     );
+
+    for hint in [
+        "ripr check --format json",
+        "copy `canonical_gap.file` into `path`",
+        "`canonical_gap.owner` into `function`",
+        "A filename containing a literal backslash cannot use `path` + `function`, even on Unix.",
+        "To suppress the finding, use its current `finding_id`.",
+        "Omit `static_class` to select every finding in the function",
+        "Keep a valid `static_class` to match only findings of that class",
+    ] {
+        assert!(warning.contains(hint), "missing {hint}: {warning}");
+    }
+
+    let current_id = predicate_finding_id(&current, RETRY_LINE)?;
+    assert_ne!(current_id, stale_id);
+    let finding = current["findings"]
+        .as_array()
+        .and_then(|rows| rows.iter().find(|row| row["id"] == current_id))
+        .ok_or("missing current predicate finding")?;
+    let field = |pointer| {
+        finding
+            .pointer(pointer)
+            .and_then(Value::as_str)
+            .ok_or(pointer)
+    };
+    let path = field("/canonical_gap/file")?;
+    let function = field("/canonical_gap/owner")?;
+    let probe_path = field("/probe/file")?;
+    assert_eq!(function, "can_retry");
+    assert_eq!(probe_path, format!("./{path}"));
+
+    let entry = function_entry_at(path, function);
+    write_policy(root, "policy-copy.toml", &entry)?;
+    let copied = run_check_with_policy(root, "policy-copy.toml")?;
+    assert!(copied.warnings.is_empty(), "{:?}", copied.warnings);
+    assert!(has_finding(&copied.suppressed, path, RETRY_LINE));
+    assert!(!has_finding(&copied.reported, path, RETRY_LINE));
+    assert!(has_finding(&copied.reported, path, BACKOFF_LINE));
+
+    let class = field("/classification")?;
+    let other_class = if class == "exposed" {
+        "no_static_path"
+    } else {
+        "exposed"
+    };
+    for (filter, expected) in [(class, true), (other_class, false)] {
+        write_policy(
+            root,
+            "policy-class.toml",
+            &format!("{entry}static_class = \"{filter}\"\n"),
+        )?;
+        let report = run_check_with_policy_json(root, "policy-class.toml")?;
+        let row = report["findings"]
+            .as_array()
+            .and_then(|rows| rows.iter().find(|row| row["id"] == current_id))
+            .ok_or("class filter removed the predicate finding from the report")?;
+        assert_eq!(row["suppressed"] == true, expected, "{filter}: {row}");
+    }
+
+    write_policy(
+        root,
+        "policy-class.toml",
+        &format!("{entry}{invalid_class}"),
+    )?;
+    let refusal = run_check_with_policy_json(root, "policy-class.toml")
+        .err()
+        .ok_or("function selector accepted an unknown static_class")?;
+    assert!(
+        refusal.contains("`retired_label` is not a known exposure class"),
+        "{refusal}"
+    );
+
+    write_policy(
+        root,
+        "policy-probe.toml",
+        &function_entry_at(probe_path, function),
+    )?;
+    let refusal = run_check_with_policy(root, "policy-probe.toml")
+        .err()
+        .ok_or("check accepted the ./-prefixed probe.file")?;
+    for hint in [
+        probe_path,
+        "canonical_gap.file",
+        "A filename containing a literal backslash cannot use `path` + `function`, even on Unix.",
+        "To suppress the finding, use its current `finding_id`.",
+    ] {
+        assert!(refusal.contains(hint), "missing {hint}: {refusal}");
+    }
 
     write_policy(root, "policy-gone.toml", &function_entry("removed_fn"))?;
     let run = run_check_with_policy(root, "policy-gone.toml")?;

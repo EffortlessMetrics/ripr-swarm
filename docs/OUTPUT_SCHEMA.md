@@ -16669,7 +16669,14 @@ Field contract:
   `status` is `"caller_reported"` and the object adds `file`, `ran`, `passed`
   and `failed` from the retained record; `next_step` names a reported failure,
   and otherwise says that ripr checked the result's binding and did not run or
-  observe the tests. The Markdown line then starts `Test run: reported by the
+  observe the tests. Since #16311 it also adds `edited_test`: `covered` when a
+  ran test is one the attempt's edit added or changed, `not_covered` when those
+  tests are known and none ran (`next_step` then says so, after a failing run
+  too), and `unknown` when ripr could not tell which tests the edit changed
+  (the selected file's start text was not recoverable exactly, either text
+  defines an ambiguous duplicate test such as `cfg` twins, or the edit changed
+  no test function). A
+  record retained before #16311 omits it. The Markdown line then starts `Test run: reported by the
   caller, not run by ripr:`. The receipt's `verification.status` stays
   `verification_not_run` either way: the counts are the caller's claim, on a
   separate axis from the static movement. The object also carries
@@ -21166,7 +21173,7 @@ top-level `source_subject`:
 
 - `digest_algorithm`: always `"sha256"`.
 - `corpus` (additive, full Rust inventory only): the analysis-owned
-  `{ "scope": "rust_workspace", "cache_schema_version": "1.204",
+  `{ "scope": "rust_workspace", "cache_schema_version": "1.206",
   "files_content_hash": "<16 lowercase hex digits>" }` from the actual
   classified inventory cache key, including both production and test Rust
   files after the existing generated-file exclusions. Repo-exposure producers
@@ -21970,7 +21977,7 @@ targeted-rerun receipt shape:
     "recomputation_reasons": ["selected_test_scope_recomputed"],
     "invalidation_status": "not_available",
     "input_fingerprint": {
-      "schema_version": "1.204",
+      "schema_version": "1.206",
       "analyzer_version": "0.11.0+0123456789abcdef0123456789abcdef01234567+languages:rust=1,typescript=1,python=1,perl=0",
       "workspace_root_hash": "…",
       "files_content_hash": "…",
