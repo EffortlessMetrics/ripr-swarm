@@ -1539,7 +1539,10 @@ pub(crate) const COUNT_CACHE_SCHEMA_VERSION: &str = "0.2";
 /// `macro_rules! include_str` from the binding scan.
 /// `1.66`: an item-position `include!` makes a file's binding candidates
 /// `Any` (#16060); earlier candidates let the binding scan skip such a file.
-pub(crate) const FILE_FACT_CACHE_SCHEMA_VERSION: &str = "1.66";
+/// `1.67`: a grouped `self` import that binds `serde_json` from another
+/// path (`use other::serde_json::{self};`) is a `json` binding candidate
+/// (#10357); earlier candidates let the binding scan skip such a file.
+pub(crate) const FILE_FACT_CACHE_SCHEMA_VERSION: &str = "1.67";
 
 /// Keep the best-effort classified-seam cache from turning a successful live
 /// analysis into an unbounded post-analysis stall on large repos. Larger live
@@ -5693,7 +5696,8 @@ mod tests {
         // 1.63 -> 1.64: `env`/`option_env` binding candidates (#14116).
         // 1.64 -> 1.65: `include_bytes`/`include_str` binding candidates (#14116).
         // 1.65 -> 1.66: item-position `include!` binds any name (#16060).
-        assert_eq!(FILE_FACT_CACHE_SCHEMA_VERSION, "1.66");
+        // 1.66 -> 1.67: grouped `self` import binding `serde_json` (#10357).
+        assert_eq!(FILE_FACT_CACHE_SCHEMA_VERSION, "1.67");
         // 1.4 -> 1.5: metadata-sourced harness validation (#3634) flips
         // verdicts for workspaces the manifest emulation approximated.
         // 1.5 -> 1.6: the #3636 reachability authority excludes

@@ -817,6 +817,11 @@ fn imported_json_wrapper_forwards_unless_json_is_rebound() -> Result<(), String>
             "#[macro_use]\nextern crate serde_json;",
         ),
         (
+            "grouped self import",
+            AUDITED,
+            "use serde_json::json;\nuse other::{serde_json::{self}};",
+        ),
+        (
             "namespace alias",
             AUDITED,
             "use serde_json::json;\nmod serde_json { macro_rules! json { ($($t:tt)*) => { return 5 }; } }",

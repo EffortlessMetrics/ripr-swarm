@@ -159,23 +159,69 @@ pub(super) fn json_namespace_rebound(node: &SyntaxNode) -> bool {
         || ast::UseTree::cast(node.clone()).is_some_and(|tree| {
             tree.use_tree_list().is_none()
                 && tree.rename().is_none()
-                && tree
-                    .path()
-                    .and_then(|path| path.segments().last())
-                    .and_then(|segment| segment.name_ref())
-                    .is_some_and(|name| name.text().trim_start_matches("r#") == "serde_json")
+                && tree.path().is_some()
+                && use_tree_binds_serde_json(&tree)
         })
+}
+
+/// The name a leaf use tree binds is its last path segment, or for a
+/// grouped `self` (`use other::serde_json::{self};`) the segment the group
+/// hangs from (#10357). Either spelling of `serde_json` binds the root,
+/// except `use serde_json::{self, ..};`, which names the extern crate itself.
+fn use_tree_binds_serde_json(tree: &ast::UseTree) -> bool {
+    let segments = super::use_tree_segments(tree);
+    let names: Vec<&str> = segments
+        .iter()
+        .map(|name| name.trim_start_matches("r#"))
+        .collect();
+    match names.as_slice() {
+        [.., "serde_json"] => true,
+        ["serde_json", "self"] => false,
+        [.., "serde_json", "self"] => true,
+        _ => false,
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::super::owner_pin_assertions;
     use super::{
-        literal_json_import_visible, literal_json_import_visible_among,
+        json_namespace_rebound, literal_json_import_visible, literal_json_import_visible_among,
         take_canonical_import_checks, take_use_scan_count,
     };
     use crate::analysis::syntax::parse_clean_source_file;
     use ra_ap_syntax::AstNode;
+
+    #[test]
+    fn a_use_tree_that_binds_serde_json_from_elsewhere_rebinds_the_namespace() {
+        let rebinds = |source: &str| {
+            ra_ap_syntax::ast::SourceFile::parse(source, ra_ap_syntax::Edition::CURRENT)
+                .tree()
+                .syntax()
+                .descendants()
+                .any(|node| json_namespace_rebound(&node))
+        };
+        for source in [
+            "use other::serde_json;",
+            "use other::{serde_json};",
+            "use other::serde_json::{self};",
+            "use other::{serde_json::{self}};",
+            "use crate::serde_json::{self, json};",
+            "use other as serde_json;",
+            "mod serde_json {}",
+        ] {
+            assert!(rebinds(source), "{source}");
+        }
+        for source in [
+            "use serde_json::json;",
+            "use serde_json::{json, Value};",
+            "use serde_json::{self, json};",
+            "use ::serde_json::{self};",
+            "use other::json;",
+        ] {
+            assert!(!rebinds(source), "{source}");
+        }
+    }
 
     #[test]
     fn json_use_scan_runs_once_per_file_not_per_macro() {
