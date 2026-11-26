@@ -3,16 +3,26 @@ use crate::domain::{self, Probe, ValueContext};
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 
+/// A [`domain::ValueFact`] plus the file it was read from. The file stays
+/// producer-side: it is not serialized and is dropped by
+/// [`LocatedValueFact::into_public`].
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct LocatedValueFact {
+    /// The file the value was read from, or `None` when unknown. Skipped by
+    /// serde: never serialized, and `None` after deserializing.
     #[serde(skip)]
     pub file: Option<PathBuf>,
+    /// The test source line the value was read from.
     pub line: usize,
+    /// Retained source or value-transfer provenance for the value.
     pub text: String,
+    /// The value itself, such as `amount = 50`.
     pub value: String,
+    /// Where in test source the value was found.
     pub context: ValueContext,
 }
 impl LocatedValueFact {
+    /// The public four-field fact, without the file.
     pub fn into_public(self) -> domain::ValueFact {
         domain::ValueFact {
             line: self.line,
@@ -40,12 +50,16 @@ impl From<domain::ValueFact> for LocatedValueFact {
         }
     }
 }
+/// [`domain::ActivationEvidence`] whose observed values keep their files.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct LocatedActivationEvidence {
+    /// Source values related tests supply, with their files.
     pub observed_values: Vec<LocatedValueFact>,
+    /// Discriminating values or checks no related test was seen to supply.
     pub missing_discriminators: Vec<domain::MissingDiscriminatorFact>,
 }
 impl LocatedActivationEvidence {
+    /// The public evidence, plus each observed value's file in the same order.
     pub fn into_public(self) -> (domain::ActivationEvidence, Vec<Option<PathBuf>>) {
         let files = self
             .observed_values
@@ -71,6 +85,8 @@ impl LocatedActivationEvidence {
 /// guessed line/token match. Mutable public reports invalidate changed receipts.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct ValueOrigins(std::collections::BTreeMap<domain::SourceLocation, Vec<OriginReceipt>>);
+/// Files for one finding's observed values, bound to its complete probe and
+/// ordered value list. Built by [`ValueOrigins::prepare`].
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct OriginReceipt {
     probe: Probe,
@@ -92,6 +108,8 @@ impl ValueOrigins {
             files,
         })
     }
+    /// Add `receipt`, keeping any receipts already recorded for the same
+    /// location.
     pub fn insert_receipt(&mut self, receipt: OriginReceipt) {
         // Location is only a routing bucket. Full probe and ordered facts
         // remain the authority, including when several probes share a line.
@@ -100,17 +118,24 @@ impl ValueOrigins {
             .or_default()
             .push(receipt);
     }
+    /// [`ValueOrigins::prepare`] and insert the receipt; does nothing when
+    /// `prepare` returns `None`.
     pub fn record(&mut self, finding: &domain::Finding, files: Vec<Option<PathBuf>>) {
         if let Some(receipt) = Self::prepare(finding, files) {
             self.insert_receipt(receipt);
         }
     }
+    /// Append every receipt from `other`. Receipts are never overwritten, so
+    /// conflicting ones stay ambiguous.
     pub fn extend(&mut self, other: Self) {
         for (location, mut receipts) in other.0 {
             // Append, never overwrite: conflicting receipts remain ambiguous.
             self.0.entry(location).or_default().append(&mut receipts);
         }
     }
+    /// The files recorded for `finding`'s observed values, in order. `None`
+    /// when no receipt matches its full probe and value list, or when matching
+    /// receipts disagree on the files.
     pub fn files(&self, finding: &domain::Finding) -> Option<&[Option<PathBuf>]> {
         self.files_for(&finding.probe, &finding.activation.observed_values)
     }
@@ -135,6 +160,7 @@ impl ValueOrigins {
             self.insert_receipt(receipt);
         }
     }
+    /// Rewrite every probe location file and value file through `rebase`.
     pub fn rebase(&mut self, rebase: impl Fn(&Path) -> PathBuf) {
         let receipts = std::mem::take(&mut self.0).into_values().flatten();
         for mut receipt in receipts {
