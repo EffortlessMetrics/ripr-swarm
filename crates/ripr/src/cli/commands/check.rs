@@ -602,7 +602,7 @@ fn select_output_format(
 /// badge, or repo formats" wording left out.
 fn suppression_policy_format_refusal(format: OutputFormat) -> String {
     format!(
-        "--suppression-policy applies to the findings-based check formats (human, human-full, json, json-compact, github, missed-txt); \
+        "--suppression-policy applies to the findings-based check formats (human, human-full, json, json-compact, github, missed-txt) and to sarif and sarif-compact; \
          --format {} does not apply it. Drop the flag, or pick one of those formats",
         format.primary_cli_name()
     )
@@ -1115,9 +1115,9 @@ fn check_inner(
         return Err("--output-dir requires a named --diff file and cannot be combined with --format/--json, --worktree/--committed, --candidate-tree/--candidate-base, --gap-ledger, --write-artifact or --suppression-policy; pass a named `--diff <file>` and drop the other flags".into());
     }
     // #1441: --suppression-policy applies to the findings-based check
-    // surfaces only. SARIF keeps its existing `.ripr/suppressions.toml`
-    // channel, and badge/repo formats have their own suppression
-    // projections — silently ignoring the flag there would misreport policy
+    // surfaces and, since #15377, to SARIF, where the explicit file replaces
+    // the implicit `[suppressions] path` manifest. Badge/repo formats have
+    // their own suppression projections — silently ignoring the flag there would misreport policy
     // application, so fail closed. #15377: this is a usage error decided by
     // argv alone, so it is refused here, before the refusal-envelope
     // snapshot: an agent or json-terse record would label it
@@ -1131,6 +1131,8 @@ fn check_inner(
                 | OutputFormat::JsonCompact
                 | OutputFormat::Github
                 | OutputFormat::MissedTxt
+                | OutputFormat::Sarif
+                | OutputFormat::SarifCompact
         )
     {
         return Err(suppression_policy_format_refusal(input.format));
@@ -2048,14 +2050,14 @@ fn check_inner(
         && candidate_tree.is_none()
         && output_dir.is_none()
         && write_artifact.is_none()
-        && last_commit_fallback_applies(
+        && app::diff_source::last_commit_fallback_applies(
             &output,
             &limited_check_input.root,
             limited_check_input.git_timeout,
         )
     {
         let mut retry = limited_check_input.clone();
-        retry.base = Some("HEAD~1".to_string());
+        retry.base = Some(app::diff_source::LAST_COMMIT_BASE.to_string());
         let retry_config = config.clone();
         // Below this, a retry worker would only time out after its cancel
         // grace; keep the original empty result instead.
@@ -2106,7 +2108,7 @@ fn check_inner(
             output = retried;
             // Drill-in, stub and repair routes rebuild their commands from
             // this input; keep them on the range that was actually shown.
-            limited_check_input.base = Some("HEAD~1".to_string());
+            limited_check_input.base = Some(app::diff_source::LAST_COMMIT_BASE.to_string());
         }
     }
     // The findings formats apply suppression only through the explicit flag.
@@ -2483,31 +2485,6 @@ fn record_human_legend_seen(root: &Path, marker: &Path) {
     let _ = crate::atomic_file::write(marker, b"1\n", "legend marker");
 }
 
-/// #13644: true when an unscoped check produced an empty range because HEAD
-/// is the checked-out comparison-base branch itself, the tree is clean and
-/// HEAD has a parent, so `--base HEAD~1` names the last commit.
-fn last_commit_fallback_applies(
-    output: &crate::CheckOutput,
-    root: &Path,
-    git_timeout: Option<std::time::Duration>,
-) -> bool {
-    if !output.findings.is_empty()
-        || output.unanalyzed_working_tree
-        || !output.untracked_working_tree_source_paths.is_empty()
-        || !output.ignored_working_tree_source_paths.is_empty()
-        || output
-            .analysis_outcome
-            .as_ref()
-            .is_none_or(|outcome| outcome.counts.changed_file_count != 0)
-    {
-        return false;
-    }
-    let Some(base) = output.base.as_deref() else {
-        return false;
-    };
-    crate::analysis::base_is_checked_out_head_with_parent(root, base, git_timeout)
-}
-
 /// The stderr warning for an empty default-base result when the default base
 /// and HEAD each resolve to the same commit after analysis. It states those
 /// two later observations only; it does not attribute the analyzed range.
@@ -2618,7 +2595,7 @@ fn render_check_gap_ledger_badge(
             );
         }
     };
-    let text = crate::bounded_input::read_to_string(gap_ledger)
+    let text = crate::bounded_input::read_artifact_text(gap_ledger)
         .map_err(|err| format!("failed to read gap ledger {}: {err}; check the path passed to `--gap-ledger` exists and you can read it", gap_ledger.display()))?;
     let policy = output::badge::BadgePolicy {
         suppressions_path: config.suppressions().display_path(),

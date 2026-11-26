@@ -6267,6 +6267,13 @@ pub(crate) fn owner_namespace_receivers(
                 .map(|import| import.local.clone()),
         );
     }
+    // An ES namespace import of a barrel whose member named like the owner
+    // is the owner's own export (#15923).
+    for local in super::related_tests::barrel_namespace_receivers(test, owner) {
+        if !receivers.contains(&local) {
+            receivers.push(local);
+        }
+    }
     // A dynamic import binds the same module namespace a static
     // `import * as` would, but as a local declaration, so it never reaches
     // `imports_in_file`. Without it the member-call gate below would
@@ -9251,6 +9258,36 @@ pub(crate) fn classify_resolved_owner(
                     workspace_root,
                 )
             });
+    // #13592: reach whose every path passes a closure edge (the owner, or a
+    // function on the way to it, is passed or stored as a value) or another
+    // module's export. When, or whether, the value runs is not modeled, so
+    // any oracle there reads unknown.
+    let reach_only_through_opaque_entry = reach_only_through_module_entry
+        && related_candidates
+            .iter()
+            .filter(|candidate| candidate.relation.uses_oracle())
+            .all(|candidate| {
+                module_entry_reach_is_opaque_only(
+                    candidate,
+                    owner,
+                    reexport_index,
+                    alias_map,
+                    workspace_root,
+                )
+            });
+    let reach_through_closure_entry = reach_only_through_opaque_entry
+        && related_candidates
+            .iter()
+            .filter(|candidate| candidate.relation.uses_oracle())
+            .any(|candidate| {
+                module_entry_reach_includes_closure(
+                    candidate,
+                    owner,
+                    reexport_index,
+                    alias_map,
+                    workspace_root,
+                )
+            });
     // Mixed entry reach: some related test reaches the owner through another
     // module's export, but not every one does, so neither "same-module" nor
     // "cross-module" alone describes it.
@@ -9695,7 +9732,8 @@ pub(crate) fn classify_resolved_owner(
         // assertion in the same test says nothing about the entry's result.
         let entry_oracle_is_strong = (strongest_strength >= OracleStrength::Strong.rank()
             && ts_entry_result_is_asserted(related_candidates))
-            || reach_only_through_cross_module_entry;
+            || reach_only_through_cross_module_entry
+            || reach_only_through_opaque_entry;
         let (class, observe, discriminate) = if entry_oracle_is_strong {
             (
                 ExposureClass::StaticUnknown,
@@ -10088,7 +10126,28 @@ pub(crate) fn classify_resolved_owner(
         && has_owner_call_evidence
         && static_limit.is_none()
     {
-        typescript_missing_discriminators(&probe_shape, line, boundary_text, flow_sink.as_ref())
+        let mut facts = typescript_missing_discriminators(
+            &probe_shape,
+            line,
+            boundary_text,
+            flow_sink.as_ref(),
+        );
+        if facts.is_empty() {
+            let change = old_line_text
+                .and_then(|old| NullishChainChange::read(old, line_text, &owner.params));
+            facts.extend(change.and_then(|change| {
+                ts_unexercised_default_discriminator(
+                    owner,
+                    &change,
+                    line,
+                    related_candidates,
+                    alias_map,
+                    workspace_root,
+                    flow_sink.as_ref(),
+                )
+            }));
+        }
+        facts
     } else {
         Vec::new()
     };
@@ -10122,6 +10181,7 @@ pub(crate) fn classify_resolved_owner(
         1,
     );
     let probe = Probe {
+        before_condition: None,
         id: ts_probe_id,
         location: SourceLocation::new(file.to_string_lossy().as_ref(), line, 1),
         owner: Some(owner_sym),
@@ -10217,6 +10277,10 @@ pub(crate) fn classify_resolved_owner(
         "TypeScript preview adapter: every exposing test file mocks a module the changed line calls; discriminate unknown (RIPR-SPEC-0243 rule 8).".to_string()
     } else if loop_count_unknown {
         "TypeScript preview adapter: the changed counted-loop header is observed only through a mock call count; the iteration count is not modeled, so discriminate unknown (RIPR-SPEC-0246 rule 8).".to_string()
+    } else if ladder_entry_unknown && reach_through_closure_entry {
+        // #13592: the path to the owner passes a function or constant used
+        // as a value (a callback, a reviver, a combinator-built rule).
+        "TypeScript preview adapter: the related tests reach the changed owner only through code that passes it, or a function that leads to it, as a value (a callback or a combinator-built constant); when that value runs is not modeled, so discriminate unknown (RIPR-SPEC-0243).".to_string()
     } else if ladder_entry_unknown && reach_only_through_cross_module_entry {
         // #13592: the caller is an export of another module that imports and
         // calls the owner (RIPR-SPEC-0243).
@@ -10321,6 +10385,9 @@ pub(crate) fn classify_resolved_owner(
         }
         ExposureClass::ReachableUnrevealed if infection.is_some() => {
             "TypeScript preview advisory: no related test call enters the changed branch; add a test input that enters it before strengthening any assertion. No repair packet is emitted.".to_string()
+        }
+        ExposureClass::StaticUnknown if ladder_entry_unknown && reach_through_closure_entry => {
+            "TypeScript preview advisory: the related test reaches the changed owner only through a callback or a value passed between functions, so no new assertion is needed on that evidence; no repair packet is emitted.".to_string()
         }
         ExposureClass::StaticUnknown
             if ladder_entry_unknown && reach_only_through_cross_module_entry =>
@@ -11751,6 +11818,39 @@ pub(crate) fn ts_spread_override_unseen(
     }
 }
 
+/// #15357: the missing check for a changed `??` default (`const x = o.p ?? 1;`
+/// edited to another literal) when the source shows that every observed owner
+/// call passes `p` explicitly, so none reaches the default: call the owner
+/// without `p`. Fail-closed through `ts_nullish_operand_unreached`, which
+/// refuses unreadable arguments, calls that omit or may drop `p`, and owners
+/// whose parameter has a non-empty default.
+pub(crate) fn ts_unexercised_default_discriminator(
+    owner: &TypeScriptOwner,
+    change: &NullishChainChange,
+    line: usize,
+    candidates: &[TypeScriptRelatedCandidate<'_>],
+    alias_map: Option<&TsAliasMap>,
+    workspace_root: Option<&Path>,
+    flow_sink: Option<&FlowSinkFact>,
+) -> Option<MissingDiscriminatorFact> {
+    let (prop, default) = change.changed_default()?;
+    if !ts_nullish_operand_unreached(change, owner, candidates, alias_map, workspace_root) {
+        return None;
+    }
+    Some(MissingDiscriminatorFact {
+        value: format!(
+            "call `{}` without `{prop}` and assert the result of the `{default}` default",
+            owner.name
+        ),
+        reason: format!(
+            "every call read under a strong assertion passes `{prop}`, so the changed default at line {line} is not exercised there"
+        ),
+        flow_sink: flow_sink.cloned(),
+        shape: crate::domain::DiscriminatorShape::Other,
+        drafted_boundary: None,
+    })
+}
+
 /// RIPR-SPEC-0246 rule 5: `true` when at least one owner call has its whole
 /// result observed by a strong assertion, every such call's argument is
 /// readable, and none reaches the changed `??` operand with a differing value.
@@ -11778,6 +11878,10 @@ pub(crate) fn ts_nullish_operand_unreached(
     }) {
         return false;
     }
+    let empty_object_default = owner
+        .source_text
+        .as_deref()
+        .is_some_and(|source| parameter_has_empty_object_default(source, &change.subject));
     let mut observed = false;
     for candidate in candidates
         .iter()
@@ -11820,12 +11924,15 @@ pub(crate) fn ts_nullish_operand_unreached(
             let Some(argument) = arguments.get(index).map(|argument| argument.trim()) else {
                 return false;
             };
-            let object =
-                if argument.starts_with('{') || argument == "undefined" || argument == "null" {
-                    Some(argument.to_string())
-                } else {
-                    ts_test_local_object(&candidate.test.body_text, argument, &callees)
-                };
+            // `p = {}` binds `{}` for an explicit `undefined`, so its
+            // inherited members stay readable (#15357).
+            let object = if argument == "undefined" && empty_object_default {
+                Some("{}".to_string())
+            } else if argument.starts_with('{') || argument == "undefined" || argument == "null" {
+                Some(argument.to_string())
+            } else {
+                ts_test_local_object(&candidate.test.body_text, argument, &callees)
+            };
             match object.map_or(ChainInput::Unknown, |object| change.input(&object)) {
                 ChainInput::Unreached => {}
                 ChainInput::Differs | ChainInput::Unknown => return false,
@@ -12941,6 +13048,12 @@ pub(crate) fn cross_module_fan_in_limit_missing(owner: &TypeScriptOwner) -> Stri
 }
 
 pub(crate) fn no_static_path_missing(owner: &TypeScriptOwner) -> String {
+    if owner.method_kind == TypeScriptMethodKind::Overwritten {
+        return format!(
+            "A later member of the same class defines `{}` again and replaces this body, so no call runs the changed code (RIPR-SPEC-0243 rule 26).",
+            owner.name
+        );
+    }
     match owner.owner_kind {
         OwnerKind::Method => format!(
             "No trusted TypeScript method receiver relation for `{}`. Direct `new ClassName(...)` receiver calls are supported, but factories, dependency injection, mocked modules, prototype aliases, and dynamic property access stay ambiguous in preview.",
@@ -12966,6 +13079,14 @@ pub(crate) fn no_static_path_missing(owner: &TypeScriptOwner) -> String {
 }
 
 pub(crate) fn no_static_path_recommendation(owner: &TypeScriptOwner) -> String {
+    if owner.method_kind == TypeScriptMethodKind::Overwritten {
+        // #16261: a direct receiver call runs the replacement, so the usual
+        // "add a direct call" advice would point at the wrong body.
+        return format!(
+            "TypeScript preview advisory: a later definition of `{}` in the same class replaces this one, so a test calling `{}` runs the later body, not the changed one. Remove or rename the earlier definition, or make the change in the definition that remains, then rerun `ripr check`.",
+            owner.name, owner.name
+        );
+    }
     match owner.owner_kind {
         OwnerKind::Method => {
             "TypeScript preview advisory: method receiver relation is missing context; use a direct `new ClassName(...)` receiver observer when safe, and keep factories, dependency injection, mocked modules, prototype aliases, and dynamic property access advisory.".to_string()
@@ -13057,8 +13178,19 @@ fn module_entry_reach_summary(
         .iter()
         .filter(|entry| entry.cross_module.is_some())
         .count();
+    let closure_called = called_entries.iter().any(|entry| entry.closure);
+    let opaque_only = called_entries
+        .iter()
+        .all(|entry| entry.closure || entry.cross_module.is_some());
     let scope = if owner.class_name.is_some() {
         "same-class"
+    } else if closure_called && opaque_only {
+        // #13592: every path passes the owner, or a function on the way to
+        // it, as a value, or crosses a module.
+        "callback or value-passing"
+    } else if closure_called {
+        // Some tests reach it through plain same-module calls too.
+        "same-module or callback"
     } else if cross_module_called > 0 && cross_module_called == called_entries.len() {
         // #13592: every entry the tests call is an export of another module
         // that reaches the owner through an imported binding.

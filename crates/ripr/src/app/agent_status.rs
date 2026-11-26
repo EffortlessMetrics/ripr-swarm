@@ -149,7 +149,7 @@ const AFTER_TEST_EDIT_STEPS: &[&str] = &[
 ];
 
 /// Human note printed with a next command that belongs after the test edit.
-pub(crate) const AFTER_TEST_EDIT_NOTE: &str = "Run this after the focused test edit, not before: it needs a snapshot taken after the edit. Inside a repair transaction, the `--attempt ... --phase after` command runs this step instead.";
+pub(crate) const AFTER_TEST_EDIT_NOTE: &str = "Run this after the focused test edit, not before: it needs a snapshot taken after the edit. Inside a repair transaction, the after-phase command the before phase prints runs this step instead.";
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct AgentStatusReport {
@@ -1441,6 +1441,7 @@ fn select_next_command(
                     attempt.attempt_id, attempt.seam_id
                 ),
             };
+            let reason = with_focused_result_requirement(reason, attempt.command.as_deref());
             return Some(AgentStatusCommand {
                 step: "repair_attempt_after".to_string(),
                 artifact: attempt.manifest.clone(),
@@ -3702,8 +3703,25 @@ fn after_attempt_command(
     AgentStatusCommand {
         step: "repair_attempt_after".to_string(),
         artifact: manifest_label.to_string(),
-        reason,
+        reason: with_focused_result_requirement(reason, view.command.as_deref()),
         command: view.command.clone().unwrap_or_default(),
+    }
+}
+
+/// #16164: an attempt that follows a new-test proposal committed an after
+/// command naming `--test-result FILE` when it began; the after-phase reason
+/// then says how to produce FILE, in the finish gate's own words. Any other
+/// attempt's reason is returned unchanged.
+fn with_focused_result_requirement(reason: String, command: Option<&str>) -> String {
+    if command.is_some_and(|command| {
+        command.ends_with(crate::app::focused_run::PROPOSAL_FOCUSED_RESULT_FLAG)
+    }) {
+        format!(
+            "{reason}. {}",
+            crate::app::focused_run::proposal_focused_result_requirement("This attempt", None)
+        )
+    } else {
+        reason
     }
 }
 
@@ -7026,9 +7044,9 @@ mod tests {
             "{cleaned}"
         );
 
-        // Receipt recommended action: the generic `--phase after` mention
+        // Receipt recommended action: the generic after-phase command mention
         // belongs to the new attempt and goes with it.
-        let receipt = "This receipt is not review evidence; rerun agent verify and agent receipt; in the repair loop, start a new attempt with `ripr agent repair --seam-id <seam-id> --phase before` and run the `--phase after` command it prints.";
+        let receipt = "This receipt is not review evidence; rerun agent verify and agent receipt; in the repair loop, start a new attempt with `ripr agent repair --seam-id <seam-id> --phase before` and run the after-phase command it prints.";
         let cleaned = without_start_recipe(receipt);
         assert!(
             !cleaned.contains("--phase before")

@@ -339,10 +339,10 @@ survives cached facts and classifications. When the change has no ranked seam, p
 gap is not on a line you changed, says why no seam on the change ranks
 (pilot withholds its seams as static limitations, they are already gripped,
 intentional or suppressed, the pilot limit left spots unchecked, the change is
-in a file pilot's repo-wide ranking leaves out by design (a Cargo build script,
-repository automation under `xtask/`, or a crate source declared outside
-`src`, which only diff analysis covers, also named after a reason drawn from
-the change's analyzed seams; #6944), or no seam
+in a file pilot's repo-wide ranking leaves out by design (a Cargo build script
+or repository automation under `xtask/`, which only diff analysis covers, also
+named after a reason drawn from the change's analyzed seams; #6944; a crate
+source declared outside `src` is ranked like `src/`, #16045), or no seam
 pilot analyzed is on a changed line), and names `ripr check` for the change
 itself, with `--worktree` when the change is uncommitted, since plain `ripr
 check` reads committed history only. When the repo-exposure seam limit cuts
@@ -815,7 +815,9 @@ A suggested assertion that carries `/* ... */` placeholders for values only the
 developer knows (for example `assert_eq!(total(/* boundary input where a >= b
 */), /* expected */)`) is printed in human handoff output as
 `assertion shape: ...`, followed by a note to replace each `/* ... */` comment
-with a real value from the developer's test before using it. Any other
+with a real value from the developer's test before using it, where the
+expected value is what the changed code produces now; an input the change
+left alone keeps its value (#15361). Any other
 assertion text keeps its existing label and gets no note. The same fill-in note
 follows other human handoff lines that print the placeholder string under a
 different field name (`Focused proof intent`, Markdown `Assertion shape`,

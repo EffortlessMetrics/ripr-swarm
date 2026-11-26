@@ -1,0 +1,16 @@
+# Registers the mid-merge conflict handling (#15296): a conflict region split
+# across zero-context hunks stays quarantined, `ripr check` offers no finding
+# from it, and doctor names the in-progress Git operation.
+[[extend]]
+id = "RIPR-SPEC-0007"
+tests = [
+  "crates/ripr/src/analysis/diff/limitations_tests.rs::conflict_region_split_across_zero_context_hunks_stays_quarantined",
+  "crates/ripr/tests/check_conflicted_merge.rs::conflicted_rust_file_offers_no_findings_and_check_exits_incomplete",
+  "crates/ripr/tests/check_conflicted_merge.rs::doctor_names_the_in_progress_merge_and_its_next_step",
+]
+code = [
+  "crates/ripr/src/analysis/diff/parse.rs",
+  "crates/ripr/src/analysis/diff/load.rs",
+  "crates/ripr/src/output/doctor.rs",
+  "crates/ripr/src/cli/commands/doctor.rs",
+]

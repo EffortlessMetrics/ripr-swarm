@@ -1092,7 +1092,14 @@ fn render_agent_packet_with_context(
         load_for_root(&options.root).map_err(|err| config_load_refusal(&options.root, err))?;
     let report = complete_agent_seam_inventory(&options.root, &config, "agent packet")
         .map_err(CoreError::from)?;
-    render_agent_packet_for_seam_with_report(&options.root, seam_id, &config, &report, context)
+    render_agent_packet_for_seam_with_report(
+        &options.root,
+        seam_id,
+        &config,
+        &report,
+        context,
+        "agent packet seam_id",
+    )
 }
 
 /// The `--seam-id` packet route over one caller-supplied inventory (#5301
@@ -1106,6 +1113,9 @@ fn render_agent_packet_for_seam_with_report(
     config: &RiprConfig,
     report: &analysis::ClassifiedSeamsReport,
     context: output::agent_seam_packets::PacketCommandContext<'_>,
+    // The command the user ran, so a refusal names it: the before phase of
+    // `agent repair` shares this renderer but is not `agent packet` (#15257).
+    surface: &str,
 ) -> Result<String, CoreError> {
     let entry = report
         .classified
@@ -1117,14 +1127,14 @@ fn render_agent_packet_for_seam_with_report(
             // listing that cannot show it: say the inventory was cut.
             if let Some(info) = report.limit_info.as_ref().filter(|info| info.is_truncated()) {
                 return CoreError::seam_id_unknown(format!(
-                    "agent packet seam_id {seam_id} was not found in the truncated seam inventory ({} of {} seams analyzed); {}",
+                    "{surface} {seam_id} was not found in the truncated seam inventory ({} of {} seams analyzed); {}",
                     info.analyzed,
                     info.total,
                     crate::app::task_first::WIDEN_SEAM_BUDGET
                 ));
             }
             CoreError::seam_id_unknown(format!(
-                "agent packet seam_id {seam_id} was not found. {}",
+                "{surface} {seam_id} was not found. {}",
                 unknown_seam_id_hint(root, seam_id)
             ))
         })?;
@@ -1132,7 +1142,7 @@ fn render_agent_packet_for_seam_with_report(
     let policy = AgentBriefPolicy::from_config(config);
     if let Some(reason) = policy.omission_reason_for_class(entry.class, Some(entry.seam.file())) {
         return Err(CoreError::seam_policy_omitted(format!(
-            "agent packet seam_id {seam_id} {reason}. {}",
+            "{surface} {seam_id} {reason}. {}",
             policy_omitted_seam_hint(root, seam_id)
         )));
     }
@@ -1217,14 +1227,19 @@ pub(super) fn classify_incomparable_pair_error(error: String) -> AgentVerifyErro
 
 /// #14021: the no-movement refusal classifies from the producer's typed
 /// `AgentVerifyMovementError`, not a substring of the rendered message. The
-/// producer carries exactly one variant, so every movement error it reports
-/// is the named refusal; the rendered text stays byte-identical to the prose
-/// the old `format!` added.
+/// producer carries exactly one variant today; the match is exhaustive so a
+/// new variant must choose its own refusal class here instead of being read
+/// as no-movement. The rendered text stays byte-identical to the prose the
+/// old `format!` added.
 pub(super) fn classify_verify_movement_error(
     error: crate::agent::artifact::AgentVerifyMovementError,
 ) -> AgentVerifyError {
+    use crate::agent::artifact::AgentVerifyMovementError;
+    let kind = match &error {
+        AgentVerifyMovementError::NoMovement { .. } => AgentVerifyRefusalKind::NoMovement,
+    };
     AgentVerifyError::Refusal {
-        kind: AgentVerifyRefusalKind::NoMovement,
+        kind,
         message: format!("agent verify {error}"),
     }
 }
@@ -1387,12 +1402,17 @@ fn run_agent_receipt_for_attempt(
     ensure_command_root(&options.root, "agent receipt")?;
 
     let verify_path = validate_agent_receipt_verify_path(&options.root, &options.verify_json)?;
-    let verify_json = crate::bounded_input::read_to_string(&verify_path).map_err(|err| {
-        format!(
-            "read agent receipt verify JSON {} failed: {err}",
-            output::outcome::display_path(&verify_path)
-        )
-    })?;
+    // Keep the bytes as written: the receipt's provenance hashes the file,
+    // and the focused-finish custody check compares against those bytes.
+    // Only the parse reads them decoded, so a PowerShell 5.1 redirect
+    // (UTF-16 or a UTF-8 mark) parses as the UTF-8 file (#15936).
+    let (verify_bytes, verify_json) =
+        crate::bounded_input::read_artifact_bytes_and_text(&verify_path).map_err(|err| {
+            format!(
+                "read agent receipt verify JSON {} failed: {err}",
+                output::outcome::display_path(&verify_path)
+            )
+        })?;
     let validated =
         app::agent_receipt::validate_agent_receipt_verify_json(&options.root, &verify_json)?;
     // #9103 (RIPR-SPEC-0311): a receipt for a gap is issued only over a verify
@@ -1509,7 +1529,7 @@ fn run_agent_receipt_for_attempt(
             &expected.attempt_id,
             expected,
             rendered.as_bytes(),
-            verify_json.as_bytes(),
+            &verify_bytes,
             custody,
         )?;
     }
@@ -2752,6 +2772,24 @@ fn run_agent_repair_phase(
                 &before_config,
                 "agent before phase",
             )?;
+            if let Some(reason) = app::task_first::changed_seam_no_path_start_refusal(
+                &before_input.root,
+                base.as_deref(),
+                &before_config,
+                &seam_id,
+                &before_report.classified,
+            ) {
+                let code = app::task_first::RepairRefusalCode::SeamNotRepairEligible;
+                let message = format!(
+                    "seam `{seam_id}` is not repair-eligible: {reason}. No repair attempt was started."
+                );
+                refusal.typed = true;
+                refusal.code = Some(code);
+                if facade_start {
+                    crate::cli::usage_refusal::note_typed_refusal(code, &message);
+                }
+                return Err(message);
+            }
             let packet = render_agent_packet_for_seam_with_report(
                 &root,
                 &seam_id,
@@ -2764,6 +2802,7 @@ fn run_agent_repair_phase(
                         .as_ref()
                         .map(|_| crate::agent::PYTHON_REPAIR_AUTHORIZATION_SUFFIX),
                 },
+                "agent repair --seam-id",
             )
             .map_err(|error| {
                 // #10712 residual: a seam the inventory has but agent policy
@@ -3767,7 +3806,7 @@ fn run_agent_repair_phase(
                                 store_ref,
                                 &attempt,
                                 &cage_policy,
-                                prior_refusals,
+                                Some(prior_refusals),
                             );
                             for line in &recovery {
                                 refusal.narrate(line.clone());
@@ -3809,19 +3848,26 @@ fn run_agent_repair_phase(
                     inline_baseline.as_ref(),
                 )
             {
+                // #16164: no result at all is a usage refusal, not a failed
+                // attempt: it is typed and narrated like any other, but it
+                // charges no retry. A supplied result this gate refuses
+                // (zero-count, failing, not new) still counts.
+                let charged = focused_run.is_some();
                 refusal.narrate(format!("focused test result required: {error}"));
                 let recovery = focused_result_recovery_lines(
                     &caller_root,
                     store_ref,
                     &attempt,
                     &cage_policy,
-                    prior_refusals,
+                    charged.then_some(prior_refusals),
                 );
                 for line in &recovery {
                     refusal.narrate(line.clone());
                 }
                 refusal.typed = true;
-                if prior_refusals.saturating_add(1)
+                if !charged {
+                    refusal.stop_unrecorded = true;
+                } else if prior_refusals.saturating_add(1)
                     >= crate::app::repair_attempt::REPAIR_ATTEMPT_AFTER_REFUSAL_BUDGET
                 {
                     refusal.code =
@@ -3998,19 +4044,24 @@ fn run_agent_repair_phase(
                         } else if crate::app::repair_attempt::repair_attempt_proposal_focused_required_is_refusal(&error) {
                             // #13203 slice C at the finish authority: the
                             // proposal file appeared after the gate above
-                            // looked. Narrate and type it like that gate.
+                            // looked. Narrate and type it like that gate,
+                            // including its #16164 rule: a missing result
+                            // charges no retry.
+                            let charged = focused_run.is_some();
                             refusal.narrate(format!("focused test result required: {error}"));
                             for line in focused_result_recovery_lines(
                                 &caller_root,
                                 store_ref,
                                 &attempt,
                                 &cage_policy,
-                                prior_refusals,
+                                charged.then_some(prior_refusals),
                             ) {
                                 refusal.narrate(line);
                             }
                             refusal.typed = true;
-                            if prior_refusals.saturating_add(1)
+                            if !charged {
+                                refusal.stop_unrecorded = true;
+                            } else if prior_refusals.saturating_add(1)
                                 >= crate::app::repair_attempt::REPAIR_ATTEMPT_AFTER_REFUSAL_BUDGET
                             {
                                 refusal.code = Some(
@@ -5005,10 +5056,13 @@ fn focused_result_recovery_lines(
     store: Option<&Path>,
     attempt: &crate::app::repair_attempt::ResolvedRepairAttempt,
     policy: &crate::edit_cage::EditCagePolicy,
-    prior_refusals: u32,
+    charged_prior_refusals: Option<u32>,
 ) -> Vec<String> {
-    if prior_refusals.saturating_add(1)
-        >= crate::app::repair_attempt::REPAIR_ATTEMPT_AFTER_REFUSAL_BUDGET
+    // `None`: this refusal charges no retry (#16164), so it never reads as
+    // the one that spends the budget.
+    if let Some(prior_refusals) = charged_prior_refusals
+        && prior_refusals.saturating_add(1)
+            >= crate::app::repair_attempt::REPAIR_ATTEMPT_AFTER_REFUSAL_BUDGET
     {
         return repair_after_no_movement_lines(root, store, attempt, policy, prior_refusals);
     }
@@ -5498,6 +5552,11 @@ pub(in crate::cli) fn before_phase_stdout(
         // the developer does not have to work out the cargo target filter.
         if let Some(command) = &continuation.focused_test_command {
             document.push_str(&format!("Run the new test: {command}\n"));
+        }
+        // #16164: a proposal attempt names its required focused result
+        // before the command that needs it.
+        if let Some(requirement) = &continuation.focused_result_requirement {
+            document.push_str(&format!("{requirement}\n"));
         }
         document.push_str(&format!("Next, after the test edit: {follow_up}\n"));
         if let Some(form) = crate::output::markdown::powershell_text_variant(&follow_up) {
@@ -8071,6 +8130,7 @@ mod before_phase_stdout_tests {
             typescript_test_cache_guidance: false,
             focused_test_command: None,
             declared_cargo_test_target: false,
+            focused_result_requirement: None,
         }
     }
 
@@ -8254,7 +8314,7 @@ mod before_phase_stdout_tests {
         );
         assert!(
             summary.contains(
-                "    (replace each /* ... */ comment with a real value from your test before using it)"
+                "    (replace each /* ... */ comment with a real value from your test before using it; the expected value is what the changed code produces now)"
             ),
             "{summary}"
         );

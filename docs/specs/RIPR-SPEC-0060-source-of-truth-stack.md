@@ -159,6 +159,12 @@ should precede blocking CI promotion.
 
 ### Local Rust gate selection roots
 
+Public `check-fast`, `ci-fast`, `precommit` and `shape` calls require the
+RIPR workspace root. They resolve the caller's Cargo workspace, verify its
+`ripr` and `xtask` members and compare canonical directories. From a member or
+documentation directory they report both paths before formatting, sorting
+allowlists or writing gate reports. The caller's working directory stays intact.
+
 The existing local fast gate is discoverable through `cargo xtask help --all`,
 `cargo xtask help check-fast`, and the command catalog. Detailed help names its
 committed-diff selection, live-worktree execution, local reports, compilation
@@ -327,6 +333,11 @@ Focused tests for `cargo xtask check-goals` source-of-truth coverage include:
 - `rejects_unknown_referenced_artifact`;
 - `rejects_unsupported_policy_field`.
 
+The subprocess test
+`xtask/tests/workspace_gate_root.rs::public_gates_refuse_nested_calls_before_touching_the_workspace`
+checks the four public dispatch arms against a second workspace and a foreign
+workspace with the same directory layout.
+
 Local routing controls in `xtask/tests/support_tier_fast_route.rs` and
 `xtask/src/check_fast_strict.rs` include:
 
@@ -366,6 +377,8 @@ This spec coordinates these accepted source-of-truth surfaces:
 - `cargo xtask check-doc-artifacts`;
 - support-tier claim map in `docs/status/SUPPORT_TIERS.md`;
 - `cargo xtask check-support-tiers`;
+- public maintenance gate root validation in `xtask/src/workspace_gate.rs::from_root`,
+  called by `xtask/src/dispatch.rs::execute`;
 - local applicability and execution in `xtask/src/main.rs::check_fast_gates` and
   `::categorize_changed_files`, with strict dispatch receipt validation in
   `xtask/src/check_fast_strict.rs::validate_fast_report`;

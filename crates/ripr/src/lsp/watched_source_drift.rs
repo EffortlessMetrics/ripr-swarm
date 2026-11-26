@@ -69,6 +69,10 @@ pub(super) struct CommittedSources<'a> {
     pub(super) diagnostic_uris: Vec<&'a Uri>,
     /// Root-relative files that committed findings list as related tests.
     pub(super) related_test_files: BTreeSet<PathBuf>,
+    /// The repository's `[languages]` configuration: each preview adapter's
+    /// handwritten-file and excluded-pattern declarations decide which script
+    /// sources it reads.
+    pub(super) languages: &'a crate::config::LanguagesConfig,
 }
 
 /// The root-relative files that committed findings list as related tests. A
@@ -219,7 +223,7 @@ fn event_drifts_committed_source(
         .related_test_files
         .iter()
         .any(|file| paths_match_on(file, &relative, case_insensitive));
-    let is_uncaptured_script_source = is_uncaptured_script_source(&relative);
+    let is_uncaptured_script_source = is_uncaptured_script_source(&relative, committed.languages);
     if !deleted {
         return carries_diagnostics || is_related_test || is_uncaptured_script_source;
     }
@@ -258,31 +262,28 @@ fn event_drifts_committed_source(
 ///
 /// Dependency, environment and build directories are left out so an install
 /// or a build that rewrites thousands of files schedules nothing. The
-/// predicates are each producer's own static walk rule. A configured
-/// handwritten-file override inside an excluded TypeScript directory is not
-/// consulted here; such a file refreshes on save or on `ripr.refresh`.
-fn is_uncaptured_script_source(relative: &Path) -> bool {
-    if relative
-        .extension()
-        .is_some_and(|extension| extension == "rs")
-    {
+/// rule is the one the analysis pipeline applies to decide that neither the
+/// diff loop nor the workspace walk of a language reads a path, so a file
+/// declared in `[languages.<lang>] handwritten_files` refreshes although it
+/// sits in an excluded directory, and a file matched by
+/// `excluded_file_patterns` does not.
+fn is_uncaptured_script_source(
+    relative: &Path,
+    languages: &crate::config::LanguagesConfig,
+) -> bool {
+    let Some(language) = crate::analysis::route(relative) else {
+        return false;
+    };
+    if language == crate::domain::LanguageId::Rust {
         return false;
     }
-    // Each language's own walk rule: Python environments are not TypeScript
-    // exclusions, and TypeScript build output is not a Python exclusion.
-    let excluded_by_adapter = match crate::analysis::route(relative) {
-        None | Some(crate::domain::LanguageId::Rust) => return false,
-        Some(crate::domain::LanguageId::Python) => {
-            crate::config::is_detectable_excluded_python_path(relative)
-        }
-        Some(crate::domain::LanguageId::TypeScript | crate::domain::LanguageId::JavaScript) => {
-            crate::config::is_detectable_excluded_typescript_path(relative)
-                || crate::config::is_detectable_generated_typescript_path(relative)
-        }
-        Some(crate::domain::LanguageId::Perl) => false,
-    };
+    // The producers' own authority: generated names, configured exclusion
+    // globs, and excluded directories minus declared handwritten files.
+    if crate::analysis::is_excluded_from_diff_and_workspace_index(language, relative, languages) {
+        return false;
+    }
     let normalized = relative.to_string_lossy().replace('\\', "/");
-    !excluded_by_adapter && !crate::analysis::path_enters_ignored_dir(&normalized)
+    !crate::analysis::path_enters_ignored_dir(&normalized)
 }
 
 #[cfg(test)]
@@ -362,6 +363,7 @@ mod tests {
             consumed,
             diagnostic_uris: diagnostic_uris.iter().collect(),
             related_test_files: related_tests.iter().map(PathBuf::from).collect(),
+            languages: &crate::config::LanguagesConfig::default(),
         };
         events_drift_committed_sources(&committed, changes, &|uri| {
             open.iter().any(|open| file_uris_match(open, uri))
@@ -380,6 +382,7 @@ mod tests {
             consumed,
             diagnostic_uris: Vec::new(),
             related_test_files,
+            languages: &crate::config::LanguagesConfig::default(),
         };
         events_drift_committed_sources_on(&committed, changes, &|_| false, case_insensitive)
     }
@@ -570,6 +573,61 @@ mod tests {
                 expected,
                 "{relative}"
             );
+        }
+        Ok(())
+    }
+
+    /// The adapters' configuration decides the rule, as it does for analysis.
+    /// A file declared handwritten refreshes although its directory is
+    /// excluded; a file matched by a configured exclusion glob does not,
+    /// although its directory is ordinary. Undeclared neighbors keep the
+    /// built-in answer.
+    #[test]
+    fn declared_handwritten_and_excluded_script_paths_follow_configuration() -> Result<(), String> {
+        let root = temp_root("script-configured")?;
+        let sources = ConsumedRustSources::default();
+        let mut languages = crate::config::LanguagesConfig::default();
+        languages.typescript.handwritten_files = vec!["dist/handwritten.ts".to_string()];
+        languages.typescript.excluded_file_patterns = vec!["src/legacy/**".to_string()];
+        languages.python.handwritten_files = vec!["build/tool.py".to_string()];
+        languages.python.excluded_file_patterns = vec!["scripts/old_*.py".to_string()];
+        let cases = [
+            ("dist/handwritten.ts", true, false),
+            ("dist/bundle.ts", false, false),
+            ("src/legacy/pricing.ts", false, true),
+            ("src/pricing.ts", true, true),
+            ("build/tool.py", true, false),
+            ("build/other.py", false, false),
+            ("scripts/old_job.py", false, true),
+            ("scripts/job.py", true, true),
+        ];
+        for (relative, configured, built_in) in cases {
+            if let Some(parent) = root.0.join(relative).parent() {
+                std::fs::create_dir_all(parent).map_err(|err| format!("create dir: {err}"))?;
+            }
+            write(&root.0, relative, b"rewritten\n")?;
+            let changed = [event(&root.0, relative, FileChangeType::CHANGED)?];
+            for (languages, expected, label) in [
+                (&languages, configured, "configured"),
+                (
+                    &crate::config::LanguagesConfig::default(),
+                    built_in,
+                    "default configuration",
+                ),
+            ] {
+                let committed = CommittedSources {
+                    root: &root.0,
+                    consumed: &sources,
+                    diagnostic_uris: Vec::new(),
+                    related_test_files: BTreeSet::new(),
+                    languages,
+                };
+                assert_eq!(
+                    events_drift_committed_sources(&committed, &changed, &|_| false),
+                    expected,
+                    "{relative} under the {label}"
+                );
+            }
         }
         Ok(())
     }

@@ -248,8 +248,6 @@ fn path_and_exclude_are_refused_where_they_would_claim_an_unapplied_bound() -> R
 fn suppression_policy_is_refused_on_formats_that_cannot_apply_it() -> Result<(), String> {
     let root = TempRoot::new("suppression-refusals")?;
     for format in [
-        "sarif",
-        "sarif-compact",
         "agent",
         "json-terse",
         "badge-json",
@@ -261,7 +259,7 @@ fn suppression_policy_is_refused_on_formats_that_cannot_apply_it() -> Result<(),
             &["--suppression-policy", "policy.toml", "--format", format],
         )?;
         if !(error.starts_with(
-            "--suppression-policy applies to the findings-based check formats (human, human-full, json, json-compact, github, missed-txt)",
+            "--suppression-policy applies to the findings-based check formats (human, human-full, json, json-compact, github, missed-txt) and to sarif and sarif-compact",
         ) && error.ends_with(&format!(
             "--format {format} does not apply it. Drop the flag, or pick one of those formats"
         )))

@@ -47,6 +47,16 @@ pub(crate) use crate::core_error::GIT_TIMEOUT_REPAIR_GUIDANCE;
 pub(crate) const GIT_NOT_FOUND_ON_PATH_MESSAGE: &str =
     "git was not found on PATH; install git, or pass a saved diff with `--diff PATH` / `--diff -`";
 
+/// The saved-diff route inside [`GIT_NOT_FOUND_ON_PATH_MESSAGE`].
+const SAVED_DIFF_ROUTE: &str = ", or pass a saved diff with `--diff PATH` / `--diff -`";
+
+/// `error` with the saved-diff route removed, for commands that take no
+/// `--diff` (`pr-evidence`, `review-comments`, `gate check`): naming a flag
+/// the command rejects sends the reader to a second failure (#15257).
+pub(crate) fn without_saved_diff_route(error: &str) -> String {
+    error.replace(SAVED_DIFF_ROUTE, "")
+}
+
 /// True when `error` is the named missing-git spawn failure (#4735).
 pub(crate) fn is_git_not_found_on_path(error: &str) -> bool {
     error == GIT_NOT_FOUND_ON_PATH_MESSAGE
@@ -139,6 +149,21 @@ pub(crate) fn run_git_output_with_deadline(
     // non-zero exit instead, changing the error text). For valid roots the
     // two forms are equivalent.
     collect_output_with_deadline(command, timeout, &describe)
+}
+
+/// Probe only locally available history, including in promisor clones. Older
+/// Git versions that ignore GIT_NO_LAZY_FETCH still cannot open a transport.
+pub(crate) fn local_merge_base(
+    root: &Path,
+    base: &str,
+    timeout: Option<Duration>,
+) -> Result<Output, CoreError> {
+    let (mut command, timeout) =
+        git_command_within(root, &["merge-base", "--", base, "HEAD"], timeout);
+    command
+        .env("GIT_NO_LAZY_FETCH", "1")
+        .env("GIT_ALLOW_PROTOCOL", "");
+    collect_output_with_deadline(command, timeout, "git merge-base")
 }
 
 /// Longest working directory, in UTF-16 units and without the trailing
@@ -1053,6 +1078,16 @@ pub(crate) fn run_git_output_with_deadline_and_limit(
     )
 }
 
+/// Configuration every isolated fixture invocation carries so a returned
+/// `git` leaves nothing running in the fixture. Since Git 2.47 a `commit`
+/// detaches `git maintenance run --auto`, which holds
+/// `.git/objects/maintenance.lock` after the commit has returned; a test that
+/// walks the tree right after setup can list the lock and lose it before the
+/// read (#9142). The `tests/common` mirror carries the same list.
+#[cfg(test)]
+const FIXTURE_GIT_NO_BACKGROUND_CONFIG: &[(&str, &str)] =
+    &[("maintenance.auto", "false"), ("gc.auto", "0")];
+
 #[cfg(test)]
 pub(crate) fn run_git_output_with_deadline_and_limit_isolated(
     root: &Path,
@@ -1073,7 +1108,20 @@ pub(crate) fn run_git_output_with_deadline_and_limit_isolated(
         .env("GIT_CONFIG_SYSTEM", null_config)
         .env_remove("GIT_DIR")
         .env_remove("GIT_WORK_TREE")
-        .env_remove("GIT_INDEX_FILE");
+        .env_remove("GIT_INDEX_FILE")
+        // An inherited `-c` pair outranks the counted pairs below, so it
+        // could turn background maintenance back on. Arguments of this
+        // command still carry their own `-c` pairs.
+        .env_remove("GIT_CONFIG_PARAMETERS");
+    for (index, (key, value)) in FIXTURE_GIT_NO_BACKGROUND_CONFIG.iter().enumerate() {
+        command
+            .env(format!("GIT_CONFIG_KEY_{index}"), key)
+            .env(format!("GIT_CONFIG_VALUE_{index}"), value);
+    }
+    command.env(
+        "GIT_CONFIG_COUNT",
+        FIXTURE_GIT_NO_BACKGROUND_CONFIG.len().to_string(),
+    );
     collect_output_with_deadline_and_limit(command, timeout, max_output_bytes, &describe)
 }
 

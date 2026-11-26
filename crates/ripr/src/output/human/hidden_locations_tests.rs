@@ -5,6 +5,14 @@ use super::tests::{bounded_output_with_findings, sample_finding};
 use crate::domain::{SourceCurrentness, SourceLocation};
 use std::path::PathBuf;
 
+/// The text under `Hidden:`. A removal-only run also lists its removed lines
+/// above Hidden (#15617), so row counts for the Hidden list read this part.
+fn hidden_section(rendered: &str) -> &str {
+    rendered
+        .split_once("\nHidden:\n")
+        .map_or("", |(_, hidden)| hidden)
+}
+
 fn assert_locations(root: PathBuf, currentness: SourceCurrentness) {
     let findings = (0..3)
         .map(|index| {
@@ -37,9 +45,21 @@ fn assert_locations(root: PathBuf, currentness: SourceCurrentness) {
         rendered.contains("Summary: 3 changed behaviors checked: "),
         "{rendered}"
     );
+    // Count the Hidden rows only: a removal-only run also lists its removed
+    // lines above Hidden, with the same location presentation (#15617).
+    let hidden = hidden_section(&rendered);
     assert_eq!(
-        rendered.matches("    - ./src/").count(),
+        hidden.matches("    - ./src/").count(),
         3 - usize::from(selected)
+    );
+    assert_eq!(
+        rendered.matches("    - ./src/").count() - hidden.matches("    - ./src/").count(),
+        if currentness == SourceCurrentness::BaseDeleted {
+            3
+        } else {
+            0
+        },
+        "{rendered}"
     );
     assert!(rendered.contains("  Full evidence: rerun with --format human-full\n"));
     assert!(rendered.contains("  Machine data: rerun with --format json\n"));
@@ -167,7 +187,11 @@ fn location_change_keeps_the_twenty_row_cap_and_continuation() {
         rendered.contains("All 23 finding(s) are base-side evidence"),
         "{rendered}"
     );
-    assert_eq!(rendered.matches("    - ./src/").count(), 20, "{rendered}");
+    assert_eq!(
+        hidden_section(&rendered).matches("    - ./src/").count(),
+        20,
+        "{rendered}"
+    );
     assert!(
         rendered.contains(
             "    - ./src/f00.rs:1 (weak); kind: predicate; reason: missing strong oracle\n"
@@ -256,7 +280,11 @@ fn identical_hidden_rows_collapse_with_a_repeat_count() {
         })
         .collect();
     let rendered = render(&bounded_output_with_findings(findings));
-    assert_eq!(rendered.matches("    - ").count(), 1, "{rendered}");
+    assert_eq!(
+        hidden_section(&rendered).matches("    - ").count(),
+        1,
+        "{rendered}"
+    );
     assert!(
         rendered.contains("reason: missing strong oracle (x3)\n"),
         "{rendered}"
@@ -278,7 +306,11 @@ fn distinct_or_non_consecutive_hidden_rows_stay_separate() {
         })
         .collect();
     let rendered = render(&bounded_output_with_findings(findings));
-    assert_eq!(rendered.matches("    - ").count(), 3, "{rendered}");
+    assert_eq!(
+        hidden_section(&rendered).matches("    - ").count(),
+        3,
+        "{rendered}"
+    );
     assert!(!rendered.contains(" (x"), "{rendered}");
 }
 
@@ -299,7 +331,11 @@ fn hidden_rows_state_a_long_shared_reason_once() {
         })
         .collect();
     let rendered = render(&bounded_output_with_findings(findings));
-    assert_eq!(rendered.matches("    - ").count(), 3, "{rendered}");
+    assert_eq!(
+        hidden_section(&rendered).matches("    - ").count(),
+        3,
+        "{rendered}"
+    );
     assert_eq!(rendered.matches(LONG).count(), 1, "{rendered}");
     assert_eq!(
         rendered.matches("; reason: same as above\n").count(),
@@ -359,7 +395,8 @@ fn hidden_rows_restate_a_long_reason_after_a_different_reason() {
         })
         .collect();
     let rendered = render(&bounded_output_with_findings(findings));
-    assert_eq!(rendered.matches("    - ").count(), 3, "{rendered}");
+    let hidden = hidden_section(&rendered);
+    assert_eq!(hidden.matches("    - ").count(), 3, "{rendered}");
     assert_eq!(rendered.matches(LONG_A).count(), 2, "{rendered}");
     assert_eq!(rendered.matches(LONG_B).count(), 1, "{rendered}");
     assert!(!rendered.contains("same as above"), "{rendered}");

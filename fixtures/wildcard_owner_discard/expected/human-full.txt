@@ -36,7 +36,7 @@ Evidence
   - observation yes: A related test observes a value or effect near the changed behavior
   - discriminator weak: Discriminator unconfirmed: no assertion text references the changed expression
   - local flow reaches returned value: amount * 8 / 100 (line 2)
-  - related test src/lib.rs:10 observes_tax uses strong exact value oracle: assert_eq!(matches!(Some(100), Some(_)), true); unconfirmed: ripr could not confirm that this assertion observes the changed behavior
+  - related test src/lib.rs:10 observes_tax uses smoke only oracle: assert_eq!(matches!(Some(100), Some(_)), true); misses: assertion too weak to tell the old behavior from the new
   - source function argument value amount = 100 at line 11
   - source assertion argument value 100 at line 12
   - source assertion argument value true at line 12
@@ -45,7 +45,7 @@ Weakness
   - No strong discriminator was detected
 
 Next step
-  The related test `observes_tax` already has an exact assertion; this does not establish observation of the returned value. Check whether the change can affect the returned value. If it can, add a separating input and assert the exact returned value. If it cannot, test the changed effect separately; another input cannot distinguish unchanged returns
+  Replace broad assertions with exact equality or a property that constrains the changed returned value
 Drill in:
   (finding id, for explain/context)
   ripr explain --root <cwd>/fixtures/wildcard_owner_discard/input --diff <cwd>/fixtures/wildcard_owner_discard/diff.patch --mode fast probe:src_lib.rs:return_value:40841afb

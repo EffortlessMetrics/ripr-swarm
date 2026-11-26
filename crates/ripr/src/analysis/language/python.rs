@@ -363,6 +363,7 @@ mod boundary;
 mod call_chain;
 mod caplog_text;
 mod class_attr_pin;
+mod class_attr_reader;
 mod classify;
 mod coarse_projection;
 mod conditional_defs;
@@ -403,6 +404,9 @@ use classify::{
     classify_change, classify_change_with_context, classify_change_with_old,
     classify_change_with_source,
 };
+mod call_variant;
+mod connective_swap;
+mod default_equal_keyword;
 mod discriminators;
 mod effect_alignment;
 #[cfg(test)]
@@ -426,6 +430,7 @@ mod package_aliases;
 mod param_fixtures;
 mod parametrize;
 mod parse_budget;
+mod positional_only_marker;
 mod probe_shape;
 mod property_read;
 mod reexports;
@@ -663,6 +668,14 @@ struct PythonOwner {
     /// Dotted package paths whose `__init__.py` re-exports this owner under
     /// its own name (`reexports.rs`). Empty until the workspace pass fills it.
     reexport_modules: Vec<String>,
+    /// For a method owner whose class is defined at module top level: dotted
+    /// package paths whose `__init__.py` re-exports that class under its own
+    /// name (`reexports.rs`). With the owner's own module paths these are the
+    /// only modules a `from M import Class` may name and still mean the
+    /// owner's class. Empty for other owners and until the workspace pass
+    /// fills it.
+    #[serde(default)]
+    class_reexport_modules: Vec<String>,
     /// Whether a `from <owner module> import *` binds this owner: the name is
     /// public and the module's `__all__` is absent or lists it. `false` until
     /// the workspace pass fills it, and when the module source is unavailable
@@ -696,6 +709,19 @@ struct PythonOwner {
     /// parameters and names it rebinds. Used only to relate a test that calls
     /// a same-module caller of a changed helper (`helper_owner_call`, #4568).
     module_callees: Vec<String>,
+    /// Names a routed handler's own scope calls as bare `name(` calls: the
+    /// same reading as `module_callees`, with nested `def` blocks and
+    /// `lambda` tails removed. The route-helper relation (#14150) claims the
+    /// handler calls the helper itself, so a call that runs only if the
+    /// handler invokes a nested scope does not count. Empty for other owners.
+    route_scope_callees: Vec<String>,
+    /// The names among `route_scope_callees` that the handler awaits a call
+    /// of: an `await` of a call of that bare name in the handler's own code.
+    /// The body of a coroutine function runs through such a call, and through
+    /// others that are not read, so the route-helper relation follows an
+    /// `async def` helper only through an awaited one (#15882 review). Empty
+    /// for other owners.
+    route_scope_awaited_callees: Vec<String>,
     /// Dotted path of the enclosing classes of a method owner, outermost
     /// first (`Outer.Inner` for `Outer.Inner.__init__`). Empty for other
     /// owners. `qualified_name` keeps only the innermost class.
@@ -744,6 +770,12 @@ struct PythonOwner {
     /// `false` by default, which grants no response-read credit.
     #[serde(default)]
     route_returns_body: bool,
+    /// Whether another route can answer the same request, so the registered
+    /// handler is not established (#14150). Separate from
+    /// `route_returns_body`: a shadowed handler may return no body and still
+    /// not be the one that runs.
+    #[serde(default)]
+    route_dispatch_ambiguous: bool,
     /// The route handler's return annotation is a bare `dict` (#13869). The
     /// workspace post-pass withdraws `route_returns_body` from such an owner
     /// when any source may rebind `dict`, which would make the annotation a
@@ -926,6 +958,12 @@ struct PythonFixtureDef {
     /// Set when attached: the `from` imports of the test's module and its
     /// conftest chain, by importing file; each must be the owner's module.
     scope_imports: Vec<(PathBuf, PythonImport)>,
+    /// Fixture definitions a route-client fixture's application parameter
+    /// resolves through, in order, when attached (#14141). Kept apart from
+    /// the test's own `fixture_defs` so following them earns no
+    /// `fixture_owner_call` relation.
+    #[serde(default)]
+    client_fixture_chain: Vec<PythonFixtureDef>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
@@ -2674,7 +2712,15 @@ mod conftest_admission_tests;
 mod source_facts_tests;
 
 #[cfg(test)]
+mod call_variant_tests;
+#[cfg(test)]
+mod connective_swap_tests;
+#[cfg(test)]
+mod default_equal_keyword_tests;
+#[cfg(test)]
 mod deleted_lines_tests;
+#[cfg(test)]
+mod positional_only_marker_tests;
 
 #[cfg(test)]
 mod fixtures_tests;
@@ -2775,6 +2821,8 @@ mod new_declaration_tests;
 mod python_tests;
 
 #[cfg(test)]
+mod class_identity_tests;
+#[cfg(test)]
 mod layout_tests;
 #[cfg(test)]
 mod package_alias_tests;
@@ -2784,6 +2832,8 @@ mod reexport_tests;
 #[cfg(test)]
 mod replaced_block_tests;
 
+#[cfg(test)]
+mod route_helper_tests;
 #[cfg(test)]
 mod route_identity_tests;
 

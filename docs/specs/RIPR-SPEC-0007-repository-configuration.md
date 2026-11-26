@@ -227,6 +227,20 @@ Supported bare keys, double-quoted entry string values, and the integer schema
 header retain their existing syntax. Single-quoted string values and quoted
 keys remain unsupported. This repair adds no broader TOML or calendar support.
 
+### Repository-controlled suppression path stays inside the repository (#14310)
+
+The implicit loader for the repository-controlled `suppressions.path` resolves
+every path component before reading. `..`, absolute and prefixed paths, a link
+or link chain whose target leaves the analyzed root, a dangling or looping link,
+and a final entry that is not a regular file all stop with one fixed refusal
+that names the entry and the repair, before any target bytes are read and
+without printing the resolved path. A link whose target stays inside the root
+still loads. A missing ordinary path, or an analyzed root that no longer exists,
+means no accepted debt. The explicit `--suppression-policy` path is an operator
+choice and is not confined. The check is not atomic against a concurrent
+writer replacing checkout entries during the run; ripr does not execute
+repository code, so that requires a separate local process.
+
 ### Unused default suppression disclosure (#7759)
 
 After successful analysis, `ripr check` in human, human-full, JSON or GitHub
@@ -261,6 +275,20 @@ changes it; the function selector ignores `finding_id` and keeps matching. It
 is exact and fails closed: another file, another function in the same file, a
 missing owner, or an owner the producer disambiguated with a `#L<line>` suffix
 (duplicate owners) never matches. Expired entries still do not apply.
+
+**Stale id warning and suppression health (#14129).** An unmatched
+`finding_id` entry that is not a known ripr 0.10 id keeps its "did not match
+any current finding" warning and adds that finding ids hash the parsed
+expression and that `path` + `function` selects the owning function across
+edits, which covers every finding in that function and cannot select a
+changed `const` or `static`; `ripr review-comments` reports only expired
+entries, not unmatched ones. An unmatched path-glob or `path` + `function` entry keeps the plain
+warning. `ripr policy suppression-health` names a `path` + `function` entry
+`<path>::<function>`, the label the check matcher reports for it, and reports
+a rejected `function` entry as a `config_error` finding. A finding with no
+function owner (a changed `const` or `static`), a same-named function in
+another file, and a same-named function in a nested module of the same file
+are not matched by the selector.
 
 **Review-comments.** `ripr review-comments --suppression-policy PATH` loads
 the same file with the same loader as `ripr check` (relative paths resolve
@@ -478,6 +506,17 @@ values; an unrelated value such as `mode = "slow"` gets no suggestion, a
 keeps the same span, rejected value and accepted-value list.
 ```
 
+A rejected value that equals an accepted one once `_` or a space is read as
+`-` names that accepted value before edit distance is consulted (#15481):
+
+```text
+Given ripr.toml sets [perl] producer = "perl_lsp", one edit from both
+`perllsp` and `perl-lsp`,
+when ripr loads the config,
+then the error ends with `(did you mean `perl-lsp`?)`; `producer = "perlsp"`,
+with no separator typed, still ends with `(did you mean `perllsp`?)`.
+```
+
 ### Per-crate overrides (#2671)
 
 ```text
@@ -671,6 +710,23 @@ keeps exit 0 when the other checks pass, and recommends
 `ripr check --base REF` bound to the diagnosed root instead of a bare
 `ripr check`. The probe runs only after `HEAD` resolved, so an unanswered Git
 never produces the advisory, and a failed prerequisite still outranks it.
+
+When the repository is mid-merge, mid-rebase or mid-cherry-pick (Git's
+operation marker exists), doctor records an advisory `git_operation` check
+naming the operation and its finish and abort commands, and keeps exit 0 when
+the other checks pass. While conflict markers remain, `ripr check` quarantines
+their regions, including regions a zero-context diff splits across hunks,
+records the `unresolved_conflict_markers` limitation and exits 2 instead of
+listing findings from rival source states. An unanswered Git probe never
+produces the advisory.
+
+With a resolved default base, doctor reports `git_base` and names the ref.
+A shared ancestor with HEAD passes. If none is available, a shallow clone gets
+the `git fetch --unshallow` and Actions `fetch-depth: 0` repairs. For unrelated
+histories in a full clone, choose a `--base` on HEAD's history. These advisories
+keep exit 0 when other checks pass. For an origin without a default-branch
+pointer, doctor suggests `git remote set-head origin --auto`. Doctor leaves
+fetching and ref changes to the user.
 
 ### Doctor separates analysis readiness from source-build prerequisites
 

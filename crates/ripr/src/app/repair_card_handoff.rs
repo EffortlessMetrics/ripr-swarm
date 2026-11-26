@@ -30,11 +30,11 @@ use crate::analysis::repair_route::{
 use crate::config::RiprConfig;
 use crate::domain::{
     AgentCardRefusalKind, CanonicalItemId, CardCurrentnessGoal, CommandSpec, DiagnosticWitness,
-    EditCageGoal, FindingCanonicalGap, FixInstructionIdentityContext, FixInstructionSummary,
-    FocusedExecutionGoal, InstructionSnapshotCurrentness, MutationConfirmationGoal,
-    RepairCardBudget, RepairCardDetailFamily, RepairCardDetailState, RepairCardDoneWhen,
-    RepairCardSnapshot, RepairCardSnapshotCurrentness, RepairCardSubject, RepairCardV1,
-    StaticMovementGoal, repair_card_route_exposable,
+    EditCageGoal, FindingCanonicalGap, FixInstructionIdentityContext, FixInstructionState,
+    FixInstructionSummary, FocusedExecutionGoal, InstructionSnapshotCurrentness,
+    MutationConfirmationGoal, RepairCardBudget, RepairCardDetailFamily, RepairCardDetailState,
+    RepairCardDoneWhen, RepairCardSnapshot, RepairCardSnapshotCurrentness, RepairCardSubject,
+    RepairCardV1, StaticMovementGoal, repair_card_route_exposable,
 };
 use crate::output::agent_seam_packets::{
     EDIT_CAGE_PRODUCTION_STATEMENT, EDIT_CAGE_TERMINALITY_WARNING, PacketCommandContext,
@@ -133,6 +133,12 @@ pub(crate) struct SeamCardFacts<'a> {
     /// bound finding's own id is byte-equal across surfaces (#8638). `None`
     /// when no finding binds the seam.
     pub(crate) finding_gap_id: Option<&'a str>,
+    /// Whether the bound finding is a new function no workspace code calls
+    /// (`is_unreferenced_no_static_path`, #14919). Its fix site is the new
+    /// test the seam packet proposes, which a check witness never names, so
+    /// the seam's own repair-packet flip is the card's instruction authority
+    /// for it (#15926), as it is for `ripr check` and `ripr repair`.
+    pub(crate) unreferenced_new_function: bool,
     /// The latest recorded repair attempt for this seam, when one exists.
     pub(crate) attempt: Option<&'a RepairAttemptManifest>,
     /// The rendered complete canonical packet envelope this card routes to.
@@ -171,6 +177,7 @@ pub(crate) fn repair_card_for_entry(
     let SeamWitnessBinding {
         witness: witness_pack,
         finding_gap_id,
+        unreferenced_new_function,
     } = witness_pack;
     let (finding_id, witness) = match witness_pack {
         Some((id, witness)) => (Some(id), Some(witness)),
@@ -210,6 +217,7 @@ pub(crate) fn repair_card_for_entry(
         witness: witness.as_ref(),
         finding_id: finding_id.as_deref(),
         finding_gap_id: finding_gap_id.as_deref(),
+        unreferenced_new_function,
         attempt: attempt.as_ref(),
         packet_json: &packet_json,
         repository_head: &repository_head,
@@ -469,10 +477,27 @@ pub(crate) fn assemble_repair_card(
     // names that check, the one the stub writes, instead of "none".
     let seam_assertion =
         seam_assertion.or_else(|| collection_contents_check_suggestion(entry, readiness));
-    let mut instruction = facts
-        .witness
-        .map(FixInstructionSummary::from_witness)
-        .unwrap_or_else(FixInstructionSummary::unavailable);
+    // #15926: a new function no workspace code calls has no related test, so
+    // its check witness names no fix site and reads as limited. Its fix site
+    // is the new test file the seam packet proposes; when the seam passes
+    // the shared repair-packet flip (the gate `ripr check`'s repair line,
+    // bare `ripr repair` and the editor action consume), the card agrees.
+    let mut instruction = if facts.unreferenced_new_function && eligibility.ineligibility.is_none()
+    {
+        FixInstructionSummary {
+            state: FixInstructionState::FixSiteReady,
+            has_fix_site: true,
+            has_suggested_assertion: false,
+            limitation_kinds: Vec::new(),
+            instruction_semantic_id: None,
+            instruction_instance_id: None,
+        }
+    } else {
+        facts
+            .witness
+            .map(FixInstructionSummary::from_witness)
+            .unwrap_or_else(FixInstructionSummary::unavailable)
+    };
     instruction.has_suggested_assertion |= seam_assertion.is_some();
     attach_fix_instruction_identities(&mut instruction, facts);
 
@@ -828,6 +853,7 @@ fn detail_sources_for(
 struct SeamWitnessBinding {
     witness: Option<(String, DiagnosticWitness)>,
     finding_gap_id: Option<String>,
+    unreferenced_new_function: bool,
 }
 
 /// Run the check pipeline and project the witness for the finding that names
@@ -865,6 +891,12 @@ fn witness_for_seam(
     Ok(SeamWitnessBinding {
         witness: witness_from_findings(&output.findings, entry, canonical_gap_id, candidate_seams),
         finding_gap_id: bound_finding_gap_id(
+            &output.findings,
+            entry,
+            canonical_gap_id,
+            candidate_seams,
+        ),
+        unreferenced_new_function: bound_finding_is_unreferenced_new_function(
             &output.findings,
             entry,
             canonical_gap_id,
@@ -990,6 +1022,45 @@ pub(crate) fn bound_finding_gap_id(
 ) -> Option<String> {
     finding_for_seam(findings, entry, canonical_gap_id, candidate_seams)
         .and_then(|finding| finding.canonical_gap.as_ref().map(|gap| gap.id.clone()))
+}
+
+/// Whether the finding bound to this seam (the shared [`finding_for_seam`]
+/// join) is a new function no workspace code calls (#14919, #15926).
+pub(crate) fn bound_finding_is_unreferenced_new_function(
+    findings: &[crate::domain::Finding],
+    entry: &ClassifiedSeam,
+    canonical_gap_id: Option<&str>,
+    candidate_seams: &[ClassifiedSeam],
+) -> bool {
+    finding_for_seam(findings, entry, canonical_gap_id, candidate_seams)
+        .is_some_and(crate::domain::Finding::is_unreferenced_no_static_path)
+}
+
+/// A bound candidate-current no-path finding can veto a suggested start
+/// when the seam inventory also finds no test path (#4668). An instant
+/// changed-line finding may miss existing tests that the seam inventory
+/// traces, so it cannot veto a reached seam. Use the full occurrence join
+/// before applying the same unreferenced-owner exception as `ripr check`.
+pub(crate) fn bound_no_path_start_refusal<'a>(
+    findings: &'a [crate::domain::Finding],
+    entry: &ClassifiedSeam,
+    candidate_seams: &[ClassifiedSeam],
+) -> Option<&'a crate::domain::Finding> {
+    if entry.evidence.reach.state != crate::domain::StageState::No {
+        return None;
+    }
+    let eligibility = repair_packet_eligibility(entry);
+    let finding = finding_for_seam(
+        findings,
+        entry,
+        eligibility.readiness.canonical_gap_id.as_deref(),
+        candidate_seams,
+    )?;
+    (finding.class == crate::domain::ExposureClass::NoStaticPath
+        && finding.is_candidate_actionable()
+        && super::gap_bound_repair::finding_is_static_limited(finding)
+        && finding_names_seam_by_location(finding, entry, candidate_seams))
+    .then_some(finding)
 }
 
 /// Project the witness for the finding that names this seam's canonical gap
@@ -1411,7 +1482,7 @@ pub(crate) mod tests {
     }
 
     /// #7179: a weakly-gripped predicate boundary carrying an explicit span.
-    fn spanned_twin_boundary_entry(
+    pub(crate) fn spanned_twin_boundary_entry(
         byte_offset: usize,
         display_line: usize,
         span: crate::analysis::seams::SeamSpan,
@@ -1598,6 +1669,7 @@ pub(crate) mod tests {
             witness: None,
             finding_id: None,
             finding_gap_id: None,
+            unreferenced_new_function: false,
             attempt: None,
             packet_json,
             repository_head: "abc123",
@@ -1912,6 +1984,38 @@ pub(crate) mod tests {
         Ok(())
     }
 
+    /// #15926: the unreferenced-function fact admits the seam's own flip, never
+    /// more. A seam that fails the repair-packet flip keeps the witness-derived
+    /// (here unavailable) instruction and offers no next action.
+    #[test]
+    fn an_unreferenced_function_fact_does_not_open_a_seam_that_fails_the_flip() -> Result<(), String>
+    {
+        let entry = weakly_gripped_entry();
+        if repair_packet_eligibility(&entry).ineligibility.is_none() {
+            return Err("fixture: the seam must fail the repair-packet flip".to_string());
+        }
+        let command = agent_inspection_command_spec(
+            AgentArtifactRoute::Packet,
+            "src",
+            entry.seam.id().as_str(),
+        );
+        let packet = packet_for(&entry);
+        let mut facts = facts_for(&entry, &packet);
+        facts.next_command = Some(command);
+        facts.unreferenced_new_function = true;
+        let card = assemble_repair_card(&facts)?;
+        if card.instruction.state != FixInstructionState::Unavailable {
+            return Err(format!(
+                "a seam failing the flip must keep its instruction: {:?}",
+                card.instruction.state
+            ));
+        }
+        if card.next_action.is_some() {
+            return Err("a seam failing the flip must offer no next action".to_string());
+        }
+        Ok(())
+    }
+
     #[test]
     fn repair_card_assembly_stays_within_the_default_bounds() -> Result<(), String> {
         let entry = weakly_gripped_entry();
@@ -2104,6 +2208,7 @@ pub(crate) mod tests {
                 normalized_discriminator: "amount==discount_threshold".to_string(),
             }),
             probe: Probe {
+                before_condition: None,
                 id: ProbeId("probe:src_lib.rs:predicate:4036edfa".to_string()),
                 location: SourceLocation::new("src/lib.rs", 2, 5),
                 owner: Some(SymbolId("src/lib.rs::pricing::discounted_total".to_string())),
@@ -2200,6 +2305,7 @@ pub(crate) mod tests {
                 normalized_discriminator: "amount==discount_threshold".to_string(),
             }),
             probe: Probe {
+                before_condition: None,
                 id: ProbeId(id.to_string()),
                 location: SourceLocation::new(file, 2, 5),
                 owner: None,

@@ -409,10 +409,11 @@ fn awkward_file_names_each_produce_a_probe() -> Result<(), String> {
         reported_paths.push(path.strip_prefix("./").unwrap_or(path).to_owned());
     }
     // The renderer writes every path with forward slashes (and a leading
-    // `./`), so a literal backslash in a file name is reported as a separator.
+    // `./`). A literal backslash is a file-name byte on Unix and is spelled
+    // `%5C`, never reported as a separator (#15908).
     let mut expected_paths: Vec<String> = names
         .iter()
-        .map(|name| format!("src/{}", name.replace('\\', "/")))
+        .map(|name| format!("src/{}", name.replace('\\', "%5C")))
         .collect();
     expected_paths.sort();
     reported_paths.sort();
@@ -1389,6 +1390,95 @@ fn shallow_clone_without_merge_base_names_the_repair() -> Result<(), String> {
     assert_sane(&ran, "shallow clone")?;
     if ran.code != Some(2) || !ran.stderr.contains("git fetch --unshallow") {
         return Err(format!("expected unshallow repair route\n{}", ran.stderr));
+    }
+    Ok(())
+}
+
+#[cfg(unix)]
+#[test]
+fn doctor_base_distinguishes_checkout_history() -> Result<(), String> {
+    let scratch = Scratch::new("doctor-base")?;
+    let source = plain(&scratch, "source")?;
+    git(&source, &["checkout", "-q", "main"])?;
+    let url = format!("file://{}", source.display());
+    for (name, shallow) in [("full", false), ("shallow", true)] {
+        let mut args = vec!["clone", "-q", "-b", "feat"];
+        if shallow {
+            args.extend(["--depth", "1", "--no-single-branch"]);
+        }
+        args.extend([&url, name]);
+        git(&scratch.path, &args)?;
+        let root = scratch.path.join(name);
+        let verify = |key: &str, status: &str, words: &[&str]| -> Result<(), String> {
+            let ran = ripr(&root, &["doctor", "--json"], &[])?;
+            let value: serde_json::Value =
+                serde_json::from_str(&ran.stdout).map_err(|e| e.to_string())?;
+            let checks = value["checks"].as_array().ok_or("doctor omitted checks")?;
+            let base_checks = checks
+                .iter()
+                .filter(|row| matches!(row["name"].as_str(), Some("git_default_base" | "git_base")))
+                .count();
+            if base_checks != 1
+                || (status == "pass" && checks.iter().any(|row| row["name"] == "git_origin_head"))
+                || ran.code != Some(0)
+                || !checks.iter().any(|row| {
+                    row["name"] == key
+                        && row["status"] == status
+                        && row["evidence"]
+                            .as_str()
+                            .is_some_and(|text| words.iter().all(|word| text.contains(word)))
+                })
+            {
+                return Err(format!("unexpected {name} doctor {key}: {}", ran.stdout));
+            }
+            Ok(())
+        };
+        if shallow {
+            verify(
+                "git_base",
+                "advisory",
+                &[
+                    "origin/main",
+                    "no merge base",
+                    "git fetch --unshallow",
+                    "fetch-depth: 0",
+                ],
+            )?;
+        } else {
+            verify("git_base", "pass", &["origin/main", "merge base with HEAD"])?;
+            git(
+                &root,
+                &[
+                    "symbolic-ref",
+                    "refs/remotes/origin/HEAD",
+                    "refs/remotes/origin/deleted",
+                ],
+            )?;
+            verify(
+                "git_origin_head",
+                "advisory",
+                &["missing or stale", "change the base"],
+            )?;
+            git(&root, &["remote", "set-head", "origin", "-d"])?;
+            verify(
+                "git_origin_head",
+                "advisory",
+                &["git remote set-head origin --auto"],
+            )?;
+            git(&root, &["checkout", "-q", "--orphan", "disjoint"])?;
+            git(&root, &["commit", "-q", "-m", "unrelated root"])?;
+            verify(
+                "git_base",
+                "advisory",
+                &["origin/main", "unrelated histories", "--base"],
+            )?;
+            git(&root, &["update-ref", "-d", "refs/remotes/origin/main"])?;
+            verify(
+                "git_default_base",
+                "advisory",
+                &["no default base", "--base"],
+            )?;
+        }
     }
     Ok(())
 }

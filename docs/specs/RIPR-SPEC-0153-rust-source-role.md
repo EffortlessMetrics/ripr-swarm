@@ -102,6 +102,26 @@ changed-file rule, `seeds_diff_probes`, so the editor keeps every finding
 the CLI reports. Other loose non-`src` files (panel subjects under
 `metrics/`) are data Cargo never compiles and stay evidence.
 
+Repo mode lists the spots of a crate root a manifest declares outside `src/`
+(`[lib] path = "source/entry.rs"`, a `[[bin]] path`) and of the modules that
+root owns, through `seeds_repo_seams` (#16045). Such a root is a library or
+binary target like `src/lib.rs`, its seams are repairable from the package's
+tests, and `ripr check` offers a repair start only for a spot the repo
+inventory lists, so leaving it out produced a weak finding with no start.
+A symlinked `src` directory or `src/lib.rs` (and the declared roots) is read
+where the link lands inside the workspace: Git reports the change at the link
+target, and that target is declared as the root and its directory as the
+module directory. Only a root Cargo builds is resolved, by the module walk's
+target rules: a link at an `autobins = false` `src/main.rs`, or at a
+`src/lib.rs` a `[lib] path` replaces, declares nothing. The classified seam
+cache keys on where each built root lands, since a link can move with no
+manifest or Rust file changing. Such a root is no diff-only shape, so pilot
+ranks it rather than naming it as left out. A link that leaves the workspace
+declares nothing, and a
+copy of the library nothing names (`real/lib.rs` beside a plain `src/lib.rs`)
+stays evidence with no start. Build scripts and `xtask/` stay out of the repo
+inventory, since no test target exercises them.
+
 `seeds_diff_probes` also consults module-tree evidence (#4435). A changed
 file seeds only when a Cargo target's module tree reaches it through
 `mod`, `#[path]` or literal `include!` edges, walked from every target

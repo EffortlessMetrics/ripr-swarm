@@ -1116,12 +1116,13 @@ pub(crate) fn not_a_work_tree_message(root: &Path) -> String {
 
 /// The refusal for a bare repository: it is a repository, but it has no
 /// checked-out source for the analysis to read, so the next action is a
-/// work tree, not "run inside a repository" (#14104).
+/// work tree, not "run inside a repository" (#14104). The work-tree route
+/// has one owner: bound to the repository, and aware of an empty repository.
 pub(crate) fn bare_repository_message(root: &Path) -> String {
     format!(
         "This root is a bare Git repository with no work tree (the analysis did not run). \
-         Check out a work tree from it (`git worktree add <path>` or `git clone`), then pass \
-         `--root <path>` to that work tree. Root: `{}`",
+         {}, then pass `--root <path>` to that work tree. Root: `{}`",
+        crate::work_tree_route::bare_root_work_tree_route_or_plain(root),
         root.display(),
     )
 }
@@ -1501,6 +1502,33 @@ pub(crate) fn default_base_unresolved_message(
     resolve_default_base(root, git_timeout).err()
 }
 
+/// Check only fetched history and preserve the loader's repair for Git's
+/// quiet exit 1. Other failures do not establish unrelated histories.
+pub(crate) fn doctor_base_history(
+    root: &Path,
+    base: &str,
+    timeout: Option<Duration>,
+) -> Result<(), CoreError> {
+    let output = crate::git::local_merge_base(root, base, timeout)?;
+    if output.status.success() && !output.stdout.trim_ascii().is_empty() {
+        return Ok(());
+    }
+    if output.status.code() == Some(1)
+        && output.stdout.trim_ascii().is_empty()
+        && output.stderr.trim_ascii().is_empty()
+    {
+        let (diagnosis, _) = no_merge_base_diagnosis(root, base, "HEAD", timeout);
+        return Err(CoreError::message(format!(
+            "Default base `{base}` has no merge base with HEAD. {diagnosis}"
+        )));
+    }
+    let reason =
+        git_reason_line(&output.stderr).unwrap_or_else(|| "Git did not return a merge base".into());
+    Err(CoreError::message(format!(
+        "Could not verify history between `{base}` and HEAD: {reason}"
+    )))
+}
+
 /// A quiet failed HEAD lookup is not enough to establish an unborn branch:
 /// loose-ref damage and inaccessible ref targets can also return silent exit 1.
 /// Git's recursive symbolic lookup distinguishes those without assuming a ref
@@ -1735,14 +1763,25 @@ fn default_base_failure_context(root: &Path, git_timeout: Option<Duration>) -> S
 /// origin --auto` creates it once the default branch's tracking ref exists,
 /// hence the `git fetch origin` before it. False when there is no `origin` or
 /// Git cannot answer, so the advice is only given where it can apply.
-fn origin_lacks_head_pointer(root: &Path, git_timeout: Option<Duration>) -> bool {
+pub(crate) fn origin_lacks_head_pointer(root: &Path, git_timeout: Option<Duration>) -> bool {
     let succeeds = |args: &[&str]| {
         crate::git::run_git_output_with_deadline(root, args, git_timeout)
             .ok()
             .map(|output| output.status.success())
     };
     succeeds(&["remote", "get-url", "origin"]) == Some(true)
-        && succeeds(&["symbolic-ref", "--quiet", "refs/remotes/origin/HEAD"]) == Some(false)
+        && (succeeds(&["symbolic-ref", "--quiet", "refs/remotes/origin/HEAD"]) == Some(false)
+            || crate::git::run_git_output_with_deadline(
+                root,
+                &[
+                    "show-ref",
+                    "--verify",
+                    "--quiet",
+                    "refs/remotes/origin/HEAD",
+                ],
+                git_timeout,
+            )
+            .is_ok_and(|output| output.status.code() == Some(1)))
 }
 
 /// Widens a single-branch clone so a fetch brings every branch of `origin`.
@@ -2997,6 +3036,30 @@ enum GitOperation {
     RebaseApply,
     Merge,
     CherryPick,
+}
+
+/// Doctor's advisory for an interrupted Git operation, or `None` when none is
+/// in progress (or Git did not answer). It shares the marker probe with the
+/// check-time warning so the two surfaces cannot disagree, and states the next
+/// step once: finish or abort the operation, then rerun.
+pub(crate) fn git_operation_advisory(root: &Path, git_timeout: Option<Duration>) -> Option<String> {
+    let operation = git_operation_in_progress(root, git_timeout)?;
+    let (name, finish, abort) = match operation {
+        GitOperation::RebaseMerge | GitOperation::RebaseApply => {
+            ("rebase", "git rebase --continue", "git rebase --abort")
+        }
+        GitOperation::Merge => ("merge", "git merge --continue", "git merge --abort"),
+        GitOperation::CherryPick => (
+            "cherry-pick",
+            "git cherry-pick --continue",
+            "git cherry-pick --abort",
+        ),
+    };
+    Some(format!(
+        "this repository is mid-{name}: while conflict markers remain, `ripr check` does not read \
+         their regions as changes and exits 2 (analysis incomplete); \
+         finish it (`{finish}`) or abort it (`{abort}`), then rerun `ripr check`"
+    ))
 }
 
 fn git_operation_warning(operation: GitOperation) -> String {

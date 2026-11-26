@@ -263,6 +263,33 @@ fn generated_workflow_replay_prints_only_runnable_next_steps() -> Result<(), Box
     );
 
     let summary = fs::read_to_string(base.join("step-summary.md"))?;
+    assert!(
+        summary.len() < 4096 && summary.lines().count() <= 32,
+        "{summary}"
+    );
+    assert_eq!(summary.matches(repair_command).count(), 1, "{summary}");
+    for name in [
+        "ripr/reports/start-here.md",
+        "ripr/reports/index.md",
+        "ripr/review/comments.json",
+    ] {
+        assert!(summary.contains(name), "{summary}");
+    }
+    assert!(
+        !summary.contains("<details") && !summary.lines().any(|line| line.starts_with("# ")),
+        "{summary}"
+    );
+    // The preview reads the event as the step does. A runner's own
+    // `GITHUB_EVENT_NAME` must not reach it: under `merge_group` the queue
+    // runs this test, and the renderer would print the non-pull-request page.
+    let preview = replay::ripr_with_env(
+        &root,
+        &["reports", "ci-summary", "--full", "--root", "."],
+        &CI_PACKET_WINDOW_ENV,
+        &[("GITHUB_EVENT_NAME", "pull_request")],
+    )?;
+    assert!(preview.status.success());
+    let summary = String::from_utf8(preview.stdout)?;
     let first_block = summary
         .split("#### First-run status\n")
         .nth(1)
@@ -395,7 +422,7 @@ fn generated_workflow_replay_prints_only_runnable_next_steps() -> Result<(), Box
             .ok_or_else(|| format!("summary has no {heading:?} block"))?;
         assert!(
             block.starts_with(&format!(
-                "- Repair start: `{repair_command}`\n- After the test edit: run the `--attempt ... --phase after` command"
+                "- Repair start: `{repair_command}`\n- After the test edit: run the after-phase command"
             )),
             "{heading:?} must lead with the repair start:\n{}",
             block.lines().take(4).collect::<Vec<_>>().join("\n")
@@ -413,7 +440,7 @@ fn generated_workflow_replay_prints_only_runnable_next_steps() -> Result<(), Box
         .ok_or("summary has no Agent review packet block")?;
     assert!(
         packet.starts_with(&format!(
-            "- Receipt: No agent receipt yet. None is expected before a repair: the `--attempt ... --phase after` command writes it after the focused test edit.\n- Start repair: `{repair_command}`\n- After the test edit: run the `--attempt ... --phase after` command"
+            "- Receipt: No agent receipt yet. None is expected before a repair: the after-phase command the before phase prints writes it after the focused test edit.\n- Start repair: `{repair_command}`\n- After the test edit: run the after-phase command"
         )),
         "the review packet must lead with the repair start:\n{packet}"
     );
@@ -3488,7 +3515,7 @@ fn generated_compact_body_lifts_code_spans_of_any_fence_length() -> Result<(), B
     ));
     fs::create_dir_all(&root)?;
     let verify_body = "### ripr gap: missing boundary assertion\n\nChanged behavior:\n``a` b``\n\nWhy this matters:\nw\n\nRepair:\nAdd one.\n\nVerify:\n`` ripr agent verify `x` ``";
-    let start_body = "### ripr gap: weak oracle\n\nWhy this matters:\nw\n\nRepair:\nAdd one.\n\nStart the repair:\n```ripr agent repair ``x`` --phase before```\n\nIt prints the `--attempt ... --phase after` command that verifies the new test.";
+    let start_body = "### ripr gap: weak oracle\n\nWhy this matters:\nw\n\nRepair:\nAdd one.\n\nStart the repair:\n```ripr agent repair ``x`` --phase before```\n\nIt prints the after-phase command that verifies the new test.";
     let plain_body = "### ripr gap: weak oracle\n\nWhy this matters:\nw\n\nRepair:\nAdd one.\n\nVerify:\n`ripr agent verify`";
     let operation = |key: &str, body: &str| {
         serde_json::json!({"operation": "create", "safe_to_publish": true, "dedupe_key": key,
@@ -3590,8 +3617,14 @@ fn generated_summary_prints_repository_relative_commands() -> Result<(), Box<dyn
         format!("- Verify after the test edit: `{verify}`\n- Receipt after verify: `{receipt}`\n"),
     )?;
 
-    // The generated step runs this command from the checkout root.
-    let run = replay::ripr(&root, &["reports", "ci-summary", "--root", "."])?;
+    // The generated step runs this command from the checkout root, on a pull
+    // request event of its own rather than the runner's.
+    let run = replay::ripr_with_env(
+        &root,
+        &["reports", "ci-summary", "--root", ".", "--full"],
+        &CI_PACKET_WINDOW_ENV,
+        &[("GITHUB_EVENT_NAME", "pull_request")],
+    )?;
     assert!(
         run.status.success(),
         "summary command failed: {}",
@@ -5344,6 +5377,172 @@ fn ci_packet_annotations_emit_a_notice_for_a_static_limitation() -> Result<(), B
         "{stdout}"
     );
     Ok(())
+}
+
+/// The lines of a job log the runner would act on as workflow commands: a
+/// `::name::` line outside every `::stop-commands::TOKEN` … `::TOKEN::`
+/// window, plus the tokens in order. An unterminated window is an error: the
+/// runner would read no later command of the step.
+#[cfg(unix)]
+fn commands_read_by_the_runner(log: &str) -> Result<(Vec<String>, Vec<String>), String> {
+    let mut open: Option<String> = None;
+    let mut read = Vec::new();
+    let mut tokens = Vec::new();
+    for line in log.lines() {
+        match &open {
+            Some(token) if line == format!("::{token}::") => open = None,
+            Some(_) => {}
+            None => match line.strip_prefix("::stop-commands::") {
+                Some(token) => {
+                    tokens.push(token.to_string());
+                    open = Some(token.to_string());
+                }
+                None if line.trim_start().starts_with("::") => read.push(line.to_string()),
+                None => {}
+            },
+        }
+    }
+    match open {
+        Some(token) => Err(format!("window {token} never resumes:\n{log}")),
+        None => Ok((read, tokens)),
+    }
+}
+
+/// A one-commit repository for a `reports ci-packet` step that asks git for
+/// `HEAD`.
+#[cfg(unix)]
+fn ci_packet_window_repo(label: &str) -> Result<std::path::PathBuf, Box<dyn Error>> {
+    let root = replay::unique_temp_dir(label)?;
+    fixture_git_ok(&root, &["init", "--initial-branch=main"])?;
+    fixture_git_ok(&root, &["config", "--local", "user.name", "Window"])?;
+    fixture_git_ok(&root, &["config", "--local", "user.email", "w@example.com"])?;
+    fixture_git_ok(&root, &["config", "--local", "commit.gpgsign", "false"])?;
+    fs::write(root.join(".gitignore"), "/target/\n")?;
+    Ok(root)
+}
+
+#[cfg(unix)]
+const CI_PACKET_WINDOW_ENV: [&str; 8] = [
+    "GITHUB_BASE_REF",
+    "GITHUB_EVENT_NAME",
+    "GITHUB_EVENT_PATH",
+    "RIPR_UPLOAD_SARIF",
+    "RIPR_COMMENT_MODE",
+    "RIPR_GATE_BASELINE",
+    "RIPR_GATE_MODE",
+    "RIPR_PILOT_TIMEOUT_MS",
+];
+
+/// The runner reads a step's stdout and stderr pipes independently, so a
+/// child's last stderr line could reach it after the resume marker on stdout.
+/// The real `reports ci-packet` therefore sends a child's stderr down its own
+/// stdout, inside the `::stop-commands::` window, and gives every window its
+/// own token.
+#[cfg(unix)]
+#[test]
+fn ci_packet_replays_child_stderr_inside_a_stop_commands_window() -> Result<(), Box<dyn Error>> {
+    let root = ci_packet_window_repo("ci-packet-stderr-window")?;
+    let result = (|| -> Result<(), Box<dyn Error>> {
+        fixture_git_ok(&root, &["add", "-A"])?;
+        fixture_git_ok(&root, &["commit", "-q", "-m", "base"])?;
+        fs::create_dir_all(root.join("target/ripr/reports"))?;
+        fs::write(
+            root.join("target/ripr/reports/policy-operations.json"),
+            "{}",
+        )?;
+        let step = "Render RIPR policy history";
+        let run = || {
+            replay::ripr_with_env(
+                &root,
+                &["reports", "ci-packet", "--root", ".", "--step", step],
+                &CI_PACKET_WINDOW_ENV,
+                // A pull request event with no payload: no number to pass on.
+                &[("GITHUB_EVENT_NAME", "pull_request")],
+            )
+        };
+        let (first, second) = (run()?, run()?);
+        let stdout = String::from_utf8(first.stdout)?;
+        let stderr = String::from_utf8(first.stderr)?;
+        // The child refuses the empty pull-request number on its stderr.
+        let refusal = "--pr-number requires a non-empty value";
+        assert!(stdout.contains(refusal), "{stdout}\n--\n{stderr}");
+        assert!(!stderr.contains(refusal), "{stderr}");
+        let (read, tokens) = commands_read_by_the_runner(&stdout)?;
+        assert_eq!(
+            read,
+            [format!("::group::{step}"), "::endgroup::".to_string()],
+            "{stdout}"
+        );
+        let [token] = tokens.as_slice() else {
+            return Err(format!("expected one window: {stdout}").into());
+        };
+        let window = stdout
+            .split_once(&format!("::stop-commands::{token}\n"))
+            .and_then(|(_, rest)| rest.split_once(&format!("\n::{token}::\n")))
+            .map(|(window, _)| window)
+            .ok_or_else(|| format!("no window: {stdout}"))?;
+        assert!(window.contains(refusal), "{stdout}");
+        // A token a pull request could predict is one it could print.
+        let (_, again) = commands_read_by_the_runner(&String::from_utf8(second.stdout)?)?;
+        assert!(token.len() >= "ripr-".len() + 32, "{token}");
+        assert_ne!(tokens, again);
+        Ok(())
+    })();
+    let _ = fs::remove_dir_all(&root);
+    result
+}
+
+/// A pull request can name a file `a<newline>::error ...`, and a child's
+/// report quotes that path, so the path's second line starts a job-log line
+/// with a workflow command. The real `reports ci-packet` pilot step prints the
+/// line (the fixture is live) and the runner reads none of it: the only
+/// commands outside a window are the step's own group markers.
+#[cfg(unix)]
+#[test]
+fn ci_packet_child_report_cannot_issue_workflow_commands() -> Result<(), Box<dyn Error>> {
+    let root = ci_packet_window_repo("ci-packet-forged-command")?;
+    let result = (|| -> Result<(), Box<dyn Error>> {
+        let forged = "::error title=forged::INJECTED";
+        let source = "pub fn price(x: i32) -> i32 { if x >= 10 { x - 1 } else { x } }\n\
+            #[cfg(test)] mod tests { #[test] fn t() { assert_eq!(super::price(1), 1); } }\n";
+        fs::write(
+            root.join("Cargo.toml"),
+            "[package]\nname = \"forged\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+        )?;
+        let dir = root.join(format!("src/a\n{forged}\n"));
+        fs::create_dir_all(&dir)?;
+        fs::write(dir.join("mod.rs"), source)?;
+        fs::write(
+            root.join("src/lib.rs"),
+            format!("#[path = \"a\\n{forged}\\n/mod.rs\"] pub mod a;\n"),
+        )?;
+        fixture_git_ok(&root, &["add", "-A"])?;
+        fixture_git_ok(&root, &["commit", "-q", "-m", "base"])?;
+        let step = "Generate RIPR pilot packet";
+        let output = replay::ripr_with_env(
+            &root,
+            &["reports", "ci-packet", "--root", ".", "--step", step],
+            &CI_PACKET_WINDOW_ENV,
+            &[],
+        )?;
+        let stdout = String::from_utf8(output.stdout)?;
+        let stderr = String::from_utf8(output.stderr)?;
+        assert!(output.status.success(), "{stdout}\n--\n{stderr}");
+        assert!(
+            stdout.lines().any(|line| line == forged),
+            "the pilot report must print the forged line: {stdout}\n--\n{stderr}"
+        );
+        assert!(!stderr.contains("INJECTED"), "{stderr}");
+        let (read, _) = commands_read_by_the_runner(&stdout)?;
+        assert_eq!(
+            read,
+            [format!("::group::{step}"), "::endgroup::".to_string()],
+            "{stdout}"
+        );
+        Ok(())
+    })();
+    let _ = fs::remove_dir_all(&root);
+    result
 }
 
 /// A pull request from a fork or from Dependabot gets a read-only token, so

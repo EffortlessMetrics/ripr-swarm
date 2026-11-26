@@ -248,6 +248,7 @@ mod tests {
             scope_bindings: Default::default(),
             identity_helpers_in_file: Default::default(),
             default_member_only_locals_in_file: Default::default(),
+            barrel_namespace_members_in_file: Default::default(),
             written_locals_in_file: Default::default(),
             member_replacements_in_file: Default::default(),
             function_replacements_in_file: Default::default(),

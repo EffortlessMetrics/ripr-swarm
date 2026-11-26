@@ -2239,35 +2239,70 @@ impl ClassifiedProbeEvidence {
                 stage
             }
         };
-        let assigned_field_weakly_read =
-            matches!(context.probe.family, ProbeFamily::FieldConstruction)
-                && context.owner_fn.is_some_and(|owner| {
-                    crate::analysis::classify::assigned_field_of(
-                        owner,
-                        context.probe,
-                        context.index,
-                    )
-                    .is_some_and(|path| {
-                        // #11870: every test that runs the owner, not those
-                        // related by file or name proximity alone.
-                        let tests: Vec<&TestSummary> = context
-                            .related_tests
-                            .iter()
-                            .filter(|(_, reason)| reason.establishes_reach(true))
-                            .map(|(test, _)| *test)
-                            .collect();
-                        crate::analysis::classify::assigned_field_gap_is_placed(
-                            owner,
-                            &context.probe.expression,
-                            &path,
-                            &tests,
-                            context.index,
-                        )
-                    })
-                });
+        // #11870: every test that runs the owner, not those related by file
+        // or name proximity alone.
+        let reaching_tests = || -> Vec<&TestSummary> {
+            context
+                .related_tests
+                .iter()
+                .filter(|(_, reason)| reason.establishes_reach(true))
+                .map(|(test, _)| *test)
+                .collect()
+        };
+        let assigned_path = context
+            .owner_fn
+            .filter(|_| matches!(context.probe.family, ProbeFamily::FieldConstruction))
+            .and_then(|owner| {
+                crate::analysis::classify::assigned_field_of(owner, context.probe, context.index)
+                    .map(|path| (owner, path))
+            });
+        let assigned_field_weakly_read = assigned_path.as_ref().is_some_and(|(owner, path)| {
+            crate::analysis::classify::assigned_field_gap_is_placed(
+                owner,
+                &context.probe.expression,
+                path,
+                &reaching_tests(),
+                context.index,
+            )
+        });
+        // RIPR-SPEC-0228 example 5 and Decision 3 (#6485): when every test
+        // that runs the owner observes nothing after the call, no reaching
+        // test holds a discriminator, however a file neighbour asserts on
+        // other fields. Observe and discriminate read `no`, so the class is
+        // `reachable_unrevealed`, not a weak discriminator. "Every test" needs
+        // the complete workspace index: a changed-files-only index can omit an
+        // untouched test that runs the owner and checks the field.
+        let assigned_field_unread = !reach_ruled_out
+            && context.workspace_complete
+            && !assigned_field_weakly_read
+            && assigned_path.as_ref().is_some_and(|(owner, path)| {
+                crate::analysis::classify::assigned_field_is_unread(
+                    owner,
+                    &context.probe.expression,
+                    path,
+                    &reaching_tests(),
+                    context.index,
+                )
+            });
         let infect = unreached(infect, "activate");
         let observe = unreached(observe, "observe");
         let discriminate = unreached(discriminate, "discriminate");
+        let (observe, discriminate) = if assigned_field_unread {
+            (
+                StageEvidence::new(
+                    StageState::No,
+                    Confidence::Medium,
+                    "No test that runs the owner checks anything after the call, so nothing observes the written field",
+                ),
+                StageEvidence::new(
+                    StageState::No,
+                    Confidence::Medium,
+                    "No assertion found on the tests that run the owner",
+                ),
+            )
+        } else {
+            (observe, discriminate)
+        };
 
         // #1715: a complete expression identifies the changed `?`, but an
         // equality for another error exit cannot certify that propagation path.
@@ -4288,6 +4323,7 @@ mod tests {
     /// confirmation rides solely on the producer-owned bare binding.
     fn owner_harness_context(index: &RustIndex, test: TestSummary) -> ClassifiedProbeEvidence {
         let probe = Probe {
+            before_condition: None,
             id: ProbeId("probe:alpha:expect_response".to_string()),
             location: SourceLocation::new("crates/alpha/src/lib.rs", 10, 2),
             owner: Some(SymbolId(
@@ -4374,6 +4410,7 @@ mod tests {
                 .find(|test| test.name == "makes")
                 .ok_or("missing test")?;
             let probe = Probe {
+                before_condition: None,
                 id: ProbeId("probe:returned-type-drop".to_string()),
                 location: SourceLocation::new("src/lib.rs", 11, 5),
                 owner: Some(owner.id.clone()),
@@ -4444,6 +4481,7 @@ mod tests {
                 .find(|test| test.name == "nearby")
                 .ok_or("missing test")?;
             let probe = Probe {
+                before_condition: None,
                 id: ProbeId("probe:helper-behind-caller".to_string()),
                 location: SourceLocation::new("src/lib.rs", 6, 5),
                 owner: Some(owner.id.clone()),
@@ -4521,6 +4559,7 @@ mod tests {
                 .find(|test| test.name == "pins_second_row")
                 .ok_or("missing test")?;
             let probe = Probe {
+                before_condition: None,
                 id: ProbeId("probe:returned-array-exit".to_string()),
                 location: SourceLocation::new("src/lib.rs", 6, 5),
                 owner: Some(owner.id.clone()),
@@ -4588,6 +4627,7 @@ mod tests {
             .find(|test| test.name == "makes")
             .ok_or("missing test")?;
         let probe = Probe {
+            before_condition: None,
             id: ProbeId("probe:local-drop-guard".to_string()),
             location: SourceLocation::new("src/lib.rs", 21, 5),
             owner: Some(owner.id.clone()),
@@ -4660,6 +4700,7 @@ mod tests {
                 "nonempty subject: the fixture must parse its assertions"
             );
             let probe = Probe {
+                before_condition: None,
                 id: ProbeId("probe:contradiction".to_string()),
                 location: SourceLocation::new("src/lib.rs", 2, 5),
                 owner: Some(owner.id.clone()),
@@ -4770,6 +4811,7 @@ mod tests {
         ];
         assert_eq!(tests.len(), 3, "nonempty subject: all fixture tests parse");
         let probe = Probe {
+            before_condition: None,
             id: ProbeId("probe:composed-contradiction".to_string()),
             location: SourceLocation::new("src/lib.rs", 2, 5),
             owner: Some(owner.id.clone()),
@@ -4846,6 +4888,7 @@ mod tests {
             .collect::<Vec<_>>();
         assert_eq!(tests.len(), 2, "nonempty subject: both fixture tests parse");
         let probe = Probe {
+            before_condition: None,
             id: ProbeId("probe:zero-arg-mixed".to_string()),
             location: SourceLocation::new("src/lib.rs", 2, 5),
             owner: Some(owner.id.clone()),
@@ -4983,6 +5026,7 @@ mod tests {
     fn gather_retains_digest_valid_propagation_witness_for_internal_consumer() -> Result<(), String>
     {
         let probe = Probe {
+            before_condition: None,
             id: ProbeId("probe:fixture:1".to_string()),
             location: SourceLocation::new("src/lib.rs", 10, 2),
             owner: Some(SymbolId("owner:calculate".to_string())),
@@ -5034,6 +5078,7 @@ mod tests {
     #[test]
     fn corrupt_digest_is_retained_as_rejected_diagnostic_outcome() -> Result<(), String> {
         let probe = Probe {
+            before_condition: None,
             id: ProbeId("probe:fixture:corrupt".to_string()),
             location: SourceLocation::new("src/lib.rs", 10, 2),
             owner: Some(SymbolId("owner:calculate".to_string())),
@@ -5439,6 +5484,7 @@ mod tests {
         let chain = resolve_chain("record", &index, true, &[]);
         assert_eq!(chain.hops.len(), 1);
         let probe = Probe {
+            before_condition: None,
             id: ProbeId("probe:selected-ledger-caller".into()),
             location: SourceLocation::new("src/lib.rs", 4, 1),
             owner: Some(owner.id.clone()),

@@ -6,6 +6,8 @@ mod check_fast_strict;
 mod front_door;
 #[path = "precommit_v2.rs"]
 pub(crate) mod precommit_v2;
+#[path = "workspace_gate.rs"]
+mod workspace_gate;
 
 fn print_help_route(args: &[String]) -> Result<(), String> {
     match args {
@@ -27,7 +29,7 @@ fn unknown_command_error(command: &str) -> String {
 
 pub(crate) fn execute(command: XtaskCommand) -> Result<(), String> {
     match command {
-        XtaskCommand::Shape => super::shape(),
+        XtaskCommand::Shape => workspace_gate::from_root(super::shape),
         XtaskCommand::FixPr => super::fix_pr(),
         XtaskCommand::InstallHooks(args) => super::install_hooks(&args),
         XtaskCommand::Commands => super::commands_report(),
@@ -40,6 +42,7 @@ pub(crate) fn execute(command: XtaskCommand) -> Result<(), String> {
         XtaskCommand::GhPrStatus(args) => super::reports::gh_pr_status(&args),
         XtaskCommand::CiBudget(args) => super::reports::ci_budget(&args),
         XtaskCommand::MergeQueue(args) => super::reports::merge_queue(&args),
+        XtaskCommand::ReleaseAuthority(args) => super::release_authority::run(&args),
         XtaskCommand::PerlMigrationRefresh(args) => super::reports::perl_migration_refresh(&args),
         XtaskCommand::FirstRun(args) => super::first_run::run(&args),
         XtaskCommand::PublicProof(args) => super::public_proof::run(&args),
@@ -56,11 +59,14 @@ pub(crate) fn execute(command: XtaskCommand) -> Result<(), String> {
         XtaskCommand::WindowsAdvisoryIsolatedSummary(args) => {
             super::windows_advisory::run_isolated(&args)
         }
+        XtaskCommand::WindowsAdvisoryFeatureRows(args) => {
+            super::windows_advisory::run_feature_rows(&args)
+        }
         XtaskCommand::EvalSweep(args) => super::reports::eval_sweep(&args),
         XtaskCommand::SuggestedFixes => super::suggested_fixes(),
-        XtaskCommand::Precommit => precommit_v2::run(),
+        XtaskCommand::Precommit => workspace_gate::from_root(precommit_v2::run),
         XtaskCommand::CiPolicy => precommit_v2::run_policy(),
-        XtaskCommand::CheckFast => check_fast_strict::run(),
+        XtaskCommand::CheckFast => workspace_gate::from_root(check_fast_strict::run),
         XtaskCommand::CheckPr => super::check_pr(),
         XtaskCommand::Fixtures(args) => super::reports::fixtures_with_args(&args),
         XtaskCommand::Goldens(args) => super::reports::goldens(&args),
@@ -172,6 +178,18 @@ pub(crate) fn execute(command: XtaskCommand) -> Result<(), String> {
         XtaskCommand::ReleaseBindServerDescriptor(args) => {
             super::reports::release_server::release_bind_server_descriptor(&args)
         }
+        XtaskCommand::ReleaseGithubTransactionPlan(args) => {
+            super::release_github_transaction::plan_command(&args)
+        }
+        XtaskCommand::ReleaseGithubTransactionObserve(args) => {
+            super::release_github_transaction::observe_command(&args)
+        }
+        XtaskCommand::ReleaseCratesIoTransactionObserve(args) => {
+            super::release_crates_io_transaction::observe_command(&args)
+        }
+        XtaskCommand::ReleaseCratesIoTransactionPlan(args) => {
+            super::release_crates_io_transaction::plan_command(&args)
+        }
         XtaskCommand::ReleaseUploadAssets(args) => {
             super::reports::release_server::release_upload_assets(&args)
         }
@@ -211,7 +229,7 @@ pub(crate) fn execute(command: XtaskCommand) -> Result<(), String> {
         XtaskCommand::Specs(args) => super::specs(&args),
         XtaskCommand::Generations(args) => super::generations(&args),
         XtaskCommand::GoldenDrift => super::reports::golden_drift(),
-        XtaskCommand::CiFast => super::ci_fast(),
+        XtaskCommand::CiFast => workspace_gate::from_root(super::ci_fast),
         XtaskCommand::CiFull => super::ci_full(),
         XtaskCommand::CheckPolicyAll => super::policy::check_policy_all(),
         XtaskCommand::CheckStaticLanguage => super::check_static_language(),

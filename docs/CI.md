@@ -160,6 +160,13 @@ needed. That is false.` still refuse (#14355). The cue sets are closed
 enumerations, so a phrasing outside them is not detected. The check is
 same-sentence/line only: a refutation on a separate line, such as `It is not
 true.` followed by `No changes are needed.`, is not detected.
+A negated blocker phrase is a resolved finding too: `No source blocker found.`
+and `no source blockers remain` admit, while `Blocker found.` and a later
+blocker sentence such as `No source blocker found. The build is red.` still
+refuse; the cue set is closed, and a refutation after the phrase — including an
+italicized `*That is false.*` — still refuses (#15980). The remainder scan is
+best-effort, not complete: a defect phrasing outside the closed vocabulary still
+admits, so the gate is a strong filter rather than a proof.
 Both carriers screen later lines the same way, so a residual written as plain
 narration (`Residual: the hosted lane on this head has not run.`) admits under
 either, while a retraction word used as narration (`the withdrawn attribution`)
@@ -656,16 +663,27 @@ and single-platform CI was the root cause enabling both.
   each serialized Cargo build. RSS is the largest command or waited descendant,
   not aggregate memory or necessarily rustc. Missing measurements are unavailable,
   not zero; diagnostics neither add a build nor change its exit status.
+  The hosted `rust-gates.yml` job adds the same 8 GiB swap file before its two
+  Clippy passes (#15935). The `ripr` lib-test lint unit alone reaches about
+  11 GiB resident and the workspace pass checks `xtask` beside it, which lost
+  the 16 GiB runner mid-step (exit 143) at three build jobs with only the
+  image's 4 GB swap file. The swap step prints `lint_memory_before_pswpout`
+  and `lint_memory_before_oom_kill` from `/proc/vmstat`, and the
+  `Report lint memory pressure` step prints the matching `lint_memory_after_`
+  lines, so the difference is what the lint passes cost on a run that
+  finished. A lost runner reaches neither report. The scratch route is
+  unchanged.
 - **`Linux Nextest Shards`** (`linux-nextest-shards.yml`, manual `workflow_dispatch` only) runs the required Rust test step as four `cargo nextest --partition count:N/4` jobs on hosted 4-core runners and reports each shard's build and run seconds and JUnit test count and checks the four partitions are a disjoint cover of the workspace test list, so the wall-clock of a sharded step can be measured (#10341; the hosted required route now shards, see `Rust Test Shards`). It is advisory, not wired to pull requests, and does not replace `Ripr Rust Small Result`.
 - **`Windows Advisory Shards`** (`windows-advisory-shards.yml`, manual `workflow_dispatch` only) runs the same workspace tests as four `cargo nextest --partition count:N/4` jobs plus a doctest job, each with its own log artifact and failure summary, so a Windows test failure is attributable to a shard without a 75-minute single step (#9272). The four tests that need a real directory deny ACL are excluded from those bash partitions and run in a `shell: pwsh` step of shard 1 (20-minute step timeout, own `acl.log` and `acl.status`), because Git for Windows bash enables backup and restore privileges that bypass the deny. Each shard records `JOB_START` at the first step and the nextest watchdog fires at `min(44 min, time left before the 80-minute job cap minus an 8-minute summarize/upload reserve)`, writing a SLOW/TIMEOUT/FAIL heartbeat so a hang that would otherwise be cancelled at the job cap still leaves a named in-flight test, a status, and an `always()` artifact; the shard-1 real-ACL step is skipped once the watchdog fired so it cannot spend that reserve (#12338). It is advisory and does not replace the nightly lane.
 - **`Windows Watchdog Qualification`** (`windows-watchdog-qualification.yml`, manual `workflow_dispatch` only) extracts the shard workflow's shipped test step, shortens only its timer to 12 seconds and runs it against a native fixture process tree in three cells: mapped, a primary-only-kill mutation that must fail the descendant check, and forced-missing mapping. It checks root identity, primary reaping, descendant termination, an unowned sentinel and uploaded receipts. It qualifies only the shortened bound (#9272).
 - **`Pilot Measure`** (`pilot-measure.yml`, manual `workflow_dispatch` only) builds a release `ripr` on a hosted runner, runs `ripr pilot` on this repository with default budgets and reports the byte sizes of `repo-exposure.json`, `agent-seam-packets.json` and the output tree, the exit code and each document's `run_status` in the job summary, then runs `ripr check --format agent --committed` on the pinned humantime commit plus the fortnight gap patch from `docs/AGENT_AS_USER_RUNS.md` and prints whether the terminal state is `open=` or `stop=`. It asserts nothing and never fails on a size or finding; the pilot output uploads as a 7-day `pilot-measure` artifact. It exists so #11951 (packet size target) and #12058 (humantime `open=`) can be confirmed on a current-main release binary.
 - **Test steps run under `windows-advisory-run`** (#9272, #9660). The
-  `--no-default-features` test step and both workspace runs go through
+  `--no-default-features` test parts and both workspace runs go through
   `cargo xtask windows-advisory-run`, which owns the cargo process tree (a Job
   Object on Windows). It streams output to the job log as it arrives and into
   the log file, ends the whole tree at its own deadline (40 minutes for the
-  `--no-default-features` tests, 70 for each workspace run), and on a timeout
+  `--no-default-features` unit targets and for each integration part, 15 for
+  its doctests, 70 for each workspace run), and on a timeout
   names every test libtest reported as running for over 60 seconds with no
   result, so a stuck run points at a test. It records cargo's exit code in the
   status file (124 when it enforced the deadline, 127 when the command could
@@ -701,6 +719,21 @@ and single-platform CI was the root cause enabling both.
   exhaust it (setup, summary compilation and the manual isolation repeats have
   no separate deadline). The manual nested-alias isolation repeats use the
   redirect-and-replay form.
+- **Rust-only tests in parts (#2400, #16036).** One
+  `cargo test -p ripr --no-default-features --features lang-rust` step did not
+  fit its 40-minute deadline (run 44952408835: 8 minutes of build, 11 of unit
+  tests, then only the `a*` to `l*` integration targets). `windows-advisory`
+  now runs that feature set's unit targets (`--lib --bins`) and doctests, and
+  each `windows-advisory-integration` part runs its third of the `ripr`
+  integration targets after both samples, under its own deadline. On run
+  45008347596 the parts took 21 minutes (unit), under 1 (doctests), and 27,
+  20 and 34 (`a-c`, `d-o`, `rest`), each with every target reached.
+  `cargo xtask windows-advisory-feature-rows` prints the feature-combination
+  section: one row per part and a joined `nofeatures-test` row that is FAIL
+  when a part failed, PASS only when every part passed, and INCOMPLETE when a
+  part was cut at its deadline (124), could not start (127) or left no
+  status. A cut part is missing evidence, not a test failure. The rows stay
+  advisory.
 - **Two samples per run.** The suite runs twice on purpose: one sample cannot
   separate a reproducible failure from a load-dependent flake. The summarizer
   tracks three states per test (failed, observed pass, not observed) and reports
@@ -711,6 +744,18 @@ and single-platform CI was the root cause enabling both.
   job. A missing log, a missing captured exit status, or a summarizer crash
   does. A lane that reports success while proving nothing is exactly the
   false-confidence condition it exists to prevent.
+- **Public's no-default-features fallback is superseded (#16122).** Public ripr
+  #1745 added `windows-advisory-summary --nofeatures-log <path>
+  --nofeatures-status <path>` after run 35497884041, where the unbounded
+  `--no-default-features` test step consumed the whole job before either
+  workspace run started, so the verdict could only report two missing logs. In
+  this lane that step runs under `windows-advisory-run`, which ends it at its
+  own deadline and names every test libtest reported as running for over 60
+  seconds with no result, and the workspace runs start regardless. The
+  summarizer refuses both flags and the catalog does not list them; a test holds
+  the catalog entry, its documented arity and the parser's listed flags to
+  agreement. When swarm returns to public, the option's removal there is
+  deliberate.
 - **Selection.** A daily schedule and explicit `workflow_dispatch`. PR and
   label subscriptions are retired. `runner_probe_only` selects the manual
   runner probe instead of the full and subset jobs.
@@ -1994,37 +2039,13 @@ log instead of leaving the summary empty. When `target/ripr/review/comments.json
 exists, the summary opens with "What RIPR found in this pull request": the count
 of changed-behavior spots where the tests may not notice a wrong result, the first
 spot with its missing check, and the `ripr agent repair` start when it is a plain
-`ripr agent repair ...` command (an unfinished analysis is never reported as clean). With no gate configured (`RIPR_GATE_MODE`
-unset or empty), the policy and governance sections (readiness, operations,
-history, promotion, waiver aging, suppression health) are folded into one
-collapsed block; when any `RIPR_GATE_MODE` value is set they are not folded.
-The fold stays open ("needs attention") when a folded report is unreadable,
-has an unexpected shape, omits an expected count, or states a warning,
-unknown, blocker, config-error, stale or ownerless-suppression count that is
-not `0`. It folds with the "no warnings or unknowns" label only when the
-readiness, operations, history, promotion and suppression-health report
-categories each parsed with all expected counts at `0` (preview-promotion and
-waiver-aging reports are conditional and keep it open only when present and not
-clean); it stays open ("some policy reports not found") when a required
-category is missing, and says
-"no policy reports found" (also open) when none was read. First-run status rows
-whose value is only the `not_available` placeholder are omitted, and the
-start-here packet is named as a file in the `ripr-reports` artifact rather than
-a `target/` path. The summary then continues with
-the `start-here` first-run packet when `ripr first-pr` can compose one from
-explicit artifacts, then includes the PR review front panel, first useful
-action fallback, a language preview grouping section when `[languages]` enables
-TypeScript or Python, policy readiness, waiver aging, and suppression health
-when their input artifacts exist, assistant-loop health when proof artifacts
-exist, the report packet index when any indexed artifact exists, the top
-recommendation, the agent review packet when present, artifact links,
-SARIF and badge status, known limits, and PR guidance annotation counts when
-`target/ripr/review/comments.json` exists. Each section keeps its at-a-glance
-lines and names its full Markdown report as a file in the `ripr-reports`
-artifact (`- Full report: ripr/... in the ripr-reports artifact`, the path
-inside the downloaded artifact, which drops the `target/` prefix) rather than
-inlining it; a three-line pull request's summary went from about 50 KB to
-13 KB (#14301). On pull
+`ripr agent repair ...` command (an unfinished analysis is never reported as clean). On a PR with readable guidance, the front page shows the gate status, analysis
+limits and available report paths in the `ripr-reports` artifact. Open
+`ripr/reports/index.md` there to navigate the complete packet. Missing guidance
+and non-PR runs retain the detailed diagnostic sections. To preview those
+sections locally against the same checkout and run settings, run
+`ripr reports ci-summary --root . --full`. This command reads existing artifacts.
+On pull
 requests, the generated workflow writes that report before emitting
 changed-line check annotations by default without posting inline review
 comments.
@@ -2215,6 +2236,14 @@ group named after the step it replaced. `ripr help reports` lists its
 failure rules, and `--step NAME` reruns one step locally. The packet exits
 `3` when the gate blocked and nothing else required failed, and `2` when a
 required step could not complete ([EXIT_CODES.md](EXIT_CODES.md#ci-integration)).
+
+Whatever a child command sends to the job log reaches it on the packet's
+stdout inside a `::stop-commands::` window with a fresh random token: always
+the child's stderr, and its stdout unless the step writes that to a report
+file. A report quotes repository text, and a pull request can name a file
+`x<newline>::error::...`; inside the window the runner reads no line of it as
+a workflow command (#15918). The packet's own group markers, step errors and
+changed-line annotations are printed outside the windows.
 
 When `ripr agent start` exits 3 for the top seam, the packet logs `RIPR agent
 loop skipped: ... declined` and moves on. Exit 3 means ripr declined (see

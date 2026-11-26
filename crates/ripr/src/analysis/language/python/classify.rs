@@ -15,7 +15,9 @@ use super::caplog_text::{PythonLogVerdict, python_log_evidence};
 use super::class_attr_pin;
 use super::conditional_expression;
 use super::dataclass_default::dataclass_default_credits;
-use super::discriminators::python_missing_discriminators;
+use super::discriminators::{
+    python_missing_discriminators, python_multiline_return_dict_entry_discriminator,
+};
 use super::dunder_truthiness;
 use super::exception_variant::exception_variant_credits;
 use super::guard_activation;
@@ -1016,8 +1018,14 @@ fn classify_change_for_owner_inner<'a>(
             unpinned_equality_dunder_limit(owner, &related_candidates, alignment.credited.is_some())
         })
     };
+    // A literal keyword-argument line (`stacklevel=3,`) is read as the call it
+    // continues (#16018), so the limits that look for that call see it.
+    let limit_text = statement_text
+        .as_deref()
+        .filter(|_| super::no_behavior::is_literal_keyword_argument_line(line_text))
+        .unwrap_or(line_text);
     let static_limit = static_limit_for_focused_change(
-        line_text,
+        limit_text,
         old_line_text,
         log_evidence.as_ref(),
         &focus,
@@ -1145,6 +1153,54 @@ fn classify_change_for_owner_inner<'a>(
         &focus,
     );
     let changed_default_exercised_ok = changed_default_override.is_none();
+    // An added `name=<literal>` that restates the declared default of every
+    // workspace definition the call can reach (#16011) binds the same value as
+    // before, so an oracle on an ordinary call cannot tell the two apart. A
+    // mock assertion that pins the call's keywords still sees the edit.
+    let default_keyword = old_line_text
+        .filter(|_| !mock_pins_changed_call)
+        .and_then(|old| {
+            super::default_equal_keyword::default_equal_keyword(old, line_text, file, owners)
+        });
+    // A header edit that only moves the positional-only `/` marker (#16011)
+    // changes behavior only for a call that passes a moved parameter by
+    // keyword. With no strong related call doing so, the edit is unconfirmed.
+    let positional_only_gap = super::positional_only_marker::positional_only_marker_gap(
+        old_line_text,
+        line_text,
+        owner,
+        &related_candidates,
+        &focus,
+    );
+    // A condition whose only edit swaps `and` for `or` (#16203) differs only
+    // for inputs where its operands disagree. Every strong related call
+    // making them agree leaves the swap unconfirmed.
+    let connective_gap = old_line_text.and_then(|old| {
+        super::connective_swap::python_connective_evidence(
+            old,
+            line_text,
+            owner,
+            &related_candidates,
+            &focus,
+        )
+    });
+    // A strip side, `round` digit count, sort direction or `get` fallback
+    // edit (#16203) differs only for an argument with whitespace on the
+    // dropped side, more decimal places, two different elements, or no such
+    // key. A line inside a multiline string is data, not a call.
+    let call_variant_gap = old_line_text
+        .filter(|_| !no_behavior.new_line_in_multiline_string)
+        .and_then(|old| {
+            super::call_variant::python_call_variant_evidence(
+                old,
+                line_text,
+                line,
+                owner,
+                owner_source,
+                &related_candidates,
+                &focus,
+            )
+        });
 
     // A changed relational predicate (`qty > on_hand` -> `qty >= on_hand`) only
     // behaves differently when its operands are equal, so a strong exact-value
@@ -1193,19 +1249,27 @@ fn classify_change_for_owner_inner<'a>(
             },
         )
         .flatten();
+    // An `and`/`or` swap (#16203) moves no comparison boundary, so its
+    // comparisons' boundaries do not decide whether a call discriminates it;
+    // the connective gate above reads that instead.
+    let connective_swap_only = old_line_text
+        .and_then(|old| super::connective_swap::swapped_connective(old, line_text))
+        .is_some();
     let boundary = membership_gap.or_else(|| {
-        (static_limit.is_none() && matches!(family, ProbeFamily::Predicate))
-            .then(|| {
-                python_boundary_evidence(
-                    line_text,
-                    old_line_text,
-                    owner,
-                    owner_source,
-                    &related_candidates,
-                    &focus,
-                )
-            })
-            .flatten()
+        (static_limit.is_none()
+            && !connective_swap_only
+            && matches!(family, ProbeFamily::Predicate))
+        .then(|| {
+            python_boundary_evidence(
+                line_text,
+                old_line_text,
+                owner,
+                owner_source,
+                &related_candidates,
+                &focus,
+            )
+        })
+        .flatten()
     });
     let loop_boundary_unknown = boundary.as_ref().is_some_and(|e| {
         matches!(
@@ -1235,6 +1299,8 @@ fn classify_change_for_owner_inner<'a>(
         )
     });
     let mut boundary_downgraded = false;
+    let mut connective_downgraded = false;
+    let mut call_variant_downgraded = false;
     // A removed or added additive call term changes the result only where the
     // term is nonzero (#6733). When every strong related call gives it the
     // value 0, a strong oracle passes either way.
@@ -1385,7 +1451,9 @@ fn classify_change_for_owner_inner<'a>(
         .flatten();
     // Class-attribute text gate (#15294): a changed class-body string constant
     // is exposed only when a related assertion carries a literal that the old
-    // text accepts and the new text rejects. Other shapes fail open.
+    // text accepts and the new text rejects. A non-string value (#16009) is
+    // exposed only when a related test reads the name or calls a method that
+    // reads it. Other shapes fail open.
     let class_attr_gap = static_limit
         .is_none()
         .then(|| {
@@ -1397,6 +1465,19 @@ fn classify_change_for_owner_inner<'a>(
                 line,
                 &related_candidates,
             )
+            .or_else(|| {
+                // #16009: the same reading for a non-string class attribute
+                // value, through the class methods that read the name.
+                super::class_attr_reader::python_class_attr_reader_gap(
+                    line_text,
+                    old_line_text,
+                    owner,
+                    owner_source,
+                    line,
+                    &related_candidates,
+                    all_tests,
+                )
+            })
         })
         .flatten();
     // #13622: an old-type exact assertion after a raised-type replacement is
@@ -1682,6 +1763,10 @@ fn classify_change_for_owner_inner<'a>(
     } else if strongest_strength >= OracleStrength::Strong.rank()
         && alignment.observes()
         && changed_default_exercised_ok
+        && default_keyword.is_none()
+        && positional_only_gap.is_none()
+        && connective_gap.is_none()
+        && call_variant_gap.is_none()
         && boundary_gap.is_none()
         && inactive_term.is_none()
         && guarded_arm_gap.is_none()
@@ -1734,6 +1819,87 @@ fn classify_change_for_owner_inner<'a>(
                 format_param_name_list(params),
                 owner.name,
                 format_param_name_list(params),
+            )],
+        )
+    } else if strongest_strength >= OracleStrength::Strong.rank()
+        && alignment.observes()
+        && let Some(keyword) = &default_keyword
+    {
+        // The added keyword restates the callee's default (#16011): the call
+        // binds the same value, so the strong oracle has nothing to tell apart.
+        (
+            ExposureClass::WeaklyExposed,
+            StageState::Yes,
+            StageState::Weak,
+            StageState::Weak,
+            vec![format!(
+                "A strong Python oracle reaches `{}`, but the added argument `{}` equals the declared default of every workspace `{}` the call can reach, so the call binds the same value as before; static evidence does not credit an assertion for an edit with no value change. The calls differ only when unpacked keywords already hold that name.",
+                owner.name, keyword.argument, keyword.callee,
+            )],
+        )
+    } else if strongest_strength >= OracleStrength::Strong.rank()
+        && alignment.observes()
+        && let Some(params) = &positional_only_gap
+    {
+        // Only a call that passes a moved parameter by keyword runs
+        // differently after a `/` marker edit (#16011).
+        (
+            ExposureClass::WeaklyExposed,
+            StageState::Yes,
+            StageState::Weak,
+            StageState::Weak,
+            vec![format!(
+                "A strong Python oracle reaches `{}`, but the edit only changes which parameters are positional-only, and no related call passes {} by keyword; static evidence cannot confirm the changed signature is discriminated. Add a test that calls `{}` with {} by keyword.",
+                owner.name,
+                format_param_name_list(params),
+                owner.name,
+                format_param_name_list(params),
+            )],
+        )
+    } else if strongest_strength >= OracleStrength::Strong.rank()
+        && alignment.observes()
+        && let Some(swap) = &connective_gap
+    {
+        // Every strong related call gives both operands the same truth
+        // value, where `and` and `or` agree (#16203).
+        connective_downgraded = true;
+        (
+            ExposureClass::WeaklyExposed,
+            StageState::Yes,
+            StageState::Weak,
+            StageState::Weak,
+            vec![format!(
+                "A strong Python oracle reaches `{}`, but the edit only swaps `and`/`or` between `{}` and `{}`, and every strong related call makes both operands {}; the two connectives agree on those inputs, so static evidence cannot confirm the swap is discriminated. Add a test that calls `{}` with inputs where `{}` and `{}` differ.",
+                owner.name,
+                swap.left,
+                swap.right,
+                agreed_phrase(&swap.agreed),
+                owner.name,
+                swap.left,
+                swap.right,
+            )],
+        )
+    } else if strongest_strength >= OracleStrength::Strong.rank()
+        && alignment.observes()
+        && let Some(variant) = &call_variant_gap
+    {
+        // Every strong related call is read to pass an argument both
+        // versions of the changed call treat alike (#16203); the message
+        // claims only what was read, not what the suite would observe.
+        call_variant_downgraded = true;
+        (
+            ExposureClass::WeaklyExposed,
+            StageState::Yes,
+            StageState::Weak,
+            StageState::Weak,
+            vec![format!(
+                "A strong Python oracle reaches `{}`, but the edit only changes `{}` to `{}`, and no strong related call is seen to pass {}; whether these tests would notice the change is not established, so static evidence cannot confirm the change is discriminated. Add a test that calls `{}` with {}.",
+                owner.name,
+                variant.old_call,
+                variant.new_call,
+                variant.discriminator,
+                owner.name,
+                variant.discriminator,
             )],
         )
     } else if strongest_strength >= OracleStrength::Strong.rank()
@@ -1799,8 +1965,8 @@ fn classify_change_for_owner_inner<'a>(
             StageState::Yes,
             StageState::Weak,
             vec![format!(
-                "A strong Python oracle reaches `{}`, but {}. Add an assertion (for example `pytest.raises(..., match=...)`) that the old text satisfies and the new text does not.",
-                owner.name, gap.reason,
+                "A strong Python oracle reaches `{}`, but {}. {}",
+                owner.name, gap.reason, gap.next_step,
             )],
         )
     } else if strongest_strength >= OracleStrength::Strong.rank()
@@ -1969,6 +2135,7 @@ fn classify_change_for_owner_inner<'a>(
         probe_id.0.insert_str(separator + 1, marker);
     }
     let probe = Probe {
+        before_condition: None,
         id: probe_id,
         location: SourceLocation::new(file.to_string_lossy().as_ref(), line, 1),
         owner: Some(owner.symbol_id()),
@@ -2016,6 +2183,8 @@ fn classify_change_for_owner_inner<'a>(
         if static_limit.is_some() || matches!(class, ExposureClass::InfectionUnknown) {
             StageState::Unknown
         } else if boundary_downgraded
+            || connective_downgraded
+            || call_variant_downgraded
             || term_downgraded
             || guarded_arm_downgraded
             || table_downgraded
@@ -2040,6 +2209,16 @@ fn classify_change_for_owner_inner<'a>(
             } else {
                 "Related tests reach the changed predicate, but no strong related test call places an input at the changed boundary.".to_string()
             }
+        } else if connective_downgraded {
+            "Related tests reach the changed condition, but every strong related test call gives both operands the same truth value, where `and` and `or` agree.".to_string()
+        } else if let Some(variant) = call_variant_gap
+            .as_ref()
+            .filter(|_| call_variant_downgraded)
+        {
+            format!(
+                "Related tests reach the changed call, but no strong related test call is seen to pass {}, so whether `{}` and `{}` return different values there is not established.",
+                variant.discriminator, variant.old_call, variant.new_call
+            )
         } else if guarded_arm_downgraded
             && guarded_arm_gap
                 .as_ref()
@@ -2194,6 +2373,58 @@ fn classify_change_for_owner_inner<'a>(
                 })
                 .into_iter()
                 .collect()
+        } else if default_keyword.is_some() && changed_default_override.is_none() {
+            // A restated default has no value for a test input to discriminate.
+            Vec::new()
+        } else if let Some(params) = positional_only_gap
+            .as_ref()
+            .filter(|_| changed_default_override.is_none())
+        {
+            vec![MissingDiscriminatorFact {
+                value: format!(
+                    "call `{}` with {} by keyword",
+                    owner.name,
+                    format_param_name_list(params)
+                ),
+                reason: format!(
+                    "the change at line {line} only moves the positional-only marker, and no related call passes {} by keyword",
+                    format_param_name_list(params)
+                ),
+                flow_sink: flow_sink.clone(),
+                shape: DiscriminatorShape::Other,
+                drafted_boundary: None,
+            }]
+        } else if let Some(swap) = connective_gap
+            .as_ref()
+            .filter(|_| changed_default_override.is_none())
+        {
+            vec![MissingDiscriminatorFact {
+                value: format!(
+                    "call `{}` with inputs where `{}` and `{}` differ",
+                    owner.name, swap.left, swap.right
+                ),
+                reason: format!(
+                    "the change at line {line} only swaps `and`/`or`, and every related call makes both operands {}",
+                    agreed_phrase(&swap.agreed)
+                ),
+                flow_sink: flow_sink.clone(),
+                shape: DiscriminatorShape::Other,
+                drafted_boundary: None,
+            }]
+        } else if let Some(variant) = call_variant_gap
+            .as_ref()
+            .filter(|_| changed_default_override.is_none())
+        {
+            vec![MissingDiscriminatorFact {
+                value: format!("call `{}` with {}", owner.name, variant.discriminator),
+                reason: format!(
+                    "the change at line {line} only changes `{}` to `{}`, and no related call is seen to pass {}; whether the current tests would notice the change is not established",
+                    variant.old_call, variant.new_call, variant.discriminator
+                ),
+                flow_sink: flow_sink.clone(),
+                shape: DiscriminatorShape::Other,
+                drafted_boundary: None,
+            }]
         } else if let Some(params) = &changed_default_override {
             // The override downgrade names a specific, actionable missing
             // discriminator — "call the owner WITHOUT the changed-default
@@ -2216,6 +2447,15 @@ fn classify_change_for_owner_inner<'a>(
                 shape: DiscriminatorShape::Other,
                 drafted_boundary: None,
             }]
+        } else if let Some(fact) = python_multiline_return_dict_entry_discriminator(
+            line,
+            line_text,
+            no_behavior.brackets.span,
+            owner_source,
+            owner,
+            flow_sink.as_ref(),
+        ) {
+            vec![fact]
         } else {
             python_missing_discriminators(
                 &family,
@@ -2540,7 +2780,9 @@ fn classify_change_for_owner_inner<'a>(
         {
             evidence.push(format!(
                 "{}: {} calls {} ({})",
-                if helper.cross_module {
+                if helper.candidate.relation == PythonRelationKind::RouteHelperCall {
+                    "route_helper_call"
+                } else if helper.cross_module {
                     "cross_module_caller_call"
                 } else {
                     "helper_owner_call"
@@ -2809,5 +3051,15 @@ pub(super) fn number_colliding_candidates(
         finding.probe.id.0 = format!("{}.{ordinal}", finding.probe.id.0);
         finding.id = finding.probe.id.0.clone();
         value_origins.rebind_probe(&original, &finding.probe);
+    }
+}
+
+/// "true", "false", or "true or false" for the values both operands of a
+/// swapped connective share across the related calls (#16203).
+fn agreed_phrase(agreed: &[bool]) -> &'static str {
+    match (agreed.contains(&true), agreed.contains(&false)) {
+        (true, false) => "true",
+        (false, true) => "false",
+        _ => "true or both false",
     }
 }

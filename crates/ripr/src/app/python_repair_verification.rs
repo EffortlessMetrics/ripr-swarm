@@ -109,7 +109,7 @@ impl VerifyAuthorization {
     fn verify(&self) -> Result<String, String> {
         if !self.authorized {
             return Err(
-                "python repair verification refuses to run: explicit --verify-authorized and --verify-authority <identity> are required; the driver never authorizes a verification automatically; pass `--verify-authorized` together with `--verify-authority <identity>`"
+                "agent repair --phase verify refuses to run: explicit --verify-authorized and --verify-authority <identity> are required; the driver never authorizes a verification automatically; pass `--verify-authorized` together with `--verify-authority <identity>`"
                     .to_string(),
             );
         }
@@ -119,7 +119,7 @@ impl VerifyAuthorization {
             .filter(|value| !value.is_empty())
             .map(str::to_string)
             .ok_or_else(|| {
-                "python repair verification refuses to run: --verify-authorized requires --verify-authority <identity>"
+                "agent repair --phase verify refuses to run: --verify-authorized requires --verify-authority <identity>"
                     .to_string()
             })
     }
@@ -3952,7 +3952,7 @@ mod python_repair_verification_semantics {
                 "an unauthorized run",
             )?;
             ensure(
-                error.contains("python repair verification refuses to run")
+                error.contains("agent repair --phase verify refuses to run")
                     && error.contains("--verify-authority")
                     && !error.contains("canonicalize"),
                 format!("{authorization:?} must be refused on authorization first: {error}"),

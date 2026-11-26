@@ -2681,3 +2681,40 @@ fn list_cursors_are_refused_and_absent_cursors_pass() -> Result<(), String> {
     );
     Ok(())
 }
+
+/// #15983: a `ripr_refresh` the transport admitted beside a running one is
+/// refused `analysis_in_flight` from that mark alone. The session here has no
+/// attempt running, which is the state after the first attempt commits
+/// between the repeat's admission and its handler: the repeat must not start
+/// an analysis. The scope is the one `call_tool` enters from the mark.
+#[tokio::test(flavor = "current_thread")]
+async fn refresh_admitted_beside_a_running_one_is_refused_after_it_commits() -> Result<(), String> {
+    let server = healthy_server()?;
+    let mut arguments = serde_json::Map::new();
+    arguments.insert("source".to_string(), Value::String("committed".to_string()));
+    let response = BESIDE_RUNNING_REFRESH
+        .scope(
+            true,
+            server.refresh_tool(Some(arguments), super::super::MAX_RESPONSE_BYTES),
+        )
+        .await
+        .map_err(|error| format!("refresh must answer, not error: {error:?}"))?;
+    let rmcp::model::CallToolResponse::Complete(result) = response else {
+        return Err("refresh did not complete".to_string());
+    };
+    let result = serde_json::to_value(&result).map_err(|error| error.to_string())?;
+    if result.pointer("/isError") != Some(&Value::Bool(true))
+        || result
+            .pointer("/structuredContent/failure/code")
+            .and_then(Value::as_str)
+            != Some("analysis_in_flight")
+    {
+        return Err(format!(
+            "the marked refresh was not refused in flight: {result}"
+        ));
+    }
+    if server.session.lock().await.in_flight {
+        return Err("the refused refresh left an attempt in flight".to_string());
+    }
+    Ok(())
+}
