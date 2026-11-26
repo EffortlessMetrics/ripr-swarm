@@ -438,6 +438,9 @@ pub(crate) use crate::output::path::display_path;
 
 /// The command that writes each `baseline update` input, so a refusal for
 /// an unreadable or foreign file names where a usable one comes from.
+/// `BASELINE_KIND` is the baseline ledger; every other kind, including the
+/// empty kind the current gate-decision input passes, is named as
+/// gate-decision JSON. A new input kind needs its own arm here.
 fn input_source(expected_kind: &str) -> &'static str {
     if expected_kind == BASELINE_KIND {
         "the reviewed baseline ledger that `ripr baseline create` writes"
