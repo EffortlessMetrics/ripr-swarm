@@ -780,14 +780,18 @@ pub(crate) fn positive_limit_from_env(
             let parsed = raw
                 .trim()
                 .parse::<usize>()
-                .map_err(|err| format!("{env_name} must be a positive integer: {err}"))?;
+                .map_err(|err| format!("{env_name} must be a positive integer: {err}; set it to a whole number above zero, or unset it to use the default"))?;
             if parsed == 0 {
-                return Err(format!("{env_name} must be a positive integer"));
+                return Err(format!(
+                    "{env_name} must be a positive integer; set it to a whole number above zero, or unset it to use the default"
+                ));
             }
             Ok(parsed)
         }
         Err(std::env::VarError::NotPresent) => Ok(default),
-        Err(std::env::VarError::NotUnicode(_)) => Err(format!("{env_name} must be valid UTF-8")),
+        Err(std::env::VarError::NotUnicode(_)) => Err(format!(
+            "{env_name} must be valid UTF-8; set it to a whole number above zero, or unset it to use the default"
+        )),
     }
 }
 
