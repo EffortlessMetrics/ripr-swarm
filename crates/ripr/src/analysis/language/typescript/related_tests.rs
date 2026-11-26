@@ -4128,7 +4128,49 @@ fn getter_replaced_in_test(test: &TypeScriptTest, owner: &TypeScriptOwner) -> bo
         .any(|n| n == super::tests_extract::MEMBER_REPLACEMENT_ANY || n == &owner.name)
         || test_spies_owner_with_fabrication_for_owner(test, &owner.name, false)
         || class_entries::assigns_member_named(&masked, &owner.name)
+        || deletes_member_named(&masked, &owner.name)
         || spies_on_member_named(&test.body_text, &owner.name)
+}
+
+/// `true` when `text` (literals and comments masked) has a `delete` whose
+/// operand ends in `.name`: `delete cart.total`, `delete new Cart(1).total`.
+/// A `delete` of a member does not run its getter, and it may remove an own
+/// property that shadowed it, so a getter test that deletes the member is not
+/// the getter as written (review of #16360). The operand runs to the first
+/// `;`, `,`, newline or unbalanced closing bracket.
+fn deletes_member_named(text: &str, name: &str) -> bool {
+    if !is_safe_javascript_identifier(name) {
+        return false;
+    }
+    let member = format!(".{name}");
+    text.match_indices("delete").any(|(idx, keyword)| {
+        let starts_clean = text[..idx]
+            .chars()
+            .next_back()
+            .is_none_or(|ch| !is_javascript_identifier_char(ch) && ch != '.');
+        let rest = &text[idx + keyword.len()..];
+        if !starts_clean || !rest.starts_with(|ch: char| ch.is_whitespace() || ch == '(') {
+            return false;
+        }
+        let mut depth = 0usize;
+        let mut end = rest.len();
+        for (offset, ch) in rest.char_indices() {
+            match ch {
+                '(' | '[' | '{' => depth += 1,
+                ')' | ']' | '}' if depth == 0 => {
+                    end = offset;
+                    break;
+                }
+                ')' | ']' | '}' => depth -= 1,
+                ';' | ',' | '\n' if depth == 0 => {
+                    end = offset;
+                    break;
+                }
+                _ => {}
+            }
+        }
+        rest[..end].trim_end().ends_with(&member)
+    })
 }
 
 /// Getter owner reached through an exported factory that returns a fresh

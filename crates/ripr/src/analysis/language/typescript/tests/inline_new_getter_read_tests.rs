@@ -131,6 +131,16 @@ fn other_reads_off_a_fresh_instance_stay_unrelated() -> Result<(), String> {
             "inline-spied-getter",
             "    jest.spyOn(Cart.prototype, 'total', 'get').mockReturnValue(45);\n    expect(new Cart(50).total).toBe(45);",
         ),
+        // A `delete` of the member does not run the getter, through a fresh
+        // instance or a receiver (review of #16360).
+        (
+            "inline-deleted",
+            "    expect(delete (new Cart(100) as any).total).toBe(true);",
+        ),
+        (
+            "receiver-deleted",
+            "    const cart: any = new Cart(100);\n    expect(delete cart.total).toBe(true);",
+        ),
         // An assignment does not read the getter.
         (
             "inline-assigned",

@@ -3081,8 +3081,10 @@ keys); do not take the next number.
   `?.`, wrapped across lines and chained (`.total.toFixed(0)`): each relates,
   as does the named-receiver control. A longer property (`.totalPrice`),
   another class's same-named getter, the read inside a comment or string, a
-  spied getter and an assignment through the fresh instance stay unrelated,
-  and so does a bare read of an ordinary method, which does not run it.
+  spied getter, an assignment through the fresh instance and a `delete` of the
+  member (fresh instance or receiver; a `delete` does not run the getter) stay
+  unrelated, and so does a bare read of an ordinary method, which does not run
+  it.
 - #16306 (rule 28, field-shadowed class method):
   `crates/ripr/src/analysis/language/typescript/tests/field_shadowed_method_tests.rs`
   runs `analyze_diff` on a method shadowed by an instance field before or after
