@@ -23,3 +23,14 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — predicate_oracle_gated_mod_ungated_owner_refused (3)
+
+Reason:
+RIPR-SPEC-0122: #15336 unconfirmed-reach note severity, possible-gap State line, legend and Terms glosses
+
+Command:
+`cargo xtask goldens bless predicate_oracle_gated_mod_ungated_owner_refused --reason "..."`
+
+Updated:
+- `expected/human.txt`

@@ -132,3 +132,14 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — rust_polling_helper_counterfeit_import_root (11)
+
+Reason:
+RIPR-SPEC-0122: #15336 unconfirmed-reach note severity, possible-gap State line, legend and Terms glosses
+
+Command:
+`cargo xtask goldens bless rust_polling_helper_counterfeit_import_root --reason "..."`
+
+Updated:
+- `expected/human.txt`

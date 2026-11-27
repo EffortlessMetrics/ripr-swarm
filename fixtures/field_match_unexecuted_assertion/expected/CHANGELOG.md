@@ -332,3 +332,26 @@ Command:
 
 Updated:
 - `expected/human.txt`
+
+## Pending — field_match_unexecuted_assertion (26)
+
+Reason:
+RIPR-SPEC-0224: inert row names the construct its refusals agree on (#15337)
+
+Command:
+`cargo xtask goldens bless field_match_unexecuted_assertion --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human-full.txt`
+
+## Pending — field_match_unexecuted_assertion (27)
+
+Reason:
+RIPR-SPEC-0122: #15336 unconfirmed-reach note severity, possible-gap State line, legend and Terms glosses
+
+Command:
+`cargo xtask goldens bless field_match_unexecuted_assertion --reason "..."`
+
+Updated:
+- `expected/human.txt`

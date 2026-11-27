@@ -267,3 +267,14 @@ Command:
 
 Updated:
 - `expected/sarif.json`
+
+## Pending — atomic_ordering_swap_strong_object_oracle (21)
+
+Reason:
+RIPR-SPEC-0122: #15336 unconfirmed-reach note severity, possible-gap State line, legend and Terms glosses
+
+Command:
+`cargo xtask goldens bless atomic_ordering_swap_strong_object_oracle --reason "..."`
+
+Updated:
+- `expected/human.txt`

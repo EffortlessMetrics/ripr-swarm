@@ -1,5 +1,59 @@
 # Golden Output Changes
 
+## Pending — corpus cache generation 1.215 for item macros naming serde_json (#16388)
+
+An item-position macro whose tokens name `serde_json` now refuses bare
+`json!` forwarding credit, which bumps the analyzer cache schema to 1.215.
+Move the portable unchanged-attempt snapshots to 1.215, recompute the
+`raw_json_placeholder_v1` artifact content commitment, then the dependent
+verify commitments and receipt byte hashes. Weak grip, unchanged movement,
+historical currentness, incomplete receipt status and fail-closed
+first-action routing remain the same. No other fixture output is
+regenerated.
+
+## Pending — corpus cache generation 1.214 for bare imported logging macros (#16420)
+
+A helper wrapper that logs through a bare leveled macro imported from an
+audited tracing or log release now forwards its helper result, which bumps
+the analyzer cache schema to 1.214. Move the portable unchanged-attempt
+snapshots to 1.214, recompute the `raw_json_placeholder_v1` artifact
+content commitment, then the dependent verify commitments and receipt byte
+hashes. Weak grip, unchanged movement, historical currentness, incomplete
+receipt status and fail-closed first-action routing remain the same. No
+other fixture output is regenerated.
+
+## Pending — corpus cache generation 1.213 for type-parameter-shadowed helpers (#12891)
+
+A helper whose every call to a name is qualified by its own type parameter no
+longer credits the same-spelled module function, which bumps the analyzer cache
+schema to 1.213. Move the portable unchanged-attempt snapshots to 1.213,
+recompute the `raw_json_placeholder_v1` artifact content commitment, then the
+dependent verify commitments and receipt byte hashes. Weak grip, unchanged
+movement, historical currentness, incomplete receipt status and fail-closed
+first-action routing remain unchanged. No other fixture output is regenerated.
+
+## Pending — corpus cache generation 1.212 for block arms that read a parameter (#10357)
+
+A comma-less match block arm in a helper wrapper that only reads the
+wrapper's parameter no longer reads as rebinding it, which bumps the
+analyzer cache schema to 1.212. Move the portable unchanged-attempt
+snapshots to 1.212, recompute the `raw_json_placeholder_v1` artifact
+content commitment, then the dependent verify commitments and receipt byte
+hashes. Weak grip, unchanged movement, historical currentness, incomplete
+receipt status and fail-closed first-action routing remain the same. No
+other fixture output is regenerated.
+
+## Pending — corpus cache generation 1.211 for imported anyhow! wrappers (#10357)
+
+A helper wrapper that calls bare `anyhow!` imported by a verified, audited
+`use anyhow::anyhow;` now forwards its helper result, which bumps the
+analyzer cache schema to 1.211. Move the portable unchanged-attempt
+snapshots to 1.211, recompute the `raw_json_placeholder_v1` artifact
+content commitment, then the dependent verify commitments and receipt byte
+hashes. Weak grip, unchanged movement, historical currentness, incomplete
+receipt status and fail-closed first-action routing remain the same. No
+other fixture output is regenerated.
+
 ## Pending — corpus cache generation 1.210 for imported json! wrappers (#10357)
 
 A helper wrapper that calls bare `json!` imported by a verified, audited
@@ -1889,3 +1943,14 @@ Command:
 
 Updated:
 - `expected/sarif.json`
+
+## Pending — boundary_gap (40)
+
+Reason:
+RIPR-SPEC-0122: #15336 unconfirmed-reach note severity, possible-gap State line, legend and Terms glosses
+
+Command:
+`cargo xtask goldens bless boundary_gap --reason "..."`
+
+Updated:
+- `expected/human.txt`

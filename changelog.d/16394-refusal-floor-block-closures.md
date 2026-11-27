@@ -1,0 +1,2 @@
+<!-- section: Internal / CI -->
+- The refusal-next-step floor (`crates/ripr/tests/refusal_next_step.rs`) now judges messages inside block-bodied closures (`.map_err(|e| { format!(..) })`, including after a leading comment), which it previously skipped, so rewording a long message can no longer drop it from the floor. It also stops flagging a `\` line continuation, a next step passed to fill a trailing `{}`, and a step after `, then`. The newly visible gaps are recorded once in `policy/refusal-next-step.d/` as a scanner-coverage catch-up (#16394).

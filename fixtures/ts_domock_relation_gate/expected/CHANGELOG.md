@@ -418,3 +418,14 @@ Command:
 
 Updated:
 - `expected/human.txt`
+
+## Pending — ts_domock_relation_gate (36)
+
+Reason:
+RIPR-SPEC-0122: #15336 unconfirmed-reach note severity, possible-gap State line, legend and Terms glosses
+
+Command:
+`cargo xtask goldens bless ts_domock_relation_gate --reason "..."`
+
+Updated:
+- `expected/human.txt`

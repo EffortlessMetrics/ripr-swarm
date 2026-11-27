@@ -414,3 +414,27 @@ Command:
 
 Updated:
 - `expected/human.txt`
+
+## Pending — owner_return_pin_unknown_singleton (33)
+
+Reason:
+RIPR-SPEC-0224: inert row names the construct its refusals agree on (#15337)
+
+Command:
+`cargo xtask goldens bless owner_return_pin_unknown_singleton --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
+
+## Pending — owner_return_pin_unknown_singleton (34)
+
+Reason:
+RIPR-SPEC-0122: #15336 unconfirmed-reach note severity, possible-gap State line, legend and Terms glosses
+
+Command:
+`cargo xtask goldens bless owner_return_pin_unknown_singleton --reason "..."`
+
+Updated:
+- `expected/human.txt`

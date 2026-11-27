@@ -840,12 +840,272 @@ fn imported_json_wrapper_forwards_unless_json_is_rebound() -> Result<(), String>
             AUDITED,
             "use serde_json::json;\nmod serde_json { macro_rules! json { ($($t:tt)*) => { return 5 }; } }",
         ),
+        // #16388: an item macro whose expansion is not read may alias the
+        // root (`cfg_if! { .. use compat as serde_json; }`).
+        (
+            "item macro alias",
+            AUDITED,
+            "use serde_json::json;\nshim! { use compat as serde_json; }",
+        ),
     ] {
         let (source, diff, line) = with_prelude(prelude)?;
         for family in ["predicate", "return_value"] {
             let finding = finding_with_dependencies(SERDE_JSON, locked, &source, &diff, family)?;
             assert_eq!(finding["probe"]["line"], line, "{label}\n{finding}");
             assert_ne!(finding["classification"], "exposed", "{label}\n{finding}");
+        }
+    }
+    Ok(())
+}
+
+/// #16420: a bare leveled logging macro imported by a verified
+/// `use tracing::info;` or `use log::warn;` is the audited macro, so a
+/// wrapper that logs through it forwards its helper result. Any other
+/// binding of the name or of the root, an unaudited release, or a helper
+/// call in the arguments keeps it opaque.
+#[test]
+fn imported_logging_wrapper_forwards_unless_the_name_or_root_is_rebound() -> Result<(), String> {
+    const TRACING: &str = "tracing = \"0.1\"";
+    const LOG: &str = "log = \"0.4\"";
+    const TRACING_LOCK: &[(&str, &str)] = &[("tracing", "0.1.44")];
+    const LOG_LOCK: &[(&str, &str)] = &[("log", "0.4.34")];
+    let with = |prelude: &str, call: &str| -> Result<(String, String, usize), String> {
+        let wrapper = format!("    {call}\n    if is_bulk(qty) {{ 5 }} else {{ 0 }}");
+        let source = format!("{prelude}\n{}", bulk_source(&wrapper, BOUNDARY_TESTS));
+        let first = source
+            .lines()
+            .position(|line| line.contains("10 <= qty"))
+            .ok_or("probe")?;
+        let diff = BULK_DIFF.replace("@@ -1,3 +1,3 @@", &format!("@@ -{0},3 +{0},3 @@", first));
+        Ok((source, diff, first + 1))
+    };
+    let info = "info!(\"order of {qty}\");";
+    for (dependency, locked, prelude, call) in [
+        (TRACING, TRACING_LOCK, "use tracing::info;", info),
+        (TRACING, TRACING_LOCK, "use tracing::{debug, info};", info),
+        (TRACING, TRACING_LOCK, "use ::tracing::info;", info),
+        (TRACING, TRACING_LOCK, "use tracing::{self, info};", info),
+        (
+            LOG,
+            LOG_LOCK,
+            "use log::warn;",
+            "warn!(\"order of {}\", qty);",
+        ),
+        (
+            LOG,
+            LOG_LOCK,
+            "use log::{error, warn};",
+            "error!(\"order of {}\", qty);",
+        ),
+    ] {
+        let (source, diff, line) = with(prelude, call)?;
+        for family in ["predicate", "return_value"] {
+            let finding = finding_with_dependencies(dependency, locked, &source, &diff, family)?;
+            assert_eq!(finding["probe"]["line"], line, "{prelude}\n{finding}");
+            assert_eq!(finding["classification"], "exposed", "{prelude}\n{finding}");
+        }
+    }
+    for (label, locked, prelude, call) in [
+        (
+            "unaudited",
+            &[("tracing", "0.1.43")][..],
+            "use tracing::info;",
+            info,
+        ),
+        (
+            "local definition",
+            TRACING_LOCK,
+            "macro_rules! info { ($($t:tt)*) => { return 5 }; }",
+            info,
+        ),
+        ("foreign import", TRACING_LOCK, "use other::info;", info),
+        (
+            "renamed import",
+            TRACING_LOCK,
+            "use tracing::warn as info;",
+            info,
+        ),
+        ("glob import", TRACING_LOCK, "use tracing::*;", info),
+        (
+            "macro_use",
+            TRACING_LOCK,
+            "#[macro_use]\nextern crate tracing;",
+            info,
+        ),
+        (
+            "namespace module",
+            TRACING_LOCK,
+            "use tracing::info;\nmod tracing { macro_rules! info { ($($t:tt)*) => { return 5 }; } }",
+            info,
+        ),
+        (
+            "crate alias",
+            TRACING_LOCK,
+            "use tracing::info;\nextern crate other as tracing;",
+            info,
+        ),
+        // #16424 review: an item macro whose expansion is not read may
+        // alias the root. No same-file use-tree scan sees this one.
+        (
+            "item macro alias",
+            TRACING_LOCK,
+            "use tracing::info;\nshim! { use compat as tracing; }",
+            info,
+        ),
+        // The helper call runs only when the level is enabled.
+        (
+            "callee in arguments",
+            TRACING_LOCK,
+            "use tracing::info;",
+            "info!(\"bulk {}\", is_bulk(qty));",
+        ),
+        // Only the leveled leaves were audited.
+        (
+            "other leaf",
+            TRACING_LOCK,
+            "use tracing::event;",
+            "event!(tracing::Level::INFO, qty);",
+        ),
+    ] {
+        let (source, diff, line) = with(prelude, call)?;
+        for family in ["predicate", "return_value"] {
+            let finding = finding_with_dependencies(TRACING, locked, &source, &diff, family)?;
+            assert_eq!(finding["probe"]["line"], line, "{label}\n{finding}");
+            assert_ne!(finding["classification"], "exposed", "{label}\n{finding}");
+        }
+    }
+    // A wrapper that never invokes a logging macro keeps its credit when
+    // another module defines a macro named like one (`error`), even when
+    // its body spells that word.
+    let source = format!(
+        "{}\nmod other {{\n    macro_rules! error {{ () => {{ 0 }}; }}\n}}\n",
+        bulk_source(
+            "    println!(\"error: {qty}\");\n    if is_bulk(qty) { 5 } else { 0 }",
+            BOUNDARY_TESTS,
+        )
+    );
+    for family in ["predicate", "return_value"] {
+        let finding = family_finding(&source, BULK_DIFF, family)?;
+        assert_eq!(finding["probe"]["line"], 2, "{finding}");
+        assert_eq!(finding["classification"], "exposed", "{family}\n{finding}");
+    }
+    Ok(())
+}
+
+#[test]
+fn imported_anyhow_wrapper_forwards_unless_anyhow_is_rebound() -> Result<(), String> {
+    const ANYHOW: &str = "anyhow = \"1\"";
+    const AUDITED: &[(&str, &str)] = &[("anyhow", "1.0.104")];
+    let wrapper = "    let _ = anyhow!(\"qty {qty}\");\n    if is_bulk(qty) { 5 } else { 0 }";
+    let with_prelude = |prelude: &str| -> Result<(String, String, usize), String> {
+        let source = format!("{prelude}\n{}", bulk_source(wrapper, BOUNDARY_TESTS));
+        let first = source
+            .lines()
+            .position(|line| line.contains("10 <= qty"))
+            .ok_or("probe")?;
+        let diff = BULK_DIFF.replace("@@ -1,3 +1,3 @@", &format!("@@ -{0},3 +{0},3 @@", first));
+        Ok((source, diff, first + 1))
+    };
+    // A verified `use anyhow::anyhow;` at an audited locked release forwards,
+    // alone or grouped with the crate's other items.
+    for prelude in [
+        "use anyhow::anyhow;",
+        "use anyhow::{anyhow, Result};",
+        "use ::anyhow::anyhow;",
+        "use anyhow;\nuse anyhow::anyhow;",
+    ] {
+        let (source, diff, line) = with_prelude(prelude)?;
+        for family in ["predicate", "return_value"] {
+            let finding = finding_with_dependencies(ANYHOW, AUDITED, &source, &diff, family)?;
+            assert_eq!(finding["probe"]["line"], line, "{prelude}\n{finding}");
+            assert_eq!(finding["classification"], "exposed", "{prelude}\n{finding}");
+        }
+    }
+    for (label, locked, prelude) in [
+        // A release outside the audit.
+        (
+            "unaudited",
+            &[("anyhow", "1.0.99")][..],
+            "use anyhow::anyhow;",
+        ),
+        // Anything else that may bind `anyhow`.
+        (
+            "local definition",
+            AUDITED,
+            "macro_rules! anyhow { ($($t:tt)*) => { return 5 }; }",
+        ),
+        ("foreign import", AUDITED, "use other::anyhow;"),
+        ("glob import", AUDITED, "use anyhow::*;"),
+        ("macro_use", AUDITED, "#[macro_use]\nextern crate anyhow;"),
+        (
+            "grouped self import",
+            AUDITED,
+            "use anyhow::anyhow;\nuse other::{anyhow::{self}};",
+        ),
+        (
+            "namespace alias",
+            AUDITED,
+            "use anyhow::anyhow;\nmod anyhow { macro_rules! anyhow { ($($t:tt)*) => { return 5 }; } }",
+        ),
+        (
+            "crate alias",
+            AUDITED,
+            "use anyhow::anyhow;\nextern crate other as anyhow;",
+        ),
+    ] {
+        let (source, diff, line) = with_prelude(prelude)?;
+        for family in ["predicate", "return_value"] {
+            let finding = finding_with_dependencies(ANYHOW, locked, &source, &diff, family)?;
+            assert_eq!(finding["probe"]["line"], line, "{label}\n{finding}");
+            assert_ne!(finding["classification"], "exposed", "{label}\n{finding}");
+        }
+    }
+    Ok(())
+}
+
+#[test]
+fn a_block_arm_that_reads_the_parameter_keeps_forwarding() -> Result<(), String> {
+    // #10357 item 4: rustfmt writes block arms without a trailing comma. One
+    // that only reads `qty` must not read as rebinding it for later arms.
+    let reads = "    let _tier = match qty % 3 {\n        0 => {\n            qty + 1\n        }\n        _ => 0,\n    };\n    if is_bulk(qty) { 5 } else { 0 }";
+    for family in ["predicate", "return_value"] {
+        let finding = family_finding(&bulk_source(reads, BOUNDARY_TESTS), BULK_DIFF, family)?;
+        assert_eq!(finding["classification"], "exposed", "{family}\n{finding}");
+    }
+    // #16406 review: an arrow inside a log string is not an arm, so the
+    // parsed reading still decides.
+    let logged = format!("    println!(\"qty => {{qty}}\");\n{reads}");
+    for family in ["predicate", "return_value"] {
+        let finding = family_finding(&bulk_source(&logged, BOUNDARY_TESTS), BULK_DIFF, family)?;
+        assert_eq!(finding["classification"], "exposed", "{family}\n{finding}");
+    }
+    // #16406 review: a raw-identifier parameter rebound by a raw-identifier
+    // arm pattern sends the arm's value, not the test's, to the helper.
+    let raw = bulk_source(
+        "    match Some(r#qty + 1) {\n        Some(r#qty) => if is_bulk(r#qty) { 5 } else { 0 },\n        None => 0,\n    }",
+        BOUNDARY_TESTS,
+    )
+    .replace("pub fn order_discount(qty: u32)", "pub fn order_discount(r#qty: u32)");
+    for family in ["predicate", "return_value"] {
+        let finding = family_finding(&raw, BULK_DIFF, family)?;
+        assert!(
+            !has_boundary_row(&finding, "qty == 10"),
+            "{family}\n{finding}"
+        );
+        assert_ne!(finding["classification"], "exposed", "{family}\n{finding}");
+    }
+    // Controls: an arm pattern that binds `qty`, after a block arm or not,
+    // and a macro whose tokens hold an arm the parser cannot read (the
+    // opaque-macro gate also refuses that one; the unit table pins the
+    // rebinding decision itself).
+    for rebinds in [
+        "    let _tier = match Some(qty) {\n        None => {\n            0\n        }\n        Some(qty) => qty,\n    };\n    if is_bulk(qty) { 5 } else { 0 }",
+        "    let _tier = match Some(1) {\n        Some(qty) => qty,\n        None => 0,\n    };\n    if is_bulk(qty) { 5 } else { 0 }",
+        "    let _tier = arms! { 0 => {\n            qty + 1\n        }\n        Some(qty) => 0 };\n    if is_bulk(qty) { 5 } else { 0 }",
+    ] {
+        for family in ["predicate", "return_value"] {
+            let finding = family_finding(&bulk_source(rebinds, BOUNDARY_TESTS), BULK_DIFF, family)?;
+            assert_ne!(finding["classification"], "exposed", "{rebinds}\n{finding}");
         }
     }
     Ok(())

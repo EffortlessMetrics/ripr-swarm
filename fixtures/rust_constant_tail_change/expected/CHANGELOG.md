@@ -81,3 +81,25 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — rust_constant_tail_change (8)
+
+Reason:
+RIPR-SPEC-0122: #15313 Summary names shared candidate lines and says No test gap when State reads no test gap found
+
+Command:
+`cargo xtask goldens bless rust_constant_tail_change --reason "..."`
+
+Updated:
+- `expected/human.txt`
+
+## Pending — rust_constant_tail_change (9)
+
+Reason:
+RIPR-SPEC-0122: #15336 unconfirmed-reach note severity, possible-gap State line, legend and Terms glosses
+
+Command:
+`cargo xtask goldens bless rust_constant_tail_change --reason "..."`
+
+Updated:
+- `expected/human.txt`

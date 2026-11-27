@@ -59,3 +59,14 @@ Command:
 
 Updated:
 - `expected/human-full.txt`
+
+## Pending — ts_cross_module_reach_shadowed (6)
+
+Reason:
+RIPR-SPEC-0122: #15336 unconfirmed-reach note severity, possible-gap State line, legend and Terms glosses
+
+Command:
+`cargo xtask goldens bless ts_cross_module_reach_shadowed --reason "..."`
+
+Updated:
+- `expected/human.txt`

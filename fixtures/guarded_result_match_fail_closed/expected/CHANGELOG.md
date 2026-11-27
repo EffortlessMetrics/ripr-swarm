@@ -757,3 +757,26 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — guarded_result_match_fail_closed (57)
+
+Reason:
+RIPR-SPEC-0224: inert row names the construct its refusals agree on (#15337)
+
+Command:
+`cargo xtask goldens bless guarded_result_match_fail_closed --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human-full.txt`
+
+## Pending — guarded_result_match_fail_closed (58)
+
+Reason:
+RIPR-SPEC-0122: #15336 unconfirmed-reach note severity, possible-gap State line, legend and Terms glosses
+
+Command:
+`cargo xtask goldens bless guarded_result_match_fail_closed --reason "..."`
+
+Updated:
+- `expected/human.txt`

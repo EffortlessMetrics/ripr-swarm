@@ -88,7 +88,8 @@ const BOUNDED_EVIDENCE_LEGEND: &str = concat!(
     "    States: yes = evidence found; weak = partial evidence; no = evidence not found; unknown/opaque = analysis limited;\n",
     "      missing = a needed test input or assertion is absent; not established = assertion unconfirmed; not applicable = stage unused\n",
     "    Summary terms: changed behavior = one change point ripr checked; appear noticed by tests = a test appears to notice the change;\n",
-    "      partly noticed = tests appear to notice it only partly; reached but not noticed = tests reach it but nothing appears to notice;\n",
+    "      partly noticed = tests appear to notice it only partly; reached but not noticed = linked to a test, but nothing appears to notice;\n",
+    "      both can rest on a test link ripr could not confirm; the reach stage says which;\n",
     "      no test path = no test path found; unclear = analysis limited, not a verdict;\n",
     "      found = listed for review; suppressed by your settings = hidden by your suppression policy;\n",
     "      base-side = evidence from the old code, not an edit target; candidate line = changed line ripr considers\n",
@@ -176,6 +177,32 @@ fn bounded_legend_capture_projection_is_exact_and_preserves_evidence() -> Result
     Ok(())
 }
 
+/// #15313 added two plain-Summary spellings that carry no new count: an
+/// " on N candidate line(s)" clause after `checked`, and `No test gap: N
+/// listed` for `N found` on an all-clear run. Fold both back so the positional
+/// count parse below reads the same numbers.
+fn plain_summary_without_15313_wording(body: &str) -> String {
+    let mut out = body.to_string();
+    if let Some(start) = out.find(" checked on ")
+        && let Some(colon) = out[start..].find(':')
+    {
+        let clause = &out[start + " checked".len()..start + colon];
+        if clause.ends_with(" candidate line") || clause.ends_with(" candidate lines") {
+            out.replace_range(start + " checked".len()..start + colon, "");
+        }
+    }
+    if let Some(start) = out.find("No test gap: ")
+        && let Some(end) = out[start..].find(" listed")
+    {
+        let count = out[start + "No test gap: ".len()..start + end].to_string();
+        out.replace_range(
+            start..start + end + " listed".len(),
+            &format!("{count} found"),
+        );
+    }
+    out
+}
+
 /// Project a Summary line, in the historical or the plain-language spelling,
 /// onto one canonical form that still carries every count: changed behaviors,
 /// the five class buckets, and the reported / total findings. A count
@@ -192,7 +219,8 @@ fn canonical_summary(line: &str) -> String {
             "Summary: behaviors={behaviors} buckets={buckets:?} reported={reported} total={total}\n"
         )
     };
-    let body = line.trim_end_matches('\n');
+    let body = plain_summary_without_15313_wording(line.trim_end_matches('\n'));
+    let body = body.as_str();
     // Historical human-full / current human-full: tokens unchanged.
     if body.contains("reachable_unrevealed") {
         let head =

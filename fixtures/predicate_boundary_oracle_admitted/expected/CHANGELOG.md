@@ -300,3 +300,25 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — predicate_boundary_oracle_admitted (24)
+
+Reason:
+RIPR-SPEC-0122: #15313 Summary names shared candidate lines and says No test gap when State reads no test gap found
+
+Command:
+`cargo xtask goldens bless predicate_boundary_oracle_admitted --reason "..."`
+
+Updated:
+- `expected/human.txt`
+
+## Pending — predicate_boundary_oracle_admitted (25)
+
+Reason:
+RIPR-SPEC-0122: #15336 unconfirmed-reach note severity, possible-gap State line, legend and Terms glosses
+
+Command:
+`cargo xtask goldens bless predicate_boundary_oracle_admitted --reason "..."`
+
+Updated:
+- `expected/human.txt`

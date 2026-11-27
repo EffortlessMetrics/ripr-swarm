@@ -1,0 +1,2 @@
+<!-- section: Fixed -->
+- A TypeScript or JavaScript test file that binds `tape`, `ava` or `node:test` under a name other than `test` now registers its tests. This covers `const check = require('tape')`, `import check = require('tape')` and `import check from 'ava'`. Before, those tests were not seen and the code they check read `no_static_path`. A written binding, mocha's or node-tap's default, and a local module's default still register nothing (#16431).

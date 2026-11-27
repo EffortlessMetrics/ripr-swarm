@@ -14,6 +14,12 @@
 //! call ripr cannot type, a call on a type that runs the owner, and (for the
 //! inherent case) any mention of the trait in the test keep the relation the
 //! caller already had. An unreadable call never turns into a new gap.
+//!
+//! One receiver is read the other way (#15752): a call on a `dyn Trait`
+//! receiver of the default's own trait runs the boxed value's vtable entry,
+//! so when some impl overrides the method, the default keeps its credit
+//! only if every binding boxes a readable type that none of the overrides
+//! is for.
 
 use super::{
     FunctionContainer, FunctionSummary, RustIndex, TestSummary, call_site_resolves_to_type,
@@ -41,10 +47,17 @@ pub(super) fn every_call_runs_an_override(
         return false;
     };
     let trait_name = impl_trait_name_from_path(trait_name);
-    let overriding: Vec<String> = same_name_ids
+    let override_ids: Vec<&str> = same_name_ids
         .iter()
-        .filter(|id| **id != owner.id.0.as_str())
+        .copied()
+        .filter(|id| *id != owner.id.0.as_str())
         .filter(|id| owner_trait_name(id).as_deref() == Some(trait_name))
+        .collect();
+    if override_ids.is_empty() {
+        return false;
+    }
+    let overriding: Vec<String> = override_ids
+        .iter()
         // A generic trait (`impl Counter<u8> for Fast`) or self type
         // (`impl Counter for Fast<u8>`) does not say which instantiations
         // override: `Counter<u16>` or `Fast<u16>` may keep the default. A
@@ -56,20 +69,17 @@ pub(super) fn every_call_runs_an_override(
         })
         .filter_map(|id| impl_self_type_name(id))
         .collect();
-    if overriding.is_empty() {
-        return false;
-    }
     // Every same-named candidate must be compiled in and each overriding
     // type must be the only type of that name, so a cfg-gated override or a
     // namesake in another module cannot stand for the type the test calls.
-    if same_name_ids
-        .iter()
-        .filter(|id| **id != owner.id.0.as_str())
-        .any(|id| candidate_cfg_gated(id, index))
-        || !overriding.iter().all(|ty| declared_once(ty, index))
-    {
-        return false;
-    }
+    // Without that, a call typed as an overriding value is not read; a
+    // trait-object call below still is, since it only ever refuses.
+    let typed_overrides = !overriding.is_empty()
+        && !same_name_ids
+            .iter()
+            .filter(|id| **id != owner.id.0.as_str())
+            .any(|id| candidate_cfg_gated(id, index))
+        && overriding.iter().all(|ty| declared_once(ty, index));
     let masked = mask_comments_and_strings(&test.body);
     let name = owner.name.as_str();
     if !every_mention_is_a_call(&masked, name) {
@@ -80,17 +90,63 @@ pub(super) fn every_call_runs_an_override(
         return false;
     }
     sites.all(|at| {
-        overriding.iter().any(|ty| {
-            call_site_resolves_to_type(
+        (typed_overrides
+            && overriding.iter().any(|ty| {
+                call_site_resolves_to_type(
+                    &masked,
+                    at,
+                    name,
+                    ty,
+                    Some(trait_name),
+                    &masked,
+                    &test.body,
+                    true,
+                ) || trait_call_on_unit_value(&masked, at, name, trait_name, ty)
+            }))
+            || trait_object_call_may_run_override(
+                test,
                 &masked,
                 at,
-                name,
-                ty,
-                Some(trait_name),
-                &masked,
-                &test.body,
-                true,
-            ) || trait_call_on_unit_value(&masked, at, name, trait_name, ty)
+                trait_name,
+                &override_ids,
+                index,
+            )
+    })
+}
+
+/// #15752: whether the call at `at` has a `dyn trait_name` receiver
+/// (`let s: Box<dyn Shape> = Box::new(Square(3)); s.area()`) that may run
+/// one of `override_ids` rather than the default. The vtable of the boxed
+/// value's type answers the call, so the default runs only when every
+/// binding boxes a value of one declared type that none of the overrides
+/// is for. A boxed type this cannot read, or an override whose self type is
+/// not one declared type (a blanket `impl<T: Copy> Shape for T`), leaves
+/// open that an override runs: a false credit is worse than a missed one.
+fn trait_object_call_may_run_override(
+    test: &TestSummary,
+    masked: &str,
+    at: usize,
+    trait_name: &str,
+    override_ids: &[&str],
+    index: &RustIndex,
+) -> bool {
+    let Some(boxed_types) =
+        crate::analysis::classify::owner_pin::dyn_box::trait_object_receiver_types(
+            test, masked, at, trait_name,
+        )
+    else {
+        return false;
+    };
+    let override_types: Option<Vec<String>> = override_ids
+        .iter()
+        .map(|id| impl_self_type_name(id).filter(|ty| declared_once(ty, index)))
+        .collect();
+    let Some(override_types) = override_types else {
+        return true;
+    };
+    !boxed_types.iter().all(|boxed| {
+        boxed.is_some_and(|ty| {
+            declared_once(ty, index) && !override_types.iter().any(|other| other == ty)
         })
     })
 }
@@ -419,7 +475,10 @@ fn declared_pub(function: &FunctionSummary, index: &RustIndex) -> bool {
 
 /// Whether `function` is declared plainly `pub`, with no `(crate)`,
 /// `(super)`, `(self)` or `(in ..)` restriction.
-fn declared_unrestricted_pub(function: &FunctionSummary, index: &RustIndex) -> bool {
+pub(in crate::analysis::classify) fn declared_unrestricted_pub(
+    function: &FunctionSummary,
+    index: &RustIndex,
+) -> bool {
     parsed_fn(function, index).is_some_and(|found| {
         found
             .visibility()

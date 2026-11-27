@@ -34,3 +34,14 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — typescript_built_class_entry_reach (4)
+
+Reason:
+RIPR-SPEC-0122: #15336 unconfirmed-reach note severity, possible-gap State line, legend and Terms glosses
+
+Command:
+`cargo xtask goldens bless typescript_built_class_entry_reach --reason "..."`
+
+Updated:
+- `expected/human.txt`

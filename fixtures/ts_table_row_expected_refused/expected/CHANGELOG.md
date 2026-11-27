@@ -150,3 +150,14 @@ Command:
 
 Updated:
 - `expected/human.txt`
+
+## Pending — ts_table_row_expected_refused (14)
+
+Reason:
+RIPR-SPEC-0122: #15336 unconfirmed-reach note severity, possible-gap State line, legend and Terms glosses
+
+Command:
+`cargo xtask goldens bless ts_table_row_expected_refused --reason "..."`
+
+Updated:
+- `expected/human.txt`

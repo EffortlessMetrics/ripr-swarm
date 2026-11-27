@@ -1,0 +1,21 @@
+crates/ripr/src/app/python_repair_verification.rs|agent repair --phase verify refuses to run: --verify-authorized requires --verify-authority <identity>
+crates/ripr/src/app/python_repair_verification.rs|python repair verification could not read the running analyzer binary: {error}
+crates/ripr/src/app/python_repair_verification.rs|python repair verification refuses attempt `{}`: the attempt carries no edit-cage baseline
+crates/ripr/src/app/python_repair_verification.rs|python repair verification refuses attempt `{}`: the attempt carries no retained agent packet
+crates/ripr/src/app/python_repair_verification.rs|python repair verification refuses attempt `{}`: the attempt carries no retained before snapshot
+crates/ripr/src/app/python_repair_verification.rs|python repair verification refuses attempt `{}`: the attempt records no python repair-trust binding; the verification phase runs only for trust-bound attempts
+crates/ripr/src/app/python_repair_verification.rs|python repair verification refuses attempt `{}`: the ready_to_finish attempt carries no after verdict
+crates/ripr/src/app/python_repair_verification.rs|python repair verification refuses attempt `{}`: the retained packet envelope carries no packet entry
+crates/ripr/src/app/python_repair_verification.rs|python repair verification refuses attempt `{}`: the verify command digest failed: {error}
+crates/ripr/src/app/python_repair_verification.rs|python repair verification: apply record is missing input
+crates/ripr/src/app/python_repair_verification.rs|python repair verification: apply record is missing its apply block
+crates/ripr/src/app/python_repair_verification.rs|python repair verification: apply record is missing trust
+crates/ripr/src/app/python_repair_verification.rs|python repair verification: apply record {} is not well-formed JSON: {error}
+crates/ripr/src/app/python_repair_verification.rs|python repair verification: retained packet is not UTF-8: {error}
+crates/ripr/src/app/python_repair_verification.rs|python repair verification: retained packet is not well-formed JSON: {error}
+crates/ripr/src/app/python_repair_verification.rs|python repair verification: subject=`{subject}`: must be a JSON object
+crates/ripr/src/app/python_repair_verification.rs|python repair verification: subject=`{subject}`: the analysis snapshot carries no seams array
+crates/ripr/src/app/python_repair_verification.rs|python repair verification: the after snapshot is not well-formed JSON: {error}
+crates/ripr/src/app/python_repair_verification.rs|python repair verification: the before snapshot is not well-formed JSON: {error}
+crates/ripr/src/app/python_repair_verification.rs|python repair verification: the committed execution response is not well-formed JSON: {error}
+crates/ripr/src/app/python_repair_verification.rs|read retained before snapshot {} failed: {error}

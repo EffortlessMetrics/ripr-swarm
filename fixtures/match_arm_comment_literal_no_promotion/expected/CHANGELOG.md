@@ -550,3 +550,14 @@ Command:
 
 Updated:
 - `expected/human.txt`
+
+## Pending — match_arm_comment_literal_no_promotion (42)
+
+Reason:
+RIPR-SPEC-0122: #15336 unconfirmed-reach note severity, possible-gap State line, legend and Terms glosses
+
+Command:
+`cargo xtask goldens bless match_arm_comment_literal_no_promotion --reason "..."`
+
+Updated:
+- `expected/human.txt`

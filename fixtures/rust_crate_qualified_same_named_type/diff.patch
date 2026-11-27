@@ -1,0 +1,11 @@
+diff --git a/src/a.rs b/src/a.rs
+--- a/src/a.rs
++++ b/src/a.rs
+@@ -1,6 +1,6 @@
+ pub struct Rng(u32);
+ impl Rng {
+     pub fn digit(&mut self, base: u32) -> u32 {
+-        if base > 9 { 2 } else { 1 }
++        if base >= 10 { 2 } else { 1 }
+     }
+ }

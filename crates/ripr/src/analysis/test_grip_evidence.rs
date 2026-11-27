@@ -1760,6 +1760,16 @@ fn enclosing_header_generics(owner: &FunctionSummary, index: &RustIndex) -> Opti
 /// offset past its closing `>`, or `None` when unbalanced. A `->` in a bound
 /// does not close it.
 fn generic_parameter_names(text: &str) -> Option<(Vec<String>, usize)> {
+    generic_parameter_list(text, true)
+}
+
+/// Like `generic_parameter_names`, but names only type parameters. A const
+/// parameter lives in the value namespace and does not shadow a module.
+fn generic_type_parameter_names(text: &str) -> Option<(Vec<String>, usize)> {
+    generic_parameter_list(text, false)
+}
+
+fn generic_parameter_list(text: &str, include_const: bool) -> Option<(Vec<String>, usize)> {
     let word = |ch: char| ch.is_alphanumeric() || ch == '_';
     let mut depth = 0usize;
     let mut params: Vec<&str> = Vec::new();
@@ -1791,6 +1801,9 @@ fn generic_parameter_names(text: &str) -> Option<(Vec<String>, usize)> {
         .iter()
         .filter_map(|param| {
             let param = param.trim();
+            if !include_const && param.starts_with("const ") {
+                return None;
+            }
             let param = param.strip_prefix("const ").unwrap_or(param).trim_start();
             if param.starts_with('\'') {
                 return None;
@@ -3578,8 +3591,11 @@ fn activate_evidence(
 /// inputs that select other arms is not activated by them, whatever their
 /// oracle: activation reads weak and the arm's pattern is the missing
 /// discriminator, as `ripr check` reads the same arm (RIPR-SPEC-0229). Only
-/// an established activation is weakened; every refusal of the shared
-/// reading keeps the stage as it was.
+/// an established activation is weakened. Every refusal of the shared
+/// reading keeps the stage as it was, except a rebound read macro on the
+/// tests' path (#15233): those inputs, read through a macro whose expansion
+/// is not read, select other arms, so the stage they produced reads unknown,
+/// never the generic `yes` it would otherwise keep.
 fn weaken_unselected_arm(
     seam: &RepoSeam,
     related: &[&TestSummary],
@@ -3594,17 +3610,23 @@ fn weaken_unselected_arm(
     let Some(owner) = owner_fn else {
         return;
     };
-    let Some(fact) = super::classify::repo_seam_unselected_arm(
+    match super::classify::repo_seam_unselected_arm(
         seam.file(),
         seam.display_line(),
         owner,
         related,
         index,
-    ) else {
-        return;
-    };
-    *activate = StageEvidence::new(StageState::Weak, Confidence::Medium, fact.reason.clone());
-    missing.push(fact);
+    ) {
+        None => {}
+        Some(super::classify::UnselectedArm::Named(fact)) => {
+            *activate =
+                StageEvidence::new(StageState::Weak, Confidence::Medium, fact.reason.clone());
+            missing.push(fact);
+        }
+        Some(super::classify::UnselectedArm::ReadMacroRebound(summary)) => {
+            *activate = StageEvidence::new(StageState::Unknown, Confidence::Low, summary);
+        }
+    }
 }
 
 fn requires_concrete_activation_values(seam: &RepoSeam) -> bool {

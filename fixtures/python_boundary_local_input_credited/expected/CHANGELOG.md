@@ -94,3 +94,14 @@ Command:
 
 Updated:
 - `expected/human.txt`
+
+## Pending — python_boundary_local_input_credited (9)
+
+Reason:
+RIPR-SPEC-0122: #15336 unconfirmed-reach note severity, possible-gap State line, legend and Terms glosses
+
+Command:
+`cargo xtask goldens bless python_boundary_local_input_credited --reason "..."`
+
+Updated:
+- `expected/human.txt`

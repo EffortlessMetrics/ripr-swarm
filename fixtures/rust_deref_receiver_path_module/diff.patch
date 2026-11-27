@@ -1,0 +1,11 @@
+diff --git a/src/lib.rs b/src/lib.rs
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -9,6 +9,6 @@
+ 
+ impl Inner {
+     pub fn limit(&self) -> u32 {
+-        self.cap * 2
++        self.cap * 2 + 1
+     }
+ }

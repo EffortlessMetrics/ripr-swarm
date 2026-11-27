@@ -224,6 +224,12 @@ second stage vocabulary.
 - `crates/ripr/src/cli/commands/pilot.rs::tests::a_worker_stuck_past_the_grace_still_ends_with_one_cancelled_line`
 - `crates/ripr/src/cli/progress.rs::tests::projection_tokens_cover_the_closed_producer_vocabulary`
 - `crates/ripr/src/cli/progress.rs::tests::rendering_failure_is_isolated`
+- `crates/ripr/src/cli/progress.rs::tests::non_tty_fast_run_prints_no_progress_including_completed`
+- `crates/ripr/src/cli/progress.rs::tests::non_tty_run_past_the_hold_still_prints_stage_and_completed`
+- `crates/ripr/src/cli/progress.rs::tests::non_tty_held_stream_heartbeats_one_interval_after_disclosure`
+- `crates/ripr/src/cli/progress.rs::tests::non_tty_success_past_the_hold_between_ticks_discloses_the_stage`
+- `crates/ripr/src/cli/progress.rs::tests::non_tty_fast_failure_keeps_stage_context_before_failed`
+- `crates/ripr/src/cli/progress.rs::tests::progress_env_zeroes_the_non_tty_hold_and_only_there`
 - `crates/ripr/src/cli/progress.rs::tests::heartbeat_is_throttled_and_bounded`
 - `crates/ripr/src/cli/progress.rs::tests::standard_heartbeat_spans_long_repo_walks_without_a_ten_second_gap`
 - `crates/ripr/src/cli/progress.rs::tests::tty_suppressed_stage_becomes_visible_once_min_visible_elapses`

@@ -179,3 +179,113 @@ fn every_diff_names_the_fixture_file_as_its_added_side() -> Result<(), Box<dyn s
     }
     Ok(())
 }
+
+/// #16302: when a classified probe replaces an enclosing `unsafe fn`
+/// boundary's finding on its line, that finding carries the boundary's
+/// `unsafe_obligation` stop reason, so the line still says the change alters
+/// an unsafe contract. A plain `unsafe {}` block in a safe function has no
+/// obligation to hand over, and the boundary's own finding keeps its reason.
+#[test]
+fn a_replaced_unsafe_fn_boundary_hands_its_obligation_to_the_edited_behavior() -> Result<(), String>
+{
+    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/unsafe_context");
+    let obligated = |report: &CheckOutput| {
+        let mut rows = report
+            .findings
+            .iter()
+            .map(|finding| {
+                (
+                    finding.probe.location.line,
+                    finding.probe.family.as_str().to_owned(),
+                    finding
+                        .stop_reasons
+                        .iter()
+                        .any(|reason| reason.as_str() == "unsafe_obligation"),
+                )
+            })
+            .collect::<Vec<_>>();
+        rows.sort_unstable();
+        rows
+    };
+    let returned = check(&root, "returned.diff")?;
+    assert_eq!(
+        obligated(&returned),
+        vec![(12, "return_value".to_owned(), true)],
+        "returned.diff"
+    );
+    // The note does not change the class the probe's own evidence gives.
+    assert_ne!(returned.findings[0].class.as_str(), "static_unknown");
+    for diff in ["predicate.diff", "inline.diff"] {
+        let report = check(&root, diff)?;
+        assert!(
+            obligated(&report).iter().all(|(_, _, carried)| !carried),
+            "{diff}: {:?}",
+            obligated(&report)
+        );
+    }
+    let mixed = check(&root, "mixed.diff")?;
+    assert_eq!(
+        obligated(&mixed),
+        vec![
+            (3, "predicate".to_owned(), false),
+            (12, "return_value".to_owned(), true),
+            (14, "static_unknown".to_owned(), true),
+        ],
+        "mixed.diff"
+    );
+    Ok(())
+}
+
+/// #16302: only the classified probe that carries the edit inherits the
+/// obligation. An unchanged predicate on the same line gets nothing, a
+/// predicate edit inside an `unsafe fn` carries it, and an unchecked-assumption
+/// block hands it over too.
+#[test]
+fn only_the_probe_carrying_the_edit_inherits_the_unsafe_obligation() -> Result<(), String> {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/unsafe_obligation_carry");
+    let obligated = |diff: &str| -> Result<Vec<(usize, String, String, bool)>, String> {
+        let report = check(&root, diff)?;
+        let mut rows = report
+            .findings
+            .iter()
+            .map(|finding| {
+                (
+                    finding.probe.location.line,
+                    finding.probe.family.as_str().to_owned(),
+                    finding.probe.expression.as_str().to_owned(),
+                    finding
+                        .stop_reasons
+                        .iter()
+                        .any(|reason| reason.as_str() == "unsafe_obligation"),
+                )
+            })
+            .collect::<Vec<_>>();
+        rows.sort_unstable();
+        Ok(rows)
+    };
+    let row = |line, family: &str, expression: &str, carried| {
+        (line, family.to_owned(), expression.to_owned(), carried)
+    };
+    assert_eq!(
+        obligated("same_line.diff")?,
+        vec![
+            row(2, "predicate", "flag", false),
+            row(2, "return_value", "return 4", true),
+        ],
+        "same_line.diff"
+    );
+    assert_eq!(
+        obligated("predicate.diff")?,
+        vec![
+            row(7, "predicate", "value > 7", true),
+            row(7, "return_value", "value > 7", true),
+        ],
+        "predicate.diff"
+    );
+    assert_eq!(
+        obligated("assumption.diff")?,
+        vec![row(13, "return_value", "return value + 3", true)],
+        "assumption.diff"
+    );
+    Ok(())
+}

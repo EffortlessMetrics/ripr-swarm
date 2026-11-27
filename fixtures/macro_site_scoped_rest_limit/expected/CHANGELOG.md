@@ -297,3 +297,25 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — macro_site_scoped_rest_limit (23)
+
+Reason:
+RIPR-SPEC-0122: #15313 Summary names shared candidate lines and says No test gap when State reads no test gap found
+
+Command:
+`cargo xtask goldens bless macro_site_scoped_rest_limit --reason "..."`
+
+Updated:
+- `expected/human.txt`
+
+## Pending — macro_site_scoped_rest_limit (24)
+
+Reason:
+RIPR-SPEC-0122: #15336 unconfirmed-reach note severity, possible-gap State line, legend and Terms glosses
+
+Command:
+`cargo xtask goldens bless macro_site_scoped_rest_limit --reason "..."`
+
+Updated:
+- `expected/human.txt`

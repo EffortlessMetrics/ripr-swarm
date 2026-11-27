@@ -420,3 +420,14 @@ Command:
 
 Updated:
 - `expected/human.txt`
+
+## Pending — python_functools_memoization_not_indirection (35)
+
+Reason:
+RIPR-SPEC-0122: #15336 unconfirmed-reach note severity, possible-gap State line, legend and Terms glosses
+
+Command:
+`cargo xtask goldens bless python_functools_memoization_not_indirection --reason "..."`
+
+Updated:
+- `expected/human.txt`

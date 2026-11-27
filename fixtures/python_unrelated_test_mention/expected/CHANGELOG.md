@@ -708,3 +708,14 @@ Command:
 
 Updated:
 - `expected/human.txt`
+
+## Pending — python_unrelated_test_mention (33)
+
+Reason:
+RIPR-SPEC-0122: #15336 unconfirmed-reach note severity, possible-gap State line, legend and Terms glosses
+
+Command:
+`cargo xtask goldens bless python_unrelated_test_mention --reason "..."`
+
+Updated:
+- `expected/human.txt`

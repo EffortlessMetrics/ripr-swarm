@@ -61,16 +61,23 @@ fn legend_prints_on_the_first_run_then_collapses_to_a_pointer() -> TestResult {
     let second = check(&project, &[])?;
     assert!(!second.contains(LEGEND), "{second}");
     assert!(second.contains(POINTER), "{second}");
-    // Only the ten legend lines became one line; the finding is unchanged.
+    // Only the eleven legend lines became one line; the finding is unchanged.
     assert_eq!(
-        first.lines().count() - 9,
+        first.lines().count() - 10,
         second.lines().count(),
-        "legend must collapse by exactly nine lines"
+        "legend must collapse by exactly ten lines"
     );
 
     let forced = check(&project, &["--legend"])?;
     assert!(forced.contains(LEGEND), "{forced}");
     assert!(!forced.contains(POINTER), "{forced}");
+    // #15336: the forced legend does not gloss the reached buckets as proof
+    // that a test reaches the change.
+    assert!(
+        forced.contains("both can rest on a test link ripr could not confirm"),
+        "{forced}"
+    );
+    assert!(!forced.contains("tests reach it but"), "{forced}");
     Ok(())
 }
 

@@ -175,3 +175,25 @@ Command:
 
 Updated:
 - `expected/human-full.txt`
+
+## Pending — rust_macro_table_arrow_sibling_item_debug_assert (15)
+
+Reason:
+RIPR-SPEC-0122: #15313 Summary names shared candidate lines and says No test gap when State reads no test gap found
+
+Command:
+`cargo xtask goldens bless rust_macro_table_arrow_sibling_item_debug_assert --reason "..."`
+
+Updated:
+- `expected/human.txt`
+
+## Pending — rust_macro_table_arrow_sibling_item_debug_assert (16)
+
+Reason:
+RIPR-SPEC-0122: #15336 unconfirmed-reach note severity, possible-gap State line, legend and Terms glosses
+
+Command:
+`cargo xtask goldens bless rust_macro_table_arrow_sibling_item_debug_assert --reason "..."`
+
+Updated:
+- `expected/human.txt`

@@ -779,3 +779,14 @@ Command:
 
 Updated:
 - `expected/human.txt`
+
+## Pending — python_mock_assert_called (37)
+
+Reason:
+RIPR-SPEC-0122: #15336 unconfirmed-reach note severity, possible-gap State line, legend and Terms glosses
+
+Command:
+`cargo xtask goldens bless python_mock_assert_called --reason "..."`
+
+Updated:
+- `expected/human.txt`

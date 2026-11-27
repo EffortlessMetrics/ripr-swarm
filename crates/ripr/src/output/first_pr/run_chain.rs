@@ -321,7 +321,7 @@ pub(super) fn run_steps(
 ) -> Result<(), String> {
     let exe = std::env::current_exe().map_err(|err| {
         format!(
-            "{} --run-chain: cannot resolve the running ripr executable: {err}",
+            "{} --run-chain: cannot resolve the running ripr executable: {err}. Check that the RIPR executable is accessible, then rerun.",
             options.command
         )
     })?;

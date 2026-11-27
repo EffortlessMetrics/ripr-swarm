@@ -2063,6 +2063,8 @@ which completed with findings. The published schemas keep `status` and
 compatible for existing readers; ripr always writes both on a refusal, and the
 pairing becomes a schema rule at the next `schema_version` bump.
 
+An explicit empty `--root` is echoed as an empty string in the 0.2 `repository_root_unusable` refusal. Its scope and sole limitation identify the unusable root, its summary is zeroed, and its findings are empty. It can echo an explicit `base`. Fields that carry analysis results, including `analysis_outcome`, are absent. Completed and bounded partial reports and other refusal kinds require a nonempty root.
+
 ### `cli_refusal` (schema `0.1`, #11584)
 
 Argv usage errors and `context` selector misses stay exit `2` with the cause
@@ -21179,7 +21181,7 @@ top-level `source_subject`:
 
 - `digest_algorithm`: always `"sha256"`.
 - `corpus` (additive, full Rust inventory only): the analysis-owned
-  `{ "scope": "rust_workspace", "cache_schema_version": "1.210",
+  `{ "scope": "rust_workspace", "cache_schema_version": "1.215",
   "files_content_hash": "<16 lowercase hex digits>" }` from the actual
   classified inventory cache key, including both production and test Rust
   files after the existing generated-file exclusions. Repo-exposure producers
@@ -21970,7 +21972,7 @@ targeted-rerun receipt shape:
     "direct_call_names": ["discounted_total"]
   },
   "cache": {
-    "schema_version": "1.67",
+    "schema_version": "1.69",
     "reuse_state": "reused_file_facts",
     "file_fact_status": "hits_2_misses_0_corrupt_0_store_errors_0",
     "hits": 2,
@@ -21983,7 +21985,7 @@ targeted-rerun receipt shape:
     "recomputation_reasons": ["selected_test_scope_recomputed"],
     "invalidation_status": "not_available",
     "input_fingerprint": {
-      "schema_version": "1.210",
+      "schema_version": "1.215",
       "analyzer_version": "0.11.0+0123456789abcdef0123456789abcdef01234567+languages:rust=1,typescript=1,python=1,perl=0",
       "workspace_root_hash": "…",
       "files_content_hash": "…",
