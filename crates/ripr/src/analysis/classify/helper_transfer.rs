@@ -4551,7 +4551,11 @@ pub(crate) fn caller_rebinds_parameter(body: &str, parameter: &str) -> bool {
     // `{` or a top-level `,`, cut at a top-level `if` guard. A guard only
     // reads the parameter (`n if n > qty =>`); the pattern before it can
     // bind it (`Some(qty) if .. =>`, `Foo { qty } =>`).
-    for (at, _) in inner.match_indices("=>") {
+    let parsed_arms = match_arm_patterns_bind(body, parameter);
+    if parsed_arms == Some(true) {
+        return true;
+    }
+    for (at, _) in inner.match_indices("=>").filter(|_| parsed_arms.is_none()) {
         let start = match_arm_start(&inner[..at]);
         let arm = &inner[start..at];
         // A comma-less block arm before this one (`None => if f { 1 } else
@@ -4580,6 +4584,42 @@ pub(crate) fn caller_rebinds_parameter(body: &str, parameter: &str) -> bool {
         }
     }
     false
+}
+
+/// Parser-backed match-arm reading (#10357 item 4): `Some(binds)` when
+/// `body` parses cleanly and no macro call's tokens hold a `=>` the parser
+/// cannot read as an arm, `None` otherwise (the lexical scan then decides).
+/// An arm binds the parameter when its pattern, not its guard or its body,
+/// holds an identifier pattern of that name, so a comma-less block arm that
+/// only reads the parameter (`0 => { qty + 1 }`) no longer refuses the arms
+/// after it.
+fn match_arm_patterns_bind(body: &str, parameter: &str) -> Option<bool> {
+    use ra_ap_syntax::AstNode;
+    use ra_ap_syntax::ast::{self, HasName};
+    let parse = crate::analysis::syntax::parse_clean_source_file_memoized(body)?;
+    let root = parse.tree();
+    let opaque_arms = root
+        .syntax()
+        .descendants()
+        .filter_map(ast::MacroCall::cast)
+        .filter_map(|call| call.token_tree())
+        .any(|tree| tree.syntax().text().to_string().contains("=>"));
+    if opaque_arms {
+        return None;
+    }
+    Some(
+        root.syntax()
+            .descendants()
+            .filter_map(ast::MatchArm::cast)
+            .filter_map(|arm| arm.pat())
+            .any(|pat| {
+                pat.syntax()
+                    .descendants()
+                    .filter_map(ast::IdentPat::cast)
+                    .filter_map(|ident| ident.name())
+                    .any(|name| name.text().trim_start_matches("r#") == parameter)
+            }),
+    )
 }
 
 /// Where the match arm ending at the end of `before` starts: after the
@@ -5855,6 +5895,9 @@ mod tests {
             // #6780 review round 3: a comma-less block arm (rustfmt's
             // layout) that never names the parameter is not a rebinding.
             "fn w(qty: u32, n: Option<u32>, f: bool) -> u32 { let k = is_bulk(qty); match n { None => {\n if f { 1 } else { 2 }\n }\n Some(m) => m, } }",
+            // #10357 item 4: a comma-less block arm that only reads the
+            // parameter does not rebind it for the arms after it.
+            "fn w(qty: u32, n: u32) -> u32 { let _t = match n { 0 => {\n qty + 1\n }\n _ => 0, }; if is_bulk(qty) { 5 } else { 0 } }",
         ] {
             assert!(!caller_rebinds_parameter(body, "qty"), "{body}");
         }
