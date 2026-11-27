@@ -6418,6 +6418,10 @@ fn a_logging_root_rebinding_reports_each_requested_logging_name() {
         "extern crate other as tracing;",
         "use other::log;",
         "use other as tracing;",
+        // #16424 review: an item macro whose expansion is not read may
+        // alias the root.
+        "cfg_if::cfg_if! { if #[cfg(unix)] { use compat as tracing; } }",
+        "mod m { shim! { use compat as log; } }",
     ] {
         assert_eq!(sites(source, &["info", "warn"]), both, "{source}");
         assert!(sites(source, &["json"]).is_empty(), "{source}");
@@ -6428,6 +6432,8 @@ fn a_logging_root_rebinding_reports_each_requested_logging_name() {
         "use ::tracing::{debug, info};",
         "use log;",
         "fn log() {}",
+        // A logging call in expression position names no root binding.
+        "fn f() { tracing::info!(\"order\"); shim!(log); }",
     ] {
         assert!(sites(source, &["info", "warn"]).is_empty(), "{source}");
     }

@@ -937,6 +937,14 @@ fn imported_logging_wrapper_forwards_unless_the_name_or_root_is_rebound() -> Res
             "use tracing::info;\nextern crate other as tracing;",
             info,
         ),
+        // #16424 review: an item macro whose expansion is not read may
+        // alias the root. No same-file use-tree scan sees this one.
+        (
+            "item macro alias",
+            TRACING_LOCK,
+            "use tracing::info;\nshim! { use compat as tracing; }",
+            info,
+        ),
         // The helper call runs only when the level is enabled.
         (
             "callee in arguments",

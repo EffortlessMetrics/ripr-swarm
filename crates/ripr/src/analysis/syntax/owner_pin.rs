@@ -1388,17 +1388,22 @@ fn macro_binding_sites_in_tree(
             ));
         }
         // #16420: a module, rename or foreign import named `tracing` or
-        // `log` may take over the root a bare logging import names.
+        // `log` may take over the root a bare logging import names, and so
+        // may an item-position macro call whose tokens name either root
+        // (`cfg_if! { if #[cfg(unix)] { use compat as tracing; } }`), since
+        // its expansion is not read.
         if LOGGING_CRATES
             .iter()
             .any(|krate| crate_namespace_rebound(node, krate))
+            || item_macro_names_logging_root(node)
         {
             for name in trusted
                 .iter()
+                .copied()
                 .filter(|name| LEVELED_LOGGING_MACROS.contains(name))
             {
                 ambiguous.push((
-                    (*name).to_string(),
+                    name.to_string(),
                     MacroBindingSite {
                         line: line_of(node),
                         kind: MacroBindingKind::Import,
@@ -2221,6 +2226,28 @@ pub(crate) const LEVELED_LOGGING_MACROS: &[&str] = &["trace", "debug", "info", "
 
 /// The crates whose leveled logging macros were audited (#10357, #16420).
 const LOGGING_CRATES: &[&str] = &["tracing", "log"];
+
+/// Whether `node` is an item-position macro call whose tokens name a
+/// [`LOGGING_CRATES`] root. Its expansion may bind that root (`use compat as
+/// tracing;` inside `cfg_if!`), which no use-tree scan of the file sees.
+fn item_macro_names_logging_root(node: &SyntaxNode) -> bool {
+    ast::MacroCall::cast(node.clone())
+        .filter(|_| {
+            node.parent().is_some_and(|parent| {
+                matches!(
+                    parent.kind(),
+                    SyntaxKind::SOURCE_FILE | SyntaxKind::ITEM_LIST
+                )
+            })
+        })
+        .and_then(|call| call.token_tree())
+        .is_some_and(|tree| {
+            tree.syntax()
+                .descendants_with_tokens()
+                .filter_map(|element| element.into_token())
+                .any(|token| LOGGING_CRATES.contains(&token.text().trim_start_matches("r#")))
+        })
+}
 
 /// The crates whose export under `name` is a drop-in for the trusted macro.
 fn drop_in_crates(name: &str) -> &'static [&'static str] {
