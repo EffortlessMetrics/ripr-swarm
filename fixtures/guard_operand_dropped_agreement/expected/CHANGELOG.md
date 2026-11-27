@@ -52,7 +52,7 @@ Updated:
 ## Pending — guard_operand_dropped_agreement (5)
 
 Reason:
-RIPR-SPEC-0122: #15313 Summary names shared candidate lines and says No test gap when State reads no test gap found
+RIPR-SPEC-0259: a -> bool owner whose reaching related tests already assert its exact result with assert!(owner(..)) / assert!(!owner(..)) gets a next step naming the missing deciding input instead of the broad-assertion template (#15149); classification, stages and evidence unchanged
 
 Command:
 `cargo xtask goldens bless guard_operand_dropped_agreement --reason "..."`

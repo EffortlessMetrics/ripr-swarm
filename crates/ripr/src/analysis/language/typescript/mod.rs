@@ -92,6 +92,7 @@ mod discovery;
 mod dropped_term_guard;
 mod enum_member_guard;
 mod error_payload_guard;
+mod export_equals;
 mod extraction_cache;
 mod fact_prefetch;
 mod fact_store;
