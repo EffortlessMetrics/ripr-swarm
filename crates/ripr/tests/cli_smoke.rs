@@ -21197,6 +21197,8 @@ fn clean_fixture_repo(label: &str, fixture: &str) -> Result<PathBuf, String> {
         std::fs::copy(source.join(relative), &target).map_err(|e| format!("copy {path}: {e}"))?;
     }
     run_git(&root, &["-c", "init.templateDir=", "init", "-q"])?;
+    std::fs::create_dir_all(root.join(".git/info"))
+        .map_err(|e| format!("create .git/info: {e}"))?;
     std::fs::write(root.join(".git/info/exclude"), "/target/\n")
         .map_err(|e| format!("write exclude: {e}"))?;
     run_git(&root, &["add", "-A"])?;
