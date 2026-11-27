@@ -87,6 +87,38 @@ fn pilot_help_describes_limit_summary_without_inventing_a_quote() -> Result<(), 
 }
 
 #[test]
+fn agent_setup_help_is_usable_without_repository_docs() -> Result<(), String> {
+    in_help_workspace(|root| {
+        assert!(!root.join("docs").exists(), "{root:?}");
+        let overview: &[&str] = &["ripr check", "ripr init --agents all"];
+        let init: &[&str] = &["--agents TARGET", "all -> all three"];
+        let mut stale = Vec::new();
+        for (args, expected) in [
+            (&["--help"][..], overview),
+            (&["help"][..], overview),
+            (&["init", "--help"][..], init),
+            (&["help", "init"][..], init),
+        ] {
+            let output = run_ripr_in(args, Some(root))?;
+            assert_eq!(output.status.code(), Some(0), "{args:?}: {output:?}");
+            assert!(output.stderr.is_empty(), "{args:?}: {output:?}");
+            let help = String::from_utf8(output.stdout).map_err(|error| error.to_string())?;
+            for expected in expected {
+                assert!(help.contains(expected), "{args:?}: missing {expected:?}");
+            }
+            if help.contains("docs/AGENT_QUICKSTART.md") {
+                stale.push(args);
+            }
+        }
+        assert!(
+            stale.is_empty(),
+            "checkout-relative agent guide in {stale:?}"
+        );
+        Ok(())
+    })
+}
+
+#[test]
 fn init_ci_provider_errors_recover_near_misses() -> Result<(), String> {
     for (value, suggestion) in [
         ("githb", " Did you mean `github`?"),

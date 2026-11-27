@@ -47,7 +47,7 @@ What are you trying to do?
   Compose PR evidence   ripr first-pr --root . --base BASE --head HEAD
   Work in an editor     ripr lsp --stdio (started by your editor)
   Adopt advisory CI     ripr init --ci github
-  Wire up your agent    ripr init --agents all   (docs/AGENT_QUICKSTART.md)
+  Wire up your agent    ripr init --agents all
 
 More:
   ripr help <command>    Options for one command.
