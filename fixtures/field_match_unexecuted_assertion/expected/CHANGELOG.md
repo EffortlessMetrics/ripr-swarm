@@ -336,10 +336,11 @@ Updated:
 ## Pending — field_match_unexecuted_assertion (26)
 
 Reason:
-RIPR-SPEC-0122: #15313 Summary names shared candidate lines and says No test gap when State reads no test gap found
+RIPR-SPEC-0224: inert row names the construct its refusals agree on (#15337)
 
 Command:
 `cargo xtask goldens bless field_match_unexecuted_assertion --reason "..."`
 
 Updated:
-- `expected/human.txt`
+- `expected/check.json`
+- `expected/human-full.txt`

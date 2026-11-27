@@ -1,0 +1,4 @@
+[package]
+name = "assertion_inert_names_construct"
+version = "0.1.0"
+edition = "2024"

@@ -618,10 +618,12 @@ Updated:
 ## Pending — guarded_result_match_swallowed (47)
 
 Reason:
-RIPR-SPEC-0122: #15313 Summary names shared candidate lines and says No test gap when State reads no test gap found
+RIPR-SPEC-0224: inert row names the construct its refusals agree on (#15337)
 
 Command:
 `cargo xtask goldens bless guarded_result_match_swallowed --reason "..."`
 
 Updated:
+- `expected/check.json`
 - `expected/human.txt`
+- `expected/human-full.txt`
