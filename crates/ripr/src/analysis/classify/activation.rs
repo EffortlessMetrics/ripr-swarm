@@ -4731,7 +4731,11 @@ pub(in crate::analysis) fn repo_seam_arm_selected(
         let imports_foreign = index.files().get(&test.file).is_some_and(|facts| {
             context.test_file_imports_foreign_callee_name(&test.file, &facts.source, &owner.name)
         });
-        let identity = unique
+        // A unique name is enough for a free function, but a method call's
+        // receiver may be a dependency value whose same-named method the
+        // index never sees, so a method owner always needs a receiver the
+        // reading ties to its type (#15359 review).
+        let identity = (unique && !owner.item.has_self_param)
             || test
                 .body
                 .lines()

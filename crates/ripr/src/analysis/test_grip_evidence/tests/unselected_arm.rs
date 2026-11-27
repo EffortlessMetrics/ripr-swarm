@@ -928,6 +928,44 @@ fn a_typed_receiver_selects_a_method_arm_beside_a_same_named_method() -> Result<
     Ok(())
 }
 
+/// #15359 review: with the method name unique in the workspace, a call on a
+/// receiver the reading cannot tie to the owner's type (a dependency value)
+/// does not show the owner's arm runs, while a receiver built as the owner's
+/// type still does.
+#[test]
+fn a_unique_method_name_on_an_unresolved_receiver_does_not_select_the_arm() -> Result<(), String> {
+    for (body, selected) in [
+        (
+            "    let window = Window { tier: 1 };\n    assert_eq!(window.rate(\"silver\"), 5);",
+            true,
+        ),
+        (
+            "    let window = Window { tier: 1 };\n    let other = meter::Meter::default();\n    let _o = other.rate(\"silver\");\n    assert_eq!(window.rate(\"gold\"), 10);",
+            false,
+        ),
+    ] {
+        let tests = format!("use prices::Window;\n\n#[test]\nfn rates() {{\n{body}\n}}\n");
+        let (full, compact, class) = arm_evidence_with_tests(WINDOW_RATE, &tests, "\"silver\"")?;
+        let expected = if selected {
+            StageState::Yes
+        } else {
+            StageState::Unknown
+        };
+        for evidence in [&full, &compact] {
+            assert_eq!(evidence.activate.state, expected, "{body}: {evidence:?}");
+        }
+        if !selected {
+            assert_ne!(class[0], SeamGripClass::StronglyGripped, "{body}: {full:?}");
+            assert_ne!(
+                class[1],
+                SeamGripClass::StronglyGripped,
+                "{body}: {compact:?}"
+            );
+        }
+    }
+    Ok(())
+}
+
 /// #15359 review: the receiver reading compares bare type names, so a
 /// same-named method on another impl of the same bare type (a typestate
 /// `Window<Silver>` beside `Window<Gold>`) or a trait method on the type
