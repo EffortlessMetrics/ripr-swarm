@@ -235,3 +235,57 @@ fn a_replaced_unsafe_fn_boundary_hands_its_obligation_to_the_edited_behavior() -
     );
     Ok(())
 }
+
+/// #16302: only the classified probe that carries the edit inherits the
+/// obligation. An unchanged predicate on the same line gets nothing, a
+/// predicate edit inside an `unsafe fn` carries it, and an unchecked-assumption
+/// block hands it over too.
+#[test]
+fn only_the_probe_carrying_the_edit_inherits_the_unsafe_obligation() -> Result<(), String> {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/unsafe_obligation_carry");
+    let obligated = |diff: &str| -> Result<Vec<(usize, String, String, bool)>, String> {
+        let report = check(&root, diff)?;
+        let mut rows = report
+            .findings
+            .iter()
+            .map(|finding| {
+                (
+                    finding.probe.location.line,
+                    finding.probe.family.as_str().to_owned(),
+                    finding.probe.expression.as_str().to_owned(),
+                    finding
+                        .stop_reasons
+                        .iter()
+                        .any(|reason| reason.as_str() == "unsafe_obligation"),
+                )
+            })
+            .collect::<Vec<_>>();
+        rows.sort_unstable();
+        Ok(rows)
+    };
+    let row = |line, family: &str, expression: &str, carried| {
+        (line, family.to_owned(), expression.to_owned(), carried)
+    };
+    assert_eq!(
+        obligated("same_line.diff")?,
+        vec![
+            row(2, "predicate", "flag", false),
+            row(2, "return_value", "return 4", true),
+        ],
+        "same_line.diff"
+    );
+    assert_eq!(
+        obligated("predicate.diff")?,
+        vec![
+            row(7, "predicate", "value > 7", true),
+            row(7, "return_value", "value > 7", true),
+        ],
+        "predicate.diff"
+    );
+    assert_eq!(
+        obligated("assumption.diff")?,
+        vec![row(13, "return_value", "return value + 3", true)],
+        "assumption.diff"
+    );
+    Ok(())
+}

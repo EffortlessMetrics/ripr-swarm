@@ -1236,7 +1236,9 @@ pub const ORACLE_ALIGNMENT_VALUES: [&str; 5] = [
 /// weak (not a pairing, refusal or unverified-observation limitation), no
 /// related row credits a strong or medium oracle (an exact assertion that is
 /// not paired with the boundary call is a different gap), and no stop reason
-/// says the call may not run.
+/// says the call may not run. `unsafe_obligation` carried onto a classified
+/// finding (#16302) is a note about the unsafe contract, not a reach limit, so
+/// it does not withdraw the flag.
 pub fn boundary_input_observed_with_weak_oracle(
     class: &ExposureClass,
     family: &ProbeFamily,
@@ -1252,7 +1254,9 @@ pub fn boundary_input_observed_with_weak_oracle(
         && discriminate.state == crate::domain::StageState::Weak
         && discriminate.summary.starts_with("Only ")
         && discriminate.summary.contains(" oracle found")
-        && stop_reasons.is_empty()
+        && stop_reasons
+            .iter()
+            .all(|reason| *reason == StopReason::UnsafeObligation)
         && related_tests
             .iter()
             .any(|test| test.oracle_strength == crate::domain::OracleStrength::Weak)

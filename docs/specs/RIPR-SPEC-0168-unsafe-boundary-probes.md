@@ -111,8 +111,13 @@ keeps the plain `unsafe block` label.
   keeps the boundary's own finding, so an edit to an `unsafe fn` signature
   keeps it too.
 - That classified probe's finding carries `unsafe_obligation` when the
-  withdrawn boundary had it, and only then
-  (`unsafe_context.rs::a_replaced_unsafe_fn_boundary_hands_its_obligation_to_the_edited_behavior`).
+  withdrawn boundary had it, and only then: an unchanged predicate beside the
+  edit on the same line gets nothing, and an unchecked-assumption block hands
+  it over like an `unsafe fn`
+  (`unsafe_context.rs::a_replaced_unsafe_fn_boundary_hands_its_obligation_to_the_edited_behavior`,
+  `unsafe_context.rs::only_the_probe_carrying_the_edit_inherits_the_unsafe_obligation`).
+  The carried note does not withdraw the weak-oracle boundary-input flag,
+  which only a reach stop reason does.
 - Parser and classifier unit tests cover extraction, innermost-boundary
   selection, shared-edge-line fail-closed rejection, and comment/string
   false-positive controls.

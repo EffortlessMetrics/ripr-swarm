@@ -4,9 +4,12 @@
 id = "RIPR-SPEC-0168"
 tests = [
   "crates/ripr/tests/unsafe_context.rs::a_replaced_unsafe_fn_boundary_hands_its_obligation_to_the_edited_behavior",
+  "crates/ripr/tests/unsafe_context.rs::only_the_probe_carrying_the_edit_inherits_the_unsafe_obligation",
+  "crates/ripr/src/domain/context_packet.rs::tests::boundary_input_observed_flag_requires_every_condition",
 ]
 code = [
   "crates/ripr/src/analysis/probes/diff.rs",
   "crates/ripr/src/analysis/classify/decision.rs",
   "crates/ripr/src/analysis/language/rust/mod.rs",
+  "crates/ripr-contract/src/domain/probe.rs",
 ]

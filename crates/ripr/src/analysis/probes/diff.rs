@@ -1084,11 +1084,12 @@ pub(crate) fn probes_for_file_with_relations(
             .iter()
             .map(|old| added_run_start(old.new_side_line, &added_run_starts))
             .collect::<BTreeSet<_>>();
-        let classified = probes
+        let carriers = probes
             .iter()
-            .map(|seed| &seed.probe)
-            .filter(|probe| probe.family != ProbeFamily::StaticUnknown)
-            .filter_map(|probe| {
+            .enumerate()
+            .map(|(index, seed)| (index, &seed.probe))
+            .filter(|(_, probe)| probe.family != ProbeFamily::StaticUnknown)
+            .filter_map(|(index, probe)| {
                 let line = probe.location.line;
                 let &(added, removed) = unsafe_context_lines.get(&line)?;
                 // A predicate can be present on an edited line even when only
@@ -1103,21 +1104,25 @@ pub(crate) fn probes_for_file_with_relations(
                     }
                     None => !replacement_runs.contains(&added_run_start(line, &added_run_starts)),
                 };
-                carries_edit.then_some((line, probe.owner.as_ref()?))
+                carries_edit.then_some((index, (line, probe.owner.clone()?)))
             })
+            .collect::<Vec<_>>();
+        let classified = carriers
+            .iter()
+            .map(|(_, key)| key.clone())
             .collect::<BTreeSet<_>>();
         let mut retained = BTreeSet::new();
         let mut keep = vec![true; probes.len()];
         // #16302: a withdrawn boundary that carried an `unsafe_obligation`
-        // hands it to the classified probes on its line and owner.
+        // hands it to the classified probes that carry the edit on its line
+        // and owner; an unchanged predicate beside the edit gets nothing.
         let mut obligations = BTreeSet::new();
         for (index, boundary, context_only) in unsafe_boundaries {
             let probe = &probes[index].probe;
             let shadowed = context_only == super::classify::UnsafeBoundary::Enclosing
-                && probe
-                    .owner
-                    .as_ref()
-                    .is_some_and(|owner| classified.contains(&(probe.location.line, owner)));
+                && probe.owner.as_ref().is_some_and(|owner| {
+                    classified.contains(&(probe.location.line, owner.clone()))
+                });
             if shadowed
                 && crate::analysis::classify::is_unsafe_obligation(probe)
                 && let Some(owner) = probe.owner.clone()
@@ -1126,14 +1131,9 @@ pub(crate) fn probes_for_file_with_relations(
             }
             keep[index] = !shadowed && retained.insert(boundary);
         }
-        for seeded in &mut probes {
-            let probe = &seeded.probe;
-            if probe.family != ProbeFamily::StaticUnknown
-                && probe.owner.as_ref().is_some_and(|owner| {
-                    obligations.contains(&(probe.location.line, owner.clone()))
-                })
-            {
-                seeded.enclosing_unsafe_obligation = true;
+        for (index, key) in &carriers {
+            if obligations.contains(key) {
+                probes[*index].enclosing_unsafe_obligation = true;
             }
         }
         probes = probes
