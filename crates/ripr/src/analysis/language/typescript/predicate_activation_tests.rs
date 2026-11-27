@@ -546,7 +546,10 @@ fn namespace_and_alias_owner_calls_keep_their_answer() -> Result<(), String> {
 /// ESM `as` rename, a CommonJS destructuring rename, and the one-hop
 /// `const result = alias(...)` idiom. The same alias stays unwitnessed when
 /// the test body redeclares it, when the expected side calls it (a
-/// tautology), or when the call is a member of another receiver.
+/// tautology), when the asserted value only wraps the alias call
+/// (`Math.max(discount(100), 100)`), when the call is a member of another
+/// receiver, or when an
+/// enclosing `describe` scope shadows it beside a real off-boundary call.
 #[test]
 fn renamed_owner_import_witnesses_like_the_owner_name() -> Result<(), String> {
     let esm = "import { applyDiscount as discount } from '../src/pricing';";
@@ -584,6 +587,10 @@ fn renamed_owner_import_witnesses_like_the_owner_name() -> Result<(), String> {
             "  expect(discount(100)).toBe(discount(99));",
         ),
         (
+            "alias inside a wrapper",
+            "  expect(Math.max(discount(100), 100)).toBe(100);",
+        ),
+        (
             "alias as another receiver's member",
             "  const cart = makeCart();\n  expect(cart.discount(100)).toBe(90);",
         ),
@@ -595,6 +602,25 @@ fn renamed_owner_import_witnesses_like_the_owner_name() -> Result<(), String> {
         }
         assert!(!evaluated.witnessed, "{name}");
     }
+    let name = "enclosing shadow";
+    let source = format!(
+        "import {{ applyDiscount }} from '../src/pricing';\n{esm}\n\
+         describe('pricing', () => {{\n\
+         \x20 const discount = (total: number) => total - 10;\n\
+         \x20 test('{name}', () => {{\n\
+         \x20   expect(applyDiscount(150)).toBe(135);\n\
+         \x20   expect(discount(100)).toBe(90);\n\
+         \x20 }});\n\
+         }});\n"
+    );
+    let evaluated = evaluate(&DISCOUNT, &source, true)?;
+    assert_eq!(
+        evaluated.row(name)?.1,
+        R::DirectOwnerCall,
+        "the real off-boundary call relates the test"
+    );
+    assert_ne!(evaluated.activation(name)?, A::Witnessed, "{name}");
+    assert!(!evaluated.witnessed, "{name}");
     Ok(())
 }
 

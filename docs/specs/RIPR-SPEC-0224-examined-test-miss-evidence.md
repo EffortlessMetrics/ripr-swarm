@@ -738,8 +738,10 @@ position rules as the witness (#5527):
    call is spelled with the owner's name, through a namespace receiver bound
    to the owner module, or as a bare call of a renamed import of the owner
    (`import { applyDiscount as discount }`, `const { applyDiscount: discount }
-   = require(...)`) whose source resolves to the owner module, unless the test
-   body redeclares that local (#16452). A renamed import through a barrel the
+   = require(...)`) whose source resolves to the owner module. The aliases are
+   exactly those that give the test its `ImportAliasOwnerCall` relation, so a
+   body-local, destructured or enclosing-scope shadow of the alias is not an
+   owner call (#16452). A renamed import through a barrel the
    resolver cannot place, and a re-export that renames the owner (`export {
    applyDiscount as discount }`), are not owner calls here.
 3. `reached_without_discriminator`: an owner call in this test carries the
@@ -783,8 +785,11 @@ position rules as the witness (#5527):
    underived boundary, a computed, absent or spread input, or an owner
    reference that is not a plain call). Never a missing input.
 
-Activation is not serialized and changes no class, stage, missing text,
-actionability or rendered output.
+Activation is not serialized. The per-row split itself changes no class,
+stage, missing text, actionability or rendered output: the finding-wide
+witness it reduces to is the RIPR-SPEC-0027 boundary witness, so only a
+change to the witness rules (such as the owner-call spellings in state 2,
+#16452) moves a class.
 
 ## Required Evidence
 
