@@ -3651,12 +3651,19 @@ pub(crate) fn ts_predicate_boundary_row_activation(
         // A renamed import witnesses only when the asserted value is the
         // whole alias call (`expect(d(100))`): a wrapper such as
         // `Math.max(d(100), 100)` may map both sides of the boundary to one
-        // value, and nothing here models its effect (#16452).
+        // value, and nothing here models its effect (#16452). Only the
+        // outer call's arguments count: matches come in source order, so the
+        // whole-call check makes the first one the outer call, and a nested
+        // `d(90, d(100))` must not witness through its inner call.
         argument_lists.extend(
             alias_locals
                 .iter()
                 .filter(|alias| observed_is_one_whole_call(observed, alias))
-                .flat_map(|alias| owner_call_arguments(observed, alias, no_receivers)),
+                .filter_map(|alias| {
+                    owner_call_arguments(observed, alias, no_receivers)
+                        .into_iter()
+                        .next()
+                }),
         );
         // #4104-E1: the canonical `const result = owner(...);
         // expect(result).toBe(...)` idiom observes the owner call through

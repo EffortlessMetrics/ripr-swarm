@@ -591,6 +591,10 @@ fn renamed_owner_import_witnesses_like_the_owner_name() -> Result<(), String> {
             "  expect(Math.max(discount(100), 100)).toBe(100);",
         ),
         (
+            "alias nested in its own call",
+            "  expect(discount(90, discount(100))).toBe(90);",
+        ),
+        (
             "alias as a foreign member",
             "  const cart = makeCart();\n  expect(cart.discount(100)).toBe(90);",
         ),
