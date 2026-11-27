@@ -1222,6 +1222,36 @@ impl ArmSelector {
         Some(ObservedArmInputs { inputs, selection })
     }
 
+    /// Whether some direct owner call this module can read in a test body
+    /// selects this arm. Unlike `observed_inputs`, a mention it cannot read
+    /// on another line does not cancel the answer: such a use may select any
+    /// arm, so it never proves an arm unselected, but it cannot undo a call
+    /// whose input does select it (#15359 review).
+    pub(in crate::analysis) fn some_call_selects(&self, test: &TestSummary) -> bool {
+        let masked = mask_comments_and_strings(&test.body);
+        let mentions = whole_word_offsets(&masked, &self.owner);
+        line_starts_of(&test.body, &mentions)
+            .into_iter()
+            .any(|line_start| {
+                let line_end = test.body[line_start..]
+                    .find('\n')
+                    .map_or(test.body.len(), |offset| line_start + offset);
+                let line = &test.body[line_start..line_end];
+                let calls = owner_calls_in(line, &self.owner, self.method, &self.local_roots);
+                let line_mentions = mentions
+                    .iter()
+                    .filter(|offset| (line_start..line_end).contains(*offset))
+                    .count();
+                calls.len() == line_mentions
+                    && calls.iter().any(|call| {
+                        self.call_input(call).is_some_and(|input| {
+                            !self.input_import_ambiguous(test, input)
+                                && self.judge(input) == ArmSelection::Selects
+                        })
+                    })
+            })
+    }
+
     fn call_input<'a>(&self, call: &OwnerCall<'a>) -> Option<&'a str> {
         let input = match self.binding {
             ScrutineeBinding::Receiver => call.receiver,

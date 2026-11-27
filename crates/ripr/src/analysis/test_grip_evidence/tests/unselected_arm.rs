@@ -95,6 +95,57 @@ fn an_arm_a_test_input_selects_keeps_its_strong_grip() -> Result<(), String> {
     Ok(())
 }
 
+/// #15359 review: a constant-row table's cell selects the arm the way a
+/// literal input does (RIPR-SPEC-0229 decision 7), so the loop variable a
+/// table test passes does not leave the arm's activation unknown.
+#[test]
+fn a_constant_table_row_selects_the_arm() -> Result<(), String> {
+    let (full, compact, class) = arm_evidence(
+        "    for (size, expected) in [(Size::Medium, 450)] {\n        assert_eq!(price_cents(size), expected);\n    }",
+        "Size::Medium",
+    )?;
+    for evidence in [&full, &compact] {
+        assert_eq!(evidence.activate.state, StageState::Yes, "{evidence:?}");
+    }
+    assert_eq!(class, [SeamGripClass::StronglyGripped; 2]);
+    let (full, compact, class) = arm_evidence(
+        "    for (size, expected) in [(Size::Small, 300)] {\n        assert_eq!(price_cents(size), expected);\n    }",
+        "Size::Medium",
+    )?;
+    for evidence in [&full, &compact] {
+        assert_ne!(evidence.activate.state, StageState::Yes, "{evidence:?}");
+    }
+    assert_ne!(class[0], SeamGripClass::StronglyGripped, "{full:?}");
+    assert_ne!(class[1], SeamGripClass::StronglyGripped, "{compact:?}");
+    Ok(())
+}
+
+/// #15359 review: a mention the reading cannot read (a function value)
+/// never proves an arm unselected, but it does not undo a direct call on
+/// another line whose input selects the arm. The arm that call does not
+/// select stays unnamed with its activation unknown.
+#[test]
+fn an_unreadable_mention_beside_a_selecting_call_keeps_the_selection() -> Result<(), String> {
+    let body = "    let saved = price_cents;\n    assert_eq!(price_cents(Size::Medium), 450);\n    assert_eq!(saved(Size::Large), 500);";
+    let (full, compact, class) = arm_evidence(body, "Size::Medium")?;
+    for evidence in [&full, &compact] {
+        assert_eq!(evidence.activate.state, StageState::Yes, "{evidence:?}");
+    }
+    assert_eq!(class, [SeamGripClass::StronglyGripped; 2]);
+    let (full, compact, class) = arm_evidence(body, "Size::Small")?;
+    for evidence in [&full, &compact] {
+        assert_eq!(evidence.activate.state, StageState::Unknown, "{evidence:?}");
+        assert!(
+            !missing_values(evidence).contains(&"Size::Small"),
+            "{:?}",
+            evidence.missing_discriminators
+        );
+    }
+    assert_ne!(class[0], SeamGripClass::StronglyGripped, "{full:?}");
+    assert_ne!(class[1], SeamGripClass::StronglyGripped, "{compact:?}");
+    Ok(())
+}
+
 #[test]
 fn an_input_the_reading_cannot_resolve_leaves_the_arm_unnamed_and_its_activation_unknown()
 -> Result<(), String> {

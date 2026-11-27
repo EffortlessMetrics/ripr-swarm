@@ -4723,8 +4723,11 @@ pub(in crate::analysis) fn repo_seam_arm_selected(
     if !unique && !inherent_method {
         return false;
     }
-    let selector =
-        selector.in_workspace(index, related_tests.iter().map(|test| test.file.as_path()));
+    // RIPR-SPEC-0229 decision 7: a constant-row table's cells select the
+    // arm the way a literal input does (#5328), as in `check`.
+    let selector = selector
+        .in_workspace(index, related_tests.iter().map(|test| test.file.as_path()))
+        .with_table_rows(related_tests.iter().copied());
     let context =
         super::context::ProbeContext::new(&probe, Some(owner), Vec::new(), false, index, true);
     related_tests.iter().any(|test| {
@@ -4751,9 +4754,11 @@ pub(in crate::analysis) fn repo_seam_arm_selected(
                 });
         identity
             && !imports_foreign
-            && selector.observed_inputs(test).is_some_and(|observed| {
-                observed.selection == super::arm_selection::ArmSelection::Selects
-            })
+            && (selector.some_call_selects(test)
+                || test
+                    .assertions
+                    .iter()
+                    .any(|assertion| selector.lent_selects(test, assertion)))
     })
 }
 
