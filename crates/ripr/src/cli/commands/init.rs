@@ -805,9 +805,16 @@ fn apply_init_plan(plan: &[InitTarget], root: &Path) -> Result<(), String> {
             println!();
             println!("Commit the agent instruction file(s) so every session sees them.");
             if !project_mcp_planned {
+                let claude_mcp = format!("ripr init --mcp{root_flag}");
+                let cursor_mcp = format!("ripr init --agents cursor --mcp{root_flag}");
                 println!(
-                    "MCP is optional. For Claude Code run `ripr init --mcp{root_flag}`; for Cursor run `ripr init --agents cursor --mcp{root_flag}`. For Codex run `codex mcp add {MCP_SERVER_NAME} -- ripr mcp --stdio`."
+                    "MCP is optional. For Claude Code run `{claude_mcp}`; for Cursor run `{cursor_mcp}`. For Codex run `codex mcp add {MCP_SERVER_NAME} -- ripr mcp --stdio`."
                 );
+                for command in [&claude_mcp, &cursor_mcp] {
+                    if let Some(powershell) = output::markdown::powershell_text_variant(command) {
+                        println!("(PowerShell) {powershell}");
+                    }
+                }
             }
         }
         if let Some((workflow, ci)) = plan.iter().find_map(|target| {

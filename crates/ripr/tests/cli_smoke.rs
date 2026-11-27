@@ -18239,6 +18239,54 @@ fn init_agents_without_mcp_offers_copyable_client_setup() -> Result<(), String> 
     Ok(())
 }
 
+/// Both optional MCP commands must carry an explicit root with shell-appropriate
+/// quoting and select that root when replayed from a different directory.
+#[test]
+fn init_agents_optional_mcp_commands_quote_explicit_root() -> Result<(), String> {
+    for (prefix, cursor) in [
+        ("ripr init --mcp", false),
+        ("ripr init --agents cursor --mcp", true),
+    ] {
+        let scratch = tempfile::tempdir().map_err(|e| e.to_string())?;
+        let project = scratch.path().join("Pat's project");
+        let decoy = scratch.path().join("foreign cwd");
+        std::fs::create_dir(&project).map_err(|e| e.to_string())?;
+        std::fs::create_dir(&decoy).map_err(|e| e.to_string())?;
+        let root = printed_path(&project);
+
+        let out = run_command(
+            env!("CARGO_BIN_EXE_ripr"),
+            Some(&decoy),
+            &["init", "--root", &root, "--agents", "all"],
+        )
+        .map_err(|e| e.to_string())?;
+        assert_success(&out);
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        let command = stdout
+            .split('`')
+            .find(|text| text.starts_with(prefix))
+            .ok_or_else(|| format!("missing {prefix}: {stdout}"))?;
+        if !cfg!(windows) {
+            let powershell_root = root.replace('\'', "''");
+            let expected = format!("(PowerShell) {prefix} --root '{powershell_root}'");
+            assert!(stdout.lines().any(|line| line == expected), "{stdout}");
+        }
+
+        assert!(!project.join(".mcp.json").exists());
+        assert!(!project.join(".cursor/mcp.json").exists());
+        assert_success(&replay_printed_ripr(command, &decoy)?);
+        assert!(project.join(".mcp.json").is_file(), "{command}");
+        assert_eq!(
+            project.join(".cursor/mcp.json").is_file(),
+            cursor,
+            "{command}"
+        );
+        assert!(!decoy.join(".mcp.json").exists());
+        assert!(!decoy.join(".cursor/mcp.json").exists());
+    }
+    Ok(())
+}
+
 /// The config-specific hints replace the generic setup suggestion even if the
 /// project has a matching or custom entry that init does not rewrite.
 #[test]

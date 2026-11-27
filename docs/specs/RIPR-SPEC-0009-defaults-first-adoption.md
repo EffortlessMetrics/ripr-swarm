@@ -124,9 +124,12 @@ The default contract is:
   user-authored front matter and content outside the markers stay untouched.
 - `ripr init --mcp` suggests `--agents cursor --mcp` for Cursor only when the
   run does not already plan `.cursor/mcp.json`.
-- `ripr init --agents` repeats the "register the MCP server" follow-up only
-  when the same run does not actually write the MCP config (an existing `ripr`
-  entry left unchanged does not count).
+- When `ripr init --agents` writes agent instructions, it prints optional MCP
+  setup commands only if the run does not plan `.mcp.json`. When the run plans
+  `.mcp.json`, it prints the project-specific client hints, including when an
+  existing `ripr` entry is left unchanged. The Claude Code and Cursor setup
+  commands retain `--root` when needed and show a PowerShell form when a
+  supported translation is needed.
 - Explicit CLI flags and LSP initialization options override repo config.
 - Repo config overrides built-in defaults.
 - Config discovery stops at a `.git` directory entry, including a dangling or
