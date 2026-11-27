@@ -672,6 +672,7 @@ const PRECOMMIT_GATE_COMMANDS: &[&str] = &[
     "check-ripr-agent-disposition",
     "check-proof-packs",
     "check-release-targets",
+    "check-package-content",
     "check-dependencies",
     "check-process-policy",
     "check-network-policy",
@@ -816,6 +817,7 @@ fn precommit_policy_remaining(
     check_ripr_agent_disposition()?;
     check_proof_packs()?;
     check_release_targets()?;
+    check_package_content()?;
     check_dependencies()?;
     if !collect_all {
         check_process_policy()?;
@@ -1894,6 +1896,7 @@ fn run_policy_checks() -> Result<(), String> {
     check_generated_clean()?;
     check_proof_packs()?;
     check_release_targets()?;
+    check_package_content()?;
     check_dependencies()?;
     check_process_policy()?;
     check_network_policy()?;

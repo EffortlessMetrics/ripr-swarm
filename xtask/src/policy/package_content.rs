@@ -108,7 +108,10 @@ pub(crate) fn check_package_content() -> Result<(), String> {
         .parent()
         .map(|root| root.join("crates"));
     for package in PACKAGES {
-        let package_list = crate::run_output("cargo", &["package", "-p", package, "--list"]);
+        let package_list = crate::run_output(
+            "cargo",
+            &["package", "-p", package, "--list", "--allow-dirty"],
+        );
         if let (Ok(list), Some(crates_dir)) = (&package_list, &crates_dir) {
             violations.extend(missing_module_violations(
                 package,
