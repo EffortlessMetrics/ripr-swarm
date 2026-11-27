@@ -233,6 +233,18 @@ fn awaited_mismatched_runner_kinds_keep_partial_extraction_disclosure() {
 }
 
 #[test]
+fn awaited_default_runner_named_like_a_suite_is_indexed_without_a_gap() {
+    // #16436 review: a node:test default bound as `suite` is its `test`
+    // function, so the awaited call is indexed and is not a kind mismatch.
+    let file = Path::new("test/nanoid.test.js");
+    let source = "import assert from 'node:assert/strict';\nimport suite from 'node:test';\nawait suite('id', () => { assert.strictEqual(nanoid().length, 21); });\n";
+    let tests = extract_tests(file, source);
+    assert_eq!(tests.len(), 1, "{tests:?}");
+    assert_eq!(tests[0].local_name, "id");
+    assert!(detect_partial_test_extraction(file, source, &tests).is_none());
+}
+
+#[test]
 fn node_expected_failure_options_cannot_supply_ordinary_test_evidence() {
     let imports =
         "import assert from 'node:assert/strict'; import { test, suite } from 'node:test';\n";

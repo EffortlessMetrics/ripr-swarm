@@ -34,3 +34,14 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — verification_prelude_glob_plain_import (4)
+
+Reason:
+RIPR-SPEC-0122: #15336 unconfirmed-reach note severity, possible-gap State line, legend and Terms glosses
+
+Command:
+`cargo xtask goldens bless verification_prelude_glob_plain_import --reason "..."`
+
+Updated:
+- `expected/human.txt`

@@ -70,3 +70,14 @@ Command:
 
 Updated:
 - `expected/human.txt`
+
+## Pending — typescript_typeof_negation_compound_gap (7)
+
+Reason:
+RIPR-SPEC-0122: #15336 unconfirmed-reach note severity, possible-gap State line, legend and Terms glosses
+
+Command:
+`cargo xtask goldens bless typescript_typeof_negation_compound_gap --reason "..."`
+
+Updated:
+- `expected/human.txt`

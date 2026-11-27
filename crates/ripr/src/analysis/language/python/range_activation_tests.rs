@@ -180,3 +180,68 @@ fn changed_range_compound_ownership_uses_source_coordinates() -> Result<(), Stri
     }
     Ok(())
 }
+
+/// The module owner spans the whole file, so reading its loop headers once per
+/// changed top-level line cost O(changed lines x file) (#16426). Every changed
+/// line of one owner shares a single read of its span, and the shared read
+/// still places a multiline iterator's interior inside its header.
+#[test]
+fn changed_top_level_lines_read_the_module_loop_headers_once() -> Result<(), String> {
+    use super::owners_tests::extract_owners;
+    let file = Path::new("src/subject.py");
+    let statements: Vec<String> = (0..64).map(|index| format!("x{index} = {index}")).collect();
+    let source = format!(
+        "{}\nfor i in range(\n    3\n):\n    pass\n",
+        statements.join("\n")
+    );
+    let line_count = source.lines().count();
+    let patch = format!(
+        "@@ -0,0 +1,{line_count} @@\n{}\n",
+        source
+            .lines()
+            .map(|line| format!("+{line}"))
+            .collect::<Vec<_>>()
+            .join("\n")
+    );
+    let changed = parse_unified_diff(&format!(
+        "--- a/src/subject.py\n+++ b/src/subject.py\n{patch}"
+    ));
+    assert_eq!(changed.len(), 1);
+    assert_eq!(changed[0].added_lines.len(), line_count);
+    let owners = extract_owners(file, &source);
+    let module = owners
+        .iter()
+        .find(|owner| owner.name == "<module>")
+        .ok_or("module owner")?;
+    assert!(
+        module.start_line == 1 && module.end_line >= line_count,
+        "{module:?}"
+    );
+    let reads = || super::range_activation::OWNER_LOOP_HEADER_READS.with(std::cell::Cell::get);
+    let before = reads();
+    let affected =
+        super::range_activation::compound_loop_owners(&changed[0], &source, &owners, None, &[]);
+    assert!(affected.contains(&module.symbol_id()), "{affected:?}");
+    let first = reads() - before;
+    assert!(
+        (1..=2).contains(&first),
+        "{first} span reads for {line_count} changed lines"
+    );
+    // A second pass over the same source reuses the read entirely.
+    let again =
+        super::range_activation::compound_loop_owners(&changed[0], &source, &owners, None, &[]);
+    assert_eq!(again, affected);
+    assert_eq!(reads() - before, first);
+    // The iterator's interior line (`    3`) is a header line; the body is not.
+    let interior = statements.len() + 2;
+    let body = statements.len() + 4;
+    for (line, expected) in [(interior, true), (body, false), (1, false)] {
+        let text = source.lines().nth(line - 1).ok_or("line")?;
+        let limit = super::range_activation::loop_context_limit(
+            module, &source, line, text, None, false, false,
+        );
+        assert_eq!(limit.is_some(), expected, "line {line}: {text}");
+    }
+    assert_eq!(reads() - before, first);
+    Ok(())
+}

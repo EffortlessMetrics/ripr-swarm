@@ -1,0 +1,2 @@
+<!-- section: Fixed -->
+- A Rust helper wrapper that logs through a bare leveled macro imported from an audited tracing or log release (`use tracing::info;` then `info!(..)`, or `use log::warn;`) now forwards its helper result, so a boundary test of the wrapper can read `exposed`. Any other binding of the macro name or of the `tracing`/`log` root, an unaudited release, or a helper call inside the macro's arguments still withholds credit (#16420).

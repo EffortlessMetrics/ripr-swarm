@@ -43,7 +43,7 @@ What are you trying to do?
   Compose PR evidence   ripr first-pr --root . --base BASE --head HEAD
   Work in an editor     ripr lsp --stdio (started by your editor)
   Adopt advisory CI     ripr init --ci github
-  Wire up your agent    ripr init --agents all   (docs/AGENT_QUICKSTART.md)
+  Wire up your agent    ripr init --agents all
 
 More:
   ripr help <command>    Options for one command.
@@ -52,8 +52,8 @@ More:
 
 Exit codes: 0 completed, 2 could not complete (usage, configuration, or
 operational error), 3 ripr declined: a blocking result, or a request it will
-not run (the output says why), 130 interrupted standalone check. Full
-contract: docs/EXIT_CODES.md.
+not run (the output says why), 130 interrupted standalone check.
+Full contract: https://github.com/EffortlessMetrics/ripr/blob/main/docs/EXIT_CODES.md
 Global flags: -v, --verbose   Extra pipeline diagnostics on stderr: timings and
 verdict reasons (any position but `help --json`). RIPR_VERBOSE=1 is stderr-only.
 
@@ -1503,8 +1503,8 @@ Options:
                            Cost class: whole-workspace modes (deep, ready) can
                            take roughly an order of magnitude longer than the
                            diff-scoped modes (instant, draft, fast) on large
-                           workspaces. See docs/CONFIGURATION.md "Analysis
-                           modes".
+                           workspaces. See the analysis modes guide:
+                           https://github.com/EffortlessMetrics/ripr/blob/main/docs/CONFIGURATION.md#analysis-modes
   --format FORMAT          Output format. Defaults to human.
                            Choose by task: eye review -> human (the default);
                            every finding with drill-in commands -> human-full;
@@ -1561,7 +1561,8 @@ Options:
                            writes that file yet; hand-author the documented
                            minimum shape from real test measurements or wait
                            for the portable producer (not shipped yet).
-                           See docs/BADGE_ADOPTION.md.
+                           See the badge adoption guide:
+                           https://github.com/EffortlessMetrics/ripr/blob/main/docs/BADGE_ADOPTION.md
                            repo-* and agent-seam-packets-json formats render
                            against the full repo baseline; the non-repo badge-*
                            formats remain diff-scoped.
@@ -1599,7 +1600,8 @@ Options:
                            --format/--json, scope switches, --gap-ledger,
                            --write-artifact or --suppression-policy. Bounded input
                            inventory refuses drift, nonregular files and external
-                           module reads. See docs/OUTPUT_SCHEMA.md.
+                           module reads. See the output schema guide:
+                           https://github.com/EffortlessMetrics/ripr/blob/main/docs/OUTPUT_SCHEMA.md
   --write-artifact PATH    Write a full-fidelity check artifact (schema
                            ripr-check-artifact-v2) for later
                            `ripr explain --from PATH` /
@@ -1895,9 +1897,10 @@ Options:
   --mode MODE  How much of the workspace is indexed: instant (changed
                files only, cheapest), draft (packages the diff touches; the
                default), fast (same as draft for now), deep and ready (whole
-               workspace, slowest). See docs/CONFIGURATION.md "Analysis
-               modes". With --from, this feeds the identity recomputation
-               (see `ripr explain --help`).
+               workspace, slowest). With --from, this feeds the identity
+               recomputation (see `ripr explain --help`).
+               See the analysis modes guide:
+               https://github.com/EffortlessMetrics/ripr/blob/main/docs/CONFIGURATION.md#analysis-modes
   --no-unchanged-tests
                Limit the index to changed Rust files. With --from, feeds
                the identity recomputation (see `ripr explain --help`).
@@ -2660,7 +2663,7 @@ What are you trying to do?
   Compose PR evidence   ripr first-pr --root . --base BASE --head HEAD
   Work in an editor     ripr lsp --stdio (started by your editor)
   Adopt advisory CI     ripr init --ci github
-  Wire up your agent    ripr init --agents all   (docs/AGENT_QUICKSTART.md)
+  Wire up your agent    ripr init --agents all
 
 More:
   ripr help <command>    Options for one command.
@@ -2669,8 +2672,8 @@ More:
 
 Exit codes: 0 completed, 2 could not complete (usage, configuration, or
 operational error), 3 ripr declined: a blocking result, or a request it will
-not run (the output says why), 130 interrupted standalone check. Full
-contract: docs/EXIT_CODES.md.
+not run (the output says why), 130 interrupted standalone check.
+Full contract: https://github.com/EffortlessMetrics/ripr/blob/main/docs/EXIT_CODES.md
 Global flags: -v, --verbose   Extra pipeline diagnostics on stderr: timings and
 verdict reasons (any position but `help --json`). RIPR_VERBOSE=1 is stderr-only.
 
@@ -2737,7 +2740,6 @@ Options:
                    and an edited section is kept unless --force refreshes it.
                    A symlink, an unreadable file or an unterminated marker is
                    refused. With cursor, --mcp also writes .cursor/mcp.json.
-                   Guide: docs/AGENT_QUICKSTART.md.
   --dry-run       Show the plan and the file bodies without writing anything.
                    Resolves the same preconditions as the real run, so it
                    fails the same way (existing file without --force, root

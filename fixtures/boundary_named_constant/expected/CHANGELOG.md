@@ -489,3 +489,14 @@ Command:
 
 Updated:
 - `expected/human.txt`
+
+## Pending — boundary_named_constant (41)
+
+Reason:
+RIPR-SPEC-0122: #15336 unconfirmed-reach note severity, possible-gap State line, legend and Terms glosses
+
+Command:
+`cargo xtask goldens bless boundary_named_constant --reason "..."`
+
+Updated:
+- `expected/human.txt`

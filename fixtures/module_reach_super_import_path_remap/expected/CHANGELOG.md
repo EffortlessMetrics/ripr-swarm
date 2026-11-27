@@ -200,3 +200,14 @@ Command:
 
 Updated:
 - `expected/human.txt`
+
+## Pending — module_reach_super_import_path_remap (16)
+
+Reason:
+RIPR-SPEC-0122: #15336 unconfirmed-reach note severity, possible-gap State line, legend and Terms glosses
+
+Command:
+`cargo xtask goldens bless module_reach_super_import_path_remap --reason "..."`
+
+Updated:
+- `expected/human.txt`

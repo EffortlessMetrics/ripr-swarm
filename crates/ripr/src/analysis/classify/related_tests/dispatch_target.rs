@@ -475,7 +475,10 @@ fn declared_pub(function: &FunctionSummary, index: &RustIndex) -> bool {
 
 /// Whether `function` is declared plainly `pub`, with no `(crate)`,
 /// `(super)`, `(self)` or `(in ..)` restriction.
-fn declared_unrestricted_pub(function: &FunctionSummary, index: &RustIndex) -> bool {
+pub(in crate::analysis::classify) fn declared_unrestricted_pub(
+    function: &FunctionSummary,
+    index: &RustIndex,
+) -> bool {
     parsed_fn(function, index).is_some_and(|found| {
         found
             .visibility()

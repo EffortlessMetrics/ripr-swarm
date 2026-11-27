@@ -46,3 +46,14 @@ Command:
 
 Updated:
 - `expected/human.txt`
+
+## Pending — same_line_call_inputs (5)
+
+Reason:
+RIPR-SPEC-0122: #15336 unconfirmed-reach note severity, possible-gap State line, legend and Terms glosses
+
+Command:
+`cargo xtask goldens bless same_line_call_inputs --reason "..."`
+
+Updated:
+- `expected/human.txt`

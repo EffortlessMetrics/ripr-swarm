@@ -472,3 +472,14 @@ Command:
 
 Updated:
 - `expected/human.txt`
+
+## Pending — currentness_matrix_reuse (37)
+
+Reason:
+RIPR-SPEC-0122: #15336 unconfirmed-reach note severity, possible-gap State line, legend and Terms glosses
+
+Command:
+`cargo xtask goldens bless currentness_matrix_reuse --reason "..."`
+
+Updated:
+- `expected/human.txt`

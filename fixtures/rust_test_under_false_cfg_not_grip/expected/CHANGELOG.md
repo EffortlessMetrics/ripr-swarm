@@ -288,3 +288,14 @@ Command:
 
 Updated:
 - `expected/human.txt`
+
+## Pending — rust_test_under_false_cfg_not_grip (25)
+
+Reason:
+RIPR-SPEC-0122: #15336 unconfirmed-reach note severity, possible-gap State line, legend and Terms glosses
+
+Command:
+`cargo xtask goldens bless rust_test_under_false_cfg_not_grip --reason "..."`
+
+Updated:
+- `expected/human.txt`

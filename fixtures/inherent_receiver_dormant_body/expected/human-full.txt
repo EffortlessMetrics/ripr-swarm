@@ -3,16 +3,17 @@ mode: fast
 root: fixtures/inherent_receiver_dormant_body/input
 
 Summary: 2 changed behavior(s) checked: 0 exposed, 0 weakly_exposed, 2 reachable_unrevealed, 0 no_static_path, 0 infection_unknown, 0 propagation_unknown, 0 static_unknown; 2 of 2 finding(s) unsuppressed
-Terms: exposed = tests appear to notice the change; weakly_exposed = tests reach it but check it
-  only loosely; reachable_unrevealed = tests reach it but nothing appears to notice a change;
-  no_static_path = no test path found; infection_unknown, propagation_unknown, static_unknown = ripr
-  could not tell from the code (analysis limited, not a verdict); finding = one reported gap;
-  unsuppressed = not hidden by your suppression policy
+Terms: exposed = tests appear to notice the change; weakly_exposed = linked to a test, but checked
+  only loosely; reachable_unrevealed = linked to a test, but nothing appears to notice a change
+  (both can rest on a test link ripr could not confirm; the reach stage says which); no_static_path
+  = no test path found; infection_unknown, propagation_unknown, static_unknown = ripr could not tell
+  from the code (analysis limited, not a verdict); finding = one reported gap; unsuppressed = not
+  hidden by your suppression policy
 
 Analysis outcome: findings below (analysis complete; complete_with_findings)
   Counts: 1 changed file(s), 2 changed line(s), 1 candidate line(s), 2 changed behavior(s) checked, 2 finding(s)
 
-WARNING ./src/lib.rs:6
+NOTE ./src/lib.rs:6
   id: probe:src_lib.rs:match_arm:f9032269
 
 Changed
@@ -28,7 +29,7 @@ Change type
   gap id (for scripts): gap:rust:src/lib.rs:impl JsonValue::as_object:match_arm:match_arm:self_object_value
 
 Static exposure
-  reachable_unrevealed (warning, confidence 0.66)
+  reachable_unrevealed (note, confidence 0.66)
 
 Evidence
   - reach weak: No test is seen calling as_object; tests share only a name token
@@ -53,7 +54,7 @@ Drill in:
   ripr explain --root <cwd>/fixtures/inherent_receiver_dormant_body/input --diff <cwd>/fixtures/inherent_receiver_dormant_body/diff.patch --mode fast probe:src_lib.rs:match_arm:f9032269
   ripr context --root <cwd>/fixtures/inherent_receiver_dormant_body/input --diff <cwd>/fixtures/inherent_receiver_dormant_body/diff.patch --mode fast --at probe:src_lib.rs:match_arm:f9032269
 
-WARNING ./src/lib.rs:6
+NOTE ./src/lib.rs:6
   id: probe:src_lib.rs:return_value:3068903e
 
 Changed
@@ -68,7 +69,7 @@ Change type
   gap id (for scripts): gap:rust:src/lib.rs:impl JsonValue::as_object:return_value:return_value:some*value
 
 Static exposure
-  reachable_unrevealed (warning, confidence 0.63)
+  reachable_unrevealed (note, confidence 0.63)
 
 Evidence
   - reach weak: No test is seen calling as_object; tests share only a name token

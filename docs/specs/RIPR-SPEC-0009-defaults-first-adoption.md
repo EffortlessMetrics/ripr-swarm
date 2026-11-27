@@ -151,6 +151,11 @@ The default contract is:
 
 ### CLI value diagnostics and option help
 
+The overview help gives `ripr init --agents all` as the agent setup command.
+`ripr init --help` and `ripr help init` describe the targets and instruction
+files. These routes provide usable setup instructions in projects without
+a copy of RIPR's source documentation.
+
 `ripr diff --format` accepts `human`, `text`, `md`, `markdown`, and `json`.
 The first four retain human output; `json` retains JSON output. Unknown values
 use the shared enum-value diagnostic: `xml` produces

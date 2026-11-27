@@ -74,6 +74,45 @@ fn in_git_root(
 }
 
 #[test]
+fn help_documentation_links_work_outside_the_source_checkout() -> Result<(), String> {
+    let docs = "https://github.com/EffortlessMetrics/ripr/blob/main/docs/";
+    let analysis_modes = "CONFIGURATION.md#analysis-modes";
+    let cases: &[(&[&str], &[&str])] = &[
+        (&["--help"], &["EXIT_CODES.md"]),
+        (
+            &["help", "check", "--all"],
+            &[analysis_modes, "BADGE_ADOPTION.md", "OUTPUT_SCHEMA.md"],
+        ),
+        (&["help", "context"], &[analysis_modes]),
+    ];
+
+    in_help_workspace(|root| {
+        for (args, pages) in cases {
+            let output = run_ripr_in(args, Some(root))?;
+            assert!(output.status.success(), "{args:?}: {output:?}");
+            let help = String::from_utf8_lossy(&output.stdout);
+            for token in help.split_whitespace() {
+                let path = token.trim_matches(['(', ')', '.', ',', '`']);
+                // The overview's quickstart pointer is tracked separately in #16401.
+                assert!(
+                    !path.starts_with("docs/")
+                        || (args == &["--help"] && path == "docs/AGENT_QUICKSTART.md"),
+                    "{args:?} contains a checkout-relative documentation path: {path}"
+                );
+            }
+            for page in *pages {
+                let url = format!("{docs}{page}");
+                assert!(
+                    help.split_whitespace().any(|token| token == url),
+                    "{args:?} is missing {url}"
+                );
+            }
+        }
+        Ok(())
+    })
+}
+
+#[test]
 fn pilot_help_describes_limit_summary_without_inventing_a_quote() -> Result<(), String> {
     let output = run_ripr(&["help", "pilot"])?;
     assert!(output.status.success(), "{output:?}");
@@ -84,6 +123,44 @@ fn pilot_help_describes_limit_summary_without_inventing_a_quote() -> Result<(), 
     );
     assert!(!help.contains("ranked N of M gaps"), "{help}");
     Ok(())
+}
+
+#[test]
+fn agent_setup_help_is_usable_without_repository_docs() -> Result<(), String> {
+    in_help_workspace(|root| {
+        assert!(!root.join("docs").exists(), "{root:?}");
+        let overview: &[&str] = &["ripr check", "ripr init --agents all"];
+        let init: &[&str] = &[
+            "--agents TARGET",
+            "CLAUDE.md",
+            "AGENTS.md",
+            ".cursor/rules/ripr.mdc",
+            "all -> all three",
+        ];
+        let mut stale = Vec::new();
+        for (args, expected) in [
+            (&["--help"][..], overview),
+            (&["help"][..], overview),
+            (&["init", "--help"][..], init),
+            (&["help", "init"][..], init),
+        ] {
+            let output = run_ripr_in(args, Some(root))?;
+            assert_eq!(output.status.code(), Some(0), "{args:?}: {output:?}");
+            assert!(output.stderr.is_empty(), "{args:?}: {output:?}");
+            let help = String::from_utf8(output.stdout).map_err(|error| error.to_string())?;
+            for expected in expected {
+                assert!(help.contains(expected), "{args:?}: missing {expected:?}");
+            }
+            if help.contains("docs/AGENT_QUICKSTART.md") {
+                stale.push(args);
+            }
+        }
+        assert!(
+            stale.is_empty(),
+            "checkout-relative agent guide in {stale:?}"
+        );
+        Ok(())
+    })
 }
 
 #[test]
@@ -1144,7 +1221,7 @@ fn default_help_discloses_exit_codes_and_global_verbose() -> Result<(), String> 
             "2 could not complete",
             "3 ripr declined",
             "130 interrupted",
-            "docs/EXIT_CODES.md",
+            "https://github.com/EffortlessMetrics/ripr/blob/main/docs/EXIT_CODES.md",
             "-v, --verbose",
             "Extra pipeline diagnostics on stderr",
         ] {
@@ -1726,7 +1803,7 @@ fn mode_help_names_index_scope_and_points_at_the_mode_table() -> Result<(), Stri
         for needle in [
             "instant (changed files only, cheapest)",
             "deep and ready (whole workspace, slowest)",
-            "See docs/CONFIGURATION.md \"Analysis modes\"",
+            "https://github.com/EffortlessMetrics/ripr/blob/main/docs/CONFIGURATION.md#analysis-modes",
         ] {
             assert_contains(&format!("{command} --help --mode line"), &help, needle)?;
         }

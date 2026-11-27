@@ -647,3 +647,14 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — assertion_shaped_control_production_caller (45)
+
+Reason:
+RIPR-SPEC-0122: #15336 unconfirmed-reach note severity, possible-gap State line, legend and Terms glosses
+
+Command:
+`cargo xtask goldens bless assertion_shaped_control_production_caller --reason "..."`
+
+Updated:
+- `expected/human.txt`

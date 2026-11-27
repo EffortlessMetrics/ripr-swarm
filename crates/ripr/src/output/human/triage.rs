@@ -211,6 +211,10 @@ impl HumanTriageState {
     }
 }
 
+/// The plain `State:` words for a top gap whose reach the evidence does not
+/// establish (#15336).
+const UNCONFIRMED_REACH_TOP_GAP_LABEL: &str = "a possible test gap (test reach not confirmed)";
+
 pub(crate) fn select_human_triage<'a>(
     output: &'a CheckOutput,
     config: &RiprConfig,
@@ -406,6 +410,15 @@ pub(crate) fn render_human_triage(
         {
             // #15335: name why nothing is selected for a removal-only run.
             removal_action::REMOVAL_ONLY_STATE
+        } else if triage.state == HumanTriageState::TopGap
+            && triage.selected.is_some_and(|finding| {
+                super::sections::reach_claim_is_unsupported(&finding.class, &finding.ripr)
+            })
+        {
+            // #15336: the selected finding's reach is not established, so it
+            // is a possible gap. The `top_gap` state id and the canonical
+            // next action are unchanged; only the words are.
+            UNCONFIRMED_REACH_TOP_GAP_LABEL
         } else {
             triage.state.plain_label()
         }

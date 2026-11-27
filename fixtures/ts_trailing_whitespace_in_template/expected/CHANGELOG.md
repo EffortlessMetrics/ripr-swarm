@@ -81,3 +81,14 @@ Command:
 
 Updated:
 - `expected/human.txt`
+
+## Pending — ts_trailing_whitespace_in_template (8)
+
+Reason:
+RIPR-SPEC-0122: #15336 unconfirmed-reach note severity, possible-gap State line, legend and Terms glosses
+
+Command:
+`cargo xtask goldens bless ts_trailing_whitespace_in_template --reason "..."`
+
+Updated:
+- `expected/human.txt`

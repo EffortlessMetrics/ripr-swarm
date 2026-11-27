@@ -47,7 +47,7 @@ What are you trying to do?
   Compose PR evidence   ripr first-pr --root . --base BASE --head HEAD
   Work in an editor     ripr lsp --stdio (started by your editor)
   Adopt advisory CI     ripr init --ci github
-  Wire up your agent    ripr init --agents all   (docs/AGENT_QUICKSTART.md)
+  Wire up your agent    ripr init --agents all
 
 More:
   ripr help <command>    Options for one command.
@@ -56,8 +56,8 @@ More:
 
 Exit codes: 0 completed, 2 could not complete (usage, configuration, or
 operational error), 3 ripr declined: a blocking result, or a request it will
-not run (the output says why), 130 interrupted standalone check. Full
-contract: docs/EXIT_CODES.md.
+not run (the output says why), 130 interrupted standalone check.
+Full contract: https://github.com/EffortlessMetrics/ripr/blob/main/docs/EXIT_CODES.md
 Global flags: -v, --verbose   Extra pipeline diagnostics on stderr: timings and
 verdict reasons (any position but `help --json`). RIPR_VERBOSE=1 is stderr-only.
 

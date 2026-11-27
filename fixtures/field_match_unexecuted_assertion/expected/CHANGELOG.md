@@ -344,3 +344,25 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human-full.txt`
+
+## Pending — field_match_unexecuted_assertion (27)
+
+Reason:
+RIPR-SPEC-0122: #15336 unconfirmed-reach note severity, possible-gap State line, legend and Terms glosses
+
+Command:
+`cargo xtask goldens bless field_match_unexecuted_assertion --reason "..."`
+
+Updated:
+- `expected/human.txt`
+
+## Pending — field_match_unexecuted_assertion (28)
+
+Reason:
+RIPR-SPEC-0122: #15336 human-full Terms line stops claiming test reach for weakly_exposed and reachable_unrevealed
+
+Command:
+`cargo xtask goldens bless field_match_unexecuted_assertion --reason "..."`
+
+Updated:
+- `expected/human-full.txt`

@@ -3003,7 +3003,7 @@ fn run_agent_repair_phase(
             let caller_root = root.clone();
             let root = root.canonicalize().map_err(|error| {
                 format!(
-                    "canonicalize agent repair root {} failed: {error}",
+                    "canonicalize agent repair root {} failed: {error}; pass an existing directory as --root",
                     root.display()
                 )
             })?;
