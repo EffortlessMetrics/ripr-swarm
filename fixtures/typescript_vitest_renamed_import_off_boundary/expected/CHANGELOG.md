@@ -12,3 +12,14 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — typescript_vitest_renamed_import_off_boundary (2)
+
+Reason:
+RIPR-SPEC-0224: re-bless on current main's glossary wording (#16452)
+
+Command:
+`cargo xtask goldens bless typescript_vitest_renamed_import_off_boundary --reason "..."`
+
+Updated:
+- `expected/human.txt`
