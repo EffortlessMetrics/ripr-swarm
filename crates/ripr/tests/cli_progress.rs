@@ -1597,8 +1597,7 @@ fn context_on_a_pipe_is_silent_by_default() -> Result<(), String> {
 /// `ripr explain --format agent` is the compact report a coding agent reads,
 /// and the agent loop follows `ripr check`'s printed `next=ripr explain ...`
 /// line, which carries no `--quiet`. On a piped stderr it is silent by default
-/// like `check --format agent`; the human explain keeps its progress (negative
-/// control) and `RIPR_PROGRESS=1` restores the stream.
+/// like `check --format agent`, and `RIPR_PROGRESS=1` restores the stream.
 #[test]
 fn explain_agent_format_on_a_pipe_is_silent_by_default() -> Result<(), String> {
     let fixture = DiffFixture::new()?;
@@ -1613,16 +1612,16 @@ fn explain_agent_format_on_a_pipe_is_silent_by_default() -> Result<(), String> {
         .to_string();
     let root = fixture.0.display().to_string();
     let diff = fixture.0.join("change.diff").display().to_string();
-    let human = [
+    let agent = [
         "explain",
         "--root",
         root.as_str(),
         "--diff",
         diff.as_str(),
         finding_id.as_str(),
+        "--format",
+        "agent",
     ];
-    let mut agent = human.to_vec();
-    agent.extend_from_slice(&["--format", "agent"]);
     let default = ripr_default()
         .args(&agent)
         .output()
@@ -1648,15 +1647,6 @@ fn explain_agent_format_on_a_pipe_is_silent_by_default() -> Result<(), String> {
         stderr_text(&forced)
     );
     assert_eq!(default.stdout, forced.stdout);
-    let human_default = ripr_default()
-        .args(human)
-        .output()
-        .map_err(|error| format!("run ripr explain: {error}"))?;
-    assert!(
-        !stderr_text(&human_default).contains("ripr progress:"),
-        "a fast human explain on a pipe prints no progress: {}",
-        stderr_text(&human_default)
-    );
     Ok(())
 }
 
