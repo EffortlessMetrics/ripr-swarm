@@ -1571,7 +1571,9 @@ pub(crate) const COUNT_CACHE_SCHEMA_VERSION: &str = "0.2";
 /// `1.68`: candidates record `anyhow` imports and `anyhow` crate-namespace
 /// rebindings (#10357); earlier candidates let the binding scan skip such a
 /// file.
-pub(crate) const FILE_FACT_CACHE_SCHEMA_VERSION: &str = "1.68";
+/// `1.69`: unresolved property macro facts record `binding_only_identifiers`
+/// (#10864); earlier entries read an empty set and keep over-withholding.
+pub(crate) const FILE_FACT_CACHE_SCHEMA_VERSION: &str = "1.69";
 
 /// Keep the best-effort classified-seam cache from turning a successful live
 /// analysis into an unbounded post-analysis stall on large repos. Larger live
@@ -5758,7 +5760,8 @@ mod tests {
         // 1.65 -> 1.66: item-position `include!` binds any name (#16060).
         // 1.66 -> 1.67: grouped `self` import binding `serde_json` (#10357).
         // 1.67 -> 1.68: `anyhow` binding candidates (#10357).
-        assert_eq!(FILE_FACT_CACHE_SCHEMA_VERSION, "1.68");
+        // 1.68 -> 1.69: property macro binding-only identifiers (#10864).
+        assert_eq!(FILE_FACT_CACHE_SCHEMA_VERSION, "1.69");
         // 1.4 -> 1.5: metadata-sourced harness validation (#3634) flips
         // verdicts for workspaces the manifest emulation approximated.
         // 1.5 -> 1.6: the #3636 reachability authority excludes
