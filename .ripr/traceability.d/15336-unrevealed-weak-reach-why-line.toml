@@ -1,0 +1,7 @@
+# Registers the #15336 unrevealed weak-reach Why line tests under RIPR-SPEC-0122.
+[[extend]]
+id = "RIPR-SPEC-0122"
+tests = [
+  "crates/ripr/tests/weak_reach_hint.rs::unrevealed_weak_reach_why_line_does_not_contradict_summary",
+  "crates/ripr/src/output/human/sections.rs::unrevealed_weak_reach_names_the_link_only_for_proximity_summaries",
+]

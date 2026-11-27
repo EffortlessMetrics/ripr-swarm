@@ -1,0 +1,8 @@
+[[extend]]
+id = "RIPR-SPEC-0186"
+tests = [
+  "crates/ripr/tests/helper_wrapper_reach.rs::a_block_arm_that_reads_the_parameter_keeps_forwarding",
+]
+code = [
+  "crates/ripr/src/analysis/classify/helper_transfer.rs",
+]

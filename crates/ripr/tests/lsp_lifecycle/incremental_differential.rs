@@ -560,3 +560,85 @@ fn external_rewrite_of_a_clean_source_refreshes_in_every_language() -> Result<()
     }
     Ok(())
 }
+
+/// A TypeScript source in a build-output directory that the repository
+/// declares handwritten is analyzed, so an external rewrite of it refreshes
+/// like any other source and the session serves what a fresh session serves.
+#[test]
+fn external_rewrite_of_a_declared_handwritten_source_refreshes() -> Result<(), String> {
+    let example = "typescript-discount-threshold";
+    let relative = "dist/pricing.ts";
+    let mut workspace = example_workspace(example)?;
+    // Move the source under `dist/`, which the adapter excludes by default,
+    // and declare it handwritten.
+    let source = workspace.read("src/pricing.ts")?;
+    std::fs::remove_file(workspace.root().join("src/pricing.ts"))
+        .map_err(|err| format!("remove src/pricing.ts failed: {err}"))?;
+    workspace.write(relative, &source)?;
+    let test = workspace.read("test/pricing.test.ts")?;
+    if !test.contains("../src/pricing") {
+        return Err(format!(
+            "fixture: the example test no longer imports ../src/pricing: {test}"
+        ));
+    }
+    workspace.write(
+        "test/pricing.test.ts",
+        &test.replace("../src/pricing", "../dist/pricing"),
+    )?;
+    workspace.write(
+        "ripr.toml",
+        "[languages]\nenabled = [\"rust\", \"typescript\"]\n\n[languages.typescript]\nhandwritten_files = [\"dist/pricing.ts\"]\n",
+    )?;
+    workspace.commit_base()?;
+
+    let root = workspace.root();
+    let cache = workspace.fresh_cache()?;
+    let mut session = start_session(&root, &cache)?;
+    let clean = full_refresh(&mut session)?;
+    if count(&served(&mut session)?, is_finding) != 0 {
+        return Err("fixture: the committed workspace must start without findings".to_string());
+    }
+    if !source.contains(">=") {
+        return Err(format!("fixture: {relative} has no `>=` to move"));
+    }
+    workspace.write(relative, &source.replacen(">=", ">", 1))?;
+    let before = status_text(&clean, "/analysis_status/attempt_id").to_string();
+    notify_changed(&mut session, &[workspace.uri(relative)?])?;
+    await_refresh(&mut session, &before, "watched_input").map_err(|err| {
+        format!(
+            "an external rewrite of declared-handwritten {relative} scheduled no refresh: {err}"
+        )
+    })?;
+    let findings = |session: &mut LspSession| -> Result<Vec<Value>, String> {
+        Ok(served(session)?
+            .into_iter()
+            .flat_map(|(_, diagnostics)| diagnostics)
+            .filter(is_finding)
+            .map(|mut finding| {
+                // A run that is not full lowers a warning to information.
+                if let Some(members) = finding.as_object_mut() {
+                    members.remove("severity");
+                }
+                finding
+            })
+            .collect())
+    };
+    let after_event = findings(&mut session)?;
+
+    let fresh_cache = workspace.fresh_cache()?;
+    let mut fresh = start_session(&root, &fresh_cache)?;
+    full_refresh(&mut fresh)?;
+    let fresh_findings = findings(&mut fresh)?;
+    shutdown_exit_and_wait(&mut fresh)?;
+    if fresh_findings.is_empty() {
+        return Err(format!(
+            "fixture: a fresh session must report a finding in declared-handwritten {relative}"
+        ));
+    }
+    if after_event != fresh_findings {
+        return Err(format!(
+            "after the watched-file event the session serves {after_event:?}, a fresh session serves {fresh_findings:?}"
+        ));
+    }
+    shutdown_exit_and_wait(&mut session)
+}

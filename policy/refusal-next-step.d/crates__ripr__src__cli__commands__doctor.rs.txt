@@ -1,2 +1,1 @@
-crates/ripr/src/cli/commands/doctor.rs|cannot inspect {}: {error}
 crates/ripr/src/cli/commands/doctor.rs|{} is not a directory

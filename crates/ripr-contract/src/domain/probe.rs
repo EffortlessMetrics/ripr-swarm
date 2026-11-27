@@ -163,8 +163,10 @@ pub enum StopReason {
     /// The changed code states an unsafe contract the compiler does not
     /// check: an `unsafe fn` (callers now carry a safety obligation) or an
     /// unchecked assumption (`unreachable_unchecked`, `assert_unchecked`).
-    /// A safe-code test cannot discharge it. Classification stays
-    /// `static_unknown`, never `exposed` (#11549).
+    /// A safe-code test cannot discharge it. The boundary's own finding
+    /// stays `static_unknown`, never `exposed` (#11549). A classified finding
+    /// that replaced that boundary on its line carries the reason as a note,
+    /// with the class its own evidence gives (#16302).
     UnsafeObligation,
 }
 
@@ -310,6 +312,13 @@ pub struct Probe {
     /// Head-side text of the change or of the probed source, when the
     /// producer has one. `None` for a removed-only line.
     pub after: Option<String>,
+    /// The old line's `if`/`while` condition, when `before` is the whole old
+    /// line and `after` is the condition of the same head on the new line
+    /// (#15420). The producer sets it from both lines; `None` whenever that
+    /// pairing is not established. Display evidence only: `before` is
+    /// unchanged and no classifier reads this.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub before_condition: Option<String>,
     /// The source expression the probe is about, as the producer read it. For
     /// a probe on a changed line this is the trimmed line; a probe placed on
     /// another site carries that site's expression.
@@ -799,7 +808,9 @@ pub struct RelatedTest {
     #[serde(default, skip_serializing_if = "RelatedTestRole::is_contributing")]
     pub role: RelatedTestRole,
     /// The one typed fact the producer established for **this row** that
-    /// backs a `missing_input` or `missing_exact_assertion` miss (#5564).
+    /// backs a `missing_input` or `missing_exact_assertion` miss (#5564), or
+    /// the conditional construct every refusal of an `assertion_inert` row
+    /// names (#15337).
     /// `None` when the producer could not establish row ownership; renderers
     /// then use generic wording and never borrow a finding-wide
     /// `missing_discriminators` entry. Evidence only: no decision reads it
@@ -1227,7 +1238,9 @@ pub const ORACLE_ALIGNMENT_VALUES: [&str; 5] = [
 /// weak (not a pairing, refusal or unverified-observation limitation), no
 /// related row credits a strong or medium oracle (an exact assertion that is
 /// not paired with the boundary call is a different gap), and no stop reason
-/// says the call may not run.
+/// says the call may not run. `unsafe_obligation` carried onto a classified
+/// finding (#16302) is a note about the unsafe contract, not a reach limit, so
+/// it does not withdraw the flag.
 pub fn boundary_input_observed_with_weak_oracle(
     class: &ExposureClass,
     family: &ProbeFamily,
@@ -1243,7 +1256,9 @@ pub fn boundary_input_observed_with_weak_oracle(
         && discriminate.state == crate::domain::StageState::Weak
         && discriminate.summary.starts_with("Only ")
         && discriminate.summary.contains(" oracle found")
-        && stop_reasons.is_empty()
+        && stop_reasons
+            .iter()
+            .all(|reason| *reason == StopReason::UnsafeObligation)
         && related_tests
             .iter()
             .any(|test| test.oracle_strength == crate::domain::OracleStrength::Weak)
@@ -1426,6 +1441,7 @@ mod tests {
 
     fn probe_over(family: ProbeFamily, expression: &str) -> Probe {
         Probe {
+            before_condition: None,
             id: ProbeId("probe:src_lib_rs:2:static_unknown".to_string()),
             location: SourceLocation {
                 file: PathBuf::from("src/lib.rs"),
@@ -1718,6 +1734,7 @@ mod decision_helper_tests {
             id: "finding:limit".to_string(),
             canonical_gap: None,
             probe: Probe {
+                before_condition: None,
                 id: ProbeId("probe:limit".to_string()),
                 location: SourceLocation::new("src/lib.rs", 4, 5),
                 owner: None,

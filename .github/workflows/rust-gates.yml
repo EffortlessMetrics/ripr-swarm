@@ -110,6 +110,10 @@ on:
         required: false
         default: ''
         type: string
+      group-members:
+        description: Ordered constituents verified by native merge-group admission, for the hosted observation.
+        type: string
+        default: ''
       admission-head:
         description: The exact PR head the admission bound.
         required: false
@@ -126,6 +130,9 @@ on:
         default: ''
         type: string
     outputs:
+      group_digest:
+        description: Hosted gates checkout and admission observation for this attempt.
+        value: ${{ jobs.rust-gates.outputs.group_digest }}
       scratch_status:
         value: ${{ jobs.rust-gates.outputs.scratch_status }}
       scratch_message:
@@ -143,6 +150,7 @@ jobs:
     runs-on: ${{ fromJSON(inputs.runner-config) }}
     timeout-minutes: ${{ inputs.job-timeout-minutes }}
     outputs:
+      group_digest: ${{ steps.group_receipt.outputs.digest }}
       scratch_status: ${{ steps.scratch.outputs.status }}
       scratch_message: ${{ steps.scratch.outputs.message }}
       pr_evidence: ${{ steps.pr_evidence.outputs.evidence }}
@@ -461,6 +469,28 @@ jobs:
           RIPR_HONESTY_ADMITTED_BASE: ${{ steps.admitted.outputs.base }}
         run: cargo xtask check-evidence-promotion-honesty
 
+      # #15935: the hosted runner has 16 GiB, and the only swap is the 4 GB
+      # file its image ships (see the shard job's swap step). The `ripr`
+      # lib-test lint unit alone reaches about 11 GiB resident, and the
+      # workspace pass checks `xtask` beside it. A local 16 GiB run of that
+      # pass needed 4.2 GB of swap at three build jobs, which is the whole
+      # image file, and the hosted runner was lost mid-step (exit 143). Another
+      # 8 GB turns that peak into slower minutes instead of a lost runner. It
+      # only adds memory: every lint target and both passes below stay as they
+      # are. The scratch route keeps its own configured capacity.
+      - name: Add swap headroom for the lint builds
+        if: ${{ !inputs.use-scratch }}
+        run: |
+          swapfile=/mnt/ci-swapfile-8g
+          if [ ! -d /mnt ]; then swapfile=/ci-swapfile-8g; fi
+          if sudo fallocate -l 8G "$swapfile" && sudo chmod 600 "$swapfile" && sudo mkswap "$swapfile" > /dev/null && sudo swapon "$swapfile"; then
+            echo "swap enabled:"; swapon --show
+          else
+            echo "::warning::could not enable swap; the lint builds run without extra headroom (#15935)"
+          fi
+          free -m
+          awk '$1 == "pswpout" || $1 == "oom_kill" { print "lint_memory_before_" $1 "=" $2 }' /proc/vmstat || echo "::warning::memory counters unavailable"
+
       # Lint optional-feature code as well as type-checking it (#13152).
       # Keep the default-feature workspace pass below: cfg(not(feature = ...))
       # branches are absent from this all-features build.
@@ -475,6 +505,18 @@ jobs:
         env:
           CARGO_BUILD_JOBS: ${{ inputs.use-scratch && inputs.cargo-build-jobs || '3' }}
         run: cargo clippy --workspace --all-targets -- -D warnings
+
+      # #15935: retain what the lint builds cost in memory. The counters are
+      # host totals since boot, so read them against the `lint_memory_before_`
+      # lines printed by the swap step: the difference is what the two lint
+      # passes swapped out and whether the kernel ended a process. A lost
+      # runner never reaches this step, so it reports surviving runs only.
+      - name: Report lint memory pressure
+        if: ${{ always() && !inputs.use-scratch }}
+        run: |
+          free -m
+          swapon --show || true
+          awk '$1 == "pswpout" || $1 == "oom_kill" { print "lint_memory_after_" $1 "=" $2 }' /proc/vmstat || echo "::warning::memory counters unavailable"
 
       # PR-side `actions/checkout` checks out `refs/pull/N/merge`, whose base can
       # lag `origin/$BASE_REF` by hours. Re-merge `HEAD^2` onto current
@@ -931,3 +973,30 @@ jobs:
         uses: ./.github/actions/ci-scratch-lease
         with:
           mode: release
+
+      # An advisory record, only after hosted gates completed. The terminal Result
+      # still requires the separate shards, verifier, review and eligibility.
+      - name: Record hosted group checkout
+        id: group_receipt
+        if: success() && github.event_name == 'merge_group' && inputs.group-members != ''
+        continue-on-error: true
+        shell: bash
+        env:
+          MEMBERS: ${{ inputs.group-members }}
+          BASE: ${{ github.event.merge_group.base_sha }}
+          GROUP: ${{ github.event.merge_group.head_sha }}
+          CHECK_ID: ${{ job.check_run_id }}
+        run: |
+          set -euo pipefail
+          [[ "$GITHUB_SHA" = "$GROUP" && "$(git rev-parse HEAD)" = "$GROUP" ]]
+          [[ "$CHECK_ID" =~ ^[1-9][0-9]*$ ]]
+          git diff --no-ext-diff --quiet HEAD --
+          tree=$(git rev-parse 'HEAD^{tree}')
+          # Sorted compact UTF-8 JSON including its terminating newline.
+          digest=$(jq -ceS --arg base "$BASE" --arg group "$GROUP" --arg tree "$tree" \
+            --arg repository "$GITHUB_REPOSITORY" --arg run "$GITHUB_RUN_ID" \
+            --arg attempt "$GITHUB_RUN_ATTEMPT" --arg check "$CHECK_ID" \
+            'select(type == "array" and length > 0) | {schema:"hosted-group-v1",
+             $repository,$base,$group,$tree,$run,$attempt,$check,
+             members:map({pr,head,queue_entry})}' <<<"$MEMBERS" | sha256sum)
+          echo "digest=${digest%% *}" >> "$GITHUB_OUTPUT"

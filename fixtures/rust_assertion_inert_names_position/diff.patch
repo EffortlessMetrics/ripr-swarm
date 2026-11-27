@@ -1,0 +1,9 @@
+diff --git a/src/lib.rs b/src/lib.rs
+index 34f55be..97fe973 100644
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -1,3 +1,3 @@
+ pub fn weight(x: u32) -> u32 {
+-    x * 3
++    x * 4
+ }

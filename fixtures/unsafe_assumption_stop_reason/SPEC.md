@@ -18,6 +18,11 @@ Both changes stay `static_unknown` and name the unsafe obligation or the
 unchecked assumption instead of "not mapped to a high-confidence change type".
 Neither is `exposed`, and neither offers a test-stub repair step.
 
+The changed body line of `pick` reports its own return-value finding in
+place of the withdrawn boundary finding, and carries `unsafe_obligation`
+beside its own stop reason, so the line still names the unsafe contract
+(#16302).
+
 ## Must Not
 
 - Credit either change as `exposed` from a safe-code test.

@@ -34,6 +34,7 @@ fn capture<T>(enabled: bool, work: impl FnOnce() -> T) -> Result<(T, Vec<Observa
 
 fn probe(id: &str) -> Probe {
     Probe {
+        before_condition: None,
         id: ProbeId(id.to_string()),
         location: SourceLocation::new("src/lib.rs", 1, 1),
         owner: None,

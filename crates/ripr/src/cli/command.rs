@@ -75,9 +75,7 @@ impl CliCommand {
             // arguments so an extra token is never silently discarded (#9867).
             Some("--help" | "-h") if wants_all(&command_args) => match command_args.len() {
                 1 => Ok(Self::HelpAll),
-                _ => Err(
-                    "usage: ripr --help --all (this route accepts no other arguments); drop the extra arguments, or run `ripr --help` to list commands".to_string(),
-                ),
+                _ => Err(strict_route_usage("--help --all", &command_args[1..])),
             },
             None | Some("--help" | "-h") => Ok(Self::Help),
             // `ripr help` (no subcommand) prints the top-level help, identical
@@ -92,10 +90,7 @@ impl CliCommand {
                 if wants_all(&command_args) {
                     return match command_args.len() {
                         1 => Ok(Self::HelpAll),
-                        _ => Err(
-                            "usage: ripr help --all (this route accepts no other arguments); drop the extra arguments, or run `ripr --help` to list commands"
-                                .to_string(),
-                        ),
+                        _ => Err(strict_route_usage("help --all", &command_args[1..])),
                     };
                 }
                 // `ripr help --json` is the versioned machine-discovery route
@@ -103,10 +98,7 @@ impl CliCommand {
                 if command_args.first().is_some_and(|arg| arg == "--json") {
                     return match command_args.len() {
                         1 => Ok(Self::HelpJson),
-                        _ => Err(
-                            "usage: ripr help --json (this route accepts no other arguments); drop the extra arguments, or run `ripr --help` to list commands"
-                                .to_string(),
-                        ),
+                        _ => Err(strict_route_usage("help --json", &command_args[1..])),
                     };
                 }
                 // `ripr help workflow [name]` is the bounded workflow-discovery
@@ -137,14 +129,23 @@ impl CliCommand {
             Some(command) => match crate::cli::command_catalog::resolve_top_level(command) {
                 Some(entry) => {
                     reject_unsupported_extended_help(entry.dispatch, command, &command_args)?;
-                    Ok(match cli_command_from_dispatch(entry.dispatch, command_args) {
-                        CliCommand::FirstPr(args) if command == "start-here" => {
-                            CliCommand::StartHere(args)
-                        }
-                        other => other,
-                    })
+                    Ok(
+                        match cli_command_from_dispatch(entry.dispatch, command_args) {
+                            CliCommand::FirstPr(args) if command == "start-here" => {
+                                CliCommand::StartHere(args)
+                            }
+                            other => other,
+                        },
+                    )
                 }
-                None => Err(unknown_command_error(command)),
+                None => {
+                    // `ripr --bogus check` typed a command after the stray
+                    // option; `ripr --bogus` typed none (#15257).
+                    let command_typed = command_args
+                        .iter()
+                        .any(|arg| crate::cli::command_catalog::resolve_top_level(arg).is_some());
+                    Err(unknown_command_error(command, command_typed))
+                }
             },
         }
     }
@@ -305,14 +306,28 @@ fn cli_command_from_dispatch(
     }
 }
 
-fn unknown_command_error(command: &str) -> String {
-    let message = unknown_command_message(command);
+/// The usage refusal of a strict one-flag route (`--help --all`, `help --all`,
+/// `help --json`). `extras` are the arguments after the route's own flag; the
+/// first is recorded as a stray argument, so a JSON-requested run gets the
+/// `cli_refusal` document the contract promises for that class (#16072).
+pub(super) fn strict_route_usage(route: &str, extras: &[String]) -> String {
+    let message = format!(
+        "usage: ripr {route} (this route accepts no other arguments); drop the extra arguments, or run `ripr --help` to list commands"
+    );
+    if let Some(extra) = extras.first() {
+        crate::cli::usage_refusal::note_unknown_argument(extra, &message, "ripr --help");
+    }
+    message
+}
+
+fn unknown_command_error(command: &str, command_typed: bool) -> String {
+    let message = unknown_command_message(command, command_typed);
     // #11584: typed code and token for a JSON-requested boundary.
     crate::cli::usage_refusal::note_unknown_command(command, &message);
     message
 }
 
-fn unknown_command_message(command: &str) -> String {
+fn unknown_command_message(command: &str, command_typed: bool) -> String {
     // An empty command name is nearly always an unset shell variable
     // (`ripr $CMD`). Echoing `""` back says nothing about that (#15985).
     if command.trim().is_empty() {
@@ -344,6 +359,11 @@ fn unknown_command_message(command: &str) -> String {
             FlagPlacement::Near(flag) => format!(
                 "unknown command {command:?}; options go after the command. Did you mean `ripr check {flag}`? Run `ripr --help`."
             ),
+            // No command was typed, so naming `ripr check` would claim a
+            // command the user never ran (#15257).
+            FlagPlacement::Unknown if !command_typed => {
+                format!("unknown option {command}; run `ripr --help` to list commands and options")
+            }
             FlagPlacement::Unknown => format!(
                 "unknown command {command:?}; options go after the command, and `ripr check` has no `{}` option. Run `ripr --help`.",
                 crate::cli::suggest::flag_name(command)
@@ -606,7 +626,7 @@ mod tests {
         let typo = CliCommand::from_parts(Some("help"), args(&["chekc", "--all"]));
         assert_eq!(
             typo,
-            Err(unknown_command_error("chekc")),
+            Err(unknown_command_error("chekc", false)),
             "`ripr help <typo> --all` should still report the typo"
         );
     }
@@ -691,7 +711,7 @@ mod tests {
             )
         );
         assert_eq!(
-            unknown_command_error("--base"),
+            unknown_command_error("--base", false),
             "unknown command \"--base\"; options go after the command, e.g. `ripr check --base ...`"
         );
     }
@@ -745,10 +765,16 @@ mod tests {
             assert_eq!(
                 CliCommand::from_parts(Some(option), Vec::new()),
                 Err(format!(
-                    "unknown command {option:?}; options go after the command, and `ripr check` has no `{option}` option. Run `ripr --help`."
+                    "unknown option {option}; run `ripr --help` to list commands and options"
                 ))
             );
         }
+        // With a command typed after the stray option, `ripr check` is the
+        // command the user meant, so the placement advice stays.
+        assert_eq!(
+            CliCommand::from_parts(Some("--bogus"), vec!["check".to_string()]),
+            Err("unknown command \"--bogus\"; options go after the command, and `ripr check` has no `--bogus` option. Run `ripr --help`.".to_string())
+        );
     }
 
     #[test]
@@ -812,11 +838,11 @@ mod tests {
     #[test]
     fn nested_subcommand_at_top_level_suggests_full_path() {
         assert_eq!(
-            unknown_command_error("ci-summary"),
+            unknown_command_error("ci-summary", false),
             "unknown command \"ci-summary\". Did you mean `ripr reports ci-summary`? Run `ripr --help`."
         );
         assert_eq!(
-            unknown_command_error("ci-packet"),
+            unknown_command_error("ci-packet", false),
             "unknown command \"ci-packet\". Did you mean `ripr reports ci-packet`? Run `ripr --help`."
         );
     }
@@ -968,8 +994,8 @@ mod tests {
         );
         // Outside `help`, the same token is not a help option.
         assert_eq!(
-            unknown_command_error("--al"),
-            "unknown command \"--al\"; options go after the command, and `ripr check` has no `--al` option. Run `ripr --help`."
+            unknown_command_error("--al", false),
+            "unknown option --al; run `ripr --help` to list commands and options"
         );
     }
 

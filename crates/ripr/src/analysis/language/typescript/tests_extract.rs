@@ -238,6 +238,11 @@ fn extract_tests_expanding_suite_factories(
             admission,
             hook_calls,
             tap_arguments: super::tap::RegistrationArguments::of_program(&ret.program),
+            implementation_tables: super::implementation_tables::ImplementationTables::of_program(
+                &ret.program.body,
+                source,
+                &imports,
+            ),
             ..TestScope::default()
         };
         scope.fixtures = super::fixture_receivers::PlaywrightFixtures::of_program(
@@ -302,7 +307,8 @@ fn extract_tests_expanding_suite_factories(
                 test.identity_helpers_in_file = helpers.clone();
             }
         }
-        let member_only = default_member_only_locals(&imports, &code);
+        let mut member_only = default_member_only_locals(&imports, &code);
+        member_only.extend(namespace_member_call_locals(&imports, &code));
         if !member_only.is_empty() {
             let member_only: Shared<_> = member_only.into();
             for test in &mut tests {
@@ -1239,11 +1245,36 @@ pub(crate) fn collect_tests_from_statements<'s, 'a>(
         if let Some((loop_bindings, body)) = loop_body_from_statement(stmt, scope) {
             // A `for`/`for...of`/`for...in` or `.forEach` callback body
             // registers its tests once per iteration; its loop variables or
-            // callback parameters shadow every enclosing binding.
+            // callback parameters shadow every enclosing binding. A member
+            // destructured from a table of namespace imports is that member
+            // of each namespace (#13592).
+            let members = scope
+                .implementation_tables
+                .loop_members(stmt, source.text(), |name| {
+                    // `Object` must be the global: no binding anywhere in
+                    // the file, the file level included, nor an import.
+                    let from = usize::from(name != "Object");
+                    scope
+                        .levels
+                        .iter()
+                        .skip(from)
+                        .flatten()
+                        .any(|(bound, _, _)| bound == name)
+                        || (name == "Object"
+                            && imports.iter().any(|import| import.local == "Object"))
+                });
             scope.levels.push(
                 loop_bindings
                     .into_iter()
-                    .map(|name| (name, ScopeValue::Other, Phase::Declaration))
+                    .map(|name| {
+                        let value = members
+                            .iter()
+                            .find(|(member, _)| *member == name)
+                            .map_or(ScopeValue::Other, |(_, namespaces)| {
+                                ScopeValue::NamespaceMember(namespaces.clone())
+                            });
+                        (name, value, Phase::Declaration)
+                    })
                     .collect(),
             );
             scope.iterables.push(Vec::new());
@@ -1507,6 +1538,9 @@ pub(crate) struct TestScope {
     /// The object-row table loop whose body is being walked (#11196).
     row_loop: Option<RowLoop>,
     tap_arguments: super::tap::RegistrationArguments,
+    /// File-level tables of namespace imports a loop may run a suite over
+    /// (#13592, unjs/ohash).
+    implementation_tables: super::implementation_tables::ImplementationTables,
 }
 
 /// One binding a scope-level statement makes, and when it runs.
@@ -1534,6 +1568,9 @@ enum ScopeValue {
     Constructed(String),
     /// Anything else, including a shadowing function, class or parameter.
     Other,
+    /// A loop header's `{ name }` destructured from each entry of a table of
+    /// namespace imports: the same-named member of each listed namespace.
+    NamespaceMember(Vec<String>),
 }
 
 impl TestScope {
@@ -1590,13 +1627,15 @@ impl TestScope {
                     }
                     Some((value, phase)) if *phase != Phase::Declaration => match value {
                         ScopeValue::Constructed(constructor) => Some(constructor.clone()),
-                        ScopeValue::Declared | ScopeValue::Other => None,
+                        ScopeValue::Declared
+                        | ScopeValue::Other
+                        | ScopeValue::NamespaceMember(_) => None,
                     },
                     _ => {
                         let mut constructors = writes.iter().filter_map(|(value, _)| match value {
                             ScopeValue::Declared => None,
                             ScopeValue::Constructed(constructor) => Some(Some(constructor)),
-                            ScopeValue::Other => Some(None),
+                            ScopeValue::Other | ScopeValue::NamespaceMember(_) => Some(None),
                         });
                         let first = constructors.next().flatten();
                         first
@@ -1604,9 +1643,17 @@ impl TestScope {
                             .cloned()
                     }
                 };
+                // Only a loop header binds a namespace member, once.
+                let namespace_member_of = match writes.as_slice() {
+                    [(ScopeValue::NamespaceMember(namespaces), Phase::Declaration)] => {
+                        namespaces.clone()
+                    }
+                    _ => Vec::new(),
+                };
                 resolved.push(TypeScriptScopeBinding {
                     name: name.to_string(),
                     constructed_by,
+                    namespace_member_of,
                     // `levels` is the test's own parameters, then the
                     // enclosing levels innermost first; the last is the file.
                     file_level: depth > 0 && depth == levels.len() - 1,
@@ -2124,6 +2171,106 @@ fn default_member_only_locals(imports: &[TypeScriptImport], code: &str) -> Vec<(
                     clean = false;
                     break;
                 }
+            }
+        }
+        if clean {
+            pairs.extend(
+                members
+                    .into_iter()
+                    .map(|member| (import.local.clone(), member)),
+            );
+        }
+    }
+    pairs
+}
+
+/// `(local, member)` for each member the file directly calls
+/// (`local.member(`) on an ES namespace import (`import * as local`) whose
+/// local is used, across the whole file, only as its own import binding and
+/// as a member receiver the file never writes (#15923). A member read is
+/// allowed and records nothing. Any other use withholds every pair of that
+/// local: a bare mention (an argument such as `spyOn(local, ..)`, a spread, a
+/// destructure, a shadowing declaration or parameter), an index access, a
+/// member assignment, update or `delete`, and a member of another object
+/// spelled the same.
+fn namespace_member_call_locals(imports: &[TypeScriptImport], code: &str) -> Vec<(String, String)> {
+    if file_is_opaque(code) {
+        return Vec::new();
+    }
+    const WRITES: [&str; 17] = [
+        "++", "--", "+=", "-=", "*=", "/=", "%=", "**=", "<<=", ">>=", ">>>=", "&=", "|=", "^=",
+        "&&=", "||=", "??=",
+    ];
+    let ident = |ch: char| ch == '_' || ch == '$' || ch.is_alphanumeric();
+    let mut pairs = Vec::new();
+    for import in imports
+        .iter()
+        .filter(|import| import.namespace && import.imported.is_none())
+    {
+        let mut members: Vec<String> = Vec::new();
+        let mut clean = true;
+        for at in word_occurrences(code, &import.local) {
+            let before = code[..at].trim_end();
+            // The binding itself: `import * as local`.
+            if before
+                .strip_suffix("as")
+                .is_some_and(|rest| rest.trim_end().ends_with('*'))
+            {
+                continue;
+            }
+            let rest = &code[at + import.local.len()..];
+            let name = ["?.", "!.", "."]
+                .iter()
+                .find_map(|dot| rest.strip_prefix(dot))
+                .map(|after| {
+                    let name: String = after.chars().take_while(|ch| ident(*ch)).collect();
+                    let tail = &after[name.len()..];
+                    (name, tail)
+                });
+            let Some((name, tail)) = name.filter(|(name, _)| !name.is_empty()) else {
+                clean = false;
+                break;
+            };
+            // The rest of the member path (`lib.Cart.prototype.apply`): a
+            // write at its end, or any reach into a prototype, is a write
+            // through the namespace.
+            let mut path_end = tail;
+            let mut reaches_prototype = false;
+            loop {
+                let rest = path_end.trim_start();
+                let Some(next) = ["?.", "!.", "."]
+                    .iter()
+                    .find_map(|dot| rest.strip_prefix(dot))
+                else {
+                    break;
+                };
+                let segment: String = next.chars().take_while(|ch| ident(*ch)).collect();
+                if segment.is_empty() {
+                    break;
+                }
+                reaches_prototype |= segment == "prototype" || segment == "__proto__";
+                path_end = &next[segment.len()..];
+            }
+            let after = path_end.trim_start();
+            let assigned =
+                after.starts_with('=') && !after.starts_with("==") && !after.starts_with("=>");
+            let prefix_write = before.ends_with("++")
+                || before.ends_with("--")
+                || before
+                    .strip_suffix("delete")
+                    .is_some_and(|rest| !rest.ends_with(ident));
+            if before.ends_with(['.', '#'])
+                || reaches_prototype
+                || after.starts_with('[')
+                || assigned
+                || prefix_write
+                || WRITES.iter().any(|write| after.starts_with(write))
+            {
+                clean = false;
+                break;
+            }
+            if tail.starts_with('(') && !members.contains(&name) {
+                members.push(name);
             }
         }
         if clean {
@@ -3521,6 +3668,7 @@ pub(crate) fn test_from_statement<'s, 'a>(
         scope_bindings: Default::default(),
         identity_helpers_in_file: Default::default(),
         default_member_only_locals_in_file: Default::default(),
+        barrel_namespace_members_in_file: Default::default(),
         written_locals_in_file: Default::default(),
         member_replacements_in_file: Default::default(),
         function_replacements_in_file: Default::default(),
@@ -4956,7 +5104,7 @@ fn collect_const_iterables(stmt: &Statement<'_>, out: &mut Vec<(String, Iterable
 
 /// Strip parentheses and TypeScript-only wrappers (`as`, `satisfies`, `!`,
 /// `<T>x`), which do not change the runtime value.
-fn runtime_expression<'a, 'b>(expression: &'b Expression<'a>) -> &'b Expression<'a> {
+pub(super) fn runtime_expression<'a, 'b>(expression: &'b Expression<'a>) -> &'b Expression<'a> {
     match expression {
         Expression::ParenthesizedExpression(inner) => runtime_expression(&inner.expression),
         Expression::TSAsExpression(inner) => runtime_expression(&inner.expression),
@@ -6730,7 +6878,7 @@ fn assignment_follows(after: &str) -> bool {
 
 /// The content of the second top-level argument of `args` when it is a plain
 /// string literal (no template interpolation), else `None`.
-fn second_argument_literal(args: &str) -> Option<&str> {
+pub(crate) fn second_argument_literal(args: &str) -> Option<&str> {
     let mut depth = 0usize;
     let mut quote: Option<char> = None;
     let mut escaped = false;

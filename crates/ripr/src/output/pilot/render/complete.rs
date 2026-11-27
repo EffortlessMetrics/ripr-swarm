@@ -627,8 +627,13 @@ fn render_pilot_summary_md_with_target(
         (None, Some(routes)) => {
             let commands = PilotLanguageRoutes::commands(routes);
             if commands.is_empty() {
-                out.push_str(NO_LANGUAGE_ROUTE_COMMAND);
-                out.push('\n');
+                match PilotLanguageRoutes::blocked_route_text(routes) {
+                    Some(route) => out.push_str(&format!("{route}\n")),
+                    None => {
+                        out.push_str(NO_LANGUAGE_ROUTE_COMMAND);
+                        out.push('\n');
+                    }
+                }
                 return out;
             }
             out.push_str(
@@ -1080,7 +1085,12 @@ fn render_pilot_terminal_unescaped(
     }
     if let Some(routes) = routes {
         let commands = PilotLanguageRoutes::commands(routes);
-        if commands.is_empty() {
+        if let (true, Some(route)) = (
+            commands.is_empty(),
+            PilotLanguageRoutes::blocked_route_text(routes),
+        ) {
+            out.push_str(&format!("Next: {route}\n"));
+        } else if commands.is_empty() {
             out.push_str(NO_LANGUAGE_ROUTE_COMMAND);
             out.push('\n');
         } else {
@@ -1270,7 +1280,6 @@ impl DiffOnlyNote {
         let kind = match self.source {
             DiffOnlySource::BuildScript => "a Cargo build script",
             DiffOnlySource::RepoAutomation => "repository automation",
-            DiffOnlySource::DeclaredOutsideSrc => "a crate source declared outside src",
         };
         let file = if code {
             format!("`{}`", self.file)
@@ -1371,6 +1380,7 @@ fn unranked_change_reason(context: PilotSummaryContext<'_>, code: bool) -> Optio
         seams,
         diff_only.as_ref(),
         base.as_ref(),
+        &bound_check_command(context, change),
         code,
     ))
 }
@@ -1399,11 +1409,13 @@ impl CurrentChangeLabel {
 
     /// Why no seam on the change ranks (#5309). A change whose seams pilot
     /// withholds, or whose seams a seam limit left unanalyzed, must not read
-    /// as a change with no seams.
+    /// as a change with no seams. `check` is the `ripr check` command bound
+    /// to pilot's root and diff selector, the one the closing line names.
     fn why_elsewhere(
         seams: ChangeSeams,
         diff_only: Option<&DiffOnlyNote>,
         base: Option<&String>,
+        check: &str,
         code: bool,
     ) -> String {
         let ChangeSeams {
@@ -1476,9 +1488,9 @@ impl CurrentChangeLabel {
                 "; but `ripr check` reads {which} as a gap or cannot tell (pilot judges the whole spot, check your changed lines), so follow `ripr check` for your change"
             ));
         } else if check_unconfirmed {
-            reason.push_str(
-                "; but ripr could not confirm what `ripr check` reads for your changed code (pilot judges the whole spot, check your changed lines), so run `ripr check` for your change",
-            );
+            reason.push_str(&format!(
+                "; but ripr could not confirm what `ripr check` reads for your changed code (pilot judges the whole spot, check your changed lines), so run `{check}` for your change"
+            ));
         }
         if touched > 0
             && let Some(note) = diff_only
@@ -1508,7 +1520,7 @@ impl CurrentChangeLabel {
                 diff_only,
             } => format!(
                 "this gap is not on a line you changed. {} For the change itself, run: {check}",
-                Self::why_elsewhere(*seams, diff_only.as_ref(), base.as_ref(), false)
+                Self::why_elsewhere(*seams, diff_only.as_ref(), base.as_ref(), check, false)
             ),
         }
     }
@@ -1526,7 +1538,7 @@ impl CurrentChangeLabel {
                 diff_only,
             } => format!(
                 "this gap is not on a line you changed. {} For the change itself, run `{check}`.",
-                Self::why_elsewhere(*seams, diff_only.as_ref(), base.as_ref(), true)
+                Self::why_elsewhere(*seams, diff_only.as_ref(), base.as_ref(), check, true)
             ),
         }
     }
@@ -1903,6 +1915,17 @@ fn push_declined_rust_files_terminal(
 }
 
 fn route_status_label(route: &PilotLanguageRoute) -> &'static str {
+    // #15297: in a root where `ripr check` refuses, neither "diff-first" nor
+    // the enable step is the next action; the route guidance names it.
+    if route.blocked_by_work_tree {
+        // A saved patch still reads only enabled languages, so a disabled
+        // one keeps its disclosure next to the blocker.
+        return if route.enabled {
+            "preview; ripr check cannot run at this root"
+        } else {
+            "preview; ripr check cannot run at this root, and it is not enabled in ripr.toml [languages]"
+        };
+    }
     match (route.available, route.enabled) {
         (false, _) => "not available in this build",
         (true, true) => "preview, diff-first",
@@ -1921,6 +1944,17 @@ fn terminal_rank_label(label: &str) -> &'static str {
 }
 
 fn terminal_route_status_label(route: &PilotLanguageRoute) -> &'static str {
+    // #15297: checked before `enabled`, so a disabled language in a root
+    // where `ripr check` refuses is not told to turn it on to check it.
+    if route.blocked_by_work_tree {
+        // A saved patch still reads only enabled languages, so a disabled
+        // one keeps its disclosure next to the blocker.
+        return if route.enabled {
+            "preview; ripr check cannot run at this root"
+        } else {
+            "preview; ripr check cannot run at this root, and it is not enabled in ripr.toml [languages]"
+        };
+    }
     match (route.available, route.enabled) {
         (false, _) => "not available in this build",
         (true, true) => "preview; run the command below to check the diff",

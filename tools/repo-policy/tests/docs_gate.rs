@@ -116,6 +116,57 @@ fn scoped_docs_gate_checks_unchanged_document_roles_in_the_subject_tree() -> Tes
     Ok(())
 }
 
+/// #16105: `core.autocrlf=true` is the Git for Windows and hosted Windows
+/// runner default. The archive the revision gate reads must keep the
+/// committed bytes under it, or every role input mismatches its blob and the
+/// gate widens on every Windows checkout. The repository-local setting makes
+/// this control host-independent. An in-tree `eol=crlf` attribute still
+/// converts the archive, and the gate must then widen rather than check bytes
+/// that are not the commit's.
+#[test]
+fn revision_docs_gate_reads_committed_role_bytes_under_autocrlf() -> TestResult {
+    let good = "# Tree\n## Context\n## Decision\n## Consequences\n## Alternatives Considered\n";
+    let rel = "docs/adr/0001-tree.md";
+    let note = "docs/releases/note.md";
+    let root = fixture(&[
+        (rel, &good.replace("## Decision", "## decision")),
+        (note, "# Note\n"),
+    ])?;
+    git(&root, &["init", "-q"])?;
+    git(&root, &["config", "core.autocrlf", "true"])?;
+    git(&root, &["add", "."])?;
+    git(&root, &["commit", "-q", "-m", "lowercase role section"])?;
+    fs::write(root.join(note), "# Note\nUpdated release note.\n")?;
+    git(&root, &["add", note])?;
+    git(&root, &["commit", "-q", "-m", "release note only"])?;
+    let checked = run_docs_gate_at_revision(&root, "HEAD~1", "HEAD")?;
+    if !checked.plan.is_docs_eligible()
+        || checked.violations
+            != [format!(
+                "{rel} is missing required ADR section `## Decision`"
+            )]
+    {
+        return Err(checked.render().into());
+    }
+    fs::write(root.join(".gitattributes"), "*.md text eol=crlf\n")?;
+    git(&root, &["add", ".gitattributes"])?;
+    git(&root, &["commit", "-q", "-m", "convert markdown on export"])?;
+    fs::write(root.join(note), "# Note\nSecond release note.\n")?;
+    git(&root, &["add", note])?;
+    git(&root, &["commit", "-q", "-m", "second release note only"])?;
+    let converted = run_docs_gate_at_revision(&root, "HEAD~1", "HEAD")?;
+    if converted.plan.is_docs_eligible()
+        || !converted
+            .plan
+            .widen_reasons
+            .iter()
+            .any(|reason| reason.contains("archived role inputs differ"))
+    {
+        return Err(converted.render().into());
+    }
+    Ok(())
+}
+
 #[cfg(unix)]
 #[test]
 fn unrelated_non_utf8_doc_name_keeps_the_scoped_role_verdict() -> TestResult {

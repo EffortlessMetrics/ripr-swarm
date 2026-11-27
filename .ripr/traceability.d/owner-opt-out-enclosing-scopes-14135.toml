@@ -13,6 +13,7 @@ tests = [
   "crates/ripr/tests/mutants_skip_owner_opt_out.rs::fn_nested_in_a_skipped_fn_is_withheld",
   "crates/ripr/tests/mutants_skip_owner_opt_out.rs::explain_states_owner_opt_out_withholding",
   "crates/ripr/tests/mutants_skip_owner_opt_out.rs::agent_and_replay_explain_the_recorded_owner_opt_out",
+  "crates/ripr/tests/mutants_skip_owner_opt_out.rs::context_followed_from_explain_keeps_the_owner_opt_out_stop",
   "crates/ripr/src/analysis/syntax/ra/owner_scopes.rs::tests::reads_impl_trait_module_and_file_scopes_innermost_first",
   "crates/ripr/src/analysis/syntax/ra/owner_scopes.rs::tests::inner_attributes_are_rewritten_to_outer_form",
   "crates/ripr/src/analysis/syntax/ra/owner_scopes.rs::tests::unparsable_source_and_ambiguous_owner_yield_nothing",
@@ -23,9 +24,12 @@ code = [
   "crates/ripr/src/output/human.rs",
   "crates/ripr/src/output/json/report.rs",
   "crates/ripr/src/app/explain.rs",
+  "crates/ripr/src/app/context.rs",
+  "crates/ripr/src/output/json/context_packet.rs",
 ]
 outputs = [
   "schemas/ripr/check.schema.json",
+  "schemas/ripr/context.schema.json",
   "docs/OUTPUT_SCHEMA.md",
   "docs/CONFIGURATION.md",
   "docs/specs/RIPR-SPEC-0450-owner-opt-out-enclosing-scopes.md",

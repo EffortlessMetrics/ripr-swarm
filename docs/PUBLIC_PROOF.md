@@ -51,8 +51,8 @@ By board, so the weak areas show before the full table:
 | Trust | Findings or seams whose own evidence contradicts itself | 0 findings | <= 0 findings | meets the bar | -1 finding since c6ccf9d (was 1 finding) |
 | Trust | Wrong verdicts on hand-checked changes from real repositories | 0.0% | <= 5.0% | meets the bar | first receipt (verdict corpus, upstream cases only; all 871 cases: 0.0%) |
 | Trust | Hand-checked edits the crate's tests fully catch that ripr still flags as a gap | **11.0%** | <= 5.0% | below the bar | no earlier measurement (observed at 2af3f38) |
-| Trust | Hand-checked edits where ripr gives no specific verdict (including abstentions a spec asks for) | **37.1%** | <= 24.0% | below the bar | no earlier measurement (observed at 2af3f38) |
-| Trust | Hand-checked edits where ripr gives no specific verdict and no spec asks it to abstain | **35.9%** | <= 20.0% | below the bar | no earlier measurement |
+| Trust | Hand-checked edits where ripr gives no specific verdict (including abstentions a spec asks for) | **37.1%** | <= 32.0% | below the bar | no earlier measurement (observed at 2af3f38) |
+| Trust | Hand-checked edits where ripr gives no specific verdict and no spec asks it to abstain | **35.9%** | <= 28.0% | below the bar | no earlier measurement |
 | Trust | Hand-checked edits the crate's tests miss that ripr reports as fine (counterweight to abstaining less) | 0.0% | <= 0.0% | meets the bar | no earlier measurement (observed at 2af3f38) |
 | Trust | Hand-checked edits the crate's tests miss that ripr credits as caught (false confidence; few credited cases so far, so read with its denominator) | **1.2%** | <= 0.0% | below the bar | no earlier measurement (observed at 2af3f38) |
 | Trust | In-scope numbered spec acceptance examples (minus waived) that a runtime-labeled verdict-corpus case cites | 100.0% | >= 100.0% | meets the bar | no earlier measurement |
@@ -109,7 +109,7 @@ Not measured, and why:
 Each line below is computed from the receipts above. Detail sections follow.
 
 - **Wrong gaps.** On changes from real repositories ripr reported a gap on 0 of 22 whose tests caught every listed mutant (0.0%): no case recorded. On the authored cases, which were written to fill empty corpus cells, it did so on 0 of 421 (0.0%).
-- **Mostly unsure.** On real-repository changes it abstained on 30 of 41 cases (73.2%); on the authored cases, 285 of 830 (34.3%). Abstaining is the safe failure, but each abstention is a change ripr gave the developer no help on.
+- **Mostly unsure.** On real-repository changes it abstained on 30 of 41 cases (73.2%); on the authored cases, 284 of 830 (34.2%). Abstaining is the safe failure, but each abstention is a change ripr gave the developer no help on.
 - **Real mutants disagree with "no test would notice".** Of 12 mutants on seams ripr called ungripped, real mutation testing caught 0 that ripr said nothing would catch; ripr agreed on 12. No false-gap examples are recorded.
 - **Thin ground truth.** Only 75 of 1745 mutants (4.3%) enter an agreement rate. 493 join a ripr seam precisely, and 418 of those still do not enter a rate.
 - **Cold `ripr pilot` to first useful result.** Worst repository: ripr-swarm at 77.6 s; the bar is at most 30.0 s.
@@ -168,8 +168,8 @@ Only the upstream cases come from real repositories. The authored cases were wri
 | False actionable (of discriminated) | 0/443 (0.0%) | 0/22 (0.0%) | 0/421 (0.0%) |
 | False exposed (of not fully discriminated) | 0/428 (0.0%) | 0/19 (0.0%) | 0/409 (0.0%) |
 | False silent (of not fully discriminated) | 0/428 (0.0%) | 0/19 (0.0%) | 0/409 (0.0%) |
-| Ideal verdict | 556/871 (63.8%) | 11/41 (26.8%) | 545/830 (65.7%) |
-| Abstained (limited or silent where acceptable) | 315/871 (36.2%) | 30/41 (73.2%) | 285/830 (34.3%) |
+| Ideal verdict | 557/871 (63.9%) | 11/41 (26.8%) | 546/830 (65.8%) |
+| Abstained (limited or silent where acceptable) | 314/871 (36.1%) | 30/41 (73.2%) | 284/830 (34.2%) |
 | Findings with a contradiction | 0/1062 (0.0%) | not split by origin | not split by origin |
 
 | Case | Origin | Truth | Ideal | Observed | Static classes | Outcome | Contradictions |
@@ -235,14 +235,14 @@ Only the upstream cases come from real repositories. The authored cases were wri
 | `cell-0231-log-targeted-record-captured` | authored | discriminated | credited | credited | exposed | ideal | none |
 | `checkout-announce-stdout-sink` | authored | not_discriminated | gap | limited | propagation_unknown | abstained | none |
 | `checkout-bulk-custom-assert-macro` | authored | discriminated | credited | credited | exposed | ideal | none |
-| `checkout-daily-limit-imported-const` | authored | discriminated | credited | credited | exposed, propagation_unknown | ideal | none |
+| `checkout-daily-limit-imported-const` | authored | discriminated | credited | credited | exposed | ideal | none |
 | `checkout-deposit-cap-happy-path-only` | authored | not_discriminated | gap | gap | weakly_exposed | ideal | none |
 | `checkout-fee-assert-under-false-flag` | authored | not_discriminated | gap | gap | reachable_unrevealed | ideal | none |
 | `checkout-fee-cfg-disabled-test` | authored | not_discriminated | gap | gap | reachable_unrevealed | ideal | none |
 | `checkout-fee-closure-never-called` | authored | not_discriminated | gap | gap | reachable_unrevealed | ideal | none |
 | `checkout-fee-err-return-guard` | authored | discriminated | credited | credited | exposed | ideal | none |
 | `checkout-fee-unpolled-async-assert` | authored | not_discriminated | gap | gap | reachable_unrevealed | ideal | none |
-| `checkout-minimum-same-file-const` | authored | discriminated | credited | credited | exposed, propagation_unknown | ideal | none |
+| `checkout-minimum-same-file-const` | authored | discriminated | credited | credited | exposed | ideal | none |
 | `checkout-persist-swallowed-ok` | authored | discriminated | credited | limited | propagation_unknown | abstained | none |
 | `checkout-rate-same-method-other-type` | authored | not_discriminated | gap | gap | weakly_exposed | ideal | none |
 | `checkout-record-discarded-result` | authored | discriminated | credited | limited | static_unknown | abstained | none |
@@ -319,7 +319,7 @@ Only the upstream cases come from real repositories. The authored cases were wri
 | `grid-constant-table` | authored | discriminated | credited | credited | exposed | ideal | none |
 | `grid-delete-exact` | authored | discriminated | credited | credited | exposed | ideal | none |
 | `grid-delete-helper` | authored | discriminated | credited | limited | static_unknown | abstained | none |
-| `grid-delete-none` | authored | partially_discriminated | gap | limited | static_unknown | abstained | none |
+| `grid-delete-none` | authored | partially_discriminated | gap | gap | reachable_unrevealed | ideal | none |
 | `grid-delete-property` | authored | partially_discriminated | gap | limited | static_unknown | abstained | none |
 | `grid-delete-table` | authored | discriminated | credited | limited | static_unknown | abstained | none |
 | `grid-early-exact` | authored | discriminated | credited | credited | exposed | ideal | none |
@@ -1028,7 +1028,7 @@ Only the upstream cases come from real repositories. The authored cases were wri
 | `trap-round-other-module` | authored | not_discriminated | gap | gap | weakly_exposed | ideal | none |
 | `trap-row-at-expected-panic-control` | authored | partially_discriminated | gap | limited | static_unknown | abstained | none |
 | `trap-row-of-unrelated-panic` | authored | not_discriminated | gap | limited | static_unknown | abstained | none |
-| `trap-scale-message-only` | authored | not_discriminated | gap | gap | weakly_exposed | ideal | none |
+| `trap-scale-message-only` | authored | not_discriminated | gap | gap | reachable_unrevealed | ideal | none |
 | `trap-score-tautology` | authored | not_discriminated | gap | gap | weakly_exposed | ideal | none |
 | `trap-shine-debug-exact-control` | authored | discriminated | credited | credited | exposed | ideal | none |
 | `trap-short-circuit-skipped-operand` | authored | partially_discriminated | gap | gap | propagation_unknown, weakly_exposed | ideal | none |

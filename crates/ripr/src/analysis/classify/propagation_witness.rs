@@ -3575,6 +3575,7 @@ mod tests {
 
     fn probe(family: ProbeFamily, expression: &str) -> Probe {
         Probe {
+            before_condition: None,
             id: ProbeId("probe:fixture:1".to_string()),
             location: SourceLocation::new("fixture/one/src/lib.rs", 10, 2),
             owner: Some(SymbolId("owner:calculate".to_string())),

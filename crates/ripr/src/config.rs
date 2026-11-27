@@ -97,8 +97,8 @@ pub(crate) use typescript::{
 // rust-only build as in a full build (#10730).
 pub(crate) use typescript::{
     is_declared_handwritten_typescript_path, is_detectable_excluded_typescript_path,
-    is_detectable_generated_typescript_path, is_typescript_docs_site_path,
-    is_typescript_excluded_dir_everywhere,
+    is_detectable_generated_typescript_path, is_typescript_excluded_dir_everywhere,
+    is_typescript_non_product_path,
 };
 
 /// Without `lang-typescript` no-config detection never selects the adapter,
@@ -393,6 +393,22 @@ fn is_repository_boundary(directory: &Path) -> bool {
         return false;
     };
     document.get("workspace").is_some_and(toml::Value::is_table)
+}
+
+/// Whether the loaded `ripr.toml` sets `[languages].enabled` itself, rather
+/// than leaving the built-in default in place. Reads the exact text the
+/// config was parsed from, so a config-free run and a `[languages]` table
+/// without `enabled` both read as the default.
+pub(crate) fn languages_enabled_is_explicit(config: &RiprConfig) -> bool {
+    config
+        .source_text()
+        .and_then(|text| toml::from_str::<toml::Value>(text).ok())
+        .is_some_and(|document| {
+            document
+                .get("languages")
+                .and_then(|languages| languages.get("enabled"))
+                .is_some()
+        })
 }
 
 pub(crate) fn load_for_root(root: &Path) -> Result<RiprConfig, String> {
@@ -2216,9 +2232,19 @@ fn assign_severity(
 /// the load, and without this the error lists every accepted value but does
 /// not say which one was meant. The hint is built from the fixed accepted
 /// names, never from file text.
+///
+/// A value that differs from an accepted one only in its word separator
+/// (`perl_lsp`, `perl lsp`) names that one before edit distance is consulted.
+/// `perl_lsp` is one edit from both `perllsp` and `perl-lsp`, and the distance
+/// tie would otherwise go to whichever is listed first.
 fn near_value_hint(value: &str, accepted: &[&'static str]) -> String {
     let normalized = value.trim().to_ascii_lowercase();
-    suggest::did_you_mean(&normalized, accepted)
+    let hyphenated = normalized.replace(['_', ' '], "-");
+    accepted
+        .iter()
+        .copied()
+        .find(|candidate| *candidate == hyphenated)
+        .or_else(|| suggest::did_you_mean(&normalized, accepted))
         .map(|nearest| format!(" ({})", suggest::suggestion_line(nearest)))
         .unwrap_or_default()
 }

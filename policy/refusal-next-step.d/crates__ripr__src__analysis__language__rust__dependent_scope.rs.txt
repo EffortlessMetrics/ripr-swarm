@@ -1,3 +1,2 @@
+crates/ripr/src/analysis/language/rust/dependent_scope.rs|dependent scope: main caller map missing after insert
 crates/ripr/src/analysis/language/rust/dependent_scope.rs|failed to read {}: {err}
-crates/ripr/src/analysis/language/rust/dependent_scope.rs|{DEPENDENT_SCOPE_ENV} must be `auto`, `named` or `full`, got `{other}`
-crates/ripr/src/analysis/language/rust/dependent_scope.rs|{DEPENDENT_SCOPE_ENV} must be valid UTF-8

@@ -67,6 +67,103 @@ async fn delayed_durable_read_leaves_the_async_executor_and_status_available() -
     Ok(())
 }
 
+/// #15244: prepare reads the durable store on a blocking worker without the
+/// session lock (production runs a current-thread runtime), then re-takes the
+/// lock and refuses `stale_snapshot` when a refresh replaced the snapshot it
+/// admitted. The injected reader is the only substitute; the lookup, its read
+/// and the final step are the production ones.
+#[tokio::test(flavor = "current_thread")]
+async fn delayed_prepare_store_read_releases_the_session_lock_and_revalidates_its_snapshot()
+-> Result<(), String> {
+    for replace_snapshot in [false, true] {
+        let server = Arc::new(healthy_server()?);
+        // Not repair-ready, so the production read touches no store and the
+        // delay below is the whole worker.
+        let mut finding = gaps::test_finding()?;
+        finding.canonical_gap = None;
+        *server.session.lock().await =
+            repair::tests::session_with(&[finding.clone()], "root:sha256:a")?;
+        let (started_tx, started_rx) = tokio::sync::oneshot::channel();
+        let (release_tx, release_rx) = std::sync::mpsc::channel();
+        let prepare_server = server.clone();
+        let worker = tokio::spawn(async move {
+            prepare_server
+                .prepare_repair_document_with("finding:test:1", None, move |lookup| {
+                    let _ = started_tx.send(());
+                    release_rx
+                        .recv_timeout(std::time::Duration::from_secs(2))
+                        .map_err(|error| {
+                            workspace::AttemptFailure::new(
+                                workspace::CODE_ANALYSIS_FAILED,
+                                format!("delayed store read was not released: {error}"),
+                                "test reader release",
+                            )
+                        })?;
+                    lookup.read(std::path::Path::new("."))
+                })
+                .await
+        });
+        let started = tokio::time::timeout(std::time::Duration::from_secs(1), started_rx).await;
+        // The session lock is free while the store is read: status answers,
+        // and a refresh can commit a replacement snapshot.
+        let live = tokio::time::timeout(
+            std::time::Duration::from_millis(250),
+            server.status_tool(super::super::MAX_RESPONSE_BYTES),
+        )
+        .await;
+        let replaced = if replace_snapshot {
+            // Same item, different committed evidence: a new snapshot id.
+            let mut refreshed = finding;
+            refreshed.evidence.push("refreshed evidence".to_string());
+            let replacement = repair::tests::session_with(&[refreshed], "root:sha256:a")?;
+            let locked =
+                tokio::time::timeout(std::time::Duration::from_millis(250), server.session.lock())
+                    .await;
+            match locked {
+                Ok(mut session) => {
+                    let before = session.last_good.as_ref().map(|s| s.snapshot_id.clone());
+                    session.last_good = replacement.last_good;
+                    let after = session.last_good.as_ref().map(|s| s.snapshot_id.clone());
+                    Some(before != after)
+                }
+                Err(_elapsed) => None,
+            }
+        } else {
+            Some(false)
+        };
+        let completed_early = worker.is_finished();
+        let _ = release_tx.send(());
+        let observed = worker.await.map_err(|error| error.to_string())?;
+        assert!(
+            !completed_early,
+            "the delayed store read ran synchronously or timed out before release"
+        );
+        started
+            .map_err(|error| error.to_string())?
+            .map_err(|error| error.to_string())?;
+        live.map_err(|error| format!("async status blocked behind the store read: {error}"))?
+            .map_err(|error| error.to_string())?;
+        let replaced = replaced.ok_or("the session lock was held across the durable store read")?;
+        assert_eq!(
+            replaced, replace_snapshot,
+            "the replacement must change the snapshot id"
+        );
+        if replace_snapshot {
+            let failure = observed
+                .err()
+                .ok_or("a snapshot replaced during the store read must refuse")?;
+            assert_eq!(failure.code, workspace::CODE_STALE_SNAPSHOT);
+        } else {
+            let document = observed.map_err(|failure| failure.detail)?;
+            assert_eq!(document["repair_packet_ready"], false);
+        }
+        if !server.session.lock().await.repairs.is_empty() {
+            return Err("prepare created a session transaction".to_string());
+        }
+    }
+    Ok(())
+}
+
 #[test]
 fn oversized_status_envelope_gets_typed_too_large_like_every_tool() -> Result<(), String> {
     // `ripr_workspace_status` goes through the shared response bound
@@ -2679,5 +2776,42 @@ fn list_cursors_are_refused_and_absent_cursors_pass() -> Result<(), String> {
         data["expected"],
         serde_json::json!("omit; the complete list fits one page")
     );
+    Ok(())
+}
+
+/// #15983: a `ripr_refresh` the transport admitted beside a running one is
+/// refused `analysis_in_flight` from that mark alone. The session here has no
+/// attempt running, which is the state after the first attempt commits
+/// between the repeat's admission and its handler: the repeat must not start
+/// an analysis. The scope is the one `call_tool` enters from the mark.
+#[tokio::test(flavor = "current_thread")]
+async fn refresh_admitted_beside_a_running_one_is_refused_after_it_commits() -> Result<(), String> {
+    let server = healthy_server()?;
+    let mut arguments = serde_json::Map::new();
+    arguments.insert("source".to_string(), Value::String("committed".to_string()));
+    let response = BESIDE_RUNNING_REFRESH
+        .scope(
+            true,
+            server.refresh_tool(Some(arguments), super::super::MAX_RESPONSE_BYTES),
+        )
+        .await
+        .map_err(|error| format!("refresh must answer, not error: {error:?}"))?;
+    let rmcp::model::CallToolResponse::Complete(result) = response else {
+        return Err("refresh did not complete".to_string());
+    };
+    let result = serde_json::to_value(&result).map_err(|error| error.to_string())?;
+    if result.pointer("/isError") != Some(&Value::Bool(true))
+        || result
+            .pointer("/structuredContent/failure/code")
+            .and_then(Value::as_str)
+            != Some("analysis_in_flight")
+    {
+        return Err(format!(
+            "the marked refresh was not refused in flight: {result}"
+        ));
+    }
+    if server.session.lock().await.in_flight {
+        return Err("the refused refresh left an attempt in flight".to_string());
+    }
     Ok(())
 }

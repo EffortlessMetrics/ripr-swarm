@@ -971,6 +971,7 @@ mod tests {
             id: "probe:src_lib.rs:binding:test".to_string(),
             canonical_gap: None,
             probe: Probe {
+                before_condition: None,
                 id: ProbeId("probe:src_lib.rs:binding:test".to_string()),
                 location: SourceLocation::new("src/lib.rs", 2, 1),
                 owner: Some(SymbolId(owner.to_string())),

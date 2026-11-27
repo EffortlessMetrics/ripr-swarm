@@ -1172,8 +1172,19 @@ pub(crate) fn validate_issued_receipt_evidence(
     receipt: &serde_json::Value,
     verify_bytes: &[u8],
 ) -> Result<(), String> {
-    let verify: serde_json::Value = serde_json::from_slice(verify_bytes)
-        .map_err(|error| format!("repair attempt verify document is not JSON: {error}; regenerate it with `ripr agent verify --json`"))?;
+    let verify: serde_json::Value = serde_json::from_slice(verify_bytes).map_err(|error| {
+        // The attempt store keeps the verify document's exact bytes, so a
+        // re-encoded copy (#15936) is refused here; say why instead of
+        // reporting a JSON syntax error at column 1.
+        if verify_bytes.starts_with(&[0xEF, 0xBB, 0xBF])
+            || verify_bytes.starts_with(&[0xFF, 0xFE])
+            || verify_bytes.starts_with(&[0xFE, 0xFF])
+        {
+            "repair attempt verify document starts with a byte-order mark, but a repair attempt binds the exact UTF-8 bytes `ripr agent verify --json` printed; write it without re-encoding (in Windows PowerShell 5.1, `cmd /c \"ripr agent verify ... --json > verify.json\"`)".to_string()
+        } else {
+            format!("repair attempt verify document is not JSON: {error}; regenerate it with `ripr agent verify --json`")
+        }
+    })?;
     let schema_version = verify
         .get("schema_version")
         .and_then(serde_json::Value::as_str);
@@ -1834,15 +1845,13 @@ pub(crate) struct BeforeRepairAttemptIdentity {
 impl BeforeRepairAttemptIdentity {
     pub(crate) fn prepare(root: &Path, seam_id: &str) -> Result<Self, String> {
         if seam_id.trim().is_empty() {
-            return Err("repair attempt requires a non-empty seam ID".to_string());
+            return Err("repair attempt requires a non-empty seam ID; pass --seam-id with an ID from `ripr agent status` or `ripr pilot --root .`".to_string());
         }
         let canonical_root = root
             .canonicalize()
             .map_err(|error| format!("canonicalize repair attempt root failed: {error}"))?;
-        let repository_head =
-            crate::agent::artifact::current_git_head(&canonical_root).map_err(|error| {
-                format!("repair attempt requires a concrete repository HEAD: {error}")
-            })?;
+        let repository_head = crate::agent::artifact::current_git_head(&canonical_root)
+            .map_err(|error| concrete_head_refusal(&canonical_root, &error))?;
         let created_unix_ms = current_unix_ms()?;
         let nonce = ATTEMPT_NONCE.fetch_add(1, Ordering::Relaxed);
         let repair_attempt_id = repair_attempt_id_from_parts(
@@ -1872,7 +1881,7 @@ pub(crate) fn begin_repair_attempt_with(
     options: BeginRepairAttemptOptions<'_>,
 ) -> Result<BeginRepairAttemptResult, String> {
     if options.seam_id.trim().is_empty() {
-        return Err("repair attempt requires a non-empty seam ID".to_string());
+        return Err("repair attempt requires a non-empty seam ID; pass --seam-id with an ID from `ripr agent status` or `ripr pilot --root .`".to_string());
     }
     if options.sources.is_empty() {
         return Err("repair attempt requires at least one before-phase artifact".to_string());
@@ -1914,7 +1923,7 @@ fn begin_repair_attempt_inner(
         store,
     } = options;
     if seam_id.trim().is_empty() {
-        return Err("repair attempt requires a non-empty seam ID".to_string());
+        return Err("repair attempt requires a non-empty seam ID; pass --seam-id with an ID from `ripr agent status` or `ripr pilot --root .`".to_string());
     }
     if sources.is_empty() {
         return Err("repair attempt requires at least one before-phase artifact".to_string());
@@ -1931,7 +1940,7 @@ fn begin_repair_attempt_inner(
     // path re-verifies after staging, and an A-B-A swap inside that window
     // is undetectable by commit comparison alone (#6822).
     let repository_identity = crate::agent::artifact::current_git_head_identity(canonical_root)
-        .map_err(|error| format!("repair attempt requires a concrete repository HEAD: {error}"))?;
+        .map_err(|error| concrete_head_refusal(canonical_root, &error))?;
     let repository_head = repository_identity.head.clone();
     // Pre-publication head gate: compare the caller's verified pin against
     // the repository HEAD this publication would record, before the attempt
@@ -3374,7 +3383,7 @@ pub(crate) fn edit_cage_policy_from_packet_with(
             .map(|path| {
                 path.as_str()
                     .ok_or_else(|| format!("repair packet {name} contains a non-string path"))
-                    .and_then(packet_path)
+                    .and_then(|text| forbidden_packet_path_text(text, stable_paths))
                     .and_then(crate::edit_cage::CagePathRule::exact)
             })
             .collect()
@@ -3511,8 +3520,8 @@ pub(crate) fn edit_cage_policy_from_packet_with(
 /// `src/a%25b.rs`, a file that does not exist.
 ///
 /// A decoded backslash refuses: on Unix it is a literal file-name byte
-/// (`%5C`), and the cage normalizer would read it as a separator, so
-/// `tests/a%5Cb.rs` would become the rule for a different file,
+/// (`%5C`), and the test-surface classifier reads it as a separator, so
+/// `tests/a%5Cb.rs` would be admitted as if it were a different file,
 /// `tests/a/b.rs`.
 fn packet_path_text(text: &str, stable_path_text: bool) -> Result<String, String> {
     if !stable_path_text {
@@ -3532,6 +3541,27 @@ fn packet_path_text(text: &str, stable_path_text: bool) -> Result<String, String
         ));
     }
     Ok(decoded.to_string())
+}
+
+/// A forbidden packet path in its native spelling. Unlike an allowed path, a
+/// literal Unix backslash (`%5C`) is accepted here (#15908): the cage compares
+/// the rule with the path Git reports, byte for byte on Unix, so the rule for
+/// `src/a%5Cb.rs` forbids exactly `src/a\b.rs`. The refusal above stays for
+/// paths that may be edited, because the test-surface classifier still reads
+/// a backslash as a separator. A production file with such a name no longer
+/// refuses the whole attempt.
+fn forbidden_packet_path_text(text: &str, stable_path_text: bool) -> Result<String, String> {
+    if !stable_path_text {
+        return Ok(text.to_string());
+    }
+    crate::analysis::decode_stable_path_text(text)
+        .to_str()
+        .map(str::to_string)
+        .ok_or_else(|| {
+            format!(
+                "repair packet path `{text}` does not name a UTF-8 path; rename the file to a UTF-8 name, then regenerate the packet"
+            )
+        })
 }
 
 /// A packet the gap decision ledger rendered. Its paths come from the
@@ -3735,7 +3765,7 @@ pub(crate) fn resolve_awaiting_repair_attempt_from(
             );
         }
         (None, None) => {
-            return Err("repair after selection requires an attempt ID or seam ID".to_string());
+            return Err("repair after selection requires an attempt ID or seam ID; pass --attempt ID, or --seam-id ID to select the one repair awaiting that gap".to_string());
         }
     };
     if manifest.state != RepairAttemptState::AwaitingEdit {
@@ -4173,7 +4203,7 @@ pub(crate) fn finish_repair_attempt_with_workflow_backups_from(
     let baseline: AttemptBaseline = serde_json::from_slice(&baseline_bytes)
         .map_err(|error| format!("decode edit-cage baseline failed: {error}; the staged baseline is damaged, so start a new attempt with `ripr agent repair`"))?;
     if baseline.root() != root {
-        return Err("edit-cage baseline root does not match selected repository".to_string());
+        return Err("edit-cage baseline root does not match selected repository; run from the repository the attempt was started in, or select that repository as the root".to_string());
     }
     // Head identity (not just HEAD) brackets the evaluation: an A-B-A
     // swap inside the window is undetectable by commit comparison alone,
@@ -4851,7 +4881,7 @@ fn select_awaiting_repair_attempt_by_seam(
     seam_id: &str,
 ) -> Result<(PathBuf, RepairAttemptManifest), String> {
     if seam_id.trim().is_empty() {
-        return Err("repair after selection requires a non-empty seam ID".to_string());
+        return Err("repair after selection requires a non-empty seam ID; pass the gap's --seam-id, or select the attempt with --attempt ID".to_string());
     }
     let manifests_root = store.resolved_path();
     let mut matches = Vec::new();
@@ -4918,6 +4948,32 @@ fn select_awaiting_repair_attempt_by_seam(
     matches.pop().ok_or_else(|| "missing attempt".to_string())
 }
 
+/// A missing manifest names what to check. The CLI selection boundary
+/// (`repair_attempt_input_error`) appends the read-only status command bound to
+/// the same `--root` and `--store`; naming an unscoped command here would
+/// suppress that follow-up and list a different store (#16345 review).
+fn missing_manifest_refusal(attempt_id: &RepairAttemptId, path: &Path) -> String {
+    format!(
+        "repair attempt manifest not found for {} at {}; check the --attempt ID and --store",
+        attempt_id.as_str(),
+        crate::output::path::human_path(path)
+    )
+}
+
+/// First-commit advice only when Git establishes an unborn HEAD; a committed
+/// checkout whose HEAD ripr cannot use (for example a SHA-256 object ID) keeps
+/// the underlying diagnosis without being told to commit again (#16345 review).
+fn concrete_head_refusal(root: &Path, error: &str) -> String {
+    match crate::analysis::probe_head_ref_state(root, None) {
+        crate::analysis::HeadRefState::Unborn => format!(
+            "repair attempt requires a concrete repository HEAD: {error}; commit the repository at least once, then rerun"
+        ),
+        _ => format!(
+            "repair attempt requires a concrete repository HEAD: {error}; fix the Git problem it names, then rerun"
+        ),
+    }
+}
+
 fn load_repair_attempt_by_id(
     store: &RepairAttemptStoreRef,
     attempt_id: &RepairAttemptId,
@@ -4926,11 +4982,7 @@ fn load_repair_attempt_by_id(
         .attempt_directory(attempt_id)
         .join(REPAIR_ATTEMPT_MANIFEST);
     if !path.is_file() {
-        return Err(format!(
-            "repair attempt manifest not found for {} at {}",
-            attempt_id.as_str(),
-            crate::output::path::human_path(&path)
-        ));
+        return Err(missing_manifest_refusal(attempt_id, &path));
     }
     let manifest = read_repair_attempt_manifest_at(store, &path)?;
     if manifest.repair_attempt_id != *attempt_id {
@@ -4952,11 +5004,7 @@ fn load_repair_attempt_snapshot_by_id(
         .attempt_directory(attempt_id)
         .join(REPAIR_ATTEMPT_MANIFEST);
     if !path.is_file() {
-        return Err(format!(
-            "repair attempt manifest not found for {} at {}",
-            attempt_id.as_str(),
-            crate::output::path::human_path(&path)
-        ));
+        return Err(missing_manifest_refusal(attempt_id, &path));
     }
     let raw =
         std::fs::read(&path).map_err(|error| format!("read {} failed: {error}", path.display()))?;
@@ -5591,7 +5639,7 @@ fn validate_manifest_at(
         .canonicalize()
         .map_err(|error| format!("canonicalize declared manifest root failed: {error}"))?;
     if declared_root != root {
-        return Err("repair attempt manifest root does not match selected repository".to_string());
+        return Err("repair attempt manifest root does not match selected repository; run from the repository the attempt was started in, or select that repository as the root".to_string());
     }
     let expected_manifest = store
         .attempt_directory(&manifest.repair_attempt_id)
@@ -5846,17 +5894,30 @@ pub(crate) fn seam_dirty_premise_refusal(
     facade_start: bool,
     violations: &[String],
 ) -> String {
+    let restart = seam_start_command(seam_id, root, store, facade_start);
+    dirty_premise_refusal(&restart, violations)
+}
+
+/// The command a not-started seam refusal tells the user to rerun: the
+/// `ripr repair <item>` façade keeps its short spelling, and an advanced
+/// start or one with an explicit `--store` keeps that store, so the retried
+/// attempt lands where the original command would have put it (#15265).
+pub(crate) fn seam_start_command(
+    seam_id: &str,
+    root: &Path,
+    store: Option<&Path>,
+    facade_start: bool,
+) -> String {
     let root_arg = shell_arg(&bound_root(&root.to_string_lossy()));
     let seam_arg = shell_arg(seam_id);
     let store_flag = quoted_store_flag(store);
-    let restart = if facade_start && store.is_none() {
+    if facade_start && store.is_none() {
         format!("ripr repair {seam_arg} --root {root_arg}")
     } else {
         format!(
             "ripr agent repair --root {root_arg}{store_flag} --seam-id {seam_arg} --phase before"
         )
-    };
-    dirty_premise_refusal(&restart, violations)
+    }
 }
 
 /// [`seam_dirty_premise_refusal`] for any start spelling: the seam and
@@ -6548,6 +6609,33 @@ mod tests {
         let rendered = serde_json::to_string(&packet).map_err(|error| error.to_string())?;
         if edit_cage_policy_from_packet(&rendered, "seam:sample").is_ok() {
             return Err("a production recommended test constructed a cage policy".to_string());
+        }
+        Ok(())
+    }
+
+    /// A forbidden production file named `a\b.rs` on Unix no longer refuses
+    /// the whole policy: its rule is the path Git reports for that file. A
+    /// path that may be edited keeps refusing (#15908).
+    #[cfg(unix)]
+    #[test]
+    fn cage_policy_forbids_a_backslash_named_file_by_its_own_path() -> Result<(), String> {
+        let packet = serde_json::json!({
+            "seam_id": "seam:sample",
+            "allowed_edit_surface": ["tests/pricing.rs"],
+            "forbidden_files": ["src/a%5Cb.rs"]
+        });
+        let rendered = serde_json::to_string(&packet).map_err(|error| error.to_string())?;
+        let policy = edit_cage_policy_from_packet(&rendered, "seam:sample")?;
+        let forbidden = policy.forbidden_paths.first().map(|rule| rule.path());
+        if forbidden != Some("src/a\\b.rs") {
+            return Err(format!("forbidden rule names another file: {forbidden:?}"));
+        }
+        let rule = policy
+            .forbidden_paths
+            .first()
+            .ok_or_else(|| "no forbidden rule".to_string())?;
+        if !rule.matches("src/a\\b.rs") || rule.matches("src/a/b.rs") {
+            return Err("the rule must match its own file only".to_string());
         }
         Ok(())
     }

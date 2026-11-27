@@ -281,6 +281,21 @@ official SDK transport:
     snapshot carries them too (#13096 worktree leg); only the
     committed-specific `empty_scope_hint` below stays committed-only.
     Complete runs omit both fields.
+  - `worktree_base_hint` (#13096 worktree leg) is the worktree-source
+    counterpart for one state: a zero-item `no_behavioral_candidates`
+    snapshot, whose diff by definition has changed lines. That is most often a
+    tests-only saved edit after the production change was committed onto the
+    base, and without a route the agent reads `not_analyzed` and stops. The
+    object carries `why` (the shared saved-worktree cause sentence) and
+    `pass_base` (retry `ripr_refresh` with `base` set to a commit before the
+    production change and the worktree source kept, for example
+    `{"source": "worktree", "base": "HEAD~1"}`; an omitted `source` could
+    select committed input on a checkout with no tracked edits). It is omitted for a
+    committed-source snapshot, for `no_scope` and `no_changed_lines`, and for
+    any snapshot with items. Like the committed hint it
+    is a named suggestion: the server does not detect which commit holds the
+    production change and never widens the base. It changes no outcome kind,
+    verdict or identity.
   - `empty_scope_hint.pass_base_last_commit` (#13096) names the concrete
     last-commit retry (`{"source": "committed", "base": "HEAD~1"}`) beside `pass_base` and
     `pass_source`. It is present only when the committed zero-item snapshot
@@ -612,7 +627,13 @@ official SDK transport:
   `workspace_unavailable` replies still arrive.
   On a usable root, reads before the first successful refresh fail closed
   with `no_snapshot`; reads during an
-  attempt report `analysis_in_flight`; unknown item ids fail closed with
+  attempt report `analysis_in_flight` (over stdio a snapshot or repair read
+  written during a refresh is instead held until the refresh reply is
+  flushed, while workspace status, `ping`, the catalog listings and a
+  repeated `ripr_refresh`, which is refused `analysis_in_flight`, are
+  answered beside the running refresh, one at a time; after a typed
+  `notifications/cancelled` for that refresh nothing is held and such a read
+  reports `analysis_in_flight` until the attempt ends; #15983); unknown item ids fail closed with
   `item_not_found`; a document whose complete tool envelope cannot fit the
   128-KiB response bound fails closed with `result_too_large` — for tool
   and resource responses the envelope is measured in its final form
@@ -953,6 +974,16 @@ strings and are not URI-decoded. RIPR-SPEC-0283 owns the decoding contract.
 - `crates/ripr/tests/mcp_stdio.rs::optional_tool_arguments_reject_null_and_recover_over_stdio`
   — the #7314 schema/dispatch contract for all six optional argument
   positions, with omission, valid-type, wrong-type and recovery controls.
+- `crates/ripr/tests/mcp_stdio.rs::running_refresh_answers_status_and_orders_snapshot_reads`
+  (Unix) — #15983 over real stdio with the refresh held inside its own
+  `git diff`: status (tool and resource) and `tools/list` answer during the
+  attempt, a repeated refresh is refused `analysis_in_flight`, and a held
+  `ripr_list_gaps` plus the status written behind it are answered after the
+  refresh, in order, bound to its snapshot. Slot accounting, cancellation
+  release and end of input are in
+  `crates/ripr/src/mcp/transport_backpressure_tests.rs`; the refusal of a
+  repeat whose first attempt has already committed is
+  `crates/ripr/src/mcp/server_tests.rs::refresh_admitted_beside_a_running_one_is_refused_after_it_commits`.
 - `crates/ripr/tests/mcp_interrupts.rs::cooperative_interrupt_lifecycle`
   (Linux) — real stdio and gated git children cover SIGINT, SIGTERM,
   early-primary pipe holders, typed failure, last-good retention, same-session

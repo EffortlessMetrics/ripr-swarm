@@ -724,3 +724,14 @@ Command:
 Updated:
 - `expected/sarif.json`
 - `expected/github.txt`
+
+## Pending — python_adversarial_free_function_module_collision (41)
+
+Reason:
+RIPR-SPEC-0008: SARIF alert messages are one plain line (#15374)
+
+Command:
+`cargo xtask goldens bless python_adversarial_free_function_module_collision --reason "..."`
+
+Updated:
+- `expected/sarif.json`

@@ -1889,6 +1889,7 @@ mod tests {
             id: "probe:src_pricing.ts:2:typescript_preview".to_string(),
             canonical_gap: None,
             probe: Probe {
+                before_condition: None,
                 id: ProbeId("probe:src_pricing.ts:2:typescript_preview".to_string()),
                 location: SourceLocation::new("src/pricing.ts", 2, 1),
                 owner: Some(crate::domain::SymbolId(

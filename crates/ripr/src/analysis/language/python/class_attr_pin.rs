@@ -28,6 +28,8 @@ use std::path::Path;
 pub(super) struct ClassAttrPinGap {
     pub(super) discriminator: String,
     pub(super) reason: String,
+    /// The repair sentence that follows the reason.
+    pub(super) next_step: String,
 }
 
 pub(super) fn python_class_attr_pin_gap(
@@ -80,6 +82,7 @@ pub(super) fn python_class_attr_pin_gap(
             "no related assertion carries a literal that the old `{name}` text {old_text:?} accepts and the new text {new_text:?} rejects, so the tests reach `{}` without observing the changed text",
             owner.name
         ),
+        next_step: "Add an assertion (for example `pytest.raises(..., match=...)`) that the old text satisfies and the new text does not.".to_string(),
     })
 }
 

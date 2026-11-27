@@ -150,15 +150,15 @@ impl DependentScopeMode {
     fn from_env_value(value: Result<String, std::env::VarError>) -> Result<Self, String> {
         match value {
             Err(std::env::VarError::NotPresent) => Ok(Self::Auto),
-            Err(std::env::VarError::NotUnicode(_)) => {
-                Err(format!("{DEPENDENT_SCOPE_ENV} must be valid UTF-8"))
-            }
+            Err(std::env::VarError::NotUnicode(_)) => Err(format!(
+                "{DEPENDENT_SCOPE_ENV} must be valid UTF-8; set it to `auto`, `named` or `full`, or unset it to use `auto`"
+            )),
             Ok(raw) => match raw.trim() {
                 "" | "auto" => Ok(Self::Auto),
                 "named" => Ok(Self::NameAdmitted),
                 "full" => Ok(Self::Full),
                 other => Err(format!(
-                    "{DEPENDENT_SCOPE_ENV} must be `auto`, `named` or `full`, got `{other}`"
+                    "{DEPENDENT_SCOPE_ENV} must be `auto`, `named` or `full`, got `{other}`; set one of those, or unset it to use `auto`"
                 )),
             },
         }
@@ -2166,7 +2166,7 @@ mod tests {
     }
 
     #[test]
-    fn withheld_macro_bindings_saturate_on_a_foreign_glob() {
+    fn withheld_macro_bindings_saturate_only_on_an_every_name_site() {
         let packages = BTreeSet::from(["core".to_string()]);
         let mut bindings = classify::WithheldMacroBindings::default();
         // A crate root's private glob reaches only its own crate, so it is
@@ -2181,7 +2181,10 @@ mod tests {
         let path = Path::new("e/src/util.rs");
         assert!(!bindings.absorb(path, "fn plain() {}", &packages, &none));
         assert!(!bindings.absorb(path, "use core::prelude::*;", &packages, &none));
-        assert!(bindings.absorb(path, "use proptest::prelude::*;", &packages, &none));
+        // A foreign glob cannot rebind a core prelude macro (#16060), so a
+        // later file may still bind one and the fold goes on.
+        assert!(!bindings.absorb(path, "use proptest::prelude::*;", &packages, &none));
+        assert!(bindings.absorb(path, "#[macro_use]\nextern crate other;", &packages, &none));
         assert!(bindings.absorb(path, "fn plain() {}", &packages, &none));
     }
 
@@ -2222,7 +2225,7 @@ mod tests {
         assert_eq!(
             DependentScopeMode::from_env_value(Ok("all".to_string())),
             Err(format!(
-                "{DEPENDENT_SCOPE_ENV} must be `auto`, `named` or `full`, got `all`"
+                "{DEPENDENT_SCOPE_ENV} must be `auto`, `named` or `full`, got `all`; set one of those, or unset it to use `auto`"
             ))
         );
     }

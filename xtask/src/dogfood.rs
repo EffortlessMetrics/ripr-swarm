@@ -3440,7 +3440,7 @@ const GENERATED_CI_FIRST_PR_REPAIR: &str = "`ripr first-pr --root . --base origi
 /// `duration_ms` is wall-clock across both producers (#6958).
 pub(crate) const GENERATED_CI_COCKPIT_COMMAND: &str = concat!(
     "cargo run --quiet -p ripr -- init --ci github --dry-run",
-    " && cargo run --quiet -p ripr -- reports ci-summary --root <generated-ci-cockpit-fixture> --base-ref main",
+    " && cargo run --quiet -p ripr -- reports ci-summary --full --root <generated-ci-cockpit-fixture> --base-ref main",
 );
 pub(crate) const GENERATED_CI_FRONT_PANEL_REPAIR: &str = "Safe next action: run `ripr pr-review front-panel --root . --pr-guidance target/ripr/review/comments.json --out target/ripr/reports/pr-review-front-panel.json --out-md target/ripr/reports/pr-review-front-panel.md` after attaching at least one explicit input.";
 pub(crate) const GENERATED_CI_PACKET_INDEX_REPAIR: &str = "Regenerate command: `ripr reports index --root . --reports-dir target/ripr/reports --review-dir target/ripr/review --receipts-dir target/ripr/receipts --workflow-dir target/ripr/workflow --agent-dir target/ripr/agent --pilot-dir target/ripr/pilot --ci-dir target/ci --out target/ripr/reports/index.json --out-md target/ripr/reports/index.md`.";
@@ -3480,7 +3480,7 @@ pub(crate) fn dogfood_generated_ci_cockpit_run() -> Result<DogfoodGeneratedCiCoc
     ))
 }
 
-/// Render `ripr reports ci-summary` against a first-run fixture that opts
+/// Render the detailed `ripr reports ci-summary --full` preview against a first-run fixture that opts
 /// into TypeScript preview so language grouping is present, without the
 /// start-here / front-panel / index artifacts that would hide the four
 /// regeneration commands (#6958).
@@ -3540,6 +3540,7 @@ fn render_generated_ci_summary_at(root: &Path) -> Result<String, String> {
         "--",
         "reports",
         "ci-summary",
+        "--full",
         "--root",
         &root_text,
         "--base-ref",
