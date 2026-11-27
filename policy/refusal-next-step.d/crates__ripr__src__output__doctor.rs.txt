@@ -1,2 +1,1 @@
-crates/ripr/src/output/doctor.rs|cannot resolve {selector} from the selected root: {error}
 crates/ripr/src/output/doctor.rs|failed to serialize doctor report: {error}

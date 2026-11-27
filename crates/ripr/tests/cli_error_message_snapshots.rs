@@ -36,6 +36,37 @@ const CASES: &[Case] = &[
         stderr: "ripr: review-comments requires --head <sha>; pass the pull request's head commit, for example `--base origin/main --head HEAD`\n",
     },
     Case {
+        args: &[
+            "review-comments",
+            "--base",
+            "origin/main",
+            "--head",
+            "HEAD",
+            "--suppression-policy",
+            "",
+        ],
+        exit: 2,
+        stderr: "ripr: review-comments --suppression-policy requires a non-empty path; pass a path right after it (an empty value usually means an unset shell variable)\n",
+    },
+    Case {
+        args: &[
+            "review-comments",
+            "--base",
+            "origin/main",
+            "--head",
+            "HEAD",
+            "--out",
+            "",
+        ],
+        exit: 2,
+        stderr: "ripr: review-comments --out requires a non-empty path; pass a path right after it (an empty value usually means an unset shell variable)\n",
+    },
+    Case {
+        args: &["pr-comments", "plan", "--max-inline-comments", "0"],
+        exit: 2,
+        stderr: "ripr: pr-comments plan --max-inline-comments must be greater than zero; pass a whole number of 1 or more\n",
+    },
+    Case {
         args: &["receipt", "write"],
         exit: 2,
         stderr: "ripr: receipt write requires a canonical_gap_id; re-run with `--gap <canonical_gap_id>` (`ripr receipt --help` shows the full command)\n",
@@ -213,6 +244,23 @@ const CASES: &[Case] = &[
         args: &["evidence-health", "--root", "/ripr-missing-root"],
         exit: 2,
         stderr: "ripr: evidence-health root /ripr-missing-root is not a directory; pass the directory that contains the workspace (for a Cargo.toml path, its parent directory)\n",
+    },
+    // #16374: a help request for an unknown topic refuses as a help topic and
+    // names the routes that list topics. The controls keep their wording.
+    Case {
+        args: &["help", "bogus-topic"],
+        exit: 2,
+        stderr: "ripr: unknown help topic \"bogus-topic\". Run `ripr help` to list commands, or `ripr help workflow` to list workflows.\n",
+    },
+    Case {
+        args: &["help", "chekc"],
+        exit: 2,
+        stderr: "ripr: unknown help topic \"chekc\". Did you mean `ripr help check`? Run `ripr help` to list commands, or `ripr help workflow` to list workflows.\n",
+    },
+    Case {
+        args: &["bogus"],
+        exit: 2,
+        stderr: "ripr: unknown command \"bogus\". Run `ripr --help`.\n",
     },
     // An option typed before the command. The `ripr check` example may only
     // name a spelling `check` accepts: `ripr -q check` used to be told to run
@@ -465,4 +513,31 @@ fn wrong_shape_config_values_say_what_to_write() -> Result<(), String> {
     } else {
         Err(failures.join("\n"))
     }
+}
+
+/// #16374 control: a real help topic still prints that command's help (exit 0,
+/// nothing on stderr), the same text as `ripr check --help`.
+#[test]
+fn a_real_help_topic_still_prints_its_help() -> Result<(), String> {
+    let here = std::env::temp_dir();
+    let run = |args: &[&str]| {
+        ripr_in(&here)
+            .args(args)
+            .output()
+            .map_err(|error| format!("run ripr {args:?}: {error}"))
+    };
+    let via_help = run(&["help", "check"])?;
+    let direct = run(&["check", "--help"])?;
+    if via_help.status.code() != Some(0)
+        || via_help.stdout.is_empty()
+        || via_help.stdout != direct.stdout
+        || !via_help.stderr.is_empty()
+    {
+        return Err(format!(
+            "ripr help check: exit {:?}, stderr {:?}",
+            via_help.status.code(),
+            String::from_utf8_lossy(&via_help.stderr)
+        ));
+    }
+    Ok(())
 }

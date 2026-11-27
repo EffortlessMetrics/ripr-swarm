@@ -445,13 +445,24 @@ impl McpServer {
         reject_unknown_arguments(&arguments, &["canonical_id", "snapshot_id"])?;
         let canonical_id = required_string_argument(&arguments, "canonical_id")?;
         let requested = optional_string_argument(&arguments, "snapshot_id")?;
-        let mut session = self.session.lock().await;
-        match session.prepare_repair(
-            &canonical_id,
-            requested.as_deref(),
-            self.root_identity.as_deref(),
-            self.analysis_root.as_deref(),
-        ) {
+        let result = match self.analysis_root.clone() {
+            Some(root) => {
+                self.prepare_repair_document_with(
+                    &canonical_id,
+                    requested.as_deref(),
+                    move |lookup| lookup.read(&root),
+                )
+                .await
+            }
+            // No store to check: the session-only route, as before.
+            None => self.session.lock().await.prepare_repair_checked(
+                &canonical_id,
+                requested.as_deref(),
+                self.root_identity.as_deref(),
+                None,
+            ),
+        };
+        match result {
             Ok(document) => {
                 // A refused item created no transaction: say so with
                 // `isError`, the same convention `ripr_get_repair_card`
@@ -468,6 +479,41 @@ impl McpServer {
             }
             Err(failure) => self.typed_failure(failure, repair::REPAIR_PACKET_SCHEMA_VERSION),
         }
+    }
+
+    /// `ripr_prepare_repair` without holding the session lock across the
+    /// durable store read (#15244): the lookup is taken under the lock, read
+    /// on a blocking worker (it runs git and the filesystem inventory, which
+    /// would stall the current-thread runtime), and the session lock is
+    /// re-taken to revalidate the admitted snapshot before any transaction is
+    /// replayed or created.
+    async fn prepare_repair_document_with(
+        &self,
+        canonical_id: &str,
+        requested: Option<&str>,
+        durable_read: impl FnOnce(
+            repair::DurableLookup,
+        ) -> Result<repair::DurableCheck, workspace::AttemptFailure>
+        + Send
+        + 'static,
+    ) -> Result<Value, workspace::AttemptFailure> {
+        let lookup = {
+            let session = self.session.lock().await;
+            session.prepare_repair_durable_lookup(canonical_id, requested)?
+        };
+        let durable = blocking_durable_worker(
+            move || durable_read(lookup),
+            "durable attempt store read worker failed",
+            "retry ripr_prepare_repair",
+        )
+        .await?;
+        let mut session = self.session.lock().await;
+        session.prepare_repair_checked(
+            canonical_id,
+            requested,
+            self.root_identity.as_deref(),
+            Some(durable),
+        )
     }
 
     async fn list_repair_attempts_tool(
@@ -1462,11 +1508,24 @@ fn repair_document_from_session(
 async fn blocking_repair_read(
     read: impl FnOnce() -> Result<Value, workspace::AttemptFailure> + Send + 'static,
 ) -> Result<Value, workspace::AttemptFailure> {
+    blocking_durable_worker(
+        read,
+        "durable repair read worker failed",
+        "retry the exact attempt or receipt read",
+    )
+    .await
+}
+
+async fn blocking_durable_worker<T: Send + 'static>(
+    read: impl FnOnce() -> Result<T, workspace::AttemptFailure> + Send + 'static,
+    failure: &str,
+    recovery: &str,
+) -> Result<T, workspace::AttemptFailure> {
     tokio::task::spawn_blocking(read).await.map_err(|error| {
         workspace::AttemptFailure::new(
             workspace::CODE_ANALYSIS_FAILED,
-            format!("durable repair read worker failed: {error}"),
-            "retry the exact attempt or receipt read",
+            format!("{failure}: {error}"),
+            recovery,
         )
     })?
 }

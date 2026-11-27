@@ -106,6 +106,31 @@ pub(crate) fn owners_from_program(
         source,
         &extract_imports_for_test_file(&program.body),
     );
+    // A CommonJS whole-export entry (#16369) stands for the function the
+    // owner side proved is the whole export; any other is dropped.
+    let whole_exports: std::collections::BTreeSet<String> = owners
+        .iter()
+        .filter(|owner| {
+            owner.commonjs_default_export
+                && owner.class_name.is_none()
+                && matches!(
+                    owner.owner_kind,
+                    OwnerKind::Function | OwnerKind::ArrowFunction
+                )
+        })
+        .map(|owner| owner.name.clone())
+        .collect();
+    let entries: std::collections::BTreeMap<String, Vec<TypeScriptModuleEntry>> = entries
+        .into_iter()
+        .map(|(name, owner_entries)| {
+            let kept = owner_entries
+                .into_iter()
+                .filter(|entry| !entry.commonjs_whole || whole_exports.contains(&entry.name))
+                .collect::<Vec<_>>();
+            (name, kept)
+        })
+        .filter(|(_, owner_entries)| !owner_entries.is_empty())
+        .collect();
     for owner in &mut owners {
         // A `ModuleFunction` owner is a non-callable `const` initializer. A
         // followable read-only value node (#13592 B2) keeps its reader
@@ -913,6 +938,14 @@ fn mark_commonjs_default_binding(
             target = Some(ident.name.as_str());
         }
     }
+    // TypeScript `export = Name;` is `module.exports = Name;` once compiled
+    // (#16365). The gate below then expects no `module.exports =` write, so
+    // a file with both forms fails it.
+    let export_equals = super::export_equals::export_equals_target(program);
+    let module_writes = usize::from(export_equals.is_none());
+    if export_equals.is_some() {
+        target = export_equals;
+    }
     // No `module.exports = <ident>` twin to find and no inline default-export
     // owner whose gate could clear it: the whole pass is a no-op, including
     // its three full-source mask builds — the expensive part on a large ESM
@@ -955,12 +988,12 @@ fn mark_commonjs_default_binding(
         .collect();
     let visible = super::tests_extract::blank_ranges(source, &comments);
     let both = super::tests_extract::byte_preserving_code_mask(source)
-        .filter(|code| commonjs_default_gate(code))
+        .filter(|code| commonjs_default_gate(code, module_writes))
         .zip(
             super::tests_extract::byte_preserving_division_mask(source)
-                .filter(|code| commonjs_default_gate(code)),
+                .filter(|code| commonjs_default_gate(code, module_writes)),
         )
-        .filter(|_| commonjs_visible_text_gate(&visible))
+        .filter(|_| commonjs_visible_text_gate(&visible, module_writes))
         .filter(|_| !names_the_module_object_in_text(source));
     let Some((code, division_code)) = both else {
         // Only the inline owners this pass flagged lose their default
@@ -973,6 +1006,15 @@ fn mark_commonjs_default_binding(
         return;
     };
     super::commonjs_default_class::keep_inline_class_whole_export(&code, &division_code, owners);
+    if let Some(name) = target {
+        super::commonjs_default_class::mark_unexported_siblings(
+            program,
+            name,
+            &code,
+            &division_code,
+            owners,
+        );
+    }
     if let Some(class_name) = target
         && super::commonjs_default_class::mark_whole_export_class(
             program,
@@ -1016,13 +1058,13 @@ fn mark_commonjs_default_binding(
 /// comments are blanked: strings, templates and regex literals stay visible,
 /// so a mis-lexed delimiter cannot hide a write. `eval` and `with` count
 /// anywhere; `\u` escapes are not read here (they are legal in strings).
-fn commonjs_visible_text_gate(visible: &str) -> bool {
+fn commonjs_visible_text_gate(visible: &str, module_writes: usize) -> bool {
     let opaque = super::tests_extract::identifier_occurrences(visible, "eval")
         .next()
         .is_some()
         || super::tests_extract::identifier_occurrences(visible, "with")
             .any(|at| visible[at + "with".len()..].trim_start().starts_with('('));
-    !opaque && commonjs_module_reach_gate(visible)
+    !opaque && commonjs_module_reach_gate(visible, module_writes)
 }
 
 /// `true` when `needle` occurs as a bare word (not a member name, not part of
@@ -1053,13 +1095,16 @@ fn names_the_module_object_in_text(source: &str) -> bool {
 /// other use (an alias, `module?.exports`, `module[...]`, compound or update
 /// writes, `Object.assign(module, ...)`, `typeof module` guards) makes the
 /// value unknowable. `eval`, `with` and `\u` escapes refuse the file.
-fn commonjs_default_gate(code: &str) -> bool {
-    !super::tests_extract::file_is_opaque(code) && commonjs_module_reach_gate(code)
+/// `module_writes` is how many `module.exports=` writes the file may hold:
+/// one, or none when the whole export is a TypeScript `export = Name;`
+/// (#16365).
+fn commonjs_default_gate(code: &str, module_writes: usize) -> bool {
+    !super::tests_extract::file_is_opaque(code) && commonjs_module_reach_gate(code, module_writes)
 }
 
-/// Every use of the module object in `code` is `module.exports = ...` once or
-/// a property access of it.
-fn commonjs_module_reach_gate(code: &str) -> bool {
+/// Every use of the module object in `code` is `module.exports = ...`
+/// (`module_writes` times) or a property access of it.
+fn commonjs_module_reach_gate(code: &str, module_writes: usize) -> bool {
     let word = |ch: Option<char>| {
         ch.is_some_and(|ch| ch == '_' || ch == '$' || ch.is_alphanumeric() || !ch.is_ascii())
     };
@@ -1124,7 +1169,7 @@ fn commonjs_module_reach_gate(code: &str) -> bool {
         }
         return false;
     }
-    assignments == 1
+    assignments == module_writes
 }
 
 /// Mark top-level function (or const arrow) owners held by the module's `export default {
@@ -2206,6 +2251,30 @@ fn extract_imports_from_statements_inner(
                     );
                 }
             }
+            continue;
+        }
+
+        // TypeScript `import x = require('./y')` compiles to `const x =
+        // require('./y')` and records the same namespace binding (#16365).
+        if let Some((name, source_str)) = super::export_equals::import_equals_require(stmt) {
+            if !require_is_ambient {
+                continue;
+            }
+            if !mutated_names
+                .get_or_insert_with(|| member_mutations(statements))
+                .contains(name)
+            {
+                namespaces.insert(name.to_string(), source_str.clone());
+            }
+            push_unique_import(
+                &mut out,
+                TypeScriptImport {
+                    source: source_str,
+                    imported: Some("default".to_string()),
+                    local: name.to_string(),
+                    namespace: true,
+                },
+            );
             continue;
         }
 

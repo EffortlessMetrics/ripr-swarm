@@ -400,7 +400,9 @@ pub(super) fn plan_agent_target(
     // The atomic write swaps the directory entry, which would replace a
     // symlinked (shared or dotfiles-managed) file with a plain copy.
     if std::fs::symlink_metadata(&path)
-        .map_err(|err| format!("cannot inspect {shown}: {err}"))?
+        .map_err(|err| {
+            format!("cannot inspect {shown}: {err}; check permissions on that path, then rerun")
+        })?
         .file_type()
         .is_symlink()
     {

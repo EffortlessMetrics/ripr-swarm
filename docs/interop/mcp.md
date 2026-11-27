@@ -816,7 +816,8 @@ remains optional in the output schema because an ineligible packet omits it.
 An ineligible item returns `isError: true` with `repair_packet_ready: false`,
 the typed ineligibility reason, `attempt: null` and a machine-readable `next`
 object (`kind` one of `nothing_to_do`, `write_test_by_hand`, `change_policy`,
-`commit_then_refresh`, `await_producer_fact`, or `terminal_static_limit`; the
+`commit_then_refresh`, `await_producer_fact`, `terminal_static_limit`, or
+`resume_durable_attempt`; the
 `reason`; an `mcp` route or `null`; and, only for `write_test_by_hand`,
 `after_editing_tests`; a
 `seam_not_found` or `seam_ambiguous` refusal also carries `stub_route`, the
@@ -867,6 +868,23 @@ refuses with `incomplete_inventory` naming the file instead of reporting
 `commit_then_refresh` (commit or stash that file, then refresh). An item whose
 `probe:` finding id names no seam is resolved once more by its readable gap id,
 the identity `ripr repair` and the card accept (#15307).
+
+`ripr_prepare_repair` creates no session transaction while a live durable
+attempt exists for the item's seam (the CLI rule `ripr repair` uses: awaiting
+its edit at the current HEAD). It answers the refusal shape with
+`ineligibility.reason: durable_attempt_awaiting`, `attempt: null`, an
+`existing_attempt` block and links naming the durable attempt, and
+`next.mcp` routing to `ripr_get_repair_attempt`; a session transaction would
+be superseded by the refresh that follows the edit, and only a durable
+attempt can reach `improved` (#15244).
+A ready
+item whose seam binding is missing, or whose HEAD or durable store cannot be
+read, fails closed (`no_snapshot`, `seam_not_found`, or `analysis_failed`) and
+creates no session transaction, because a rival attempt could not be ruled out.
+A store holding a manifest the inventory cannot read refuses the same way
+(`analysis_failed`, naming the unreadable manifests), since its seam cannot be
+told. The store is read without holding the session lock; a snapshot replaced
+meanwhile refuses with `stale_snapshot` before anything is created.
 
 `ripr_get_repair_attempt` (and `ripr://repair-attempt/{attempt_id}`) reads
 one transaction by identity: session transactions answer first; otherwise

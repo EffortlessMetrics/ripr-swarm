@@ -1,0 +1,4 @@
+[package]
+name = "rust_into_from_fn_shadows_constructor_fixture"
+version = "0.0.0"
+edition = "2024"

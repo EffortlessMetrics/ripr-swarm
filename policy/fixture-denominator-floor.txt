@@ -350,6 +350,7 @@ case fixtures/evidence-promotion-honesty-corpus/corpus.json#python_route_respons
 case fixtures/evidence-promotion-honesty-corpus/corpus.json#python_route_response_duplicate_old_key
 case fixtures/evidence-promotion-honesty-corpus/corpus.json#python_route_response_equivalent_number
 case fixtures/evidence-promotion-honesty-corpus/corpus.json#python_route_response_float_floor_division
+case fixtures/evidence-promotion-honesty-corpus/corpus.json#python_parent_collected_test_shadow
 case fixtures/evidence-promotion-honesty-corpus/corpus.json#python_route_response_json_patch
 case fixtures/evidence-promotion-honesty-corpus/corpus.json#python_route_response_list_subscript
 case fixtures/evidence-promotion-honesty-corpus/corpus.json#python_route_response_parenthesized_alias
@@ -467,6 +468,7 @@ case fixtures/evidence-promotion-honesty-corpus/corpus.json#rust_contradiction_w
 case fixtures/evidence-promotion-honesty-corpus/corpus.json#rust_contradiction_withhold_lone_test
 case fixtures/evidence-promotion-honesty-corpus/corpus.json#rust_contradiction_withhold_mates_only
 case fixtures/evidence-promotion-honesty-corpus/corpus.json#rust_copy_builder_field_write_unmoved_read
+case fixtures/evidence-promotion-honesty-corpus/corpus.json#rust_crate_qualified_same_named_type
 case fixtures/evidence-promotion-honesty-corpus/corpus.json#rust_cross_crate_trait_impl_borrows_no_doctest
 case fixtures/evidence-promotion-honesty-corpus/corpus.json#rust_dep_edge_cross_crate_positive_control
 case fixtures/evidence-promotion-honesty-corpus/corpus.json#rust_dep_edge_cross_crate_wrong_crate_oracle_non_promotion
@@ -937,6 +939,8 @@ case fixtures/evidence-promotion-honesty-corpus/corpus.json#ts_then_function_sco
 case fixtures/evidence-promotion-honesty-corpus/corpus.json#ts_then_inline_receiver_shadow_cannot_confirm_return
 case fixtures/evidence-promotion-honesty-corpus/corpus.json#ts_token_substring
 case fixtures/evidence-promotion-honesty-corpus/corpus.json#ts_trailing_suite_hook_argument
+case fixtures/evidence-promotion-honesty-corpus/corpus.json#typescript_body_local_class_shadow
+case fixtures/evidence-promotion-honesty-corpus/corpus.json#typescript_body_local_class_shadow_control
 case fixtures/evidence-promotion-honesty-corpus/corpus.json#typescript_boundary_folded_const_transformed_local
 case fixtures/evidence-promotion-honesty-corpus/corpus.json#typescript_boundary_literal_in_other_parameter
 case fixtures/evidence-promotion-honesty-corpus/corpus.json#typescript_boundary_transformed_local
@@ -1870,6 +1874,7 @@ golden fixtures/python_route_response_docs_route/expected human-full.txt human.t
 golden fixtures/python_route_response_duplicate_old_key/expected human-full.txt human.txt
 golden fixtures/python_route_response_equivalent_number/expected human-full.txt human.txt
 golden fixtures/python_route_response_float_floor_division/expected human-full.txt human.txt
+golden fixtures/python_parent_collected_test_shadow/expected human-full.txt human.txt
 golden fixtures/python_route_response_json_patch/expected human-full.txt human.txt
 golden fixtures/python_route_response_list_subscript/expected human-full.txt human.txt
 golden fixtures/python_route_response_parenthesized_alias/expected human-full.txt human.txt
@@ -1977,6 +1982,7 @@ golden fixtures/rust_contradiction_composed_file_mates/expected human-full.txt h
 golden fixtures/rust_contradiction_lone_test/expected human-full.txt human.txt
 golden fixtures/rust_contradiction_mates_only/expected human-full.txt human.txt
 golden fixtures/rust_copy_builder_field_write/expected human.txt
+golden fixtures/rust_crate_qualified_same_named_type/expected human-full.txt human.txt
 golden fixtures/rust_deleted_guard_same_value/expected human.txt
 golden fixtures/rust_dep_edge_cross_crate_ambiguity/expected human-full.txt human.txt
 golden fixtures/rust_dep_edge_cross_crate_positive/expected human-full.txt human.txt
@@ -2238,6 +2244,8 @@ golden fixtures/typescript_adversarial_render_unobserved_sink/expected human-ful
 golden fixtures/typescript_adversarial_same_method_other_class/expected human-full.txt human.txt
 golden fixtures/typescript_adversarial_token_substring/expected human-full.txt human.txt
 golden fixtures/typescript_awaited_promise_reject/expected human.txt
+golden fixtures/typescript_body_local_class_shadow/expected human-full.txt human.txt
+golden fixtures/typescript_body_local_class_shadow_control/expected human-full.txt human.txt
 golden fixtures/typescript_boundary_folded_const_transformed_local/expected human-full.txt human.txt
 golden fixtures/typescript_boundary_gap/expected human.txt
 golden fixtures/typescript_boundary_literal_in_other_parameter/expected human-full.txt human.txt

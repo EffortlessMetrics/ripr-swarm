@@ -14,6 +14,8 @@
 //! assertion stay here — they are the only copy.
 
 use crate::domain::{
+    ASSERTION_SHAPED_NO_STATIC_PATH_NEXT_STEP, ASSERTION_SHAPED_REACHABLE_UNREVEALED_NEXT_STEP,
+    ASSERTION_SHAPED_WEAKLY_EXPOSED_NEXT_STEP, BUILD_SCRIPT_NO_STATIC_PATH_NEXT_STEP,
     ExposureClass, Finding, OracleStrength, ProbeFamily, RelatedTest, RelatedTestMiss,
     StaticLimitKind, StopReason, exact_assertion_fact, input_boundary_fact,
 };
@@ -285,6 +287,8 @@ fn reach_edge_unresolved(finding: &Finding) -> bool {
 /// `exposed` there is nothing to change, for the unknown classes ripr has not
 /// established what is missing, and a gap whose next step was withheld (an
 /// exact oracle already covers the direct sink) indicates no assertion repair.
+/// Build-script and assertion-helper guidance already describes the appropriate
+/// action, so the generic test recipe would be misleading.
 fn verdict_changers(finding: &Finding, owner_signature: Option<&str>) -> Vec<String> {
     // Base-side evidence (`base_deleted`, `moved_or_renamed`) is not a
     // candidate edit target: its Next step recommends no test change, so a
@@ -299,8 +303,15 @@ fn verdict_changers(finding: &Finding, owner_signature: Option<&str>) -> Vec<Str
         ExposureClass::NoStaticPath
             | ExposureClass::ReachableUnrevealed
             | ExposureClass::WeaklyExposed
-    ) || finding.recommended_next_step.is_none()
-    {
+    ) || matches!(
+        finding.recommended_next_step.as_deref(),
+        None | Some(
+            BUILD_SCRIPT_NO_STATIC_PATH_NEXT_STEP
+                | ASSERTION_SHAPED_NO_STATIC_PATH_NEXT_STEP
+                | ASSERTION_SHAPED_REACHABLE_UNREVEALED_NEXT_STEP
+                | ASSERTION_SHAPED_WEAKLY_EXPOSED_NEXT_STEP
+        )
+    ) {
         return Vec::new();
     }
     // #7796: the recipe names the owner; when the observed call shape is
@@ -593,6 +604,56 @@ mod tests {
             !text.contains(StopReason::HelperIdentityUnresolved.next_step()),
             "{text}"
         );
+    }
+
+    #[test]
+    fn verdict_recipe_respects_build_script_and_assertion_helper_guidance() {
+        let mut finding = sample_perl_finding();
+        finding.related_tests.clear();
+        finding.class = ExposureClass::NoStaticPath;
+        finding.recommended_next_step = Some("Add a test that calls the changed code.".to_string());
+
+        let ordinary = render_verdict_explanation(&finding, Some("main()"));
+        assert!(
+            ordinary.contains("  - call `main()` and assert on its result\n"),
+            "{ordinary}"
+        );
+
+        for (class, step, signature) in [
+            (
+                ExposureClass::NoStaticPath,
+                BUILD_SCRIPT_NO_STATIC_PATH_NEXT_STEP,
+                "main()",
+            ),
+            (
+                ExposureClass::NoStaticPath,
+                ASSERTION_SHAPED_NO_STATIC_PATH_NEXT_STEP,
+                "assert_expected(value: u16)",
+            ),
+            (
+                ExposureClass::ReachableUnrevealed,
+                ASSERTION_SHAPED_REACHABLE_UNREVEALED_NEXT_STEP,
+                "assert_expected(value: u16)",
+            ),
+            (
+                ExposureClass::WeaklyExposed,
+                ASSERTION_SHAPED_WEAKLY_EXPOSED_NEXT_STEP,
+                "assert_expected(value: u16)",
+            ),
+        ] {
+            finding.class = class;
+            finding.recommended_next_step = Some(step.to_string());
+            let text = render_verdict_explanation(&finding, Some(signature));
+            assert!(text.contains("Why this verdict"), "{text}");
+            assert!(
+                !text.contains("To change the verdict, a test needs to:"),
+                "{text}"
+            );
+            assert_eq!(
+                crate::output::next_step::reconcile_next_step(&finding),
+                step
+            );
+        }
     }
 
     #[test]

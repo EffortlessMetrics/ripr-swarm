@@ -5,17 +5,34 @@
 
 use serde::{Deserialize, Serialize};
 
+/// How a consumer should present one review gap. Serialized as the
+/// `snake_case` word that [`EvidenceState::as_str`] returns. Each producer
+/// (the Rust evidence record, preview language adapters) chooses the state;
+/// only [`EvidenceState::Actionable`] marks a repair target.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum EvidenceState {
+    /// The gap is a repair target consumers may act on. The only state that
+    /// [`EvidenceState::is_actionable`] accepts.
     Actionable,
+    /// Existing tests already observe the behavior. For Rust seams this is
+    /// the `strongly_gripped` grip class.
     AlreadyObserved,
+    /// Shown for context but not a repair target. For Rust seams this is the
+    /// `intentional` grip class.
     InternalOnly,
+    /// Not actionable: the producer cannot back a repair packet. This covers
+    /// analyzer limits, and also real gaps that name a test file or a missing
+    /// test but lack the verification, receipt or edit constraints a repair
+    /// needs.
     StaticLimitation,
+    /// Not actionable, and no other state applies. A preview producer may
+    /// still attach a suggested test or assertion as advice.
     Unknown,
 }
 
 impl EvidenceState {
+    /// Returns the snake_case wire word, such as `"already_observed"`.
     pub const fn as_str(self) -> &'static str {
         match self {
             Self::Actionable => "actionable",
@@ -26,6 +43,7 @@ impl EvidenceState {
         }
     }
 
+    /// Returns `true` only for [`EvidenceState::Actionable`].
     pub const fn is_actionable(self) -> bool {
         matches!(self, Self::Actionable)
     }

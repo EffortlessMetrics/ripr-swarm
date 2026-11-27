@@ -6294,6 +6294,50 @@ fn test_local_module_shadow_covers_project_names_import_forms_and_conftest_dirs(
     ];
     let unit = "svc/a/tests/unit/test_x.py";
     assert!(identifies(&nested, "svc/a/core.py", unit).0);
+    // #14083 A5: a module pytest collects in `tests` inserts that basedir too,
+    // ahead of the subdirectory's own import (checked under pytest 9.2: a run
+    // of the whole tree resolves `core` in `unit/test_x.py` to the helper,
+    // while a run of `tests/unit` alone reaches the project module).
+    let with_collected = [
+        "svc/a/pyproject.toml",
+        "svc/a/core.py",
+        "svc/a/tests/core.py",
+        "svc/a/tests/test_a.py",
+        "svc/a/tests/unit/test_x.py",
+    ];
+    assert!(!identifies(&with_collected, "svc/a/core.py", unit).0);
+    // A helper module pytest does not collect (`tests/helpers.py`, under a
+    // `tests` directory) inserts nothing: the layout stays identifying.
+    let uncollected = [
+        "svc/a/pyproject.toml",
+        "svc/a/core.py",
+        "svc/a/tests/core.py",
+        "svc/a/tests/helpers.py",
+        "svc/a/tests/unit/test_x.py",
+    ];
+    assert!(identifies(&uncollected, "svc/a/core.py", unit).0);
+    // A collected test module above the test's own project root belongs to
+    // the outer project's run, not to `svc/a`'s: the nested project's tests
+    // keep their credit (`svc/test_health.py` beside the outer `svc/core.py`).
+    let nested_project = [
+        "svc/pyproject.toml",
+        "svc/core.py",
+        "svc/test_health.py",
+        "svc/a/pyproject.toml",
+        "svc/a/core.py",
+        "svc/a/tests/test_core.py",
+    ];
+    assert!(identifies(&nested_project, "svc/a/core.py", "svc/a/tests/test_core.py").0);
+    // The project root itself is inside the project: a collected module in
+    // `svc/a` puts `svc/a` on the path, where the owner lives anyway.
+    let at_root = [
+        "svc/a/pyproject.toml",
+        "svc/a/core.py",
+        "svc/a/test_root.py",
+        "svc/a/tests/core.py",
+        "svc/a/tests/unit/test_x.py",
+    ];
+    assert!(identifies(&at_root, "svc/a/core.py", unit).0);
     let with_conftest = [
         "svc/a/pyproject.toml",
         "svc/a/core.py",

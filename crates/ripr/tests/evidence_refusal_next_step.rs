@@ -1,8 +1,9 @@
 //! Refusals for a missing or broken input file name where a usable one comes
 //! from, not just the read error: `ripr pr-evidence --check`,
 //! `ripr impacted-evidence --check`, `ripr baseline update`,
-//! `ripr calibrate cargo-mutants`, `ripr check --suppression-policy` and the
-//! `ripr agent repair` attempt selectors. Each case runs the real binary in a
+//! `ripr calibrate cargo-mutants`, `ripr check --suppression-policy`,
+//! `ripr agent receipt --verify-json` and the `ripr agent repair` attempt
+//! selectors. Each case runs the real binary in a
 //! scratch directory and pins the next-step clause, so a regression that drops
 //! it fails here rather than only in the looser action-word floor
 //! (`refusal_next_step.rs`).
@@ -294,6 +295,40 @@ fn calibrate_refusal_names_the_snapshot_command() -> Result<(), String> {
     Ok(())
 }
 
+/// A verify JSON whose shape is not what `ripr agent verify` writes names
+/// that command, and a seam id it does not list says to pick one it does.
+#[test]
+fn agent_receipt_verify_json_refusals_name_the_producer() -> Result<(), String> {
+    let dir = committed_repo()?;
+    let receipt = [
+        "agent",
+        "receipt",
+        "--root",
+        ".",
+        "--verify-json",
+        "verify.json",
+        "--seam-id",
+        "seam-a",
+        "--json",
+    ];
+    let producer = "; pass the unedited JSON that `ripr agent verify` wrote as --verify-json";
+    for (verify, first) in [
+        (
+            r#"{"schema_version":"0.3"}"#,
+            "agent verify JSON is missing `inputs`",
+        ),
+        (
+            r#"{"schema_version":"0.3","inputs":{"before":"before.json"}}"#,
+            "agent verify inputs is missing string field `after`",
+        ),
+    ] {
+        std::fs::write(dir.0.join("verify.json"), verify)
+            .map_err(|error| format!("write verify.json: {error}"))?;
+        stderr_has_all(&refusal(&dir.0, &receipt)?, &[first, producer])?;
+    }
+    Ok(())
+}
+
 #[test]
 fn suppression_policy_refusals_name_the_fix() -> Result<(), String> {
     let repo = committed_repo()?;
@@ -424,6 +459,184 @@ fn agent_repair_attempt_refusals_name_the_fix() -> Result<(), String> {
     if stderr.contains("commit the repository at least once") {
         return Err(format!(
             "committed SHA-256 checkout was told to commit again:\n{stderr}"
+        ));
+    }
+    Ok(())
+}
+
+/// Input files that parse but do not hold what the command reads name the
+/// command that writes a usable one (#16019).
+#[test]
+fn invalid_input_file_refusals_name_the_producer() -> Result<(), String> {
+    let dir = committed_repo()?;
+    let write = |name: &str, contents: &str| {
+        std::fs::write(dir.0.join(name), contents).map_err(|error| format!("write {name}: {error}"))
+    };
+    write("check.json", r#"{"tool":"ripr"}"#)?;
+    stderr_has_all(
+        &refusal(
+            &dir.0,
+            &[
+                "review-comments",
+                "--root",
+                ".",
+                "--base",
+                "HEAD",
+                "--head",
+                "HEAD",
+                "--check-output",
+                "check.json",
+            ],
+        )?,
+        &[
+            "is invalid: missing producer schema_version",
+            "; rerun `ripr check --json` for the same root, base and diff, then pass its output to `--check-output`",
+        ],
+    )?;
+    write("ledger.json", r#"{"schema_version":"0.1"}"#)?;
+    let regenerate =
+        "; regenerate it with `ripr reports gap-ledger` or pass the ledger that command wrote";
+    stderr_has_all(
+        &refusal(&dir.0, &["swarm", "queue", "--gap-ledger", "ledger.json"])?,
+        &[
+            "swarm queue --gap-ledger ledger.json is invalid: ",
+            regenerate,
+        ],
+    )?;
+    stderr_has_all(
+        &refusal(
+            &dir.0,
+            &[
+                "agent",
+                "packet",
+                "--root",
+                ".",
+                "--gap-ledger",
+                "ledger.json",
+                "--gap-id",
+                "gap:demo",
+                "--json",
+            ],
+        )?,
+        &[
+            "agent packet --gap-ledger ledger.json is invalid: ",
+            regenerate,
+        ],
+    )?;
+    write("receipt.json", "{ not json")?;
+    stderr_has_all(
+        &refusal(&dir.0, &["receipt", "check", "--path", "receipt.json"])?,
+        &[
+            "receipt at receipt.json is malformed: invalid JSON: ",
+            "; rewrite it with `ripr receipt write`",
+        ],
+    )
+}
+
+/// `receipt write` names the checkout fix only when Git could not resolve
+/// HEAD. A HEAD that resolves to an id receipts cannot bind (SHA-256) keeps
+/// the resolver's own advice instead of being told to make a first commit.
+#[test]
+fn receipt_write_head_refusal_names_the_fix_that_applies() -> Result<(), String> {
+    let write = [
+        "receipt",
+        "write",
+        "--gap",
+        "gap:demo",
+        "--verify-command",
+        "cargo test",
+        "--status",
+        "passed",
+    ];
+    let checkout_fix = "; run ripr from inside a Git checkout that has at least one commit";
+
+    let unborn = scratch()?;
+    git(&unborn.0, &["init", "-q"])?;
+    let stderr = refusal(&unborn.0, &write)?;
+    stderr_has_all(
+        &stderr,
+        &[
+            "receipt requires a Git repository with a resolvable HEAD: ",
+            checkout_fix,
+        ],
+    )?;
+
+    let sha256 = scratch()?;
+    git(&sha256.0, &["init", "-q", "--object-format=sha256"])?;
+    git(
+        &sha256.0,
+        &["commit", "-q", "--allow-empty", "-m", "fixture"],
+    )?;
+    let stderr = refusal(&sha256.0, &write)?;
+    stderr_has_all(&stderr, &["returned an invalid commit"])?;
+    if stderr.contains(checkout_fix) {
+        return Err(format!(
+            "a committed SHA-256 checkout got the first-commit advice:\n{stderr}"
+        ));
+    }
+    Ok(())
+}
+
+/// `reports kani` input refusals say which flag to correct (#16019).
+#[test]
+fn kani_report_input_refusals_name_the_flag_to_fix() -> Result<(), String> {
+    let dir = committed_repo()?;
+    std::fs::write(dir.0.join("binding.json"), "{}")
+        .map_err(|error| format!("write binding.json: {error}"))?;
+    std::fs::create_dir_all(dir.0.join("result-dir"))
+        .map_err(|error| format!("create result-dir: {error}"))?;
+    let kani = |input: &str| {
+        refusal(
+            &dir.0,
+            &[
+                "reports",
+                "kani",
+                "--input",
+                input,
+                "--binding",
+                "binding.json",
+                "--root",
+                ".",
+            ],
+        )
+    };
+    stderr_has_all(
+        &kani("missing-result.json")?,
+        &[
+            "reports kani read --input missing-result.json failed: not found; pass an existing, readable --input file",
+        ],
+    )?;
+    std::fs::write(dir.0.join("result.json"), "{}")
+        .map_err(|error| format!("write result.json: {error}"))?;
+    stderr_has_all(
+        &refusal(
+            &dir.0,
+            &[
+                "reports",
+                "kani",
+                "--input",
+                "result.json",
+                "--binding",
+                "missing-binding.json",
+                "--root",
+                ".",
+            ],
+        )?,
+        &[
+            "reports kani read --binding missing-binding.json failed: not found; pass an existing, readable --binding file",
+        ],
+    )?;
+    // A directory already says what to pass; the flag hint is not stacked on.
+    let stderr = kani("result-dir")?;
+    stderr_has_all(
+        &stderr,
+        &[
+            "reports kani read --input result-dir failed: is a directory, not a file; pass the path of a file",
+        ],
+    )?;
+    if stderr.contains("readable --input file") {
+        return Err(format!(
+            "directory refusal stacked a second next step:\n{stderr}"
         ));
     }
     Ok(())

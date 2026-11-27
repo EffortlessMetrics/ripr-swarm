@@ -1130,6 +1130,213 @@ fn refusal_next(
     next
 }
 
+/// The seam a ready item's durable attempt would be filed under. Fail closed
+/// (#15244): an item that cannot be mapped to a seam refuses instead of
+/// creating a session attempt that might be a rival the store would have
+/// shown.
+fn item_seam_id(
+    snapshot: &super::workspace::Snapshot,
+    item: &GapItem,
+) -> Result<String, AttemptFailure> {
+    let Some(producers) = &snapshot.card_producers else {
+        return Err(AttemptFailure::new(
+            super::workspace::CODE_NO_SNAPSHOT,
+            "the current snapshot carries no repair-card producers, so the durable attempt store cannot be checked for this item's seam; no session attempt was created",
+            "re-run ripr_refresh to commit a complete snapshot, then retry",
+        ));
+    };
+    let Some(binding) = producers
+        .bindings
+        .iter()
+        .find(|binding| binding.item_canonical_id == item.canonical_id)
+    else {
+        return Err(AttemptFailure::new(
+            super::repair_card::CODE_SEAM_NOT_FOUND,
+            format!(
+                "canonical item {} is not bound to a seam, so the durable attempt store cannot be checked for it; no session attempt was created",
+                item.canonical_id
+            ),
+            "read the item's evidence with ripr_get_gap, or run `ripr agent card` in the repository",
+        ));
+    };
+    Ok(binding.seam.seam.id().as_str().to_string())
+}
+
+/// What a store-aware prepare must read from the workspace, taken from the
+/// session under its lock: the consumed-source custody check (#15240) and the
+/// durable attempt store. Reading it ([`Self::read`]) hashes source files and
+/// runs git and the filesystem inventory, so the server runs it on a blocking
+/// worker without holding the session lock (#15244).
+pub(crate) struct DurableLookup {
+    /// The admitted snapshot, shared so custody can be read off the lock.
+    snapshot: std::sync::Arc<super::workspace::Snapshot>,
+    canonical_id: String,
+    /// `None` when the item is not repair-ready in the admitted snapshot, so
+    /// no durable attempt can bear on the outcome.
+    seam_id: Option<String>,
+}
+
+impl DurableLookup {
+    pub(crate) fn read(self, root: &Path) -> Result<DurableCheck, AttemptFailure> {
+        // Custody first: a stale or unverifiable source refuses before the
+        // store is read, as it precedes every document on the session route.
+        let item = self.snapshot.require_item(&self.canonical_id)?;
+        let custody_notes = prepare_custody(Some(root), &self.snapshot, item)?;
+        let reading = match &self.seam_id {
+            None => DurableReading::NotNeeded,
+            Some(seam_id) => DurableReading::Read(durable_attempt_for_seam(root, seam_id)?),
+        };
+        Ok(DurableCheck {
+            snapshot_id: self.snapshot.snapshot_id.clone(),
+            reading,
+            custody_notes,
+        })
+    }
+}
+
+/// The workspace's answer for one admitted snapshot: the durable store's
+/// reading and the custody check's disclosed limits. Prepare only uses it
+/// when the session's current snapshot is still that snapshot.
+pub(crate) struct DurableCheck {
+    snapshot_id: String,
+    reading: DurableReading,
+    /// What [`prepare_custody`] could not establish for this snapshot's item;
+    /// produced only by [`DurableLookup::read`] after custody passed.
+    custody_notes: Vec<String>,
+}
+
+enum DurableReading {
+    NotNeeded,
+    Read(Option<crate::app::task_first::ReusableAttempt>),
+}
+
+fn durable_attempt_for_seam(
+    root: &Path,
+    seam_id: &str,
+) -> Result<Option<crate::app::task_first::ReusableAttempt>, AttemptFailure> {
+    crate::app::task_first::checked_reusable_awaiting_attempt(root, seam_id).map_err(|error| {
+        AttemptFailure::new(
+            super::workspace::CODE_ANALYSIS_FAILED,
+            format!(
+                "no session attempt was created: the durable attempt store could not be fully read, so a live attempt for this seam cannot be ruled out: {error}"
+            ),
+            "run `ripr agent status` in the repository for the full diagnostic, then retry",
+        )
+    })
+}
+
+/// #15240: never mint (or replay) a ready transaction over source that
+/// changed after the snapshot captured it. The card's own shared
+/// consumed-source custody check decides, with the same typed
+/// `stale_snapshot` refusal; the server does not watch the worktree.
+/// The refusal precedes the ineligible (negative) documents too. An
+/// item with no bound seam (admission can ready an unbound item) is
+/// checked over its own file and fix-site file instead of skipped.
+/// Returns the facts the custody check could not establish, disclosed in
+/// the ready packet's limitations instead of implied current. `root` is
+/// `None` when the server has no workspace root: a snapshot that carries
+/// custody then fails closed with `workspace_unavailable`.
+fn prepare_custody(
+    root: Option<&Path>,
+    snapshot: &super::workspace::Snapshot,
+    item: &GapItem,
+) -> Result<Vec<String>, AttemptFailure> {
+    let mut custody_notes: Vec<String> = Vec::new();
+    if let Some(producers) = &snapshot.card_producers {
+        let Some(root) = root else {
+            return Err(AttemptFailure::new(
+                super::workspace::CODE_WORKSPACE_UNAVAILABLE,
+                "the workspace root is unavailable, so the consumed source cannot be re-verified for this repair",
+                "restart the server with `ripr mcp --stdio --root <repository>` and retry",
+            ));
+        };
+        // The packet hands out the item's file and its fix site as the
+        // edit surface, which a bound seam's evidence files need not
+        // include (for example a fix-site test file that is not a related
+        // test), so both are checked for every item, bound or not. They
+        // are rendered stable path text; the digests are keyed by native
+        // relative paths, so each is converted without rewriting a Unix
+        // file-name byte (#15908).
+        let item_file = super::repair_card::native_item_path(&item.file);
+        let fix_site = item.repair_readiness.fix_site.as_ref();
+        let fix_path = fix_site
+            .filter(|site| !site.file.is_empty())
+            .map(|site| super::repair_card::native_item_path(&site.file));
+        if let Some(binding) = producers
+            .bindings
+            .iter()
+            .find(|binding| binding.item_canonical_id == item.canonical_id)
+        {
+            // Seam evidence paths are native already: passed unchanged.
+            super::repair_card::verify_consumed_source_custody(
+                root,
+                snapshot,
+                item,
+                producers,
+                &binding.seam,
+                "repair preparation",
+            )?;
+        }
+        let mut paths = vec![item_file.clone()];
+        paths.extend(fix_path.clone());
+        super::repair_card::verify_consumed_paths(
+            root,
+            snapshot,
+            item,
+            producers,
+            &paths,
+            "repair preparation",
+        )?;
+        // `first_drift` skips a path with no captured digest, so an edit
+        // surface that custody cannot vouch for must not ride a ready
+        // packet silently: a ready Rust item file, or an existing test the
+        // fix site extends, with no digest fails closed.
+        let not_verifiable = |path: &Path, role: &str| {
+            AttemptFailure::new(
+                super::workspace::CODE_STALE_SNAPSHOT,
+                format!(
+                    "repair preparation for canonical item {} is refused: source custody cannot be verified for {role} `{}` because the snapshot holds no captured digest for it",
+                    item.canonical_id,
+                    path.display()
+                ),
+                "ripr_refresh will not clear this: the file is outside the captured Rust corpus or its capture was unavailable; read the item with ripr_get_gap, or run `ripr agent packet` in the repository",
+            )
+            .with_data(json!({
+                "current_snapshot_id": snapshot.snapshot_id,
+                "custody": "not_verifiable",
+                "path": path.display().to_string(),
+            }))
+        };
+        let is_rust = |path: &Path| path.extension().is_some_and(|ext| ext == "rs");
+        if !is_rust(&item_file) {
+            custody_notes.push(format!(
+                "source custody is not checked for `{}`: only Rust source files carry captured digests, so a change after the snapshot is not detected for this item",
+                item_file.display()
+            ));
+        } else if item.repair_readiness.ready
+            && producers.consumed_sources.digest(&item_file).is_none()
+        {
+            // The path cannot be captured at all (absolute, `..`,
+            // unavailable or conflicting capture, empty custody): a
+            // refresh cannot clear it, so say so and fail closed.
+            return Err(not_verifiable(&item_file, "the item file"));
+        }
+        if let (Some(site), Some(fix_path)) = (fix_site, fix_path.as_ref())
+            && producers.consumed_sources.digest(fix_path).is_none()
+        {
+            if item.repair_readiness.ready && site.new_test_kind.is_none() && is_rust(fix_path) {
+                // An existing test the packet tells the agent to extend.
+                return Err(not_verifiable(fix_path, "the fix-site file"));
+            }
+            custody_notes.push(format!(
+                "source custody is not checked for the fix-site file `{}`: the snapshot holds no captured digest for it (for example a proposed new test file)",
+                fix_path.display()
+            ));
+        }
+    }
+    Ok(custody_notes)
+}
+
 /// The next step for a repair start held only by an uncommitted inline test
 /// target (#11397): commit or stash that file, as `ripr repair` says, then
 /// refresh. Refreshing the unchanged tree cannot lift the hold.
@@ -1163,6 +1370,7 @@ impl WorkspaceSession {
     /// ineligible item returns an honest negative document with
     /// `repair_packet_ready: false` and no attempt — never a fabricated
     /// field and never a misleading transaction.
+    #[cfg(test)]
     pub(crate) fn prepare_repair(
         &mut self,
         canonical_id: &str,
@@ -1170,113 +1378,117 @@ impl WorkspaceSession {
         root_identity: Option<&str>,
         root: Option<&Path>,
     ) -> Result<Value, AttemptFailure> {
+        // Custody over `root` without the durable store: the checked step
+        // with a store answer of "no durable attempt" for the same snapshot,
+        // so custody fixtures need not be git repositories or bind a seam.
+        let durable = match root {
+            Some(root) => {
+                let snapshot = self.active_snapshot(requested)?;
+                let item = snapshot.require_item(canonical_id)?;
+                let custody_notes = prepare_custody(Some(root), snapshot, item)?;
+                Some(DurableCheck {
+                    snapshot_id: snapshot.snapshot_id.clone(),
+                    reading: if item.repair_readiness.ready {
+                        DurableReading::Read(None)
+                    } else {
+                        DurableReading::NotNeeded
+                    },
+                    custody_notes,
+                })
+            }
+            None => None,
+        };
+        self.prepare_repair_checked(canonical_id, requested, root_identity, durable)
+    }
+
+    /// `prepare_repair` plus the durable attempt store (#15170): when
+    /// `store_root` names the workspace root and the CLI's own single-attempt
+    /// rule (`reusable_awaiting_attempt`) finds a live durable attempt for the
+    /// item's seam, no rival session transaction is created. The document
+    /// discloses the durable attempt and routes to it instead, exactly as
+    /// `ripr repair` refuses a second attempt. The server runs these same
+    /// steps with the store read off the session lock.
+    #[cfg(test)]
+    pub(crate) fn prepare_repair_with_store(
+        &mut self,
+        canonical_id: &str,
+        requested: Option<&str>,
+        root_identity: Option<&str>,
+        store_root: Option<&Path>,
+    ) -> Result<Value, AttemptFailure> {
+        let durable = match store_root {
+            Some(root) => Some(
+                self.prepare_repair_durable_lookup(canonical_id, requested)?
+                    .read(root)?,
+            ),
+            None => None,
+        };
+        self.prepare_repair_checked(canonical_id, requested, root_identity, durable)
+    }
+
+    /// The first step of a store-aware prepare: what the durable store must be
+    /// asked, for the snapshot this call admits. It reads only the session.
+    pub(crate) fn prepare_repair_durable_lookup(
+        &self,
+        canonical_id: &str,
+        requested: Option<&str>,
+    ) -> Result<DurableLookup, AttemptFailure> {
+        let snapshot = self.active_snapshot(requested)?;
+        let item = snapshot.require_item(canonical_id)?;
+        let seam_id = if item.repair_readiness.ready {
+            Some(item_seam_id(snapshot, item)?)
+        } else {
+            None
+        };
+        Ok(DurableLookup {
+            snapshot: std::sync::Arc::clone(snapshot),
+            canonical_id: canonical_id.to_string(),
+            seam_id,
+        })
+    }
+
+    /// The last step of prepare. `durable` is `None` only when there is no
+    /// workspace root (so no store and no source to read); otherwise it is the
+    /// workspace's answer (custody and store) for the snapshot
+    /// [`Self::prepare_repair_durable_lookup`] admitted, which may have been
+    /// read without the session lock. A snapshot that changed meanwhile
+    /// refuses with `stale_snapshot` before anything is replayed or created.
+    /// With `None`, custody runs here and fails closed when the snapshot
+    /// carries consumed-source custody it cannot read (#15240).
+    pub(crate) fn prepare_repair_checked(
+        &mut self,
+        canonical_id: &str,
+        requested: Option<&str>,
+        root_identity: Option<&str>,
+        durable: Option<DurableCheck>,
+    ) -> Result<Value, AttemptFailure> {
         let snapshot = self.active_snapshot(requested)?;
         let snapshot_id = snapshot.snapshot_id.clone();
+        if let Some(check) = &durable
+            && check.snapshot_id != snapshot_id
+        {
+            return Err(AttemptFailure::new(
+                super::workspace::CODE_STALE_SNAPSHOT,
+                format!(
+                    "snapshot {} was replaced while the durable attempt store was read; no session attempt was created",
+                    check.snapshot_id
+                ),
+                "retry ripr_prepare_repair against the current snapshot",
+            )
+            .with_data(json!({ "current_snapshot_id": snapshot_id })));
+        }
         // #14138: a withheld owner opt-out id refuses with `owner_opt_out`.
         let item = snapshot.require_item(canonical_id)?;
-        // #15240: never mint (or replay) a ready transaction over source that
-        // changed after the snapshot captured it. The card's own shared
-        // consumed-source custody check decides, with the same typed
-        // `stale_snapshot` refusal; the server does not watch the worktree.
-        // The refusal precedes the ineligible (negative) documents too. An
-        // item with no bound seam (admission can ready an unbound item) is
-        // checked over its own file and fix-site file instead of skipped.
-        // Facts the custody check could not establish; disclosed in the ready
-        // packet's limitations instead of implied current.
-        let mut custody_notes: Vec<String> = Vec::new();
-        if let Some(producers) = &snapshot.card_producers {
-            let Some(root) = root else {
-                return Err(AttemptFailure::new(
-                    super::workspace::CODE_WORKSPACE_UNAVAILABLE,
-                    "the workspace root is unavailable, so the consumed source cannot be re-verified for this repair",
-                    "restart the server with `ripr mcp --stdio --root <repository>` and retry",
-                ));
-            };
-            // The packet hands out the item's file and its fix site as the
-            // edit surface, which a bound seam's evidence files need not
-            // include (for example a fix-site test file that is not a related
-            // test), so both are checked for every item, bound or not. They
-            // are rendered stable path text; the digests are keyed by native
-            // relative paths, so each is converted without rewriting a Unix
-            // file-name byte (#15908).
-            let item_file = super::repair_card::native_item_path(&item.file);
-            let fix_site = item.repair_readiness.fix_site.as_ref();
-            let fix_path = fix_site
-                .filter(|site| !site.file.is_empty())
-                .map(|site| super::repair_card::native_item_path(&site.file));
-            if let Some(binding) = producers
-                .bindings
-                .iter()
-                .find(|binding| binding.item_canonical_id == item.canonical_id)
-            {
-                // Seam evidence paths are native already: passed unchanged.
-                super::repair_card::verify_consumed_source_custody(
-                    root,
-                    snapshot,
-                    item,
-                    producers,
-                    &binding.seam,
-                    "repair preparation",
-                )?;
-            }
-            let mut paths = vec![item_file.clone()];
-            paths.extend(fix_path.clone());
-            super::repair_card::verify_consumed_paths(
-                root,
-                snapshot,
-                item,
-                producers,
-                &paths,
-                "repair preparation",
-            )?;
-            // `first_drift` skips a path with no captured digest, so an edit
-            // surface that custody cannot vouch for must not ride a ready
-            // packet silently: a ready Rust item file, or an existing test the
-            // fix site extends, with no digest fails closed.
-            let not_verifiable = |path: &Path, role: &str| {
-                AttemptFailure::new(
-                    super::workspace::CODE_STALE_SNAPSHOT,
-                    format!(
-                        "repair preparation for canonical item {} is refused: source custody cannot be verified for {role} `{}` because the snapshot holds no captured digest for it",
-                        item.canonical_id,
-                        path.display()
-                    ),
-                    "ripr_refresh will not clear this: the file is outside the captured Rust corpus or its capture was unavailable; read the item with ripr_get_gap, or run `ripr agent packet` in the repository",
-                )
-                .with_data(json!({
-                    "current_snapshot_id": snapshot.snapshot_id,
-                    "custody": "not_verifiable",
-                    "path": path.display().to_string(),
-                }))
-            };
-            let is_rust = |path: &Path| path.extension().is_some_and(|ext| ext == "rs");
-            if !is_rust(&item_file) {
-                custody_notes.push(format!(
-                    "source custody is not checked for `{}`: only Rust source files carry captured digests, so a change after the snapshot is not detected for this item",
-                    item_file.display()
-                ));
-            } else if item.repair_readiness.ready
-                && producers.consumed_sources.digest(&item_file).is_none()
-            {
-                // The path cannot be captured at all (absolute, `..`,
-                // unavailable or conflicting capture, empty custody): a
-                // refresh cannot clear it, so say so and fail closed.
-                return Err(not_verifiable(&item_file, "the item file"));
-            }
-            if let (Some(site), Some(fix_path)) = (fix_site, fix_path.as_ref())
-                && producers.consumed_sources.digest(fix_path).is_none()
-            {
-                if item.repair_readiness.ready && site.new_test_kind.is_none() && is_rust(fix_path)
-                {
-                    // An existing test the packet tells the agent to extend.
-                    return Err(not_verifiable(fix_path, "the fix-site file"));
-                }
-                custody_notes.push(format!(
-                    "source custody is not checked for the fix-site file `{}`: the snapshot holds no captured digest for it (for example a proposed new test file)",
-                    fix_path.display()
-                ));
-            }
-        }
+        // #15240: the consumed-source custody check, read before readiness,
+        // replay and creation on every route (see [`prepare_custody`]). A
+        // store-aware prepare ran it off the session lock, for the snapshot
+        // it admitted, which was revalidated above; the session-only route
+        // has no workspace root to read, so it runs here (no IO) and fails
+        // closed whenever the snapshot carries custody to verify.
+        let custody_notes = match &durable {
+            Some(check) => check.custody_notes.clone(),
+            None => prepare_custody(None, snapshot, item)?,
+        };
         let readiness = &item.repair_readiness;
         if !readiness.ready {
             let reason = readiness.ineligibility.unwrap_or("repair_not_established");
@@ -1333,6 +1545,73 @@ impl WorkspaceSession {
                     "no attempt was created: the tool must not create a misleading transaction",
                 ],
                 "claim_boundary": "Repair-packet evaluation for one canonical item. This negative document authorizes nothing and creates nothing.",
+            });
+            return bounded_document(document, RECOVERY_REPAIR_TOO_LARGE);
+        }
+
+        // A live durable attempt for this seam wins over a session one: the
+        // CLI refuses a second attempt, and a session transaction would be
+        // superseded by the very refresh the flow prescribes after editing
+        // tests, while only a durable attempt can reach `improved`.
+        let existing = match durable.map(|check| check.reading) {
+            None => None,
+            Some(DurableReading::Read(existing)) => existing,
+            Some(DurableReading::NotNeeded) => {
+                // The same snapshot admitted this item as not ready; a ready
+                // reading now is a projection bug, never "no attempt".
+                return Err(AttemptFailure::new(
+                    CODE_ATTEMPT_INVALID,
+                    "the durable attempt store was not checked for a ready item; no session attempt was created",
+                    "re-run ripr_refresh and retry ripr_prepare_repair",
+                ));
+            }
+        };
+        if let Some(existing) = existing {
+            let existing_id = existing.attempt_id;
+            let document = json!({
+                "schema_version": REPAIR_PACKET_SCHEMA_VERSION,
+                "snapshot_id": snapshot_id,
+                "requested_snapshot_id": requested,
+                "item": {
+                    "canonical_id": item.canonical_id,
+                    "finding_id": item.finding_id,
+                },
+                "repair_packet_ready": false,
+                "ineligibility": {
+                    "reason": "durable_attempt_awaiting",
+                    "detail": "a durable repair attempt for this seam is already awaiting its focused test edit at the current HEAD; no second attempt was started, as `ripr repair` also refuses one",
+                },
+                "attempt": Value::Null,
+                "existing_attempt": {
+                    "attempt_id": existing_id,
+                    "state": "awaiting_edit",
+                    "origin": "durable_cli",
+                    "snapshot_id": snapshot_id,
+                    "canonical_id": item.canonical_id,
+                    "finding_id": item.finding_id,
+                },
+                "next": {
+                    "kind": "resume_durable_attempt",
+                    "reason": "durable_attempt_awaiting",
+                    "detail": "read the existing durable attempt, edit the focused test it names, then re-check; only a durable attempt can reach `improved`, and a session transaction would be superseded by the refresh that follows the edit",
+                    "mcp": {
+                        "tool": "ripr_get_repair_attempt",
+                        "arguments": { "attempt_id": existing_id },
+                    },
+                    "after_editing_tests": verify_after_editing_tests(snapshot.base.as_deref()),
+                },
+                "recovery": "do not retry ripr_prepare_repair for this item: it creates nothing while the durable attempt awaits its edit. Continue with ripr_get_repair_attempt",
+                "limitations": [
+                    "no session transaction was created: the durable attempt is the one attempt for this seam",
+                    "the durable attempt's liveness is the CLI's own awaiting-at-current-HEAD reading, taken when this tool ran",
+                ],
+                "links": {
+                    "gap": format!("ripr://gap/{}", item.canonical_id),
+                    "snapshot": format!("ripr://snapshot/{snapshot_id}"),
+                    "repair_attempt": format!("ripr://repair-attempt/{existing_id}"),
+                    "receipt": format!("ripr://receipt/{existing_id}"),
+                },
+                "claim_boundary": "Disclosure of an existing durable attempt for one canonical item. This document authorizes nothing and creates nothing.",
             });
             return bounded_document(document, RECOVERY_REPAIR_TOO_LARGE);
         }
@@ -2520,6 +2799,108 @@ pub(super) mod tests {
                 session.repairs.len()
             ));
         }
+        Ok(())
+    }
+
+    /// #15244: a ready item that cannot be mapped to a seam cannot rule out a
+    /// durable attempt, so a store-aware prepare refuses instead of creating a
+    /// session attempt; without a store the session route is unchanged.
+    #[test]
+    fn store_aware_prepare_fails_closed_when_the_item_has_no_seam_binding() -> Result<(), String> {
+        let mut session = session_with(&[super::super::gaps::test_finding()?], "root:sha256:a")?;
+        let root = unique_test_dir("store-aware")?;
+        let refused = session.prepare_repair_with_store(
+            "gap:test:1",
+            None,
+            Some("root:sha256:a"),
+            Some(&root),
+        );
+        let failure = refused.err().ok_or("a store-aware prepare must refuse")?;
+        assert_eq!(failure.code, super::super::workspace::CODE_NO_SNAPSHOT);
+        if !session.repairs.is_empty() {
+            return Err("a refusal must not create a session transaction".to_string());
+        }
+        let created = session
+            .prepare_repair_with_store("gap:test:1", None, Some("root:sha256:a"), None)
+            .map_err(|failure| failure.detail)?;
+        assert_eq!(created["attempt"]["origin"], "mcp_session");
+        Ok(())
+    }
+
+    /// #15244: the store answer may be read off the session lock, so the
+    /// last step revalidates the admitted snapshot before it replays or
+    /// creates anything, and only a matching answer decides the outcome.
+    #[test]
+    fn checked_prepare_binds_the_durable_answer_to_its_admitted_snapshot() -> Result<(), String> {
+        let mut session = session_with(&[super::super::gaps::test_finding()?], "root:sha256:a")?;
+        let current = session
+            .last_good
+            .as_ref()
+            .map(|snapshot| snapshot.snapshot_id.clone())
+            .ok_or("fixture lost its snapshot")?;
+        let check = |snapshot_id: &str, reading| DurableCheck {
+            snapshot_id: snapshot_id.to_string(),
+            reading,
+            custody_notes: Vec::new(),
+        };
+        let root = Some("root:sha256:a");
+        // A snapshot replaced during the store read refuses stale.
+        let stale = session
+            .prepare_repair_checked(
+                "gap:test:1",
+                None,
+                root,
+                Some(check("snapshot:replaced", DurableReading::Read(None))),
+            )
+            .err()
+            .ok_or("an answer for another snapshot must refuse")?;
+        assert_eq!(stale.code, CODE_STALE_SNAPSHOT);
+        assert_eq!(stale.data["current_snapshot_id"], current.as_str());
+        // A ready item whose store was never asked refuses too.
+        let unchecked = session
+            .prepare_repair_checked(
+                "gap:test:1",
+                None,
+                root,
+                Some(check(&current, DurableReading::NotNeeded)),
+            )
+            .err()
+            .ok_or("an unchecked store must refuse a ready item")?;
+        assert_eq!(unchecked.code, CODE_ATTEMPT_INVALID);
+        // A live durable attempt is disclosed, not rivalled.
+        let disclosed = session
+            .prepare_repair_checked(
+                "gap:test:1",
+                None,
+                root,
+                Some(check(
+                    &current,
+                    DurableReading::Read(Some(crate::app::task_first::ReusableAttempt {
+                        attempt_id: "repair-attempt:durable".to_string(),
+                        next_command: String::new(),
+                    })),
+                )),
+            )
+            .map_err(|failure| failure.detail)?;
+        assert_eq!(
+            disclosed["existing_attempt"]["attempt_id"],
+            "repair-attempt:durable"
+        );
+        assert_eq!(disclosed["repair_packet_ready"], false);
+        if !session.repairs.is_empty() {
+            return Err("no refusal or disclosure may create a session transaction".to_string());
+        }
+        // Control: the current snapshot with no durable attempt creates one.
+        let created = session
+            .prepare_repair_checked(
+                "gap:test:1",
+                None,
+                root,
+                Some(check(&current, DurableReading::Read(None))),
+            )
+            .map_err(|failure| failure.detail)?;
+        assert_eq!(created["attempt"]["origin"], "mcp_session");
+        assert_eq!(session.repairs.len(), 1);
         Ok(())
     }
 
