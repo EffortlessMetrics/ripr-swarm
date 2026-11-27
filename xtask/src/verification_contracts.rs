@@ -4718,6 +4718,85 @@ mod tests {
     }
 
     #[test]
+    fn empty_check_root_requires_a_typed_refusal() -> Result<(), String> {
+        let root = repo_root()?;
+        let schema = read_json(root.join("schemas/ripr/check.schema.json"))?;
+        let directory = root.join("tests/fixtures/verification/ripr");
+        let check = |doc: &Value, expected: bool, label: &str| -> Result<(), String> {
+            let mut violations = Vec::new();
+            validate_value_against_schema(doc, &schema, &schema, label.into(), &mut violations);
+            if expected != violations.is_empty() {
+                return Err(format!(
+                    "{label}: expected valid={expected}, got {violations:?}"
+                ));
+            }
+            Ok(())
+        };
+        let genuine = read_json(directory.join("check-empty-root-refusal.valid.json"))?;
+        check(&genuine, true, "unusable root refusal")?;
+        let mut terse = genuine.clone();
+        terse["rendering"] = serde_json::json!("terse");
+        check(&terse, true, "terse unusable root refusal")?;
+        terse["rendering"] = serde_json::json!("full");
+        check(&terse, false, "unknown rendering on unusable root refusal")?;
+        for name in [
+            "check-complete.valid.json",
+            "check-partial-scope.valid.json",
+            "check-limited.valid.json",
+            "check-findings.valid.json",
+        ] {
+            let mut doc = read_json(directory.join(name))?;
+            check(&doc, true, name)?;
+            for (key, value) in doc.as_object().ok_or("expected report object")? {
+                if !matches!(key.as_str(), "base" | "rendering") && genuine.get(key).is_none() {
+                    let mut mixed = genuine.clone();
+                    mixed[key] = value.clone();
+                    check(&mixed, false, key)?;
+                }
+            }
+            doc["root"] = serde_json::json!("");
+            check(&doc, false, name)?;
+            doc["status"] = genuine["status"].clone();
+            doc["error"] = genuine["error"].clone();
+            check(&doc, false, "borrowed refusal fields")?;
+        }
+        for key in [
+            "status",
+            "error",
+            "analysis_scope",
+            "run_limitations",
+            "root",
+        ] {
+            let mut without = genuine.clone();
+            without
+                .as_object_mut()
+                .ok_or("expected object")?
+                .remove(key);
+            check(&without, false, key)?;
+        }
+        let completed = read_json(directory.join("check-complete.valid.json"))?;
+        for (path, value) in [
+            ("/root", serde_json::json!(false)),
+            ("/error/code", serde_json::json!("diff_scope_oversized")),
+            ("/findings", completed["findings"].clone()),
+            ("/summary/probes", serde_json::json!(1)),
+            (
+                "/analysis_scope/downstream_consumable",
+                serde_json::json!(true),
+            ),
+            ("/run_limitations/0/category", serde_json::json!("other")),
+            ("/run_limitations", serde_json::json!([])),
+        ] {
+            let mut inconsistent = genuine.clone();
+            *inconsistent
+                .pointer_mut(path)
+                .ok_or_else(|| format!("missing {path}"))? = value;
+            check(&inconsistent, false, path)?;
+        }
+        Ok(())
+    }
+
+    #[test]
     fn check_schema_rejects_unknown_top_level_field() -> Result<(), String> {
         let root = repo_root()?;
         let schema = read_json(root.join("schemas/ripr/check.schema.json"))?;
