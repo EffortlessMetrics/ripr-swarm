@@ -12,3 +12,14 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — rust_into_from_fn_shadows_constructor (2)
+
+Reason:
+RIPR-SPEC-0001: refresh human summary wording after merging main; no classification change (#15277)
+
+Command:
+`cargo xtask goldens bless rust_into_from_fn_shadows_constructor --reason "..."`
+
+Updated:
+- `expected/human.txt`
