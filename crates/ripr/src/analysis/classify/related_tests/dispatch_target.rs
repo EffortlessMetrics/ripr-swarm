@@ -704,12 +704,12 @@ fn past_generic_parameters(text: &str) -> Option<&str> {
         if at < literal_end {
             continue;
         }
-        if ch == '\'' {
-            if let Some(len) = char_literal_len(&text[at..]) {
-                literal_end = at + len;
-                previous = '\'';
-                continue;
-            }
+        if ch == '\''
+            && let Some(len) = char_literal_len(&text[at..])
+        {
+            literal_end = at + len;
+            previous = '\'';
+            continue;
         }
         let in_braces = stack.last() == Some(&'{');
         match ch {
