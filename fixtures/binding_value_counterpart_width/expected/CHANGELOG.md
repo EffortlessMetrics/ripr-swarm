@@ -137,3 +137,36 @@ Command:
 
 Updated:
 - `expected/human.txt`
+
+## Pending — binding_value_counterpart_width (12)
+
+Reason:
+RIPR-SPEC-0122: #15313 Summary names shared candidate lines and says No test gap when State reads no test gap found
+
+Command:
+`cargo xtask goldens bless binding_value_counterpart_width --reason "..."`
+
+Updated:
+- `expected/human.txt`
+
+## Pending — binding_value_counterpart_width (13)
+
+Reason:
+RIPR-SPEC-0122: #15336 unconfirmed-reach note severity, possible-gap State line, legend and Terms glosses
+
+Command:
+`cargo xtask goldens bless binding_value_counterpart_width --reason "..."`
+
+Updated:
+- `expected/human.txt`
+
+## Pending — binding_value_counterpart_width (14)
+
+Reason:
+RIPR-SPEC-0122: #15336 human-full Terms line stops claiming test reach for weakly_exposed and reachable_unrevealed
+
+Command:
+`cargo xtask goldens bless binding_value_counterpart_width --reason "..."`
+
+Updated:
+- `expected/human-full.txt`

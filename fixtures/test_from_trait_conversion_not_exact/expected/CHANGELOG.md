@@ -282,3 +282,25 @@ Command:
 
 Updated:
 - `expected/human.txt`
+
+## Pending — test_from_trait_conversion_not_exact (23)
+
+Reason:
+RIPR-SPEC-0122: #15336 unconfirmed-reach note severity, possible-gap State line, legend and Terms glosses
+
+Command:
+`cargo xtask goldens bless test_from_trait_conversion_not_exact --reason "..."`
+
+Updated:
+- `expected/human.txt`
+
+## Pending — test_from_trait_conversion_not_exact (24)
+
+Reason:
+RIPR-SPEC-0122: #15336 human-full Terms line stops claiming test reach for weakly_exposed and reachable_unrevealed
+
+Command:
+`cargo xtask goldens bless test_from_trait_conversion_not_exact --reason "..."`
+
+Updated:
+- `expected/human-full.txt`

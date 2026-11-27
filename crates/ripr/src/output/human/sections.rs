@@ -62,7 +62,8 @@ pub(crate) const HUMAN_EVIDENCE_LEGEND: &str = concat!(
     "    States: yes = evidence found; weak = partial evidence; no = evidence not found; unknown/opaque = analysis limited;\n",
     "      missing = a needed test input or assertion is absent; not established = assertion unconfirmed; not applicable = stage unused\n",
     "    Summary terms: changed behavior = one change point ripr checked; appear noticed by tests = a test appears to notice the change;\n",
-    "      partly noticed = tests appear to notice it only partly; reached but not noticed = tests reach it but nothing appears to notice;\n",
+    "      partly noticed = tests appear to notice it only partly; reached but not noticed = linked to a test, but nothing appears to notice;\n",
+    "      both can rest on a test link ripr could not confirm; the reach stage says which;\n",
     "      no test path = no test path found; unclear = analysis limited, not a verdict;\n",
     "      found = listed for review; suppressed by your settings = hidden by your suppression policy;\n",
     "      base-side = evidence from the old code, not an edit target; candidate line = changed line ripr considers\n",
@@ -86,11 +87,19 @@ fn next_step_prefix(step: &str) -> &'static str {
 /// candidate edit target, so it must not read as an actionable warning. A
 /// configured `warning` is shown as `note`; `off`, `info` and `note` are kept.
 /// Display only: counts, JSON and classification are unchanged.
+///
+/// #15336: the same downgrade covers a reached-class finding whose reach the
+/// evidence does not establish ([`reach_claim_is_unsupported`]): it is a
+/// possible gap, not a confirmed one, so it must not read as a warning beside
+/// a `Why` line that says no test is confirmed to reach the change. It applies
+/// wherever this human finding renderer runs, `check` and `explain` alike, so
+/// one finding never changes severity between the two.
 fn display_severity(finding: &Finding, config: &RiprConfig) -> &'static str {
     let configured = config
         .severity_for_file(&finding.probe.location.file)
         .for_exposure(&finding.class);
-    if finding.source_currentness.is_base_side()
+    if (finding.source_currentness.is_base_side()
+        || reach_claim_is_unsupported(&finding.class, &finding.ripr))
         && configured == crate::config::ConfigSeverity::Warning
     {
         crate::config::ConfigSeverity::Note.as_str()
@@ -1605,6 +1614,13 @@ fn partial_path_hint(ripr: &RiprEvidence) -> &'static str {
 /// `NoStaticPath` hints do.
 const NO_CALLING_TEST_HINT: &str = "no test is seen calling this change";
 const UNESTABLISHED_REACH_HINT: &str = "test reach to this change is not established";
+/// #15336: an `unrevealed` finding whose reach stage is weak sits under the
+/// summary's "reached but not noticed" bucket, so a bare "not established"
+/// contradicts it. Say what the weak reach is instead: a link by shared file
+/// or name, with no test confirmed to reach the change. Only a proximity-only
+/// reach summary supports that wording; any other weak reach keeps the bare
+/// "not established" hint rather than naming a link the evidence lacks.
+const UNREVEALED_WEAK_REACH_HINT: &str = "no test is confirmed to reach this change; related tests are linked only by a shared file or name";
 
 /// Whether the reach stage is callee-only evidence: every related test
 /// exercises the seam's converted callee and none invokes the changed
@@ -1612,6 +1628,15 @@ const UNESTABLISHED_REACH_HINT: &str = "test reach to this change is not establi
 /// producer (`analysis::classify::reach`).
 fn is_callee_only_reach(reach: &crate::domain::StageEvidence) -> bool {
     reach.summary.starts_with(CALLEE_ONLY_REACH_PREFIX)
+}
+
+/// Whether a weak reach stage comes from file or name proximity alone, read
+/// from the producer's shared summary marker.
+fn is_proximity_only_reach(reach: &crate::domain::StageEvidence) -> bool {
+    reach.state == StageState::Weak
+        && reach
+            .summary
+            .contains(crate::domain::PROXIMITY_ONLY_REACH_MARKER)
 }
 
 /// The macro the finding's "assertion not credited" note names, read back from
@@ -1691,6 +1716,10 @@ fn classification_hint(
         return Some(
             if callee_only {
                 NO_CALLING_TEST_HINT
+            } else if *class == ExposureClass::ReachableUnrevealed
+                && is_proximity_only_reach(&ripr.reach)
+            {
+                UNREVEALED_WEAK_REACH_HINT
             } else {
                 UNESTABLISHED_REACH_HINT
             }
@@ -2025,6 +2054,44 @@ mod classification_hint_tests {
         assert!(hint.is_some_and(|hint| hint.ends_with("the standard `assert_eq!`")));
     }
 
+    // #15336: only a proximity-only weak reach names the shared file/name
+    // link; another weak reach summary keeps the bare "not established" hint.
+    #[test]
+    fn unrevealed_weak_reach_names_the_link_only_for_proximity_summaries() {
+        let mut evidence = ripr(StageState::Weak, StageState::No);
+        evidence.reach = StageEvidence::new(
+            StageState::Weak,
+            Confidence::Low,
+            "A test may reach this change through a helper ripr cannot trace",
+        );
+        assert_eq!(
+            classification_hint(&ExposureClass::ReachableUnrevealed, &evidence).as_deref(),
+            Some(super::UNESTABLISHED_REACH_HINT)
+        );
+        evidence.reach.summary =
+            "No test is seen calling render; tests share only a name token".to_string();
+        assert_eq!(
+            classification_hint(&ExposureClass::ReachableUnrevealed, &evidence).as_deref(),
+            Some(super::UNREVEALED_WEAK_REACH_HINT)
+        );
+        assert_eq!(
+            classification_hint(&ExposureClass::WeaklyExposed, &evidence).as_deref(),
+            Some(super::UNESTABLISHED_REACH_HINT)
+        );
+        // The marker alone is not enough: a ruled-out (`No`) reach keeps the
+        // bare hint, and callee-only reach keeps its own.
+        evidence.reach.state = StageState::No;
+        assert_eq!(
+            classification_hint(&ExposureClass::ReachableUnrevealed, &evidence).as_deref(),
+            Some(super::UNESTABLISHED_REACH_HINT)
+        );
+        evidence.reach = callee_only_reach();
+        assert_eq!(
+            classification_hint(&ExposureClass::ReachableUnrevealed, &evidence).as_deref(),
+            Some(super::NO_CALLING_TEST_HINT)
+        );
+    }
+
     // #7330: generic weak reach must not produce a "reaches this change" hint
     // through partial_path_hint (trait-shadow and similar weak_token_substring
     // witnesses).
@@ -2041,11 +2108,12 @@ mod classification_hint_tests {
             ExposureClass::ReachableUnrevealed,
         ] {
             let hint = classification_hint(&class, &evidence);
-            assert_eq!(
-                hint.as_deref(),
-                Some("test reach to this change is not established"),
-                "{class:?}"
-            );
+            let expected = if class == ExposureClass::ReachableUnrevealed {
+                super::UNREVEALED_WEAK_REACH_HINT
+            } else {
+                "test reach to this change is not established"
+            };
+            assert_eq!(hint.as_deref(), Some(expected), "{class:?}");
             assert!(
                 hint.as_deref()
                     .is_none_or(|hint| !hint.contains("reaches this change")),

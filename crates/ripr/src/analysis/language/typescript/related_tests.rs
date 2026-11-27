@@ -630,6 +630,7 @@ impl ReExportIndex {
                             chain_names: names.iter().cloned().collect(),
                         }),
                         closure: frame.closure,
+                        commonjs_whole: false,
                     };
                     best.insert(key, entry.clone());
                     if best.len() > MAX_CROSS_MODULE_ENTRIES {
@@ -787,6 +788,7 @@ impl ReExportIndex {
                             chain_names: Vec::new(),
                         }),
                         closure: false,
+                        commonjs_whole: false,
                     });
                 }
                 frontier.push_back(SubclassFrame {
@@ -3524,8 +3526,9 @@ pub(crate) fn module_entry_owner(
         class_default_export: false,
         default_object_member: false,
         default_object_unsafe_siblings: Vec::new(),
-        commonjs_default_export: false,
-        commonjs_whole_function: false,
+        // A CommonJS whole export is bound by `require(...)` itself (#16369).
+        commonjs_default_export: entry.commonjs_whole,
+        commonjs_whole_function: entry.commonjs_whole,
         constructor_callback: false,
         method_kind: TypeScriptMethodKind::Ordinary,
         module_entries: Vec::new(),

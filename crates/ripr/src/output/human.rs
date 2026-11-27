@@ -396,7 +396,10 @@ pub(crate) fn render_bounded_with_config_and_navigation(
     drill_in: Option<&FindingDrillIn>,
     provenance: CheckDiffProvenance,
 ) -> String {
-    let mut out = render_header_summary(output, config, true);
+    let triage = triage::select_human_triage(output, config);
+    let all_clear = !output.findings.is_empty()
+        && triage::reads_all_clear(&triage, output, drill_in, provenance);
+    let mut out = render_header_summary(output, config, true, all_clear);
     render_analysis_outcome_disclosure(&mut out, output, true);
     render_suppression_policy_block(&mut out, output);
     render_owner_opt_out_block(&mut out, output);
@@ -410,7 +413,6 @@ pub(crate) fn render_bounded_with_config_and_navigation(
             // paragraph: `Start here:` opens after a blank line here, as it
             // does after the analysis-outcome block on a run with findings.
             out.push('\n');
-            let triage = triage::select_human_triage(output, config);
             triage::render_human_triage(&mut out, &triage, output, config, drill_in, provenance);
         }
         let mut tail = String::new();
@@ -431,7 +433,6 @@ pub(crate) fn render_bounded_with_config_and_navigation(
         return out;
     }
 
-    let triage = triage::select_human_triage(output, config);
     triage::render_human_triage(&mut out, &triage, output, config, drill_in, provenance);
     let mut tail = String::new();
     render_all_no_path_disclosure(&mut tail, output);
@@ -476,7 +477,7 @@ pub(crate) fn render_full_with_config_and_navigation(
     config: &RiprConfig,
     drill_in: Option<&FindingDrillIn>,
 ) -> String {
-    let mut out = render_header_summary(output, config, false);
+    let mut out = render_header_summary(output, config, false, false);
 
     render_analysis_outcome_disclosure(&mut out, output, false);
     render_suppression_policy_block(&mut out, output);
@@ -636,7 +637,12 @@ fn render_analyzed_revisions(out: &mut String, output: &CheckOutput) {
 /// `plain` selects the bounded (default) human wording (#8165): plain words
 /// only, no schema tokens. `human-full` passes `false` and keeps the schema
 /// summary byte-for-byte.
-fn render_header_summary(output: &CheckOutput, config: &RiprConfig, plain: bool) -> String {
+pub(super) fn render_header_summary(
+    output: &CheckOutput,
+    config: &RiprConfig,
+    plain: bool,
+    all_clear: bool,
+) -> String {
     let mut out = String::new();
     out.push_str(&format!(
         "ripr static RIPR exposure analysis\nmode: {}\nroot: {}\n",
@@ -765,12 +771,24 @@ fn render_header_summary(output: &CheckOutput, config: &RiprConfig, plain: bool)
                     s.proof_harness_only
                 ));
             }
+            // #15313: two checks (a predicate and a return value) can sit on one
+            // edited line. Name the line count the `Counts:` line also prints, so a
+            // reader can match "2 changed behaviors" to their one-line edit.
+            let on_lines = shared_line_note(output);
+            // #15313: `found` means "listed for review", and a reader takes it as a
+            // gap count. `all_clear` is the decision behind the Start here
+            // `State: no test gap found` (`triage::reads_all_clear`); the Summary
+            // says so in the same words, and only then.
+            let listed = if all_clear {
+                format!("No test gap: {unsuppressed} listed")
+            } else {
+                format!("{unsuppressed} found")
+            };
             out.push_str(&format!(
-                "Summary: {} changed {} checked: {}. {} found, {} suppressed by your settings{owner_opt_out}{base_side}\n\n",
+                "Summary: {} changed {} checked{on_lines}: {}. {listed}, {} suppressed by your settings{owner_opt_out}{base_side}\n\n",
                 s.probes,
                 if s.probes == 1 { "behavior" } else { "behaviors" },
                 classes,
-                unsuppressed,
                 suppressed,
             ));
         }
@@ -794,7 +812,7 @@ fn render_header_summary(output: &CheckOutput, config: &RiprConfig, plain: bool)
         // #10691: the stable tokens stay (they are the schema vocabulary);
         // each is glossed once so the line reads without the specs.
         out.push_str(&wrap_human_prose(
-            "Terms: exposed = tests appear to notice the change; weakly_exposed = tests reach it but check it only loosely; reachable_unrevealed = tests reach it but nothing appears to notice a change; no_static_path = no test path found; infection_unknown, propagation_unknown, static_unknown = ripr could not tell from the code (analysis limited, not a verdict); finding = one reported gap; unsuppressed = not hidden by your suppression policy",
+            "Terms: exposed = tests appear to notice the change; weakly_exposed = linked to a test, but checked only loosely; reachable_unrevealed = linked to a test, but nothing appears to notice a change (both can rest on a test link ripr could not confirm; the reach stage says which); no_static_path = no test path found; infection_unknown, propagation_unknown, static_unknown = ripr could not tell from the code (analysis limited, not a verdict); finding = one reported gap; unsuppressed = not hidden by your suppression policy",
             "",
             "  ",
         ));
@@ -802,6 +820,24 @@ fn render_header_summary(output: &CheckOutput, config: &RiprConfig, plain: bool)
     }
     render_language_file_breakdown(&mut out, output);
     out
+}
+
+/// #15313: names the candidate-line count when several checks share a line
+/// (" on 1 candidate line"). Empty when each check has its own line or the run
+/// carries no analysis outcome. The count is the producer's own
+/// `candidate_line_count`, the number the `Counts:` line prints.
+fn shared_line_note(output: &CheckOutput) -> String {
+    let Some(outcome) = &output.analysis_outcome else {
+        return String::new();
+    };
+    let lines = outcome.counts.candidate_line_count;
+    if lines == 0 || lines >= outcome.counts.probe_count {
+        return String::new();
+    }
+    format!(
+        " on {lines} candidate {}",
+        if lines == 1 { "line" } else { "lines" }
+    )
 }
 
 /// #8389: base-side findings (`base_deleted`, `moved_or_renamed`) are counted
@@ -2485,7 +2521,7 @@ mod tests {
                 analyzed_revisions: None,
             };
 
-            let rendered = render_header_summary(&output, &RiprConfig::default(), false);
+            let rendered = render_header_summary(&output, &RiprConfig::default(), false, false);
 
             let expected = format!("root: {}\n", crate::output::path::human_path(&root));
             assert!(
@@ -4067,6 +4103,172 @@ mod tests {
             );
             assert!(full.contains(&format!("({expected}, confidence")), "{full}");
         }
+    }
+
+    /// #15336: a reached-class finding whose reach the evidence does not
+    /// establish renders `note`, not a configured `warning`, on the digest,
+    /// the full render and the `explain` render; reach `yes` keeps `warning`,
+    /// and a configured `off` passes through.
+    #[test]
+    fn unconfirmed_reach_finding_renders_at_note_severity() {
+        use crate::config::ConfigSeverity;
+        let confirmed = sample_finding();
+        assert_eq!(
+            confirmed.ripr.reach.state,
+            StageState::Yes,
+            "fixture subject"
+        );
+        let default = RiprConfig::default();
+        let digest = |finding: &Finding, config: &RiprConfig| {
+            super::sections::render_finding_digest_with_config(finding, config, Path::new("."))
+        };
+        let explain = |finding: &Finding| {
+            super::render_finding_with_context_command(
+                finding,
+                &default,
+                "ripr context --finding x",
+                Path::new("."),
+            )
+        };
+        assert!(digest(&confirmed, &default).contains("severity: warning,"));
+        assert!(render_finding(&confirmed).starts_with("WARNING "));
+        assert!(explain(&confirmed).starts_with("WARNING "));
+        for class in [
+            ExposureClass::WeaklyExposed,
+            ExposureClass::ReachableUnrevealed,
+        ] {
+            let mut unconfirmed = confirmed.clone();
+            unconfirmed.class = class.clone();
+            unconfirmed.ripr.reach = stage(
+                StageState::Weak,
+                Confidence::Low,
+                "No test is seen calling sample; tests share only a name token",
+            );
+            assert!(super::sections::reach_claim_is_unsupported(
+                &unconfirmed.class,
+                &unconfirmed.ripr
+            ));
+            let rendered = digest(&unconfirmed, &default);
+            assert!(
+                rendered.contains("severity: note,"),
+                "{class:?}: {rendered}"
+            );
+            assert!(
+                !rendered.contains("severity: warning"),
+                "{class:?}: {rendered}"
+            );
+            let full = render_finding(&unconfirmed);
+            assert!(full.starts_with("NOTE "), "{class:?}: {full}");
+            let explained = explain(&unconfirmed);
+            assert!(explained.starts_with("NOTE "), "{class:?}: {explained}");
+            // Only a configured `warning` is downgraded; every other
+            // configured severity passes through.
+            for (configured, word) in [
+                (ConfigSeverity::Off, "off"),
+                (ConfigSeverity::Info, "info"),
+                (ConfigSeverity::Note, "note"),
+            ] {
+                let mut config = RiprConfig::default();
+                config.severity.findings.weakly_exposed = configured;
+                config.severity.findings.reachable_unrevealed = configured;
+                assert!(
+                    digest(&unconfirmed, &config).contains(&format!("severity: {word},")),
+                    "{class:?} {word}"
+                );
+            }
+            // Reach `yes` in the same class keeps `warning`.
+            let mut confirmed_same_class = confirmed.clone();
+            confirmed_same_class.class = class.clone();
+            assert!(
+                digest(&confirmed_same_class, &default).contains("severity: warning,"),
+                "{class:?}"
+            );
+            // Callee-only reach disclaims owner invocation even when its
+            // state reads `yes`, so it is downgraded too (#7003).
+            let mut callee_only = confirmed_same_class.clone();
+            callee_only.ripr.reach = stage(
+                StageState::Yes,
+                Confidence::Low,
+                &format!("{CALLEE_ONLY_REACH_PREFIX}: observes_callee_outcome"),
+            );
+            assert!(
+                digest(&callee_only, &default).contains("severity: note,"),
+                "{class:?}"
+            );
+        }
+        // Classes outside the two reached buckets are untouched by the rule.
+        let mut exposed = confirmed.clone();
+        exposed.class = ExposureClass::Exposed;
+        exposed.ripr.reach = stage(StageState::Weak, Confidence::Low, "weak");
+        assert!(!super::sections::reach_claim_is_unsupported(
+            &exposed.class,
+            &exposed.ripr
+        ));
+    }
+
+    /// #15336: the `State:` words follow the selected finding's reach, and
+    /// the first-run legend (the same render `--legend` forces), the repeat
+    /// pointer and the `human-full` `Terms:` line never say these buckets
+    /// prove a reaching test. The rendered check JSON keeps the same summary,
+    /// class and severity for both cases.
+    #[test]
+    fn unconfirmed_reach_state_and_glossaries_do_not_claim_reach() -> Result<(), String> {
+        let confirmed = sample_finding();
+        let mut unconfirmed = confirmed.clone();
+        unconfirmed.ripr.reach = stage(
+            StageState::Weak,
+            Confidence::Low,
+            "No test is seen calling sample; tests share only a name token",
+        );
+        let possible = "State: a possible test gap (test reach not confirmed)";
+        let mut pointer_config = RiprConfig::default();
+        pointer_config.reports.human_legend = crate::config::HumanLegend::Pointer;
+        let mut json = Vec::new();
+        for (finding, unconfirmed_reach) in [(confirmed, false), (unconfirmed, true)] {
+            let output = bounded_output_with_findings(vec![finding]);
+            let rendered_json: serde_json::Value = serde_json::from_str(
+                &crate::output::json::render_with_config(&output, &RiprConfig::default(), None),
+            )
+            .map_err(|err| err.to_string())?;
+            let finding_json = &rendered_json["findings"][0];
+            assert!(finding_json.is_object(), "{rendered_json}");
+            json.push((
+                rendered_json["summary"].clone(),
+                finding_json["class"].clone(),
+                finding_json["severity"].clone(),
+            ));
+            let first = super::render_bounded_with_config(&output, &RiprConfig::default());
+            let repeat = super::render_bounded_with_config(&output, &pointer_config);
+            let full = super::render_full_with_config(&output, &RiprConfig::default());
+            for rendered in [&first, &repeat] {
+                assert_eq!(rendered.contains(possible), unconfirmed_reach, "{rendered}");
+                assert_eq!(
+                    rendered.contains("State: a test gap to inspect or repair"),
+                    !unconfirmed_reach,
+                    "{rendered}"
+                );
+            }
+            for rendered in [&first, &full] {
+                // `human-full` wraps its `Terms:` line; compare flowed text.
+                let flowed = rendered.split_whitespace().collect::<Vec<_>>().join(" ");
+                assert!(!flowed.contains("tests reach it but"), "{rendered}");
+                assert!(
+                    flowed.contains(
+                        "both can rest on a test link ripr could not confirm; the reach stage says which"
+                    ),
+                    "{rendered}"
+                );
+            }
+            assert!(first.contains(super::HUMAN_EVIDENCE_LEGEND), "{first}");
+            assert!(!repeat.contains("Summary terms:"), "{repeat}");
+            assert_eq!(
+                repeat.matches("    Terms: rerun with `--legend`").count(),
+                1,
+                "{repeat}"
+            );
+        }
+        assert_eq!(json[0], json[1], "machine classes and counts must not move");
+        Ok(())
     }
 
     /// rc rehearsal (py-pricing): Start here picked the card-less constant
@@ -9541,7 +9743,7 @@ mod tests {
                 .any(|line| Some(line) == evidence.as_deref()),
             "{pointer}"
         );
-        assert_eq!(full.lines().count() - 9, pointer.lines().count());
+        assert_eq!(full.lines().count() - 10, pointer.lines().count());
     }
 
     /// #9373 item 1: stage names and conservative state words are explained
@@ -9594,7 +9796,8 @@ mod tests {
             "changed behavior = one change point ripr checked",
             "appear noticed by tests = a test appears to notice the change",
             "partly noticed = tests appear to notice it only partly",
-            "reached but not noticed = tests reach it but nothing appears to notice",
+            "reached but not noticed = linked to a test, but nothing appears to notice",
+            "both can rest on a test link ripr could not confirm; the reach stage says which",
             "no test path = no test path found",
             // #9244 item 4 (leftover jargon): the remaining words the Summary
             // and Counts lines print.

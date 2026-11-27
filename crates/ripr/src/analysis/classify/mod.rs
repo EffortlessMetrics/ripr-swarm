@@ -83,15 +83,16 @@ pub(in crate::analysis) use absorbing_tail::absorbing_tail_sink;
 #[cfg(feature = "lang-python")]
 pub(in crate::analysis) use activation::sort_value_facts;
 pub(in crate::analysis) use activation::{
-    LocalBoundary, TestValueFacts, activation_and_boundary_input, assigned_field_gap_is_placed,
-    assigned_field_is_unread, assigned_field_of, assigned_field_read_confirms,
-    assigned_field_seed_is_visible, assigned_field_weak_read_start, call_parameter_names,
-    chain_row_transfer_stop, changed_comparison_conjunct, comparison_operands,
-    computed_input_parameters, function_parameters as whole_signature_parameters,
-    guarded_boundary_row_reaches, literal_operand_value, local_boundary, macro_names_rebound,
-    owner_plain_written_value, owner_receiver_borrow, owner_writes_field_only_at_probe,
-    predicate_line_bool_guards, pushed_collection_compared_whole, pushed_literal_path,
-    repo_seam_unselected_arm, signature_parameters, test_binds_owner_type,
+    LocalBoundary, TestValueFacts, UnselectedArm, activation_and_boundary_input,
+    assigned_field_gap_is_placed, assigned_field_is_unread, assigned_field_of,
+    assigned_field_read_confirms, assigned_field_seed_is_visible, assigned_field_weak_read_start,
+    call_parameter_names, chain_row_transfer_stop, changed_comparison_conjunct,
+    comparison_operands, computed_input_parameters,
+    function_parameters as whole_signature_parameters, guarded_boundary_row_reaches,
+    literal_operand_value, local_boundary, macro_names_rebound, owner_plain_written_value,
+    owner_receiver_borrow, owner_writes_field_only_at_probe, predicate_line_bool_guards,
+    pushed_collection_compared_whole, pushed_literal_path, repo_seam_unselected_arm,
+    signature_parameters, test_binds_owner_type,
 };
 pub(in crate::analysis) use arm_selection::{
     ArmSelector, error_path_arm_probe, match_arm_selection_witness_linkage,
@@ -127,8 +128,9 @@ pub(in crate::analysis) use const_flow::{
 pub(in crate::analysis) use const_readers::{const_reader_returns, same_file_const_readers};
 pub(in crate::analysis) use context::ProbeContext;
 pub(in crate::analysis) use decision::{
-    WRAPPER_ERROR_BINDING_NEXT_STEP, classify, confidence_score, ensure_unknown_stop_reason,
-    exact_oracle_gap_next_step, missing_evidence, recommended_next_step,
+    WRAPPER_ERROR_BINDING_NEXT_STEP, bool_owner_exact_result_next_step,
+    carry_enclosing_unsafe_obligation, classify, confidence_score, ensure_unknown_stop_reason,
+    exact_oracle_gap_next_step, is_unsafe_obligation, missing_evidence, recommended_next_step,
     recommended_next_step_with_boundary, stop_reasons,
 };
 pub(in crate::analysis) use diff_touched::DiffTouchedTests;
@@ -202,9 +204,9 @@ pub(in crate::analysis) use owner_pin::{
     AssertionRefusal, OwnerPinSyntax, OwnerReturnPin, WithheldMacroBindings,
     claims_payload_eq_candidates, direct_call_name, equality_condition_operands,
     expected_operand_value, function_declaration_is_async, helper_pins_owner_call,
-    matches_owner_ok, owner_builds_declared_error_variant, pin_scope_needs,
-    returned_closure_pin_required, targeted_free_call_reaches_owner, targeted_name_is_alias,
-    targeted_type_name_is_unresolved, trait_impl_self_type_names,
+    literal_matches_assertion_operands, matches_owner_ok, owner_builds_declared_error_variant,
+    pin_scope_needs, returned_closure_pin_required, targeted_free_call_reaches_owner,
+    targeted_name_is_alias, targeted_type_name_is_unresolved, trait_impl_self_type_names,
 };
 pub(in crate::analysis) use owner_pin::{
     FallibleCheckReceipt, derived_fields_compare_by_value, fallible_check_receipt,

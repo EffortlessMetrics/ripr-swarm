@@ -47,6 +47,7 @@ pub(crate) fn summarize_file_lexically(path: PathBuf, text: String) -> FileFacts
             mentioned_identifiers: crate::analysis::extract::property_macros::mentioned_identifiers(
                 &text[item.body_start..item.range.end],
             ),
+            binding_only_identifiers: Vec::new(),
         });
     }
     // Only macro-bearing fallback files need offsets; ordinary fallback keeps

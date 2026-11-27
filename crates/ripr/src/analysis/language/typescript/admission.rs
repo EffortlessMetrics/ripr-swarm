@@ -129,6 +129,11 @@ pub(crate) struct TypeScriptAdmissionContext {
     setup_assertion_like: bool,
     /// Modules and strict scripts keep block functions inside their block.
     pub(super) block_functions_are_lexical: bool,
+    /// Locals of ES default imports (`import check from 'tape'`), the only
+    /// non-namespace `default` records that are the module's own default
+    /// export. A CommonJS `{ default: check } = require(...)` reads a
+    /// property that may be absent (#16431 review).
+    esm_default_locals: BTreeSet<String>,
 }
 
 impl TypeScriptAdmissionContext {
@@ -164,6 +169,11 @@ impl TypeScriptAdmissionContext {
                 .iter()
                 .filter(|statement| {
                     matches!(statement, Statement::ImportDeclaration(_))
+                        // `import test = require('tape')` compiles to a `const`
+                        // `require()` binding and TypeScript refuses writes to
+                        // it (#16370).
+                        || (known_require
+                            && super::export_equals::import_equals_require(statement).is_some())
                         || matches!(statement, Statement::VariableDeclaration(declaration)
                             if known_require && !declaration.declare
                                 && (declaration.kind == oxc_ast::ast::VariableDeclarationKind::Const
@@ -226,6 +236,11 @@ impl TypeScriptAdmissionContext {
                 })
                 .collect(),
             reexport_names: reexport_spellings(statements),
+            esm_default_locals: esm_imports
+                .iter()
+                .filter(|import| !import.namespace && import.imported.as_deref() == Some("default"))
+                .map(|import| import.local.clone())
+                .collect(),
             // Callers pass a workspace-relative path (the analysis loop's
             // `relative`). An absolute path whose ancestors contain `test` /
             // `spec` over-withholds every relative import as test support;
@@ -349,10 +364,31 @@ impl TypeScriptAdmissionContext {
         family: impl Fn(&str) -> bool,
     ) -> bool {
         self.imports.iter().any(|import| {
-            !import.namespace
-                && import.local == local
-                && import.imported.as_deref().is_some_and(&family)
+            import.local == local
+                && ((!import.namespace && import.imported.as_deref().is_some_and(&family))
+                    // A runner whose default export is its `test` function
+                    // registers under any local name (`const check =
+                    // require('tape')`, `import check from 'ava'`, #16431).
+                    // Only the whole module (`require()`, import-equals) or
+                    // an ES default import is that function.
+                    || (family("test") && self.import_is_default_test_runner(import)))
         })
+    }
+
+    /// Whether `local` is bound to the default export of a runner whose
+    /// default export is its `test` function: the whole module (`require()`,
+    /// import-equals) or an ES default import of `tape`, `ava`, `node:test`
+    /// or `test` (#16431, #16436).
+    pub(crate) fn binds_default_test_runner(&self, local: &str) -> bool {
+        self.imports
+            .iter()
+            .any(|import| import.local == local && self.import_is_default_test_runner(import))
+    }
+
+    fn import_is_default_test_runner(&self, import: &TypeScriptImport) -> bool {
+        import.imported.as_deref() == Some("default")
+            && (import.namespace || self.esm_default_locals.contains(&import.local))
+            && DEFAULT_TEST_RUNNERS.contains(&import.source.as_str())
     }
 
     /// The context a registration is resolved in: the runner imports only,
@@ -381,6 +417,7 @@ impl TypeScriptAdmissionContext {
                 .collect(),
             imports,
             test_dir: self.test_dir.clone(),
+            esm_default_locals: self.esm_default_locals.clone(),
             ..Self::default()
         }
     }
@@ -714,6 +751,13 @@ fn verified_namespace_member_registrations(
         // The one declaration of the namespace.
         let mut declarations = Vec::new();
         for statement in &program.body {
+            // `import runner = require('node:test')` declares it too (#16370).
+            if let Statement::TSImportEqualsDeclaration(declaration) = statement
+                && declaration.id.name.as_str() == namespace.local
+            {
+                declarations.push((declaration.span.start, declaration.id.span));
+                continue;
+            }
             let Statement::VariableDeclaration(declaration) = statement else {
                 continue;
             };
@@ -1046,6 +1090,10 @@ enum ImportClass {
     /// dependency RIPR cannot see into.
     Package,
 }
+
+/// Runner modules whose default export (and CommonJS `module.exports`) is
+/// the `test` registration function itself (#16431).
+const DEFAULT_TEST_RUNNERS: &[&str] = &["tape", "ava", "node:test", "test"];
 
 const RUNNER_MODULES: &[&str] = &[
     "vitest",

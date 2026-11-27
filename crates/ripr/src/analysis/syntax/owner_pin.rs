@@ -10,8 +10,8 @@ mod fallible_check;
 mod literal_json;
 mod scan_memo;
 use literal_json::{
-    json_namespace_rebound, literal_json_import_visible_among, literal_json_tokens,
-    literal_json_tree, literal_json_uses,
+    crate_namespace_rebound, json_namespace_rebound, literal_json_import_visible_among,
+    literal_json_tokens, literal_json_tree, literal_json_uses,
 };
 mod slice_table;
 pub(crate) use fallible_check::{decimal_u8, literal_check_syntax, literal_owner_syntax};
@@ -516,6 +516,13 @@ pub(crate) fn macro_binding_scan(
     .collect()
 }
 
+/// Drop-in value macros outside [`TRUSTED_MACRO_NAMES`] whose binding sites
+/// the scan also records: `serde_json`'s `json!` and `anyhow`'s `anyhow!`
+/// build a value and cannot return. Each is trusted only through a
+/// manifest-verified import from its own crate whose root the file does not
+/// rebind (#10357).
+pub(crate) const DROP_IN_VALUE_MACROS: &[&str] = &["json", "anyhow"];
+
 /// Standard macros that cannot return a value from the enclosing function,
 /// whose workspace rebinding the owner-pin scans look for.
 pub(crate) const TRUSTED_MACRO_NAMES: &[&str] = &[
@@ -606,12 +613,14 @@ impl MacroBindingCandidates {
         }
     }
 
-    /// Whether the scan may report a site for any trusted name. `Names`
-    /// only ever holds trusted names, so this is its emptiness.
+    /// Whether the scan may report a site for any trusted name or `json`.
+    /// `Names` only ever holds trusted names and the drop-in value macros.
     pub(crate) fn may_bind_any_trusted(&self) -> bool {
         match self {
             Self::Any => true,
-            Self::Names(names) => !names.is_empty(),
+            // `anyhow` is a forwarding-only candidate: no assertion or
+            // reference-count consumer reads it (#10357).
+            Self::Names(names) => names.iter().any(|name| name != "anyhow"),
         }
     }
 }
@@ -625,7 +634,8 @@ impl MacroBindingCandidates {
 pub(crate) fn macro_binding_candidates(source: &ast::SourceFile) -> MacroBindingCandidates {
     let trusted = |text: &str| {
         let name = text.trim_start_matches("r#");
-        (TRUSTED_MACRO_NAMES.contains(&name) || name == "json").then(|| name.to_string())
+        (TRUSTED_MACRO_NAMES.contains(&name) || DROP_IN_VALUE_MACROS.contains(&name))
+            .then(|| name.to_string())
     };
     let binds_any = |text: &str| {
         matches!(
@@ -635,8 +645,11 @@ pub(crate) fn macro_binding_candidates(source: &ast::SourceFile) -> MacroBinding
     };
     let mut names = BTreeSet::new();
     for node in source.syntax().descendants() {
-        if json_namespace_rebound(&node) {
+        if json_root_may_be_rebound(&node) {
             names.insert("json".to_string());
+        }
+        if crate_namespace_rebound(&node, "anyhow") {
+            names.insert("anyhow".to_string());
         }
         if renames_standard_crate(&node) {
             return MacroBindingCandidates::Any;
@@ -1011,6 +1024,11 @@ fn renames_standard_crate(node: &SyntaxNode) -> bool {
 // `FILE_FACT_CACHE_SCHEMA_VERSION`, or cached candidates hide the new sites.
 fn macro_binding_scan_needed(source: &str, trusted: &[&str]) -> bool {
     trusted.contains(&"json") && source.contains("serde_json")
+        || trusted.contains(&"anyhow") && source.contains("anyhow")
+        || trusted
+            .iter()
+            .any(|name| LEVELED_LOGGING_MACROS.contains(name))
+            && (source.contains("tracing") || source.contains("log"))
         || source.contains("macro")
         || source.contains("use")
         || source.contains("extern")
@@ -1356,9 +1374,50 @@ fn macro_binding_sites_in_tree(
         }
         // An extern-crate alias or module in another file can defeat this
         // import's root even when that file never mentions `json` itself.
-        if trusted.contains(&"json") && json_namespace_rebound(node) {
+        if trusted.contains(&"json") && json_root_may_be_rebound(node) {
             ambiguous.push((
                 "json".to_string(),
+                MacroBindingSite {
+                    line: line_of(node),
+                    kind: MacroBindingKind::Import,
+                    scope: None,
+                    scope_bytes: None,
+                    crate_local: false,
+                    module_local: false,
+                },
+            ));
+        }
+        // #16420: a module, rename or foreign import named `tracing` or
+        // `log` may take over the root a bare logging import names, and so
+        // may an item-position macro call whose tokens name either root
+        // (`cfg_if! { if #[cfg(unix)] { use compat as tracing; } }`), since
+        // its expansion is not read.
+        if LOGGING_CRATES
+            .iter()
+            .any(|krate| crate_namespace_rebound(node, krate))
+            || item_macro_names_root(node, LOGGING_CRATES)
+        {
+            for name in trusted
+                .iter()
+                .copied()
+                .filter(|name| LEVELED_LOGGING_MACROS.contains(name))
+            {
+                ambiguous.push((
+                    name.to_string(),
+                    MacroBindingSite {
+                        line: line_of(node),
+                        kind: MacroBindingKind::Import,
+                        scope: None,
+                        scope_bytes: None,
+                        crate_local: false,
+                        module_local: false,
+                    },
+                ));
+            }
+        }
+        if trusted.contains(&"anyhow") && crate_namespace_rebound(node, "anyhow") {
+            ambiguous.push((
+                "anyhow".to_string(),
                 MacroBindingSite {
                     line: line_of(node),
                     kind: MacroBindingKind::Import,
@@ -1960,6 +2019,10 @@ fn macro_binding_sites_in_tree(
                         // #15263: `use std::vec;` / `use alloc::vec;` names
                         // the standard macro itself, like a standard-root glob.
                         None
+                    } else if item.rename().is_none() && imports_bare_drop_in_crate(&item, name) {
+                        // `use anyhow;` names the extern crate, which lives in
+                        // the type namespace only and binds no macro (#10357).
+                        None
                     } else if !is_drop_in_assertion(&item, name)
                         || drop_in_shadowed(root, external)
                         // A plain import that binds a standard root's name
@@ -2156,6 +2219,42 @@ const EXPECT_TEST_CRATES: &[&str] = &["expect_test"];
 /// and (for `assert_ok!`/`assert_some!`) yields the payload.
 const CLAIMS_CRATES: &[&str] = &["claims"];
 
+/// #16420: the leveled logging macros tracing and log both export, whose
+/// bare spelling is trusted for helper forwarding only through a verified
+/// import from one of [`LOGGING_CRATES`].
+pub(crate) const LEVELED_LOGGING_MACROS: &[&str] = &["trace", "debug", "info", "warn", "error"];
+
+/// The crates whose leveled logging macros were audited (#10357, #16420).
+const LOGGING_CRATES: &[&str] = &["tracing", "log"];
+
+/// Whether `node` is an item-position macro call whose tokens name one of
+/// `roots`. Its expansion may bind that root (`cfg_if! { .. use compat as
+/// tracing; }`), which no use-tree scan of the file sees (#16420, #16388).
+fn item_macro_names_root(node: &SyntaxNode, roots: &[&str]) -> bool {
+    ast::MacroCall::cast(node.clone())
+        .filter(|_| {
+            node.parent().is_some_and(|parent| {
+                matches!(
+                    parent.kind(),
+                    SyntaxKind::SOURCE_FILE | SyntaxKind::ITEM_LIST
+                )
+            })
+        })
+        .and_then(|call| call.token_tree())
+        .is_some_and(|tree| {
+            tree.syntax()
+                .descendants_with_tokens()
+                .filter_map(|element| element.into_token())
+                .any(|token| roots.contains(&token.text().trim_start_matches("r#")))
+        })
+}
+
+/// [`json_namespace_rebound`], or an item macro whose tokens name
+/// `serde_json` and whose expansion is not read (#16388).
+fn json_root_may_be_rebound(node: &SyntaxNode) -> bool {
+    json_namespace_rebound(node) || item_macro_names_root(node, &["serde_json"])
+}
+
 /// The crates whose export under `name` is a drop-in for the trusted macro.
 fn drop_in_crates(name: &str) -> &'static [&'static str] {
     match name {
@@ -2163,6 +2262,10 @@ fn drop_in_crates(name: &str) -> &'static [&'static str] {
         "assert_eq" | "assert_ne" => DROP_IN_ASSERTION_CRATES,
         "expect" | "expect_file" => EXPECT_TEST_CRATES,
         "json" => &["serde_json"],
+        "anyhow" => &["anyhow"],
+        // #16420: tracing and log export the leveled logging macros under
+        // the same names; a verified import from either is the audited one.
+        _ if LEVELED_LOGGING_MACROS.contains(&name) => LOGGING_CRATES,
         // `use std::env;` names the module and, in the macro namespace, the
         // standard `env!` itself; `use std::include_str;` is the standard
         // macro as well.
@@ -2976,6 +3079,32 @@ fn is_standard_macro_import(item: &ast::UseTree, name: &str) -> bool {
         segments.as_slice(),
         [root, imported] if exporters.contains(root) && *imported == name
     )
+}
+
+/// Whether `item` is a top-level `use krate;` or `use ::krate;` of a drop-in
+/// crate whose own name is the trusted macro name (`anyhow`).
+fn imports_bare_drop_in_crate(item: &ast::UseTree, name: &str) -> bool {
+    let top_level = item
+        .syntax()
+        .ancestors()
+        .skip(1)
+        .filter_map(ast::UseTree::cast)
+        .next()
+        .is_none();
+    let path: String = item
+        .path()
+        .map(|path| {
+            path.syntax()
+                .descendants_with_tokens()
+                .filter_map(|element| element.into_token())
+                .filter(|token| !token.kind().is_trivia())
+                .map(|token| token.text().trim_start_matches("r#").to_string())
+                .collect()
+        })
+        .unwrap_or_default();
+    top_level
+        && drop_in_crates(name).contains(&name)
+        && path.strip_prefix("::").unwrap_or(&path) == name
 }
 
 fn is_drop_in_assertion(item: &ast::UseTree, name: &str) -> bool {
@@ -7806,7 +7935,7 @@ fn eager_path(
                 || table.label().is_some()
                 || row_array(&table, function, rows_reach_the_loop).is_none()
             {
-                return Err(conditional_construct(&parent));
+                return Err(conditional_construct(&parent, &node));
             }
             if table.syntax().descendants().any(|node| {
                 (ast::BreakExpr::can_cast(node.kind()) || ast::ContinueExpr::can_cast(node.kind()))
@@ -7827,24 +7956,42 @@ fn eager_path(
             || ast::StmtList::can_cast(parent.kind())
             || ast::ParenExpr::can_cast(parent.kind()))
         {
-            return Err(conditional_construct(&parent));
+            return Err(conditional_construct(&parent, &node));
         }
         node = parent;
     }
 }
 
 /// Reader-facing name for a construct that may skip the code inside it.
-fn conditional_construct(node: &SyntaxNode) -> &'static str {
-    if ast::ForExpr::can_cast(node.kind()) {
-        "a `for` loop, which may run zero times"
-    } else if ast::WhileExpr::can_cast(node.kind()) {
-        "a `while` loop, which may run zero times"
-    } else if ast::IfExpr::can_cast(node.kind()) {
-        "an `if` branch"
-    } else if ast::MatchArm::can_cast(node.kind())
-        || ast::MatchArmList::can_cast(node.kind())
-        || ast::MatchExpr::can_cast(node.kind())
-    {
+/// `child` is the node the walk came up from, so a position the construct
+/// always evaluates (an `if` or `while` condition, a `match` scrutinee, a
+/// `for` iterable) is named as that position, never as a branch, arm or
+/// loop body that may be skipped (#15337 review). The refusal is unchanged.
+fn conditional_construct(node: &SyntaxNode, child: &SyntaxNode) -> &'static str {
+    let is = |part: Option<SyntaxNode>| part.is_some_and(|part| &part == child);
+    if let Some(table) = ast::ForExpr::cast(node.clone()) {
+        if is(table.iterable().map(|expr| expr.syntax().clone())) {
+            "the iterable of a `for` loop"
+        } else {
+            "a `for` loop, which may run zero times"
+        }
+    } else if let Some(body) = ast::WhileExpr::cast(node.clone()) {
+        if is(body.condition().map(|expr| expr.syntax().clone())) {
+            "the condition of a `while` loop"
+        } else {
+            "a `while` loop, which may run zero times"
+        }
+    } else if let Some(branch) = ast::IfExpr::cast(node.clone()) {
+        if is(branch.condition().map(|expr| expr.syntax().clone())) {
+            "the condition of an `if`"
+        } else {
+            "an `if` branch"
+        }
+    } else if ast::MatchExpr::can_cast(node.kind()) {
+        // An arm's body stops at its `MatchArm`, so the walk reaches the
+        // `match` itself only from the scrutinee.
+        "the scrutinee of a `match`"
+    } else if ast::MatchArm::can_cast(node.kind()) || ast::MatchArmList::can_cast(node.kind()) {
         "a `match` arm"
     } else if ast::BinExpr::can_cast(node.kind()) {
         "an operand of `&&` or `||`"

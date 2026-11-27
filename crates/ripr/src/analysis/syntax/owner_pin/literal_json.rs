@@ -149,7 +149,15 @@ pub(super) fn take_use_scan_count() -> usize {
 }
 
 pub(super) fn json_namespace_rebound(node: &SyntaxNode) -> bool {
-    let named = |name: ast::Name| name.text().trim_start_matches("r#") == "serde_json";
+    crate_namespace_rebound(node, "serde_json")
+}
+
+/// Whether `node` binds the name of the drop-in crate `krate` to something
+/// other than that extern crate: a rename or module of that name, or a use
+/// tree that binds it from another path. Either way a bare macro the file
+/// imports from `krate` may name another item (#10357).
+pub(super) fn crate_namespace_rebound(node: &SyntaxNode, krate: &str) -> bool {
+    let named = |name: ast::Name| name.text().trim_start_matches("r#") == krate;
     ast::Rename::cast(node.clone())
         .and_then(|rename| rename.name())
         .is_some_and(named)
@@ -160,18 +168,20 @@ pub(super) fn json_namespace_rebound(node: &SyntaxNode) -> bool {
             tree.use_tree_list().is_none()
                 && tree.rename().is_none()
                 && tree.path().is_some()
-                && use_tree_binds_serde_json(&tree)
+                && use_tree_binds_crate(&tree, krate)
         })
 }
 
 /// The name a leaf use tree binds is its last path segment, or for a
 /// grouped `self` (`use other::serde_json::{self};`) the segment the group
-/// hangs from (#10357). Either spelling of `serde_json` binds the root,
+/// hangs from (#10357). Either spelling of the crate name binds the root,
 /// except a path that is the bare crate name itself (`use serde_json;`,
 /// `use serde_json::{self, ..};`, `use ::serde_json::{self};`), which names
-/// the extern crate under its own name (#16350). A `self` path segment is a
-/// keyword, not a name reference, so the path is read from its text.
-fn use_tree_binds_serde_json(tree: &ast::UseTree) -> bool {
+/// the extern crate under its own name (#16350), and the crate's own
+/// same-named item (`use anyhow::anyhow;`), which is its macro, not a
+/// module. A `self` path segment is a keyword, not a name reference, so the
+/// path is read from its tokens.
+fn use_tree_binds_crate(tree: &ast::UseTree, krate: &str) -> bool {
     let mut parts: Vec<String> = tree
         .syntax()
         .ancestors()
@@ -194,15 +204,19 @@ fn use_tree_binds_serde_json(tree: &ast::UseTree) -> bool {
     }
     let path = path.replace("r#", "");
     let bare = path.strip_prefix("::").unwrap_or(&path);
-    bare != "serde_json" && path.rsplit("::").next() == Some("serde_json")
+    let own_macro = bare
+        .strip_prefix(krate)
+        .and_then(|rest| rest.strip_prefix("::"))
+        == Some(krate);
+    bare != krate && !own_macro && path.rsplit("::").next() == Some(krate)
 }
 
 #[cfg(test)]
 mod tests {
     use super::super::owner_pin_assertions;
     use super::{
-        json_namespace_rebound, literal_json_import_visible, literal_json_import_visible_among,
-        take_canonical_import_checks, take_use_scan_count,
+        crate_namespace_rebound, json_namespace_rebound, literal_json_import_visible,
+        literal_json_import_visible_among, take_canonical_import_checks, take_use_scan_count,
     };
     use crate::analysis::syntax::parse_clean_source_file;
     use ra_ap_syntax::AstNode;
@@ -241,6 +255,35 @@ mod tests {
             "use ::serde_json;",
             "use r#serde_json::{self, json};",
             "use other::json;",
+        ] {
+            assert!(!rebinds(source), "{source}");
+        }
+    }
+
+    #[test]
+    fn the_crates_own_same_named_macro_does_not_rebind_its_namespace() {
+        let rebinds = |source: &str| {
+            ra_ap_syntax::ast::SourceFile::parse(source, ra_ap_syntax::Edition::CURRENT)
+                .tree()
+                .syntax()
+                .descendants()
+                .any(|node| crate_namespace_rebound(&node, "anyhow"))
+        };
+        for source in [
+            "use other::anyhow;",
+            "use other::{anyhow::{self}};",
+            "use other as anyhow;",
+            "extern crate other as anyhow;",
+            "mod anyhow {}",
+        ] {
+            assert!(rebinds(source), "{source}");
+        }
+        for source in [
+            "use anyhow::anyhow;",
+            "use ::anyhow::anyhow;",
+            "use anyhow::{anyhow, Result};",
+            "use anyhow::{self, anyhow};",
+            "use anyhow;",
         ] {
             assert!(!rebinds(source), "{source}");
         }

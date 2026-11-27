@@ -439,3 +439,38 @@ Command:
 
 Updated:
 - `expected/human.txt`
+
+## Pending — owner_return_pin_deferred_closure_binding (35)
+
+Reason:
+RIPR-SPEC-0224: inert row names the construct its refusals agree on (#15337)
+
+Command:
+`cargo xtask goldens bless owner_return_pin_deferred_closure_binding --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
+
+## Pending — owner_return_pin_deferred_closure_binding (36)
+
+Reason:
+RIPR-SPEC-0122: #15336 unconfirmed-reach note severity, possible-gap State line, legend and Terms glosses
+
+Command:
+`cargo xtask goldens bless owner_return_pin_deferred_closure_binding --reason "..."`
+
+Updated:
+- `expected/human.txt`
+
+## Pending — owner_return_pin_deferred_closure_binding (37)
+
+Reason:
+RIPR-SPEC-0122: #15336 human-full Terms line stops claiming test reach for weakly_exposed and reachable_unrevealed
+
+Command:
+`cargo xtask goldens bless owner_return_pin_deferred_closure_binding --reason "..."`
+
+Updated:
+- `expected/human-full.txt`

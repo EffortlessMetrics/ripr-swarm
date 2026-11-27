@@ -34,3 +34,14 @@ Command:
 Updated:
 - `expected/sarif.json`
 - `expected/github.txt`
+
+## Pending — python_patched_callee_reachable_unrevealed (4)
+
+Reason:
+RIPR-SPEC-0122: #15336 unconfirmed-reach note severity, possible-gap State line, legend and Terms glosses
+
+Command:
+`cargo xtask goldens bless python_patched_callee_reachable_unrevealed --reason "..."`
+
+Updated:
+- `expected/human.txt`

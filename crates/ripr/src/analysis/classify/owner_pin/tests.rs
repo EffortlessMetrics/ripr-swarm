@@ -6396,6 +6396,94 @@ fn any_mention_in_another_macros_arguments_stays_ambiguous() {
     );
 }
 
+/// #16388: an item macro whose tokens name `serde_json` may alias the root
+/// a bare `json!` import names, so the scan reports a `json` site and the
+/// stored candidates record `json` (the slice-boundary count then reads the
+/// file). An expression-position call naming the root does neither, and a
+/// plain `json` import reports no site.
+#[test]
+fn an_item_macro_naming_serde_json_is_a_json_binding_site() {
+    let sites = |source: &str| {
+        trusted_macro_binding_sites(source, &BTreeSet::new(), &["json"], &|_, _| false, &|_| {
+            true
+        })
+    };
+    let candidates = |source: &str| {
+        parse_clean_source_file(source)
+            .map(|parse| macro_binding_candidates(&parse.tree()).may_bind_any_trusted())
+    };
+    for source in [
+        "use serde_json::json;\nshim! { use compat as serde_json; }",
+        "cfg_if::cfg_if! { if #[cfg(unix)] { use compat as serde_json; } }",
+        "mod m { shim! { use compat as r#serde_json; } }",
+    ] {
+        assert!(!sites(source).is_empty(), "{source}");
+        assert_eq!(candidates(source), Some(true), "{source}");
+    }
+    // The import alone reports no site, though its `json` name is still a
+    // stored candidate (every trusted import is).
+    assert!(sites("use serde_json::json;").is_empty());
+    let expression = "fn f() { let _ = serde_json::json!(null); shim!(serde_json); }";
+    assert!(sites(expression).is_empty());
+    assert_eq!(candidates(expression), Some(false));
+}
+
+/// #16420: a file that declares, renames or imports a `tracing` or `log`
+/// namespace reports a site for each requested logging name, even when it
+/// never names the macro, so a verified `use tracing::info;` elsewhere stops
+/// counting. The crate's own spellings and other names report none.
+#[test]
+fn a_logging_root_rebinding_reports_each_requested_logging_name() {
+    let sites = |source: &str, names: &[&str]| -> BTreeSet<String> {
+        trusted_macro_binding_sites(source, &BTreeSet::new(), names, &|_, _| false, &|_| true)
+            .into_iter()
+            .map(|(name, _)| name)
+            .collect()
+    };
+    let both: BTreeSet<String> = ["info", "warn"]
+        .iter()
+        .map(|name| name.to_string())
+        .collect();
+    for source in [
+        "mod log {}",
+        "mod tracing {}",
+        "extern crate other as tracing;",
+        "use other::log;",
+        "use other as tracing;",
+        // #16424 review: an item macro whose expansion is not read may
+        // alias the root.
+        "cfg_if::cfg_if! { if #[cfg(unix)] { use compat as tracing; } }",
+        "mod m { shim! { use compat as log; } }",
+    ] {
+        assert_eq!(sites(source, &["info", "warn"]), both, "{source}");
+        assert!(sites(source, &["json"]).is_empty(), "{source}");
+    }
+    for source in [
+        "use tracing::info;",
+        "use log::{self, warn};",
+        "use ::tracing::{debug, info};",
+        "use log;",
+        "fn log() {}",
+        // A logging call in expression position names no root binding.
+        "fn f() { tracing::info!(\"order\"); shim!(log); }",
+    ] {
+        assert!(sites(source, &["info", "warn"]).is_empty(), "{source}");
+    }
+    // An import of the name from anywhere else, or one Cargo may route to
+    // another package, is a site for that name.
+    assert!(sites("use other::info;", &["info"]).contains("info"));
+    assert!(
+        !trusted_macro_binding_sites(
+            "use tracing::info;",
+            &BTreeSet::new(),
+            &["info"],
+            &|_, _| false,
+            &|_| false,
+        )
+        .is_empty()
+    );
+}
+
 /// #5993: `#[macro_use] mod NAME;` written directly in the branches of a
 /// verified registry `cfg_if::cfg_if!` is that item written directly; any
 /// other `macro_use`, any `no_implicit_prelude`, and an unverified or
@@ -7314,6 +7402,29 @@ fn each_refusal_names_the_gate_that_failed() {
     assert_eq!(
         refusal(&format!("if true {{ {pin} }}"), ""),
         conditional("an `if` branch")
+    );
+    // A position the construct always evaluates is named as that position,
+    // not as a branch, arm or body that may be skipped (#15337 review).
+    let check = "assert_eq!(weight(4), 12)";
+    assert_eq!(
+        refusal(&format!("if {{ {check}; true }} {{}}"), ""),
+        conditional("the condition of an `if`")
+    );
+    assert_eq!(
+        refusal(&format!("match {{ {check}; true }} {{ _ => {{}} }}"), ""),
+        conditional("the scrutinee of a `match`")
+    );
+    assert_eq!(
+        refusal(&format!("match true {{ _ => {{ {pin} }} }}"), ""),
+        conditional("a `match` arm")
+    );
+    assert_eq!(
+        refusal(&format!("while {{ {check}; false }} {{}}"), ""),
+        conditional("the condition of a `while` loop")
+    );
+    assert_eq!(
+        refusal(&format!("for _ in {{ {check}; 0..2 }} {{}}"), ""),
+        conditional("the iterable of a `for` loop")
     );
     assert_eq!(
         refusal(&format!("return; {pin}"), ""),

@@ -200,6 +200,7 @@ fn class_entries_for(
                 hops: 0,
                 cross_module: None,
                 closure: false,
+                commonjs_whole: false,
             })
             .collect();
         entries.sort();

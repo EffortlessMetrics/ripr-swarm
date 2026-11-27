@@ -1,0 +1,4 @@
+[package]
+name = "rust_dyn_box_bare_object_other_file_fixture"
+version = "0.0.0"
+edition = "2018"

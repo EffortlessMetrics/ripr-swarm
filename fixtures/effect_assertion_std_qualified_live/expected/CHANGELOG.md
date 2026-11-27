@@ -253,3 +253,36 @@ Command:
 
 Updated:
 - `expected/human-full.txt`
+
+## Pending — effect_assertion_std_qualified_live (20)
+
+Reason:
+RIPR-SPEC-0122: #15313 Summary names shared candidate lines and says No test gap when State reads no test gap found
+
+Command:
+`cargo xtask goldens bless effect_assertion_std_qualified_live --reason "..."`
+
+Updated:
+- `expected/human.txt`
+
+## Pending — effect_assertion_std_qualified_live (21)
+
+Reason:
+RIPR-SPEC-0122: #15336 unconfirmed-reach note severity, possible-gap State line, legend and Terms glosses
+
+Command:
+`cargo xtask goldens bless effect_assertion_std_qualified_live --reason "..."`
+
+Updated:
+- `expected/human.txt`
+
+## Pending — effect_assertion_std_qualified_live (22)
+
+Reason:
+RIPR-SPEC-0122: #15336 human-full Terms line stops claiming test reach for weakly_exposed and reachable_unrevealed
+
+Command:
+`cargo xtask goldens bless effect_assertion_std_qualified_live --reason "..."`
+
+Updated:
+- `expected/human-full.txt`

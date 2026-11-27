@@ -181,7 +181,7 @@ pub(crate) fn load_diff_with_effective_base_core(
             // #4480: stdin is bounded by the shared CLI input cap, so a
             // producer that never closes the pipe cannot grow memory forever.
             let buffer = crate::bounded_input::read_reader(std::io::stdin().lock())
-                .map_err(|err| format!("failed to read diff from stdin: {err}"))?;
+                .map_err(|err| format!("failed to read diff from stdin: {err}; check that the command feeding stdin writes a complete unified diff under the input limit, then rerun"))?;
             return Ok(LoadedDiff {
                 text: decode_diff_text("diff from stdin", buffer)?,
                 effective_base: None,
@@ -3159,7 +3159,7 @@ fn run_git_diff_bytes(
     // would be parsed as a diff option, so refuse it at the sink.
     if range.starts_with('-') {
         return Err(
-            format!("refusing to diff `{range}`: a revision range cannot start with `-`").into(),
+            format!("refusing to diff `{range}`: a revision range cannot start with `-`; pass a revision or range such as `origin/main..HEAD`").into(),
         );
     }
     // `diff.orderFile=/dev/null` neutralizes ambient file ordering (#5325):
@@ -3329,9 +3329,7 @@ pub(crate) fn no_merge_base_diagnosis(
 ) -> (String, bool) {
     if is_shallow_repository(root, git_timeout) {
         let text = format!(
-            "This is a shallow clone, so `{base}` and `{head}` share no fetched history \
-             (the analysis did not run). Fetch the full history with `git fetch --unshallow` \
-             (in GitHub Actions, set `fetch-depth: 0` on actions/checkout), then re-run."
+            "This is a shallow clone, so `{base}` and `{head}` {SHALLOW_NO_MERGE_BASE_REPAIR}"
         );
         (text, true)
     } else {
@@ -3341,6 +3339,25 @@ pub(crate) fn no_merge_base_diagnosis(
         );
         (text, false)
     }
+}
+
+/// The fixed tail of the shallow-clone verdict of [`no_merge_base_diagnosis`].
+/// Every producer of that verdict ends its error with the diagnosis, so the
+/// tail is the verdict's own terminal marker.
+const SHALLOW_NO_MERGE_BASE_REPAIR: &str = "share no fetched history (the analysis did not run). \
+     Fetch the full history with `git fetch --unshallow` (in GitHub Actions, set `fetch-depth: 0` \
+     on actions/checkout), then re-run.";
+
+/// Whether an error's innermost text carries the shallow-clone verdict of
+/// [`no_merge_base_diagnosis`] (#15321). This reads the verdict the owner
+/// already reached when the failure was produced rather than re-probing the
+/// repository later. It is still a text contract, not a typed kind: it holds
+/// because every producer ends its error with the diagnosis. The match is
+/// anchored to the end, so a root path or ref name embedded earlier in the
+/// text (for example in the unclassified `git -C <root> diff` hint, which
+/// ends differently) cannot trigger it.
+pub(crate) fn names_shallow_no_merge_base(error_text: &str) -> bool {
+    error_text.ends_with(SHALLOW_NO_MERGE_BASE_REPAIR)
 }
 
 /// Whether `root` is a shallow clone. `false` when Git cannot answer, so a

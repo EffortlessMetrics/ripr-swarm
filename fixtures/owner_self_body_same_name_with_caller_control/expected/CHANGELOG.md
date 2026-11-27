@@ -202,3 +202,26 @@ Command:
 
 Updated:
 - `expected/human.txt`
+
+## Pending — owner_self_body_same_name_with_caller_control (17)
+
+Reason:
+RIPR-SPEC-0122: #15336 unconfirmed-reach note severity, possible-gap State line, legend and Terms glosses
+
+Command:
+`cargo xtask goldens bless owner_self_body_same_name_with_caller_control --reason "..."`
+
+Updated:
+- `expected/human.txt`
+- `expected/human-full.txt`
+
+## Pending — owner_self_body_same_name_with_caller_control (18)
+
+Reason:
+RIPR-SPEC-0122: #15336 human-full Terms line stops claiming test reach for weakly_exposed and reachable_unrevealed
+
+Command:
+`cargo xtask goldens bless owner_self_body_same_name_with_caller_control --reason "..."`
+
+Updated:
+- `expected/human-full.txt`

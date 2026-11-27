@@ -76,7 +76,10 @@ pub(crate) struct TypeScriptOwner {
     /// `module.exports = <function>` as the file's whole export, independent of
     /// the file-level gate that licenses `commonjs_default_export`: a named
     /// import or member of such a module (`const { f } = require(...)`,
-    /// `k.f`) is a property of the function, never the owner.
+    /// `k.f`) is a property of the function, never the owner. Also set on the
+    /// other top-level functions of a module whose whole export is one
+    /// identifier and that adds no named property (#16366): a named import
+    /// or member reads a property of that export, never the sibling.
     pub(crate) commonjs_whole_function: bool,
     /// `true` for a `ModuleFunction` owner whose declarator initializer is a
     /// call with a function-valued argument (`export const X =

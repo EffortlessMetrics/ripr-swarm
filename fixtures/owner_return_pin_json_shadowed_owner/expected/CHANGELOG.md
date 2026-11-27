@@ -324,3 +324,25 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — owner_return_pin_json_shadowed_owner (27)
+
+Reason:
+RIPR-SPEC-0122: #15313 Summary names shared candidate lines and says No test gap when State reads no test gap found
+
+Command:
+`cargo xtask goldens bless owner_return_pin_json_shadowed_owner --reason "..."`
+
+Updated:
+- `expected/human.txt`
+
+## Pending — owner_return_pin_json_shadowed_owner (28)
+
+Reason:
+RIPR-SPEC-0122: #15336 unconfirmed-reach note severity, possible-gap State line, legend and Terms glosses
+
+Command:
+`cargo xtask goldens bless owner_return_pin_json_shadowed_owner --reason "..."`
+
+Updated:
+- `expected/human.txt`

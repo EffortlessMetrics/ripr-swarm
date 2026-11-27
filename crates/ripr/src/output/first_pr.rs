@@ -776,6 +776,20 @@ fn render_start_here_packet_with_selection(
     packet
 }
 
+/// The derived `--gap-ledger` file needs its parent directory. A file in the
+/// way (or an unwritable location) is a wrong `--gap-ledger` value, so the
+/// refusal names the flag and the fix instead of a bare OS error.
+fn create_gap_ledger_parent(parent: &Path) -> Result<(), String> {
+    fs::create_dir_all(parent).map_err(|err| {
+        format!(
+            "first-pr --gap-ledger directory {} cannot be created: {}; pass a --gap-ledger \
+             path whose parent is a writable directory (or can be created as one)",
+            crate::output::path::human_path(parent),
+            crate::bounded_input::read_failure_detail(&err)
+        )
+    })
+}
+
 fn materialize_check_output_gap_ledger(
     root: &Path,
     options: &FirstPrOptions,
@@ -812,15 +826,13 @@ fn materialize_check_output_gap_ledger(
     let markdown = crate::output::gap_decision_ledger::render_gap_decision_ledger_markdown(&report);
     let gap_ledger_path = resolve_path(root, &options.gap_ledger);
     if let Some(parent) = gap_ledger_path.parent() {
-        fs::create_dir_all(parent)
-            .map_err(|err| format!("failed to create {}: {err}", parent.display()))?;
+        create_gap_ledger_parent(parent)?;
     }
     crate::output::file_write::write(&gap_ledger_path, json.as_bytes())
         .map_err(|err| crate::output::file_write::write_failure_message(&gap_ledger_path, &err))?;
     let gap_ledger_markdown = resolve_path(root, &with_extension(&options.gap_ledger, "md"));
     if let Some(parent) = gap_ledger_markdown.parent() {
-        fs::create_dir_all(parent)
-            .map_err(|err| format!("failed to create {}: {err}", parent.display()))?;
+        create_gap_ledger_parent(parent)?;
     }
     crate::output::file_write::write(&gap_ledger_markdown, markdown.as_bytes()).map_err(|err| {
         crate::output::file_write::write_failure_message(&gap_ledger_markdown, &err)

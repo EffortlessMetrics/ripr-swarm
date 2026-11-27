@@ -67,6 +67,103 @@ async fn delayed_durable_read_leaves_the_async_executor_and_status_available() -
     Ok(())
 }
 
+/// #15244: prepare reads the durable store on a blocking worker without the
+/// session lock (production runs a current-thread runtime), then re-takes the
+/// lock and refuses `stale_snapshot` when a refresh replaced the snapshot it
+/// admitted. The injected reader is the only substitute; the lookup, its read
+/// and the final step are the production ones.
+#[tokio::test(flavor = "current_thread")]
+async fn delayed_prepare_store_read_releases_the_session_lock_and_revalidates_its_snapshot()
+-> Result<(), String> {
+    for replace_snapshot in [false, true] {
+        let server = Arc::new(healthy_server()?);
+        // Not repair-ready, so the production read touches no store and the
+        // delay below is the whole worker.
+        let mut finding = gaps::test_finding()?;
+        finding.canonical_gap = None;
+        *server.session.lock().await =
+            repair::tests::session_with(&[finding.clone()], "root:sha256:a")?;
+        let (started_tx, started_rx) = tokio::sync::oneshot::channel();
+        let (release_tx, release_rx) = std::sync::mpsc::channel();
+        let prepare_server = server.clone();
+        let worker = tokio::spawn(async move {
+            prepare_server
+                .prepare_repair_document_with("finding:test:1", None, move |lookup| {
+                    let _ = started_tx.send(());
+                    release_rx
+                        .recv_timeout(std::time::Duration::from_secs(2))
+                        .map_err(|error| {
+                            workspace::AttemptFailure::new(
+                                workspace::CODE_ANALYSIS_FAILED,
+                                format!("delayed store read was not released: {error}"),
+                                "test reader release",
+                            )
+                        })?;
+                    lookup.read(std::path::Path::new("."))
+                })
+                .await
+        });
+        let started = tokio::time::timeout(std::time::Duration::from_secs(1), started_rx).await;
+        // The session lock is free while the store is read: status answers,
+        // and a refresh can commit a replacement snapshot.
+        let live = tokio::time::timeout(
+            std::time::Duration::from_millis(250),
+            server.status_tool(super::super::MAX_RESPONSE_BYTES),
+        )
+        .await;
+        let replaced = if replace_snapshot {
+            // Same item, different committed evidence: a new snapshot id.
+            let mut refreshed = finding;
+            refreshed.evidence.push("refreshed evidence".to_string());
+            let replacement = repair::tests::session_with(&[refreshed], "root:sha256:a")?;
+            let locked =
+                tokio::time::timeout(std::time::Duration::from_millis(250), server.session.lock())
+                    .await;
+            match locked {
+                Ok(mut session) => {
+                    let before = session.last_good.as_ref().map(|s| s.snapshot_id.clone());
+                    session.last_good = replacement.last_good;
+                    let after = session.last_good.as_ref().map(|s| s.snapshot_id.clone());
+                    Some(before != after)
+                }
+                Err(_elapsed) => None,
+            }
+        } else {
+            Some(false)
+        };
+        let completed_early = worker.is_finished();
+        let _ = release_tx.send(());
+        let observed = worker.await.map_err(|error| error.to_string())?;
+        assert!(
+            !completed_early,
+            "the delayed store read ran synchronously or timed out before release"
+        );
+        started
+            .map_err(|error| error.to_string())?
+            .map_err(|error| error.to_string())?;
+        live.map_err(|error| format!("async status blocked behind the store read: {error}"))?
+            .map_err(|error| error.to_string())?;
+        let replaced = replaced.ok_or("the session lock was held across the durable store read")?;
+        assert_eq!(
+            replaced, replace_snapshot,
+            "the replacement must change the snapshot id"
+        );
+        if replace_snapshot {
+            let failure = observed
+                .err()
+                .ok_or("a snapshot replaced during the store read must refuse")?;
+            assert_eq!(failure.code, workspace::CODE_STALE_SNAPSHOT);
+        } else {
+            let document = observed.map_err(|failure| failure.detail)?;
+            assert_eq!(document["repair_packet_ready"], false);
+        }
+        if !server.session.lock().await.repairs.is_empty() {
+            return Err("prepare created a session transaction".to_string());
+        }
+    }
+    Ok(())
+}
+
 #[test]
 fn oversized_status_envelope_gets_typed_too_large_like_every_tool() -> Result<(), String> {
     // `ripr_workspace_status` goes through the shared response bound
@@ -692,7 +789,7 @@ async fn list_gaps_accepts_offset_and_limit_at_the_dispatch_edge() -> Result<(),
         serde_json::json!({"offset": 3, "limit": 10}),
         serde_json::json!({"independent_pages": true}),
         serde_json::json!({"independent_pages": false}),
-        serde_json::json!({"snapshot_id": "snapshot:sha256:x", "offset": 0, "limit": 1}),
+        serde_json::json!({"snapshot_id": format!("snapshot:sha256:{}", "a".repeat(64)), "offset": 0, "limit": 1}),
     ] {
         let arguments = serde_json::from_value(arguments).map_err(|error| error.to_string())?;
         let response = server
@@ -2341,6 +2438,55 @@ async fn refresh_verify_route_follows_the_retained_snapshot_base() -> Result<(),
     );
     let _ = std::fs::remove_dir_all(&root);
     Ok(())
+}
+
+#[test]
+fn echoed_arguments_escape_control_and_bidi_characters_and_stay_bounded() {
+    let escaped = crate::mcp::escape_echoed_argument("a\u{1b}b\nc\u{202e}d\u{200b}e");
+    assert_eq!(escaped, "a\\u{1b}b\\nc\\u{202e}d\\u{200b}e");
+    // Line and paragraph separators are not `is_control`, but render as line
+    // breaks: escaped so an echo cannot forge a line.
+    assert_eq!(
+        crate::mcp::escape_echoed_argument("a\u{2028}b\u{2029}c"),
+        "a\\u{2028}b\\u{2029}c"
+    );
+    assert_eq!(
+        crate::mcp::escape_echoed_argument("plain/id.rs:1 é"),
+        "plain/id.rs:1 é"
+    );
+    let long = "x".repeat(1000);
+    let bounded = crate::mcp::escape_echoed_argument(&long);
+    assert!(bounded.ends_with("..."), "{bounded}");
+    assert!(bounded.len() < 300, "{}", bounded.len());
+}
+
+#[test]
+fn malformed_snapshot_ids_are_invalid_arguments_and_well_formed_ones_pass() {
+    let args = |value: &str| serde_json::from_value(serde_json::json!({"snapshot_id": value})).ok();
+    for bad in [
+        "",
+        "abc",
+        "snapshot:sha256:x",
+        "snapshot:sha256:ABCDEF",
+        "sha256:aa",
+    ] {
+        let error = super::optional_snapshot_id_argument(&args(bad));
+        assert!(
+            matches!(&error, Err(e) if e.message.contains("snapshot:sha256:<64 lowercase hex")),
+            "{bad:?} must be refused: {error:?}"
+        );
+    }
+    let good = format!("snapshot:sha256:{}", "0123456789abcdef".repeat(4));
+    assert_eq!(
+        super::optional_snapshot_id_argument(&args(&good))
+            .ok()
+            .flatten(),
+        Some(good)
+    );
+    assert_eq!(
+        super::optional_snapshot_id_argument(&None).ok().flatten(),
+        None
+    );
 }
 
 fn invalid_params_data(error: &ErrorData) -> Result<&Value, String> {

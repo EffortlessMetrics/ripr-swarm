@@ -1,0 +1,12 @@
+[[extend]]
+id = "RIPR-SPEC-0184"
+tests = [
+  "crates/ripr/tests/cli_error_message_snapshots.rs::argument_refusals_name_the_exact_next_command",
+  "crates/ripr/tests/cli_error_message_snapshots.rs::a_real_help_topic_still_prints_its_help",
+  "crates/ripr/tests/cli_smoke/json_refusal_next_steps.rs::an_unknown_help_topic_json_refusal_points_at_ripr_help",
+  "crates/ripr/src/cli/command.rs::tests::help_with_unknown_subcommand_returns_unknown_help_topic_error",
+]
+code = [
+  "crates/ripr/src/cli/command.rs",
+  "crates/ripr/src/cli/usage_refusal.rs",
+]

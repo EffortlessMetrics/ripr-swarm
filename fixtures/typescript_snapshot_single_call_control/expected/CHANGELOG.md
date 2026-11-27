@@ -270,3 +270,25 @@ Command:
 
 Updated:
 - `expected/human-full.txt`
+
+## Pending — typescript_snapshot_single_call_control (22)
+
+Reason:
+RIPR-SPEC-0122: #15336 unconfirmed-reach note severity, possible-gap State line, legend and Terms glosses
+
+Command:
+`cargo xtask goldens bless typescript_snapshot_single_call_control --reason "..."`
+
+Updated:
+- `expected/human.txt`
+
+## Pending — typescript_snapshot_single_call_control (23)
+
+Reason:
+RIPR-SPEC-0122: #15336 human-full Terms line stops claiming test reach for weakly_exposed and reachable_unrevealed
+
+Command:
+`cargo xtask goldens bless typescript_snapshot_single_call_control --reason "..."`
+
+Updated:
+- `expected/human-full.txt`

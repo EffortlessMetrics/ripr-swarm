@@ -756,3 +756,14 @@ Command:
 
 Updated:
 - `expected/human.txt`
+
+## Pending — typescript_tothrow_exact_oracle (50)
+
+Reason:
+RIPR-SPEC-0122: #15336 unconfirmed-reach note severity, possible-gap State line, legend and Terms glosses
+
+Command:
+`cargo xtask goldens bless typescript_tothrow_exact_oracle --reason "..."`
+
+Updated:
+- `expected/human.txt`
