@@ -749,7 +749,7 @@ pub fn load_suppressions_for_root_at(
     } else {
         // Config may select another root-relative file. Rename only the
         // parser's location prefix, preserving values and declaration lines.
-        let display = relative_path.display().to_string();
+        let display = crate::output::path::human_path(relative_path);
         Err(violations
             .into_iter()
             .map(|violation| violation.replacen(SUPPRESSIONS_PATH, &display, 1))
@@ -1360,7 +1360,19 @@ pub fn function_selector_label(path: &str, function: &str) -> String {
 /// malformed file is an `Err`, so the caller can never publish unfiltered
 /// counts believing a policy was applied.
 pub fn load_check_suppression_policy(path: &Path) -> Result<Vec<SuppressionEntry>, String> {
-    let display = path.display().to_string();
+    load_check_suppression_policy_on(path, cfg!(windows))
+}
+
+/// [`load_check_suppression_policy`] with the display host explicit, so the
+/// Windows rendering is testable anywhere (#16357). Every message names the
+/// policy through the house human-path rule: on Windows a `--root .` join
+/// such as `.\.ripr/suppressions.toml` renders as `./.ripr/suppressions.toml`
+/// in the header and on each problem line, never with mixed separators.
+fn load_check_suppression_policy_on(
+    path: &Path,
+    windows: bool,
+) -> Result<Vec<SuppressionEntry>, String> {
+    let display = crate::output::path::human_path_text(&path.to_string_lossy(), windows);
     let text = crate::bounded_input::read_to_string(path)
         .map_err(|err| format!("failed to read suppression policy `{display}`: {}; pass an existing TOML file as `--suppression-policy`", crate::bounded_input::read_failure_detail(&err)))?;
     let (entries, violations) = parse_suppressions_manifest(&text);
@@ -1399,8 +1411,9 @@ mod tests {
         CheckSuppressionCandidate, SUPPRESSIONS_PATH, SuppressionApplication, SuppressionEntry,
         SuppressionKind, apply_check_suppressions, apply_exposure_suppressions,
         apply_test_efficiency_suppressions, current_iso_date, days_to_civil_date, is_expired,
-        is_iso_date, load_check_suppression_policy, native_separators_to_slash, owner_function_of,
-        parse_suppressions_manifest, path_glob_matches, root_relative_finding_path,
+        is_iso_date, load_check_suppression_policy, load_check_suppression_policy_on,
+        native_separators_to_slash, owner_function_of, parse_suppressions_manifest,
+        path_glob_matches, root_relative_finding_path,
     };
 
     /// #16271: only the platform separator becomes `/`. On Unix a literal
@@ -2329,6 +2342,83 @@ owner = "repo-owner"
         .map_err(|e| format!("write: {e}"))?;
         let entries = load_check_suppression_policy(&valid)?;
         assert_eq!(entries.len(), 1);
+
+        let _ = std::fs::remove_dir_all(&dir);
+        Ok(())
+    }
+
+    /// #16357: a Windows `--root .` join reaches the loader as
+    /// `.\.ripr/suppressions.toml`; the refusal names it through the house
+    /// human-path rule, never with mixed separators.
+    #[test]
+    fn check_suppression_policy_missing_file_names_one_separator_style() -> Result<(), String> {
+        let joined = Path::new(".\\ripr-16357-missing\\.ripr/suppressions.toml");
+        let err = load_check_suppression_policy_on(joined, true)
+            .err()
+            .ok_or("missing policy file must be an error")?;
+        assert!(
+            err.starts_with(
+                "failed to read suppression policy `./ripr-16357-missing/.ripr/suppressions.toml`:"
+            ),
+            "err: {err}"
+        );
+        assert!(!err.contains('\\'), "err: {err}");
+        Ok(())
+    }
+
+    /// #16357: header and every per-problem line name the policy the same
+    /// normalized way on Windows. A Unix filename may contain a literal `\`,
+    /// so the file exists on this host while the Windows rule is applied;
+    /// on Unix the same path keeps its backslash, which names that file.
+    #[cfg(unix)]
+    #[test]
+    fn check_suppression_policy_problems_name_one_separator_style() -> Result<(), String> {
+        let dir = std::env::temp_dir().join(format!(
+            "ripr-check-suppression-policy-16357-{}",
+            std::process::id()
+        ));
+        std::fs::create_dir_all(&dir).map_err(|e| format!("mkdir: {e}"))?;
+        let policy = dir.join(".ripr\\suppressions.toml");
+        std::fs::write(
+            &policy,
+            "schema_version = 1\n[[suppressions]]\nkind = \"exposure_gap\"\nreason = 42\n",
+        )
+        .map_err(|e| format!("write: {e}"))?;
+        let normalized = format!("{}/.ripr/suppressions.toml", dir.display());
+
+        let err = load_check_suppression_policy_on(&policy, true)
+            .err()
+            .ok_or("invalid policy file must be an error")?;
+        let mut lines = err.lines();
+        assert_eq!(
+            lines.next(),
+            Some(
+                format!(
+                    "suppression policy `{normalized}` is invalid; fix each problem listed below, then rerun:"
+                )
+                .as_str()
+            ),
+            "err: {err}"
+        );
+        let problems: Vec<&str> = lines.collect();
+        assert!(!problems.is_empty(), "err: {err}");
+        for problem in &problems {
+            assert!(
+                problem.starts_with(&format!("{normalized}:")),
+                "problem: {problem}"
+            );
+        }
+        assert!(!err.contains('\\'), "err: {err}");
+        assert!(!err.contains(SUPPRESSIONS_PATH), "err: {err}");
+
+        // The Unix rule keeps the literal backslash: it names this file.
+        let unix_err = load_check_suppression_policy_on(&policy, false)
+            .err()
+            .ok_or("invalid policy file must be an error")?;
+        assert!(
+            unix_err.contains(&format!("`{}`", policy.display())),
+            "err: {unix_err}"
+        );
 
         let _ = std::fs::remove_dir_all(&dir);
         Ok(())
