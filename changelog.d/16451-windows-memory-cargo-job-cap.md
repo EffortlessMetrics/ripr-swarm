@@ -1,0 +1,2 @@
+<!-- section: Fixed -->
+- `xtask::cargo_job_cap::host_memory_bytes()` now detects native Windows host/Job-Object memory via a bounded, `OnceLock`-cached PowerShell probe chain without `unsafe` or new dependencies, extending the `< 24 GiB` Cargo job cap in local `precommit` and qualified archive packaging/installation (`candidate_harness/archive.rs`) to constrained Windows runners while keeping high-RAM Windows hosts uncapped (#15216, #16451).

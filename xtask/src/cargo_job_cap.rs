@@ -33,6 +33,7 @@ fn capped_jobs(
 }
 
 /// `MemTotal` from `/proc/meminfo` text, in bytes.
+#[cfg(any(not(target_os = "windows"), test))]
 fn meminfo_total_bytes(text: &str) -> Option<u64> {
     let line = text
         .lines()
@@ -43,6 +44,7 @@ fn meminfo_total_bytes(text: &str) -> Option<u64> {
 }
 
 /// A cgroup memory limit file's value in bytes. `max` means no limit.
+#[cfg(any(not(target_os = "windows"), test))]
 fn cgroup_limit_bytes(text: &str) -> Option<u64> {
     text.trim().parse::<u64>().ok()
 }
@@ -52,6 +54,7 @@ fn cgroup_limit_bytes(text: &str) -> Option<u64> {
 /// (`0::<path>`) and for a v1 hierarchy carrying the `memory` controller. A
 /// nested child limit below an unlimited root is therefore seen. Without a
 /// readable membership, the two root files.
+#[cfg(any(not(target_os = "windows"), test))]
 fn cgroup_limit_files(membership: Option<&str>) -> Vec<String> {
     let Some(text) = membership else {
         return vec![
@@ -88,6 +91,7 @@ fn cgroup_limit_files(membership: Option<&str>) -> Vec<String> {
 
 /// The smallest of `MemTotal` and every readable cgroup limit on this
 /// process's membership path, read through `read`.
+#[cfg(any(not(target_os = "windows"), test))]
 fn smallest_memory_bound(read: &dyn Fn(&str) -> Option<String>) -> Option<u64> {
     let membership = read("/proc/self/cgroup");
     let limits = cgroup_limit_files(membership.as_deref())
@@ -100,10 +104,183 @@ fn smallest_memory_bound(read: &dyn Fn(&str) -> Option<String>) -> Option<u64> {
         .min()
 }
 
-/// The smallest memory bound this process can see, or `None` off Linux or
-/// when nothing is readable.
-pub(crate) fn host_memory_bytes() -> Option<u64> {
+/// Timeout for a single Windows host-memory probe subprocess.
+#[cfg(target_os = "windows")]
+const WINDOWS_MEMORY_PROBE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
+
+#[cfg(any(target_os = "windows", test))]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum WindowsMemoryUnit {
+    Bytes,
+    Kibibytes,
+}
+
+/// Parse a single positive integer memory reading from a Windows memory query.
+/// Strips a leading UTF-8 BOM (`\u{FEFF}`) that older Windows PowerShell
+/// configurations may prepend to stdout.
+#[cfg(any(target_os = "windows", test))]
+fn parse_windows_memory(text: &str, unit: WindowsMemoryUnit) -> Option<u64> {
+    let text = text.strip_prefix('\u{FEFF}').unwrap_or(text);
+    let value = text.trim().parse::<u64>().ok()?;
+    if value == 0 {
+        return None;
+    }
+    match unit {
+        WindowsMemoryUnit::Bytes => Some(value),
+        WindowsMemoryUnit::Kibibytes => value.checked_mul(1024),
+    }
+}
+
+/// .NET GC heap-limit variables that constrain only the `pwsh` probe's CLR heap
+/// rather than native 64-bit Cargo; stripped from the probe child environment.
+#[cfg(any(target_os = "windows", test))]
+const WINDOWS_PROBE_REMOVED_ENVS: [&str; 4] = [
+    "DOTNET_GCHeapHardLimit",
+    "DOTNET_GCHeapHardLimitPercent",
+    "COMPlus_GCHeapHardLimit",
+    "COMPlus_GCHeapHardLimitPercent",
+];
+
+/// Query Windows host memory without `unsafe` FFI by trying bounded PowerShell
+/// probes in order:
+/// 1. 64-bit `pwsh` `.NET` `GC.GetGCMemoryInfo().TotalAvailableMemoryBytes` (bytes;
+///    respects Windows Job Object memory limits as well as physical RAM; skipped
+///    when `pwsh` is a 32-bit process so 4 GiB WOW64 virtual-address clamping
+///    cannot produce a false low-memory cap),
+/// 2. Windows PowerShell 5.1 `Microsoft.VisualBasic.Devices.ComputerInfo.TotalPhysicalMemory`
+///    (bytes; uses `GlobalMemoryStatusEx` without WMI/CIM),
+/// 3. Windows PowerShell 5.1 `Win32_OperatingSystem.TotalVisibleMemorySize` (KiB).
+#[cfg(any(target_os = "windows", test))]
+fn windows_memory_bytes_with(
+    run_probe: &dyn Fn(&str, &[&str]) -> Option<String>,
+    windows_powershell_path: &str,
+) -> Option<u64> {
+    let probes: [(&str, &[&str], WindowsMemoryUnit); 3] = [
+        (
+            "pwsh",
+            &[
+                "-NoProfile",
+                "-NonInteractive",
+                "-Command",
+                "if ([Environment]::Is64BitProcess) { [GC]::GetGCMemoryInfo().TotalAvailableMemoryBytes }",
+            ],
+            WindowsMemoryUnit::Bytes,
+        ),
+        (
+            windows_powershell_path,
+            &[
+                "-NoProfile",
+                "-NonInteractive",
+                "-Command",
+                "Add-Type -AssemblyName Microsoft.VisualBasic; ([Microsoft.VisualBasic.Devices.ComputerInfo]::new()).TotalPhysicalMemory",
+            ],
+            WindowsMemoryUnit::Bytes,
+        ),
+        (
+            windows_powershell_path,
+            &[
+                "-NoProfile",
+                "-NonInteractive",
+                "-Command",
+                "(Get-CimInstance -ClassName Win32_OperatingSystem).TotalVisibleMemorySize",
+            ],
+            WindowsMemoryUnit::Kibibytes,
+        ),
+    ];
+    for (program, args, unit) in probes {
+        if let Some(bytes) =
+            run_probe(program, args).and_then(|output| parse_windows_memory(&output, unit))
+        {
+            return Some(bytes);
+        }
+    }
+    None
+}
+
+#[cfg(target_os = "windows")]
+fn windows_powershell_executable() -> String {
+    if let Some(root) = std::env::var_os("SystemRoot") {
+        let candidate = std::path::PathBuf::from(root)
+            .join("System32")
+            .join("WindowsPowerShell")
+            .join("v1.0")
+            .join("powershell.exe");
+        if candidate.is_file() {
+            return candidate.to_string_lossy().into_owned();
+        }
+    }
+    "powershell.exe".to_string()
+}
+
+/// Run a leaf Windows memory-query command without wrapping it in a fresh
+/// nested Windows Job Object. Creating an inner job (as `OwnedProcess::spawn`
+/// does for process-tree cleanup) masks an outer runner Job Object memory limit
+/// from CoreCLR's `QueryInformationJobObject(NULL, ...)` inside
+/// `GC.GetGCMemoryInfo().TotalAvailableMemoryBytes`.
+#[cfg(target_os = "windows")]
+fn run_windows_memory_probe(program: &str, args: &[&str]) -> Option<String> {
+    use std::io::Read;
+    use std::process::{Command, Stdio};
+    use std::time::{Duration, Instant};
+
+    let mut command = Command::new(program);
+    command
+        .args(args)
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null());
+    for var in WINDOWS_PROBE_REMOVED_ENVS {
+        command.env_remove(var);
+    }
+    let mut child = command.spawn().ok()?;
+    let mut stdout = child.stdout.take()?;
+    let reader = std::thread::spawn(move || {
+        let mut buf = Vec::new();
+        stdout.read_to_end(&mut buf).ok().map(|_| buf)
+    });
+    let deadline = Instant::now() + WINDOWS_MEMORY_PROBE_TIMEOUT;
+    let status = loop {
+        match child.try_wait() {
+            Ok(Some(status)) => break Some(status),
+            Ok(None) => {
+                if Instant::now() >= deadline {
+                    let _ = child.kill();
+                    let _ = child.wait();
+                    break None;
+                }
+                std::thread::sleep(Duration::from_millis(10));
+            }
+            Err(_) => {
+                let _ = child.kill();
+                let _ = child.wait();
+                break None;
+            }
+        }
+    };
+    if !status.is_some_and(|s| s.success()) {
+        return None;
+    }
+    let bytes = reader.join().ok().flatten()?;
+    String::from_utf8(bytes).ok()
+}
+
+#[cfg(target_os = "windows")]
+fn detect_host_memory_bytes() -> Option<u64> {
+    let powershell = windows_powershell_executable();
+    windows_memory_bytes_with(&run_windows_memory_probe, &powershell)
+}
+
+#[cfg(not(target_os = "windows"))]
+fn detect_host_memory_bytes() -> Option<u64> {
     smallest_memory_bound(&|path| std::fs::read_to_string(path).ok())
+}
+
+/// The smallest memory bound this process can see on Linux (`/proc/meminfo`
+/// and cgroup limits) or Windows (`.NET` / PowerShell memory query), or
+/// `None` on other platforms or when nothing is readable.
+pub(crate) fn host_memory_bytes() -> Option<u64> {
+    static MEMORY_BYTES: OnceLock<Option<u64>> = OnceLock::new();
+    *MEMORY_BYTES.get_or_init(detect_host_memory_bytes)
 }
 
 /// Environment for the Cargo children of a local `precommit`: empty, or the
@@ -131,9 +308,11 @@ pub(crate) fn local_precommit_envs() -> &'static [(&'static str, &'static str)] 
 #[cfg(test)]
 mod tests {
     use super::{
-        LOW_MEMORY_BYTES, capped_jobs, cgroup_limit_bytes, meminfo_total_bytes,
-        smallest_memory_bound,
+        LOW_MEMORY_BYTES, WINDOWS_PROBE_REMOVED_ENVS, WindowsMemoryUnit, capped_jobs,
+        cgroup_limit_bytes, meminfo_total_bytes, parse_windows_memory, smallest_memory_bound,
+        windows_memory_bytes_with,
     };
+    use std::cell::RefCell;
     use std::collections::BTreeMap;
 
     const GIB: u64 = 1024 * 1024 * 1024;
@@ -267,5 +446,191 @@ mod tests {
         assert_eq!(cgroup_limit_bytes("16106127360\n"), Some(16_106_127_360));
         assert_eq!(cgroup_limit_bytes("max\n"), None);
         assert_eq!(cgroup_limit_bytes(""), None);
+    }
+
+    #[test]
+    fn windows_memory_parsers_accept_only_positive_integers() {
+        assert_eq!(
+            parse_windows_memory("272315080704\r\n", WindowsMemoryUnit::Bytes),
+            Some(272_315_080_704)
+        );
+        assert_eq!(
+            parse_windows_memory("17179869184\n", WindowsMemoryUnit::Bytes),
+            Some(16 * GIB)
+        );
+        assert_eq!(
+            parse_windows_memory("\u{FEFF}17179869184\r\n", WindowsMemoryUnit::Bytes),
+            Some(16 * GIB)
+        );
+        assert_eq!(
+            parse_windows_memory("16777216\r\n", WindowsMemoryUnit::Kibibytes),
+            Some(16 * GIB)
+        );
+        assert_eq!(
+            parse_windows_memory("\u{FEFF}16777216\r\n", WindowsMemoryUnit::Kibibytes),
+            Some(16 * GIB)
+        );
+
+        for bad in [
+            "",
+            "   \r\n",
+            "0\r\n",
+            "-1",
+            "16.5",
+            "16 GB",
+            "warn\n17179869184\n",
+        ] {
+            assert_eq!(
+                parse_windows_memory(bad, WindowsMemoryUnit::Bytes),
+                None,
+                "bytes should reject {bad:?}"
+            );
+            assert_eq!(
+                parse_windows_memory(bad, WindowsMemoryUnit::Kibibytes),
+                None,
+                "kibibytes should reject {bad:?}"
+            );
+        }
+        assert_eq!(
+            parse_windows_memory(&u64::MAX.to_string(), WindowsMemoryUnit::Kibibytes),
+            None,
+            "kibibytes overflow must reject instead of saturating"
+        );
+    }
+
+    #[test]
+    fn windows_memory_probe_falls_back_through_powershell_and_caps_low_memory_hosts() {
+        const PS51: &str = "powershell.exe";
+
+        let calls = RefCell::new(Vec::new());
+        let low = windows_memory_bytes_with(
+            &|program, args| {
+                calls.borrow_mut().push((
+                    program.to_string(),
+                    args.last().copied().unwrap_or_default().to_string(),
+                ));
+                (program == "pwsh").then(|| format!("{}\r\n", 16 * GIB))
+            },
+            PS51,
+        );
+        assert_eq!(low, Some(16 * GIB));
+        assert_eq!(calls.borrow().len(), 1, "primary pwsh stops fallback chain");
+        assert!(
+            calls.borrow()[0]
+                .1
+                .contains("[Environment]::Is64BitProcess"),
+            "pwsh probe must guard against 32-bit WOW64 virtual-address clamping"
+        );
+        for var in [
+            "DOTNET_GCHeapHardLimit",
+            "DOTNET_GCHeapHardLimitPercent",
+            "COMPlus_GCHeapHardLimit",
+            "COMPlus_GCHeapHardLimitPercent",
+        ] {
+            assert!(
+                WINDOWS_PROBE_REMOVED_ENVS.contains(&var),
+                "probe environment must strip {var}"
+            );
+        }
+        assert_eq!(capped_jobs(false, low, Some(4)), Some("1"));
+        assert_eq!(capped_jobs(true, low, Some(4)), None);
+
+        // 32-bit pwsh emits empty stdout and must fall through to ComputerInfo.
+        let wow64_fallback = windows_memory_bytes_with(
+            &|program, args| {
+                if program == "pwsh" {
+                    Some(String::new())
+                } else if program == PS51
+                    && args.last().is_some_and(|cmd| cmd.contains("ComputerInfo"))
+                {
+                    Some(format!("{}\r\n", 64 * GIB))
+                } else {
+                    None
+                }
+            },
+            PS51,
+        );
+        assert_eq!(wow64_fallback, Some(64 * GIB));
+        assert_eq!(capped_jobs(false, wow64_fallback, Some(16)), None);
+
+        let high = windows_memory_bytes_with(
+            &|program, _| (program == "pwsh").then(|| format!("{}\r\n", 256 * GIB)),
+            PS51,
+        );
+        assert_eq!(high, Some(256 * GIB));
+        assert_eq!(capped_jobs(false, high, Some(32)), None);
+
+        let computer_info = windows_memory_bytes_with(
+            &|program, args| {
+                if program == PS51 && args.last().is_some_and(|cmd| cmd.contains("ComputerInfo")) {
+                    Some(format!("{}\r\n", 16 * GIB))
+                } else {
+                    None
+                }
+            },
+            PS51,
+        );
+        assert_eq!(computer_info, Some(16 * GIB));
+        assert_eq!(capped_jobs(false, computer_info, Some(4)), Some("1"));
+
+        let cim_fallback = windows_memory_bytes_with(
+            &|program, args| {
+                if program == "pwsh" {
+                    Some("not-a-number\r\n".to_string())
+                } else if program == PS51
+                    && args
+                        .last()
+                        .is_some_and(|cmd| cmd.contains("Win32_OperatingSystem"))
+                {
+                    Some(format!("{}\r\n", 16 * GIB / 1024))
+                } else {
+                    None
+                }
+            },
+            PS51,
+        );
+        assert_eq!(cim_fallback, Some(16 * GIB));
+
+        let unreadable = windows_memory_bytes_with(&|_, _| None, PS51);
+        assert_eq!(unreadable, None);
+        assert_eq!(capped_jobs(false, unreadable, Some(4)), None);
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn native_windows_host_memory_bytes_detects_physical_memory() -> Result<(), String> {
+        let first = super::host_memory_bytes();
+        let second = super::host_memory_bytes();
+        assert_eq!(first, second, "cached host memory must be stable");
+        let bytes = first.ok_or_else(|| {
+            "native Windows host memory probe should return a positive byte count".to_string()
+        })?;
+        assert!(
+            bytes >= 512 * 1024 * 1024,
+            "detected Windows memory {bytes} bytes is implausibly small"
+        );
+        // Cross-check against Windows PowerShell 5.1 physical RAM: an effective
+        // memory bound (physical RAM or Job Object limit) cannot exceed host RAM.
+        let powershell = super::windows_powershell_executable();
+        if let Some(physical) = super::run_windows_memory_probe(
+            &powershell,
+            &[
+                "-NoProfile",
+                "-NonInteractive",
+                "-Command",
+                "Add-Type -AssemblyName Microsoft.VisualBasic; ([Microsoft.VisualBasic.Devices.ComputerInfo]::new()).TotalPhysicalMemory",
+            ],
+        )
+        .and_then(|out| parse_windows_memory(&out, WindowsMemoryUnit::Bytes))
+        {
+            assert!(
+                bytes <= physical,
+                "detected Windows memory bound {bytes} exceeds physical RAM {physical}"
+            );
+        }
+        let expected_cap = (bytes < LOW_MEMORY_BYTES).then_some("1");
+        assert_eq!(capped_jobs(false, first, Some(4)), expected_cap);
+        assert_eq!(capped_jobs(true, first, Some(4)), None);
+        Ok(())
     }
 }

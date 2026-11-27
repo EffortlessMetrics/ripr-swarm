@@ -1,0 +1,10 @@
+[[extend]]
+id = "RIPR-SPEC-0224"
+tests = [
+  "crates/ripr/src/analysis/language/typescript/predicate_activation_tests.rs::renamed_owner_import_witnesses_like_the_owner_name",
+  "fixtures/typescript_vitest_renamed_import_boundary_exposed",
+  "fixtures/typescript_vitest_renamed_import_off_boundary",
+]
+code = [
+  "crates/ripr/src/analysis/language/typescript/classifier.rs",
+]
