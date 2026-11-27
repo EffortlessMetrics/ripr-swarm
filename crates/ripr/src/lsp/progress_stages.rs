@@ -293,6 +293,7 @@ mod tests {
     fn non_tty_policy() -> ProgressPolicy {
         ProgressPolicy {
             min_visible: Duration::ZERO,
+            non_tty_hold: Duration::ZERO,
             first_heartbeat: Duration::from_secs(30),
             heartbeat_every: Duration::from_secs(30),
             max_heartbeats: 1,

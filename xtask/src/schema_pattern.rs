@@ -489,8 +489,12 @@ fn match_atom(
             Some(actual) if actual == expected => continue_with(position + 1),
             _ => false,
         },
+        // ECMAScript `.` (the JSON Schema dialect) matches no line
+        // terminator: LF, CR, U+2028 or U+2029.
         Atom::AnyExceptNewline => match input.get(position) {
-            Some(actual) if *actual != '\n' => continue_with(position + 1),
+            Some(actual) if !matches!(actual, '\n' | '\r' | '\u{2028}' | '\u{2029}') => {
+                continue_with(position + 1)
+            }
             _ => false,
         },
         Atom::Class(class) => match input.get(position) {
@@ -547,6 +551,33 @@ mod tests {
             r"^(?![^\\/]+:)(?![\\/])(?!.*(?:^|[\\/])\.\.(?:[\\/]|$)).+$",
         ] {
             SchemaPattern::compile(pattern)?;
+        }
+        Ok(())
+    }
+
+    /// The relative working-directory pattern, read as ECMAScript reads it:
+    /// each expectation was evaluated with an ECMAScript `RegExp` against the
+    /// same pattern string, and the integration-test checker pins the same
+    /// cases (`crates/ripr/tests/rerun_json_schema.rs`).
+    #[test]
+    fn working_directory_pattern_matches_ecmascript() -> Result<(), String> {
+        let pattern = r"^(?![^\\/]+:)(?![\\/])(?!.*(?:^|[\\/])\.\.(?:[\\/]|$)).+$";
+        for (text, expected) in [
+            (".", true),
+            ("crates/ripr", true),
+            (":literal", true),
+            ("a..b/c", true),
+            ("", false),
+            ("q:rel", false),
+            ("::x", false),
+            ("/abs", false),
+            ("a/../b", false),
+            ("a\nb", false),
+            ("a\rb", false),
+            ("a\u{2028}b", false),
+            ("a\u{2029}b", false),
+        ] {
+            assert_eq!(matches(pattern, text)?, expected, "{text:?}");
         }
         Ok(())
     }

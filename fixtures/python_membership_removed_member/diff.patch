@@ -1,0 +1,11 @@
+diff --git a/truthy/convert.py b/truthy/convert.py
+--- a/truthy/convert.py
++++ b/truthy/convert.py
+@@ -6,6 +6,6 @@
+     if isinstance(val, str):
+         val = val.lower()
+ 
+-    if val in (True, "true", "t", "yes", "y", "on", "1", 1):
++    if val in (True, "true", "t", "yes", "on", "1", 1):
+         return True
+     if val in (False, "false", "f", "no", "n", "off", "0", 0):

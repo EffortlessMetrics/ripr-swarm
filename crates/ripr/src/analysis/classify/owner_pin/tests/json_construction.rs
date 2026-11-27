@@ -128,7 +128,7 @@ fn literal_json_namespace_in_another_source_file_stays_uncredited() {
 }
 
 #[test]
-fn literal_json_configuration_and_lock_changes_revoke_cached_identity() -> Result<(), String> {
+fn literal_json_configuration_and_lock_changes_revoke_the_next_analysis() -> Result<(), String> {
     let fixture = Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("../../fixtures/owner_return_pin_json_real_literal/input");
     let manifest =
@@ -144,10 +144,13 @@ fn literal_json_configuration_and_lock_changes_revoke_cached_identity() -> Resul
         ],
     )?;
     let result = (|| -> Result<(), String> {
-        let authority = crate::analysis::facts::drop_in::DropInManifests::new(&root);
+        // One authority serves one analysis and keeps its per-file verdict
+        // (#16038); each edit below is observed by the next analysis.
+        let authority = || crate::analysis::facts::drop_in::DropInManifests::new(&root);
         let file = Path::new("tests/save.rs");
+        let first = authority();
         assert!(
-            authority.verified_literal_json(file),
+            first.verified_literal_json(file),
             "canonical dependency resolves"
         );
         for config_path in [".cargo/config.toml", "tests/.cargo/config.toml"] {
@@ -156,9 +159,13 @@ fn literal_json_configuration_and_lock_changes_revoke_cached_identity() -> Resul
                 .map_err(|e| e.to_string())?;
             std::fs::write(&path, "[source.crates-io]\nreplace-with='fake'\n")
                 .map_err(|e| e.to_string())?;
-            assert!(!authority.verified_literal_json(file), "{config_path}");
+            assert!(!authority().verified_literal_json(file), "{config_path}");
+            assert!(
+                first.verified_literal_json(file),
+                "an analysis keeps the verdict it started with"
+            );
             std::fs::remove_file(path).map_err(|e| e.to_string())?;
-            assert!(authority.verified_literal_json(file));
+            assert!(authority().verified_literal_json(file));
         }
         let changed_lock = lock.replace(
             "c841b55ecdae098c80dcae9cf767f6f8a0c2cdb3416bbef72181df4d0fe73f14",
@@ -166,9 +173,9 @@ fn literal_json_configuration_and_lock_changes_revoke_cached_identity() -> Resul
         );
         assert_ne!(changed_lock, lock);
         std::fs::write(root.join("Cargo.lock"), changed_lock).map_err(|e| e.to_string())?;
-        assert!(!authority.verified_literal_json(file));
+        assert!(!authority().verified_literal_json(file));
         std::fs::write(root.join("Cargo.lock"), &lock).map_err(|e| e.to_string())?;
-        assert!(authority.verified_literal_json(file));
+        assert!(authority().verified_literal_json(file));
         for dependency in [
             "serde_json={version='=1.0.151',optional=true}",
             "serde_json={version='=1.0.151',package='foreign'}",
@@ -177,14 +184,169 @@ fn literal_json_configuration_and_lock_changes_revoke_cached_identity() -> Resul
             let changed = manifest.replace("serde_json=\"=1.0.151\"", dependency);
             assert_ne!(changed, manifest);
             std::fs::write(root.join("Cargo.toml"), changed).map_err(|e| e.to_string())?;
-            assert!(!authority.verified_literal_json(file), "{dependency}");
+            assert!(!authority().verified_literal_json(file), "{dependency}");
         }
         std::fs::write(root.join("Cargo.toml"), &manifest).map_err(|e| e.to_string())?;
         std::fs::remove_file(root.join("Cargo.lock")).map_err(|e| e.to_string())?;
         assert!(
-            !authority.verified_literal_json(file),
+            !authority().verified_literal_json(file),
             "unlocked dependency"
         );
+        Ok(())
+    })();
+    std::fs::remove_dir_all(root).map_err(|e| e.to_string())?;
+    result
+}
+
+#[test]
+fn literal_json_identity_accepts_each_audited_release_with_its_own_checksum() -> Result<(), String>
+{
+    const OLD: &str = "c841b55ecdae098c80dcae9cf767f6f8a0c2cdb3416bbef72181df4d0fe73f14";
+    const NEW: &str = "e7e9cc8b1b85264074fbcc02a88680c4096b1e47df8f739dceb03bf482f04bd6";
+    let fixture = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../fixtures/owner_return_pin_json_real_literal/input");
+    let manifest = std::fs::read_to_string(fixture.join("Cargo.toml"))
+        .map_err(|e| e.to_string())?
+        .replace("=1.0.151", "=1.0.154");
+    let lock = std::fs::read_to_string(fixture.join("Cargo.lock")).map_err(|e| e.to_string())?;
+    let release_lock = lock.replace("version = \"1.0.151\"", "version = \"1.0.154\"");
+    assert_ne!(release_lock, lock, "fixture locks serde_json 1.0.151");
+    let root = crate::analysis::facts::drop_in::temp_workspace(
+        "json-release",
+        &[
+            ("Cargo.toml", &manifest),
+            ("Cargo.lock", &release_lock.replace(OLD, NEW)),
+            ("src/lib.rs", "pub fn weight(x:u32)->u32{x*3}"),
+            ("tests/save.rs", "#[test] fn checks() {}"),
+        ],
+    )?;
+    let result = (|| -> Result<(), String> {
+        let file = Path::new("tests/save.rs");
+        let verified = || {
+            crate::analysis::facts::drop_in::DropInManifests::new(&root).verified_literal_json(file)
+        };
+        assert!(verified(), "1.0.154 with its crates.io checksum");
+        // Each release is bound to its own checksum, not to any audited one.
+        std::fs::write(root.join("Cargo.lock"), &release_lock).map_err(|e| e.to_string())?;
+        assert!(!verified(), "1.0.154 carrying the 1.0.151 checksum");
+        std::fs::write(
+            root.join("Cargo.lock"),
+            release_lock
+                .replace(OLD, NEW)
+                .replace("version = \"1.0.154\"", "version = \"1.0.153\""),
+        )
+        .map_err(|e| e.to_string())?;
+        std::fs::write(
+            root.join("Cargo.toml"),
+            manifest.replace("=1.0.154", "=1.0.153"),
+        )
+        .map_err(|e| e.to_string())?;
+        assert!(!verified(), "an unaudited release");
+        Ok(())
+    })();
+    std::fs::remove_dir_all(root).map_err(|e| e.to_string())?;
+    result
+}
+
+/// #14116: a virtual workspace root declares nothing; the member that uses
+/// `json!` declares serde_json itself. The importing file's own resolved edge
+/// stays the authority, so a sibling member without the dependency is refused.
+#[test]
+fn literal_json_identity_follows_a_member_declaration_under_a_virtual_root() -> Result<(), String> {
+    let fixture = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../fixtures/owner_return_pin_json_real_literal/input");
+    let package = std::fs::read_to_string(fixture.join("Cargo.toml")).map_err(|e| e.to_string())?;
+    let manifest = package.replace("\n[workspace]\n", "\n");
+    assert_ne!(manifest, package, "the member is not a workspace root");
+    let before_other = "[[package]]\nname = \"proc-macro2\"";
+    let lock = std::fs::read_to_string(fixture.join("Cargo.lock")).map_err(|e| e.to_string())?;
+    let member_lock = lock.replace(
+        before_other,
+        &format!("[[package]]\nname = \"other\"\nversion = \"0.1.0\"\n\n{before_other}"),
+    );
+    assert_ne!(
+        member_lock, lock,
+        "fixture lock orders proc-macro2 after other"
+    );
+    const VIRTUAL: &str = "[workspace]\nmembers=['crates/demo','crates/other']\nresolver='3'\n";
+    const OTHER: &str = "[package]\nname=\"other\"\nversion=\"0.1.0\"\nedition=\"2024\"\n";
+    let root = crate::analysis::facts::drop_in::temp_workspace(
+        "json-member",
+        &[
+            ("Cargo.toml", VIRTUAL),
+            ("Cargo.lock", &member_lock),
+            ("crates/demo/Cargo.toml", &manifest),
+            ("crates/demo/src/lib.rs", "pub fn weight(x:u32)->u32{x*3}"),
+            ("crates/demo/tests/save.rs", "#[test] fn checks() {}"),
+            ("crates/other/Cargo.toml", OTHER),
+            ("crates/other/src/lib.rs", ""),
+            ("crates/other/tests/save.rs", "#[test] fn checks() {}"),
+        ],
+    )?;
+    let result = (|| -> Result<(), String> {
+        let verified = |file: &str| {
+            crate::analysis::facts::drop_in::DropInManifests::new(&root)
+                .verified_literal_json(Path::new(file))
+        };
+        let write = |path: &str, text: &str| {
+            std::fs::write(root.join(path), text).map_err(|e| e.to_string())
+        };
+        assert!(
+            verified("crates/demo/tests/save.rs"),
+            "the declaring member's own edge resolves"
+        );
+        assert!(
+            !verified("crates/other/tests/save.rs"),
+            "a member without the dependency has no edge"
+        );
+        // The same answer reaches the assertion: the literal `json!` leaves the
+        // equality credited in the declaring member and refused in the other.
+        let refusal = |member: &str| -> Result<Option<AssertionRefusal>, String> {
+            let tests = "use serde_json::json;\nuse demo::weight;\n#[test]\nfn checks() { let p = json!({\"uri\":\"untitled:save\",\"text\":null}); assert_eq!(weight(4),12); }\n";
+            let lib = format!("{member}/src/lib.rs");
+            let file = format!("{member}/tests/save.rs");
+            let mut index = index(&[(lib.as_str(), WEIGHT_LIB), (file.as_str(), tests)]);
+            index.drop_in_manifests = crate::analysis::facts::drop_in::DropInManifests::new(&root);
+            let test = index
+                .tests()
+                .iter()
+                .find(|test| test.file == Path::new(&file))
+                .ok_or("the member test must be indexed")?;
+            let assertion = test.assertions.first().ok_or("the assertion must parse")?;
+            Ok(OwnerPinSyntax::default().refusal(test, assertion, &index))
+        };
+        let credited = refusal("crates/demo")?;
+        assert!(credited.is_none(), "declaring member: {credited:?}");
+        assert!(
+            refusal("crates/other")?.is_some(),
+            "member without the edge"
+        );
+        // The root must name the declaring member for the prefilter to pass.
+        write("Cargo.toml", &VIRTUAL.replace("'crates/demo',", ""))?;
+        assert!(!verified("crates/demo/tests/save.rs"), "unnamed member");
+        write("Cargo.toml", VIRTUAL)?;
+        assert!(verified("crates/demo/tests/save.rs"));
+        // Every refusal of the single-package profile still holds for a member.
+        for dependency in [
+            "serde_json={version='=1.0.151',optional=true}",
+            "serde_json={version='=1.0.151',package='foreign'}",
+            "serde_json={path='fake'}",
+        ] {
+            let changed = manifest.replace("serde_json=\"=1.0.151\"", dependency);
+            assert_ne!(changed, manifest);
+            write("crates/demo/Cargo.toml", &changed)?;
+            assert!(!verified("crates/demo/tests/save.rs"), "{dependency}");
+        }
+        write("crates/demo/Cargo.toml", &manifest)?;
+        assert!(verified("crates/demo/tests/save.rs"));
+        write(
+            "Cargo.lock",
+            &member_lock.replace(
+                "c841b55ecdae098c80dcae9cf767f6f8a0c2cdb3416bbef72181df4d0fe73f14",
+                "0000000000000000000000000000000000000000000000000000000000000000",
+            ),
+        )?;
+        assert!(!verified("crates/demo/tests/save.rs"), "changed checksum");
         Ok(())
     })();
     std::fs::remove_dir_all(root).map_err(|e| e.to_string())?;

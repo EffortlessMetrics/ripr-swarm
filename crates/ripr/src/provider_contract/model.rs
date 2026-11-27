@@ -140,6 +140,22 @@ pub struct RiprProviderEvidenceEntryV1 {
     pub has_test_target: bool,
 }
 
+/// Copy a row from the analyzer's portable report projection. Receipt validation
+/// checks its wire vocabulary and path alongside the rest of the summary.
+impl From<crate::domain::TestEvidenceEntry> for RiprProviderEvidenceEntryV1 {
+    fn from(entry: crate::domain::TestEvidenceEntry) -> Self {
+        Self {
+            test_name: entry.test_name,
+            file: entry.file,
+            line: entry.line as u64,
+            oracle_kind: entry.oracle_kind,
+            oracle_strength: entry.oracle_strength,
+            relation_reason: entry.relation_reason,
+            has_test_target: entry.has_test_target,
+        }
+    }
+}
+
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct RiprProviderEvidenceSummaryV1 {

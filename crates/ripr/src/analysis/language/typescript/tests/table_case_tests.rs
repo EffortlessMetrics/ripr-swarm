@@ -422,3 +422,100 @@ fn empty_tables_disclose_only_executed_inline_title_functions() -> Result<(), St
     }
     Ok(())
 }
+
+#[test]
+fn row_writes_withhold_each_literals_and_disclose_for_registrations() {
+    fn assert_for_disclosed(source: &str, statement: &str) {
+        let file = Path::new("tests/tier.test.ts");
+        let tests = extract_tests(file, source);
+        assert!(tests.is_empty(), "{statement}: {tests:?}");
+        let gap = detect_partial_test_extraction(file, source, &tests);
+        assert!(
+            gap.is_some_and(|gap| gap.shape == "test.for registration"),
+            "{statement}"
+        );
+    }
+
+    for write in [
+        "[p] = [5]",
+        "({ p } = value)",
+        "[a, p] = value",
+        "({ key: [p] } = value)",
+        "delete (p)[0]",
+        "(p = 5)",
+        "(p++)",
+    ] {
+        // Unlike a number, the literal cell `undefined` still parses as an
+        // assignment target after substitution. Reparse alone cannot guard it.
+        let cell = if write.starts_with("delete") {
+            "999"
+        } else {
+            "undefined"
+        };
+        for (method, binding) in [("each", "p, tier"), ("for", "[p, tier]")] {
+            let source = format!(
+                "import {{ test, expect }} from 'vitest';\ntest.{method}([[{cell}, 'silver']])('tier', ({binding}) => {{\n  {write};\n  expect(loyaltyTier(p)).toBe(tier);\n}});"
+            );
+            if method == "each" {
+                assert_eq!(
+                    observed_and_expected(&source),
+                    vec![(Some("loyaltyTier(p)".into()), None, true, 4)],
+                    "{write}"
+                );
+            } else {
+                assert_for_disclosed(&source, write);
+            }
+        }
+    }
+
+    for (statement, concrete) in [
+        ("[row[0]] = [5]", false),
+        ("delete row[0]", false),
+        ("[other] = [row[0]]", true),
+        ("[other[row[0]]] = [5]", true),
+        ("delete other[row[0]]", true),
+        ("[other = f(row[0])] = []", true),
+    ] {
+        let source = format!(
+            "import {{ test, expect }} from 'vitest';\ntest.for([[999, 'silver']])('tier', (row) => {{\n  {statement};\n  expect(loyaltyTier(row[0])).toBe(row[1]);\n}});"
+        );
+        if concrete {
+            assert_eq!(
+                observed_and_expected(&source),
+                vec![(
+                    Some("loyaltyTier(999)".into()),
+                    Some("'silver'".into()),
+                    false,
+                    4
+                )],
+                "{statement}"
+            );
+        } else {
+            assert_for_disclosed(&source, statement);
+        }
+    }
+}
+
+#[test]
+fn object_each_row_writes_keep_dynamic_expected_values() {
+    // Both substitutions parse. Only the role of `actual` distinguishes
+    // writing the callback binding from reading it on the right-hand side.
+    for (statement, observed, expected, dynamic) in [
+        ("[actual] = [5]", "f(actual)", None, true),
+        ("[other] = [actual]", "f(undefined)", Some("17"), false),
+    ] {
+        let source = format!(
+            "test.each([{{out: undefined, want: 17}}])('result', ({{out: actual, want}}) => {{\n  {statement};\n  expect(f(actual)).toBe(want);\n}});"
+        );
+        assert_eq!(
+            observed_and_expected(&source),
+            vec![(
+                Some(observed.into()),
+                expected.map(str::to_owned),
+                dynamic,
+                3
+            )],
+            "{statement}"
+        );
+    }
+}

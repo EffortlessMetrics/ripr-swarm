@@ -3,5 +3,5 @@
 # than its floor, so the count may only rise. Raise a floor in the same PR that
 # adds expectations; never lower it to make a check pass.
 python = 30
-rust = 19
+rust = 30
 typescript = 4

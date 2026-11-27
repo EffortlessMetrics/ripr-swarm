@@ -1,0 +1,19 @@
+diff --git a/src/cart.py b/src/cart.py
+--- a/src/cart.py
++++ b/src/cart.py
+@@ -3,12 +3,11 @@ CAP = 100
+ 
+ def capped_total(items):
+     total = sum(items)
+-    if total > CAP:
+-        total = CAP
++    # The cap moved to the caller.
+ 
+     return total
+ 
+ 
+ def clamped_double(x):
+-    x = min(x * 2, CAP)
+-    return max(x, 0)
++    # one clamp for both ends
++    return max(min(x * 2, CAP), 0)

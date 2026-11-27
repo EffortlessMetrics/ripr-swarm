@@ -8,8 +8,12 @@ Analysis outcome: findings below (analysis complete)
   Counts: 1 changed file(s), 5 changed line(s), 1 candidate line(s), 3 changed behavior(s) checked, 3 finding(s)
 
 Start here:
-  State: no gap selected for repair
-  Safe next action: all findings are base-side evidence, not candidate edit targets; rerun with --format human-full to inspect the full evidence before treating this run as actionable
+  State: every finding left is on removed code, which is never an edit target
+  Safe next action: the diff removes code, and removed code is never an edit target, so nothing is selected for repair; static evidence on the removed code: 1 no test path, 2 unclear. Rerun with --format human-full for the evidence on each removed line
+  Removed code (static evidence on the old lines, not a test result; each location is where the code stood in the current file):
+    - ./src/lib.rs:13 `if cost > 0 { cost } else { 0 }` (kind: predicate): no test path was found
+    - ./src/lib.rs:13 `fn retired_helper() -> i32 {` (kind: unclear): ripr could not tell whether a test checks it (analysis limited, not a verdict)
+    - ./src/lib.rs:13 `let cost = 5;` (kind: unclear): ripr could not tell whether a test checks it (analysis limited, not a verdict)
 
 Hidden:
   All 3 finding(s) are base-side evidence, not candidate edit targets — rerun with --format human-full for the full evidence.

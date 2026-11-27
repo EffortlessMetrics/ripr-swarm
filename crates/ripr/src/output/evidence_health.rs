@@ -959,6 +959,7 @@ mod tests {
             evidence: TestGripEvidence {
                 seam_id,
                 related_tests: vec![std::sync::Arc::new(RelatedTestGrip {
+                    assertion_targets_non_function: None,
                     test_name: "discounts_large_orders".to_string(),
                     file: PathBuf::from("tests/pricing.rs"),
                     line: 12,
@@ -1034,6 +1035,7 @@ mod tests {
             evidence: TestGripEvidence {
                 seam_id,
                 related_tests: vec![std::sync::Arc::new(RelatedTestGrip {
+                    assertion_targets_non_function: None,
                     test_name: "discounts_smoke".to_string(),
                     file: PathBuf::from("tests/pricing.rs"),
                     line: 22,

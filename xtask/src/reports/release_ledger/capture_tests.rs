@@ -29,7 +29,11 @@ fn git(root: &Path, values: &[&str]) -> Result<String, String> {
     Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
 }
 
-fn commit(root: &Path, files: &[(&str, Option<&str>)], message: &str) -> Result<String, String> {
+pub(super) fn commit(
+    root: &Path,
+    files: &[(&str, Option<&str>)],
+    message: &str,
+) -> Result<String, String> {
     for (path, contents) in files {
         match contents {
             Some(text) => fs::write(root.join(path), text).map_err(|error| error.to_string())?,
@@ -41,7 +45,7 @@ fn commit(root: &Path, files: &[(&str, Option<&str>)], message: &str) -> Result<
     git(root, &["rev-parse", "HEAD"])
 }
 
-fn new_repo(label: &str) -> Result<PathBuf, String> {
+pub(super) fn new_repo(label: &str) -> Result<PathBuf, String> {
     let nonce = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map_err(|error| error.to_string())?

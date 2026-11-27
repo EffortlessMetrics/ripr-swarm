@@ -145,7 +145,7 @@
       "owner_kind": "function",
       "changed_sink": "log, warning, msgs, msgs: 5",
       "oracle_alignment": "unknown",
-      "alignment_reason": "no_strong_oracle",
+      "alignment_reason": "other_behavior_assertion_passed_over",
       "source_currentness": "candidate_current"
     }
   ],

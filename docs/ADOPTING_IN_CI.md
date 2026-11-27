@@ -33,6 +33,12 @@ the job log and summary, and fails only when ripr could not complete. Details:
 ripr init --ci github
 ```
 
+Run it at the repository root. GitHub reads workflows only from the
+repository's top-level `.github/workflows`, and the generated workflow
+analyzes the checkout root, so `ripr init --ci <provider> --root <subdir>`
+with a subdirectory of the repository refuses (exit 2) and names the command
+to run at the root (`--ci gitlab` has the same rule for `.gitlab-ci.yml`).
+
 Add `--dry-run` to print the workflow without writing it. The generated
 workflow reads two gate repository variables and leaves both unset, so it is
 advisory only: it summarizes findings and uploads reports, and the job never
@@ -114,6 +120,19 @@ only related tests are weak, such as `assert!(f(1) > 0)`, will not block until
 a stronger test exists. Open `gate-decision.md` for the exact reason on each
 candidate. The same applies when a test changed in the pull request next to the
 gap: that candidate stays advisory with the reason stated.
+
+## When the summary says `blocked`
+
+`blocked` under First-run status means the pull-request analysis did not run,
+not that the pull request is blocked. The summary gives the reason on the next
+lines:
+
+- `Reason:` names a base branch that is not in the checkout. The generated
+  workflow checks out with `fetch-depth: 0`; a shallow checkout (a lower
+  `fetch-depth`, or another checkout action) cannot compare against the base.
+- `No pull request in this run` appears on a manual run (`workflow_dispatch`).
+  Repository-wide reports do not need a pull request; the changed-behavior
+  findings do.
 
 ## Fork and Dependabot pull requests
 

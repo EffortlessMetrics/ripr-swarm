@@ -1,0 +1,44 @@
+{
+  "case_id": "py-raise-subclass-swap-base-match",
+  "subject_id": "authored-py-pytest-raise-subclass",
+  "diff": "cases/py-raise-subclass-swap-base-match.diff",
+  "anchor": {
+    "file": "vers/parse.py",
+    "line": 7
+  },
+  "edit_kind": "behavior_change",
+  "behavior_family": "error_class",
+  "test_shape": "pytest_raises_match_class_edit",
+  "hard_case": "raise ValueError swapped for a same-module subclass InvalidVersion(ValueError) under pytest.raises(ValueError, match=...): the subclass is still a ValueError, so the test passes",
+  "truth": {
+    "state": "not_discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "python -m pytest -q -p no:cacheprovider",
+    "toolchain": "Python 3.13.18, pytest 9.1.1, x86_64-linux",
+    "mutants": [
+      {
+        "replacement": "raise InvalidVersion(\"invalid version\")",
+        "mutated_line": null,
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "not equivalent: the raised class is the subclass InvalidVersion, but the base-class assertion holds for both"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "gap",
+    "acceptable_verdicts": [
+      "gap",
+      "limited"
+    ]
+  },
+  "reasoning": "A same-module subclass of the asserted base class still satisfies pytest.raises(ValueError, match='invalid version') with the same message, so the swap passes the tests. Reading it exposed credits a class change the assertion cannot see; weakly_exposed is the honest reading.",
+  "labeling_observation": {
+    "ripr_commit": "local",
+    "full_checkout_verdict": "gap",
+    "full_checkout_classifications": [
+      "weakly_exposed"
+    ],
+    "excerpt_parity": "matched"
+  }
+}

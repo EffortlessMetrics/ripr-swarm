@@ -1,0 +1,28 @@
+{
+  "id": "python_multiline_def_boundary_control",
+  "language": "python",
+  "tier": "pure",
+  "source_fixture": "fixtures/python_multiline_def_boundary_control",
+  "vector": "multi_line_def_header_boundary_placed_control",
+  "probe_family": "predicate",
+  "assertions": [
+    {
+      "type": "must_not_report_clean"
+    },
+    {
+      "type": "expected_finding_count",
+      "count": 1
+    },
+    {
+      "type": "must_promote"
+    },
+    {
+      "type": "expected_class",
+      "class": "exposed"
+    },
+    {
+      "type": "expected_finding_owner",
+      "owner": "python:src/fx/core.py::over"
+    }
+  ]
+}

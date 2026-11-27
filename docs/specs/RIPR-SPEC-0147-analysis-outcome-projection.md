@@ -32,12 +32,24 @@ on it would make `verify=complete` unreachable in ordinary repositories; the
 human, GitHub and JSON disclosures keep naming it;
 full JSON is an explicit drilldown. The report must describe the same root,
 base and saved source; changed inputs require a fresh check. The consumer
-requires `verify=complete` before claiming done. An empty findings list alone is not completion evidence.
+requires `verify=complete` (or `verify=complete_with_limits`, below) before claiming done. An empty findings list alone is not completion evidence.
 When full summary findings exceed full summary exposed findings the refusal
 reason is `unexposed_findings_remain` (#13825). It names what it counts rather
 than "gaps": a limited finding (`static_unknown`, `propagation_unknown`, ...)
 is reported under the header's `limits=`, not `gaps=`, so the record never
 claims gaps remain beside a `gaps=0` header.
+When that is the only unmet condition and every unexposed finding is an
+analyzer limit no test edit can close (a candidate-current, non-preview,
+non-withheld `static_unknown`, `infection_unknown` or `propagation_unknown`
+finding that a reaching related test pins `strong`/`medium` here or, as an
+examined-only row (selected by role, not `miss`), on another finding
+of the same owner function in the run, with no owner-bound related
+test asserting only weakly), the record
+reads `verify=complete_with_limits|...|limits=CLASS:COUNT,...` (#14821), and
+the consumer may finish with those limits disclosed. It upgrades no finding
+and establishes no test adequacy; `no_static_path`, `weakly_exposed` and
+`reachable_unrevealed` findings, weak related tests and suppressed unexposed
+findings keep the refusal.
 Explain navigation retains its printed format for artifact replay with an
 explicit suppression policy, since that combination refuses Agent format.
 
@@ -112,6 +124,29 @@ a patch saved with trailing blank lines and `git format-patch` output are
 well-formed input. Any `+`, `-` or space-prefixed line past the declared counts
 is still an excess body line, also behind such padding, and a hunk that still
 owes lines reads an empty line as context and `-- ` as a removal.
+
+A path whose hunks arrive from file sections on both sides of a commit
+boundary (an mbox `From <object id>` line from `git format-patch --stdout`, or
+a `commit <object id>` header from `git log -p`), or whose later section's
+`index` line starts from a different old blob than its first (headerless
+`git log -p --oneline` or custom formats), has no single coordinate space: a series that edits the file in two commits, or a later commit that
+renames, copies or deletes an edited path, describes a different version of the
+file in each section. None
+of that path's lines are read, and a located `language_scope_unsupported`
+limitation at stage `diff_parse` names it with recovery `use_two_way_diff`
+(analyze one diff of the whole change). It is kept only for a path in an
+enabled analyzed language and outside ripr's own artifact roots; paths changed
+in a single section of the same input keep their lines, and an operator scope
+that admits only refused paths reports the limitation rather than
+`scope_filter_matched_nothing` (#15268). The refusal makes the outcome
+`partial_with_limitations`, never complete, with the exit status of other
+partial outcomes rather than the `unsupported_input` exit. Sections of one
+two-way diff that repeat a path with no commit boundary and no differing old
+blob (a hand-assembled diff with one section per hunk, or a file/symlink type
+change written as a deletion plus a creation) share one old/new pair and are
+read together as before. A refused path in a
+language that is routable but not enabled is dropped like any other
+out-of-language limitation, so it carries no refusal and no preview advisory.
 
 A `diff --git` section whose header names one path under two different
 mnemonic side prefixes (`i/`, `w/`, `c/`, `o/`, as git writes under
