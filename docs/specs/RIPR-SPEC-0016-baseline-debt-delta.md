@@ -536,9 +536,11 @@ Generated CI must not rewrite baselines, run
 baseline of an entire tree from a `ripr check --format json` (or `json-terse`)
 artifact instead of a gate decision. The producer is
 `ripr check --candidate-tree "$(git rev-parse HEAD^{tree})" --format json`,
-which compares the candidate tree with the empty tree. `--from-check` and
-`--from` are exclusive, and the operator workflow lives in
-`docs/BASELINE_LEDGER_WORKFLOW.md`.
+which compares the candidate tree with the empty tree. When the findings
+exceed the default JSON findings byte budget the producer writes a bounded
+document, which this route refuses, so a large repository runs it with
+`RIPR_CHECK_FINDINGS_BYTES=0`. Exactly one of `--from-check` and `--from` is
+given, and the operator workflow lives in `docs/BASELINE_LEDGER_WORKFLOW.md`.
 
 The route projects each finding onto the gate-decision shape and goes through
 the same entry builder as `--from`, so identity, review metadata and skip
@@ -650,8 +652,9 @@ The implementation adds tests for:
   identity, terse and full artifacts giving the same baseline, the entry
   joining on the identity a gate decision carries, refusal of scoped,
   incomplete, foreign, bounded and partial-scope artifacts, an empty baseline
-  from a run without findings, flag parsing, a real whole-tree producer
-  artifact through the binary, and PowerShell-encoded artifacts.
+  from a run without findings, flag parsing and source exclusivity, a real
+  whole-tree producer artifact through the binary, and PowerShell-encoded
+  artifacts.
 
 ## Implementation Mapping
 
