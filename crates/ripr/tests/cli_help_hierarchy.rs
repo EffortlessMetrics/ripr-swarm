@@ -101,7 +101,11 @@ fn help_documentation_links_work_outside_the_source_checkout() -> Result<(), Str
                 );
             }
             for page in *pages {
-                assert!(help.contains(&format!("{docs}{page}")), "{args:?}: {help}");
+                let url = format!("{docs}{page}");
+                assert!(
+                    help.split_whitespace().any(|token| token == url),
+                    "{args:?} is missing {url}"
+                );
             }
         }
         Ok(())
