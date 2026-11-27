@@ -1,0 +1,19 @@
+# An assertion_inert row names the conditional construct every refusal agrees
+# on (#15337, RIPR-SPEC-0224).
+[[extend]]
+id = "RIPR-SPEC-0224"
+tests = [
+  "crates/ripr/src/output/related_test_miss.rs::tests::an_inert_row_names_its_construct_only_from_its_own_support",
+]
+fixtures = [
+  "fixtures/rust_assertion_inert_names_construct",
+]
+outputs = [
+  "fixtures/rust_assertion_inert_names_construct/expected/check.json",
+  "fixtures/rust_assertion_inert_names_construct/expected/human.txt",
+  "fixtures/rust_assertion_inert_names_construct/expected/human-full.txt",
+]
+code = [
+  "crates/ripr/src/analysis/classify/refusal_miss.rs",
+  "crates/ripr/src/output/related_test_miss.rs",
+]
