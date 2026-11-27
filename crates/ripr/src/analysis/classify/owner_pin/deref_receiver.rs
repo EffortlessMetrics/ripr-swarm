@@ -45,9 +45,10 @@
 //!   the owner nor the wrapper name is a `type` alias or an `as` rename
 //!   (`use std::string::String as Inner;`), and no `const`, `static`, `fn`
 //!   or `let` binds the wrapper's name, so `Guard(..)` is its constructor.
-//!   Neither name is a std prelude or primitive type name, and no `use`
-//!   outside `crate`/`self`/`super` spells either name or imports a glob,
-//!   so both names denote the workspace types everywhere;
+//!   Neither name is a std prelude or primitive type name, no `use` of any
+//!   root spells either name, no glob other than a bare `self::*`,
+//!   `super::*` or `crate::*` and no `extern crate` exists, so both names
+//!   denote the workspace types everywhere;
 //! - the wrapper is declared exactly once in the workspace, as a non-generic
 //!   `struct` whose only attributes are std derives; no function shares its
 //!   name; no `type` item mentions it; it is never renamed (`Guard as G`);
@@ -686,23 +687,29 @@ const PRELUDE_TYPE_NAMES: &[&str] = &[
 ];
 
 /// Whether `name` may denote a type from outside the workspace somewhere: a
-/// std prelude or primitive name, or a `use` item not rooted at `crate`,
-/// `self` or `super` that spells `name` or imports a glob
-/// (`use std::string::String;`, `use std::collections::*;`). Such a name
-/// may resolve to the std type in one module and to the workspace type in
+/// std prelude or primitive name, any `use` item that spells `name`
+/// (whatever its root: `use crate::net::IpAddr;` reaches std through a
+/// `pub use std::net;`, and any import of the name may be such a route), any
+/// glob other than a bare `self::*`, `super::*` or `crate::*`, or any
+/// `extern crate` (its name is a `crate::` path root). Such a name may
+/// resolve to the std type in one module and to the workspace type in
 /// another, so matching it to the workspace owner by name alone may credit
 /// a call that runs std code.
 fn name_may_bind_outside_workspace(files: &[String], name: &str) -> bool {
     PRELUDE_TYPE_NAMES.contains(&name)
         || files.iter().any(|masked| {
-            whole_word_offsets(masked, "use").into_iter().any(|at| {
+            !whole_word_offsets(masked, "extern").into_iter().all(|at| {
+                !masked[at + "extern".len()..]
+                    .trim_start()
+                    .starts_with("crate")
+            }) || whole_word_offsets(masked, "use").into_iter().any(|at| {
                 let rest = &masked[at + "use".len()..];
                 let item = &rest[..rest.find(';').unwrap_or(rest.len())];
                 let compact: String = item.split_whitespace().collect();
-                let local = ["crate::", "self::", "super::"]
-                    .iter()
-                    .any(|root| compact.starts_with(root));
-                !local && (compact.contains('*') || !whole_word_offsets(item, name).is_empty())
+                let bare_local_glob =
+                    ["self::*", "super::*", "crate::*"].contains(&compact.as_str());
+                (compact.contains('*') && !bare_local_glob)
+                    || !whole_word_offsets(item, name).is_empty()
             })
         })
 }
@@ -880,10 +887,13 @@ mod tests {
     fn a_name_a_non_workspace_import_or_the_prelude_may_bind_refuses() {
         let files =
             |texts: &[&str]| -> Vec<String> { texts.iter().map(|text| text.to_string()).collect() };
-        let owner = "use std::ops::Deref; use super::*; use crate::model::Inner; struct Inner;";
+        let owner = "use std::ops::Deref; use super::*; pub struct Inner; extern \"C\" {}";
         assert!(!name_may_bind_outside_workspace(&files(&[owner]), "Inner"));
         for text in [
             "use other::Inner;",
+            "pub use std::net; use crate::net::Inner;",
+            "use crate::net::*;",
+            "extern crate alloc;",
             "pub use other_crate::{Inner, Thing};",
             "use std::collections::*;",
         ] {
