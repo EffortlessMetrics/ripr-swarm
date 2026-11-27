@@ -25,3 +25,14 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — rust_dyn_box_unindexed_member_blanket (3)
+
+Reason:
+RIPR-SPEC-0001: rebless the dyn-box fixtures for main's reached-but-not-noticed summary wording (#15277)
+
+Command:
+`cargo xtask goldens bless rust_dyn_box_unindexed_member_blanket --reason "..."`
+
+Updated:
+- `expected/human.txt`

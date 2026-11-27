@@ -23,3 +23,14 @@ Command:
 
 Updated:
 - `expected/check.json`
+
+## Pending — rust_dyn_box_bare_object_impl (3)
+
+Reason:
+RIPR-SPEC-0001: rebless the dyn-box fixtures for main's reached-but-not-noticed summary wording (#15277)
+
+Command:
+`cargo xtask goldens bless rust_dyn_box_bare_object_impl --reason "..."`
+
+Updated:
+- `expected/human.txt`
