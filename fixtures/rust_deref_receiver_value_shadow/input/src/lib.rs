@@ -10,24 +10,22 @@ impl Inner {
     }
 }
 
-pub struct Guard {
-    pub inner: Inner,
-}
+pub struct Guard(pub Inner);
 
 impl Deref for Guard {
     type Target = Inner;
 
     fn deref(&self) -> &Inner {
-        &self.inner
+        &self.0
     }
 }
-
-#[allow(non_upper_case_globals)]
-pub const Guard: fn(Inner) -> [u8; 7] = |_| [0; 7];
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[allow(non_upper_case_globals)]
+    const Guard: fn(Inner) -> [u8; 7] = |_| [0; 7];
 
     #[test]
     fn guard_len() {

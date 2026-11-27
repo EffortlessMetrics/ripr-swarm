@@ -726,7 +726,8 @@ fn declares_tuple_struct(masked: &str, wrapper: &str) -> bool {
 /// calls some other value and refuses.
 fn wrapper_value_unshadowed(masked: &str, wrapper: &str, tuple_wrapper: bool) -> bool {
     whole_word_offsets(masked, wrapper).into_iter().all(|at| {
-        let before = masked[..at].trim_end();
+        let before = &masked[..at];
+        let before = before.strip_suffix("r#").unwrap_or(before).trim_end();
         let previous = &before[ident_run_start(before, &[])..];
         if ["const", "static", "fn", "let", "mut"].contains(&previous) {
             return false;
@@ -864,6 +865,7 @@ mod tests {
             "pub static Guard: u8 = 0;",
             "fn t() { fn Guard(i: Inner) -> Other { todo() } }",
             "let mut Guard = |i| i;",
+            "mod tests { use super::*; const r#Guard: fn(Inner) -> u8 = f; }",
         ] {
             assert!(!wrapper_value_unshadowed(text, "Guard", true), "{text}");
         }

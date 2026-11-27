@@ -8,7 +8,7 @@ Issue: #15277
 
 ## Given
 
-The inherent `Inner::len` changes. `Guard` is a named-field struct that derefs to `Inner`, and a `const Guard: fn(Inner) -> [u8; 7]` shares its name in the value namespace. The test asserts `Guard(Inner { cap: 3 }).len() == 7`. `Guard(..)` calls the const, so `.len()` is the array's length. The test passes on the old code and on the new code.
+The inherent `Inner::len` changes. `Guard` is a tuple struct that derefs to `Inner`, and the test module declares `const Guard: fn(Inner) -> [u8; 7]`, which shadows the glob-imported tuple constructor. The test asserts `Guard(Inner { cap: 3 }).len() == 7`. `Guard(..)` calls the const, so `.len()` is the array's length. The test passes on the old code and on the new code.
 
 ## When
 
