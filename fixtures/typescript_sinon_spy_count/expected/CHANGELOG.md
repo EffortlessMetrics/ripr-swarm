@@ -83,3 +83,14 @@ Command:
 
 Updated:
 - `expected/human.txt`
+
+## Pending — typescript_sinon_spy_count (8)
+
+Reason:
+RIPR-SPEC-0122: #15336 human-full Terms line stops claiming test reach for weakly_exposed and reachable_unrevealed
+
+Command:
+`cargo xtask goldens bless typescript_sinon_spy_count --reason "..."`
+
+Updated:
+- `expected/human-full.txt`

@@ -163,3 +163,15 @@ Command:
 
 Updated:
 - `expected/human-full.txt`
+
+## Pending — typescript_mock_count_computed (14)
+
+Reason:
+RIPR-SPEC-0122: #15336 human-full Terms line stops claiming test reach for weakly_exposed and reachable_unrevealed
+
+Command:
+`cargo xtask goldens bless typescript_mock_count_computed --reason "..."`
+
+Updated:
+- `expected/human.txt`
+- `expected/human-full.txt`
