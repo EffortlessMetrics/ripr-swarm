@@ -1,5 +1,17 @@
 # Golden Output Changes
 
+## Pending — corpus cache generation 1.217 for rootless grouped imports and body-scoped macro names (#16388)
+
+A rootless grouped drop-in import (`use {anyhow::anyhow, ..};`) is now
+verified by its own root, and a body-scoped macro name joins the binding
+scan only when the wrapper invokes it bare, which bumps the analyzer cache
+schema to 1.217. Move the portable unchanged-attempt snapshots to 1.217,
+recompute the `raw_json_placeholder_v1` artifact content commitment, then
+the dependent verify commitments and receipt byte hashes. Weak grip,
+unchanged movement, historical currentness, incomplete receipt status and
+fail-closed first-action routing remain the same. No other fixture output
+is regenerated.
+
 ## Pending — corpus cache generation 1.216 for source-bound provider failures (#10864)
 
 A property test whose provider verification failed is now an opaque repository

@@ -22220,6 +22220,8 @@ tests = [
   "xtask/src/cargo_job_cap.rs::tests::job_cap_applies_only_to_a_constrained_parallel_host_without_an_explicit_count",
   "xtask/src/cargo_job_cap.rs::tests::memory_sources_parse_only_their_exact_shapes",
   "xtask/src/cargo_job_cap.rs::tests::nested_and_ancestor_cgroup_limits_bound_memory",
+  "xtask/src/cargo_job_cap.rs::tests::windows_memory_parsers_accept_only_positive_integers",
+  "xtask/src/cargo_job_cap.rs::tests::windows_memory_probe_falls_back_through_powershell_and_caps_low_memory_hosts",
 ]
 fixtures = []
 code = [

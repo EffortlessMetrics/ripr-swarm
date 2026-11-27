@@ -43,7 +43,7 @@ What are you trying to do?
   Compose PR evidence   ripr first-pr --root . --base BASE --head HEAD
   Work in an editor     ripr lsp --stdio (started by your editor)
   Adopt advisory CI     ripr init --ci github
-  Wire up your agent    ripr init --agents all   (docs/AGENT_QUICKSTART.md)
+  Wire up your agent    ripr init --agents all
 
 More:
   ripr help <command>    Options for one command.
@@ -2663,7 +2663,7 @@ What are you trying to do?
   Compose PR evidence   ripr first-pr --root . --base BASE --head HEAD
   Work in an editor     ripr lsp --stdio (started by your editor)
   Adopt advisory CI     ripr init --ci github
-  Wire up your agent    ripr init --agents all   (docs/AGENT_QUICKSTART.md)
+  Wire up your agent    ripr init --agents all
 
 More:
   ripr help <command>    Options for one command.
@@ -2740,7 +2740,6 @@ Options:
                    and an edited section is kept unless --force refreshes it.
                    A symlink, an unreadable file or an unterminated marker is
                    refused. With cursor, --mcp also writes .cursor/mcp.json.
-                   Guide: docs/AGENT_QUICKSTART.md.
   --dry-run       Show the plan and the file bodies without writing anything.
                    Resolves the same preconditions as the real run, so it
                    fails the same way (existing file without --force, root

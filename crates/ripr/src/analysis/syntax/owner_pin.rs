@@ -2018,6 +2018,34 @@ fn macro_binding_sites_in_tree(
                 };
                 if let Some(name) = name {
                     let name = name.trim_start_matches("r#");
+                    // #16388: a rootless group (`use {anyhow::anyhow, ..};`)
+                    // has no outer path, so each leaf is verified against its
+                    // own first segment, as if it were imported alone.
+                    let leaf_root;
+                    let (root, external) = if root.is_empty() {
+                        leaf_root = use_tree_segments(&item)
+                            .into_iter()
+                            .next()
+                            .unwrap_or_default();
+                        // The root and its `::` qualifier both come from the
+                        // outermost path-bearing tree (`{::krate::{name}}`).
+                        let leaf_external = item
+                            .syntax()
+                            .ancestors()
+                            .filter_map(ast::UseTree::cast)
+                            .filter_map(|tree| tree.path())
+                            .last()
+                            .and_then(|path| {
+                                path.syntax()
+                                    .descendants_with_tokens()
+                                    .filter_map(|element| element.into_token())
+                                    .find(|token| !token.kind().is_trivia())
+                            })
+                            .is_some_and(|token| token.kind() == ra_ap_syntax::T![::]);
+                        (leaf_root.as_str(), leaf_external)
+                    } else {
+                        (root, external)
+                    };
                     let kind = if !trusted.contains(&name) {
                         None
                     } else if item.rename().is_none()
@@ -3241,13 +3269,13 @@ fn is_standard_macro_import(item: &ast::UseTree, name: &str) -> bool {
 /// Whether `item` is a top-level `use krate;` or `use ::krate;` of a drop-in
 /// crate whose own name is the trusted macro name (`anyhow`).
 fn imports_bare_drop_in_crate(item: &ast::UseTree, name: &str) -> bool {
+    // Only pathless groups may enclose it (`use {anyhow, ..};`, #16388).
     let top_level = item
         .syntax()
         .ancestors()
         .skip(1)
         .filter_map(ast::UseTree::cast)
-        .next()
-        .is_none();
+        .all(|tree| tree.path().is_none());
     let path: String = item
         .path()
         .map(|path| {

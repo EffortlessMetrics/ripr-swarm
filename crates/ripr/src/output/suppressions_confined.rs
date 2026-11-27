@@ -30,14 +30,14 @@ pub fn load_suppressions_for_root_at(
     let text = std::fs::read_to_string(path).map_err(|err| {
         vec![format!(
             "failed to read suppression policy `{}`: {err}",
-            relative_path.display()
+            super::path::human_path(relative_path)
         )]
     })?;
     let (entries, violations) = parse_suppressions_manifest(&text);
     if violations.is_empty() {
         Ok(entries)
     } else {
-        let display = relative_path.display().to_string();
+        let display = super::path::human_path(relative_path);
         Err(violations
             .into_iter()
             .map(|violation| violation.replacen(SUPPRESSIONS_PATH, &display, 1))
