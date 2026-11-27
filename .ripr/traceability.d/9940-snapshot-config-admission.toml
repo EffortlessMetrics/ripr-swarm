@@ -1,0 +1,13 @@
+# Remaining runner-config admission cases for RIPR-SPEC-0258 (#9940).
+[[extend]]
+id = "RIPR-SPEC-0258"
+tests = [
+  "crates/ripr/src/analysis/language/typescript/tests/committed_snapshot_tests.rs::wrapped_commonjs_exports_track_destructured_config_writes",
+  "crates/ripr/src/analysis/language/typescript/tests/committed_snapshot_tests.rs::destructured_config_writes_refuse_but_unrelated_patterns_keep_credit",
+  "crates/ripr/src/analysis/language/typescript/tests/committed_snapshot_tests.rs::exported_config_mutations_and_unread_merges_refuse",
+  "crates/ripr/src/analysis/language/typescript/tests/committed_snapshot_tests.rs::vitest_config_wrapper_alias_keeps_credit_but_dynamic_test_member_refuses",
+]
+fixtures = ["fixtures/typescript_snapshot_destructured_config_write"]
+code = [
+  "crates/ripr/src/analysis/language/typescript/committed_snapshot/config_admission.rs",
+]
