@@ -225,3 +225,35 @@ history without adding another repo control plane.
 
 These release environments and publish tokens belong to the source repository,
 not `ripr-swarm`, until a dedicated release-boundary change is approved.
+
+## Source-Only Workflow And Event-Policy Cutover
+
+Under Option A (one tree with repository-specific workflow execution;
+`policy/source-only-workflows.toml`), landing the Phase 1 dispatch-only files
+in `ripr-swarm` changes no repository settings and starts zero Actions runs.
+The following repository/org settings changes remain explicitly owner-gated:
+
+1. **Disable source-only workflows in `EffortlessMetrics/ripr-swarm`** (before
+   Phase 2 PR restores automatic source events in git): disable
+   `source-only-ci.yml`, `source-only-security.yml`, and
+   `source-only-promotion-composition.yml` in `ripr-swarm` Actions settings and
+   record each workflow ID and `disabled_manually` read-back in
+   `policy/source-only-workflows.toml` (`swarm_disable_observation`).
+2. **Allowlist `pull_request_target` on `EffortlessMetrics/ripr` for Dec 2,
+   2026 policy compliance** (`EffortlessMetrics/ripr#1893`): configure a
+   workflow-file-scoped GitHub Actions event policy on `EffortlessMetrics/ripr`
+   explicitly allowing `pull_request_target` only for
+   `.github/workflows/source-only-promotion-composition.yml` (and
+   `.github/workflows/source-promotion-composition.yml` before the Option A
+   fast-forward completes). If that event policy is unavailable, fall back to
+   an independently operated GitHub App check rather than weakening the gate to
+   `pull_request`.
+3. **Require `Source Promotion Composition` on `EffortlessMetrics/ripr/main`**
+   (`EffortlessMetrics/ripr#1893` `issuecomment-7061605484`): add
+   `{"context": "Source Promotion Composition", "app_id": 15368}` alongside the
+   five conventional required checks (`rust`, `msrv`, `vscode`, `cargo-deny`,
+   `dependency-review`) and read back the effective protection state.
+4. **Settings App path swap (separate PR)**: confirm whether the Settings App
+   is installed on `EffortlessMetrics/ripr-swarm` before moving
+   `.github/source-settings.yml` onto `.github/settings.yml` and flipping
+   `settings_app_holds = "source"`.

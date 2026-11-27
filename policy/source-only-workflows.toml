@@ -60,3 +60,21 @@ swarm_disable_observation = ""
 [workflow.source_events]
 pull_request = []
 push = ["branches: [main, master]"]
+
+# Trusted default-branch promotion composition gate (EffortlessMetrics/ripr#1893,
+# landed in ripr#1903 at 4bfb2ea14d; Nov 21 hosted canary receipts in ripr#1893
+# runs 44912512043, 44912789397, 44896760529, 44896738643).
+# December 2, 2026 pull_request_target policy: requires an owner-configured
+# workflow-file-scoped Actions event policy allowlist on EffortlessMetrics/ripr
+# for `.github/workflows/source-only-promotion-composition.yml` (and
+# `.github/workflows/source-promotion-composition.yml` prior to Option A FF).
+[[workflow]]
+path = ".github/workflows/source-only-promotion-composition.yml"
+source_path = ".github/workflows/source-promotion-composition.yml"
+source_blob = "c6c55de65fc7a269601455b0e78c5a194bcd5c2b"
+required_contexts = ["Source Promotion Composition"]
+phase = "dispatch_only"
+swarm_disable_observation = ""
+
+[workflow.source_events]
+pull_request_target = ["types: [opened, synchronize, reopened, edited]", "branches: [main]"]

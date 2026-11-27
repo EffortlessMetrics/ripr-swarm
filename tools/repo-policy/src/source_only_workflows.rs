@@ -244,8 +244,10 @@ fn entry_violations(ledger: &Ledger, entry: &SourceOnlyWorkflow, text: &str) -> 
         violations.push(format!("{path}: no jobs found under `jobs:`"));
     }
     let guarded_prefix = format!("{} && (", ledger.guard);
+    let requires_exact_guard = entry.source_events.contains_key("pull_request_target");
     for job in &jobs {
         let guarded = match &job.condition {
+            Some(condition) if requires_exact_guard => condition == &ledger.guard,
             Some(condition) => {
                 condition == &ledger.guard
                     || condition
@@ -255,10 +257,17 @@ fn entry_violations(ledger: &Ledger, entry: &SourceOnlyWorkflow, text: &str) -> 
             None => false,
         };
         if !guarded {
-            violations.push(format!(
-                "{path}: job `{}` must open its `if:` with the source repository guard `{}`",
-                job.id, ledger.guard
-            ));
+            if requires_exact_guard {
+                violations.push(format!(
+                    "{path}: job `{}` in a pull_request_target source-only workflow must use the exact repository guard `{}` with no extra skip condition (GitHub treats a skipped required job as Success; #1893)",
+                    job.id, ledger.guard
+                ));
+            } else {
+                violations.push(format!(
+                    "{path}: job `{}` must open its `if:` with the source repository guard `{}`",
+                    job.id, ledger.guard
+                ));
+            }
         }
     }
     if !text.contains("rehearse_in_swarm:") {
@@ -585,6 +594,31 @@ mod tests {
         );
         assert_ne!(commented, SETTINGS);
         assert_eq!(required_contexts(&commented), vec!["rust", "cargo-deny"]);
+        Ok(())
+    }
+
+    #[test]
+    fn pull_request_target_source_only_workflow_requires_exact_guard() -> Result<(), String> {
+        let prt_ledger = parse_ledger(&format!(
+            "schema_version = \"1.0\"\nsource_repository = \"EffortlessMetrics/ripr\"\nswarm_repository = \"EffortlessMetrics/ripr-swarm\"\nsource_origin = \"{SHA}\"\nguard = \"{GUARD}\"\nsource_settings = \".github/source-settings.yml\"\nsource_settings_origin_blob = \"{SHA}\"\nsettings_app_path = \".github/settings.yml\"\nsettings_app_holds = \"swarm\"\n\n[[workflow]]\npath = \"{PATH}\"\nsource_path = \".github/workflows/source-promotion-composition.yml\"\nsource_blob = \"{SHA}\"\nrequired_contexts = [\"rust\", \"cargo-deny\"]\nphase = \"dispatch_only\"\nswarm_disable_observation = \"\"\n\n[workflow.source_events]\npull_request_target = [\"types: [opened, synchronize, reopened, edited]\", \"branches: [main]\"]\n"
+        ))?;
+        let exact = workflow("", GUARD, GUARD);
+        assert!(
+            check(&prt_ledger, &exact, SETTINGS).is_empty(),
+            "exact guard must pass"
+        );
+        let extra = workflow(
+            "",
+            GUARD,
+            &format!("{GUARD} && (github.event_name == 'pull_request_target')"),
+        );
+        let found = check(&prt_ledger, &extra, SETTINGS);
+        assert!(
+            found
+                .iter()
+                .any(|v| v.contains("job `deny`") && v.contains("exact repository guard")),
+            "{found:#?}"
+        );
         Ok(())
     }
 }
