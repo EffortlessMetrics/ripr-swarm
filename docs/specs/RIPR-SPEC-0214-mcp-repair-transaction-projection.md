@@ -196,7 +196,12 @@ read-only and without execution authority (ADR 0022):
   own, so it fails closed: a ready item with no seam binding, or an
   unreadable HEAD or attempt store, returns a typed failure
   (`no_snapshot`, `seam_not_found`, `analysis_failed`) and creates no session
-  transaction. MCP still creates and edits nothing durable.
+  transaction. A store holding a manifest the inventory cannot read refuses
+  the same way (`analysis_failed`, naming the unreadable manifests), since its
+  seam cannot be told. The store is read without holding the session lock,
+  and a snapshot replaced meanwhile refuses with `stale_snapshot` (carrying
+  `current_snapshot_id`) before anything is created. MCP still creates and
+  edits nothing durable.
 - When a gate is not established, the tool returns an
   `isError: false` document with `repair_packet_ready: false`, the typed
   `ineligibility.reason`, and `attempt: null` — never a failure envelope,
