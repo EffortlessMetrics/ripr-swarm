@@ -91,7 +91,13 @@ fn agent_setup_help_is_usable_without_repository_docs() -> Result<(), String> {
     in_help_workspace(|root| {
         assert!(!root.join("docs").exists(), "{root:?}");
         let overview: &[&str] = &["ripr check", "ripr init --agents all"];
-        let init: &[&str] = &["--agents TARGET", "all -> all three"];
+        let init: &[&str] = &[
+            "--agents TARGET",
+            "CLAUDE.md",
+            "AGENTS.md",
+            ".cursor/rules/ripr.mdc",
+            "all -> all three",
+        ];
         let mut stale = Vec::new();
         for (args, expected) in [
             (&["--help"][..], overview),
