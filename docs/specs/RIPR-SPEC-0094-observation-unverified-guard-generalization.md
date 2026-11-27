@@ -17,6 +17,7 @@ Linked issues:
 - #7820
 - #7966
 - #12234
+- #13037
 
 Linked PRs:
 
@@ -707,6 +708,46 @@ test that never runs the owner activates, observes and discriminates
 nothing. These
 rules govern diff-mode reveal; repo exposure grading (`test_grip_evidence`)
 does not apply them yet.
+
+An equality that compares one stable value read with a copy of itself
+(#13037) is not credited as a discriminator. Both operands must be the same
+place, a binding with optional field or tuple-index projections (`b.0`,
+`cfg.limits.max`), up to a leading borrow and trailing `.clone()`,
+`.to_owned()` or `.to_vec()` calls (`assert_eq!(b.0, b.0.clone())`). An
+operand with a call is not one value read twice (`counter.next()` runs twice
+and can observe a state change), and a literal, index, macro or operator is
+not a place, so those keep their reading.
+
+This is a conservative heuristic, not a claim that such an assertion can never
+fail. It passes for any value whose equality is reflexive and whose copy
+preserves it, and ripr does not establish when that holds. Where it does not
+(a float place that can become NaN, a hand-written `PartialEq` or `Clone`),
+the assertion can discriminate and ripr underclaims it (#16227); the
+`self_comparison_float_nan_stays_weak` fixture is that contrast, a test that
+fails at runtime on the changed `x / x` and still reads weak. The reading
+matches a self-computed expected value: probe-relative strength at most
+`weak`, observation never confirmed, for every family, whether or not either
+side calls the owner. The one exception is the #6692 clone-field pin, which
+establishes the derived `PartialEq` and the hand-written `Clone::clone` it
+tests: the owner-return pin has admitted `assert_eq!(recv.clone(), recv)`, so
+that comparison keeps its credit. Proof:
+`comparison_with_own_copy_is_weak_and_unconfirmed`, the
+`collection_argument_computed_expected` fixture (row `exact_value` / `weak`),
+`self_comparison_float_nan_stays_weak` and
+`clone_field_pin_self_comparison_keeps_credit`.
+
+Because the cap records what ripr did not establish, not a shown weakness,
+the output says so. A `weak_assertion` row whose assertion is a self-comparison
+explains that it compares a value with its own copy and that static analysis
+did not establish that it discriminates the changed behavior, instead of the
+generic "assertion too weak" sentence. When every strongest contributing row
+of a `weakly_exposed` finding is such a row, the next step names that test and
+says to verify the changed behavior with the test runner or assert against an
+independent expected value, instead of the family's "strengthen the assertion"
+template. The `miss` token, class and strength are unchanged. Proof:
+`self_comparison_weak_row_says_not_established`,
+`self_comparison_rows_name_what_was_not_established` and the two fixtures
+above that read weak.
 
 Proof: `owner_parameter_name_confirms_only_in_an_assertion_calling_the_owner`,
 `a_type_qualified_expected_call_reaches_only_through_its_own_type`, the

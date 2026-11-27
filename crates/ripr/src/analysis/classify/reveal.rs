@@ -3240,8 +3240,21 @@ fn analyze_related_assertions(
                     }
                     (None, None) => false,
                 };
-            let self_computed =
-                self_computed || empty_after_skipped_push || seeded_after_skipped_push;
+            // #13037 conservative heuristic: an equality of a place with a
+            // copy of itself (`assert_eq!(b.0, b.0.clone())`) passes for any
+            // value whose equality is reflexive and whose copy preserves it,
+            // and ripr does not establish when that fails (a NaN float, a
+            // hand-written `PartialEq` or `Clone`, #16227). So, like a
+            // self-computed expected value, it is not credited: capped at
+            // weak, never confirming. The one exception is the #6692
+            // clone-field pin, which establishes the derived `PartialEq` and
+            // the hand-written `clone` it tests.
+            let compared_with_own_copy =
+                matched && !owner_pinned && compares_value_with_its_own_copy(&assertion.text);
+            let self_computed = self_computed
+                || empty_after_skipped_push
+                || seeded_after_skipped_push
+                || compared_with_own_copy;
             // #6692: the owner pin is credited only through an assertion
             // that matched, from a test that may supply the oracle, with the
             // pin surviving the reveal-side defeats. The missing-field
@@ -3977,6 +3990,53 @@ fn called_paths(text: &str) -> Vec<(Option<String>, String)> {
 
 #[cfg(kani)]
 mod kani_proofs;
+
+/// True when an equality assertion compares one stable value read with a copy
+/// of itself (#13037): both operands are the same place (a binding with
+/// optional field or tuple-index projections, `b.0`, `cfg.limits.max`), each
+/// with at most a leading borrow and trailing `.clone()`, `.to_owned()` or
+/// `.to_vec()` calls. Such an assertion passes for any value with reflexive,
+/// copy-preserving equality; ripr does not credit it as a discriminator, a
+/// conservative reading that underclaims a NaN float or a hand-written
+/// `PartialEq`/`Clone` (#16227). Anything else is not read as a self-comparison: an operand with
+/// a call (`counter.next()` runs twice and can observe a state change), a
+/// literal (`render("a b")` and `render("ab")` differ), an index, a macro or an
+/// operator. An exact self-comparison (`assert_eq!(x, x)`) is already a weak
+/// relation at extraction (RIPR-SPEC-0231 step 3); this reads the copy forms
+/// relative to a probe, so the #6692 clone-field pin can still admit them.
+pub(crate) fn compares_value_with_its_own_copy(assertion: &str) -> bool {
+    fn place(operand: &str) -> Option<String> {
+        let mut text = operand.trim();
+        loop {
+            let before = text.len();
+            text = text.strip_prefix('&').unwrap_or(text).trim_start();
+            for suffix in [".clone()", ".to_owned()", ".to_vec()"] {
+                text = text.strip_suffix(suffix).unwrap_or(text).trim_end();
+            }
+            if text.len() == before {
+                break;
+            }
+        }
+        let identifier = |segment: &str| {
+            segment
+                .chars()
+                .next()
+                .is_some_and(|ch| ch.is_alphabetic() || ch == '_')
+                && segment.chars().all(|ch| ch.is_alphanumeric() || ch == '_')
+        };
+        let segments: Vec<&str> = text.split('.').map(str::trim).collect();
+        let (root, projections) = segments.split_first()?;
+        (identifier(root)
+            && projections.iter().all(|segment| {
+                identifier(segment)
+                    || (!segment.is_empty() && segment.chars().all(|ch| ch.is_ascii_digit()))
+            }))
+        .then(|| segments.join("."))
+    }
+    equality_operands(assertion).is_some_and(|[left, right]| {
+        place(&left).is_some_and(|left| place(&right).is_some_and(|right| left == right))
+    })
+}
 
 /// A self-computed assertion's probe-relative strength is at most `weak`.
 fn self_computed_cap(strength: OracleStrength, self_computed: bool) -> OracleStrength {
@@ -14713,6 +14773,89 @@ return Err(\"typed pin\".into());
         let (discriminate, strength) =
             tax_reveal("subtotal * 8 / 1000", &test, &params, &|_, _| false);
         assert_eq!(strength, OracleStrength::Strong);
+        assert_eq!(
+            discriminate.state,
+            StageState::Yes,
+            "{}",
+            discriminate.summary
+        );
+    }
+
+    /// #13037: `assert_eq!(RATE, RATE.clone())` names the changed constant,
+    /// so before this rule its token confirmed observation at full strength,
+    /// yet it compares a value with a copy of itself, which passes for any
+    /// value with reflexive equality. Neither side calls the owner, so the #5830 self-computed
+    /// reading does not apply. The row is capped at weak and observation
+    /// stays unconfirmed. The control compares the same constant with an
+    /// independent literal and keeps its credit.
+    #[test]
+    fn comparison_with_own_copy_is_weak_and_unconfirmed() {
+        let params = vec!["subtotal".to_string()];
+        for text in [
+            "assert_eq!(RATE, RATE.clone());",
+            "assert_eq!(&RATE.to_owned(), &RATE);",
+        ] {
+            let test = test_with_assertions("rate_is_itself", vec![exact(text)]);
+            let (discriminate, strength) =
+                tax_reveal("subtotal * RATE", &test, &params, &|_, _| false);
+            assert_eq!(strength, OracleStrength::Weak, "{text}");
+            assert_eq!(
+                discriminate.state,
+                StageState::Weak,
+                "{text}: {}",
+                discriminate.summary
+            );
+        }
+        let test = test_with_assertions("rate_is_pinned", vec![exact("assert_eq!(RATE, 8);")]);
+        let (discriminate, strength) = tax_reveal("subtotal * RATE", &test, &params, &|_, _| false);
+        assert_eq!(strength, OracleStrength::Strong);
+        assert_eq!(
+            discriminate.state,
+            StageState::Yes,
+            "{}",
+            discriminate.summary
+        );
+        assert!(compares_value_with_its_own_copy(
+            "assert_eq!(b.0, b.0.clone());"
+        ));
+        assert!(compares_value_with_its_own_copy(
+            "assert!(&v.to_vec() == &v);"
+        ));
+        assert!(!compares_value_with_its_own_copy(
+            "assert_eq!(b.0, c.0.clone());"
+        ));
+        assert!(!compares_value_with_its_own_copy(
+            "assert_eq!(b.0.len(), 1);"
+        ));
+        // Review of #16154: only a stable place read is a self-comparison.
+        // A call runs twice and may observe state; literals keep their
+        // spaces; an index or operator is not a place.
+        assert!(compares_value_with_its_own_copy(
+            "assert_eq!(cfg . limits.max, &cfg.limits.max.to_owned());"
+        ));
+        for distinct in [
+            "assert_eq!(counter.next(), counter.next().clone());",
+            "assert_eq!(render(\"a b\"), render(\"ab\").clone());",
+            "assert_eq!(render(\"ab\"), render(\"ab\").clone());",
+            "assert_eq!(v[0], v[0].clone());",
+            "assert_eq!(a + b, (a + b).clone());",
+            "assert_eq!(b.0.len(), b.0.clone().len());",
+        ] {
+            assert!(!compares_value_with_its_own_copy(distinct), "{distinct}");
+        }
+        // A self-comparison beside an independent pin in the same test does
+        // not cost that pin its credit: the discriminator stage reads the
+        // strongest row. (The helper's `strength` is the first row's.)
+        let test = test_with_assertions(
+            "rate_is_itself_and_pinned",
+            vec![
+                exact("assert_eq!(RATE, RATE.clone());"),
+                exact("assert_eq!(RATE, 8);"),
+            ],
+        );
+        let (discriminate, first_row) =
+            tax_reveal("subtotal * RATE", &test, &params, &|_, _| false);
+        assert_eq!(first_row, OracleStrength::Weak);
         assert_eq!(
             discriminate.state,
             StageState::Yes,

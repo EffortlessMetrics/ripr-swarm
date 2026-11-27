@@ -16,8 +16,11 @@ Start here:
   Gap ID (for scripts): gap:rust:src/lib.rs:add:call_deletion:call_deletion:v.push_x*1
   Changed behavior: v.push(x * 1)
   Missing check: No strong assertion was detected
-  Related test: src/lib.rs:10 records_into_the_bag (ripr could not confirm that this assertion observes the changed behavior)
-  Next step: Strengthen the related assertion so it discriminates the changed behavior
+  Related test: src/lib.rs:10 records_into_the_bag (compares a value with its own copy; static analysis did not establish that this discriminates the changed behavior)
+  Next step: The related test `records_into_the_bag` compares a value with its own copy; static
+    analysis did not establish that this discriminates the changed behavior. Verify the changed
+    behavior with the project's configured test runner (`cargo test` for ordinary Cargo tests), or
+    assert against an independent expected value
   Evidence: reach yes · infection yes · propagation yes · observation yes · assertion weak
     Stages (static evidence): reach = test path to changed owner; infection = inputs can activate change;
       propagation = changed effect reaches output; observation = related test/assertion evidence;

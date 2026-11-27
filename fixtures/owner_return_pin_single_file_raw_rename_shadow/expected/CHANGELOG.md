@@ -359,3 +359,15 @@ Command:
 
 Updated:
 - `expected/human.txt`
+
+## Pending — owner_return_pin_single_file_raw_rename_shadow (29)
+
+Reason:
+RIPR-SPEC-0094: a related assertion comparing a value with a copy of itself is capped at weak unless the #6692 clone-field pin admits it (#13037)
+
+Command:
+`cargo xtask goldens bless owner_return_pin_single_file_raw_rename_shadow --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human-full.txt`

@@ -12,6 +12,9 @@ use crate::domain::{
 const SCRIPT_OBSERVATION_UNCONFIRMED: &str =
     "the preview adapter could not confirm that this assertion observes the changed behavior";
 
+/// Why a weak row whose assertion compares a value with its own copy misses.
+const SELF_COMPARISON_NOT_ESTABLISHED: &str = "compares a value with its own copy; static analysis did not establish that this discriminates the changed behavior";
+
 /// Strength-only row pick kept for non-script callers and legacy tests.
 ///
 /// TypeScript/JavaScript preview surfaces must use
@@ -102,6 +105,19 @@ pub(crate) fn related_test_miss_reason(test: &RelatedTest, family: &ProbeFamily)
         RelatedTestMiss::AssertionAdmissionUnproven => {
             "assertion admission unproven: ripr could not establish that this assertion counts here"
                 .to_string()
+        }
+        // #13037 review: an equality between a value and its own copy is
+        // capped by the analyzer because ripr did not establish that it
+        // discriminates, not because the assertion was shown to be too
+        // weak. A NaN payload can make it fail (#16227), so say only what
+        // static analysis did not establish. Wording only: the grade stands.
+        RelatedTestMiss::WeakAssertion
+            if test
+                .oracle
+                .as_deref()
+                .is_some_and(crate::analysis::compares_value_with_its_own_copy) =>
+        {
+            SELF_COMPARISON_NOT_ESTABLISHED.to_string()
         }
         RelatedTestMiss::WeakAssertion => {
             "assertion too weak to tell the old behavior from the new".to_string()
@@ -831,6 +847,25 @@ mod tests {
 
     fn reason(test: &RelatedTest, family: &ProbeFamily) -> Option<String> {
         related_test_miss_reason(test, family)
+    }
+
+    // #13037 review: a weak row whose assertion compares a value with its
+    // own copy says what static analysis did not establish, not that the
+    // assertion is too weak; another weak row keeps the generic sentence.
+    #[test]
+    fn self_comparison_weak_row_says_not_established() {
+        let mut copy = test_with(Some(RelatedTestMiss::WeakAssertion), None);
+        copy.oracle = Some("assert_eq!(b.0, b.0.clone());".to_string());
+        let text = reason(&copy, &ProbeFamily::CallDeletion).unwrap_or_default();
+        assert_eq!(text, SELF_COMPARISON_NOT_ESTABLISHED);
+        assert!(!text.contains("too weak"), "{text}");
+
+        let mut is_ok = test_with(Some(RelatedTestMiss::WeakAssertion), None);
+        is_ok.oracle = Some("assert!(add(&mut v, 1).is_ok());".to_string());
+        assert_eq!(
+            reason(&is_ok, &ProbeFamily::CallDeletion).as_deref(),
+            Some("assertion too weak to tell the old behavior from the new")
+        );
     }
 
     #[test]

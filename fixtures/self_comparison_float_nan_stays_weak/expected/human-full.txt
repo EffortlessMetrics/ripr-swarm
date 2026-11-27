@@ -1,0 +1,74 @@
+ripr static RIPR exposure analysis
+mode: fast
+root: fixtures/self_comparison_float_nan_stays_weak/input
+
+Summary: 2 changed behavior(s) checked: 0 exposed, 2 weakly_exposed, 0 reachable_unrevealed, 0 no_static_path, 0 infection_unknown, 0 propagation_unknown, 0 static_unknown; 2 of 2 finding(s) unsuppressed
+Terms: exposed = tests appear to notice the change; weakly_exposed = tests reach it but check it
+  only loosely; reachable_unrevealed = tests reach it but nothing appears to notice a change;
+  no_static_path = no test path found; infection_unknown, propagation_unknown, static_unknown = ripr
+  could not tell from the code (analysis limited, not a verdict); finding = one reported gap;
+  unsuppressed = not hidden by your suppression policy
+
+Analysis outcome: findings below (analysis complete; complete_with_findings)
+  Counts: 1 changed file(s), 2 changed line(s), 1 candidate line(s), 2 changed behavior(s) checked, 2 finding(s)
+
+Shared evidence and guidance
+  E1 [findings 1, 2]: reach yes: Related tests appear to reach add: records_into_the_bag
+  E2 [findings 1, 2]: infection yes: Reachable tests can plausibly activate this changed behavior
+  E3 [findings 1, 2]: propagation yes: Complete propagation witness reaches state write: v.push(x / x)
+  E4 [findings 1, 2]: observation yes: A related test observes a value or effect near the changed behavior
+  E5 [findings 1, 2]: discriminator weak: Discriminator unconfirmed: no assertion text references the changed expression
+  E6 [findings 1, 2]: local flow reaches state write: v.push(x / x) (line 3)
+  E7 [findings 1, 2]: related test src/lib.rs:10 records_into_the_bag uses weak exact value oracle: assert_eq!(b.0, b.0.clone()); misses: compares a value with its own copy; static analysis did not establish that this discriminates the changed behavior
+  E8 [findings 1, 2]: source function argument value v = 0 at line 12
+  E9 [findings 1, 2]: source function argument value x = 0.0 at line 12
+  E10 [findings 1, 2]: source assertion argument value 0 at line 13
+  N1 [findings 1, 2]: The related test `records_into_the_bag` compares a value with its own copy; static analysis did not establish that this discriminates the changed behavior. Verify the changed behavior with the project's configured test runner (`cargo test` for ordinary Cargo tests), or assert against an independent expected value
+
+Finding 1: WARNING ./src/lib.rs:3
+  id: probe:src_lib.rs:call_deletion:ad2dbd4c
+Changed
+  before: v.push(x)
+  after:  v.push(x / x)
+Change type
+  a line that makes a call changed
+  family: call_deletion
+  delta:  effect (changes a side effect)
+  owner:  src/lib.rs::add
+  gap id (for scripts): gap:rust:src/lib.rs:add:call_deletion:call_deletion:v.push_x/x
+Static exposure
+  weakly_exposed (warning, confidence 0.92)
+Evidence
+  shared evidence: E1, E2, E3, E4, E5, E6, E7, E8, E9, E10
+Weakness
+  - No strong discriminator was detected
+Next step
+  shared guidance: N1
+Drill in:
+  (finding id, for explain/context)
+  ripr explain --root <cwd>/fixtures/self_comparison_float_nan_stays_weak/input --diff <cwd>/fixtures/self_comparison_float_nan_stays_weak/diff.patch --mode fast probe:src_lib.rs:call_deletion:ad2dbd4c
+  ripr context --root <cwd>/fixtures/self_comparison_float_nan_stays_weak/input --diff <cwd>/fixtures/self_comparison_float_nan_stays_weak/diff.patch --mode fast --at probe:src_lib.rs:call_deletion:ad2dbd4c
+
+Finding 2: WARNING ./src/lib.rs:3
+  id: probe:src_lib.rs:side_effect:962e7ca0
+Changed
+  before: v.push(x)
+  after:  v.push(x / x)
+Change type
+  a side effect changed
+  family: side_effect
+  delta:  effect (changes a side effect)
+  owner:  src/lib.rs::add
+  gap id (for scripts): gap:rust:src/lib.rs:add:side_effect:side_effect:v.push_x/x
+Static exposure
+  weakly_exposed (warning, confidence 0.92)
+Evidence
+  shared evidence: E1, E2, E3, E4, E5, E6, E7, E8, E9, E10
+Weakness
+  - No strong discriminator was detected
+Next step
+  shared guidance: N1
+Drill in:
+  (finding id, for explain/context)
+  ripr explain --root <cwd>/fixtures/self_comparison_float_nan_stays_weak/input --diff <cwd>/fixtures/self_comparison_float_nan_stays_weak/diff.patch --mode fast probe:src_lib.rs:side_effect:962e7ca0
+  ripr context --root <cwd>/fixtures/self_comparison_float_nan_stays_weak/input --diff <cwd>/fixtures/self_comparison_float_nan_stays_weak/diff.patch --mode fast --at probe:src_lib.rs:side_effect:962e7ca0

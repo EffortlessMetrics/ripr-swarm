@@ -4,7 +4,8 @@ use crate::analysis::classify::{
     body_contains_owner_call, bool_owner_exact_result_next_step, ensure_unknown_stop_reason,
     exact_error_variant, exact_oracle_gap_next_step, is_partial_eq_method, missing_evidence,
     oracle_crediting_relations, recommended_next_step, recommended_next_step_with_boundary,
-    shared_owner_call_identity, stop_reasons, wrapper_error_seam_expression,
+    self_comparison_next_step, shared_owner_call_identity, stop_reasons,
+    wrapper_error_seam_expression,
 };
 use crate::analysis::rust_index::TestSummary;
 use crate::domain::*;
@@ -347,6 +348,12 @@ pub(in crate::analysis) fn build_finding_with_origins(
         // #15149: a `-> bool` owner's `assert!(owner(..))` already checks the
         // exact result, so the broad-assertion template names a rewrite that
         // checks the same values; the missing piece is a deciding input.
+        Some(step)
+    } else if let Some(step) =
+        self_comparison_next_step(&class, &related_tests, context.owner_fn.is_some())
+    {
+        // #13037 review: the strongest related assertions compare a value
+        // with its own copy; "strengthen the assertion" would misstate why.
         Some(step)
     } else if class == ExposureClass::NoStaticPath && context.unmounted_build_script {
         Some(crate::domain::BUILD_SCRIPT_NO_STATIC_PATH_NEXT_STEP.to_string())

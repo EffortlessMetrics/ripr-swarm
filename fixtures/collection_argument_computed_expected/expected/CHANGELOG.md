@@ -371,3 +371,29 @@ Command:
 
 Updated:
 - `expected/human-full.txt`
+
+## Pending — collection_argument_computed_expected (29)
+
+Reason:
+RIPR-SPEC-0094: a related assertion comparing a value with a copy of itself is capped at weak unless the #6692 clone-field pin admits it (#13037)
+
+Command:
+`cargo xtask goldens bless collection_argument_computed_expected --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
+
+## Pending — collection_argument_computed_expected (30)
+
+Reason:
+RIPR-SPEC-0094: #13037 review 7111459915, a self-comparison row says static analysis did not establish discrimination instead of 'too weak'; next step names verification or an independent expected value. Wording only; class and strength unchanged.
+
+Command:
+`cargo xtask goldens bless collection_argument_computed_expected --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
