@@ -178,18 +178,44 @@ fn sibling_argument_heads(
 /// Whether the test may run the owner without naming it. A method the
 /// language or the standard library calls through syntax is left to the
 /// readings that own that syntax; `from` and `try_from` are also reached by
-/// `into`/`try_into`, and `from` by `?`.
+/// `into`/`try_into`, and `from` by `?`. A binary operator method (and its
+/// `_assign` form) is reached only through its operator token, or `sum` /
+/// `product` for `add` / `mul`, so a test with none of those runs it only by
+/// name. Any occurrence of the token counts, even a negative literal or a
+/// reference, so the reading stays conservative.
 fn has_unnamed_route(name: &str, masked: &str) -> bool {
     let names_word = |word: &str| {
         masked
             .match_indices(word)
             .any(|(at, matched)| ident_boundary(masked, at, at + matched.len()))
     };
+    let operator = name.strip_suffix("_assign").unwrap_or(name);
+    if let Some((token, words)) = binary_operator_route(operator) {
+        return masked.contains(token) || words.iter().any(|word| names_word(word));
+    }
     match name {
         "from" => names_word("into") || masked.contains('?'),
         "try_from" => names_word("try_into"),
         _ => IMPLICIT_DISPATCH_METHODS.contains(&name),
     }
+}
+
+/// The operator token of a binary operator trait method, and the standard
+/// library methods that reach it by name-free dispatch.
+fn binary_operator_route(name: &str) -> Option<(&'static str, &'static [&'static str])> {
+    Some(match name {
+        "add" => ("+", &["sum"]),
+        "sub" => ("-", &[]),
+        "mul" => ("*", &["product"]),
+        "div" => ("/", &[]),
+        "rem" => ("%", &[]),
+        "bitand" => ("&", &[]),
+        "bitor" => ("|", &[]),
+        "bitxor" => ("^", &[]),
+        "shl" => ("<<", &[]),
+        "shr" => (">>", &[]),
+        _ => return None,
+    })
 }
 
 /// Whether the test names the owner's method at least once and every mention
@@ -1093,15 +1119,64 @@ mod tests {
             "impl From<&str> for Name::from",
             "let s: String = String::new(); assert_eq!(Name::from(&s).0, 0);",
         )?);
-        // An operator method is left to the operator reading.
-        let add = "use std::ops::Add;\n#[derive(Debug, PartialEq, Clone, Copy)]\npub struct Meters(pub u32);\n\
-            impl Add<u32> for Meters {\n    type Output = Meters;\n    fn add(self, rhs: u32) -> Meters { Meters(self.0 + rhs) }\n}\n\
-            impl Add<Meters> for Meters {\n    type Output = Meters;\n    fn add(self, rhs: Meters) -> Meters { Meters(self.0 + rhs.0) }\n}\n";
-        assert!(direct(
-            add,
-            "impl Add<u32> for Meters::add",
-            "let m = Meters(1); assert_eq!(m.add(Meters(2)), Meters(3));",
-        )?);
+        Ok(())
+    }
+
+    const METERS: &str = "use std::ops::{Add, AddAssign};\n#[derive(Debug, PartialEq, Clone, Copy)]\npub struct Meters(pub u32);\n\
+        impl Add<u32> for Meters {\n    type Output = Meters;\n    fn add(self, rhs: u32) -> Meters { Meters(self.0 + rhs) }\n}\n\
+        impl Add<Meters> for Meters {\n    type Output = Meters;\n    fn add(self, rhs: Meters) -> Meters { Meters(self.0 + rhs.0 + 1) }\n}\n\
+        impl AddAssign<u32> for Meters {\n    fn add_assign(&mut self, rhs: u32) { self.0 += rhs; }\n}\n\
+        impl AddAssign<Meters> for Meters {\n    fn add_assign(&mut self, rhs: Meters) { self.0 += rhs.0 + 1; }\n}\n";
+
+    /// #14074, operator shape: an operator trait method called by name is
+    /// read like any trait method when the test has no operator token (or
+    /// `sum` for `add`) that could run it unnamed.
+    #[test]
+    fn a_named_operator_call_typed_as_the_sibling_is_not_a_direct_call() -> Result<(), String> {
+        for (owner, body) in [
+            (
+                "impl Add<u32> for Meters::add",
+                "let m = Meters(1); assert_eq!(m.add(Meters(2)), Meters(4));",
+            ),
+            (
+                "impl Add<Meters> for Meters::add",
+                "let m = Meters(1); assert_eq!(m.add(2u32), Meters(3));",
+            ),
+            (
+                "impl AddAssign<Meters> for Meters::add_assign",
+                "let mut m = Meters(1); m.add_assign(2u32); assert_eq!(m, Meters(3));",
+            ),
+        ] {
+            assert!(!direct(METERS, owner, body)?, "{owner} <- {body}");
+        }
+        Ok(())
+    }
+
+    /// The operator token, or `sum`, may run the owner unnamed, so the
+    /// direct call stands; so does a call passing the owner's own type.
+    #[test]
+    fn an_operator_reachable_unnamed_or_typed_as_the_owner_keeps_the_direct_call()
+    -> Result<(), String> {
+        for (owner, body) in [
+            (
+                "impl Add<u32> for Meters::add",
+                "let m = Meters(1); assert_eq!(m.add(Meters(2)), m + 3u32);",
+            ),
+            (
+                "impl Add<u32> for Meters::add",
+                "let m = Meters(1); let s: Meters = [m].into_iter().sum(); assert_eq!(m.add(Meters(2)), s);",
+            ),
+            (
+                "impl AddAssign<u32> for Meters::add_assign",
+                "let mut m = Meters(1); m.add_assign(Meters(2)); m += 1u32; assert_eq!(m, Meters(5));",
+            ),
+            (
+                "impl Add<u32> for Meters::add",
+                "let m = Meters(1); assert_eq!(m.add(2u32), Meters(3));",
+            ),
+        ] {
+            assert!(direct(METERS, owner, body)?, "{owner} <- {body}");
+        }
         Ok(())
     }
 
@@ -1196,7 +1271,45 @@ mod tests {
             "let c = Cents::try_from(2u32);"
         ));
         // A method syntax runs unnamed is never read here.
-        assert!(has_unnamed_route("add", "let m = a.add(b);"));
+        assert!(has_unnamed_route("eq", "assert!(a.eq(&b));"));
+        assert!(has_unnamed_route("neg", "let m = a.neg();"));
+        assert!(has_unnamed_route("index", "let m = a.index(0u8);"));
         assert!(!has_unnamed_route("scale", "let m = a.scale(2u8);"));
+    }
+
+    #[test]
+    fn a_binary_operator_is_reached_unnamed_only_through_its_token() {
+        for (name, by_name, unnamed) in [
+            ("add", "let m = a.add(2u32);", "let m = a + b;"),
+            (
+                "add",
+                "let m = a.add(2u32);",
+                "let m: Meters = all.into_iter().sum();",
+            ),
+            ("add_assign", "a.add_assign(2u32);", "a += b;"),
+            ("sub", "let m = a.sub(2u32);", "let m = a - b;"),
+            ("sub", "let m = a.sub(2u32);", "let m = a.sub(-2i32);"),
+            (
+                "mul",
+                "let m = a.mul(2u32);",
+                "let m: Meters = all.iter().copied().product();",
+            ),
+            ("div", "let m = a.div(2u32);", "let m = a / b;"),
+            ("rem", "let m = a.rem(2u32);", "let m = a % b;"),
+            ("bitand", "let m = a.bitand(2u32);", "let m = a.bitand(&b);"),
+            ("bitor", "let m = a.bitor(2u32);", "let f = |x| x;"),
+            ("bitxor", "let m = a.bitxor(2u32);", "let m = a ^ b;"),
+            ("shl", "let m = a.shl(2u32);", "let m = a << 2u32;"),
+            (
+                "shr",
+                "let m = a.shr(2u32);",
+                "let v: Vec<Vec<u8>> = Vec::new();",
+            ),
+        ] {
+            assert!(!has_unnamed_route(name, by_name), "{name}: {by_name}");
+            assert!(has_unnamed_route(name, unnamed), "{name}: {unnamed}");
+        }
+        // `sum` inside a longer identifier is not the iterator method.
+        assert!(!has_unnamed_route("add", "let checksum = a.add(2u32);"));
     }
 }

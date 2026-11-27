@@ -1,0 +1,2 @@
+crates/ripr/src/lsp/gap_artifacts.rs|Command::new|1|lsp-artifact-fifo-15275|#15275: unit test runs `mkfifo` (Unix-only) in a unique temp dir to prove workspace gap artifact validation refuses a FIFO without opening it. No shell or network.
+crates/ripr/src/lsp/uri.rs|Command::new|1|lsp-artifact-fifo-15275|#15275: unit test runs `mkfifo` (Unix-only) in a unique temp dir to prove the capped LSP artifact read refuses a FIFO without opening it. No shell or network.

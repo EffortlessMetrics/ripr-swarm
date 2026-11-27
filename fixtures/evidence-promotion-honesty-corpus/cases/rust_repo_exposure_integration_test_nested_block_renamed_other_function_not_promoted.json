@@ -1,0 +1,27 @@
+{
+  "id": "rust_repo_exposure_integration_test_nested_block_renamed_other_function_not_promoted",
+  "language": "rust",
+  "tier": "pure",
+  "source_report": "fixtures/evidence-promotion-honesty-corpus/reports/rust-repo-exposure-integration-test-nested-block-renamed-other-function.json",
+  "report_subject": "fixtures/evidence-promotion-honesty-corpus/repo-exposure-subjects/integration-test-nested-block-renamed-other-function",
+  "vector": "bare_call_renamed_to_another_function_in_a_nested_block_of_an_integration_test_root_cannot_credit_the_owner",
+  "assertions": [
+    {
+      "type": "expected_repo_seam_grip",
+      "owner": "src/lib.rs::discount",
+      "expression": "amount >= 100",
+      "grip_class": "activation_unknown",
+      "reach": "weak"
+    },
+    {
+      "type": "expected_repo_seam_related_test",
+      "owner": "src/lib.rs::discount",
+      "expression": "amount >= 100",
+      "test": "nested_renamed_other",
+      "file": "tests/it.rs",
+      "line": 2,
+      "oracle_strength": "strong",
+      "relation_reason": "import_path_affinity"
+    }
+  ]
+}

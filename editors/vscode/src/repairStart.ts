@@ -231,3 +231,62 @@ export function extractAgentRepairLoopTarget(
 export function seamIdFromAgentRepairTarget(target: Record<string, unknown>): string | undefined {
   return nonEmptyString(target['seam_id']);
 }
+
+/**
+ * Machine action names (`CodeAction.data.action_name`, RIPR-SPEC-0129) whose
+ * inert form explains why no repair can start here, most specific first
+ * (#13636): the seam start itself (for example `uncommitted_production_change`),
+ * then the targeted-test brief and the gap repair packet.
+ */
+export const BLOCKED_REPAIR_START_ACTION_NAMES: readonly string[] = [
+  'copy_agent_repair_command',
+  'copy_targeted_test_brief',
+  'copy_gap_repair_packet',
+];
+
+/**
+ * The server's own reason a repair cannot start, read from raw LSP code
+ * actions (#13636). `vscode.executeCodeActionProvider` drops
+ * `CodeAction.disabled`, so the caller asks the server directly and passes
+ * the protocol result here. Returns the first inert action's human reason
+ * in {@link BLOCKED_REPAIR_START_ACTION_NAMES} order, or `undefined` when
+ * none names one.
+ */
+export function blockedRepairStartReason(actions: unknown): string | undefined {
+  return blockedRepairStart(actions)?.reason;
+}
+
+/** An inert ripr action's machine name and human reason (#13636). */
+export interface BlockedRepairStart {
+  actionName: string;
+  reason: string;
+}
+
+/**
+ * {@link blockedRepairStartReason} with the machine name of the inert action
+ * that supplied it, so a caller can tell the start's own refusal
+ * (`copy_agent_repair_command`) from a weaker packet/brief refusal.
+ */
+export function blockedRepairStart(actions: unknown): BlockedRepairStart | undefined {
+  if (!Array.isArray(actions)) {
+    return undefined;
+  }
+  for (const name of BLOCKED_REPAIR_START_ACTION_NAMES) {
+    for (const action of actions) {
+      if (!isRecord(action) || !isRecord(action['disabled']) || !isRecord(action['data'])) {
+        continue;
+      }
+      if (action['data']['action_name'] !== name) {
+        continue;
+      }
+      const reason = nonEmptyString(action['disabled']['reason']);
+      if (reason) {
+        return { actionName: name, reason };
+      }
+    }
+  }
+  return undefined;
+}
+
+/** The machine name of the seam repair start action (RIPR-SPEC-0129). */
+export const REPAIR_START_ACTION_NAME = 'copy_agent_repair_command';

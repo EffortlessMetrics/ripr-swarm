@@ -1,0 +1,5 @@
+[[extend]]
+id = "RIPR-SPEC-0028"
+tests = [
+  "crates/ripr/src/analysis/language/python/deleted_lines_tests.rs::literal_keyword_argument_line_takes_the_call_shape",
+]

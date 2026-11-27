@@ -26,7 +26,8 @@ extension resolves the server in this order:
 1. `ripr.server.path`
 2. bundled server binary, when present
 3. downloaded cached server binary
-4. `ripr` on `PATH`, when `ripr.server.version` is empty
+4. `ripr` on `PATH`, when `ripr.server.version` is empty, automatic download is
+   enabled, and it is not older than the extension's expected server version
 5. verified first-run download
 6. `ripr` on `PATH`, as the fallback when the download fails or a version is pinned
 7. actionable setup error

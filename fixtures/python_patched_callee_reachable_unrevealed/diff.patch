@@ -1,0 +1,6 @@
+--- a/pricing.py
++++ b/pricing.py
+@@ -1,2 +1,2 @@
+ def rate_for(region):
+-    return 1
++    return 3

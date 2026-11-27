@@ -159,3 +159,16 @@ Command:
 
 Updated:
 - `expected/human.txt`
+
+## Pending — rust_const_expectation_self_computed (13)
+
+Reason:
+RIPR-SPEC-0001: #7807 a removed line read as static_unknown only for lack of context is not reported again when its block replacement's modeled probe carries the whole removed text as before
+
+Command:
+`cargo xtask goldens bless rust_const_expectation_self_computed --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`

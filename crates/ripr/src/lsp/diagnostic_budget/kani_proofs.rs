@@ -30,13 +30,14 @@ fn symbolic_budget() -> DiagnosticBudget {
     kani::assume(budget.max_items_per_document <= budget.max_items_per_workspace_response);
     kani::assume(budget.max_serialized_bytes > 0);
     kani::assume(budget.max_inline_detail_bytes > 0);
-    // Anything accepted by production validation must be representable here.
+    // Every budget generated in this bounded domain must pass validation.
     assert!(budget.validate().is_ok());
     budget
 }
 
-/// Item-count limits hold on every step of the walk and are tight: an item is
-/// only omitted for a count limit when that limit is actually reached.
+/// Count, byte and inline-detail pressure compose in the same production walk.
+/// The independent widened arithmetic pins exact decisions and reason priority,
+/// not only upper bounds (an implementation that refuses everything must fail).
 #[kani::proof]
 #[kani::unwind(6)]
 fn budget_item_limits_hold_over_walk() {
@@ -44,42 +45,63 @@ fn budget_item_limits_hold_over_walk() {
     let mut cursor = BudgetCursor::default();
     let mut per_doc = [0usize; 2];
     let mut omitted = 0usize;
+    let mut exact = 0u128;
+    let mut saw_document_omission = false;
+    let mut saw_workspace_omission = false;
+    let mut saw_byte_omission = false;
     for _ in 0..STEPS {
         let doc = usize::from(kani::any::<bool>());
-        let decision = cursor.decide(&budget, per_doc[doc], kani::any(), kani::any());
+        let payload: usize = kani::any();
+        let detail: usize = kani::any();
+        let next_exact = exact + payload as u128;
+        let expected = if per_doc[doc] == budget.max_items_per_document {
+            saw_document_omission = true;
+            BudgetDecision::Omit {
+                reason: OmittedDiagnosticReason::DocumentItemLimit,
+                overflow: DiagnosticOverflowReason::DocumentItemLimit,
+            }
+        } else if cursor.selected_len == budget.max_items_per_workspace_response {
+            saw_workspace_omission = true;
+            BudgetDecision::Omit {
+                reason: OmittedDiagnosticReason::WorkspaceItemLimit,
+                overflow: DiagnosticOverflowReason::WorkspaceItemLimit,
+            }
+        } else if cursor.selected_len > 0 && next_exact > budget.max_serialized_bytes as u128 {
+            saw_byte_omission = true;
+            BudgetDecision::Omit {
+                reason: OmittedDiagnosticReason::SerializedByteLimit,
+                overflow: DiagnosticOverflowReason::SerializedByteLimit,
+            }
+        } else {
+            BudgetDecision::Select {
+                byte_overflow: next_exact > budget.max_serialized_bytes as u128,
+                inline_detail_omitted: detail > budget.max_inline_detail_bytes,
+            }
+        };
+        let decision = cursor.decide(&budget, per_doc[doc], payload, detail);
+        assert!(decision == expected);
         match decision {
             BudgetDecision::Select { .. } => {
-                cursor.commit(0);
+                cursor.commit(payload);
+                exact = next_exact;
                 per_doc[doc] += 1;
             }
-            BudgetDecision::Omit { reason, overflow } => {
-                omitted += 1;
-                match reason {
-                    OmittedDiagnosticReason::DocumentItemLimit => {
-                        assert!(per_doc[doc] >= budget.max_items_per_document);
-                        assert!(overflow == DiagnosticOverflowReason::DocumentItemLimit);
-                    }
-                    OmittedDiagnosticReason::WorkspaceItemLimit => {
-                        assert!(cursor.selected_len >= budget.max_items_per_workspace_response);
-                    }
-                    OmittedDiagnosticReason::SerializedByteLimit => {}
-                    // Profile filtering is decided before the budget cursor runs, so
-                    // this arm must be unreachable; fail the proof if it is not.
-                    OmittedDiagnosticReason::ProfileFiltered => {
-                        kani::assert(false, "budget cursor never omits for profile filtering");
-                    }
-                }
-            }
+            BudgetDecision::Omit { .. } => omitted += 1,
         }
         assert!(per_doc[0] <= budget.max_items_per_document);
         assert!(per_doc[1] <= budget.max_items_per_document);
         assert!(cursor.selected_len <= budget.max_items_per_workspace_response);
         assert!(cursor.selected_len == per_doc[0] + per_doc[1]);
+        assert!(cursor.selected_bytes as u128 == exact);
+        if cursor.selected_len > 1 {
+            assert!(exact <= budget.max_serialized_bytes as u128);
+        }
     }
     assert!(cursor.selected_len + omitted == STEPS);
     kani::cover!(omitted > 0 && cursor.selected_len > 1);
-    kani::cover!(per_doc[0] == budget.max_items_per_document && omitted > 0);
-    kani::cover!(cursor.selected_len == budget.max_items_per_workspace_response && omitted > 0);
+    kani::cover!(saw_document_omission && saw_byte_omission);
+    kani::cover!(saw_workspace_omission && saw_byte_omission);
+    kani::cover!(budget.max_serialized_bytes == usize::MAX && saw_byte_omission);
 }
 
 /// The serialized-byte budget is never exceeded except by a lone first item
@@ -89,10 +111,6 @@ fn budget_item_limits_hold_over_walk() {
 #[kani::unwind(6)]
 fn budget_bytes_never_exceed_limit_or_wrap() {
     let budget = symbolic_budget();
-    // With a limit of exactly `usize::MAX` the saturating sum can clamp to the
-    // limit while the true sum exceeds it (found by this proof; an 18 EB budget
-    // is unreachable, so it is excluded rather than treated as a defect).
-    kani::assume(budget.max_serialized_bytes < usize::MAX);
     let mut cursor = BudgetCursor::default();
     let mut exact: u128 = 0;
     let mut saw_byte_omission = false;
@@ -127,6 +145,7 @@ fn budget_bytes_never_exceed_limit_or_wrap() {
     }
     kani::cover!(cursor.selected_len >= 2);
     kani::cover!(saw_byte_omission);
+    kani::cover!(budget.max_serialized_bytes == usize::MAX && saw_byte_omission);
     kani::cover!(cursor.selected_len == 1 && exact > budget.max_serialized_bytes as u128);
 }
 

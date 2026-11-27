@@ -46,6 +46,7 @@ impl Fixture {
                 "AGENTS.md",
                 "AGENTS.override.md",
                 "CLAUDE.md",
+                "GEMINI.md",
                 "docs/ARCHITECTURE.md",
                 "docs/PR_AUTOMATION.md",
                 "docs/agent-context/review-conversations.md",
@@ -410,6 +411,57 @@ fn missing_and_unreadable_required_policy_inputs_fail() -> Result<(), String> {
     assert!(!fixture.run("check-agent-skills")?.status.success());
     std::fs::create_dir(fixture.0.join("AGENTS.md")).map_err(|e| e.to_string())?;
     assert!(!fixture.run("check-agent-skills")?.status.success());
+    Ok(())
+}
+
+#[test]
+fn gemini_route_controls_invalidate_preflight() -> Result<(), String> {
+    let fixture = Fixture::new()?;
+    let pointer = fixture.0.join("GEMINI.md");
+    let valid = "@./AGENTS.md\n";
+    let check = || -> Result<String, String> {
+        let output = fixture.run("check-agent-skills")?;
+        assert!(!output.status.success());
+        assert!(!fixture.run("verify-preflight")?.status.success());
+        std::fs::read_to_string(fixture.0.join("target/ripr/reports/agent-skills.md"))
+            .map_err(|error| error.to_string())
+    };
+    let preflight = fixture.run("preflight")?;
+    assert!(
+        preflight.status.success(),
+        "{}",
+        String::from_utf8_lossy(&preflight.stderr)
+    );
+    assert!(fixture.run("verify-preflight")?.status.success());
+
+    std::fs::remove_file(&pointer).map_err(|error| error.to_string())?;
+    assert!(check()?.contains("gemini: GEMINI.md unreadable"));
+    for invalid in [
+        "@./AGENTS.override.md\n",
+        "@./AGENTS.md\n@./CLAUDE.md\n",
+        "`@./AGENTS.md`\n",
+        "@./AGENTS.md\nA second policy body.\n",
+    ] {
+        std::fs::write(&pointer, invalid).map_err(|error| error.to_string())?;
+        assert!(check()?.contains("gemini: GEMINI.md must contain only @./AGENTS.md"));
+    }
+    std::fs::write(&pointer, "@./AGENTS.md\r\n").map_err(|error| error.to_string())?;
+    assert!(fixture.run("check-agent-skills")?.status.success());
+    assert!(!fixture.run("verify-preflight")?.status.success());
+    std::fs::write(&pointer, valid).map_err(|error| error.to_string())?;
+
+    let gemini = fixture.0.join(".gemini");
+    let settings = gemini.join("settings.json");
+    let skills = gemini.join("skills");
+    std::fs::create_dir(&gemini).map_err(|error| error.to_string())?;
+    std::fs::write(&settings, "{}").map_err(|error| error.to_string())?;
+    assert!(check()?.contains("gemini: .gemini/settings.json conflicts"));
+    std::fs::remove_file(&settings).map_err(|error| error.to_string())?;
+    std::fs::create_dir(&skills).map_err(|error| error.to_string())?;
+    assert!(check()?.contains("gemini: .gemini/skills conflicts"));
+    std::fs::remove_dir(&skills).map_err(|error| error.to_string())?;
+    assert!(fixture.run("check-agent-skills")?.status.success());
+    assert!(fixture.run("verify-preflight")?.status.success());
     Ok(())
 }
 
@@ -1011,5 +1063,211 @@ fn user_text_frontdoor_uses_the_judge_not_the_foreign_matcher() -> Result<(), St
     let missing = run(&bad)?;
     assert!(!missing.status.success());
     assert!(String::from_utf8_lossy(&missing.stderr).contains("policy source identity:"));
+    Ok(())
+}
+
+const DOC_ROLE_PROPOSAL_PATH: &str = "docs/proposals/nested/RIPR-PROP-9000-doc-role-fixture.md";
+const DOC_ROLE_ADR_PATH: &str = "docs/adr/nested/9000-doc-role-fixture.md";
+const DOC_ROLE_PROPOSAL: &str = "\
+# Fixture proposal
+## Problem
+A bounded problem.
+## Success criteria
+A discriminating check.
+## Alternatives considered
+Keep the existing checker.
+## Risks
+A missing section.
+## Non-goals
+Other document roles.
+";
+const DOC_ROLE_ADR: &str = "\
+# Fixture decision
+## Context
+The existing contract.
+## Decision
+Retain its sections.
+## Consequences
+One shared checker.
+## Alternatives Considered
+Duplicating the checker.
+";
+const DOC_ROLE_PASS_REPORT: &str = concat!(
+    "# check-doc-roles\n\nStatus: pass\n\n",
+    "## Why This Matters\n\n",
+    "Typed planning docs blur when role boundaries drift. Proposals should answer *why*; ADRs should record durable decisions. Required sections per role keep each doc to one job and keep the typed context graph reviewable.\n\n",
+    "## Violations\n\nNone detected.\n\n",
+    "## Rerun\n\n",
+    "\x60\x60\x60bash\ncargo xtask check-doc-roles\n\x60\x60\x60\n",
+);
+
+fn doc_roles_fixture() -> Result<Fixture, String> {
+    let fixture = Fixture::new()?;
+    for (relative, text) in [
+        (DOC_ROLE_PROPOSAL_PATH, DOC_ROLE_PROPOSAL),
+        (DOC_ROLE_ADR_PATH, DOC_ROLE_ADR),
+        ("docs/proposals/README.md", "index, not a proposal\n"),
+        ("docs/proposals/notes.md", "not a RIPR-PROP record\n"),
+        (
+            "docs/proposals/RIPR-PROP-9001-not-markdown.txt",
+            "not Markdown\n",
+        ),
+        ("docs/adr/README.md", "index, not an ADR\n"),
+        ("docs/adr/notes.txt", "not Markdown\n"),
+        (
+            "docs/handoffs/unstructured.md",
+            "handoffs remain out of scope\n",
+        ),
+    ] {
+        let path = fixture.0.join(relative);
+        std::fs::create_dir_all(path.parent().ok_or("doc-role fixture parent")?)
+            .map_err(|e| e.to_string())?;
+        std::fs::write(path, text).map_err(|e| e.to_string())?;
+    }
+    Ok(fixture)
+}
+
+#[test]
+fn doc_roles_frontdoor_preserves_scope_headings_and_report() -> Result<(), String> {
+    let fixture = doc_roles_fixture()?;
+    let report = fixture.0.join("target/ripr/reports/doc-roles.md");
+    let output = fixture.run("check-doc-roles")?;
+    assert!(
+        output.status.success(),
+        "positive control: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        output.stdout,
+        b"check-doc-roles: pass (target/ripr/reports/doc-roles.md)\n"
+    );
+    assert_eq!(
+        std::fs::read_to_string(&report).map_err(|e| e.to_string())?,
+        DOC_ROLE_PASS_REPORT
+    );
+    assert!(
+        !fixture
+            .0
+            .join("target/ripr/reports/policy-preflight.json")
+            .exists(),
+        "a standalone role check is not a policy preflight receipt"
+    );
+    let nested = fixture.0.join("tools/repo-policy/src");
+    let nested_output = fixture
+        .command("check-doc-roles")?
+        .current_dir(&nested)
+        .output()
+        .map_err(|e| e.to_string())?;
+    assert_eq!(nested_output.status.code(), output.status.code());
+    assert_eq!(nested_output.stdout, output.stdout);
+    assert_eq!(nested_output.stderr, output.stderr);
+    assert!(!nested.join("target").exists());
+
+    // Literal contract inventory, not the production required-headings helper.
+    // Every removed heading must make the actual CLI fail after valid setup.
+    for (relative, original, headings) in [
+        (
+            DOC_ROLE_PROPOSAL_PATH,
+            DOC_ROLE_PROPOSAL,
+            &[
+                "## Problem",
+                "## Success criteria",
+                "## Alternatives considered",
+                "## Risks",
+                "## Non-goals",
+            ][..],
+        ),
+        (
+            DOC_ROLE_ADR_PATH,
+            DOC_ROLE_ADR,
+            &[
+                "## Context",
+                "## Decision",
+                "## Consequences",
+                "## Alternatives Considered",
+            ][..],
+        ),
+    ] {
+        let path = fixture.0.join(relative);
+        for &heading in headings {
+            assert_eq!(original.matches(heading).count(), 1, "control setup");
+            std::fs::write(&path, original.replace(heading, "missing section"))
+                .map_err(|e| e.to_string())?;
+            let refused = fixture.run("check-doc-roles")?;
+            assert!(!refused.status.success(), "{relative}: {heading}");
+            assert!(refused.stdout.is_empty());
+            let error = String::from_utf8_lossy(&refused.stderr);
+            assert!(
+                error.starts_with(
+                    "xtask: check-doc-roles failed; see target/ripr/reports/doc-roles.md\n"
+                ),
+                "{error}"
+            );
+            assert!(
+                error.contains(relative) && error.contains(heading),
+                "{error}"
+            );
+            let failed_report = std::fs::read_to_string(&report).map_err(|e| e.to_string())?;
+            assert!(failed_report.starts_with("# check-doc-roles\n\nStatus: fail\n"));
+            assert!(
+                failed_report.contains(relative) && failed_report.contains(heading),
+                "{failed_report}"
+            );
+            std::fs::write(&path, original).map_err(|e| e.to_string())?;
+        }
+    }
+    assert!(fixture.run("check-doc-roles")?.status.success());
+    assert_eq!(
+        std::fs::read_to_string(report).map_err(|e| e.to_string())?,
+        DOC_ROLE_PASS_REPORT
+    );
+    Ok(())
+}
+
+#[test]
+fn doc_roles_frontdoor_propagates_report_write_failure() -> Result<(), String> {
+    let fixture = doc_roles_fixture()?;
+    assert!(fixture.run("check-doc-roles")?.status.success());
+    let relative = Path::new("target/ripr/reports/doc-roles.md");
+    let report = fixture.0.join(relative);
+    std::fs::remove_file(&report).map_err(|e| e.to_string())?;
+    std::fs::create_dir(&report).map_err(|e| e.to_string())?;
+    let refused = fixture.run("check-doc-roles")?;
+    assert!(!refused.status.success());
+    assert!(refused.stdout.is_empty(), "report failure printed success");
+    let error = String::from_utf8_lossy(&refused.stderr).replace('\\', "/");
+    if !error.contains("failed to write target/ripr/reports/doc-roles.md:") {
+        return Err(format!("unexpected report write diagnostic: {error}"));
+    }
+    Ok(())
+}
+
+#[test]
+fn doc_roles_frontdoor_rejects_changed_implementation_and_wrong_source() -> Result<(), String> {
+    let fixture = doc_roles_fixture()?;
+    assert!(fixture.run("check-doc-roles")?.status.success());
+    let report = fixture.0.join("target/ripr/reports/doc-roles.md");
+    let historical_report = std::fs::read(&report).map_err(|e| e.to_string())?;
+    for relative in ["tools/repo-policy/src/doc_roles.rs", "Cargo.toml"] {
+        let path = fixture.0.join(relative);
+        let original = std::fs::read(&path).map_err(|e| e.to_string())?;
+        let mut changed = original.clone();
+        changed.extend_from_slice(b"\n// wrong-source control\n");
+        std::fs::write(&path, changed).map_err(|e| e.to_string())?;
+        let refused = fixture.run("check-doc-roles")?;
+        assert!(!refused.status.success());
+        assert!(refused.stdout.is_empty());
+        assert!(
+            String::from_utf8_lossy(&refused.stderr)
+                .contains("policy executable is stale or belongs to a different source tree")
+        );
+        assert_eq!(
+            std::fs::read(&report).map_err(|e| e.to_string())?,
+            historical_report,
+            "a stale executable must not replace the retained historical report"
+        );
+        std::fs::write(path, original).map_err(|e| e.to_string())?;
+    }
+    assert!(fixture.run("check-doc-roles")?.status.success());
     Ok(())
 }

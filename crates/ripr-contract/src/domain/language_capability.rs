@@ -17,6 +17,7 @@ use SupportState::{NotProven, SupportedWithRequiredFallback};
 use TierCeiling::{Preview, UsableAlpha};
 use sha2::{Digest, Sha256};
 
+/// Schema version of the `ripr capabilities` JSON document.
 pub const LANGUAGE_CAPABILITIES_SCHEMA_VERSION: &str = "0.1";
 
 /// Framework value for a cell whose semantics do not depend on a test
@@ -26,16 +27,29 @@ pub const FRAMEWORK_ANY: &str = "any";
 /// Closed support vocabulary. There is deliberately no numeric score.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum SupportState {
+    /// The capability is established exactly as stated.
     ExactSupported,
+    /// The capability is established through a conservative
+    /// overapproximation.
     ConservativeOverapproximation,
+    /// The capability is established only together with the fallback named in
+    /// the cell's `limit`.
     SupportedWithRequiredFallback,
+    /// The capability is not supported; the cell's `limit` names the typed
+    /// limitation.
     UnsupportedWithTypedLimit,
+    /// The capability does not apply, and the cell names the evidence for that.
     NotApplicableWithEvidence,
+    /// The cell's evidence is out of date, so it does not establish the
+    /// capability.
     Stale,
+    /// The capability has not been shown. A combination with no cell reads as
+    /// this state.
     NotProven,
 }
 
 impl SupportState {
+    /// Every support state, in declaration order.
     pub const ALL: [SupportState; 7] = [
         SupportState::ExactSupported,
         SupportState::ConservativeOverapproximation,
@@ -46,6 +60,7 @@ impl SupportState {
         SupportState::NotProven,
     ];
 
+    /// The stable snake_case label used in output.
     pub fn as_str(self) -> &'static str {
         match self {
             SupportState::ExactSupported => "exact_supported",
@@ -63,11 +78,15 @@ impl SupportState {
 /// support for the same language.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub enum AnalysisMode {
+    /// Diff mode: analysis of the changes in a diff.
     Diff,
+    /// Repo mode: repository-wide analysis, which may cover only a bounded
+    /// working set.
     Repo,
 }
 
 impl AnalysisMode {
+    /// The stable lowercase label used in output.
     pub fn as_str(self) -> &'static str {
         match self {
             AnalysisMode::Diff => "diff",
@@ -93,6 +112,7 @@ pub enum CapabilityFamily {
 }
 
 impl CapabilityFamily {
+    /// The stable snake_case label used in output.
     pub fn as_str(self) -> &'static str {
         match self {
             CapabilityFamily::StaticFacts => "static_facts",
@@ -106,11 +126,14 @@ impl CapabilityFamily {
 /// decision; this table never promotes.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum TierCeiling {
+    /// The cell may be read at the usable alpha tier.
     UsableAlpha,
+    /// The cell may be read at the preview tier at most.
     Preview,
 }
 
 impl TierCeiling {
+    /// The stable snake_case label used in output.
     pub fn as_str(self) -> &'static str {
         match self {
             TierCeiling::UsableAlpha => "usable_alpha",
@@ -122,11 +145,17 @@ impl TierCeiling {
 /// One language/framework/mode/family capability cell.
 #[derive(Clone, Copy, Debug)]
 pub struct CapabilityCell {
+    /// Language the cell describes.
     pub language: LanguageId,
+    /// Test framework the cell describes, or [`FRAMEWORK_ANY`].
     pub framework: &'static str,
+    /// Analysis mode the cell describes.
     pub mode: AnalysisMode,
+    /// Capability family the cell describes.
     pub family: CapabilityFamily,
+    /// What the capability's support is.
     pub state: SupportState,
+    /// Highest tier the cell may be read at.
     pub tier_ceiling: TierCeiling,
     /// Typed fallback or limitation the reader must honor; `None` only when
     /// the state carries no limit.
@@ -478,7 +507,9 @@ pub fn cell_id(cell: &CapabilityCell) -> String {
     )
 }
 
+/// Opening marker of the generated registry block in Markdown.
 pub const REGISTRY_BEGIN: &str = "<!-- capability-registry:begin (generated from domain::language_capability::CAPABILITY_CELLS; do not edit) -->";
+/// Closing marker of the generated registry block in Markdown.
 pub const REGISTRY_END: &str = "<!-- capability-registry:end -->";
 
 /// The generated registry projection, markers included. This is the single

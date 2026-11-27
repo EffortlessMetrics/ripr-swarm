@@ -69,27 +69,28 @@ Only edit tests. Never change production code to make a gap go away.
 Keep the same --base and source options for every check below.
 
 Loop (max 3 rounds per gap):
-1. FIND    `ripr check --quiet --format agent` (add `--base <branch>` if no origin/main|master).
+1. FIND    `ripr check --quiet --format agent` (no default branch: add `--base <branch>`;
+           committed on it yourself: `--base <sha of HEAD~N>`, N = your commits; a sha stays fixed).
            Read gap, test and next lines. Exit 0 can still mean gaps; 2/3 = stop (read stderr).
 2. DETAIL  Skip when `missing=` is one code value (`missing=total == 100`): not `-`, a sentence, `…` or `(+N more)`.
            Otherwise follow the printed `ripr explain ...` with its selector and scope. Add `--format agent`
            only if no `--format` is present; for `--from` plus `--suppression-policy`, keep it as printed.
-           Follow `ripr context ...` as-is (JSON). Optional: `ripr agent stub --at FILE:LINE --kind KIND [--write]`.
-3. WRITE   One focused test next to the related test. Use assert_eq! on exact changed
-           values: every changed field, branch and boundary (below, equal, above). Not
-           `.is_some()`, `.is_empty()`, `<=`, or only whole-struct equality.
+           If it prints `next=ripr context ...`, follow that as-is (JSON). Optional: `ripr agent stub --at FILE:LINE --kind KIND [--write]`.
+3. WRITE   One focused test next to the related test. Pin what the changed code does now:
+           assert_eq! on exact values for every changed field, branch and boundary (below,
+           equal, above). Not `.is_some()`, `.is_empty()`, `<=`, or only whole-struct equality.
 4. VERIFY  `cargo test <your_test_name>` must pass. Then run `ripr check --quiet --format agent`
            once more on the same root, base and saved source (new files need `git add -N PATH`).
            Check its exit status before reading it; do not change inputs before DONE.
-5. DONE    Use that same report; require exit 0 and its last line `verify=complete|...`.
-           `verify=refused`, a missing `verify=` line, or a cut-off report mean STOP.
-           `done=` or an empty gap list alone is never enough.
+5. DONE    Use that same report; require exit 0 and its last line `verify=complete|...` or
+           `verify=complete_with_limits|...` (only analyzer limits remain; report its `limits=`).
+           `verify=refused`, a missing `verify=` line, or a cut-off report mean STOP; `done=` or an empty gap list alone is never enough.
            If gaps remain, return to FIND; if inputs change, repeat VERIFY before DONE.
            Report tests and static result; this does not establish runtime bug detection.
 
 STOP and report instead of looping when:
 - the outcome names empty scope, no changed behavior, partial analysis, unsupported input or failed analysis;
-- the top finding says "Analyzer limit" / "Tests cannot close this static-analysis limitation";
+- verify is refused and the top finding says "Analyzer limit" / "Tests cannot close this static-analysis limitation";
 - the same gap remains after 3 exact-assert tests (it may be an equivalent change, e.g. `>` vs
   `>=` where both branches return the same value); or `ripr check` exits 2 or 3.
 
@@ -117,7 +118,7 @@ tracked edits when any exist; pass `source: "committed"` or
 refresh. The server does not watch the worktree.
 
 The CLI loop above is cheaper. The default MCP tool list alone is about 12 KB
-(11,884 bytes on the wire) at every session start. Register it only if your
+(12,075 bytes on the wire) at every session start. Register it only if your
 agent prefers tools. `ripr` must be on
 `PATH`.
 
@@ -155,7 +156,7 @@ For one finding, pick by what the consumer is:
 
 | Need | Command | Output |
 |---|---|---|
-| A model reading a few lines under a token budget | `ripr explain <id> --format agent` | compact lines with an explicit `done=` / `open=` / `stop=` terminal line and a `next=` context command |
+| A model reading a few lines under a token budget | `ripr explain <id> --format agent` | compact lines with an explicit `done=` / `open=` / `stop=` terminal line, `owner=` / `before=` lines, and a `next=` context command only when the packet holds more |
 | A person reading why it was flagged | `ripr explain <id>` | human explanation |
 | A tool or agent that needs fields (related tests, seams, evidence) | `ripr context --at <id>` | JSON packet (always JSON) |
 
@@ -180,6 +181,19 @@ subset:
   no-scope condition applies. A new file stays untracked until
   `git add -N <path>`, so stage new files before the post-edit check.
   Gitignored source is named in the notes but does not refuse.
+- `verify=complete_with_limits|outcome=O|findings=N|exposed=E|limits=CLASS:COUNT,...`
+  (#14821) means every condition above holds except equal counts, and every
+  unexposed finding is an analyzer limit no test edit can close: a
+  candidate-current, non-preview `static_unknown`, `infection_unknown` or
+  `propagation_unknown` finding that a test calls and that some exact test
+  pins: a related test reaches it and is `strong`/`medium` there, or is a
+  test ripr reads as `strong`/`medium` on another finding of the same
+  changed function in this run.
+  No related test bound to it may assert only weakly (`weak` or `smoke`).
+  The loop may end in DONE; report the `limits=` as unproven, not as
+  exposed. Any gap, `no_static_path`, weak or smoke-only related test, test
+  without an exact assertion, preview finding or suppressed unexposed
+  finding keeps `verify=refused`.
 - `verify=refused|...|reason=R,...` names every unmet condition
   (`outcome_missing`, `no_behavior_in_scope`, `analysis_incomplete`,
   `unexposed_findings_remain`, `unanalyzed_working_tree`, `untracked_source_excluded`,

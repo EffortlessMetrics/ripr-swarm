@@ -1,0 +1,27 @@
+{
+  "id": "rust_repo_exposure_integration_test_nested_block_renamed_other_function_sibling_mount_control",
+  "language": "rust",
+  "tier": "pure",
+  "source_report": "fixtures/evidence-promotion-honesty-corpus/reports/rust-repo-exposure-integration-test-nested-block-renamed-other-function-sibling-mount-control.json",
+  "report_subject": "fixtures/evidence-promotion-honesty-corpus/repo-exposure-subjects/integration-test-nested-block-renamed-other-function-sibling-mount-control",
+  "vector": "integration_test_mounted_by_a_sibling_root_that_may_define_the_assertion_macro_keeps_the_earlier_reading",
+  "assertions": [
+    {
+      "type": "expected_repo_seam_grip",
+      "owner": "src/lib.rs::discount",
+      "expression": "amount >= 100",
+      "grip_class": "activation_unknown",
+      "reach": "yes"
+    },
+    {
+      "type": "expected_repo_seam_related_test",
+      "owner": "src/lib.rs::discount",
+      "expression": "amount >= 100",
+      "test": "nested_renamed_other",
+      "file": "tests/it.rs",
+      "line": 2,
+      "oracle_strength": "unknown",
+      "relation_reason": "direct_owner_call"
+    }
+  ]
+}

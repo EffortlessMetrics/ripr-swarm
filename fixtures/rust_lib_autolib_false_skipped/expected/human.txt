@@ -1,0 +1,11 @@
+ripr static RIPR exposure analysis
+mode: fast
+root: fixtures/rust_lib_autolib_false_skipped/input
+
+Summary: 0 changed behaviors checked
+
+Analysis outcome: limitations below (analysis incomplete)
+  Zero findings is not a clean result because the analyzed scope is incomplete.
+  Limitation: some files were not fully analyzed during language analysis; file: src/lib.rs; affected items: 1; No Cargo target's module tree reaches this changed Rust file: no `mod`, `#[path]` or `include!` names it, so rustc does not compile it and its change seeds no finding; recovery: inspect the failure — No `mod`, `#[path]` or `include!` from a Cargo target reaches src/lib.rs, so rustc does not compile it and its change was not analyzed. Declare it from a module its crate compiles, or delete it if it is dead code.
+
+No findings reported: the analysis was incomplete, so this is not a clean result.

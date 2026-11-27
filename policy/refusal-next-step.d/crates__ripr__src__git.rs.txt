@@ -1,0 +1,7 @@
+crates/ripr/src/git.rs|failed to open the stdin pipe for {describe}
+crates/ripr/src/git.rs|failed to open the stdout pipe for {describe}
+crates/ripr/src/git.rs|failed while reading git cat-file --batch stdout: {err}
+crates/ripr/src/git.rs|failed while reading {stream_name} from {describe}: {error}
+crates/ripr/src/git.rs|failed while waiting on {}: {err}
+crates/ripr/src/git.rs|{describe} failed: {} no diagnostic
+crates/ripr/src/git.rs|{stream_name} pipe reader failed while collecting {describe}

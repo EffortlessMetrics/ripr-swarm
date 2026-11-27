@@ -1,0 +1,100 @@
+{
+  "schema_version": "0.2",
+  "tool": "ripr",
+  "mode": "fast",
+  "root": "fixtures/rust_trait_impl_std_method_takes_receiver/input",
+  "summary": {"changed_rust_files":1,"probes":1,"findings":1,"exposed":0,"weakly_exposed":0,"reachable_unrevealed":0,"no_static_path":0,"infection_unknown":0,"propagation_unknown":0,"static_unknown":1,"changed_files_by_language":[{"language":"rust","files":1}]},
+  "analysis_outcome": {
+    "analysis_complete": true,
+    "outcome": {"schema_version":"0.1","kind":"complete_with_findings","identity":{"repository_identity":null,"root_identity":null,"config_identity":null,"base_revision":null,"input_identity":"sha256:9345b7ee76db627113e9659964961ce5d67c7226edc85965a093e076ada231b5","snapshot_identity":null,"git_candidate_subject":null},"counts":{"changed_file_count":1,"changed_line_count":2,"candidate_line_count":1,"probe_count":1,"finding_count":1},"limitations":[],"claim_boundary":"Static analysis outcome only; no correctness, test-adequacy, runtime-execution, or merge-readiness claim."}
+  },
+  "findings": [
+    {
+      "id": "probe:src_lib.rs:return_value:0abe64cc",
+      "classification": "static_unknown",
+      "severity": "note",
+      "confidence": 0.56,
+      "probe": {
+        "id": "probe:src_lib.rs:return_value:0abe64cc",
+        "family": "return_value",
+        "delta": "value",
+        "file": "./src/lib.rs",
+        "line": 25,
+        "expression": "self.left + 1"
+       },
+      "ripr": {
+        "reach": {"state":"weak","confidence":"low","summary":"No test is seen calling count; tests share only a name token"},
+        "infect": {"state":"yes","confidence":"medium","summary":"Reachable tests can plausibly activate this changed behavior"},
+        "propagate": {"state":"yes","confidence":"high","summary":"Complete propagation witness reaches returned value: self.left + 1"},
+        "observe": {"state":"no","confidence":"medium","summary":"Related tests were found, but no assertion appears to observe the changed value, error, field, or effect"},
+        "discriminate": {"state":"no","confidence":"medium","summary":"No assertion found on related tests"}
+       },
+      "evidence_stages": [
+        {"stage":"reach","state":"weak","confidence":"low"},
+        {"stage":"infect","state":"yes","confidence":"medium"},
+        {"stage":"propagate","state":"yes","confidence":"high"},
+        {"stage":"observe","state":"no","confidence":"medium"},
+        {"stage":"discriminate","state":"no","confidence":"medium"}
+      ],
+      "evidence_path": ["reach weak: No test is seen calling count; tests share only a name token", "infection yes: Reachable tests can plausibly activate this changed behavior", "propagation yes: Complete propagation witness reaches returned value: self.left + 1", "observation no: Related tests were found, but no assertion appears to observe the changed value, error, field, or effect", "discriminator no: No assertion found on related tests", "local flow reaches returned value: self.left + 1 (line 25)", "related test src/lib.rs:37 shelf_count uses strong exact value oracle: assert_eq!(Shelf::stocked(3).count(), 3);", "source assertion argument value 3 at line 38"],
+      "flow_sinks": [
+        {"kind":"return_value","text":"self.left + 1","line":25}
+      ],
+      "evidence": ["Complete propagation witness reaches returned value: self.left + 1", "No assertion found on related tests", "No test is seen calling count; tests share only a name token", "Reachable tests can plausibly activate this changed behavior", "Related tests were found, but no assertion appears to observe the changed value, error, field, or effect", "gap_withheld: reachable_unrevealed is not claimed; whether the operator, drop glue, iterator or virtual call a test makes lands on the changed method (rust_implicit_call_unresolved)", "limitation_last_established_edge: reach weak: No test is seen calling count; tests share only a name token", "limitation_first_unresolved_edge: whether the operator, drop glue, iterator or virtual call a test makes lands on the changed method", "limitation_analyzer_route: analysis/classify/gap-admission", "limitation_non_claim: no missing test, no weak oracle, and no test adequacy is established"],
+      "missing": ["A Rust test names the type of the changed trait-impl method and may run that method through an operator, scope exit, loop, index or a method call on a receiver whose type ripr does not infer (`dyn Trait`, a second impl of the trait), but ripr does not follow that call to the changed method. ripr does not claim a gap; this is a named limitation, not a coverage claim."],
+      "assertion_texts": {
+        "38": "assert_eq!(Shelf::stocked(3).count(), 3);"
+      },
+      "activation": {
+        "observed_values": [
+          {
+            "line": 38,
+            "value": "3",
+            "context": "assertion_argument"
+          }
+        ],
+        "missing_discriminators": [
+        ]
+      },
+      "observed_values": [
+        {
+          "line": 38,
+          "value": "3",
+          "context": "assertion_argument"
+        }
+      ],
+      "missing_discriminators": [
+      ],
+      "related_tests_total": 1,
+      "related_tests": [
+        {
+          "name": "shelf_count",
+          "file": "src/lib.rs",
+          "line": 37,
+          "oracle_strength": "strong",
+          "oracle_kind": "exact_value",
+          "oracle": "assert_eq!(Shelf::stocked(3).count(), 3);",
+          "relation_reason": "weak_token_substring",
+          "relation_confidence": "low",
+          "miss": "no_call_path",
+          "why": "no established call path to the changed code; linked by name only"
+        }
+      ],
+      "stop_reasons": ["gap_evidence_unresolved"],
+      "oracle_kind": "exact_value",
+      "oracle_strength": "strong",
+      "recommended_next_step": "`shelf_count` (src/lib.rs:37) names `Shelf` and calls a method named `count` on a receiver whose type ripr does not infer, and ripr does not follow that call to `count`, so it does not report a gap. Check that an assertion in that test would fail if `count` returned the wrong value; add a test only if none does.",
+      "suggested_next_action": "`shelf_count` (src/lib.rs:37) names `Shelf` and calls a method named `count` on a receiver whose type ripr does not infer, and ripr does not follow that call to `count`, so it does not report a gap. Check that an assertion in that test would fail if `count` returned the wrong value; add a test only if none does.",
+      "language": "rust",
+      "static_limit_kind": "rust_implicit_call_unresolved",
+      "static_limitation": {
+        "analyzer_route": "analysis/classify/gap-admission",
+        "first_unresolved_edge": "whether the operator, drop glue, iterator or virtual call a test makes lands on the changed method",
+        "kind": "rust_implicit_call_unresolved",
+        "last_established_edge": "reach weak: No test is seen calling count; tests share only a name token",
+        "non_claim": "no missing test, no weak oracle, and no test adequacy is established"
+      },
+      "source_currentness": "candidate_current"
+    }
+  ]
+}

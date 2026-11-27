@@ -68,6 +68,7 @@ pub(super) fn withhold(seam: &RepoSeam, evidence: &mut TestGripEvidence, tests: 
     {
         return false;
     }
+    evidence.discriminate.static_limit_kind = Some(LIMIT);
     evidence.discriminate.summary = format!(
         "{}: {}; Original discrimination: {}",
         LIMIT.as_str(),

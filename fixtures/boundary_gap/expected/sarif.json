@@ -52,7 +52,7 @@
             }
           ],
           "message": {
-            "text": "Missing check: No related test call uses amount equal to discount_threshold; observed amount values: 10_000, 50; observed discount_threshold values: 100. weakly_exposed static exposure for predicate probe: amount >= discount_threshold. Next step: Add boundary tests for below, equal, and above the changed threshold with exact assertions."
+            "text": "Missing check: No related test call uses amount equal to discount_threshold; observed amount values: 10_000, 50; observed discount_threshold values: 100. Changed code `amount >= discount_threshold` is only partly noticed by tests. Next step: Add boundary tests for below, equal, and above the changed threshold with exact assertions."
           },
           "partialFingerprints": {
             "riprFingerprintV1": "ripr.finding.weakly_exposed|probe:src_lib.rs:predicate:c80557eb|probe:src_lib.rs:predicate:c80557eb|fixtures/boundary_gap/input/src/lib.rs"

@@ -1,0 +1,27 @@
+{
+  "id": "rust_repo_exposure_nested_block_renamed_other_function_outer_call_control",
+  "language": "rust",
+  "tier": "pure",
+  "source_report": "fixtures/evidence-promotion-honesty-corpus/reports/rust-repo-exposure-nested-block-renamed-other-function-outer-call-control.json",
+  "report_subject": "fixtures/evidence-promotion-honesty-corpus/repo-exposure-subjects/nested-block-renamed-other-function-outer-call-control",
+  "vector": "bare_owner_call_outside_a_renaming_nested_block_keeps_direct_credit",
+  "assertions": [
+    {
+      "type": "expected_repo_seam_grip",
+      "owner": "src/lib.rs::discount",
+      "expression": "amount >= 100",
+      "grip_class": "activation_unknown",
+      "reach": "yes"
+    },
+    {
+      "type": "expected_repo_seam_related_test",
+      "owner": "src/lib.rs::discount",
+      "expression": "amount >= 100",
+      "test": "nested_rename_then_owner",
+      "file": "src/lib.rs",
+      "line": 14,
+      "oracle_strength": "strong",
+      "relation_reason": "direct_owner_call"
+    }
+  ]
+}

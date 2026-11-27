@@ -1,0 +1,46 @@
+{
+  "case_id": "authored-15030-str-equality-tail-long-flag",
+  "subject_id": "authored-15030-str-equality-tail",
+  "diff": "cases/authored-15030-str-equality-tail-long-flag.diff",
+  "anchor": {
+    "file": "src/lib.rs",
+    "line": 2
+  },
+  "edit_kind": "behavior_change",
+  "behavior_family": "predicate_equality",
+  "test_shape": "bool_owner_string_equality_tail_pin",
+  "hard_case": "The owner returns a `||` chain of `==` comparisons between a `&str` parameter and string literals; the test asserts the owner is true on the changed literal.",
+  "truth": {
+    "state": "discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "cargo test",
+    "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+    "mutants": [
+      {
+        "replacement": "flag == \"-v\" || flag == \"--verb\"",
+        "mutated_line": null,
+        "outcome": "tests_failed",
+        "failing_test": "tests::accepts_the_long_flag",
+        "equivalence_review": "not equivalent: `is_verbose(\"--verbose\")` becomes false and `assert!(is_verbose(\"--verbose\"))` fails. Run under rustc 1.95.0 with `cargo test` on the edited subject: tests_failed in tests::accepts_the_long_flag."
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "credited",
+    "acceptable_verdicts": [
+      "credited",
+      "limited",
+      "silent"
+    ]
+  },
+  "reasoning": "`assert!(is_verbose(\"--verbose\"))` passes exactly the changed literal to a bool owner whose tail is a string-equality chain, so it pins the edit (#15030). Before the fix string atoms did not parse as a chain and the pin read as a weak relational check, a false gap.",
+  "labeling_observation": {
+    "ripr_commit": "332729ac",
+    "full_checkout_verdict": "credited",
+    "full_checkout_classifications": [
+      "exposed",
+      "infection_unknown"
+    ],
+    "excerpt_parity": "matched"
+  }
+}

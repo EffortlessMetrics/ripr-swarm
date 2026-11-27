@@ -15,7 +15,7 @@ fn perl_executable_rejects_nul_without_echoing_the_path() {
     for value in [r#""\u0000""#, r#""tools/\u0000exporter""#] {
         let result = parse_config(&format!("[perl]\nexecutable = {value}\n"));
         assert!(
-            matches!(result, Err(ref message) if message == "perl.executable must not contain NUL characters"),
+            matches!(result, Err(ref message) if message == "perl.executable must not contain NUL characters; set it to the exporter's path, or remove the key to use the default exporter"),
             "a NUL-bearing executable must fail with a source-free diagnostic: {result:?}"
         );
     }
@@ -43,5 +43,22 @@ fn perl_executable_preserves_valid_paths_and_the_opt_in_boundary() -> Result<(),
         );
     }
     assert!(parse_config("[perl]\n")?.perl().executable.is_none());
+    Ok(())
+}
+
+#[test]
+fn perl_executable_identity_uses_native_separators() -> Result<(), String> {
+    let identity = |value: &str| {
+        let config = parse_config(&format!("[perl]\nexecutable = '{value}'\n"))?;
+        Ok::<_, String>(super::check_artifact_config_identity_hash(&config))
+    };
+    let nested = identity("tools/Exporter")?;
+    let backslash = identity(r"tools\Exporter")?;
+    if cfg!(windows) {
+        assert_eq!(backslash, nested);
+    } else {
+        assert_ne!(backslash, nested);
+    }
+    assert_ne!(identity("tools/exporter")?, nested);
     Ok(())
 }

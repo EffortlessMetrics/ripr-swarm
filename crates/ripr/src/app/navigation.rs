@@ -85,12 +85,13 @@ impl RepairRoute {
 
 /// `git -C <root> --literal-pathspecs commit -m "<message>" -- <files>`: the
 /// one commit spelling every repair route prints before its start (#10698,
-/// #13636). `None` for an empty file list.
+/// #13636), and the editor's blocked repair start (#13636). `None` for an
+/// empty file list.
 ///
 /// The command runs from any directory: `git -C <root>` anchors it at the
 /// analyzed root, `--literal-pathspecs` keeps names like `src/[ab].py`
 /// literal, and the files are shell-quoted and spelled relative to that root.
-fn commit_prerequisite_command(root_display: &str, files: &[String]) -> Option<String> {
+pub(crate) fn commit_prerequisite_command(root_display: &str, files: &[String]) -> Option<String> {
     if files.is_empty() {
         return None;
     }
@@ -165,6 +166,12 @@ pub(crate) enum RepairRouteRefusal {
     NoSeamInventory {
         language: String,
         file: String,
+    },
+    /// The root is below the Git top-level, where a repair attempt cannot
+    /// start (#15488): a start printed here would refuse at the before
+    /// phase, so the check screen names the top-level instead.
+    SubdirectoryRoot {
+        top_level: String,
     },
     /// The root's typed config could not be loaded.
     ConfigUnreadable,
@@ -260,6 +267,11 @@ impl RepairRouteRefusal {
             Self::NoSeamInventory { language, file } => format!(
                 "no repair start offered: {}",
                 super::task_first::no_seam_inventory_reason_plain(language, file)
+            ),
+            Self::SubdirectoryRoot { top_level } => format!(
+                "no repair start offered: this root is not the exact Git top-level \
+                 ({top_level}), and a repair attempt starts only there; rerun \
+                 `ripr check` from {top_level}, then use the start it prints there"
             ),
             Self::ConfigUnreadable => "no repair start offered: the root's config could not be \
                  read; fix the ripr.toml error at the root, then rerun `ripr check`"
@@ -1319,6 +1331,18 @@ mod tests {
         assert!(
             !budget.contains("ripr repair"),
             "seam-budget refusal must not route to the same truncated gate: {budget}"
+        );
+        // #15488: a subdirectory root names the top-level to rerun from,
+        // never a start under that root.
+        let subdir = RepairRouteRefusal::SubdirectoryRoot {
+            top_level: "repo".to_string(),
+        }
+        .advisory(gate);
+        assert_eq!(
+            subdir,
+            "no repair start offered: this root is not the exact Git top-level \
+             (repo), and a repair attempt starts only there; rerun \
+             `ripr check` from repo, then use the start it prints there"
         );
     }
 
