@@ -48,6 +48,7 @@ Linked issues:
 - #16366 (a function beside a one-identifier CommonJS whole export; rule 19)
 - #16369 (a CommonJS export reaches the private helper it calls; rule 19)
 - #16370 (runner loaded with TypeScript `import x = require()`)
+- #16431 (a `tape`, `ava` or `node:test` default bound under another name)
 - #9435 (exact oracle ignored on five changed-line shapes)
 - #9497 (skipped or unexercised tests credited as exposed; rules 17 and 18)
 - #11196 (start rate: a conditional assertion in an unconsulted test no longer
@@ -3257,6 +3258,14 @@ keys); do not take the next number.
   member pick stay `no_static_path`, and a renamed pick off a type-only
   `import type runner = require()` registers nothing while its value twin
   reads `exposed`.
+- #16431 (renamed default runner binding; registration fact in
+  RIPR-SPEC-0027):
+  `crates/ripr/src/analysis/language/typescript/tests/renamed_default_runner_tests.rs`
+  runs `analyze_diff` on a test registered through `check`, a tape default
+  bound by `require()`, import-equals or an ES default import, and through
+  renamed ava and `node:test` default imports: each reads `exposed` like the
+  `test` reference. A written binding, mocha's and node-tap's defaults, a
+  local module's default and `check.skip(...)` stay `no_static_path`.
 
 - #11196 (rule 11, object rows): `tests/object_row_tests.rs` pins the per-row
   literal assertions for the `for...of` and `test.each` object-row forms and

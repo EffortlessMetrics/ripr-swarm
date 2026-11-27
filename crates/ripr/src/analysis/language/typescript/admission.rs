@@ -354,9 +354,14 @@ impl TypeScriptAdmissionContext {
         family: impl Fn(&str) -> bool,
     ) -> bool {
         self.imports.iter().any(|import| {
-            !import.namespace
-                && import.local == local
-                && import.imported.as_deref().is_some_and(&family)
+            import.local == local
+                && ((!import.namespace && import.imported.as_deref().is_some_and(&family))
+                    // A runner whose default export is its `test` function
+                    // registers under any local name (`const check =
+                    // require('tape')`, `import check from 'ava'`, #16431).
+                    || (import.imported.as_deref() == Some("default")
+                        && DEFAULT_TEST_RUNNERS.contains(&import.source.as_str())
+                        && family("test")))
         })
     }
 
@@ -1058,6 +1063,10 @@ enum ImportClass {
     /// dependency RIPR cannot see into.
     Package,
 }
+
+/// Runner modules whose default export (and CommonJS `module.exports`) is
+/// the `test` registration function itself (#16431).
+const DEFAULT_TEST_RUNNERS: &[&str] = &["tape", "ava", "node:test", "test"];
 
 const RUNNER_MODULES: &[&str] = &[
     "vitest",

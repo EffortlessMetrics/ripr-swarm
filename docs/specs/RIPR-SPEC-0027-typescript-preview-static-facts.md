@@ -130,7 +130,12 @@ Test discovery:
   runner-source, shadowing, skip/todo-options and inactive-modifier fences
   (#10987). The namespace object's own name, a member read off it
   (`runner.test(...)`), and an aliased `.each` factory register nothing
-  through this path
+  through this path, except that a default binding of a runner whose default
+  export is its `test` function (`tape`, `ava`, `node:test`, `test`) is that
+  function under any local name: `const check = require('tape')`,
+  `import check = require('tape')` and `import check from 'ava'` register like
+  `test` (#16431). Other runners' defaults (mocha, node-tap's namespace) and a
+  local module's default stay unregistered
 - AVA's macro form, a named macro between the title and the callback
   (`test(name, macro, async (t) => {})`, `test(name, ns.macro, fn)`): the
   function third argument is the callback (#10964) for a root bound to AVA's `test`, and only an inline function; a macro without a
@@ -911,6 +916,13 @@ and
 `xtask/src/main.rs::tests::bun_ub_calibration_command_writes_markdown_and_json`,
 which keep TS-discriminated, missing-discriminator, mention-only, and
 bridge-unknown cases advisory and non-repair-ready.
+
+`crates/ripr/src/analysis/language/typescript/tests/renamed_default_runner_tests.rs`
+pins #16431: a tape default bound as `check` by `require()`, import-equals or
+an ES default import, and renamed ava and `node:test` default imports read
+`exposed` like the `test` reference, while a written binding, mocha's and
+node-tap's defaults, a local module's default and a `.skip` call stay
+`no_static_path`.
 
 ## Implementation Mapping
 
