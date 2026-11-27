@@ -981,6 +981,15 @@ fn mark_commonjs_default_binding(
         return;
     };
     super::commonjs_default_class::keep_inline_class_whole_export(&code, &division_code, owners);
+    if let Some(name) = target {
+        super::commonjs_default_class::mark_unexported_siblings(
+            program,
+            name,
+            &code,
+            &division_code,
+            owners,
+        );
+    }
     if let Some(class_name) = target
         && super::commonjs_default_class::mark_whole_export_class(
             program,

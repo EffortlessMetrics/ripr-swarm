@@ -60,7 +60,7 @@ appears in a finding's own `stop_reasons`.
 | `proc_macro_opaque` | heuristic annotation | no | probe expression contains a `name!(` invocation (not `!=`) | RIPR-SPEC-0411 |
 | `no_changed_rust_line` | heuristic annotation | no | changed line has no owning Rust function and is not a compile-time assertion | RIPR-SPEC-0411 |
 | `compile_time_invariant` | compile-time shape | no | changed line is a compile-time assertion (`const_assert!`, etc.), a continuation line of one, or a const that a top-level assertion in the same file names, without an owner function (#12040); or, inside a function, a line of an inline const block holding only an assertion macro, on one line (`const { assert!(N <= 249) };`) or split by rustfmt over several (#14181); or a line of one `compile_error!(..)` invocation, bare or under `core::`/`std::`, on one line or split over several, with no code or literal after it on its last line (#15933) | RIPR-SPEC-0411 |
-| `unsafe_obligation` | unsafe obligation | no | `static_unknown` probe labels `unsafe fn` or unchecked-assumption block | RIPR-SPEC-0168 |
+| `unsafe_obligation` | unsafe obligation | no | `static_unknown` probe labels `unsafe fn` or unchecked-assumption block; or a classified probe replaced such a boundary's finding on its line (#16302) | RIPR-SPEC-0168 |
 | `transitive_reach_unresolved` | reach limitation | yes | bounded reach walk stops at an unresolved internal edge | RIPR-SPEC-0114 |
 | `macro_reach_unresolved` | reach limitation | yes | reach candidate stops at an unexpanded same-repo macro | RIPR-SPEC-0117 |
 | `gap_evidence_unresolved` | gap admission | yes | gap withheld because framework/oracle evidence is unreadable | RIPR-SPEC-0240 |
