@@ -178,6 +178,16 @@ remain accepted by the parser. The rendered `doctor` option line names
 alternative. Both profiles remain accepted. Help exits 0 with empty stderr;
 invalid or missing option values remain usage errors with exit 2.
 
+Misplacing `pilot` under `ripr agent` still refuses with exit 2. Only the exact
+`pilot` token adds guidance to the usual unknown-subcommand diagnostic:
+`pilot` is a top-level command; try `ripr pilot --root <dir>`. The accepted
+agent subcommand list stays the same and the hint does not dispatch the pilot.
+Plain output keeps stdout empty and writes the `ripr: `-prefixed diagnostic to
+stderr. With `--json`, the exit and stderr stay the same, and stdout carries
+the existing typed refusal (`unknown_value`, token `pilot`, the same message, and
+`next: null`). Other unknown agent subcommands keep their existing diagnostics
+(#16373).
+
 ## Surface Defaults
 
 | Surface | Default should do | Default should not do |
@@ -935,6 +945,7 @@ Current tests and reports that support the contract:
 - `crates/ripr/src/cli/mod.rs::tests::run_dispatches_check_parse_errors`
 - `crates/ripr/src/cli/mod.rs::tests::run_treats_a_repeated_global_verbose_as_one_enable`
 - `crates/ripr/src/cli/execute.rs::tests::execute_dispatches_subcommand_args_without_reparsing_argv`
+- `crates/ripr/tests/cli_smoke/cli_value_contracts.rs::misplaced_agent_pilot_preserves_usage_refusal_and_suggests_top_level`
 - `crates/ripr/src/cli/commands/init_agents.rs::tests::detected_but_not_enabled_languages_are_not_promised`
 - `crates/ripr/src/cli/commands/init_agents.rs::tests::force_refreshes_generated_cursor_frontmatter_but_not_user_frontmatter`
 - `crates/ripr/src/cli/commands/init_agents.rs::tests::python_block_names_pytest_and_does_not_promise_guided_repair`

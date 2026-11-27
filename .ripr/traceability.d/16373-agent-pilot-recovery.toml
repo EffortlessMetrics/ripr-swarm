@@ -1,0 +1,8 @@
+# Registers the usage refusal and recovery for a misplaced pilot command (#16373).
+[[extend]]
+id = "RIPR-SPEC-0009"
+tests = [
+  "crates/ripr/src/cli/agent.rs::tests::agent_args_guide_misplaced_pilot_to_top_level",
+  "crates/ripr/tests/cli_smoke/cli_value_contracts.rs::misplaced_agent_pilot_preserves_usage_refusal_and_suggests_top_level",
+]
+code = ["crates/ripr/src/cli/agent.rs::parse_agent_args"]
