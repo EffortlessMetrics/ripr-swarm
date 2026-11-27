@@ -14911,6 +14911,7 @@ tests = [
   "crates/ripr/src/cli/progress.rs::tests::projection_tokens_cover_the_closed_producer_vocabulary",
   "crates/ripr/src/cli/progress.rs::tests::rendering_failure_is_isolated",
   "crates/ripr/src/cli/progress.rs::tests::non_tty_fast_run_prints_no_progress_including_completed",
+  "crates/ripr/src/cli/progress.rs::tests::fast_human_pipe_holds_check_and_explain_progress",
   "crates/ripr/src/cli/progress.rs::tests::non_tty_run_past_the_hold_still_prints_stage_and_completed",
   "crates/ripr/src/cli/progress.rs::tests::non_tty_held_stream_heartbeats_one_interval_after_disclosure",
   "crates/ripr/src/cli/progress.rs::tests::non_tty_success_past_the_hold_between_ticks_discloses_the_stage",

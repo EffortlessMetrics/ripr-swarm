@@ -416,6 +416,10 @@ impl CliProgressSink {
         #[cfg(test)]
         let sink = match FROZEN_STDERR_CLOCK.take() {
             Some(instant) => {
+                assert!(
+                    !tty,
+                    "a piped command must select the non-TTY progress sink"
+                );
                 Self::with_writer_and_clock(writer, tty, policy, Arc::new(move || instant))
             }
             None => Self::with_writer(writer, tty, policy),
@@ -2262,6 +2266,8 @@ mod tests {
         Ok(command)
     }
 
+    /// RIPR-SPEC-0185: default human commands on a pipe wire a non-TTY
+    /// sink and keep successful runs silent inside the hold.
     #[test]
     fn fast_human_pipe_holds_check_and_explain_progress() -> Result<(), Box<dyn std::error::Error>>
     {
