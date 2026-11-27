@@ -459,6 +459,17 @@ mod tests {
         stopped.stop_reasons = vec![crate::domain::StopReason::NoChangedRustLine];
         assert!(!stopped.boundary_input_observed_with_weak_oracle());
 
+        // The unsafe-contract note carried from a replaced boundary (#16302)
+        // does not say the call may not run, so it keeps the flag; beside a
+        // reach stop the flag still drops.
+        let mut obligation = positive.clone();
+        obligation.stop_reasons = vec![crate::domain::StopReason::UnsafeObligation];
+        assert!(obligation.boundary_input_observed_with_weak_oracle());
+        obligation
+            .stop_reasons
+            .push(crate::domain::StopReason::NoChangedRustLine);
+        assert!(!obligation.boundary_input_observed_with_weak_oracle());
+
         let mut no_step = positive;
         no_step.recommended_next_step = None;
         assert!(!no_step.boundary_input_observed_with_weak_oracle());

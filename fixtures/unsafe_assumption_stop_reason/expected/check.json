@@ -199,7 +199,7 @@
           "relation_confidence": "high"
         }
       ],
-      "stop_reasons": ["propagation_evidence_unknown"],
+      "stop_reasons": ["propagation_evidence_unknown", "unsafe_obligation"],
       "oracle_kind": "exact_value",
       "oracle_strength": "strong",
       "recommended_next_step": "Trace the changed value to its output or effect, and inspect what the related test actually checks. If it has an assertion, inspect exactly what that assertion observes. Add or tighten a test only if this finds a gap; compare old and new code with the project's configured test runner (`cargo test` for ordinary Cargo tests). The static class may remain unknown.",

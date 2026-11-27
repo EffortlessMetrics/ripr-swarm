@@ -744,10 +744,11 @@ promotion.
 > Historical context; see [current direction](#current-product-position).
 
 The current source package is `ripr` 0.11.0 (`crates/ripr/Cargo.toml`). Its
-release notes are staged as unreleased in [CHANGELOG.md](../CHANGELOG.md); the
+draft release notes are in [0.11.0 release notes](releases/0.11.0-release-notes.md),
+while [CHANGELOG.md](../CHANGELOG.md) tracks `Unreleased` changes; the
 repository version now carries the 0.11.0 frame ahead of the publication
 transaction. The 0.9.0 language-adapter frame below is historical. The active
-0.11.0 selection rule is the exact transaction-boundary live swarm head in
+0.11.0 selection template (which does not yet pin a candidate) is
 `release-candidates/0.11.0-live-head-selection.json`.
 
 ### `0.11.0` - Replacement freeze (historical, superseded)
@@ -1171,7 +1172,7 @@ ripr can compare static exposure classes with real mutation results when explici
 
 ### `0.10.0` - Honest-by-construction evidence and downstream gate adoption
 
-The current 0.10.0 frame is staged and unreleased. It hardens seam identity
+The 0.10.0 frame was published on 2026-06-15. It hardens seam identity
 and sink-observation honesty across Rust, TypeScript, and Python, adds the
 consumer-verifiable `new_unsuppressed` gate receipt, cross-checks receipt
 ledger identity, and carries the evidence-promotion meta-gate. See the

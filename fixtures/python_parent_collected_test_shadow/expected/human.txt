@@ -1,0 +1,58 @@
+ripr static RIPR exposure analysis
+mode: fast
+root: fixtures/python_parent_collected_test_shadow/input
+config: <cwd>/fixtures/python_parent_collected_test_shadow/input/ripr.toml
+
+Summary: 1 changed behavior checked: 0 appear noticed by tests, 1 partly noticed, 0 reached but not noticed, 0 no test path. 1 found, 0 suppressed by your settings
+
+Changed file(s) by language: python = 1
+
+Analysis outcome: findings below (analysis complete)
+  Counts: 1 changed file(s), 2 changed line(s), 1 candidate line(s), 1 changed behavior(s) checked, 1 finding(s)
+
+Start here:
+  State: preview language, advisory only
+  Safe next action: preview-language evidence is advisory; apply the next step below to the suggested test and run its verify command before relying on it
+  File: svc/a/core.py:2
+  Language: python
+  Language status: preview
+  Static exposure: weak (severity: warning, confidence 0.40)
+  Why capped: preview adapter: infection/propagation not modeled (Python); syntax-first, no type or import resolution; the assertion is not confirmed to observe the changed value. Preview score, not on the same scale as Rust confidence.
+  Why weak: a related test reaches this change but does not observe the exact changed value
+  Gap ID (for scripts): gap:python:svc/a/core.py:price:return_value:return_value:x+2
+  Changed behavior: return x + 2
+  Missing check (1 of 2): A strong Python oracle reaches `price`, but its assertion does not observe
+    the changed owner's output; static evidence cannot confirm the changed behavior is
+    discriminated. Add an assertion on the changed owner's output
+  Related test: svc/a/tests/unit/test_x.py:4 test_price
+  Suggested test file: svc/a/tests/unit/test_x.py
+  Suggested test: test_price
+  Test node: svc/a/tests/unit/test_x.py::test_price
+  Verify command (Bash): (cd -P -- <cwd>/fixtures/python_parent_collected_test_shadow/input/svc/a && python -m pytest tests/unit/test_x.py::test_price) (high)
+  Next step — Python preview: strengthen the existing related test with an exact return-value assertion for the missing check `return value == <expected value>`
+  Evidence: reach yes · infection yes · propagation yes · observation weak · assertion weak
+    Stages (static evidence): reach = test path to changed owner; infection = inputs can activate change;
+      propagation = changed effect reaches output; observation = related test/assertion evidence;
+      assertion = a test assertion tells intended from wrong behavior
+    States: yes = evidence found; weak = partial evidence; no = evidence not found; unknown/opaque = analysis limited;
+      missing = a needed test input or assertion is absent; not established = assertion unconfirmed; not applicable = stage unused
+    Summary terms: changed behavior = one change point ripr checked; appear noticed by tests = a test appears to notice the change;
+      partly noticed = tests appear to notice it only partly; reached but not noticed = tests reach it but nothing appears to notice;
+      no test path = no test path found; unclear = analysis limited, not a verdict;
+      found = listed for review; suppressed by your settings = hidden by your suppression policy;
+      base-side = evidence from the old code, not an edit target; candidate line = changed line ripr considers
+    - reach yes: 1 related Python test(s) found for owner `price`
+    - infection yes: Changed Python return expression can alter the owner return value: `return x + 2`
+    - 5 more detail line(s) in --format human-full
+
+Next: drill into the top finding:
+  (finding id, for explain/context)
+  ripr explain --root <cwd>/fixtures/python_parent_collected_test_shadow/input --diff <cwd>/fixtures/python_parent_collected_test_shadow/diff.patch --mode fast probe:svc_a_core.py:python_preview:50a98324
+  ripr context --root <cwd>/fixtures/python_parent_collected_test_shadow/input --diff <cwd>/fixtures/python_parent_collected_test_shadow/diff.patch --mode fast --at probe:svc_a_core.py:python_preview:50a98324
+  no repair start offered: the spot list behind `ripr repair` and `ripr agent repair --phase before` covers Rust files only, so this Python finding in `svc/a/core.py` has no spot to start a repair from; this is a terminal state of the delegated loop, not a stale id. The gap, test node and verify command that `ripr check` prints are the manual route: add the missing check to that test by hand and run the printed verify command
+
+More:
+  Full evidence: rerun with --format human-full
+  Machine data: rerun with --format json
+
+Note: 1 Python file analyzed under preview support — preview evidence is advisory and may be incomplete. Treat its findings as advisory, not Rust-grade.

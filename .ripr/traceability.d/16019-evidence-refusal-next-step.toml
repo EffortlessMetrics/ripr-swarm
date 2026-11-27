@@ -34,3 +34,10 @@ id = "RIPR-SPEC-0011"
 tests = [
   "crates/ripr/tests/evidence_refusal_next_step.rs::agent_repair_attempt_refusals_name_the_fix",
 ]
+
+# `ripr agent receipt --verify-json` shape refusals name `ripr agent verify` (#16019).
+[[extend]]
+id = "RIPR-SPEC-0011"
+tests = [
+  "crates/ripr/tests/evidence_refusal_next_step.rs::agent_receipt_verify_json_refusals_name_the_producer",
+]

@@ -1,0 +1,16 @@
+# A crate-qualified receiver naming another module's same-named type gives
+# the owner no direct call (#14083 A2a, graduating the A2 unit case).
+[[extend]]
+id = "RIPR-SPEC-0005"
+fixtures = [
+  "fixtures/rust_crate_qualified_same_named_type",
+]
+outputs = [
+  "fixtures/rust_crate_qualified_same_named_type/expected/check.json",
+]
+
+[[extend]]
+id = "RIPR-SPEC-0108"
+fixtures = [
+  "fixtures/rust_crate_qualified_same_named_type",
+]

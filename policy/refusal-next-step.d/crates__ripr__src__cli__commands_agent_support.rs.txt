@@ -1,0 +1,5 @@
+crates/ripr/src/cli/commands_agent_support.rs|canonicalize agent brief root {} failed: {err}
+crates/ripr/src/cli/commands_agent_support.rs|canonicalize agent receipt root {} failed: {err}
+crates/ripr/src/cli/commands_agent_support.rs|canonicalize agent verify root {} failed: {err}
+crates/ripr/src/cli/commands_agent_support.rs|hash agent receipt {output_name} {} failed: {err}
+crates/ripr/src/cli/commands_agent_support.rs|read agent verify {label} snapshot {} failed: {err}

@@ -14535,7 +14535,7 @@ fn agent_receipt_rejects_target_absent_from_both_states() -> Result<(), Box<dyn 
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(
         stderr.contains(
-            "agent receipt seam_id seam-retained-target was not found in agent verify JSON"
+            "agent receipt seam_id seam-retained-target was not found in agent verify JSON; pass a --seam-id that the verify JSON lists"
         ),
         "mutation: requested a receipt for a target seam absent from both states; expected the seam-selection rejection; actual stderr: {stderr}"
     );

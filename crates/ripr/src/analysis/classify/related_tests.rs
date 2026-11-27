@@ -8924,6 +8924,13 @@ fn owner_call_relation_reason_gated(
                 index,
                 trust_unplaced_standard_root,
             ))
+        // #15277: `let s: Box<dyn Trait> = Box::new(Square(3)); s.area()`
+        // runs `Square`'s `Trait` impl.
+        || impl_trait.as_deref().is_some_and(|trait_name| {
+            super::owner_pin::dyn_box::boxed_receiver_calls_impl(
+                test, owner_name, &impl_type, trait_name, index,
+            )
+        })
     {
         RelationReason::DirectOwnerCall
     } else {
