@@ -16,11 +16,10 @@ Updated:
 ## Pending — rust_whole_value_associated_constructor_unpinned_field (2)
 
 Reason:
-RIPR-SPEC-0225: the exact constructor field stays weak because its strongest test reaches the owner without a verified field sink; retries 7 fails in both compiled source versions.
+RIPR-SPEC-0122: #15336 unconfirmed-reach note severity, possible-gap State line, legend and Terms glosses
 
 Command:
 `cargo xtask goldens bless rust_whole_value_associated_constructor_unpinned_field --reason "..."`
 
 Updated:
-- `expected/check.json`
-- `expected/human-full.txt`
+- `expected/human.txt`

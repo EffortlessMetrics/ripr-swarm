@@ -557,18 +557,6 @@ Updated:
 ## Pending — source_role_harness_suppression (38)
 
 Reason:
-RIPR-SPEC-0155 / RIPR-SPEC-0197: retain fixture classifications while refreshing composed producer guidance and assertion-local sink identity; owner-call proximity alone does not establish discriminator credit
-
-Command:
-`cargo xtask goldens bless source_role_harness_suppression --reason "..."`
-
-Updated:
-- `expected/check.json`
-- `expected/human.txt`
-
-## Pending — source_role_harness_suppression (48)
-
-Reason:
 RIPR-SPEC-0155: plain same_test_pairing_missing summary; exact summary values only, existing evidence prose sort retained; classifications, IDs, counts, oracle fields and recommendations unchanged
 
 Command:
@@ -640,11 +628,10 @@ Updated:
 ## Pending — source_role_harness_suppression (44)
 
 Reason:
-RIPR-SPEC-0155 For source_role_harness_suppression, admit the discriminator only with assertion evidence linked to the changed result.
+RIPR-SPEC-0122: #15336 unconfirmed-reach note severity, possible-gap State line, legend and Terms glosses
 
 Command:
 `cargo xtask goldens bless source_role_harness_suppression --reason "..."`
 
 Updated:
-- `expected/check.json`
 - `expected/human.txt`

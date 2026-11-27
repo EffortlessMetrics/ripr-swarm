@@ -757,3 +757,14 @@ Command:
 
 Updated:
 - `expected/human.txt`
+
+## Pending — ts_pkg_discovery_no_package (43)
+
+Reason:
+RIPR-SPEC-0122: #15336 unconfirmed-reach note severity, possible-gap State line, legend and Terms glosses
+
+Command:
+`cargo xtask goldens bless ts_pkg_discovery_no_package --reason "..."`
+
+Updated:
+- `expected/human.txt`

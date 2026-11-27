@@ -641,13 +641,13 @@ Command:
 Updated:
 - `expected/human.txt`
 
-## Pending — editor_lsp_workflow LSP boundary pairing
+## Pending — editor_lsp_workflow (33)
 
 Reason:
-RIPR-SPEC-0186: below/above calls without a same-test equality oracle carry weak discrimination. The framed protocol control adds an actual equality assertion and checks production inventory `StageState::Yes`; strong seams remain absent from editor diagnostic evidence.
+RIPR-SPEC-0122: #15336 unconfirmed-reach note severity, possible-gap State line, legend and Terms glosses
 
-Reproduce producer:
-`RIPR_UPDATE_FIXTURES=1 cargo test --locked -p ripr --lib lsp::tests::editor_lsp_workflow_lsp_goldens_match_production -- --exact --test-threads=1`
+Command:
+`cargo xtask goldens bless editor_lsp_workflow --reason "..."`
 
 Updated:
-- `expected/lsp-diagnostics.json` (`discriminate`: `yes` to `weak`; all other data unchanged).
+- `expected/human.txt`

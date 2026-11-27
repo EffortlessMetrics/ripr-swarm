@@ -413,7 +413,7 @@ Updated:
 ## Pending — propagated_error_closing_early_path (31)
 
 Reason:
-RIPR-SPEC-0108: the default human line says the missing error-variant check in plain words (check-user-text glossary); JSON and human-full keep the classifier wording
+RIPR-SPEC-0122: #15336 unconfirmed-reach note severity, possible-gap State line, legend and Terms glosses
 
 Command:
 `cargo xtask goldens bless propagated_error_closing_early_path --reason "..."`

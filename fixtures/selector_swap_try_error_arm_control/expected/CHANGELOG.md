@@ -205,3 +205,14 @@ Command:
 
 Updated:
 - `expected/human.txt`
+
+## Pending — selector_swap_try_error_arm_control (17)
+
+Reason:
+RIPR-SPEC-0122: #15336 unconfirmed-reach note severity, possible-gap State line, legend and Terms glosses
+
+Command:
+`cargo xtask goldens bless selector_swap_try_error_arm_control --reason "..."`
+
+Updated:
+- `expected/human.txt`

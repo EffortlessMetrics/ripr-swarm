@@ -364,7 +364,6 @@ Updated:
 ## Pending — rust_slice_table_boundary (29)
 
 Reason:
-RIPR-SPEC-0001 / RIPR-SPEC-0197: retain fixture classifications while refreshing composed producer guidance and assertion-local sink identity; owner-call proximity alone does not establish discriminator credit
 RIPR-SPEC-0224: distinguish the file-proximity miss from an assertion-free direct caller (#14808).
 
 Command:
@@ -378,23 +377,10 @@ Updated:
 ## Pending — rust_slice_table_boundary (30)
 
 Reason:
-RIPR-SPEC-0001 For rust_slice_table_boundary, admit the discriminator only with assertion evidence linked to the changed result.
+RIPR-SPEC-0122: #15336 unconfirmed-reach note severity, possible-gap State line, legend and Terms glosses
 
 Command:
 `cargo xtask goldens bless rust_slice_table_boundary --reason "..."`
 
 Updated:
-- `expected/check.json`
-- `expected/human.txt`
-
-## Pending — rust_slice_table_boundary (31)
-
-Reason:
-RIPR-SPEC-0001: history-sync composition; main's related-test selection lists mean_latency_smoke alongside the import line's rows; class unchanged
-
-Command:
-`cargo xtask goldens bless rust_slice_table_boundary --reason "..."`
-
-Updated:
-- `expected/check.json`
 - `expected/human.txt`

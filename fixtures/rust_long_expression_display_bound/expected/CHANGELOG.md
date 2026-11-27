@@ -714,3 +714,14 @@ Command:
 
 Updated:
 - `expected/human-full.txt`
+
+## Pending — rust_long_expression_display_bound (45)
+
+Reason:
+RIPR-SPEC-0122: #15336 unconfirmed-reach note severity, possible-gap State line, legend and Terms glosses
+
+Command:
+`cargo xtask goldens bless rust_long_expression_display_bound --reason "..."`
+
+Updated:
+- `expected/human.txt`

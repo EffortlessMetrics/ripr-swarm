@@ -218,3 +218,14 @@ Command:
 
 Updated:
 - `expected/human.txt`
+
+## Pending — module_reach_bare_import_control (18)
+
+Reason:
+RIPR-SPEC-0122: #15336 unconfirmed-reach note severity, possible-gap State line, legend and Terms glosses
+
+Command:
+`cargo xtask goldens bless module_reach_bare_import_control --reason "..."`
+
+Updated:
+- `expected/human.txt`

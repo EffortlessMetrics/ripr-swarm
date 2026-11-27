@@ -511,3 +511,14 @@ Command:
 
 Updated:
 - `expected/human.txt`
+
+## Pending — guarded_result_match_conditional_failure (38)
+
+Reason:
+RIPR-SPEC-0122: #15336 unconfirmed-reach note severity, possible-gap State line, legend and Terms glosses
+
+Command:
+`cargo xtask goldens bless guarded_result_match_conditional_failure --reason "..."`
+
+Updated:
+- `expected/human.txt`

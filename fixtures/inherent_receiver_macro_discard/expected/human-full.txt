@@ -12,7 +12,7 @@ Terms: exposed = tests appear to notice the change; weakly_exposed = tests reach
 Analysis outcome: findings below (analysis complete; complete_with_findings)
   Counts: 1 changed file(s), 2 changed line(s), 1 candidate line(s), 2 changed behavior(s) checked, 2 finding(s)
 
-WARNING ./src/lib.rs:6
+NOTE ./src/lib.rs:6
   id: probe:src_lib.rs:match_arm:f9032269
 
 Changed
@@ -28,7 +28,7 @@ Change type
   gap id (for scripts): gap:rust:src/lib.rs:impl JsonValue::as_object:match_arm:match_arm:self_object_value
 
 Static exposure
-  reachable_unrevealed (warning, confidence 0.66)
+  reachable_unrevealed (note, confidence 0.66)
 
 Evidence
   - reach weak: No test is seen calling as_object; tests share only a name token
@@ -52,7 +52,7 @@ Drill in:
   ripr explain --root <cwd>/fixtures/inherent_receiver_macro_discard/input --diff <cwd>/fixtures/inherent_receiver_macro_discard/diff.patch --mode fast probe:src_lib.rs:match_arm:f9032269
   ripr context --root <cwd>/fixtures/inherent_receiver_macro_discard/input --diff <cwd>/fixtures/inherent_receiver_macro_discard/diff.patch --mode fast --at probe:src_lib.rs:match_arm:f9032269
 
-WARNING ./src/lib.rs:6
+NOTE ./src/lib.rs:6
   id: probe:src_lib.rs:return_value:3068903e
 
 Changed
@@ -67,7 +67,7 @@ Change type
   gap id (for scripts): gap:rust:src/lib.rs:impl JsonValue::as_object:return_value:return_value:some*value
 
 Static exposure
-  reachable_unrevealed (warning, confidence 0.63)
+  reachable_unrevealed (note, confidence 0.63)
 
 Evidence
   - reach weak: No test is seen calling as_object; tests share only a name token

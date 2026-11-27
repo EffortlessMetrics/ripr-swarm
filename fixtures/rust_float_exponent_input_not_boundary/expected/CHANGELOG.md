@@ -58,3 +58,14 @@ Command:
 
 Updated:
 - `expected/human.txt`
+
+## Pending — rust_float_exponent_input_not_boundary (6)
+
+Reason:
+RIPR-SPEC-0122: #15336 unconfirmed-reach note severity, possible-gap State line, legend and Terms glosses
+
+Command:
+`cargo xtask goldens bless rust_float_exponent_input_not_boundary --reason "..."`
+
+Updated:
+- `expected/human.txt`

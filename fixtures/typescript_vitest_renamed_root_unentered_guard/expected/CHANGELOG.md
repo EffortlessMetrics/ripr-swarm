@@ -10,3 +10,14 @@ Command:
 
 Updated:
 - `expected/human-full.txt`
+
+## Pending — typescript_vitest_renamed_root_unentered_guard (2)
+
+Reason:
+RIPR-SPEC-0122: #15336 unconfirmed-reach note severity, possible-gap State line, legend and Terms glosses
+
+Command:
+`cargo xtask goldens bless typescript_vitest_renamed_root_unentered_guard --reason "..."`
+
+Updated:
+- `expected/human.txt`

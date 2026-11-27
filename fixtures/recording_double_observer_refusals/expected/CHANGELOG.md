@@ -252,3 +252,14 @@ Command:
 
 Updated:
 - `expected/human.txt`
+
+## Pending — recording_double_observer_refusals (21)
+
+Reason:
+RIPR-SPEC-0122: #15336 unconfirmed-reach note severity, possible-gap State line, legend and Terms glosses
+
+Command:
+`cargo xtask goldens bless recording_double_observer_refusals --reason "..."`
+
+Updated:
+- `expected/human.txt`

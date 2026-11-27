@@ -521,7 +521,7 @@ Updated:
 ## Pending — error_path_operand_error_lexeme (39)
 
 Reason:
-RIPR-SPEC-0108: the default human line says the missing error-variant check in plain words (check-user-text glossary); JSON and human-full keep the classifier wording
+RIPR-SPEC-0122: #15336 unconfirmed-reach note severity, possible-gap State line, legend and Terms glosses
 
 Command:
 `cargo xtask goldens bless error_path_operand_error_lexeme --reason "..."`

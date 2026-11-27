@@ -15,7 +15,7 @@ Changed file(s) by language: python = 1
 Analysis outcome: findings below (analysis complete; complete_with_findings)
   Counts: 1 changed file(s), 2 changed line(s), 1 candidate line(s), 1 changed behavior(s) checked, 1 finding(s)
 
-WARNING src/shapes/money.py:6
+NOTE src/shapes/money.py:6
   id: probe:src_shapes_money.py:python_preview:aacb327b
 
 Changed
@@ -34,7 +34,7 @@ Language
   owner kind: method
 
 Static exposure
-  weakly_exposed (warning, confidence 0.40)
+  weakly_exposed (note, confidence 0.40)
   Why capped: preview adapter: infection/propagation not modeled (Python); syntax-first, no type or import resolution; no related test reaches the changed owner. Preview score, not on the same scale as Rust confidence.
 
 Evidence

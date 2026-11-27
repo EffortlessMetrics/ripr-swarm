@@ -27,7 +27,7 @@ Updated:
 ## Pending — predicate_oracle_gated_mod_ungated_owner_refused (3)
 
 Reason:
-RIPR-SPEC-0197 For predicate_oracle_gated_mod_ungated_owner_refused, keep the repair advice aligned with the observed seam, owner and boundary.
+RIPR-SPEC-0122: #15336 unconfirmed-reach note severity, possible-gap State line, legend and Terms glosses
 
 Command:
 `cargo xtask goldens bless predicate_oracle_gated_mod_ungated_owner_refused --reason "..."`

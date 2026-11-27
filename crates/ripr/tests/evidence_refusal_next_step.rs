@@ -252,6 +252,37 @@ fn baseline_update_refusals_name_the_command_that_writes_each_input() -> Result<
             "current gate-decision current.json missing schema_version",
             GATE_SOURCE,
         ],
+    )?;
+    write("current.json", r#"{"schema_version":"0.1"}"#)?;
+    stderr_has_all(
+        &refusal(&dir.0, &update)?,
+        &[
+            "baseline update current gate-decision input current.json is missing decisions array",
+            GATE_SOURCE,
+        ],
+    )?;
+    write(
+        "current.json",
+        r#"{"schema_version":"0.1","decisions":[{}]}"#,
+    )?;
+    stderr_has_all(
+        &refusal(&dir.0, &update)?,
+        &[
+            "contains a decision without stable identity; refusing to remove or migrate reviewed debt",
+            "; regenerate it with `ripr gate evaluate`, then rerun",
+        ],
+    )?;
+    write("current.json", r#"{"schema_version":"0.1","decisions":[]}"#)?;
+    write(
+        "baseline.json",
+        r#"{"schema_version":"0.1","kind":"gate_baseline"}"#,
+    )?;
+    stderr_has_all(
+        &refusal(&dir.0, &update)?,
+        &[
+            "baseline update input baseline.json is missing entries array",
+            BASELINE_SOURCE,
+        ],
     )
 }
 

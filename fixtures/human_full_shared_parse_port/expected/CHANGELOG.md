@@ -437,7 +437,7 @@ Updated:
 ## Pending — human_full_shared_parse_port (34)
 
 Reason:
-RIPR-SPEC-0108: compose PR #16016 history-sync with protected swarm main (baaaa92024)
+RIPR-SPEC-0122: #15336 unconfirmed-reach note severity, possible-gap State line, legend and Terms glosses
 
 Command:
 `cargo xtask goldens bless human_full_shared_parse_port --reason "..."`

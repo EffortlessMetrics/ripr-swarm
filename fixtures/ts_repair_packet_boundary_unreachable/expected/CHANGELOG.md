@@ -620,3 +620,14 @@ Command:
 
 Updated:
 - `expected/sarif.json`
+
+## Pending — ts_repair_packet_boundary_unreachable (47)
+
+Reason:
+RIPR-SPEC-0122: #15336 unconfirmed-reach note severity, possible-gap State line, legend and Terms glosses
+
+Command:
+`cargo xtask goldens bless ts_repair_packet_boundary_unreachable --reason "..."`
+
+Updated:
+- `expected/human.txt`

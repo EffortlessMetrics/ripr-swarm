@@ -351,7 +351,6 @@ Updated:
 ## Pending — rust_slice_table_zero_elements (28)
 
 Reason:
-RIPR-SPEC-0001 / RIPR-SPEC-0197: retain fixture classifications while refreshing composed producer guidance and assertion-local sink identity; owner-call proximity alone does not establish discriminator credit
 RIPR-SPEC-0224: report no established path for an assertion-free file-proximity row (#14808).
 
 Command:
@@ -365,19 +364,7 @@ Updated:
 ## Pending — rust_slice_table_zero_elements (29)
 
 Reason:
-RIPR-SPEC-0001 For rust_slice_table_zero_elements, admit the discriminator only with assertion evidence linked to the changed result.
-
-Command:
-`cargo xtask goldens bless rust_slice_table_zero_elements --reason "..."`
-
-Updated:
-- `expected/check.json`
-- `expected/human.txt`
-
-## Pending — rust_slice_table_zero_elements (30)
-
-Reason:
-RIPR-SPEC-0001: history-sync composition; the related-test representative follows the composed selection order; class unchanged
+RIPR-SPEC-0122: #15336 unconfirmed-reach note severity, possible-gap State line, legend and Terms glosses
 
 Command:
 `cargo xtask goldens bless rust_slice_table_zero_elements --reason "..."`

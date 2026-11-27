@@ -130,7 +130,7 @@ Updated:
 ## Pending — rust_diverging_call_error_side (11)
 
 Reason:
-RIPR-SPEC-0108: the default human line says the missing error-variant check in plain words (check-user-text glossary); JSON and human-full keep the classifier wording
+RIPR-SPEC-0122: #15336 unconfirmed-reach note severity, possible-gap State line, legend and Terms glosses
 
 Command:
 `cargo xtask goldens bless rust_diverging_call_error_side --reason "..."`

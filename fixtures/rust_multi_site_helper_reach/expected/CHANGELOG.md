@@ -15,11 +15,10 @@ Updated:
 ## Pending — rust_multi_site_helper_reach (2)
 
 Reason:
-RIPR-SPEC-0159 For rust_multi_site_helper_reach, retain the unresolved boundary input in the infection evidence and advice.
+RIPR-SPEC-0122: #15336 unconfirmed-reach note severity, possible-gap State line, legend and Terms glosses
 
 Command:
 `cargo xtask goldens bless rust_multi_site_helper_reach --reason "..."`
 
 Updated:
-- `expected/check.json`
 - `expected/human.txt`

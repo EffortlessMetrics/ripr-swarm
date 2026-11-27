@@ -419,12 +419,10 @@ Updated:
 ## Pending — parser_formatted_input_provenance (33)
 
 Reason:
-RIPR-SPEC-0240 For parser_formatted_input_provenance, retain the unresolved boundary input in the infection evidence and advice.
+RIPR-SPEC-0122: #15336 unconfirmed-reach note severity, possible-gap State line, legend and Terms glosses
 
 Command:
 `cargo xtask goldens bless parser_formatted_input_provenance --reason "..."`
 
 Updated:
-- `expected/check.json`
 - `expected/human.txt`
-- `expected/human-full.txt`

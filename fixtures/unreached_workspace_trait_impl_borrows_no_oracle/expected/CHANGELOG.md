@@ -275,3 +275,14 @@ Command:
 
 Updated:
 - `expected/human.txt`
+
+## Pending — unreached_workspace_trait_impl_borrows_no_oracle (22)
+
+Reason:
+RIPR-SPEC-0122: #15336 unconfirmed-reach note severity, possible-gap State line, legend and Terms glosses
+
+Command:
+`cargo xtask goldens bless unreached_workspace_trait_impl_borrows_no_oracle --reason "..."`
+
+Updated:
+- `expected/human.txt`

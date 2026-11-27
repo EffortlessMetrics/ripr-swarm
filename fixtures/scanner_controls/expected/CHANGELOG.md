@@ -530,11 +530,10 @@ Updated:
 ## Pending — scanner_controls (44)
 
 Reason:
-RIPR-SPEC-0163 For scanner_controls, retain the unresolved boundary input in the infection evidence and advice.
+RIPR-SPEC-0122: #15336 unconfirmed-reach note severity, possible-gap State line, legend and Terms glosses
 
 Command:
 `cargo xtask goldens bless scanner_controls --reason "..."`
 
 Updated:
-- `expected/check.json`
 - `expected/human.txt`

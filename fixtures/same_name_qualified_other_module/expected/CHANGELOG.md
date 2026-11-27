@@ -334,3 +334,14 @@ Command:
 
 Updated:
 - `expected/human-full.txt`
+
+## Pending — same_name_qualified_other_module (27)
+
+Reason:
+RIPR-SPEC-0122: #15336 unconfirmed-reach note severity, possible-gap State line, legend and Terms glosses
+
+Command:
+`cargo xtask goldens bless same_name_qualified_other_module --reason "..."`
+
+Updated:
+- `expected/human.txt`

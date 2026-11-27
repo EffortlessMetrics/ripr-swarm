@@ -214,3 +214,14 @@ Command:
 
 Updated:
 - `expected/human.txt`
+
+## Pending — rust_path_keyword_affinity (18)
+
+Reason:
+RIPR-SPEC-0122: #15336 unconfirmed-reach note severity, possible-gap State line, legend and Terms glosses
+
+Command:
+`cargo xtask goldens bless rust_path_keyword_affinity --reason "..."`
+
+Updated:
+- `expected/human.txt`

@@ -380,3 +380,14 @@ Command:
 
 Updated:
 - `expected/human.txt`
+
+## Pending — rust_preseeded_first_element (30)
+
+Reason:
+RIPR-SPEC-0122: #15336 unconfirmed-reach note severity, possible-gap State line, legend and Terms glosses
+
+Command:
+`cargo xtask goldens bless rust_preseeded_first_element --reason "..."`
+
+Updated:
+- `expected/human.txt`

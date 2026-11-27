@@ -233,7 +233,7 @@ Updated:
 ## Pending — boundary_pairing_sibling_element (18)
 
 Reason:
-RIPR-SPEC-0108: compose PR #16016 history-sync with protected swarm main (baaaa92024)
+RIPR-SPEC-0122: #15336 unconfirmed-reach note severity, possible-gap State line, legend and Terms glosses
 
 Command:
 `cargo xtask goldens bless boundary_pairing_sibling_element --reason "..."`

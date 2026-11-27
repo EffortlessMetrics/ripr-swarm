@@ -467,3 +467,14 @@ Updated:
 - `expected/human.txt`
 - `expected/human-full.txt`
 - `expected/human.txt`
+
+## Pending — predicate_oracle_execution_shadowed (37)
+
+Reason:
+RIPR-SPEC-0122: #15336 unconfirmed-reach note severity, possible-gap State line, legend and Terms glosses
+
+Command:
+`cargo xtask goldens bless predicate_oracle_execution_shadowed --reason "..."`
+
+Updated:
+- `expected/human.txt`

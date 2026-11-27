@@ -313,7 +313,8 @@ decisive stages behind a remainder count (#4324):
     States: yes = evidence found; weak = partial evidence; no = evidence not found; unknown/opaque = analysis limited;
       missing = a needed test input or assertion is absent; not established = assertion unconfirmed; not applicable = stage unused
     Summary terms: changed behavior = one change point ripr checked; appear noticed by tests = a test appears to notice the change;
-      partly noticed = tests appear to notice it only partly; reached but not noticed = tests reach it but nothing appears to notice;
+      partly noticed = tests appear to notice it only partly; reached but not noticed = linked to a test, but nothing appears to notice;
+      both can rest on a test link ripr could not confirm; the reach stage says which;
       no test path = no test path found; unclear = analysis limited, not a verdict;
       found = listed for review; suppressed by your settings = hidden by your suppression policy;
       base-side = evidence from the old code, not an edit target; candidate line = changed line ripr considers
@@ -330,12 +331,12 @@ no test path) in the same static vocabulary (#9244 item 4); its last lines also 
 and the Counts line's `candidate line` (#9244 item 4 leftovers, #10691). They claim no runtime mutation outcome.
 The CLI prints the legend on the first standalone human run in a build tree that
 selects a digest (a `--output-dir` fanout member always carries it and does not
-count) and records that in `target/ripr/legend-seen`; later runs replace the ten lines with one
+count) and records that in `target/ripr/legend-seen`; later runs replace the eleven lines with one
 `Terms: ` pointer to `--legend`, which prints them again. Library
 callers and an unwritable output tree always get the full legend (#10481).
 No legend renders when there is no selected digest (empty, all-suppressed,
 base-side-only, or unresolved-currentness-only findings). The legend adds a fixed
-ten lines; it does not expand the per-stage detail window. Full human and
+eleven lines; it does not expand the per-stage detail window. Full human and
 machine formats retain their existing contracts. This addresses item 1 and #9244
 item 4 only; the shared class vocabulary and per-class discoverability in items 2
 and 3 are unchanged.
@@ -373,6 +374,18 @@ related tests are linked only by a shared file or name` (#15336). The wording
 is chosen only when the reach summary carries the producer's proximity-only
 marker; any other non-`yes` reach keeps `test reach to this change is not
 established`, and callee-only reach keeps its own hint.
+
+The same unsupported-reach rule (#15295) also sets the finding's human
+severity and the `State:` words (#15336). Such a finding is a possible gap,
+not a confirmed one: the digest, the full render and the `ripr explain`
+render show a configured `warning` for it as `note` (a configured `off`,
+`info` or `note` is kept), and when it is the selected top gap the
+digest's `State:` line reads `a possible test gap (test reach not confirmed)`. The `top_gap` state id and the next action are
+unchanged. The first-run Evidence legend (also printed by `--legend`)
+describes both reached buckets as linked to a test, and says both can rest
+on a test link ripr could not confirm, with the reach stage saying which.
+Class, counts, JSON, SARIF, GitHub annotations,
+LSP diagnostics, `missed.txt` and gate decisions are unchanged.
 
 The digest states each fact once (#14308). A stage detail whose prose equals
 the digest's `Missing check` / `Analyzer limit` value (after collapsing
@@ -1508,6 +1521,8 @@ report with zero records still carries its route.
 - `crates/ripr/tests/weak_reach_hint.rs::guard_refusal_does_not_override_unestablished_reach` — guard refusal positive and unestablished-reach controls (#7330).
 - `crates/ripr/tests/weak_reach_hint.rs::unrevealed_weak_reach_why_line_does_not_contradict_summary` — real proximity-only unrevealed finding names the file/name link; reach `yes` keeps the reaching-test hint (#15336).
 - `crates/ripr/src/output/human/sections.rs::unrevealed_weak_reach_names_the_link_only_for_proximity_summaries` — marker gate: non-marker weak, `No` and callee-only reach keep their hints (#15336).
+- `crates/ripr/src/output/human.rs::unconfirmed_reach_finding_renders_at_note_severity` — unsupported reach renders `note` on the digest, full and explain renders; reach `yes` keeps `warning`; configured `off` passes through (#15336).
+- `crates/ripr/src/output/human.rs::unconfirmed_reach_state_and_glossaries_do_not_claim_reach` — possible-gap `State:` words through first-run and repeat legend renders; the legend never says these buckets prove reach; machine classes and counts are identical to the confirmed control (#15336).
 
 - `crates/ripr/src/output/human/agent_tests.rs::explain_agent_gap_is_one_record_one_test_open_terminal_and_context_next`
 - `crates/ripr/src/output/human/agent_tests.rs::explain_agent_undiscriminated_gap_carries_owner_and_before_and_skips_context`

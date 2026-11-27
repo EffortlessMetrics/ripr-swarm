@@ -15,7 +15,7 @@ Changed file(s) by language: typescript = 1
 Analysis outcome: findings below (analysis complete; complete_with_findings)
   Counts: 1 changed file(s), 2 changed line(s), 1 candidate line(s), 1 changed behavior(s) checked, 1 finding(s)
 
-WARNING src/discount.ts:2
+NOTE src/discount.ts:2
   id: probe:src_discount.ts:typescript_preview:2396aec1
 
 Changed
@@ -43,7 +43,7 @@ Preview actionability
   raw evidence: src/discount.ts:2 (typescript_preview_probe) source=probe:src_discount.ts:typescript_preview:2396aec1 owner=applyDiscount
 
 Static exposure
-  weakly_exposed (warning, confidence 0.40)
+  weakly_exposed (note, confidence 0.40)
   Why capped: preview adapter: infection/propagation not modeled (TypeScript); syntax-first, no type or import resolution; no related test reaches the changed owner. Preview score, not on the same scale as Rust confidence.
 
 Evidence

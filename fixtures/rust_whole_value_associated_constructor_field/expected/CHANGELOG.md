@@ -23,3 +23,14 @@ Command:
 
 Updated:
 - `expected/human.txt`
+
+## Pending — rust_whole_value_associated_constructor_field (3)
+
+Reason:
+RIPR-SPEC-0122: #15336 unconfirmed-reach note severity, possible-gap State line, legend and Terms glosses
+
+Command:
+`cargo xtask goldens bless rust_whole_value_associated_constructor_field --reason "..."`
+
+Updated:
+- `expected/human.txt`

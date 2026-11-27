@@ -390,23 +390,10 @@ Updated:
 ## Pending — wildcard_oracle_wildcard_wrong (28)
 
 Reason:
-RIPR-SPEC-0108 / RIPR-SPEC-0197: retain fixture classifications while refreshing composed producer guidance and assertion-local sink identity; owner-call proximity alone does not establish discriminator credit
+RIPR-SPEC-0122: #15336 unconfirmed-reach note severity, possible-gap State line, legend and Terms glosses
 
 Command:
 `cargo xtask goldens bless wildcard_oracle_wildcard_wrong --reason "..."`
 
 Updated:
-- `expected/check.json`
 - `expected/human.txt`
-- `expected/human-full.txt`
-
-## Pending — wildcard_oracle_wildcard_wrong (29)
-
-Reason:
-RIPR-SPEC-0108 For wildcard_oracle_wildcard_wrong, admit the discriminator only with assertion evidence linked to the changed result.
-
-Command:
-`cargo xtask goldens bless wildcard_oracle_wildcard_wrong --reason "..."`
-
-Updated:
-- `expected/check.json`

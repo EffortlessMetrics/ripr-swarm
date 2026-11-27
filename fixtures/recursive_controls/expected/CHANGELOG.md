@@ -542,11 +542,10 @@ Updated:
 ## Pending — recursive_controls (44)
 
 Reason:
-RIPR-SPEC-0165 For recursive_controls, retain the unresolved boundary input in the infection evidence and advice.
+RIPR-SPEC-0122: #15336 unconfirmed-reach note severity, possible-gap State line, legend and Terms glosses
 
 Command:
 `cargo xtask goldens bless recursive_controls --reason "..."`
 
 Updated:
-- `expected/check.json`
 - `expected/human.txt`

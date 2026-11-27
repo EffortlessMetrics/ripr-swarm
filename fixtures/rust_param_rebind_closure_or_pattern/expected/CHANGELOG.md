@@ -211,12 +211,10 @@ Updated:
 ## Pending — rust_param_rebind_closure_or_pattern (17)
 
 Reason:
-RIPR-SPEC-0158 For rust_param_rebind_closure_or_pattern, retain the unresolved boundary input in the infection evidence and advice.
+RIPR-SPEC-0122: #15336 unconfirmed-reach note severity, possible-gap State line, legend and Terms glosses
 
 Command:
 `cargo xtask goldens bless rust_param_rebind_closure_or_pattern --reason "..."`
 
 Updated:
-- `expected/check.json`
 - `expected/human.txt`
-- `expected/human-full.txt`

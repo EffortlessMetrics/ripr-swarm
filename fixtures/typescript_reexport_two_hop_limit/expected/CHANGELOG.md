@@ -636,3 +636,14 @@ Command:
 
 Updated:
 - `expected/human.txt`
+
+## Pending — typescript_reexport_two_hop_limit (38)
+
+Reason:
+RIPR-SPEC-0122: #15336 unconfirmed-reach note severity, possible-gap State line, legend and Terms glosses
+
+Command:
+`cargo xtask goldens bless typescript_reexport_two_hop_limit --reason "..."`
+
+Updated:
+- `expected/human.txt`

@@ -23,3 +23,14 @@ Command:
 
 Updated:
 - `expected/human.txt`
+
+## Pending — rust_predicate_owner_value_masked_tuple_projection (3)
+
+Reason:
+RIPR-SPEC-0122: #15336 unconfirmed-reach note severity, possible-gap State line, legend and Terms glosses
+
+Command:
+`cargo xtask goldens bless rust_predicate_owner_value_masked_tuple_projection --reason "..."`
+
+Updated:
+- `expected/human.txt`

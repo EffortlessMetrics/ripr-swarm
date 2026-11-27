@@ -72,12 +72,10 @@ Updated:
 ## Pending — rust_predicate_added_disjunct_sibling_field (7)
 
 Reason:
-RIPR-SPEC-0108: compose PR #16016 history-sync with protected swarm main (baaaa92024)
+RIPR-SPEC-0122: #15336 unconfirmed-reach note severity, possible-gap State line, legend and Terms glosses
 
 Command:
 `cargo xtask goldens bless rust_predicate_added_disjunct_sibling_field --reason "..."`
 
 Updated:
-- `expected/check.json`
 - `expected/human.txt`
-- `expected/human-full.txt`
