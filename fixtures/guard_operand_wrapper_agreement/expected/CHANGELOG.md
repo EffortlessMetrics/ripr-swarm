@@ -33,3 +33,14 @@ Command:
 
 Updated:
 - `expected/human.txt`
+
+## Pending — guard_operand_wrapper_agreement (4)
+
+Reason:
+RIPR-SPEC-0122: #15336 unconfirmed-reach note severity, possible-gap State line, legend and Terms glosses
+
+Command:
+`cargo xtask goldens bless guard_operand_wrapper_agreement --reason "..."`
+
+Updated:
+- `expected/human.txt`

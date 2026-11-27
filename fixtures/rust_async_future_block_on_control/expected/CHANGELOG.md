@@ -34,3 +34,14 @@ Command:
 
 Updated:
 - `expected/human.txt`
+
+## Pending — rust_async_future_block_on_control (4)
+
+Reason:
+RIPR-SPEC-0122: #15336 unconfirmed-reach note severity, possible-gap State line, legend and Terms glosses
+
+Command:
+`cargo xtask goldens bless rust_async_future_block_on_control --reason "..."`
+
+Updated:
+- `expected/human.txt`

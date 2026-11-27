@@ -465,3 +465,14 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — predicate_oracle_execution_reached_uncalled (37)
+
+Reason:
+RIPR-SPEC-0122: #15336 unconfirmed-reach note severity, possible-gap State line, legend and Terms glosses
+
+Command:
+`cargo xtask goldens bless predicate_oracle_execution_reached_uncalled --reason "..."`
+
+Updated:
+- `expected/human.txt`

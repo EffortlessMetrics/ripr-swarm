@@ -530,3 +530,14 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — binding_predicate_equality_boundary (36)
+
+Reason:
+RIPR-SPEC-0122: #15336 unconfirmed-reach note severity, possible-gap State line, legend and Terms glosses
+
+Command:
+`cargo xtask goldens bless binding_predicate_equality_boundary --reason "..."`
+
+Updated:
+- `expected/human.txt`

@@ -25,3 +25,14 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — javascript_tap_computed_string_names (3)
+
+Reason:
+RIPR-SPEC-0122: #15336 unconfirmed-reach note severity, possible-gap State line, legend and Terms glosses
+
+Command:
+`cargo xtask goldens bless javascript_tap_computed_string_names --reason "..."`
+
+Updated:
+- `expected/human.txt`

@@ -255,3 +255,14 @@ Command:
 
 Updated:
 - `expected/human.txt`
+
+## Pending — test_in_index_read_not_exact (21)
+
+Reason:
+RIPR-SPEC-0122: #15336 unconfirmed-reach note severity, possible-gap State line, legend and Terms glosses
+
+Command:
+`cargo xtask goldens bless test_in_index_read_not_exact --reason "..."`
+
+Updated:
+- `expected/human.txt`

@@ -757,3 +757,14 @@ Command:
 
 Updated:
 - `expected/human-full.txt`
+
+## Pending — python_adversarial_dict_field_sibling_key (45)
+
+Reason:
+RIPR-SPEC-0122: #15336 unconfirmed-reach note severity, possible-gap State line, legend and Terms glosses
+
+Command:
+`cargo xtask goldens bless python_adversarial_dict_field_sibling_key --reason "..."`
+
+Updated:
+- `expected/human.txt`

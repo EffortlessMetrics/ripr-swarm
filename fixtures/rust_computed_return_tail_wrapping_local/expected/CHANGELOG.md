@@ -23,3 +23,14 @@ Command:
 
 Updated:
 - `expected/human.txt`
+
+## Pending — rust_computed_return_tail_wrapping_local (3)
+
+Reason:
+RIPR-SPEC-0122: #15336 unconfirmed-reach note severity, possible-gap State line, legend and Terms glosses
+
+Command:
+`cargo xtask goldens bless rust_computed_return_tail_wrapping_local --reason "..."`
+
+Updated:
+- `expected/human.txt`

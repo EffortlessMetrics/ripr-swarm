@@ -57,3 +57,14 @@ Command:
 
 Updated:
 - `expected/human.txt`
+
+## Pending — collection_push_contents_check_next_step (6)
+
+Reason:
+RIPR-SPEC-0122: #15336 unconfirmed-reach note severity, possible-gap State line, legend and Terms glosses
+
+Command:
+`cargo xtask goldens bless collection_push_contents_check_next_step --reason "..."`
+
+Updated:
+- `expected/human.txt`

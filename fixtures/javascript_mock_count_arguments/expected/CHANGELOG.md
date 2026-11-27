@@ -12,3 +12,14 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — javascript_mock_count_arguments (2)
+
+Reason:
+RIPR-SPEC-0122: #15336 unconfirmed-reach note severity, possible-gap State line, legend and Terms glosses
+
+Command:
+`cargo xtask goldens bless javascript_mock_count_arguments --reason "..."`
+
+Updated:
+- `expected/human.txt`

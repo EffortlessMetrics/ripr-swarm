@@ -39,3 +39,14 @@ Command:
 
 Updated:
 - `expected/human.txt`
+
+## Pending — classify_opaque_signals (4)
+
+Reason:
+RIPR-SPEC-0122: #15336 unconfirmed-reach note severity, possible-gap State line, legend and Terms glosses
+
+Command:
+`cargo xtask goldens bless classify_opaque_signals --reason "..."`
+
+Updated:
+- `expected/human.txt`

@@ -205,3 +205,14 @@ Command:
 
 Updated:
 - `expected/human.txt`
+
+## Pending — helper_chain_method_entry (17)
+
+Reason:
+RIPR-SPEC-0122: #15336 unconfirmed-reach note severity, possible-gap State line, legend and Terms glosses
+
+Command:
+`cargo xtask goldens bless helper_chain_method_entry --reason "..."`
+
+Updated:
+- `expected/human.txt`

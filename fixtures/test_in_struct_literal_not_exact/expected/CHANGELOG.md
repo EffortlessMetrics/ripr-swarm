@@ -256,3 +256,14 @@ Command:
 
 Updated:
 - `expected/human.txt`
+
+## Pending — test_in_struct_literal_not_exact (21)
+
+Reason:
+RIPR-SPEC-0122: #15336 unconfirmed-reach note severity, possible-gap State line, legend and Terms glosses
+
+Command:
+`cargo xtask goldens bless test_in_struct_literal_not_exact --reason "..."`
+
+Updated:
+- `expected/human.txt`
