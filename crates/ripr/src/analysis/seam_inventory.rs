@@ -741,8 +741,10 @@ fn inventory_classified_seams_report_collect(
             index_build,
             config,
             &analyzed_production_files,
-            limit_and_source.clone(),
-            repair_ceiling,
+            SeamInventoryBounds {
+                limit_and_source: limit_and_source.clone(),
+                repair_ceiling,
+            },
             |classified, limit_info, lexical_fallback_files, index, pass, total| {
                 let store_key = match (repair_ceiling, &limit_and_source) {
                     (Some(ceiling), Some((limit, _))) if classified.len() > *limit => {
@@ -1538,14 +1540,18 @@ type ClassifiedSeamInventory = (
     Vec<AnalysisLimitation>,
 );
 
+struct SeamInventoryBounds {
+    limit_and_source: Option<(usize, SeamLimitSource)>,
+    repair_ceiling: Option<usize>,
+}
+
 fn inventory_classified_seams_from_state_with_config(
     state: &OwnedWorkspaceState,
     mut cached: super::facts::CachedRustIndex,
     index_build: Duration,
     config: &RiprConfig,
     production_files: &[PathBuf],
-    limit_and_source: Option<(usize, SeamLimitSource)>,
-    repair_ceiling: Option<usize>,
+    bounds: SeamInventoryBounds,
     publish: impl for<'index> FnOnce(
         &[ClassifiedSeam],
         Option<&SeamLimitInfo>,
@@ -1555,6 +1561,10 @@ fn inventory_classified_seams_from_state_with_config(
         usize,
     ) -> Result<(), String>,
 ) -> Result<ClassifiedSeamInventory, String> {
+    let SeamInventoryBounds {
+        limit_and_source,
+        repair_ceiling,
+    } = bounds;
     trace_latency_phase(
         "file_fact_cache",
         &format!(
