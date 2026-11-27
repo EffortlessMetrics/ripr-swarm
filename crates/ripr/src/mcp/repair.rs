@@ -823,15 +823,14 @@ fn refusal_next(
     next
 }
 
-/// The live durable attempt for a ready item's seam, by the CLI's own
-/// single-attempt rule. Fail closed (#15244): an item that cannot be mapped to
-/// a seam, or a HEAD/store that cannot be read, refuses instead of creating a
-/// session attempt that might be a rival the store would have shown.
-fn live_durable_attempt(
+/// The seam a ready item's durable attempt would be filed under. Fail closed
+/// (#15244): an item that cannot be mapped to a seam refuses instead of
+/// creating a session attempt that might be a rival the store would have
+/// shown.
+fn item_seam_id(
     snapshot: &super::workspace::Snapshot,
     item: &GapItem,
-    root: &Path,
-) -> Result<Option<crate::app::task_first::ReusableAttempt>, AttemptFailure> {
+) -> Result<String, AttemptFailure> {
     let Some(producers) = &snapshot.card_producers else {
         return Err(AttemptFailure::new(
             super::workspace::CODE_NO_SNAPSHOT,
@@ -853,7 +852,43 @@ fn live_durable_attempt(
             "read the item's evidence with ripr_get_gap, or run `ripr agent card` in the repository",
         ));
     };
-    durable_attempt_for_seam(root, binding.seam.seam.id().as_str())
+    Ok(binding.seam.seam.id().as_str().to_string())
+}
+
+/// What a store-aware prepare must read from the durable attempt store,
+/// taken from the session under its lock. Reading it ([`Self::read`]) runs
+/// git and the filesystem inventory, so the server runs it on a blocking
+/// worker without holding the session lock (#15244).
+pub(crate) struct DurableLookup {
+    snapshot_id: String,
+    /// `None` when the item is not repair-ready in the admitted snapshot, so
+    /// no durable attempt can bear on the outcome.
+    seam_id: Option<String>,
+}
+
+impl DurableLookup {
+    pub(crate) fn read(self, root: &Path) -> Result<DurableCheck, AttemptFailure> {
+        let reading = match &self.seam_id {
+            None => DurableReading::NotNeeded,
+            Some(seam_id) => DurableReading::Read(durable_attempt_for_seam(root, seam_id)?),
+        };
+        Ok(DurableCheck {
+            snapshot_id: self.snapshot_id,
+            reading,
+        })
+    }
+}
+
+/// The durable store's answer for one admitted snapshot. Prepare only uses it
+/// when the session's current snapshot is still that snapshot.
+pub(crate) struct DurableCheck {
+    snapshot_id: String,
+    reading: DurableReading,
+}
+
+enum DurableReading {
+    NotNeeded,
+    Read(Option<crate::app::task_first::ReusableAttempt>),
 }
 
 fn durable_attempt_for_seam(
@@ -864,7 +899,7 @@ fn durable_attempt_for_seam(
         AttemptFailure::new(
             super::workspace::CODE_ANALYSIS_FAILED,
             format!(
-                "no session attempt was created: the durable attempt store could not be read, so a live attempt for this seam cannot be ruled out: {error}"
+                "no session attempt was created: the durable attempt store could not be fully read, so a live attempt for this seam cannot be ruled out: {error}"
             ),
             "run `ripr agent status` in the repository for the full diagnostic, then retry",
         )
@@ -906,7 +941,9 @@ impl WorkspaceSession {
     /// rule (`reusable_awaiting_attempt`) finds a live durable attempt for the
     /// item's seam, no rival session transaction is created. The document
     /// discloses the durable attempt and routes to it instead, exactly as
-    /// `ripr repair` refuses a second attempt.
+    /// `ripr repair` refuses a second attempt. The server runs these same
+    /// steps with the store read off the session lock.
+    #[cfg(test)]
     pub(crate) fn prepare_repair_with_store(
         &mut self,
         canonical_id: &str,
@@ -914,8 +951,63 @@ impl WorkspaceSession {
         root_identity: Option<&str>,
         store_root: Option<&Path>,
     ) -> Result<Value, AttemptFailure> {
+        let durable = match store_root {
+            Some(root) => Some(
+                self.prepare_repair_durable_lookup(canonical_id, requested)?
+                    .read(root)?,
+            ),
+            None => None,
+        };
+        self.prepare_repair_checked(canonical_id, requested, root_identity, durable)
+    }
+
+    /// The first step of a store-aware prepare: what the durable store must be
+    /// asked, for the snapshot this call admits. It reads only the session.
+    pub(crate) fn prepare_repair_durable_lookup(
+        &self,
+        canonical_id: &str,
+        requested: Option<&str>,
+    ) -> Result<DurableLookup, AttemptFailure> {
+        let snapshot = self.active_snapshot(requested)?;
+        let item = snapshot.require_item(canonical_id)?;
+        let seam_id = if item.repair_readiness.ready {
+            Some(item_seam_id(snapshot, item)?)
+        } else {
+            None
+        };
+        Ok(DurableLookup {
+            snapshot_id: snapshot.snapshot_id.clone(),
+            seam_id,
+        })
+    }
+
+    /// The last step of prepare. `durable` is `None` only when there is no
+    /// store to check; otherwise it is the store's answer for the snapshot
+    /// [`Self::prepare_repair_durable_lookup`] admitted, which may have been
+    /// read without the session lock. A snapshot that changed meanwhile
+    /// refuses with `stale_snapshot` before anything is replayed or created.
+    pub(crate) fn prepare_repair_checked(
+        &mut self,
+        canonical_id: &str,
+        requested: Option<&str>,
+        root_identity: Option<&str>,
+        durable: Option<DurableCheck>,
+    ) -> Result<Value, AttemptFailure> {
         let snapshot = self.active_snapshot(requested)?;
         let snapshot_id = snapshot.snapshot_id.clone();
+        if let Some(check) = &durable
+            && check.snapshot_id != snapshot_id
+        {
+            return Err(AttemptFailure::new(
+                super::workspace::CODE_STALE_SNAPSHOT,
+                format!(
+                    "snapshot {} was replaced while the durable attempt store was read; no session attempt was created",
+                    check.snapshot_id
+                ),
+                "retry ripr_prepare_repair against the current snapshot",
+            )
+            .with_data(json!({ "current_snapshot_id": snapshot_id })));
+        }
         // #14138: a withheld owner opt-out id refuses with `owner_opt_out`.
         let item = snapshot.require_item(canonical_id)?;
         let readiness = &item.repair_readiness;
@@ -973,9 +1065,20 @@ impl WorkspaceSession {
         // CLI refuses a second attempt, and a session transaction would be
         // superseded by the very refresh the flow prescribes after editing
         // tests, while only a durable attempt can reach `improved`.
-        if let Some(root) = store_root
-            && let Some(existing) = live_durable_attempt(snapshot, item, root)?
-        {
+        let existing = match durable.map(|check| check.reading) {
+            None => None,
+            Some(DurableReading::Read(existing)) => existing,
+            Some(DurableReading::NotNeeded) => {
+                // The same snapshot admitted this item as not ready; a ready
+                // reading now is a projection bug, never "no attempt".
+                return Err(AttemptFailure::new(
+                    CODE_ATTEMPT_INVALID,
+                    "the durable attempt store was not checked for a ready item; no session attempt was created",
+                    "re-run ripr_refresh and retry ripr_prepare_repair",
+                ));
+            }
+        };
+        if let Some(existing) = existing {
             let existing_id = existing.attempt_id;
             let document = json!({
                 "schema_version": REPAIR_PACKET_SCHEMA_VERSION,
@@ -1876,6 +1979,82 @@ pub(super) mod tests {
             .prepare_repair_with_store("gap:test:1", None, Some("root:sha256:a"), None)
             .map_err(|failure| failure.detail)?;
         assert_eq!(created["attempt"]["origin"], "mcp_session");
+        Ok(())
+    }
+
+    /// #15244: the store answer may be read off the session lock, so the
+    /// last step revalidates the admitted snapshot before it replays or
+    /// creates anything, and only a matching answer decides the outcome.
+    #[test]
+    fn checked_prepare_binds_the_durable_answer_to_its_admitted_snapshot() -> Result<(), String> {
+        let mut session = session_with(&[super::super::gaps::test_finding()?], "root:sha256:a")?;
+        let current = session
+            .last_good
+            .as_ref()
+            .map(|snapshot| snapshot.snapshot_id.clone())
+            .ok_or("fixture lost its snapshot")?;
+        let check = |snapshot_id: &str, reading| DurableCheck {
+            snapshot_id: snapshot_id.to_string(),
+            reading,
+        };
+        let root = Some("root:sha256:a");
+        // A snapshot replaced during the store read refuses stale.
+        let stale = session
+            .prepare_repair_checked(
+                "gap:test:1",
+                None,
+                root,
+                Some(check("snapshot:replaced", DurableReading::Read(None))),
+            )
+            .err()
+            .ok_or("an answer for another snapshot must refuse")?;
+        assert_eq!(stale.code, CODE_STALE_SNAPSHOT);
+        assert_eq!(stale.data["current_snapshot_id"], current.as_str());
+        // A ready item whose store was never asked refuses too.
+        let unchecked = session
+            .prepare_repair_checked(
+                "gap:test:1",
+                None,
+                root,
+                Some(check(&current, DurableReading::NotNeeded)),
+            )
+            .err()
+            .ok_or("an unchecked store must refuse a ready item")?;
+        assert_eq!(unchecked.code, CODE_ATTEMPT_INVALID);
+        // A live durable attempt is disclosed, not rivalled.
+        let disclosed = session
+            .prepare_repair_checked(
+                "gap:test:1",
+                None,
+                root,
+                Some(check(
+                    &current,
+                    DurableReading::Read(Some(crate::app::task_first::ReusableAttempt {
+                        attempt_id: "repair-attempt:durable".to_string(),
+                        next_command: String::new(),
+                    })),
+                )),
+            )
+            .map_err(|failure| failure.detail)?;
+        assert_eq!(
+            disclosed["existing_attempt"]["attempt_id"],
+            "repair-attempt:durable"
+        );
+        assert_eq!(disclosed["repair_packet_ready"], false);
+        if !session.repairs.is_empty() {
+            return Err("no refusal or disclosure may create a session transaction".to_string());
+        }
+        // Control: the current snapshot with no durable attempt creates one.
+        let created = session
+            .prepare_repair_checked(
+                "gap:test:1",
+                None,
+                root,
+                Some(check(&current, DurableReading::Read(None))),
+            )
+            .map_err(|failure| failure.detail)?;
+        assert_eq!(created["attempt"]["origin"], "mcp_session");
+        assert_eq!(session.repairs.len(), 1);
         Ok(())
     }
 

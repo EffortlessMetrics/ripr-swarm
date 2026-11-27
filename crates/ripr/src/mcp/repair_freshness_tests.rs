@@ -1438,3 +1438,61 @@ fn durable_attempt_for_seam_ignores_a_moved_head_and_a_finished_attempt() -> Res
     );
     Ok(())
 }
+
+/// #15244: a manifest the inventory cannot read could be a live attempt for
+/// any seam, so the checked read MCP prepare uses refuses with its diagnostic
+/// instead of reading "no attempt". The CLI's lenient selection is unchanged:
+/// it still resumes the readable live attempt beside it.
+#[test]
+fn durable_attempt_for_seam_fails_closed_on_a_corrupt_manifest() -> Result<(), String> {
+    let (root, id) = prepared("dup-corrupt")?;
+    // Control: the readable store alone yields the live attempt.
+    assert_eq!(
+        durable_attempt_for_seam(&root, "seam:freshness")
+            .map_err(|f| f.detail)?
+            .map(|found| found.attempt_id),
+        Some(id.as_str().to_string()),
+    );
+    let corrupt = root.join("target/ripr/repair-attempts/corrupt-attempt");
+    std::fs::create_dir_all(&corrupt).map_err(|error| error.to_string())?;
+    write(&corrupt.join("attempt.json"), "{ not a manifest")?;
+    // Stimulus precondition: the store stays readable and the inventory
+    // records exactly this directory as an unreadable entry.
+    let entries = crate::app::repair_attempt::inventory_repair_attempts(&root)?;
+    let invalid: Vec<&str> = entries
+        .iter()
+        .filter_map(|entry| match entry {
+            crate::app::repair_attempt::RepairAttemptInventoryEntry::Invalid {
+                directory, ..
+            } => Some(directory.as_str()),
+            crate::app::repair_attempt::RepairAttemptInventoryEntry::Valid(_) => None,
+        })
+        .collect();
+    assert_eq!(invalid, ["corrupt-attempt"]);
+    // Its seam cannot be told, so every seam refuses, the live one included.
+    for seam in ["seam:freshness", "seam:other"] {
+        let failure = match durable_attempt_for_seam(&root, seam) {
+            Err(failure) => failure,
+            Ok(found) => {
+                return Err(format!(
+                    "a corrupt manifest must fail closed for {seam}: {}",
+                    found.is_some()
+                ));
+            }
+        };
+        assert_eq!(failure.code, super::super::workspace::CODE_ANALYSIS_FAILED);
+        assert!(failure.detail.contains("no session attempt was created"));
+        assert!(
+            failure.detail.contains("corrupt-attempt"),
+            "the refusal must name the unreadable manifest: {}",
+            failure.detail
+        );
+    }
+    // The CLI keeps its lenient selection.
+    assert_eq!(
+        crate::app::task_first::reusable_awaiting_attempt(&root, "seam:freshness")
+            .map(|found| found.attempt_id),
+        Some(id.as_str().to_string()),
+    );
+    Ok(())
+}

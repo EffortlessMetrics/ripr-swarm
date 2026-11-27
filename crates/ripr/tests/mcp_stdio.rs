@@ -7150,6 +7150,82 @@ fn prepare_repair_discloses_a_live_durable_attempt_instead_of_a_rival() -> Resul
     Ok(())
 }
 
+/// #15244: an unreadable manifest in the durable store could be a live
+/// attempt for this seam, so `ripr_prepare_repair` refuses with a typed
+/// failure naming it and creates no session attempt; once the store reads
+/// cleanly the same call creates the session attempt.
+#[cfg(feature = "lang-rust")]
+#[test]
+fn prepare_repair_fails_closed_on_an_unreadable_durable_manifest() -> Result<(), String> {
+    const BOUNDARY: &str = "gap:rust:src/lib.rs:is_adult:predicate_boundary:predicate:age==18";
+    const REFRESH_TIMEOUT: Duration = Duration::from_mins(3);
+    const REPLY_TIMEOUT: Duration = Duration::from_mins(1);
+    let root = install_weak_boundary_fixture()?;
+    let _guard = FixtureGuard { root: root.clone() };
+    let mut session = SequentialStdio::spawn(&root)?;
+    session.call("discover", "server/discover", json!({}), REPLY_TIMEOUT)?;
+    let refresh = session.call_tool("refresh", "ripr_refresh", json!({}), REFRESH_TIMEOUT)?;
+    structured_tool_success(&refresh, "ripr_refresh")?;
+    let corrupt = root.join("target/ripr/repair-attempts/corrupt-attempt");
+    std::fs::create_dir_all(&corrupt).map_err(|error| error.to_string())?;
+    std::fs::write(corrupt.join("attempt.json"), "{ not a manifest")
+        .map_err(|error| error.to_string())?;
+
+    let refused = session.call_tool(
+        "prepare-corrupt",
+        "ripr_prepare_repair",
+        json!({ "canonical_id": BOUNDARY }),
+        REPLY_TIMEOUT,
+    )?;
+    let failure = refused
+        .pointer("/result/structuredContent/failure")
+        .ok_or_else(|| format!("an unreadable manifest must refuse typed: {refused}"))?;
+    let detail = failure["detail"].as_str().unwrap_or("");
+    if refused.pointer("/result/isError") != Some(&json!(true))
+        || failure["code"] != "analysis_failed"
+        || !detail.contains("no session attempt was created")
+        || !detail.contains("corrupt-attempt")
+    {
+        return Err(format!("unreadable manifest refusal drifted: {refused}"));
+    }
+    // No session attempt: the gap's attempt link stays unbound.
+    let gap = session.call_tool(
+        "gap-refused",
+        "ripr_get_gap",
+        json!({ "canonical_id": BOUNDARY }),
+        REPLY_TIMEOUT,
+    )?;
+    let gap = structured_tool_success(&gap, "ripr_get_gap")?;
+    if !gap["item"]["links"]["repair_attempt"].is_null() {
+        return Err(format!("a refusal must not bind a session attempt: {gap}"));
+    }
+
+    // Control: the same call against a cleanly readable store creates it.
+    std::fs::remove_dir_all(&corrupt).map_err(|error| error.to_string())?;
+    let created = session.call_tool(
+        "prepare-clean",
+        "ripr_prepare_repair",
+        json!({ "canonical_id": BOUNDARY }),
+        REPLY_TIMEOUT,
+    )?;
+    let created = structured_prepare_document(&created, "ripr_prepare_repair")?;
+    let attempt_id = created["attempt"]["attempt_id"]
+        .as_str()
+        .filter(|_| created["attempt"]["origin"] == "mcp_session")
+        .ok_or_else(|| format!("a readable store must keep the session route: {created}"))?;
+    let gap = session.call_tool(
+        "gap-created",
+        "ripr_get_gap",
+        json!({ "canonical_id": BOUNDARY }),
+        REPLY_TIMEOUT,
+    )?;
+    let gap = structured_tool_success(&gap, "ripr_get_gap")?;
+    if gap["item"]["links"]["repair_attempt"] != format!("ripr://repair-attempt/{attempt_id}") {
+        return Err(format!("the created session attempt must bind: {gap}"));
+    }
+    Ok(())
+}
+
 /// #8717: a weakly gripped boundary that names its missing discriminator is
 /// the repair target. MCP reports it repair-ready and binds an `awaiting_edit`
 /// attempt exactly when `ripr repair` admits the same item, and an item the

@@ -4270,24 +4270,75 @@ pub(crate) struct ReusableAttempt {
 /// before evidence is the evidence a fresh start would record, so a second
 /// attempt adds nothing and would make `ripr continue` ambiguous. Any
 /// other state, another seam, or a moved HEAD starts a new attempt. An
-/// unreadable store or HEAD also starts a new attempt: the attempt
-/// authority then makes its own decision.
+/// unreadable store or HEAD also starts a new attempt, and an unreadable
+/// manifest is skipped: the attempt authority then makes its own decision.
 pub(crate) fn reusable_awaiting_attempt(root: &Path, seam_id: &str) -> Option<ReusableAttempt> {
-    checked_reusable_awaiting_attempt(root, seam_id)
+    scan_reusable_awaiting_attempt(root, seam_id)
         .ok()
-        .flatten()
+        .and_then(|scan| scan.reusable)
 }
 
-/// [`reusable_awaiting_attempt`] with the read failure kept: `Err` means the
-/// HEAD or the attempt store could not be read, which is not the same fact as
-/// "no live attempt". The CLI has its own attempt authority behind the lenient
-/// form; the MCP adapter has none and refuses on `Err` (#15244).
+/// At most this many unreadable-manifest diagnostics are named in a checked
+/// refusal; the rest are counted.
+const MAX_NAMED_INVALID_ATTEMPTS: usize = 4;
+
+/// [`reusable_awaiting_attempt`] with an incomplete inspection kept: `Err`
+/// means the HEAD or the attempt store could not be read, or the store holds
+/// a manifest that could not be read. An unreadable manifest's seam cannot be
+/// told, so it could be a live attempt for this seam; either way the fact is
+/// not "no live attempt". The CLI has its own attempt authority behind the
+/// lenient form; the MCP adapter has none and refuses on `Err` (#15244).
 pub(crate) fn checked_reusable_awaiting_attempt(
     root: &Path,
     seam_id: &str,
 ) -> Result<Option<ReusableAttempt>, String> {
+    let scan = scan_reusable_awaiting_attempt(root, seam_id)?;
+    if scan.invalid.is_empty() {
+        return Ok(scan.reusable);
+    }
+    let named = scan
+        .invalid
+        .iter()
+        .take(MAX_NAMED_INVALID_ATTEMPTS)
+        .map(|(directory, error)| format!("{directory}: {error}"))
+        .collect::<Vec<_>>()
+        .join("; ");
+    let more = scan
+        .invalid
+        .len()
+        .saturating_sub(MAX_NAMED_INVALID_ATTEMPTS);
+    let more = if more == 0 {
+        String::new()
+    } else {
+        format!("; and {more} more")
+    };
+    Err(format!(
+        "{} repair attempt manifest(s) in the store could not be read, and an unreadable manifest's seam cannot be told: {named}{more}",
+        scan.invalid.len()
+    ))
+}
+
+struct ReusableAttemptScan {
+    reusable: Option<ReusableAttempt>,
+    /// `(directory, error)` for each manifest the inventory could not read.
+    invalid: Vec<(String, String)>,
+}
+
+fn scan_reusable_awaiting_attempt(
+    root: &Path,
+    seam_id: &str,
+) -> Result<ReusableAttemptScan, String> {
     let head = current_git_head(root)?;
     let entries = inventory_repair_attempts_from(root, None)?;
+    let invalid = entries
+        .iter()
+        .filter_map(|entry| match entry {
+            RepairAttemptInventoryEntry::Valid(_) => None,
+            RepairAttemptInventoryEntry::Invalid { directory, error } => {
+                Some((directory.clone(), error.clone()))
+            }
+        })
+        .collect();
     let manifests = entries
         .iter()
         .filter_map(|entry| match entry {
@@ -4301,7 +4352,10 @@ pub(crate) fn checked_reusable_awaiting_attempt(
                 && crate::app::repair_attempt::repair_attempt_baseline_reading(root, manifest)
                     .permits_continuation()
         });
-    Ok(pick_reusable_attempt(manifests, seam_id, &head))
+    Ok(ReusableAttemptScan {
+        reusable: pick_reusable_attempt(manifests, seam_id, &head),
+        invalid,
+    })
 }
 
 /// Decision law after [`reusable_awaiting_attempt`] has admitted the retained
