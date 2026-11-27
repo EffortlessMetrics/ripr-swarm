@@ -349,7 +349,12 @@ fn write_first_pr(repo: &Path, options: &FirstPrOptions) -> Result<(), String> {
     let json_path = out_dir.join(START_HERE_JSON);
     let markdown_path = out_dir.join(START_HERE_MD);
     let json_text = serde_json::to_string_pretty(&packet)
-        .map_err(|err| format!("failed to serialize {} packet: {err}", options.command))?;
+        .map_err(|err| {
+            format!(
+                "failed to serialize {} packet: {err}. Report this error with the RIPR version and reproduction steps.",
+                options.command
+            )
+        })?;
     crate::output::file_write::write(&json_path, format!("{json_text}\n").as_bytes())
         .map_err(|err| crate::output::file_write::write_failure_message(&json_path, &err))?;
     crate::output::file_write::write(
