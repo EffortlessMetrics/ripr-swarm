@@ -2346,6 +2346,7 @@ mod row_sink_alignment_tests {
             decorator_lines: None,
             parameters: Vec::new(),
             reexport_modules: Vec::new(),
+            class_reexport_modules: Vec::new(),
             star_exported: false,
             ambiguous_src_modules: Vec::new(),
             test_local_shadows: Vec::new(),
@@ -2353,6 +2354,8 @@ mod row_sink_alignment_tests {
             module_constants: Vec::new(),
             same_class_callees: Vec::new(),
             module_callees: Vec::new(),
+            route_scope_callees: Vec::new(),
+            route_scope_awaited_callees: Vec::new(),
             class_path: String::new(),
             term_facts: Default::default(),
             class_facts: Default::default(),
@@ -2363,6 +2366,7 @@ mod row_sink_alignment_tests {
             nested_result_discarded: false,
             trusted_stdlib_click_alias: false,
             route_returns_body: false,
+            route_dispatch_ambiguous: false,
             route_dict_annotation: false,
         }
     }

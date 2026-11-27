@@ -141,12 +141,10 @@ Updated:
 ## Pending — binding_value_counterpart_width (12)
 
 Reason:
-RIPR-SPEC-0158 For binding_value_counterpart_width, retain the unresolved boundary input in the infection evidence and advice.
+RIPR-SPEC-0122: #15313 Summary names shared candidate lines and says No test gap when State reads no test gap found
 
 Command:
 `cargo xtask goldens bless binding_value_counterpart_width --reason "..."`
 
 Updated:
-- `expected/check.json`
 - `expected/human.txt`
-- `expected/human-full.txt`

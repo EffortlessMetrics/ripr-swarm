@@ -818,45 +818,7 @@ Updated:
 ## Pending — error_variant_boxed_wrapper_downcast_witness (60)
 
 Reason:
-RIPR-SPEC-0106: refuse owner-level credit for two ambiguous early-return sites; real native branch controls change the first return outcome but not the second; preserve boxed binding limitations and discarded-witness refusal
-
-Command:
-`cargo xtask goldens bless error_variant_boxed_wrapper_downcast_witness --reason "..."`
-
-Updated:
-- `expected/check.json`
-- `expected/human.txt`
-- `expected/human-full.txt`
-
-## Pending — error_variant_boxed_wrapper_downcast_witness (61)
-
-Reason:
-RIPR-SPEC-0106: current21production+4native controls establish the current bound unit-error observer selects only the first literal guard return; later identical return, unentered, overwritten, shadowed, unrelated and sibling-variant controls remain non-exposed; wrappers retain typed unresolved binding. Native per-return contrast independently distinguishes the first from the second return.
-
-Command:
-`cargo xtask goldens bless error_variant_boxed_wrapper_downcast_witness --reason "..."`
-
-Updated:
-- `expected/check.json`
-- `expected/human.txt`
-- `expected/human-full.txt`
-
-## Pending — error_variant_boxed_wrapper_downcast_witness (62)
-
-Reason:
-RIPR-SPEC-0106 For error_variant_boxed_wrapper_downcast_witness, admit the discriminator only with assertion evidence linked to the changed result.
-
-Command:
-`cargo xtask goldens bless error_variant_boxed_wrapper_downcast_witness --reason "..."`
-
-Updated:
-- `expected/check.json`
-- `expected/human.txt`
-
-## Pending — error_variant_boxed_wrapper_downcast_witness (63)
-
-Reason:
-RIPR-SPEC-0108: the default human line says the missing error-variant check in plain words (check-user-text glossary); JSON and human-full keep the classifier wording
+RIPR-SPEC-0122: #15313 Summary names shared candidate lines and says No test gap when State reads no test gap found
 
 Command:
 `cargo xtask goldens bless error_variant_boxed_wrapper_downcast_witness --reason "..."`

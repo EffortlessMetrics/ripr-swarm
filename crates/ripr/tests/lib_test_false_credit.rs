@@ -433,7 +433,7 @@ fn an_integration_target_path_mount_keeps_credit_in_every_mode() -> Result<(), S
 const GENERATED_MOUNT_BUILD: &str = "use std::path::PathBuf;\nfn main() {\n    let out = PathBuf::from(std::env::var(\"OUT_DIR\").unwrap());\n    let shared = PathBuf::from(std::env::var(\"CARGO_MANIFEST_DIR\").unwrap()).join(\"../a/src/shared.rs\");\n    std::fs::write(out.join(\"plain.rs\"), format!(\"#[path = {:?}] pub mod shared;\\n\", shared.display().to_string())).unwrap();\n}\n";
 
 #[test]
-fn a_build_script_generated_mount_keeps_credit() -> Result<(), String> {
+fn a_build_script_generated_mount_is_doubt_not_a_skip() -> Result<(), String> {
     // #14962 review B1: `b`'s build script writes `#[path = ...] pub mod
     // shared;` into `OUT_DIR`, and `b` includes it, so `cargo test -p b`
     // runs `t`. The dynamic `include!` is doubt, not a skip.
@@ -454,7 +454,34 @@ fn a_build_script_generated_mount_keeps_credit() -> Result<(), String> {
         "a/src/shared.rs",
         1,
     )?;
-    assert_exposed_in_every_mode(&fixture, "a build-script-generated mount")
+    assert_include_doubt_in_every_mode(&fixture, "a build-script-generated mount")
+}
+
+/// A dynamic `include!` keeps a skipped target's tests in doubt, not
+/// withheld: no mode reads them as the withheld `no_static_path`. Since
+/// #16060 the spliced file may also define `macro_rules! assert_eq` before
+/// the module it mounts, so a mode whose index reads `b/src/lib.rs` reports
+/// the assertion as an analyzer limit naming the include; a mode whose
+/// narrower index never reads `b` keeps the credit it had.
+fn assert_include_doubt_in_every_mode(fixture: &TempCrate, label: &str) -> Result<(), String> {
+    let mut limited = 0;
+    for mode in MODES {
+        let finding = fixture.finding_in(mode.clone())?;
+        let text = format!("{finding:?}");
+        match &finding.class {
+            ExposureClass::Exposed => {}
+            ExposureClass::StaticUnknown => {
+                assert!(
+                    text.contains("`include!` at b/src/lib.rs:1"),
+                    "{label} in {mode:?} names the include: {finding:?}"
+                );
+                limited += 1;
+            }
+            other => return Err(format!("{label} in {mode:?}: {other:?} {text}")),
+        }
+    }
+    assert!(limited > 0, "{label}: some mode reads the include");
+    Ok(())
 }
 
 #[test]
@@ -623,9 +650,10 @@ const MEMBER_A_TESTED: &str = "[package]\nname = \"a\"\nversion = \"0.0.0\"\nedi
 const NAMELESS_MOUNT_BUILD: &str = "use std::path::PathBuf;\nfn main() {\n    let out = PathBuf::from(std::env::var(\"OUT_DIR\").unwrap());\n    let stem = \"shared\";\n    let file = PathBuf::from(std::env::var(\"CARGO_MANIFEST_DIR\").unwrap()).join(\"../a/src\").join(format!(\"{stem}.{}\", \"rs\"));\n    std::fs::write(out.join(\"plain.rs\"), format!(\"#[path = {:?}] pub mod {stem};\", file.display().to_string())).unwrap();\n}\n";
 
 #[test]
-fn a_brace_or_bracket_generated_include_keeps_credit_in_every_mode() -> Result<(), String> {
+fn a_brace_or_bracket_generated_include_is_the_same_doubt_in_every_mode() -> Result<(), String> {
     // #14962 review n1: `include!{..}` and `include![..]` are the same
-    // dynamic mount as `include!(..)`.
+    // dynamic mount as `include!(..)`, and (#16060) the same possible
+    // definition of the assertion macros.
     for include in [
         "include!(concat!(env!(\"OUT_DIR\"), \"/plain.rs\"));\n",
         "include!{concat!(env!(\"OUT_DIR\"), \"/plain.rs\")}\n",
@@ -639,7 +667,9 @@ fn a_brace_or_bracket_generated_include_keeps_credit_in_every_mode() -> Result<(
         ];
         let fixture = mounted_from_b(&b_files)?;
         let control = mounted_from_b_with(MEMBER_A_TESTED, &b_files)?;
-        assert_exposed_like_control_in_every_mode(&fixture, &control, include.trim())?;
+        // The tests-on control reads the same include doubt.
+        assert_include_doubt_in_every_mode(&control, include.trim())?;
+        assert_include_doubt_in_every_mode(&fixture, include.trim())?;
     }
     Ok(())
 }
@@ -1016,6 +1046,67 @@ fn bench_unit_tests_are_not_a_discriminator_unless_the_bench_is_tested() -> Resu
         1,
     )?;
     assert_credited_beyond_instant(&tested, "a `test = true` bench")
+}
+
+/// Cargo rejects a bare package nested in a workspace until it is admitted
+/// as a member. Check the same file, diff and API options in both layouts.
+#[test]
+fn bare_bench_requires_a_runnable_target() -> Result<(), String> {
+    let manifest = "[package]\nname = 'auto-targets'\nversion = '0.0.0'\nedition = '2021'\n";
+    let outer = TempCrate::create_in(
+        "[workspace]\nmembers = []\n",
+        &[
+            ("billing/Cargo.toml", manifest),
+            ("billing/src/lib.rs", OWNER),
+            ("billing/benches/load.rs", BENCH_TESTS),
+        ],
+        "src/lib.rs",
+        1,
+    )?;
+    let fixture = TempCrate {
+        root: outer.root.join("billing"),
+        changed_line: 2,
+    };
+    std::fs::rename(
+        outer.root.join("diff.patch"),
+        fixture.root.join("diff.patch"),
+    )
+    .map_err(|error| error.to_string())?;
+    assert_eq!(
+        fixture.finding_in(Mode::Fast)?.class,
+        ExposureClass::NoStaticPath
+    );
+    std::fs::write(
+        outer.root.join("Cargo.toml"),
+        "[workspace]\nmembers = ['billing']\n",
+    )
+    .map_err(|error| error.to_string())?;
+    assert_eq!(
+        fixture.finding_in(Mode::Fast)?.class,
+        ExposureClass::NoStaticPath
+    );
+    let tests = fixture.root.join("tests");
+    std::fs::create_dir(&tests).map_err(|error| error.to_string())?;
+    let sibling = tests.join("fee.rs");
+    std::fs::write(
+        &sibling,
+        BENCH_TESTS.replace("fn t()", "fn integration_pin()"),
+    )
+    .map_err(|error| error.to_string())?;
+    let finding = fixture.finding_in(Mode::Fast)?;
+    assert_eq!(finding.class, ExposureClass::Exposed);
+    assert_eq!(related_names(&finding), ["integration_pin"]);
+    std::fs::remove_file(sibling).map_err(|error| error.to_string())?;
+    std::fs::write(
+        fixture.root.join("Cargo.toml"),
+        format!("{manifest}\n[[bench]]\nname = 'load'\ntest = true\n"),
+    )
+    .map_err(|error| error.to_string())?;
+    assert_eq!(
+        fixture.finding_in(Mode::Fast)?.class,
+        ExposureClass::Exposed
+    );
+    Ok(())
 }
 
 #[test]

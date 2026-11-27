@@ -1,0 +1,19 @@
+# A body-local class that shadows the imported owner class withholds the
+# owner's relation; its unshadowed control keeps it (#14083 A1a).
+[[extend]]
+id = "RIPR-SPEC-0095"
+fixtures = [
+  "fixtures/typescript_body_local_class_shadow",
+  "fixtures/typescript_body_local_class_shadow_control",
+]
+outputs = [
+  "fixtures/typescript_body_local_class_shadow/expected/check.json",
+  "fixtures/typescript_body_local_class_shadow_control/expected/check.json",
+]
+
+[[extend]]
+id = "RIPR-SPEC-0108"
+fixtures = [
+  "fixtures/typescript_body_local_class_shadow",
+  "fixtures/typescript_body_local_class_shadow_control",
+]

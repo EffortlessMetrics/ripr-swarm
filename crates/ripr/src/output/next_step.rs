@@ -217,6 +217,7 @@ mod tests {
             id: "probe:src_discount.ts:typescript_preview:2396aec1".to_string(),
             canonical_gap: None,
             probe: Probe {
+                before_condition: None,
                 id: ProbeId("probe:src_discount.ts:typescript_preview:2396aec1".to_string()),
                 location: SourceLocation::new("src/discount.ts", 2, 1),
                 owner: Some(SymbolId(

@@ -82,6 +82,32 @@ fn find_related_tests_in<'context, 'index>(
         })
         .unwrap_or_default();
     candidates.retain(|test_index, _| !inaccessible_direct.contains(test_index));
+    // #14069 (#14179): a test whose every spelling of the owner's name is a
+    // bare call bound by a renaming import of another function, or only by
+    // standard-library globs, runs that other function. The finding-level
+    // relation demotes the same call to name-only, so the seam drops the
+    // direct row too. This runs after the visibility record above, so a
+    // test shown unable to reach a private owner stays refused below; the
+    // weaker matchers may still relate any other test. A test whose every
+    // mention of the name is bound by a local of its body (`let dt = |x|
+    // x + 1;`, #14552) is dropped the same way.
+    if owner.free_function
+        && let Some(function) = owner.function
+    {
+        candidates.retain(|test_index, _| {
+            context.tests.get(*test_index).is_none_or(|indexed| {
+                !crate::analysis::classify::test_calls_only_a_renamed_other_function(
+                    context.index,
+                    function,
+                    indexed.test,
+                ) && !crate::analysis::classify::test_calls_only_a_local_binding(
+                    context.index,
+                    function,
+                    indexed.test,
+                )
+            })
+        });
+    }
     if cancellation::checkpoint().is_err() {
         return Vec::new();
     }
@@ -396,6 +422,17 @@ pub(super) fn match_direct_owner_call(
     let Some(indices) = context.tests_by_call_name.get(&owner.name) else {
         return;
     };
+    // #15278: a direct call from a test in another package is credited when
+    // the owner is a free function, the only function of its name in the
+    // index, and the test's call settles on it through a crate name the
+    // test's package imports the owner's library by (`wscore::fee(..)`, or
+    // `fee(..)` under `use wscore::fee;`). A call spelled through another
+    // crate (`pricing::fee(..)`) or bound by an import from one does not
+    // settle on the owner and keeps the package guard, as does every weaker
+    // relation.
+    let cross_package_owner = owner
+        .function
+        .filter(|_| owner.free_function && owner.same_name_count == 1);
     for (position, test_index) in indices.iter().enumerate() {
         if position.is_multiple_of(32) && cancellation::checkpoint().is_err() {
             return;
@@ -449,10 +486,23 @@ pub(super) fn match_direct_owner_call(
         }) {
             continue;
         }
+        let test_prefix = match (prefix, cross_package_owner) {
+            (Some(guard), Some(function))
+                if !indexed.path_normalized.starts_with(guard)
+                    && crate::analysis::classify::test_call_settles_on_owner(
+                        context.index,
+                        function,
+                        indexed.test,
+                    ) =>
+            {
+                None
+            }
+            _ => prefix,
+        };
         insert_related_candidate(
             candidates,
             context,
-            prefix,
+            test_prefix,
             *test_index,
             RelationReason::DirectOwnerCall,
         );
@@ -882,20 +932,33 @@ pub(super) fn sort_related_tests_for_seam<'a>(
     // #12478: one reverse owner-reach walk for the whole related set. A
     // one-element slice per test rebuilt the walk (and its unbounded
     // OnceLock closure) on every related test of the seam.
-    let credited_views = ((refuse || claims_pin.is_some()) && !related.is_empty()).then(|| {
-        let related_pairs: Vec<_> = related
-            .iter()
-            .map(|&(indexed, reason)| (indexed.test, reason))
-            .collect();
-        super::credited_related_tests(
-            seam,
-            context,
-            owner_fn,
-            &related_pairs,
-            refuse,
-            claims_pin.as_ref(),
-        )
+    // #16188: an owner call only an untrusted inner macro holds is read
+    // through the credited view too, so the published row agrees.
+    let macro_held = owner_fn.is_some_and(|owner| {
+        let owner = super::macro_operand_owner_call::OwnerName::of(owner);
+        related.iter().any(|(indexed, _)| {
+            super::macro_operand_owner_call::test_has_macro_held_owner_call(
+                indexed.test,
+                &owner,
+                context.index,
+            )
+        })
     });
+    let credited_views = ((refuse || claims_pin.is_some() || macro_held) && !related.is_empty())
+        .then(|| {
+            let related_pairs: Vec<_> = related
+                .iter()
+                .map(|&(indexed, reason)| (indexed.test, reason))
+                .collect();
+            super::credited_related_tests(
+                seam,
+                context,
+                owner_fn,
+                &related_pairs,
+                refuse,
+                claims_pin.as_ref(),
+            )
+        });
     debug_assert!(
         credited_views
             .as_ref()

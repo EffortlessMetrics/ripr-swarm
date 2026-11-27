@@ -1,0 +1,2 @@
+crates/ripr/src/cli/commands/swarm/ingest.rs|canonicalize swarm ingest root {} failed: {err}
+crates/ripr/src/cli/commands/swarm/ingest.rs|read swarm ingest --result {} failed: {err}

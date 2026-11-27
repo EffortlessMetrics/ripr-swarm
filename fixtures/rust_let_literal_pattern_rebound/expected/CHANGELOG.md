@@ -156,12 +156,10 @@ Updated:
 ## Pending — rust_let_literal_pattern_rebound (13)
 
 Reason:
-RIPR-SPEC-0158 / RIPR-SPEC-0197: retain fixture classifications while refreshing composed producer guidance and assertion-local sink identity; owner-call proximity alone does not establish discriminator credit
+RIPR-SPEC-0186: the repair explanation identifies the missing exact boundary assertion when the fixture has no paired oracle (#15664).
 
 Command:
 `cargo xtask goldens bless rust_let_literal_pattern_rebound --reason "..."`
 
 Updated:
-- `expected/check.json`
 - `expected/human.txt`
-- `expected/human-full.txt`

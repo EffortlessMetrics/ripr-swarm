@@ -358,3 +358,27 @@ Command:
 
 Updated:
 - `expected/human-full.txt`
+
+## Pending — collection_argument_raw_imported_vec (28)
+
+Reason:
+RIPR-SPEC-0259: #13037 amendment, a weak finding whose related test already asserts an exact value names the unestablished link instead of the strengthen template; static class unchanged
+
+Command:
+`cargo xtask goldens bless collection_argument_raw_imported_vec --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
+
+## Pending — collection_argument_raw_imported_vec (29)
+
+Reason:
+RIPR-SPEC-0122: #15313 Summary names shared candidate lines and says No test gap when State reads no test gap found
+
+Command:
+`cargo xtask goldens bless collection_argument_raw_imported_vec --reason "..."`
+
+Updated:
+- `expected/human.txt`

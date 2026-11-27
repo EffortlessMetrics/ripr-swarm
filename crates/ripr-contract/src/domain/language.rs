@@ -60,10 +60,16 @@ pub fn pytest_verify_interpreter(command: &str) -> Option<&'static str> {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum LanguageId {
+    /// Rust, the reference language.
     Rust,
+    /// TypeScript, analyzed by the TypeScript-family adapter.
     TypeScript,
+    /// JavaScript, analyzed by the TypeScript-family adapter and labeled
+    /// separately in output.
     JavaScript,
+    /// Python, a preview adapter.
     Python,
+    /// Perl, a preview adapter.
     Perl,
 }
 
@@ -121,6 +127,12 @@ impl LanguageId {
         }
     }
 
+    /// Whether this crate's `lang-*` Cargo feature for this language is
+    /// enabled; JavaScript shares `lang-typescript`. `ripr` forwards its
+    /// adapter features here, so inside `ripr` this matches whether the adapter
+    /// is compiled. In a standalone `ripr-contract` build the features are
+    /// markers only: its defaults enable Rust, TypeScript and Python without
+    /// any adapter.
     pub fn is_available(self) -> bool {
         match self {
             LanguageId::Rust => cfg!(feature = "lang-rust"),
@@ -131,6 +143,7 @@ impl LanguageId {
         }
     }
 
+    /// The Cargo feature that compiles this language's adapter.
     pub fn required_feature(self) -> &'static str {
         match self {
             LanguageId::Rust => "lang-rust",
@@ -342,7 +355,9 @@ pub fn format_languages_enabled_toml(languages: &[&str]) -> String {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum LanguageStatus {
+    /// The reference implementation. Only Rust uses it.
     Stable,
+    /// A preview adapter.
     Preview,
 }
 
@@ -365,11 +380,26 @@ impl LanguageStatus {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum OwnerKind {
+    /// A free function declaration. The TypeScript adapter also uses it for a
+    /// function expression bound to a name.
     Function,
+    /// A method on a class. In Python, a function defined in a class body with
+    /// no decorator whose name ends in `classmethod` or `staticmethod`.
     Method,
+    /// A class-level method in the adapter's syntactic classification: a
+    /// `static` method in TypeScript, or, in Python, a method with a decorator
+    /// whose name ends in `classmethod` or `staticmethod`.
     ClassMethod,
+    /// An arrow function owner, named by its binding or, for an anonymous
+    /// default export, by the synthetic name `default`.
     ArrowFunction,
+    /// A function or arrow function in a `.tsx` or `.jsx` file whose name
+    /// starts with an uppercase letter and whose body looks like it returns
+    /// JSX.
     Component,
+    /// A module-level TypeScript binding whose initializer is not a function
+    /// or arrow function expression, such as a `const` value or a call result.
+    /// Despite the name, the bound value is not known to be a function.
     ModuleFunction,
 }
 
@@ -396,14 +426,37 @@ impl OwnerKind {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum StaticLimitKind {
+    /// A call goes through a dynamic shape, such as `getattr(...)` or a
+    /// registry lookup, so syntax alone cannot resolve which behavior runs.
     DynamicDispatch,
+    /// Metaprogramming, such as runtime-created behavior, that the adapter does
+    /// not infer.
     Metaprogramming,
+    /// A cross-module relationship, such as a dynamic import or a call into an
+    /// imported module, cannot be resolved because the adapter does not build
+    /// an import graph.
     MissingImportGraph,
+    /// A decorator, route registration or framework wrapper stands between the
+    /// tests and the changed code, a changed registration is not observed by
+    /// any related test, or such a wrapper controls whether a related test
+    /// runs, so reach, observation or activation could not be established. It
+    /// does not show that the changed code was reached.
     DecoratorIndirection,
+    /// A related test mocks, reloads, rebinds or substitutes a module or
+    /// fixture, so which object the test reads is not resolved. The mocked
+    /// target need not be the changed code's module.
     MockedModule,
+    /// A helper call whose body is not analyzed, such as a custom assertion
+    /// helper, so what it checks is unknown.
     OpaqueCustomAssertionHelper,
+    /// A related test is property-based, so its inputs come from a generator.
     PropertyBasedTest,
+    /// A related pytest test takes values from a fixture, and static analysis
+    /// cannot tell what the fixture supplies.
     UnresolvedPytestFixture,
+    /// The changed code or a related test's oracle uses a shape the adapter
+    /// does not model, such as a Python `approx` tolerance band or a `caplog`
+    /// read, or the source could not be parsed.
     UnsupportedSyntax,
     /// The changed Rust seam owner is FFI/binding-exposed; whether an
     /// external-language (e.g. TypeScript) test oracle discriminates this

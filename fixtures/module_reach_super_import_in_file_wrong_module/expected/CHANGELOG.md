@@ -195,7 +195,7 @@ Updated:
 ## Pending — module_reach_super_import_in_file_wrong_module (16)
 
 Reason:
-RIPR-SPEC-0159 / RIPR-SPEC-0197: retain fixture classifications while refreshing composed producer guidance and assertion-local sink identity; owner-call proximity alone does not establish discriminator credit
+RIPR-SPEC-0115: plain-words next step drops the internal analyzer route name (#15309)
 
 Command:
 `cargo xtask goldens bless module_reach_super_import_in_file_wrong_module --reason "..."`
@@ -208,25 +208,21 @@ Updated:
 ## Pending — module_reach_super_import_in_file_wrong_module (17)
 
 Reason:
-RIPR-SPEC-0159 The test calls the sibling module entry. Neither the predicate nor its returned comparison has a resolved owner argument.
-RIPR-SPEC-0115: plain-words next step drops the internal analyzer route name (#15309)
+RIPR-SPEC-0122: the Summary names findings whose reach is a test link ripr could not confirm (#15295)
 
 Command:
 `cargo xtask goldens bless module_reach_super_import_in_file_wrong_module --reason "..."`
 
 Updated:
-- `expected/check.json`
 - `expected/human.txt`
-- `expected/human-full.txt`
 
 ## Pending — module_reach_super_import_in_file_wrong_module (18)
 
 Reason:
-RIPR-SPEC-0159: history-sync composition; main's limit wording composed with the import line's routing text; class unchanged
+RIPR-SPEC-0122: #15313 Summary names shared candidate lines and says No test gap when State reads no test gap found
 
 Command:
 `cargo xtask goldens bless module_reach_super_import_in_file_wrong_module --reason "..."`
 
 Updated:
 - `expected/human.txt`
-- `expected/human-full.txt`

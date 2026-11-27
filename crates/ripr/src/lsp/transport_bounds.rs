@@ -1126,6 +1126,86 @@ mod tests {
         Ok(())
     }
 
+    /// #16091: once the session ends, a server-to-client request the client
+    /// never answered must not hold the process for the request bound. The
+    /// bound here is two minutes and the session must be over in ten
+    /// seconds, for `shutdown` + `exit` and for a closed input alike. The
+    /// bounded request releases on the session end, not on its own expiry.
+    #[tokio::test]
+    async fn session_end_releases_an_unanswered_client_request_before_its_bound()
+    -> Result<(), String> {
+        async fn run(end_with_exit: bool) -> Result<super::super::SessionEnding, String> {
+            let (client_io, server_io) = tokio::io::duplex(64 * 1024);
+            let (server_read, server_write) = tokio::io::split(server_io);
+            let (mut client_read, mut client_write) = tokio::io::split(client_io);
+            let root = std::env::temp_dir();
+            let initialize = initialize_pull_mode_frame(&root)?;
+            let bounds = TransportBounds {
+                client_request_timeout: Duration::from_mins(2),
+                ..e2e_bounds()
+            };
+            let server = tokio::spawn(async move {
+                super::super::serve_streams(server_read, server_write, root, &bounds, None).await
+            });
+            client_write
+                .write_all(&initialize)
+                .await
+                .map_err(|err| format!("writing initialize: {err}"))?;
+            read_frame_containing(
+                &mut client_read,
+                "\"capabilities\"",
+                "the initialize result",
+            )
+            .await?;
+            client_write
+                .write_all(&frame(
+                    r#"{"jsonrpc":"2.0","method":"initialized","params":{}}"#,
+                ))
+                .await
+                .map_err(|err| format!("writing initialized: {err}"))?;
+            // The first server-to-client request goes out and is never
+            // answered; the `initialized` handler is parked on it.
+            read_frame_containing(
+                &mut client_read,
+                "client/registerCapability",
+                "the registerCapability request",
+            )
+            .await?;
+            if end_with_exit {
+                let mut exit = frame(r#"{"jsonrpc":"2.0","id":2,"method":"shutdown"}"#);
+                exit.extend_from_slice(&frame(r#"{"jsonrpc":"2.0","method":"exit"}"#));
+                client_write
+                    .write_all(&exit)
+                    .await
+                    .map_err(|err| format!("writing shutdown and exit: {err}"))?;
+            } else {
+                client_write
+                    .shutdown()
+                    .await
+                    .map_err(|err| format!("closing input: {err}"))?;
+            }
+            // Keep reading so egress never stalls the server.
+            let drain = tokio::spawn(async move {
+                let mut sink = Vec::new();
+                let _ = client_read.read_to_end(&mut sink).await;
+            });
+            let outcome = tokio::time::timeout(Duration::from_secs(10), server)
+                .await
+                .map_err(|_elapsed| {
+                    "server lingered: an ended session must not wait out an unanswered server-to-client request (#16091)"
+                        .to_string()
+                })?
+                .map_err(|err| format!("server task failed: {err}"))?;
+            drop(client_write);
+            drain.await.map_err(|err| format!("drain failed: {err}"))?;
+            outcome
+        }
+
+        assert_eq!(run(true).await?, super::super::SessionEnding::Exit);
+        assert_eq!(run(false).await?, super::super::SessionEnding::InputClosed);
+        Ok(())
+    }
+
     /// #14219: a framed body the codec refuses ends the session with input
     /// still open, and only that ending carries a stderr notice; a closed
     /// input and an `exit` stay silent.

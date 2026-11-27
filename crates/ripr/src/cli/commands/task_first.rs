@@ -610,9 +610,14 @@ fn run_facade_repair(mut options: RepairFacadeOptions) -> Result<(), CommandErro
     // `cli_refusal` document, so it must leave stdout empty — a refusal
     // preceded by a success document would hand an orchestrator
     // success-shaped output on a retry that already started (#7032).
-    let (attempt_id, before_stdout) = crate::cli::drive_before_phase_deferring_stdout(
-        facade_before_options(&options.root, &seam_id, options.json, options.quiet),
-    )?;
+    let (attempt_id, before_stdout) =
+        crate::cli::drive_before_phase_deferring_stdout(facade_before_options(
+            &options.root,
+            &seam_id,
+            options.base.as_deref(),
+            options.json,
+            options.quiet,
+        ))?;
     // `--json` (#11584): the packet envelope with `repair_attempt` is the
     // whole document; the human card is not appended to it.
     if options.json {
@@ -755,6 +760,7 @@ fn resume_awaiting_attempt(
 fn facade_before_options(
     root: &std::path::Path,
     seam_id: &str,
+    base: Option<&str>,
     json: bool,
     quiet: bool,
 ) -> AgentRepairOptions {
@@ -763,7 +769,7 @@ fn facade_before_options(
         root_explicit: true,
         seam_id: Some(seam_id.to_string()),
         gap_id: None,
-        base: None,
+        base: base.map(str::to_owned),
         attempt_id: None,
         phase: AgentRepairPhase::Before,
         python_repair_trust: None,
@@ -1165,8 +1171,15 @@ fn no_eligible_seam_message(
     };
     // #11883: the next step leads on its own sentence and the reasons follow
     // as one bullet each, instead of one unwrapped line with the command last.
+    // #15615: an open change may sit beside repairable spots outside it, so
+    // its lead scopes "none is ready" to the changed lines.
+    let scope = if change == NoEligibleChange::OpenOnChange {
+        " on your changed lines"
+    } else {
+        ""
+    };
     let mut message = format!(
-        "ripr looked at {total_seams} {noun} in the code under {root}; none is ready for an automatic repair. {next}"
+        "ripr looked at {total_seams} {noun} in the code under {root}; none is ready for an automatic repair{scope}. {next}"
     );
     if !reasons.is_empty() {
         message.push_str("\nWhy:");
@@ -1177,10 +1190,18 @@ fn no_eligible_seam_message(
         // was rendered, disclose the remainder instead of letting three
         // read as the whole story.
         if reasons_total > reasons.len() {
-            message.push_str(&format!(
-                "\n  (and {} more; run `ripr pilot --root {root}` for per-seam detail)",
-                reasons_total - reasons.len()
-            ));
+            let more = reasons_total - reasons.len();
+            // #15615: the rows past the cap are spots on the change, which
+            // the same-base check shows; pilot tours the whole repository.
+            if change == NoEligibleChange::OpenOnChange {
+                message.push_str(&format!(
+                    "\n  (and {more} more on your changed lines; `{check}` shows the change's findings)"
+                ));
+            } else {
+                message.push_str(&format!(
+                    "\n  (and {more} more; run `ripr pilot --root {root}` for per-seam detail)"
+                ));
+            }
         }
     }
     message
@@ -1453,6 +1474,28 @@ mod tests {
             return Err(format!(
                 "complete list must not claim a remainder: {complete}"
             ));
+        }
+        // #15615: an open change's remainder is more changed spots, which the
+        // same-base check shows; the lead scopes "none is ready" to the change.
+        let open = no_eligible_seam_message(
+            Path::new("."),
+            Some("main"),
+            crate::app::task_first::NoEligibleChange::OpenOnChange,
+            9,
+            &reasons,
+            5,
+        );
+        for expected in [
+            "none is ready for an automatic repair on your changed lines.",
+            "(and 2 more on your changed lines; `ripr check --root ",
+            " --base main` shows the change's findings)",
+        ] {
+            if !open.contains(expected) {
+                return Err(format!("open change must carry {expected:?}: {open}"));
+            }
+        }
+        if open.contains("ripr pilot") {
+            return Err(format!("open change remainder must not tour: {open}"));
         }
         Ok(())
     }
@@ -2077,7 +2120,7 @@ mod tests {
         // The start holds its document: it comes back as a value, so
         // nothing reaches stdout before the card has rendered.
         let (attempt_id, before_stdout) = crate::cli::drive_before_phase_deferring_stdout(
-            facade_before_options(&root, FIXTURE_SEAM, false, false),
+            facade_before_options(&root, FIXTURE_SEAM, None, false, false),
         )
         .map_err(|error| error.to_string())?;
         if before_stdout.trim().is_empty() {

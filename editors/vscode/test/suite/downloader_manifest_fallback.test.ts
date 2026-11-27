@@ -12,6 +12,7 @@ import {
   ManifestPlacementRequest,
   downloadServer,
   cachedServerInstallation,
+  listZipCentralDirectoryEntries,
   manifestPlacementPlan,
   placementArchiveUrl,
   resolveServerManifestPlacement
@@ -206,15 +207,29 @@ function sha256Bytes(bytes: Buffer): string {
   return crypto.createHash('sha256').update(bytes).digest('hex');
 }
 
-function run(command: string, args: string[]): Promise<void> {
+function quotePowerShell(value: string): string {
+  return `'${value.replace(/'/g, "''")}'`;
+}
+
+function run(command: string, args: string[]): Promise<{ readonly stdout: string; readonly stderr: string }> {
   return new Promise((resolve, reject) => {
-    const child = require('child_process').spawn(command, args, { shell: false, stdio: 'ignore' });
+    const child = require('child_process').spawn(command, args, {
+      shell: false,
+      stdio: ['ignore', 'pipe', 'pipe']
+    });
+    const stdoutChunks: Buffer[] = [];
+    const stderrChunks: Buffer[] = [];
+    child.stdout?.on('data', (chunk: Buffer) => stdoutChunks.push(chunk));
+    child.stderr?.on('data', (chunk: Buffer) => stderrChunks.push(chunk));
     child.once('error', reject);
-    child.once('exit', (code: number | null) => {
+    child.once('close', (code: number | null) => {
+      const stdout = Buffer.concat(stdoutChunks).toString('utf8');
+      const stderr = Buffer.concat(stderrChunks).toString('utf8');
       if (code === 0) {
-        resolve();
+        resolve({ stdout, stderr });
       } else {
-        reject(new Error(`${command} exited with code ${code}`));
+        const detail = [stderr.trim(), stdout.trim()].filter((text) => text.length > 0).join(' | ');
+        reject(new Error(`${command} exited with code ${code}${detail ? `: ${detail}` : ''}`));
       }
     });
   });
@@ -236,12 +251,36 @@ async function buildFixtureArchive(workRoot: string): Promise<{ readonly bytes: 
       '-NoProfile',
       '-NonInteractive',
       '-Command',
-      `Compress-Archive -Path '${staging}\\*' -DestinationPath '${archivePath}' -Force`
+      `Compress-Archive -Path ${quotePowerShell(`${staging}\\*`)} -DestinationPath ${quotePowerShell(archivePath)} -Force`
     ]);
   } else {
     await run('tar', ['-czf', archivePath, '-C', staging, executableName]);
   }
   const bytes = await fs.promises.readFile(archivePath);
+  if (isWindows) {
+    // Prove the fixture before the download claims: the archive lists exactly
+    // the probe payload, and the extractor command the downloader uses yields
+    // it. A fixture or host-tool fault then fails here, with the observed
+    // members, instead of as the downloader's missing-executable refusal
+    // (Windows packaged run 45006905751).
+    const members = listZipCentralDirectoryEntries(bytes).map((entry) => entry.name);
+    assert.deepStrictEqual(members, [executableName], `fixture archive members: ${JSON.stringify(members)}`);
+    const trial = path.join(workRoot, 'extract-trial');
+    await fs.promises.mkdir(trial);
+    const expandOutput = await run('powershell.exe', [
+      '-NoProfile',
+      '-ExecutionPolicy',
+      'Bypass',
+      '-Command',
+      `Expand-Archive -LiteralPath ${quotePowerShell(archivePath)} -DestinationPath ${quotePowerShell(trial)} -Force`
+    ]);
+    const extracted = await fs.promises.readdir(trial, { recursive: true });
+    assert.deepStrictEqual(
+      extracted,
+      [executableName],
+      `fixture archive extracted to: ${JSON.stringify(extracted)} (stdout: ${JSON.stringify(expandOutput.stdout.trim())}, stderr: ${JSON.stringify(expandOutput.stderr.trim())})`
+    );
+  }
   return { bytes, sha256: sha256Bytes(bytes) };
 }
 

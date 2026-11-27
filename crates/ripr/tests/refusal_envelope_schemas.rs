@@ -88,7 +88,9 @@ fn empty_root_refusals_preserve_the_supplied_string() -> Result<(), String> {
         (
             DIFF_REFUSAL_SCHEMA,
             &["diff", "--json", "--base", "ripr-unresolved-ref"],
-            "analysis_failed",
+            // The empty root is refused before the base is resolved, so the
+            // typed identity is the root refusal, not the base failure.
+            "repository_root_unusable",
         ),
         (
             RERUN_REFUSAL_SCHEMA,
@@ -241,8 +243,20 @@ fn conforms(document: &Value, schema: &Value) -> Result<(), String> {
     published_schema::check(document, schema, schema, "refusal")
 }
 
+/// The repair route each identity this file exercises must name. The schemas
+/// accept any nonempty route, so the route is pinned here (RIPR-SPEC-0241).
+fn expected_repair_route(identity: &str) -> Result<&'static str, String> {
+    match identity {
+        "repository_root_unusable" => Ok("analysis/repository-root"),
+        "config_invalid" => Ok("analysis/config-load"),
+        "check_artifact_unusable" => Ok("analysis/check-artifact"),
+        "seam_id_unknown" => Ok("analysis/seam-inventory"),
+        other => Err(format!("no pinned repair route for the {other} identity")),
+    }
+}
+
 /// Validate each labelled refusal against `path` and require the identity it
-/// was produced for.
+/// was produced for and that identity's repair route.
 fn check_refusals(path: &str, refusals: &[(&str, Value)]) -> Result<(), String> {
     let schema = published_schema::read(path)?;
     for (identity, refusal) in refusals {
@@ -251,6 +265,13 @@ fn check_refusals(path: &str, refusals: &[(&str, Value)]) -> Result<(), String> 
             return Err(format!(
                 "{path}: expected a {identity} refusal, got {}",
                 refusal["analysis_scope"]["run_status"]
+            ));
+        }
+        let route = expected_repair_route(identity)?;
+        if refusal["analysis_scope"]["repair_route"] != route {
+            return Err(format!(
+                "{path}: expected the {identity} refusal to route to {route}, got {}",
+                refusal["analysis_scope"]["repair_route"]
             ));
         }
     }
@@ -299,13 +320,18 @@ fn refusal_schemas_differ_from_the_diff_refusal_schema_only_where_stated() -> Re
         expected["properties"]["schema_version"]["const"] = json!(derived.version);
         expected["properties"]["analysis_scope"]["properties"]["scope"]["const"] =
             json!(derived.scope);
-        // The context parser accepts an explicitly empty root. A missing
-        // artifact still produces a typed refusal echoing that exact spelling.
+        // The context parser accepts an explicitly empty root, and the root
+        // refusal echoes that exact spelling.
         if derived.path == CONTEXT_REFUSAL_SCHEMA {
             expected["properties"]["root"] = json!({"type": "string"});
             // A context refusal cannot carry positive optional summary counts.
             for &counter in OPTIONAL_SUMMARY_COUNTS {
                 expected["properties"]["summary"]["properties"][counter] = json!({"const": 0});
+            }
+            // Context always echoes its effective mode, so the schema
+            // requires it.
+            if let Some(required) = expected["required"].as_array_mut() {
+                required.push(json!("mode"));
             }
         }
         if let Some(properties) = expected["properties"].as_object_mut() {
@@ -364,6 +390,20 @@ fn context_json_refusals_conform_to_the_published_schema() -> Result<(), String>
         write(&root, "ripr.toml", "[analysis]\nmode = \"deep\"\n")?;
         let schema = published_schema::read(CONTEXT_REFUSAL_SCHEMA)?;
         for format in ["json", "json-compact"] {
+            let check_root_repair_route = |document: &Value, case: &str| {
+                for location in [
+                    "/analysis_scope/repair_route",
+                    "/run_limitations/0/repair_route",
+                ] {
+                    let actual = document.pointer(location).and_then(Value::as_str);
+                    if actual != Some("analysis/repository-root") {
+                        return Err(format!(
+                            "{format} {case}: expected analysis/repository-root at {location}, got {actual:?}"
+                        ));
+                    }
+                }
+                Ok(())
+            };
             let args = [
                 "context",
                 "--at",
@@ -375,9 +415,12 @@ fn context_json_refusals_conform_to_the_published_schema() -> Result<(), String>
                 "--format",
                 format,
             ];
-            let refusals = root_and_config_refusals("context", "analysis_failed", &args)?;
+            let refusals = root_and_config_refusals("context", "repository_root_unusable", &args)?;
             check_refusals(CONTEXT_REFUSAL_SCHEMA, &refusals)?;
             for (identity, document) in &refusals {
+                if *identity == "repository_root_unusable" {
+                    check_root_repair_route(document, "missing root")?;
+                }
                 if document.get("mode").and_then(Value::as_str) != Some("ready")
                     || document.get("base").and_then(Value::as_str) != Some("main")
                 {
@@ -422,10 +465,21 @@ fn context_json_refusals_conform_to_the_published_schema() -> Result<(), String>
                     "{format} refused to echo the explicitly empty root"
                 ));
             }
+            check_root_repair_route(&empty_root, "empty root")?;
+            // An empty root is the shared root refusal, as for check, diff,
+            // rerun and the agent commands; it is refused before the
+            // artifact is read.
             check_refusals(
                 CONTEXT_REFUSAL_SCHEMA,
-                &[("check_artifact_unusable", empty_root)],
+                &[("repository_root_unusable", empty_root)],
             )?;
+            let mut modeless = document.clone();
+            if let Some(object) = modeless.as_object_mut() {
+                object.remove("mode");
+            }
+            if conforms(&modeless, &schema).is_ok() {
+                return Err(format!("{format} schema accepted a refusal with no mode"));
+            }
             check_refusals(
                 CONTEXT_REFUSAL_SCHEMA,
                 &[("check_artifact_unusable", document)],
@@ -433,7 +487,10 @@ fn context_json_refusals_conform_to_the_published_schema() -> Result<(), String>
         }
         Ok(())
     })();
-    let _ = std::fs::remove_dir_all(&root);
+    // A failed run keeps the fixture for inspection.
+    if captured.is_ok() {
+        let _ = std::fs::remove_dir_all(&root);
+    }
     captured
 }
 

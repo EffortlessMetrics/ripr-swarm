@@ -320,23 +320,10 @@ Updated:
 ## Pending — rust_array_sibling_exit_field (24)
 
 Reason:
-RIPR-SPEC-0225 / RIPR-SPEC-0197: retain fixture classifications while refreshing composed producer guidance and assertion-local sink identity; owner-call proximity alone does not establish discriminator credit
+RIPR-SPEC-0122: #15313 Summary names shared candidate lines and says No test gap when State reads no test gap found
 
 Command:
 `cargo xtask goldens bless rust_array_sibling_exit_field --reason "..."`
 
 Updated:
-- `expected/check.json`
 - `expected/human.txt`
-- `expected/human-full.txt`
-
-## Pending — rust_array_sibling_exit_field (25)
-
-Reason:
-RIPR-SPEC-0225 For rust_array_sibling_exit_field, admit the discriminator only with assertion evidence linked to the changed result.
-
-Command:
-`cargo xtask goldens bless rust_array_sibling_exit_field --reason "..."`
-
-Updated:
-- `expected/check.json`

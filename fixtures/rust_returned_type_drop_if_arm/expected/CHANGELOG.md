@@ -261,11 +261,10 @@ Updated:
 ## Pending — rust_returned_type_drop_if_arm (21)
 
 Reason:
-RIPR-SPEC-0197 For rust_returned_type_drop_if_arm, admit the discriminator only with assertion evidence linked to the changed result.
+RIPR-SPEC-0122: #15313 Summary names shared candidate lines and says No test gap when State reads no test gap found
 
 Command:
 `cargo xtask goldens bless rust_returned_type_drop_if_arm --reason "..."`
 
 Updated:
-- `expected/check.json`
-- `expected/human-full.txt`
+- `expected/human.txt`

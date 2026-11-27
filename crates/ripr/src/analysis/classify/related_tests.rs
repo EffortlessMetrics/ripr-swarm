@@ -42,6 +42,8 @@ mod operator_dispatch;
 mod parse_dispatch;
 mod path_arg;
 mod std_receiver;
+mod std_trait_rival;
+mod trait_receiver;
 pub(in crate::analysis) use operator_dispatch::assertion_observes_named_add_result;
 pub(in crate::analysis::classify) use operator_dispatch::stringified_ranges;
 
@@ -436,8 +438,8 @@ impl RelatedTestCandidateIndex {
     }
 
     /// #15104: record a module declaration reading of every index file that
-    /// may declare a module, for a run without a diff (a repo scan): no
-    /// declaration changed.
+    /// may declare a module or hold a gate outside one (#14952), for a run
+    /// without a diff (a repo scan): no declaration changed.
     pub(in crate::analysis) fn with_unchanged_module_declarations(
         self,
         index: &crate::analysis::rust_index::RustIndex,
@@ -449,6 +451,9 @@ impl RelatedTestCandidateIndex {
                 .filter(|(_, facts)| {
                     !facts.module_declarations.is_empty()
                         || crate::analysis::diff::may_declare_module(&facts.source)
+                        || crate::analysis::diff::ModuleDeclarations::may_hold_outside_gate(
+                            &facts.source,
+                        )
                 })
                 .map(|(path, facts)| (path.as_path(), facts.data().source.as_ref())),
             std::iter::empty(),
@@ -1371,8 +1376,23 @@ fn find_related_tests_with_candidates<'a>(
             &full_scan_pin_syntax
         }
     };
+    // #15932: read once per owner; each test only adds its own crate.
+    let owner_is_crate_private = std::cell::OnceCell::new();
     for test_index in candidate_indices {
         let test = index.test_at(test_index);
+        // #15932: an integration test cannot name a function its crate does
+        // not export, so neither a call of that name (it runs another
+        // function) nor a test named after it is a relation to this owner.
+        // The namesake call counts as no call at all: every other route (a
+        // public entry on the helper chain, a method entry, an equality or
+        // formatting dispatch) relates the test exactly as it would without
+        // that call.
+        let owner_is_out_of_reach = owner_fn.is_some_and(|owner| {
+            super::call_identity::is_plain_integration_test(index, test)
+                && *owner_is_crate_private.get_or_init(|| {
+                    super::call_identity::owner_is_private_to_its_crate(index, owner)
+                })
+        });
         // Registration proves the callback, not its owner. Match the repo
         // path before any relation can lend evidence, and keep a later
         // policy-modified fact from falling through as an ordinary test.
@@ -1435,7 +1455,7 @@ fn find_related_tests_with_candidates<'a>(
         {
             continue;
         }
-        let calls_owner = calls_owner_by_name || dispatches_to_fmt;
+        let calls_owner = (calls_owner_by_name && !owner_is_out_of_reach) || dispatches_to_fmt;
         // #8999: `assert_eq!(a, b)` over two values of the owner's type runs
         // the owner's `PartialEq::eq` with no call fact naming it. A distinct
         // signal from `calls_owner`: it bypasses none of the cross-package
@@ -1690,7 +1710,9 @@ fn find_related_tests_with_candidates<'a>(
         // `config` can occur in unrelated test paths (for example
         // `reconfigure.rs`).
         let file_path_token_matches = test_path_names_probe_stem(&test.file, &file_name);
-        let owner_name_in_test = !owner_name_lc.is_empty() && test_name.contains(&owner_name_lc);
+        let owner_name_in_test = !owner_name_lc.is_empty()
+            && test_name.contains(&owner_name_lc)
+            && !owner_is_out_of_reach;
         let token_in_test_name = test_name_words
             .iter()
             .any(|word| test_name_has_word(&test_name, word));
@@ -1893,6 +1915,7 @@ fn find_related_tests_with_candidates<'a>(
                 test_source,
                 index,
                 dispatches_to_fmt,
+                workspace_complete,
             );
             // A name-only call (an unrelated same-named method) never hides
             // the formatting reach of a helper-entry `fmt` (#8999).
@@ -7828,9 +7851,22 @@ fn visible_receiver_binding_names_type(
     for ancestor in call.ancestors().skip(1) {
         // These patterns may bind the receiver. This small admission does not
         // infer their types, and never borrows an outer same-spelled binding.
-        if ast::ClosureExpr::can_cast(ancestor.kind())
-            || ast::ForExpr::can_cast(ancestor.kind())
-            || ast::MatchArm::can_cast(ancestor.kind())
+        if ast::ClosureExpr::can_cast(ancestor.kind()) || ast::MatchArm::can_cast(ancestor.kind()) {
+            return false;
+        }
+        // #6485: a `for` loop binds only its own pattern. When that pattern
+        // does not spell the receiver, the receiver is the binding visible
+        // around the loop (`let mut stats = ..; for _ in 0..n {
+        // stats.record() }`), so the walk continues outward. A pattern that
+        // does spell it may bind any type and still refuses, and so does a
+        // pattern holding a macro (`for bind!(stats) in ..`), whose expansion
+        // may bind any name.
+        if let Some(for_loop) = ast::ForExpr::cast(ancestor.clone())
+            && for_loop.pat().is_none_or(|pattern| {
+                pattern.syntax().descendants().any(|node| {
+                    ast::MacroPat::can_cast(node.kind()) || ast::MacroCall::can_cast(node.kind())
+                }) || ident_pat_binds_name(Some(pattern), name)
+            })
         {
             return false;
         }
@@ -8162,6 +8198,7 @@ pub(in crate::analysis) fn inherent_owner_call_resolves(
                 .map(|facts| facts.data().source.as_ref()),
             index,
             false,
+            false,
         ) == RelationReason::DirectOwnerCall
 }
 
@@ -8227,7 +8264,9 @@ pub(in crate::analysis::classify) fn assertion_inherent_owner_calls_resolve(
 /// resolved receiver, no test-module type or trait shadow, no rename). The
 /// caller must already be known to call `owner` by name; this only refuses.
 /// Same-name workspace functions are read from a full scan, so ambiguity
-/// refuses exactly as it does for the check-side relation.
+/// refuses exactly as it does for the check-side relation. The index is read
+/// as complete: this only refuses after the check-side relation, which
+/// applied the index-completeness gate, already related the caller.
 pub(in crate::analysis) fn owner_call_is_direct(
     caller: &TestSummary,
     owner: &FunctionSummary,
@@ -8250,6 +8289,7 @@ pub(in crate::analysis) fn owner_call_is_direct(
             .map(|facts| facts.data().source.as_ref()),
         index,
         false,
+        true,
     ) == RelationReason::DirectOwnerCall
 }
 
@@ -8276,6 +8316,7 @@ pub(in crate::analysis) fn inherent_owner_call_resolves_if_macros_trusted(
             index,
             false,
             trust,
+            false,
         )
     };
     requires_inherent_receiver_identity(owner)
@@ -8312,6 +8353,7 @@ pub(in crate::analysis) fn inherent_owner_call_resolves_inside_unreadable_macro(
             index,
             false,
             trust,
+            false,
         )
     };
     requires_inherent_receiver_identity(owner)
@@ -8350,6 +8392,7 @@ pub(in crate::analysis) fn inherent_owner_call_resolves_in_forwarded_body(
             .get(&caller.file)
             .map(|facts| facts.data().source.as_ref()),
         index,
+        false,
         false,
         false,
     ) == RelationReason::DirectOwnerCall
@@ -8659,6 +8702,10 @@ fn trait_declaration_owner_shadowed(
     }) || super::owner_pin::parent_chain_shadows_trait(test, trait_name, owner_scope, index)
 }
 
+#[allow(
+    clippy::too_many_arguments,
+    reason = "the relation reason carries the index-completeness input beside the existing ones without a parameter struct"
+)]
 fn owner_call_relation_reason(
     test: &TestSummary,
     owner_fn: Option<&FunctionSummary>,
@@ -8667,6 +8714,7 @@ fn owner_call_relation_reason(
     test_source: Option<&str>,
     index: &RustIndex,
     fmt_dispatch_resolved: bool,
+    workspace_complete: bool,
 ) -> RelationReason {
     owner_call_relation_reason_gated(
         test,
@@ -8677,12 +8725,13 @@ fn owner_call_relation_reason(
         index,
         fmt_dispatch_resolved,
         false,
+        workspace_complete,
     )
 }
 
 #[allow(
     clippy::too_many_arguments,
-    reason = "the gated form adds one input to the existing relation reason without a parameter struct"
+    reason = "the gated form adds two inputs to the existing relation reason without a parameter struct"
 )]
 fn owner_call_relation_reason_gated(
     test: &TestSummary,
@@ -8693,6 +8742,7 @@ fn owner_call_relation_reason_gated(
     index: &RustIndex,
     fmt_dispatch_resolved: bool,
     trust_unplaced_standard_root: bool,
+    workspace_complete: bool,
 ) -> RelationReason {
     let indexed_same_name_count = same_name_ids.len();
     let Some(owner) = owner_fn else {
@@ -8765,6 +8815,12 @@ fn owner_call_relation_reason_gated(
         if super::call_identity::test_calls_only_a_renamed_other_function(index, owner, test) {
             return RelationReason::WeakTokenSubstring;
         }
+        // #14552: a test whose every mention of the name is bound by a
+        // local of its body (`let dt = |x| x + 1;`, a nested `fn dt`) calls
+        // that local, not the owner.
+        if super::call_identity::test_calls_only_a_local_binding(index, owner, test) {
+            return RelationReason::WeakTokenSubstring;
+        }
         // RIPR-SPEC-0005: a free function whose name another module also
         // defines is not reached when the test's own `use` binds the bare
         // name to that other module's twin.
@@ -8834,6 +8890,13 @@ fn owner_call_relation_reason_gated(
             RelationReason::WeakTokenSubstring
         };
     }
+    // #16040: a standard trait's method of the name is indexed nowhere, so
+    // the unique-name credit below cannot see it take the call first.
+    if !fmt_dispatch_resolved
+        && std_trait_rival::a_standard_trait_method_may_take_the_call(test, owner, owner_name)
+    {
+        return RelationReason::WeakTokenSubstring;
+    }
     // The formatting dispatch already bound the value to this impl's type
     // and trait, and refused a second `fmt` for the same pair.
     if indexed_same_name_count <= 1 || fmt_dispatch_resolved {
@@ -8850,6 +8913,24 @@ fn owner_call_relation_reason_gated(
             && impl_trait_name(&owner.id.0).is_some_and(|impl_trait| {
                 fully_qualified_call_names_impl(test, owner_name, &impl_type, &impl_trait)
             }))
+        // A changed-files index can omit the module that declares a rival
+        // method of the name, so the typed trait receiver reading needs the
+        // whole workspace indexed.
+        || (workspace_complete
+            && trait_receiver::typed_receiver_runs_trait_impl(
+                test,
+                owner,
+                &impl_type,
+                index,
+                trust_unplaced_standard_root,
+            ))
+        // #15277: `let s: Box<dyn Trait> = Box::new(Square(3)); s.area()`
+        // runs `Square`'s `Trait` impl.
+        || impl_trait.as_deref().is_some_and(|trait_name| {
+            super::owner_pin::dyn_box::boxed_receiver_calls_impl(
+                test, owner_name, &impl_type, trait_name, index,
+            )
+        })
     {
         RelationReason::DirectOwnerCall
     } else {
@@ -10287,6 +10368,7 @@ mod second {\n    use super::*;\n    #[test]\n    fn dup() {\n        let _ = sc
                 module_qualified: false,
                 crate_qualifier: None,
                 transparent_macros_rebound: false,
+                verified_macro_roots: Vec::new(),
                 diverging_handlers: Vec::new(),
             }],
             stop_above: None,
@@ -10402,6 +10484,7 @@ mod second {\n    use super::*;\n    #[test]\n    fn dup() {\n        let _ = sc
                 module_qualified: false,
                 crate_qualifier: None,
                 transparent_macros_rebound: false,
+                verified_macro_roots: Vec::new(),
                 diverging_handlers: Vec::new(),
             }],
             stop_above: None,
@@ -10461,6 +10544,7 @@ mod second {\n    use super::*;\n    #[test]\n    fn dup() {\n        let _ = sc
                 module_qualified: false,
                 crate_qualifier: None,
                 transparent_macros_rebound: false,
+                verified_macro_roots: Vec::new(),
                 diverging_handlers: Vec::new(),
             }],
             stop_above: None,
@@ -16768,6 +16852,7 @@ fn crate_c_score_test() {
                 module_qualified: false,
                 crate_qualifier: None,
                 transparent_macros_rebound: false,
+                verified_macro_roots: Vec::new(),
                 diverging_handlers: Vec::new(),
             }],
             stop_above: None,
@@ -16883,6 +16968,7 @@ fn crate_c_score_test() {
                 module_qualified: false,
                 crate_qualifier: None,
                 transparent_macros_rebound: false,
+                verified_macro_roots: Vec::new(),
                 diverging_handlers: Vec::new(),
             }],
             stop_above: None,
@@ -16969,6 +17055,7 @@ fn crate_c_score_test() {
                 module_qualified: false,
                 crate_qualifier: None,
                 transparent_macros_rebound: false,
+                verified_macro_roots: Vec::new(),
                 diverging_handlers: Vec::new(),
             }],
             stop_above: None,
@@ -17197,6 +17284,7 @@ let r = try_parse_summary();",
 
     fn wrapper_error_probe(file: &str, expression: &str) -> Probe {
         Probe {
+            before_condition: None,
             id: ProbeId("probe:wrapper".to_string()),
             location: SourceLocation::new(file, 5, 1),
             owner: Some(SymbolId(format!("{file}::owner"))),
@@ -18591,6 +18679,7 @@ try_parse_summary(raw).map_err(Into::into)"
 
     fn probe(file: &str, expression: &str) -> Probe {
         Probe {
+            before_condition: None,
             id: ProbeId("probe:test".to_string()),
             location: SourceLocation::new(file, 2, 1),
             owner: Some(SymbolId(format!("{file}::owner"))),
@@ -18607,6 +18696,7 @@ try_parse_summary(raw).map_err(Into::into)"
     /// A probe with no function owner — models a module-level struct field.
     fn struct_field_probe(file: &str, expression: &str) -> Probe {
         Probe {
+            before_condition: None,
             id: ProbeId("probe:struct-field".to_string()),
             location: SourceLocation::new(file, 46, 1),
             owner: None,

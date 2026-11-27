@@ -12,7 +12,6 @@ use crate::output::agent_seam_packets::{
     allowed_edit_surface_for_gap_route, gap_record_packet_do_not_do,
     suggested_assertion_for_classified_seam, targeted_test_brief_outline_for_classified_seam,
 };
-use crate::output::evidence_record::repair_start_command_for;
 use crate::output::first_useful_action::DEFAULT_FIRST_USEFUL_ACTION_OUT;
 use crate::output::human::{plain_observation_wording, plain_stop_condition};
 use crate::output::placeholder_assertion::fill_in_note_line;
@@ -877,6 +876,9 @@ fn push_diagnostic_witness(lines: &mut Vec<String>, witness: &DiagnosticWitness)
     if let Some(before) = &witness.before {
         lines.push(format!("- before: `{before}`"));
     }
+    if let Some(condition) = &witness.before_condition {
+        lines.push(format!("- old condition: `{condition}`"));
+    }
     if let Some(after) = &witness.after {
         lines.push(format!("- after: `{after}`"));
     }
@@ -1413,7 +1415,7 @@ fn push_editor_commands(
     // Only a seam `agent repair` would accept (the fail-closed repair-packet
     // flip, RIPR-SPEC-0087 §8, plus a test-surface target) names the repair
     // start; any other seam's hover stays as it was (#3906).
-    if let Some(repair) = repair_start_command_for(entry, &root) {
+    if let Some(repair) = super::actions::seam_repair_start_command(entry, snapshot, &root) {
         // #13636: the start refuses a dirty production premise; name the
         // commit step first, as the inert "Start repair" action does.
         if let Some(commit) = super::actions::seam_start_commit_step(&snapshot.root, &root) {
@@ -2065,6 +2067,7 @@ mod seam_hover_tests {
             diagnostic_uri_index: None,
             delivery_selection: None,
             seams_deferred: false,
+            seam_inventory_on_full_refresh: false,
             partial_scope: None,
             component_outcomes: Vec::new(),
             out_of_scope_test_file_findings: 0,
@@ -2564,7 +2567,7 @@ mod seam_hover_tests {
             "- name: `discounted_total_boundary_discriminator`",
             "- candidate value: `discount_threshold (equality boundary)`",
             "- assertion shape: assert_eq!(discounted_total",
-            "  (replace each /* ... */ comment with a real value from your test before using it)",
+            "  (replace each /* ... */ comment with a real value from your test before using it; the expected value is what the changed code produces now)",
         ] {
             if !md.contains(needle) {
                 return Err(format!("missing {needle:?} in:\n{md}"));

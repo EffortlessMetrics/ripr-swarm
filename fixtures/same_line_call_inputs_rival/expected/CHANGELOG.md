@@ -51,10 +51,10 @@ Updated:
 ## Pending — same_line_call_inputs_rival (5)
 
 Reason:
-RIPR-SPEC-0001 For same_line_call_inputs_rival, admit the discriminator only with assertion evidence linked to the changed result.
+RIPR-SPEC-0122: #15313 Summary names shared candidate lines and says No test gap when State reads no test gap found
 
 Command:
 `cargo xtask goldens bless same_line_call_inputs_rival --reason "..."`
 
 Updated:
-- `expected/check.json`
+- `expected/human.txt`

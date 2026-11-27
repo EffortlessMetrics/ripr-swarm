@@ -35,15 +35,29 @@ fn near_miss_values_name_the_accepted_value() -> Result<(), String> {
         ),
         (
             "[lsp]\ndiagnostic_profile = \"Full\"\n",
-            "invalid lsp.diagnostic_profile \"Full\"; expected \"actionable\" or \"full\" in [lsp] (did you mean `full`?)",
+            "invalid lsp.diagnostic_profile \"Full\"; set it to \"actionable\" or \"full\" in [lsp] (did you mean `full`?)",
         ),
         (
             "[lsp]\ndiagnostic_profile = \"actionabel\"\n",
-            "invalid lsp.diagnostic_profile \"actionabel\"; expected \"actionable\" or \"full\" in [lsp] (did you mean `actionable`?)",
+            "invalid lsp.diagnostic_profile \"actionabel\"; set it to \"actionable\" or \"full\" in [lsp] (did you mean `actionable`?)",
         ),
         (
             "[perl]\nproducer = \"perl_ripr_facts\"\n",
             "perl.producer `perl_ripr_facts` is not supported; expected perl-ripr-facts, perllsp, or perl-lsp (did you mean `perl-ripr-facts`?)",
+        ),
+        // One edit from both `perllsp` and `perl-lsp`: the separator decides.
+        (
+            "[perl]\nproducer = \"perl_lsp\"\n",
+            "perl.producer `perl_lsp` is not supported; expected perl-ripr-facts, perllsp, or perl-lsp (did you mean `perl-lsp`?)",
+        ),
+        (
+            "[perl]\nproducer = \"Perl LSP\"\n",
+            "perl.producer `Perl LSP` is not supported; expected perl-ripr-facts, perllsp, or perl-lsp (did you mean `perl-lsp`?)",
+        ),
+        // No separator typed: the unseparated spelling stays the nearest.
+        (
+            "[perl]\nproducer = \"perlsp\"\n",
+            "perl.producer `perlsp` is not supported; expected perl-ripr-facts, perllsp, or perl-lsp (did you mean `perllsp`?)",
         ),
         (
             "[severity.seams]\nopaque = \"Off\"\n",

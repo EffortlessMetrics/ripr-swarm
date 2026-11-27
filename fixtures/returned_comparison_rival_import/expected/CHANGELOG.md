@@ -180,7 +180,7 @@ Updated:
 ## Pending — returned_comparison_rival_import (15)
 
 Reason:
-RIPR-SPEC-0108 / RIPR-SPEC-0197: retain fixture classifications while refreshing composed producer guidance and assertion-local sink identity; owner-call proximity alone does not establish discriminator credit
+RIPR-SPEC-0108: a test whose every mention of the owner's name is a local closure or let binding of its body no longer relates by direct_owner_call (#14552)
 
 Command:
 `cargo xtask goldens bless returned_comparison_rival_import --reason "..."`
@@ -193,11 +193,10 @@ Updated:
 ## Pending — returned_comparison_rival_import (16)
 
 Reason:
-RIPR-SPEC-0108 For returned_comparison_rival_import, admit the discriminator only with assertion evidence linked to the changed result.
+RIPR-SPEC-0122: #15313 Summary names shared candidate lines and says No test gap when State reads no test gap found
 
 Command:
 `cargo xtask goldens bless returned_comparison_rival_import --reason "..."`
 
 Updated:
-- `expected/check.json`
-- `expected/human-full.txt`
+- `expected/human.txt`

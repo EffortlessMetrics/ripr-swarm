@@ -1,5 +1,3 @@
-crates/ripr/src/analysis/seam_inventory.rs|RIPR_REVIEW_EVIDENCE_WINDOW_SIZE must be between 1 and {MAX_REVIEW_EVIDENCE_WINDOW}
-crates/ripr/src/analysis/seam_inventory.rs|invalid RIPR_REVIEW_EVIDENCE_WINDOW_SIZE: {error}
 crates/ripr/src/analysis/seam_inventory.rs|invalid review evidence window size
 crates/ripr/src/analysis/seam_inventory.rs|read {} failed: {err}
 crates/ripr/src/analysis/seam_inventory.rs|review evidence window is incomplete; no complete guidance is available

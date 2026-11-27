@@ -16,6 +16,12 @@ use tokio::sync::Mutex;
 /// Upper bound for the `ripr_refresh` `base` revision text; no real ref name
 /// or commit id approaches it, and it keeps a hostile argument out of Git.
 const MAX_BASE_REVISION_BYTES: usize = 256;
+tokio::task_local! {
+    /// Whether the tool call being dispatched carries the transport's
+    /// [`super::transport::BesideRunningRefresh`] mark. Unset outside
+    /// `call_tool` (direct handler calls in tests), which reads as `false`.
+    static BESIDE_RUNNING_REFRESH: bool;
+}
 
 /// Application adapter only. The SDK owns RPC dispatch and lifecycle, except
 /// initialize-session `ping`: method name wins over `params._meta` so a
@@ -31,6 +37,19 @@ pub(super) struct McpServer {
     analysis_root: Option<PathBuf>,
     root_identity: Option<String>,
     session: Arc<Mutex<workspace::WorkspaceSession>>,
+    /// Set from the moment a refresh claims the session until its handler
+    /// returns. The transport reads it when it admits a repeated refresh
+    /// (#15983); the session's own `in_flight` sits behind an async lock.
+    attempt_running: Arc<AtomicBool>,
+}
+
+/// Clears the transport-visible attempt flag on every exit of `refresh_tool`,
+/// unwind and dropped handler included.
+struct AttemptRunning(Arc<AtomicBool>);
+impl Drop for AttemptRunning {
+    fn drop(&mut self) {
+        self.0.store(false, Ordering::SeqCst);
+    }
 }
 
 impl McpServer {
@@ -59,6 +78,7 @@ impl McpServer {
             analysis_root,
             status,
             session: Arc::new(Mutex::new(session)),
+            attempt_running: Arc::new(AtomicBool::new(false)),
         };
         // Domain JSON carries status/catalog data, not version-dependent SDK
         // result metadata. SDK constructors supply current result fields and
@@ -158,19 +178,27 @@ impl McpServer {
         let session = self.session.clone();
         {
             let mut session = session.lock().await;
-            if session.in_flight {
+            // A refresh the transport admitted beside a running one is
+            // refused even when that attempt has since committed (#15983):
+            // the caller re-sent it while an analysis was running.
+            let beside_running = BESIDE_RUNNING_REFRESH
+                .try_with(|beside| *beside)
+                .unwrap_or(false);
+            if session.in_flight || beside_running {
                 let failure = workspace::AttemptFailure::new(
                     workspace::CODE_ANALYSIS_IN_FLIGHT,
                     "an analysis attempt is already running",
-                    "wait for the running attempt to finish (the stdio transport answers one request at a time, so a pipelined request is served after it), then retry",
+                    "do not re-send ripr_refresh while it runs: poll ripr_workspace_status until attempt_state leaves in_flight, then use its snapshot or follow its failure recovery",
                 );
                 return self.typed_failure(failure, workspace::REFRESH_SCHEMA_VERSION);
             }
             session.in_flight = true;
+            self.attempt_running.store(true, Ordering::SeqCst);
             session.desired_base = base.clone();
             session.desired_source = source;
             session.desired_source_defaulted = source_defaulted;
         }
+        let _attempt_running = AttemptRunning(self.attempt_running.clone());
         let mut attempt = workspace::InFlightAttempt::new(session.clone());
         #[cfg(test)]
         super::panic_containment::injected_tool_panic::fire(
@@ -417,12 +445,24 @@ impl McpServer {
         reject_unknown_arguments(&arguments, &["canonical_id", "snapshot_id"])?;
         let canonical_id = required_string_argument(&arguments, "canonical_id")?;
         let requested = optional_string_argument(&arguments, "snapshot_id")?;
-        let mut session = self.session.lock().await;
-        match session.prepare_repair(
-            &canonical_id,
-            requested.as_deref(),
-            self.root_identity.as_deref(),
-        ) {
+        let result = match self.analysis_root.clone() {
+            Some(root) => {
+                self.prepare_repair_document_with(
+                    &canonical_id,
+                    requested.as_deref(),
+                    move |lookup| lookup.read(&root),
+                )
+                .await
+            }
+            // No store to check: the session-only route, as before.
+            None => self.session.lock().await.prepare_repair_checked(
+                &canonical_id,
+                requested.as_deref(),
+                self.root_identity.as_deref(),
+                None,
+            ),
+        };
+        match result {
             Ok(document) => {
                 // A refused item created no transaction: say so with
                 // `isError`, the same convention `ripr_get_repair_card`
@@ -439,6 +479,41 @@ impl McpServer {
             }
             Err(failure) => self.typed_failure(failure, repair::REPAIR_PACKET_SCHEMA_VERSION),
         }
+    }
+
+    /// `ripr_prepare_repair` without holding the session lock across the
+    /// durable store read (#15244): the lookup is taken under the lock, read
+    /// on a blocking worker (it runs git and the filesystem inventory, which
+    /// would stall the current-thread runtime), and the session lock is
+    /// re-taken to revalidate the admitted snapshot before any transaction is
+    /// replayed or created.
+    async fn prepare_repair_document_with(
+        &self,
+        canonical_id: &str,
+        requested: Option<&str>,
+        durable_read: impl FnOnce(
+            repair::DurableLookup,
+        ) -> Result<repair::DurableCheck, workspace::AttemptFailure>
+        + Send
+        + 'static,
+    ) -> Result<Value, workspace::AttemptFailure> {
+        let lookup = {
+            let session = self.session.lock().await;
+            session.prepare_repair_durable_lookup(canonical_id, requested)?
+        };
+        let durable = blocking_durable_worker(
+            move || durable_read(lookup),
+            "durable attempt store read worker failed",
+            "retry ripr_prepare_repair",
+        )
+        .await?;
+        let mut session = self.session.lock().await;
+        session.prepare_repair_checked(
+            canonical_id,
+            requested,
+            self.root_identity.as_deref(),
+            Some(durable),
+        )
     }
 
     async fn list_repair_attempts_tool(
@@ -1433,11 +1508,24 @@ fn repair_document_from_session(
 async fn blocking_repair_read(
     read: impl FnOnce() -> Result<Value, workspace::AttemptFailure> + Send + 'static,
 ) -> Result<Value, workspace::AttemptFailure> {
+    blocking_durable_worker(
+        read,
+        "durable repair read worker failed",
+        "retry the exact attempt or receipt read",
+    )
+    .await
+}
+
+async fn blocking_durable_worker<T: Send + 'static>(
+    read: impl FnOnce() -> Result<T, workspace::AttemptFailure> + Send + 'static,
+    failure: &str,
+    recovery: &str,
+) -> Result<T, workspace::AttemptFailure> {
     tokio::task::spawn_blocking(read).await.map_err(|error| {
         workspace::AttemptFailure::new(
             workspace::CODE_ANALYSIS_FAILED,
-            format!("durable repair read worker failed: {error}"),
-            "retry the exact attempt or receipt read",
+            format!("{failure}: {error}"),
+            recovery,
         )
     })?
 }
@@ -1557,7 +1645,16 @@ impl ServerHandler for McpServer {
         // the response bound minus the JSON-escaped request id of the call
         // being answered minus the fixed outer reserve.
         let max_envelope_bytes = super::outer_envelope_budget(&context.id);
-        self.call_tool_contained(request, max_envelope_bytes).await
+        let beside_running = context
+            .extensions
+            .get::<super::transport::BesideRunningRefresh>()
+            .is_some();
+        BESIDE_RUNNING_REFRESH
+            .scope(
+                beside_running,
+                self.call_tool_contained(request, max_envelope_bytes),
+            )
+            .await
     }
     async fn read_resource(
         &self,
@@ -1815,6 +1912,10 @@ impl InitializeSessionService {
             inner: McpServer::new(status, analysis_root)?,
             handshake_seen: AtomicBool::new(false),
         })
+    }
+    /// The flag the transport reads when it admits a repeated refresh.
+    pub(super) fn attempt_running(&self) -> Arc<AtomicBool> {
+        self.inner.attempt_running.clone()
     }
 }
 

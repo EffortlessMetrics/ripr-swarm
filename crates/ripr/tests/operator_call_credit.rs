@@ -1082,7 +1082,10 @@ fn a_std_derive_that_defines_the_method_withholds_the_sole_credit() -> Result<()
         signature: "fn partial_cmp(&self, other: &Money) -> Option<std::cmp::Ordering>",
         old_line: "        self.0.partial_cmp(&other.0)",
         new_line: "        other.0.partial_cmp(&self.0)",
-        test_body: "let less = Money(2) < Money(3);\n        assert_eq!(less, true);",
+        // Both directions pinned at once is an exact pin of the ordering; a
+        // lone stored bool compared with `true` reads as the relational check
+        // it stores (#16296), which this credit question does not study.
+        test_body: "let order = [Money(2) < Money(3), Money(3) < Money(2)];\n        assert_eq!(order, [true, false]);",
         extra_items: concat!(
             "#[derive(Debug, Clone, Copy)]\npub struct Money(pub i64);\n",
             "#[cfg(test)] mod named { use super::*; #[test] fn named_call() { let order = Money::partial_cmp(&Money(1), &Money(2)); assert!(order.is_some()); } }"

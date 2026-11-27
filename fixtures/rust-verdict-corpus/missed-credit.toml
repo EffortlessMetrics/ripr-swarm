@@ -74,7 +74,7 @@ reason = "Tests discriminate the change but ripr abstains because the test reach
 
 [[entry]]
 case = "grid-delete-table"
-reason = "Tests discriminate the change but ripr abstains because the test reaches the owner only through a path ripr cannot bind statically (no test path found, or tests share only a name token or file with the owner) (#12769; parent #12766). Delete this entry when the row credits."
+reason = "Tests discriminate the change and ripr sees the test reach the owner (a receiver call inside a `for` loop, #6485), but abstains on purpose: the call runs inside `for _ in 0..times`, a loop over a table row that runs zero times in the `(0, 0)` row, and ripr does not evaluate table rows, so the exact `assert_eq!(stats.misses, want)` after the loop does not confirm the write (RIPR-SPEC-0228 observation rule 1 needs an owner call that runs before the read). Delete this entry when the row credits."
 
 [[entry]]
 case = "grid-flow-else-pinned"

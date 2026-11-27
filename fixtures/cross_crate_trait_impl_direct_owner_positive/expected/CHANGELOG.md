@@ -272,7 +272,7 @@ Updated:
 ## Pending — cross_crate_trait_impl_direct_owner_positive (21)
 
 Reason:
-RIPR-SPEC-0108 / RIPR-SPEC-0197: retain fixture classifications while refreshing composed producer guidance and assertion-local sink identity; owner-call proximity alone does not establish discriminator credit
+RIPR-SPEC-0259: #13037 amendment, a weak finding whose related test already asserts an exact value names the unestablished link instead of the strengthen template; static class unchanged
 
 Command:
 `cargo xtask goldens bless cross_crate_trait_impl_direct_owner_positive --reason "..."`
@@ -285,11 +285,36 @@ Updated:
 ## Pending — cross_crate_trait_impl_direct_owner_positive (22)
 
 Reason:
-RIPR-SPEC-0108 For cross_crate_trait_impl_direct_owner_positive, admit the discriminator only with assertion evidence linked to the changed result, and explain why the bounded match-arm owner cannot start a repair.
+RIPR-SPEC-0259: #13037 review repair, the match_arm and field_construction exact-oracle steps add an if-it-does branch naming the unconfirmed observation link; static class unchanged
 
 Command:
 `cargo xtask goldens bless cross_crate_trait_impl_direct_owner_positive --reason "..."`
 
 Updated:
 - `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
+
+## Pending — cross_crate_trait_impl_direct_owner_positive (23)
+
+Reason:
+RIPR-SPEC-0259: #13037 review repair, the match_arm exact-oracle step names an arm whose result is replaced before the assertion; static class unchanged
+
+Command:
+`cargo xtask goldens bless cross_crate_trait_impl_direct_owner_positive --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
+
+## Pending — cross_crate_trait_impl_direct_owner_positive (24)
+
+Reason:
+RIPR-SPEC-0122: #15313 Summary names shared candidate lines and says No test gap when State reads no test gap found
+
+Command:
+`cargo xtask goldens bless cross_crate_trait_impl_direct_owner_positive --reason "..."`
+
+Updated:
 - `expected/human.txt`

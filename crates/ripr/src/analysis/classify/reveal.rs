@@ -2162,7 +2162,11 @@ fn bare_call_end(code: &str, call_at: usize, call_len: usize) -> Option<usize> {
 
 /// [`bare_call_end`]'s end offset, with whether `.unwrap()`, `.expect(..)`
 /// or `?` consumed the call's result before the `;`.
-fn call_statement_tail(code: &str, call_at: usize, call_len: usize) -> Option<(usize, bool)> {
+pub(in crate::analysis) fn call_statement_tail(
+    code: &str,
+    call_at: usize,
+    call_len: usize,
+) -> Option<(usize, bool)> {
     let args_at = call_at + call_len;
     let mut depth = 0usize;
     let mut close = None;
@@ -2391,7 +2395,7 @@ pub(in crate::analysis) fn unconditional_owner_insert_field(
 /// Whether the call at `at` in a test body (masked, starting at its `fn`)
 /// is a top-level statement of that body: not inside a nested block, branch,
 /// loop or closure, any of which may never run it. Fails closed.
-fn runs_unconditionally(masked: &str, at: usize) -> bool {
+pub(in crate::analysis) fn runs_unconditionally(masked: &str, at: usize) -> bool {
     let before = &masked[..at];
     let depth = before.matches('{').count() as isize - before.matches('}').count() as isize;
     let statement_start = before.rfind([';', '{', '}']).map_or(0, |index| index + 1);
@@ -11396,6 +11400,7 @@ return Err(\"typed pin\".into());
 
     fn probe(family: ProbeFamily, expression: &str) -> Probe {
         Probe {
+            before_condition: None,
             id: ProbeId("probe:test".to_string()),
             location: SourceLocation::new("src/lib.rs", 1, 1),
             owner: None,

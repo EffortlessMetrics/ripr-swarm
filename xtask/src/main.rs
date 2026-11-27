@@ -53,6 +53,8 @@ mod public_proof;
 mod publish_rehearsal;
 mod publish_stage;
 mod release_authority;
+mod release_crates_io_transaction;
+mod release_github_transaction;
 mod source_package_contents;
 // #4544: one definition of the gap `source_subject` contract, shared with the
 // ripr crate's LSP validator without widening ripr's public API.
@@ -129,6 +131,7 @@ mod work_result_identity;
 mod work_selection_identity;
 mod work_synthesis_identity;
 mod work_wave_identity;
+mod workspace_format;
 pub(crate) use types::*;
 mod exact_schema_json;
 mod reports;
@@ -622,7 +625,11 @@ fn ci_fast() -> Result<(), String> {
 }
 
 fn ci_fast_with_envs(envs: &[(&str, &str)]) -> Result<(), String> {
-    run_with_envs("cargo", &["fmt", "--check"], envs)?;
+    workspace_format::run(workspace_format::FormatStep {
+        check: true,
+        envs,
+        diagnostics: None,
+    })?;
     run_with_envs("cargo", &["check", "--workspace", "--all-targets"], envs)?;
     run_with_envs("cargo", &["test", "--workspace"], envs)?;
     run_policy_checks()
@@ -710,7 +717,7 @@ fn precommit_policy(
         repo_policy::verify_preflight(Path::new(path))?;
     }
     precommit_formatting::run(collect_all, || {
-        run("cargo", &["fmt", "--check"]).map(|_| ())
+        workspace_format::run(workspace_format::FormatStep::new(true))
     })?;
     if collect_all {
         policy::check_policy_all()?;
@@ -967,7 +974,11 @@ fn check_fast_gates(
     impact_disclosure: &mut String,
 ) -> Result<(), String> {
     // Always run: these are cheap and catch cross-cutting drift.
-    run::run_diagnostic("cargo", &["fmt", "--check"], child_diagnostics)?;
+    workspace_format::run(workspace_format::FormatStep {
+        check: true,
+        envs: &[],
+        diagnostics: Some(&mut *child_diagnostics),
+    })?;
     ran.push("fmt --check");
     check_static_language()?;
     ran.push("check-static-language");
@@ -2817,7 +2828,7 @@ fn make_hook_executable(path: &Path) -> Result<(), String> {
 
 fn shape() -> Result<(), String> {
     ensure_reports_dir()?;
-    run("cargo", &["fmt"])?;
+    workspace_format::run(workspace_format::FormatStep::new(false))?;
     let sorted = sort_allowlist_files()?;
     // Surface the tracked-file rewrites before the contributor commits: a
     // silent `policy/*.txt` / `.ripr/*.txt` rewrite is a surprising diff in

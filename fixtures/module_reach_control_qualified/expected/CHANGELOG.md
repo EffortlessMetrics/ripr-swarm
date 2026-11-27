@@ -251,14 +251,13 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 
-## Pending — module_reach_control_qualified (17)
+## Pending — module_reach_control_qualified (21)
 
 Reason:
-RIPR-SPEC-0159: retain canonical qualified helper reach and same-test returned-boundary oracle; real parser/native controls preserve owner and sibling refusals
+RIPR-SPEC-0122: #15313 Summary names shared candidate lines and says No test gap when State reads no test gap found
 
 Command:
 `cargo xtask goldens bless module_reach_control_qualified --reason "..."`
 
 Updated:
-- `expected/check.json`
 - `expected/human.txt`

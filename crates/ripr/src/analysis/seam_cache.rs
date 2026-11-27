@@ -714,52 +714,128 @@ pub(crate) struct CachedSeamLimitInfo {
 /// `1.161`: owner-bound field snapshots carry the shared framework limit
 /// through full and compact evidence before recommendation admission (#13278).
 /// Panic markers also use the producer-owned discrimination prefix (#13291).
-/// `1.164`: compose importer identity with main field-snapshot and panic-marker semantics.
-/// `1.165`: returned comparisons retain same-owner/element boundary pairing.
-/// `1.166`: canonical scalar-match and unit-error unwrap observer identity.
-/// `1.167`: typed helper-call independence and primitive named-format effect carriers.
-/// `1.168`: changed tuple Option slots retain nominal receiver and component identity.
-/// `1.169`: seal tuple Iterator pins to the unshadowed standard prelude.
-/// `1.170`: complete workspace context is required for tuple Iterator dispatch.
-/// `1.171`: tuple field-type queries bind the exact indexed owner location.
-/// `1.172`: compose importer-aware tuple pins with current module-glob ancestry.
-/// `1.173`: retain the typed unresolved guarded-error-return limitation.
-/// `1.174`: guarded-return lookup uses the indexed fn token, not visibility text.
-/// `1.175`: borrowed bool observers pair only through their exact result argument.
-/// `1.176`: unit-error pattern identity is tied to the selected literal guard row.
-/// `1.177`: certified bool Clone dispatch and returned-comparison pairing.
-/// `1.178`: assertion-local forwarded results, resolved constructor calls and typed Err identity.
-/// `1.179`: imported body globs, primitive getters and same-assertion method entry pairing.
-/// `1.180`: primitive getter trait-default closure and verified asserted effect calls.
-/// `1.181`: closed collection observers, independent expectations and resolved qualified/local type imports.
-/// `1.182`: typed expected callers, split/From/interior-state/success receipts and outer-call boundary subjects.
-/// `1.183`: exact same-line observer coordinates and independent typed scalar projections.
-/// `1.184`: typed literal validity and honest arithmetic/observer-dispatch limits.
-/// `1.185`: same-line call occurrences bind whole observers and retain authenticated bool negation.
-/// `1.186`: preserve authenticated bool, nominal keyed-getter and typed operator observers.
-/// `1.187`: close generic receiver and constructor bindings; retain named operator tuple observations.
-/// `1.191`: refresh accepted plain pairing evidence after main-side composition.
-/// `1.192`: admit only authenticated claims imports in synthetic doc examples.
-/// `1.193`: preserve authenticated whole-return pins independently of predicate pairing.
-/// `1.194`: typed eager option chains and parsed subsequent binding identities.
-/// `1.195`: exact seam owners, assertion-local error custody and producer-bound repair scope.
-/// `1.196`: current swarm and retained source observers, boundary and return evidence.
-/// `1.197`: Composes protected rebound binding and retained deleted-guard assertion evidence.
-/// `1.198`: withhold deleted-guard credit when the base constructor identity is unproven.
-/// `1.199`: bind explicit Cargo harness flags to the selected target path.
-/// `1.200`: include every directly asserted same-line owner input in classified seams.
-/// `1.201`: refuse old gap evidence for calls erased by test-local empty macros.
-/// `1.202`: remove return-value seams for unit-tail statement blocks (#15459).
-/// `1.203`: compose with protected main through its `1.185` generation: typed
-/// boundary-input summaries, invocation-scope refusal, success-only failure
-/// seams, module-const readers and gated doctest limits (#12757, #12852,
-/// #13592, #14951, #15846). Main reused `1.162`..`1.185` with other meanings.
-/// `1.204`: compose with protected main through its `1.187` generation:
-/// attribute-macro generated tests take no invocation scopes (#12857).
-/// `1.205`: compose with protected main through its `1.189` generation: a
-/// std- or core-rooted import of an exempt macro name keeps invocation scopes
-/// (#12876).
-pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.205";
+/// `1.162`: computed local initializer operands do not become boundaries (#12981).
+/// `1.163`: an exact error-variant pin that names a sibling variant of an
+/// `error_variant` seam is graded weak in the related-test record, as the
+/// discriminate stage already grades it (#12836).
+/// `1.164`: a bare `assert_matches!` around a placed inherent owner call names
+/// the unread-macro limitation instead of an unnamed gap (#12829).
+/// `1.165`: a guarded `Result` match that names a sibling variant of an
+/// `error_variant` seam is graded weak in the related-test record (#12897).
+/// `1.166`: predicate-boundary facts carry the concrete drafted boundary
+/// assertion (agent-efficiency study tweak #4). Old classified entries would
+/// keep serving the placeholder template for warm workspaces.
+/// `1.167`: a manifest-verified drop-in assertion import around an inherent
+/// owner call names the unverifiable-macro limit when placement is
+/// unavailable (#12886).
+/// `1.168`: `MissingDiscriminatorFact` carries a typed `shape`; cached facts
+/// written before the field cannot decode and inserted-guard facts name the
+/// guard domain instead of the equality boundary (#12414).
+/// `1.169`: the repo-wide audit withholds a plain `assert_eq!` whose literal the
+/// current owner provably does not return; cached grips decided before the
+/// withhold would keep crediting it (#13005).
+/// `1.170`: an `Err(..)` constructor is credited only when every call between it
+/// and its assertion macro is on the positive allowlist; wrapper and receiver
+/// reads are refused (#12474).
+/// `1.171`: a workspace assertion macro defined in another file that forwards
+/// its operands to a std assertion names the macro-wrapped limit instead of an
+/// unnamed gap, with nothing credited (#12886).
+/// `1.172`: a receiver rebound by a multiline Python target withholds
+/// protocol-entry credit (#9992).
+/// `1.173`: `#[async_std::test]` bodies admit owner-return pins read through one
+/// `.await` on an async owner (#5040). Old entries would keep those assertions
+/// refused as async tests.
+/// `1.174`: the repo-seam proximity gate reads a local's initializer, so an
+/// assertion on a local bound to another function pins that function (#12264).
+/// `1.175`: an equality whose compared error is replaced by an adapter such as
+/// `map_err` classifies as a weak relational check, not an exact value; cached
+/// grips decided before the refusal would keep crediting it (#12610).
+/// `1.176`: a claims `assert_ok_eq!` / `assert_some_eq!` pins a whole-value
+/// field of the struct the owner returns, and a whole-value field pin whose
+/// field value neither owner version computes no longer credits (#12394,
+/// #12864).
+/// `1.177`: same multiline receiver binding refusal as `1.172` (#9992) — the
+/// Python rule rejudges seams the `1.176` transition did not touch.
+/// `1.178`: per-byte slice-counter boundary credit and repeat-array
+/// (`&[x; n]`) input lengths in the shared `literal_slice_length` helper
+/// (#5346, #12641) — cached boundary verdicts from before the widening are not
+/// reused.
+/// `1.180`: a constructed field or return spelled with a logical-or (`a || b`)
+/// is no longer read as an opaque closure, so its direct propagation witness
+/// can complete (#14326).
+/// `1.181`: an exact assertion that pins only the success payload (`.unwrap()`,
+/// `Ok(..)`, `Some(..)`) is no longer an oracle on a failure-arm (`Err` /
+/// `None`) seam it cannot reach (#12757).
+/// `1.182`: a module-level `const` read only by a same-module function gains a
+/// reader entry, so cached verdicts for such a value would stay
+/// `no_static_path` (#13592).
+/// #14139 adds `RepoSeam::owner_opt_out` (serde-defaulted, absent unless the
+/// owner carries `#[mutants::skip]`) without a bump: the attribute's bytes are
+/// in `files_content_hash`, so adding or removing it changes the key, and the
+/// key's analyzer build identity already keeps entries written by a build
+/// without the field from this one. A bump would only rewrite
+/// `source_subject.corpus.cache_schema_version` in every repo artifact.
+/// `1.183`: the unresolved boundary-input activation summary leads with the
+/// typed `activation_boundary_input_unresolved` token and the evidence record
+/// no longer derives that category from the sentence (#14951), so a cached
+/// summary without the token would lose its category.
+/// `1.184`: a macro-generated test takes no invocation scopes when its file or
+/// invocation scope rebinds an exempt std macro name (#12852).
+/// `1.185`: an explicit registered harness uses only the selected Cargo target
+/// key under an aliased workspace root (#15846).
+/// `1.187`: a macro-generated test carrying an unrecognised attribute macro takes
+/// no invocation scopes (#12857).
+/// `1.189`: a std- or core-rooted import of an exempt macro name lets a
+/// generated test keep its invocation scopes when the root is not shadowed (#12876).
+/// `1.191`: a helper wrapper that reads `env!` or `option_env!` forwards
+/// the helper result when neither name is rebound (#10357).
+/// `1.192`: a `std::`/`core::` assertion whose root the manifest binds to a
+/// package reads as an unknown oracle (#10150).
+/// `1.193`: an assertion whose every owner call sits inside an untrusted inner
+/// macro reads as an unknown oracle for that owner (#16188).
+/// `1.194`: a `for` over any non-empty array runs its assertion, not only a
+/// constant-row table (#14116).
+/// `1.195`: an owner result bound to a local that only an untrusted inner macro
+/// uses reads as an unknown oracle for that owner (#16192).
+/// `1.196`: a check helper with `?` lends its assertion when every eager call
+/// is `check(..)?` (#14116).
+/// `1.197`: an owner result unwrapped or chained into a local that only an untrusted
+/// inner macro uses reads as an unknown oracle for that owner (#16219).
+/// `1.198`: an owner call whose result a statement discards (`let _ = pick(0);`,
+/// `pick(0);`) is not a free observation beside a macro-held call (#16258).
+/// `1.199`: a helper wrapper reading `include_str!` or `include_bytes!` forwards
+/// its helper result unless either name is rebound (#10357).
+/// `1.200`: a `matches!` or-pattern whose alternatives all pin a value reads
+/// weak, not exact (#16286).
+/// `1.201`: a renamed call in a test's own module file (`src/tests.rs`) reads
+/// the enclosing module files, so a nested-block rename settles there too (#16277).
+/// `1.202`: `assert_eq!(matches!(..), true)` reads only as strong as its
+/// pattern (#16290).
+/// `1.204`: a test whose every mention of the owner's name is bound by a
+/// local of its body (`let dt = |x| x + 1;`, a nested `fn dt`) no longer
+/// relates by `direct_owner_call` (#14552).
+/// `1.205`: a boolean local compared with `true` reads as its
+/// initializer (#16296).
+/// `1.206`: a helper wrapper that logs through an audited
+/// `tracing::`/`log::` leveled macro forwards (#10357).
+/// `1.207`: a trait impl method on a receiver built by an indexed constructor
+/// relates by `direct_owner_call` unless another method of the name may take
+/// the call, and an inherent by-value twin withholds it (#15956, #15428).
+/// `1.208`: a helper wrapper that builds a value through an
+/// audited `anyhow::anyhow!` or `serde_json::json!` forwards (#10357).
+/// `1.209`: a `&self` or `&mut self` trait impl method is name-only when a
+/// standard trait's method of the name comes at an earlier probing step
+/// (#16040).
+/// `1.210`: a helper wrapper that calls `json!` imported by a
+/// verified `use serde_json::json;` forwards (#10357).
+/// `1.211`: a helper wrapper that calls `anyhow!` imported by a
+/// verified `use anyhow::anyhow;` forwards (#10357).
+/// `1.212`: a comma-less match block arm that only reads a helper
+/// wrapper parameter no longer reads as rebinding it (#10357).
+/// `1.213`: a helper whose every call to a name is qualified by its own type
+/// parameter no longer credits the same-spelled module function (#12891).
+/// `1.214`: compose history-sync import (1.205) with protected swarm main (1.213) and public 352f9d796f (#16016).
+pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.214";
 /// `0.2` → `0.3`: same semantic transition as the outer cache (#3273 /
 /// #3286) — sharded entries derive from the same facts and cannot bypass
 /// the outer generation bump.
@@ -968,42 +1044,55 @@ pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.205";
 /// `0.164`: composed successor and main semantics, matching full 1.162.
 /// `0.165`: same importer-bound observer semantics as full 1.163.
 /// `0.163`: same field-snapshot and panic marker authority as full `1.161`.
-/// `0.166`: same composed semantics as full `1.164`.
-/// `0.167`: same returned-boundary pairing as full `1.165`.
-/// `0.168`: same observer identity as full `1.166`.
-/// `0.169`: same observer identities as full `1.167`.
-/// `0.170`: same tuple-component identity as full `1.168`.
-/// `0.171`: same sealed prelude scope as full `1.169`.
-/// `0.172`: same complete-context tuple dispatch as full `1.170`.
-/// `0.173`: same exact-owner field-type query as full `1.171`.
-/// `0.174`: same composed module-glob ancestry as full `1.172`.
-/// `0.175`: same guarded-error-return limitation as full `1.173`.
-/// `0.176`: same fn-token guarded-return identity as full `1.174`.
-/// `0.177`: same exact borrowed-bool pairing as full `1.175`.
-/// `0.178`: same selected unit-error row identity as full `1.176`.
-/// `0.179`: same certified bool Clone and returned-comparison pairing as full `1.177`.
-/// `0.180`: same affirmative observer identity as full `1.178`.
-/// `0.181`: same composed observer and unresolved-input semantics as full `1.179`.
-/// `0.182`: same getter-default closure and asserted effect semantics as full `1.180`.
-/// `0.183`: same closed collection and resolved observer semantics as full `1.181`.
-/// `0.184`: same typed carriers and outer-call boundary subjects as full `1.182`.
-/// `0.185`: same exact observer coordinates and scalar projections as full `1.183`.
-/// `0.186`: same honest transfer/dispatch limitations as full `1.184`.
-/// `0.193`: same accepted plain pairing evidence as full `1.191`.
-/// `0.194`: same authenticated claims doc-example evidence as full `1.192`.
-/// `0.195`: same whole-return pin evidence as full `1.193`.
-/// `0.196`: same option-chain and parsed binding evidence as full `1.194`.
-/// `0.198`: same composed classifications as full `1.196`.
-/// `0.199`: Matches full generation 1.197 for rebound bindings and deleted guards.
-/// `0.200`: match full `1.198` for base-side constructor identity.
-/// `0.201`: match full `1.199` for explicit Cargo target identity.
-/// `0.202`: match full `1.200` for same-line owner inputs.
-/// `0.203`: match full `1.201` for test-local empty macros.
-/// `0.204`: match full `1.202` for unit-tail statement blocks.
-/// `0.205`: match full `1.203` for the protected-main composition.
-/// `0.206`: match full `1.204` for protected main's `1.187` / `0.189`.
-/// `0.207`: match full `1.205` for protected main's `1.189` / `0.191`.
-const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.207";
+/// `0.164`: same computed-local boundary rule as full `1.162` (#12981).
+/// `0.165`: same sibling-variant error-pin grade as full `1.163` (#12836).
+/// `0.166`: same placed `assert_matches!` limit as full `1.164` (#12829).
+/// `0.167`: same sibling-variant guarded-match grade as full `1.165` (#12897).
+/// `0.168`: same drafted-boundary-assertion transition as full `1.166`.
+/// `0.169`: same drop-in import limit as full `1.167` (#12886).
+/// `0.170`: same typed missing-discriminator shape as full `1.168` (#12414).
+/// `0.171`: same plain `assert_eq!` literal withhold as full `1.169` (#13005).
+/// `0.172`: same positive Err-enclosing rule as full `1.170` (#12474).
+/// `0.173`: same cross-file wrapper limit as full `1.171` (#12886).
+/// `0.174`: same multiline receiver binding refusal as full `1.172` (#9992).
+/// `0.175`: same `#[async_std::test]` admission as full `1.173` (#5040).
+/// `0.176`: same local-bound proximity pin as full `1.174` (#12264).
+/// `0.177`: same adapter-replaced error-read refusal as full `1.175` (#12610).
+/// `0.178`: same claims field-construction pin as full `1.176` (#12394, #12864).
+/// `0.179`: same multiline receiver binding refusal as full `1.177` (#9992).
+/// `0.180`: same slice-counter boundary credit as full `1.178` (#5346, #12641).
+/// `0.182`: same logical-or field witness as full `1.180` (#14326).
+/// `0.183`: same failure-seam success-only refusal as full `1.181` (#12757).
+/// `0.184`: same module-const reader entry as full `1.182` (#13592).
+/// `0.185`: same typed boundary-input summary as full `1.183` (#14951).
+/// `0.186`: same invocation-scope refusal as full `1.184` (#12852).
+/// `0.187`: same explicit Cargo harness target identity as full `1.185` (#15846).
+/// `0.189`: same attribute-macro scope refusal as full `1.187` (#12857).
+/// `0.191`: same std-rooted import exemption as full `1.189` (#12876).
+/// `0.193`: same env!-reading wrapper forwarding as full `1.191` (#10357).
+/// `0.194`: same manifest-rebound assertion root as full `1.192` (#10150).
+/// `0.195`: same macro-held owner call as full `1.193` (#16188).
+/// `0.196`: same non-empty array loop execution as full `1.194` (#14116).
+/// `0.197`: same macro-held owner-result local as full `1.195` (#16192).
+/// `0.198`: same propagated fallible check helper as full `1.196` (#14116).
+/// `0.199`: same chained owner-result local as full `1.197` (#16219).
+/// `0.200`: same discarded owner call as full `1.198` (#16258).
+/// `0.201`: same include-reading wrapper forwarding as full `1.199` (#10357).
+/// `0.202`: same or-pattern oracle reading as full `1.200` (#16286).
+/// `0.203`: same file-module nested-block rename as full `1.201` (#16277).
+/// `0.204`: same compared-pattern oracle reading as full `1.202` (#16290).
+/// `0.206`: same local-binder refusal as full `1.204` (#14552).
+/// `0.207`: same compared-bool-local oracle reading as full `1.205` (#16296).
+/// `0.208`: same audited logging-wrapper forwarding as full `1.206` (#10357).
+/// `0.209`: same constructed trait receiver reading as full `1.207` (#15956).
+/// `0.210`: same audited value-macro wrapper forwarding as full `1.208` (#10357).
+/// `0.211`: same standard trait rival reading as full `1.209` (#16040).
+/// `0.212`: same imported json! wrapper forwarding as full `1.210` (#10357).
+/// `0.213`: same imported anyhow! wrapper forwarding as full `1.211` (#10357).
+/// `0.214`: same block-arm parameter reading as full `1.212` (#10357).
+/// `0.215`: same type-parameter-shadowed helper reading as full `1.213` (#12891).
+/// `0.216`: match full `1.214` for composed history-sync import + protected swarm main (#16016).
+const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.216";
 
 /// Compact-classified seam cache schema. This cache stores the same
 /// `ClassifiedSeam` envelope shape as the full repo exposure cache, but
@@ -1214,41 +1303,55 @@ const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.207";
 /// `0.164`: composed successor and main semantics, matching full 1.162.
 /// `0.165`: same importer-bound observer semantics as full 1.163.
 /// `0.163`: same field-snapshot and panic marker authority as full `1.161`.
-/// `0.166`: same composed semantics as full `1.164`.
-/// `0.167`: same returned-boundary pairing as full `1.165`.
-/// `0.168`: same observer identity as full `1.166`.
-/// `0.169`: same observer identities as full `1.167`.
-/// `0.170`: same tuple-component identity as full `1.168`.
-/// `0.171`: same sealed prelude scope as full `1.169`.
-/// `0.172`: same complete-context tuple dispatch as full `1.170`.
-/// `0.173`: same exact-owner field-type query as full `1.171`.
-/// `0.174`: same composed module-glob ancestry as full `1.172`.
-/// `0.175`: same guarded-error-return limitation as full `1.173`.
-/// `0.176`: same fn-token guarded-return identity as full `1.174`.
-/// `0.177`: same exact borrowed-bool pairing as full `1.175`.
-/// `0.178`: same selected unit-error row identity as full `1.176`.
-/// `0.179`: same certified bool Clone and returned-comparison pairing as full `1.177`.
-/// `0.180`: same affirmative observer identity as full `1.178`.
-/// `0.181`: same composed observer and unresolved-input semantics as full `1.179`.
-/// `0.182`: same getter-default closure and asserted effect semantics as full `1.180`.
-/// `0.183`: same closed collection and resolved observer semantics as full `1.181`.
-/// `0.184`: same typed carriers and outer-call boundary subjects as full `1.182`.
-/// `0.185`: same exact observer coordinates and scalar projections as full `1.183`.
-/// `0.186`: same honest transfer/dispatch limitations as full `1.184`.
-/// `0.193`: same accepted plain pairing evidence as full `1.191`.
-/// `0.194`: same authenticated claims doc-example evidence as full `1.192`.
-/// `0.195`: same whole-return pin evidence as full `1.193`.
-/// `0.196`: same option-chain and parsed binding evidence as full `1.194`.
-/// `0.199`: Matches full generation 1.197 for rebound bindings and deleted guards.
-/// `0.200`: match full `1.198` for base-side constructor identity.
-/// `0.201`: match full `1.199` for explicit Cargo target identity.
-/// `0.202`: match full `1.200` for same-line owner inputs.
-/// `0.203`: match full `1.201` for test-local empty macros.
-/// `0.204`: match full `1.202` for unit-tail statement blocks.
-/// `0.205`: match full `1.203` for the protected-main composition.
-/// `0.206`: match full `1.204` for protected main's `1.187` / `0.189`.
-/// `0.207`: match full `1.205` for protected main's `1.189` / `0.191`.
-pub(crate) const COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.207";
+/// `0.164`: same computed-local boundary rule as full `1.162` (#12981).
+/// `0.165`: same sibling-variant error-pin grade as full `1.163` (#12836).
+/// `0.166`: same placed `assert_matches!` limit as full `1.164` (#12829).
+/// `0.167`: same sibling-variant guarded-match grade as full `1.165` (#12897).
+/// `0.168`: same drafted-boundary-assertion transition as full `1.166`.
+/// `0.169`: same drop-in import limit as full `1.167` (#12886).
+/// `0.170`: same typed missing-discriminator shape as full `1.168` (#12414).
+/// `0.171`: same plain `assert_eq!` literal withhold as full `1.169` (#13005).
+/// `0.172`: same positive Err-enclosing rule as full `1.170` (#12474).
+/// `0.173`: same cross-file wrapper limit as full `1.171` (#12886).
+/// `0.174`: same multiline receiver binding refusal as full `1.172` (#9992).
+/// `0.175`: same `#[async_std::test]` admission as full `1.173` (#5040).
+/// `0.176`: same local-bound proximity pin as full `1.174` (#12264).
+/// `0.177`: same adapter-replaced error-read refusal as full `1.175` (#12610).
+/// `0.178`: same claims field-construction pin as full `1.176` (#12394, #12864).
+/// `0.179`: same multiline receiver binding refusal as full `1.177` (#9992).
+/// `0.180`: same slice-counter boundary credit as full `1.178` (#5346, #12641).
+/// `0.182`: same logical-or field witness as full `1.180` (#14326).
+/// `0.183`: same failure-seam success-only refusal as full `1.181` (#12757).
+/// `0.184`: same module-const reader entry as full `1.182` (#13592).
+/// `0.185`: same typed boundary-input summary as full `1.183` (#14951).
+/// `0.186`: same invocation-scope refusal as full `1.184` (#12852).
+/// `0.187`: same explicit Cargo harness target identity as full `1.185` (#15846).
+/// `0.189`: same attribute-macro scope refusal as full `1.187` (#12857).
+/// `0.191`: same std-rooted import exemption as full `1.189` (#12876).
+/// `0.193`: same env!-reading wrapper forwarding as full `1.191` (#10357).
+/// `0.194`: same manifest-rebound assertion root as full `1.192` (#10150).
+/// `0.195`: same macro-held owner call as full `1.193` (#16188).
+/// `0.196`: same non-empty array loop execution as full `1.194` (#14116).
+/// `0.197`: same macro-held owner-result local as full `1.195` (#16192).
+/// `0.198`: same propagated fallible check helper as full `1.196` (#14116).
+/// `0.199`: same chained owner-result local as full `1.197` (#16219).
+/// `0.200`: same discarded owner call as full `1.198` (#16258).
+/// `0.201`: same include-reading wrapper forwarding as full `1.199` (#10357).
+/// `0.202`: same or-pattern oracle reading as full `1.200` (#16286).
+/// `0.203`: same file-module nested-block rename as full `1.201` (#16277).
+/// `0.204`: same compared-pattern oracle reading as full `1.202` (#16290).
+/// `0.206`: same local-binder refusal as full `1.204` (#14552).
+/// `0.207`: same compared-bool-local oracle reading as full `1.205` (#16296).
+/// `0.208`: same audited logging-wrapper forwarding as full `1.206` (#10357).
+/// `0.209`: same constructed trait receiver reading as full `1.207` (#15956).
+/// `0.210`: same audited value-macro wrapper forwarding as full `1.208` (#10357).
+/// `0.211`: same standard trait rival reading as full `1.209` (#16040).
+/// `0.212`: same imported json! wrapper forwarding as full `1.210` (#10357).
+/// `0.213`: same imported anyhow! wrapper forwarding as full `1.211` (#10357).
+/// `0.214`: same block-arm parameter reading as full `1.212` (#10357).
+/// `0.215`: same type-parameter-shadowed helper reading as full `1.213` (#12891).
+/// `0.216`: match full `1.214` for composed history-sync import + protected swarm main (#16016).
+pub(crate) const COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.216";
 
 /// Compact class-count cache used by repo badge rendering. It keys off
 /// the same workspace state as the full fact cache, but stores only
@@ -1475,7 +1578,19 @@ pub(crate) const COUNT_CACHE_SCHEMA_VERSION: &str = "0.2";
 /// cannot, and would hide a `macro_rules! env` from the binding scan.
 /// `1.63`: a unit owner's tail block of `;`-terminated statements is not
 /// probed as `return_value` (#15459); `1.62` facts still carry that shape.
-pub(crate) const FILE_FACT_CACHE_SCHEMA_VERSION: &str = "1.64";
+/// `1.65`: `include_bytes` and `include_str` join the trusted macro names
+/// (#14116); `1.64` candidates cannot name them, and would hide a
+/// `macro_rules! include_str` from the binding scan.
+/// `1.66`: an item-position `include!` makes a file's binding candidates
+/// `Any` (#16060); earlier candidates let the binding scan skip such a file.
+/// `1.67`: a grouped `self` import that binds `serde_json` from another
+/// path (`use other::serde_json::{self};`) is a `json` binding candidate
+/// (#10357); earlier candidates let the binding scan skip such a file. The
+/// bare crate name (`use serde_json::{self, json};`) is not (#16350).
+/// `1.68`: candidates record `anyhow` imports and `anyhow` crate-namespace
+/// rebindings (#10357); earlier candidates let the binding scan skip such a
+/// file.
+pub(crate) const FILE_FACT_CACHE_SCHEMA_VERSION: &str = "1.68";
 
 /// Keep the best-effort classified-seam cache from turning a successful live
 /// analysis into an unbounded post-analysis stall on large repos. Larger live
@@ -1738,7 +1853,9 @@ fn seam_cache_store_limit_from_env(
     match value {
         Ok(value) => parse_positive_seam_cache_store_limit(&value, env_name),
         Err(std::env::VarError::NotPresent) => Ok(default_limit),
-        Err(std::env::VarError::NotUnicode(_)) => Err(format!("{env_name} must be valid UTF-8")),
+        Err(std::env::VarError::NotUnicode(_)) => Err(format!(
+            "{env_name} must be valid UTF-8; set it to a whole number above zero, or unset it to use the default"
+        )),
     }
 }
 
@@ -1746,9 +1863,11 @@ fn parse_positive_seam_cache_store_limit(value: &str, env_name: &str) -> Result<
     let trimmed = value.trim();
     let parsed = trimmed
         .parse::<usize>()
-        .map_err(|err| format!("{env_name} must be a positive integer: {err}"))?;
+        .map_err(|err| format!("{env_name} must be a positive integer: {err}; set it to a whole number above zero, or unset it to use the default"))?;
     if parsed == 0 {
-        return Err(format!("{env_name} must be a positive integer"));
+        return Err(format!(
+            "{env_name} must be a positive integer; set it to a whole number above zero, or unset it to use the default"
+        ));
     }
     Ok(parsed)
 }
@@ -2155,6 +2274,17 @@ impl WorkspaceKeyContext<'_> {
                 )),
                 None => workspace_manifests_hash,
             };
+        // #16045 review: a symlinked crate root (`src -> real`,
+        // `src/lib.rs -> ../real/lib.rs`) decides which files the repo
+        // inventory lists, and the link can move with no manifest or Rust
+        // file changing (discovery skips links). Fold where each built root
+        // lands into the key. A workspace without linked roots keeps its key.
+        let workspace_manifests_hash = match linked_crate_root_identity(self.workspace_root) {
+            Some(identity) => hash_str(&format!(
+                "{workspace_manifests_hash}:linked-crate-roots:{identity}"
+            )),
+            None => workspace_manifests_hash,
+        };
         // The registered-harness premise is producer-owned Cargo metadata.
         // Raw configuration, including malformed bytes and absence, changes
         // that premise independently of Rust sources, HEAD and ripr.toml.
@@ -4881,6 +5011,39 @@ pub(crate) fn hash_bytes(bytes: &[u8]) -> String {
     format!("{:016x}", fnv1a_64(bytes))
 }
 
+/// Where every symlinked production root the workspace's manifests build
+/// lands, root-relative, or `None` when no built root is reached through a
+/// link (#16045 review).
+fn linked_crate_root_identity(root: &Path) -> Option<String> {
+    let mut manifests = Vec::new();
+    collect_named_workspace_files(root, root, "Cargo.toml", &mut manifests);
+    let relative = |path: &Path| {
+        path.strip_prefix(root)
+            .unwrap_or(path)
+            .to_string_lossy()
+            .replace('\\', "/")
+    };
+    let mut lines = BTreeSet::new();
+    for (manifest, bytes) in manifests {
+        let Ok(text) = std::str::from_utf8(&bytes) else {
+            continue;
+        };
+        let package_dir = match manifest.parent() {
+            Some(parent) if !parent.as_os_str().is_empty() => root.join(parent),
+            _ => root.to_path_buf(),
+        };
+        for (file, dir) in super::workspace::linked_production_roots(root, &package_dir, text) {
+            lines.insert(format!(
+                "{}\t{}\t{}",
+                relative(&manifest),
+                relative(&file),
+                relative(&dir)
+            ));
+        }
+    }
+    (!lines.is_empty()).then(|| hash_str(&lines.into_iter().collect::<Vec<_>>().join("\n")))
+}
+
 fn hash_named_workspace_files(root: &Path, file_name: &str) -> String {
     workspace_named_file_identity(root, file_name)
         .unwrap_or_else(|| hash_str("<no matching workspace files>"))
@@ -5601,7 +5764,11 @@ mod tests {
         // 1.60 -> 1.61: digest-framed entries verified over stored bytes (#9216).
         // 1.62 -> 1.63: unit tail statement blocks are not return values (#15459).
         // 1.63 -> 1.64: `env`/`option_env` binding candidates (#14116).
-        assert_eq!(FILE_FACT_CACHE_SCHEMA_VERSION, "1.64");
+        // 1.64 -> 1.65: `include_bytes`/`include_str` binding candidates (#14116).
+        // 1.65 -> 1.66: item-position `include!` binds any name (#16060).
+        // 1.66 -> 1.67: grouped `self` import binding `serde_json` (#10357).
+        // 1.67 -> 1.68: `anyhow` binding candidates (#10357).
+        assert_eq!(FILE_FACT_CACHE_SCHEMA_VERSION, "1.68");
         // 1.4 -> 1.5: metadata-sourced harness validation (#3634) flips
         // verdicts for workspaces the manifest emulation approximated.
         // 1.5 -> 1.6: the #3636 reachability authority excludes
@@ -5795,9 +5962,57 @@ mod tests {
         // 1.159 -> 1.160: assertion call-kind identity separates same-named owners (#12234).
         // Composed main and successor invalidate both predecessor branches.
         // 1.160 -> 1.161: unresolved field snapshots cannot remain marker-free (#13278).
-        // 1.203 -> 1.204: protected main's attribute-macro scope refusal (#12857).
-        // 1.204 -> 1.205: protected main's std-rooted import exemption (#12876).
-        assert_eq!(CACHE_SCHEMA_VERSION, "1.205");
+        // 1.161 -> 1.162: computed local operands are not predicate boundaries (#12981).
+        // 1.162 -> 1.163: a sibling-variant error pin reads weak in the record, as in the stage (#12836).
+        // 1.163 -> 1.164: a placed bare `assert_matches!` names the unread-macro limit (#12829).
+        // 1.164 -> 1.165: a sibling-variant guarded match reads weak in the record (#12897).
+        // 1.163 -> 1.164: predicate-boundary facts carry the concrete drafted
+        // boundary assertion (agent-efficiency study tweak #4).
+        // 1.166 -> 1.167: a drop-in assertion import names the unverifiable-macro limit (#12886).
+        // 1.167 -> 1.168: typed missing-discriminator shape (#12414).
+        // 1.169 -> 1.170: positive Err-enclosing allowlist (#12474).
+        // 1.170 -> 1.171: cross-file forwarding wrapper names the limit (#12886).
+        // 1.171 -> 1.172: multiline Python receiver rebindings withhold protocol-entry credit (#9992).
+        // 1.172 -> 1.173: `#[async_std::test]` owner-return pins (#5040).
+        // 1.173 -> 1.174: local-bound proximity pin (#12264).
+        // 1.174 -> 1.175: adapter-replaced error-read refusal (#12610).
+        // 1.175 -> 1.176: claims field-construction pin; field value neither version computes (#12394, #12864).
+        // 1.176 -> 1.177: multiline receiver rebindings rejudged (#9992).
+        // 1.177 -> 1.178: per-byte slice-counter boundary credit (#5346, #12641).
+        // 1.178 -> 1.180: logical-or is not closure syntax in a propagation witness (#14326).
+        // 1.180 -> 1.181: success-only assertions leave the failure seam undiscriminated (#12757).
+        // 1.181 -> 1.182: a same-module reader of a module-level const gains a reader entry (#13592).
+        // 1.182 -> 1.183: typed boundary-input activation summary (#14951).
+        // 1.183 -> 1.184: rebound std macro names refuse invocation scopes (#12852).
+        // 1.185 -> 1.187: attribute-macro generated tests refuse invocation scopes (#12857).
+        // 1.187 -> 1.189: std-rooted imports keep invocation scopes (#12876).
+        // 1.188 / 0.190 is left for #13041.
+        // 1.189 -> 1.191: env!-reading wrappers forward helper results (#10357).
+        // 1.190 / 0.192 is left for #13041.
+        // 1.191 -> 1.192: manifest-rebound std/core assertion roots read unknown (#10150); 1.190 is left for #13041.
+        // 1.192 -> 1.193: owner calls only an untrusted inner macro holds read unknown (#16188).
+        // 1.193 -> 1.194: a for over any non-empty array runs its assertion (#14116).
+        // 1.194 -> 1.195: owner-result locals only an untrusted inner macro uses read unknown (#16192).
+        // 1.195 -> 1.196: a propagated fallible check helper lends its assertion (#14116).
+        // 1.196 -> 1.197: chained owner-result locals only an untrusted inner macro uses read unknown (#16219).
+        // 1.197 -> 1.198: a discarded owner call is not a free observation beside a macro-held call (#16258).
+        // 1.198 -> 1.199: include_str!/include_bytes! wrappers forward their helper result (#10357).
+        // 1.199 -> 1.200: matches! or-patterns of values read weak (#16286).
+        // 1.200 -> 1.201: nested-block renames settle in a test's own module file (#16277).
+        // 1.201 -> 1.202: assert_eq!(matches!(..), true) follows its pattern (#16290).
+        // 1.202 -> 1.204: a test-local binder of the name withholds direct credit (#14552).
+        // 1.204 -> 1.205: a compared bool local follows its initializer (#16296).
+        // 1.205 -> 1.206: an audited qualified logging macro is transparent (#10357).
+        // 1.206 -> 1.207: constructed trait receivers and by-value twins (#15956, #15428).
+        // 1.207 -> 1.208: an audited qualified value macro is transparent (#10357).
+        // 1.208 -> 1.209: a standard trait method at an earlier probing step (#16040).
+        // 1.209 -> 1.210: an imported serde_json json! is transparent (#10357).
+        // 1.210 -> 1.211: an imported anyhow! is transparent (#10357).
+        // 1.211 -> 1.212: block arms that read a parameter do not rebind it (#10357).
+        // 1.212 -> 1.213: a type parameter shadows a same-spelled module helper (#12891).
+        // 1.213 -> 1.214: compose history-sync import (1.205) with protected swarm main (1.213) (#16016).
+        assert_eq!(CACHE_SCHEMA_VERSION, "1.214");
+        // 1.168 -> 1.169: plain `assert_eq!` literal withhold in the audit (#13005).
         // 0.12 -> 0.13 through 0.14 / 0.15 / 0.16 / 0.17 / 0.18: same
         // #3731 semantic transition as the outer classified-seam cache,
         // for the sharded and compact envelopes.
@@ -5943,8 +6158,56 @@ mod tests {
         // 0.160 -> 0.161: same cloned-callback withholding as full 1.159 (#13219).
         // 0.161 -> 0.162: same assertion call-kind identity as full 1.160 (#12234).
         // 0.162 -> 0.163: same field-snapshot limitation as full 1.161 (#13278).
-        assert_eq!(SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.207");
-        assert_eq!(COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.207");
+        // 0.163 -> 0.164: same computed-local rule as full 1.162 (#12981).
+        // 0.164 -> 0.165: same sibling-variant error-pin grade as full 1.163 (#12836).
+        // 0.165 -> 0.166: same placed `assert_matches!` limit as full 1.164 (#12829).
+        // 0.166 -> 0.167: same sibling-variant guarded-match grade as full 1.165 (#12897).
+        // 0.167 -> 0.168: same drafted-boundary-assertion transition as full 1.166.
+        // 0.168 -> 0.169: same drop-in import limit as full 1.167 (#12886).
+        // 0.169 -> 0.170: same typed missing-discriminator shape as full 1.168 (#12414).
+        // 0.171 -> 0.172: same positive Err-enclosing rule as full 1.170 (#12474).
+        // 0.172 -> 0.173: same cross-file wrapper limit as full 1.171 (#12886).
+        // 0.173 -> 0.174: same multiline receiver binding refusal as full 1.172 (#9992).
+        // 0.174 -> 0.175: same async_std test admission as full 1.173 (#5040).
+        // 0.175 -> 0.176: same local-bound proximity pin as full 1.174 (#12264).
+        // 0.176 -> 0.177: same adapter-replaced refusal as full 1.175 (#12610).
+        // 0.177 -> 0.178: same claims field-construction pin as full 1.176 (#12394, #12864).
+        // 0.178 -> 0.179: same multiline receiver rejudgment as full 1.177 (#9992).
+        // 0.179 -> 0.180: same slice-counter boundary credit as full 1.178 (#5346, #12641).
+        // 0.180 -> 0.182: same logical-or field witness as full 1.180 (#14326).
+        // 0.182 -> 0.183: same failure-seam success-only refusal as full 1.181 (#12757).
+        // 0.183 -> 0.184: same module-const reader entry as full 1.182 (#13592).
+        // 0.184 -> 0.185: same typed boundary-input summary as full 1.183 (#14951).
+        // 0.185 -> 0.186: same invocation-scope refusal as full 1.184 (#12852).
+        // 0.187 -> 0.189: same attribute-macro scope refusal as full 1.187 (#12857).
+        // 1.186 / 0.188 is left for #13041.
+        // 0.189 -> 0.191: same std-rooted import exemption as full 1.189 (#12876).
+        // 0.191 -> 0.193: same env!-reading wrapper forwarding as full 1.191 (#10357).
+        // 0.193 -> 0.194: same manifest-rebound assertion root as full 1.192 (#10150).
+        // 0.194 -> 0.195: same macro-held owner call as full 1.193 (#16188).
+        // 0.195 -> 0.196: same non-empty array loop execution as full 1.194 (#14116).
+        // 0.196 -> 0.197: same macro-held owner-result local as full 1.195 (#16192).
+        // 0.197 -> 0.198: same propagated fallible check helper as full 1.196 (#14116).
+        // 0.198 -> 0.199: same chained owner-result local as full 1.197 (#16219).
+        // 0.199 -> 0.200: same discarded owner call as full 1.198 (#16258).
+        // 0.200 -> 0.201: same include-reading wrapper forwarding as full 1.199 (#10357).
+        // 0.201 -> 0.202: same or-pattern oracle reading as full 1.200 (#16286).
+        // 0.202 -> 0.203: same file-module nested-block rename as full 1.201 (#16277).
+        // 0.203 -> 0.204: same compared-pattern oracle reading as full 1.202 (#16290).
+        // 0.204 -> 0.206: same local-binder refusal as full 1.204 (#14552).
+        // 0.206 -> 0.207: same compared-bool-local oracle reading as full 1.205 (#16296).
+        // 0.207 -> 0.208: same audited logging-wrapper forwarding as full 1.206 (#10357).
+        // 0.208 -> 0.209: same constructed trait receiver reading as full 1.207 (#15956).
+        // 0.209 -> 0.210: same audited value-macro wrapper forwarding as full 1.208 (#10357).
+        // 0.210 -> 0.211: same standard trait rival reading as full 1.209 (#16040).
+        // 0.211 -> 0.212: same imported json! wrapper forwarding as full 1.210 (#10357).
+        // 0.212 -> 0.213: same imported anyhow! wrapper forwarding as full 1.211 (#10357).
+        // 0.213 -> 0.214: same block-arm parameter reading as full 1.212 (#10357).
+        // 0.214 -> 0.215: same type-parameter-shadowed helper reading as full 1.213 (#12891).
+        // 0.215 -> 0.216: match full 1.214 for composed history-sync import + protected swarm main (#16016).
+        assert_eq!(SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.216");
+        assert_eq!(COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.216");
+        // 0.170 -> 0.171: same plain `assert_eq!` literal withhold as full 1.169 (#13005).
     }
 
     #[test]

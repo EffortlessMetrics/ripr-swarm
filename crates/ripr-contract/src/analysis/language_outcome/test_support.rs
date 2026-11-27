@@ -53,6 +53,7 @@ pub(crate) fn test_finding() -> Result<Finding, String> {
             normalized_discriminator: "total == 10000".to_string(),
         }),
         probe: Probe {
+            before_condition: None,
             id: ProbeId("probe:test:1".to_string()),
             location: SourceLocation::new("src/lib.rs", 12, 5),
             owner: Some(crate::domain::SymbolId("symbol:checkout".to_string())),

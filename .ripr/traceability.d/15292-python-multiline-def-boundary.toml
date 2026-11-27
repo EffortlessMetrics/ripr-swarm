@@ -4,6 +4,9 @@ id = "RIPR-SPEC-0028"
 tests = [
   "crates/ripr/src/analysis/language/python/guard_activation.rs::tests::multiline_signature_parameters_are_not_rebinding",
   "crates/ripr/src/analysis/language/python/tests.rs::multi_line_def_header_span_skips_string_literals",
+  "crates/ripr/src/analysis/language/python/guard_activation.rs::tests::rebound_scan_starts_below_a_multi_line_header",
+  "crates/ripr/src/analysis/language/python/classify/tests.rs::multi_line_header_does_not_hide_an_unentered_arm",
+  "crates/ripr/src/analysis/language/python/classify/tests.rs::body_rebinding_below_a_multi_line_header_keeps_oracle_credit",
 ]
 code = [
   "crates/ripr/src/analysis/language/python/guard_activation.rs",

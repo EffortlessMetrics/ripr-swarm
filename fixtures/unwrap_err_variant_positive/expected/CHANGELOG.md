@@ -641,24 +641,10 @@ Updated:
 ## Pending — unwrap_err_variant_positive (49)
 
 Reason:
-RIPR-SPEC-0106: correct the real Git diff hunk to the actual Err line; preserve exact unit-variant positive and native wrong-variant refusal
+RIPR-SPEC-0122: #15313 Summary names shared candidate lines and says No test gap when State reads no test gap found
 
 Command:
 `cargo xtask goldens bless unwrap_err_variant_positive --reason "..."`
 
 Updated:
-- `expected/check.json`
-- `expected/human.txt`
-- `expected/human-full.txt`
-
-## Pending — unwrap_err_variant_positive (50)
-
-Reason:
-RIPR-SPEC-0106 Keep the source-owned distinct error path and return value findings, and retain the structured evidence stages from RIPR-SPEC-0423.
-
-Command:
-`cargo xtask goldens bless unwrap_err_variant_positive --reason "..."`
-
-Updated:
-- `expected/check.json`
 - `expected/human.txt`

@@ -315,10 +315,12 @@ Updated:
 ## Pending — owner_return_pin_json_uncalled_closure (26)
 
 Reason:
-RIPR-SPEC-0108: the default human line says the missing error-variant check in plain words (check-user-text glossary); JSON and human-full keep the classifier wording
+RIPR-SPEC-0224: inert row names the construct its refusals agree on (#15337)
 
 Command:
 `cargo xtask goldens bless owner_return_pin_json_uncalled_closure --reason "..."`
 
 Updated:
+- `expected/check.json`
 - `expected/human.txt`
+- `expected/human-full.txt`

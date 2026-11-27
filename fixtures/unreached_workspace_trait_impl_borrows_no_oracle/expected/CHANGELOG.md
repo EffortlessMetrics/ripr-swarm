@@ -268,18 +268,7 @@ Updated:
 ## Pending — unreached_workspace_trait_impl_borrows_no_oracle (21)
 
 Reason:
-RIPR-SPEC-0108 For unreached_workspace_trait_impl_borrows_no_oracle, explain why the bounded match-arm owner cannot start a repair.
-
-Command:
-`cargo xtask goldens bless unreached_workspace_trait_impl_borrows_no_oracle --reason "..."`
-
-Updated:
-- `expected/human.txt`
-
-## Pending — unreached_workspace_trait_impl_borrows_no_oracle (22)
-
-Reason:
-RIPR-SPEC-0108: the default human line says the missing error-variant check in plain words (check-user-text glossary); JSON and human-full keep the classifier wording
+RIPR-SPEC-0122: #15313 Summary names shared candidate lines and says No test gap when State reads no test gap found
 
 Command:
 `cargo xtask goldens bless unreached_workspace_trait_impl_borrows_no_oracle --reason "..."`

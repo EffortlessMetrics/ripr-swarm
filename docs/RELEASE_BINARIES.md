@@ -155,9 +155,14 @@ The `package-smoke` matrix installs that artifact on each native runner
 (Linux x64 on Ubuntu 22.04 for the glibc 2.34 floor, Linux ARM64, macOS Intel,
 macOS ARM64, Windows x64), with no ripr on `PATH`:
 
-- `pip install --no-index --pre --find-links wheels ripr-rs` from the full five-wheel
-  directory, so pip must select the wheel whose tag matches the host; the job
-  fails if it picks any other tag;
+- `pip install --no-index --pre --find-links wheels --report pip-report.json ripr-rs`
+  from the full five-wheel directory. Before launching ripr, the verifier checks
+  the selected wheel's exact filename (including the host tag), SHA-256,
+  distribution name, and normalized version against the same-run native wheel
+  receipt. The receipt must name the requested source, version, and target and
+  bind the raw qualified payload identity bytes. The verifier separately checks
+  the installed executable against that payload identity; a mismatch stops
+  the smoke test even if the other checks agree;
 - `npm install --offline` of the launcher tarball plus the host's own native
   package, with scripts disabled and an empty cache;
 - both installed commands must print `ripr <version> (<commit>)` and run

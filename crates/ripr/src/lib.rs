@@ -147,6 +147,7 @@ pub mod output;
 pub mod provider_contract;
 pub mod review_input;
 mod terminal_text;
+mod work_tree_route;
 mod workspace_status;
 
 pub use analysis::DiffScopeFilter;

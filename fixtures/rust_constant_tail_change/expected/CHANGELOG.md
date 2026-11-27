@@ -73,7 +73,6 @@ Updated:
 ## Pending — rust_constant_tail_change (7)
 
 Reason:
-RIPR-SPEC-0197 The separate base-side return in pick has no discriminating assertion. Its existing test observes an empty vector on both sides.
 RIPR-SPEC-0197 (#14936): the deleted same-value guard of pick reads weakly_exposed; gate's guard discriminate stage reads weak
 
 Command:
@@ -86,10 +85,10 @@ Updated:
 ## Pending — rust_constant_tail_change (8)
 
 Reason:
-RIPR-SPEC-0224: a direct assertion reads the removed guard owner's return; the same value on both sides keeps discrimination weak while the authenticated observation needs no unknown-observation marker.
+RIPR-SPEC-0122: #15313 Summary names shared candidate lines and says No test gap when State reads no test gap found
 
 Command:
 `cargo xtask goldens bless rust_constant_tail_change --reason "..."`
 
 Updated:
-- `expected/check.json`
+- `expected/human.txt`

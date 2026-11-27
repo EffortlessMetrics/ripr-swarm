@@ -1213,6 +1213,7 @@ mod tests {
             .find(|f| f.name == "inc")
             .ok_or_else(|| "fixture owner missing".to_string())?;
         let probe = Probe {
+            before_condition: None,
             id: ProbeId("body-admission".to_string()),
             location: SourceLocation::new(owner.file.clone(), owner.start_line, 1),
             owner: Some(owner.id.clone()),

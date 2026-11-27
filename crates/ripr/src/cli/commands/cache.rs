@@ -20,7 +20,8 @@ Usage: ripr cache export [--root PATH] --out NEW_DIRECTORY
 
 Copy a qualified current-input cache snapshot, excluding historical keys,
 unreferenced shards, fingerprint mappings and staging files. The live cache
-is never changed. Run repo exposure or repo badge analysis first.
+is never changed. Run `ripr check --format repo-exposure-summary-json`
+first (same --root).
 
   --root PATH   Analyzed root, preserving the spelling supplied to check.
                 Default: the same implicit workspace resolution as check.

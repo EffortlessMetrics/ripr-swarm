@@ -1573,6 +1573,9 @@ fn run_pipeline_for_diff_text_with_language_config(
     // file count and the out-of-scope count. These are intake quantities, not
     // raw Git path counts and not adapter result counts.
     super::publish_scoped_intake_facts(changed_files.len(), out_of_scope.count);
+    // #16250: changed files the operator's own configuration left out, with
+    // the setting that matched, for the `explain` miss diagnosis.
+    let mut configured_exclusions: Vec<(String, String)> = Vec::new();
     let mut limitations = parsed_diff
         .limitations
         .into_iter()
@@ -1684,10 +1687,16 @@ fn run_pipeline_for_diff_text_with_language_config(
                     .collect::<Vec<_>>()
             };
             if !configured.is_empty() {
+                let setting = "[languages.rust] generated_file_patterns";
                 limitations.push(configured_exclusion_note(
-                    "[languages.rust] generated_file_patterns",
+                    setting,
                     &normalized(&configured),
                 )?);
+                configured_exclusions.extend(
+                    configured
+                        .iter()
+                        .map(|path| (super::stable_path_text(path), setting.to_string())),
+                );
             }
             let builtin_skipped = result.skipped_files.saturating_sub(configured.len());
             // The language outcome and every projection below count only
@@ -2166,10 +2175,14 @@ fn run_pipeline_for_diff_text_with_language_config(
         // #13894: paths the operator's own `excluded_file_patterns` left out
         // are requested scope: a scope note, not an incomplete limitation.
         if skip_class == PreviewSkipClass::ConfiguredPattern {
-            limitations.push(configured_exclusion_note(
-                &format!("[{config_section}] excluded_file_patterns"),
-                &skipped,
-            )?);
+            let setting = format!("[{config_section}] excluded_file_patterns");
+            limitations.push(configured_exclusion_note(&setting, &skipped)?);
+            configured_exclusions.extend(skipped.iter().map(|path| {
+                (
+                    super::stable_path_text(std::path::Path::new(path)),
+                    setting.clone(),
+                )
+            }));
             continue;
         }
         let (recovery_kind, recovery) = match skip_class {
@@ -2177,10 +2190,10 @@ fn run_pipeline_for_diff_text_with_language_config(
                 AnalysisRecoveryKind::DeclareHandwrittenFiles,
                 format!(
                     "Not analyzed by the {name} preview adapter: {listed}. It skips \
-                     generated files and vendored, dependency, build-output and cache \
-                     directories; if one of these is hand-written, declare its exact \
+                     {skipped_kinds}; if one of these is hand-written, declare its exact \
                      repository-relative path in `[{config_section}] handwritten_files` \
-                     and re-run the analysis."
+                     and re-run the analysis.",
+                    skipped_kinds = excluded_path_skip_kinds(language),
                 ),
             ),
             PreviewSkipClass::GeneratedName => (
@@ -2501,6 +2514,9 @@ fn run_pipeline_for_diff_text_with_language_config(
             super::stable_path_text(&file.path),
             file.added_lines.iter().map(|line| line.new_side_line),
         );
+    }
+    for (path, setting) in configured_exclusions {
+        changed_line_index.record_configured_exclusion(path, setting);
     }
     let kind = if limitations.iter().any(|limitation| {
         matches!(
@@ -3476,6 +3492,20 @@ fn is_excluded_from_preview_analysis(
     }
 }
 
+/// What the excluded-path limitation says an adapter skips. The TypeScript/JS
+/// adapter also refuses docs sites and tool configuration scripts (#13088,
+/// #15947); the Python adapter applies neither rule, so its sentence must not
+/// name them.
+fn excluded_path_skip_kinds(language: LanguageId) -> &'static str {
+    match language {
+        LanguageId::TypeScript => {
+            "generated files, vendored, dependency, build-output and cache directories, \
+             docs sites and tool configuration scripts"
+        }
+        _ => "generated files and vendored, dependency, build-output and cache directories",
+    }
+}
+
 /// Whether the TypeScript/JS adapter's generated-name and excluded-directory
 /// authorities refuse `path`. The authorities are real in every feature lane
 /// (like the Python ones), so the diff-scope guard measures the same admitted
@@ -3485,7 +3515,7 @@ fn is_excluded_from_typescript_preview_analysis(
     language_config: &crate::config::LanguagesConfig,
 ) -> bool {
     is_excluded_from_typescript_workspace_index(path, language_config)
-        || (crate::config::is_typescript_docs_site_path(path)
+        || (crate::config::is_typescript_non_product_path(path)
             && !crate::config::is_declared_handwritten_typescript_path(
                 &language_config.typescript.handwritten_files,
                 path,
@@ -3494,8 +3524,9 @@ fn is_excluded_from_typescript_preview_analysis(
 
 /// Whether the TypeScript/JS workspace walk also refuses `path`, so it can
 /// supply neither a changed owner nor test evidence. This is the diff-loop
-/// authority without the `docs/` rule, which is diff-only (#13088): the walk
-/// keeps indexing `docs/` because libraries keep tests there.
+/// authority without the `docs/` and tool-config rules, which are diff-only
+/// (#13088, #15947): the walk keeps indexing `docs/` because libraries keep
+/// tests there, and keeps reading tool configs for alias and runner detection.
 fn is_excluded_from_typescript_workspace_index(
     path: &std::path::Path,
     language_config: &crate::config::LanguagesConfig,
@@ -3517,7 +3548,7 @@ fn is_excluded_from_typescript_workspace_index(
 /// [`is_excluded_from_preview_analysis`] for TypeScript/JS, where `docs/` is
 /// skipped as changed scope but still indexed. The Python walk applies the
 /// same three authorities as its diff loop, so the two agree there.
-fn is_excluded_from_diff_and_workspace_index(
+pub(crate) fn is_excluded_from_diff_and_workspace_index(
     language: LanguageId,
     path: &std::path::Path,
     language_config: &crate::config::LanguagesConfig,
@@ -10576,6 +10607,50 @@ index 0000000..1111111 100644
             ));
         }
         Ok(())
+    }
+
+    #[test]
+    fn changed_typescript_line_count_excludes_tool_configs_unless_declared_handwritten()
+    -> Result<(), String> {
+        // #15947: the pipeline's admitted-diff measure refuses a runner
+        // config like the adapter does; `app.config.ts` is a near miss.
+        let files = vec![
+            changed_line_file("web/app.ts", 2, 1),
+            changed_line_file("jest.config.ts", 2_001, 0),
+            changed_line_file("web/app.config.ts", 4, 0),
+        ];
+
+        let default_count = changed_language_line_count(
+            &files,
+            LanguageId::TypeScript,
+            &crate::config::LanguagesConfig::default(),
+        );
+        if default_count != 7 {
+            return Err(format!(
+                "expected tool-config lines excluded and the near miss counted, got {default_count}"
+            ));
+        }
+
+        let mut declared = crate::config::LanguagesConfig::default();
+        declared.typescript.handwritten_files = vec!["jest.config.ts".to_string()];
+        let declared_count = changed_language_line_count(&files, LanguageId::TypeScript, &declared);
+        if declared_count != 2_008 {
+            return Err(format!(
+                "expected the declared handwritten config to count again, got {declared_count}"
+            ));
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn excluded_path_skip_kinds_name_typescript_only_rules_for_typescript_only() {
+        let typescript = excluded_path_skip_kinds(LanguageId::TypeScript);
+        assert!(typescript.contains("docs sites"));
+        assert!(typescript.contains("tool configuration scripts"));
+        let python = excluded_path_skip_kinds(LanguageId::Python);
+        assert!(!python.contains("docs sites"));
+        assert!(!python.contains("tool configuration"));
+        assert!(python.contains("build-output and cache directories"));
     }
 
     #[test]

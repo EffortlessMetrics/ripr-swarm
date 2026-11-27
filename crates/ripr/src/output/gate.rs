@@ -219,7 +219,7 @@ pub(crate) fn build_gate_decision_report(
             let resolved = resolve_root_path(&input.root, path);
             let display = display_path(path);
             let ledger_result = consumed
-                .read_toml_text_and_record(&resolved, &display)
+                .read_toml_text_and_record(&resolved, &display, "--exception-policy")
                 .and_then(|(text, digest)| {
                     consumed.exception_policy = Some(digest);
                     exception_policy::load_exception_ledger_from_text(&text, &display)
@@ -245,7 +245,7 @@ pub(crate) fn build_gate_decision_report(
             let resolved = resolve_root_path(&input.root, path);
             let display = display_path(path);
             let ledger_result = consumed
-                .read_toml_text_and_record(&resolved, &display)
+                .read_toml_text_and_record(&resolved, &display, "--acknowledgements")
                 .and_then(|(text, digest)| {
                     consumed.acknowledgements = Some(digest);
                     structured_acknowledgements::load_structured_acknowledgements_from_text(
@@ -291,14 +291,21 @@ pub(crate) fn build_gate_decision_report(
     // so a baseline entry elsewhere is not evidence of resolution.
     let analysis_scope = if config_errors.is_empty() {
         match gap_ledger.as_ref() {
-            Some(records) => Some(
-                crate::output::review_comments::gap_ledger_analysis_scope_json(
+            Some(records) => {
+                let mut scope = crate::output::review_comments::gap_ledger_analysis_scope_json(
                     records,
                     gap_ledger_coverage.as_ref(),
                     &gap_ledger_refusal,
                     gap_ledger_owner_opt_outs.as_ref(),
-                ),
-            ),
+                );
+                // The ledger owns coverage; only review-comments knows which changed files
+                // its parser declined. Preserve malformed disclosures for the existing warning.
+                if let Some(declined) = pr_guidance.pointer("/analysis_scope/parser_declined_files")
+                {
+                    scope["parser_declined_files"] = declined.clone();
+                }
+                Some(scope)
+            }
             None => {
                 let scope = pr_guidance
                     .get("analysis_scope")
@@ -1664,14 +1671,19 @@ fn read_json_value_and_bytes_with_display(
             format!("read {display} failed: {err}")
         }
     })?;
+    // The subject hash covers the bytes as written; the parse reads the same
+    // bytes decoded from a PowerShell 5.1 encoding when one is marked (#15936).
+    let text = crate::bounded_input::decode_artifact_text(&bytes).map_err(|err| {
+        format!("read {display} failed: {err}; save the file as UTF-8, then rerun")
+    })?;
     let value =
-        serde_json::from_slice(&bytes).map_err(|err| format!("parse {display} failed: {err}"))?;
+        serde_json::from_str(&text).map_err(|err| format!("parse {display} failed: {err}"))?;
     Ok((value, bytes))
 }
 
 fn read_json_value_with_display(path: &Path, display: &Path) -> Result<Value, String> {
     let display = display_path(display);
-    let text = crate::bounded_input::read_to_string(path).map_err(|err| {
+    let text = crate::bounded_input::read_artifact_text(path).map_err(|err| {
         if err.kind() == std::io::ErrorKind::NotFound {
             format!("read {display} failed: not found")
         } else {

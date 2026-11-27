@@ -21,6 +21,7 @@ pub(super) fn missing(
         return seam.kind() == crate::analysis::seams::SeamKind::PredicateBoundary;
     };
     let mut probe = Probe {
+        before_condition: None,
         id: ProbeId(format!("repo-boundary-pairing:{}", seam.id().as_str())),
         location: SourceLocation::new(seam.file().to_path_buf(), seam.display_line(), 1),
         owner: Some(owner.id.clone()),

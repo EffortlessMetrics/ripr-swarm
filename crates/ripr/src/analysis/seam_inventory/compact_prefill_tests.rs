@@ -118,7 +118,7 @@ fn compact_windows_full_cold_run_populates_complete_summary_cache() -> Result<()
         repo_exposure_seam_limit()?,
         Some((1, SeamLimitSource::Configured))
     );
-    let full = inventory_classified_seams_report_inner(&root, &config, None)?;
+    let full = inventory_classified_seams_report_inner(&root, &config, None, None)?;
     assert_eq!(full.classified.len(), 1);
     assert_eq!(
         full.limit_info.as_ref().map(|info| info.total),

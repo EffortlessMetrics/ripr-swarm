@@ -38,7 +38,7 @@ Updated:
 ## Pending — predicate_oracle_disabled_mod_refused (4)
 
 Reason:
-RIPR-SPEC-0197 For predicate_oracle_disabled_mod_refused, keep the repair advice aligned with the observed seam, owner and boundary.
+RIPR-SPEC-0122: #15313 Summary names shared candidate lines and says No test gap when State reads no test gap found
 
 Command:
 `cargo xtask goldens bless predicate_oracle_disabled_mod_refused --reason "..."`

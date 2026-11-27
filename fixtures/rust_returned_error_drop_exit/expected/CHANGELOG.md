@@ -386,31 +386,7 @@ Updated:
 ## Pending — rust_returned_error_drop_exit (30)
 
 Reason:
-RIPR-SPEC-0197 / RIPR-SPEC-0197: retain fixture classifications while refreshing composed producer guidance and assertion-local sink identity; owner-call proximity alone does not establish discriminator credit
-
-Command:
-`cargo xtask goldens bless rust_returned_error_drop_exit --reason "..."`
-
-Updated:
-- `expected/check.json`
-- `expected/human.txt`
-- `expected/human-full.txt`
-
-## Pending — rust_returned_error_drop_exit (31)
-
-Reason:
-RIPR-SPEC-0197 For rust_returned_error_drop_exit, admit the discriminator only with assertion evidence linked to the changed result.
-
-Command:
-`cargo xtask goldens bless rust_returned_error_drop_exit --reason "..."`
-
-Updated:
-- `expected/check.json`
-
-## Pending — rust_returned_error_drop_exit (32)
-
-Reason:
-RIPR-SPEC-0108: the default human line says the missing error-variant check in plain words (check-user-text glossary); JSON and human-full keep the classifier wording
+RIPR-SPEC-0122: #15313 Summary names shared candidate lines and says No test gap when State reads no test gap found
 
 Command:
 `cargo xtask goldens bless rust_returned_error_drop_exit --reason "..."`

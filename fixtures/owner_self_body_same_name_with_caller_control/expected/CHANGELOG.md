@@ -195,24 +195,10 @@ Updated:
 ## Pending — owner_self_body_same_name_with_caller_control (16)
 
 Reason:
-RIPR-SPEC-0108 / RIPR-SPEC-0197: retain fixture classifications while refreshing composed producer guidance and assertion-local sink identity; owner-call proximity alone does not establish discriminator credit
+RIPR-SPEC-0122: the Summary names findings whose reach is a test link ripr could not confirm (#15295)
 
 Command:
 `cargo xtask goldens bless owner_self_body_same_name_with_caller_control --reason "..."`
 
 Updated:
-- `expected/check.json`
-- `expected/human.txt`
-- `expected/human-full.txt`
-
-## Pending — owner_self_body_same_name_with_caller_control (17)
-
-Reason:
-RIPR-SPEC-0108 For owner_self_body_same_name_with_caller_control, admit the discriminator only with assertion evidence linked to the changed result.
-
-Command:
-`cargo xtask goldens bless owner_self_body_same_name_with_caller_control --reason "..."`
-
-Updated:
-- `expected/check.json`
 - `expected/human.txt`

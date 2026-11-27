@@ -52,11 +52,21 @@ Updated:
 ## Pending — guard_operand_dropped_agreement (5)
 
 Reason:
-RIPR-SPEC-0197 The omitted guard agrees on both literal call inputs. The return retains its weak discriminator while the predicate reports an unresolved computed operand.
+RIPR-SPEC-0259: a -> bool owner whose reaching related tests already assert its exact result with assert!(owner(..)) / assert!(!owner(..)) gets a next step naming the missing deciding input instead of the broad-assertion template (#15149); classification, stages and evidence unchanged
 
 Command:
 `cargo xtask goldens bless guard_operand_dropped_agreement --reason "..."`
 
 Updated:
-- `expected/check.json`
-- `expected/human-full.txt`
+- `expected/human.txt`
+
+## Pending — guard_operand_dropped_agreement (6)
+
+Reason:
+RIPR-SPEC-0122: #15313 Summary names shared candidate lines and says No test gap when State reads no test gap found
+
+Command:
+`cargo xtask goldens bless guard_operand_dropped_agreement --reason "..."`
+
+Updated:
+- `expected/human.txt`

@@ -26,20 +26,7 @@ Updated:
 ## Pending — guard_operand_wrapper_agreement (3)
 
 Reason:
-RIPR-SPEC-0197: history-sync composition; the import line's sink-identity rule leaves a direct_owner_call oracle uncredited without sink-level evidence, and main's unresolved-operand wording applies; class unchanged
-
-Command:
-`cargo xtask goldens bless guard_operand_wrapper_agreement --reason "..."`
-
-Updated:
-- `expected/check.json`
-- `expected/human.txt`
-- `expected/human-full.txt`
-
-## Pending — guard_operand_wrapper_agreement (4)
-
-Reason:
-RIPR-SPEC-0108: history-sync composition; the import line's sink-identity rule leaves a direct_owner_call oracle uncredited without sink-level evidence, and main's unresolved-operand wording applies; class unchanged
+RIPR-SPEC-0122: #15313 Summary names shared candidate lines and says No test gap when State reads no test gap found
 
 Command:
 `cargo xtask goldens bless guard_operand_wrapper_agreement --reason "..."`

@@ -77,6 +77,7 @@ fn relation_guard_namespace_calls_still_check_body_and_scope_shadows() -> Result
     test.scope_bindings = vec![super::TypeScriptScopeBinding {
         name: "pricing".to_owned(),
         constructed_by: None,
+        namespace_member_of: Vec::new(),
         file_level: false,
         parameter_end: None,
     }]
@@ -131,6 +132,7 @@ fn relation_guard_reexports_still_check_local_and_enclosing_shadows() -> Result<
     test.scope_bindings = vec![super::TypeScriptScopeBinding {
         name: "cost".to_owned(),
         constructed_by: None,
+        namespace_member_of: Vec::new(),
         file_level: false,
         parameter_end: None,
     }]

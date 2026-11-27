@@ -385,7 +385,7 @@ Updated:
 ## Pending — rust_adversarial_shared_error_variant_proximity (29)
 
 Reason:
-RIPR-SPEC-0108: the default human line says the missing error-variant check in plain words (check-user-text glossary); JSON and human-full keep the classifier wording
+RIPR-SPEC-0122: #15313 Summary names shared candidate lines and says No test gap when State reads no test gap found
 
 Command:
 `cargo xtask goldens bless rust_adversarial_shared_error_variant_proximity --reason "..."`

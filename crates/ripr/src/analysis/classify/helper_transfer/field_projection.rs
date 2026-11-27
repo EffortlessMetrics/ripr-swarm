@@ -447,6 +447,7 @@ mod tests {
     #[test]
     fn receipt_rejects_mutated_identity_and_validation_bytes() {
         let probe = Probe {
+            before_condition: None,
             id: crate::domain::ProbeId("fixture".into()),
             location: crate::domain::SourceLocation {
                 file: "src/lib.rs".into(),
@@ -497,6 +498,7 @@ mod tests {
 
     fn probe() -> Probe {
         Probe {
+            before_condition: None,
             id: ProbeId("fixture".into()),
             location: crate::domain::SourceLocation {
                 file: "src/lib.rs".into(),

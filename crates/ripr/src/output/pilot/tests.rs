@@ -5485,13 +5485,13 @@ fn pilot_names_changed_files_its_ranking_leaves_out() {
     let several = PilotCurrentChange::from_diff_text(
         Path::new("."),
         Some("origin/main".to_string()),
-        &diff(&["build.rs", "lib/odd.rs", "src/lib.rs"]),
+        &diff(&["build.rs", "xtask/src/main.rs", "src/lib.rs"]),
     )
     .with_diff_only_files(vec![
         (PathBuf::from("build.rs"), DiffOnlySource::BuildScript),
         (
-            PathBuf::from("lib/odd.rs"),
-            DiffOnlySource::DeclaredOutsideSrc,
+            PathBuf::from("xtask/src/main.rs"),
+            DiffOnlySource::RepoAutomation,
         ),
     ])
     .with_seams_counted(&[], None);
@@ -5504,13 +5504,13 @@ fn pilot_names_changed_files_its_ranking_leaves_out() {
     let only_several = PilotCurrentChange::from_diff_text(
         Path::new("."),
         Some("origin/main".to_string()),
-        &diff(&["build.rs", "lib/odd.rs"]),
+        &diff(&["build.rs", "xtask/src/main.rs"]),
     )
     .with_diff_only_files(vec![
         (PathBuf::from("build.rs"), DiffOnlySource::BuildScript),
         (
-            PathBuf::from("lib/odd.rs"),
-            DiffOnlySource::DeclaredOutsideSrc,
+            PathBuf::from("xtask/src/main.rs"),
+            DiffOnlySource::RepoAutomation,
         ),
     ])
     .with_seams_counted(&[], None);
@@ -5810,6 +5810,68 @@ fn pilot_not_scanned_block_omits_python_pilot_analyzed() {
     assert!(terminal.contains("Not scanned by pilot"), "{terminal}");
     assert!(terminal.contains("perl:"), "{terminal}");
     assert!(!terminal.contains("  python:"), "{terminal}");
+}
+
+/// #15297: every blocker withholds the check command, so no rendered route
+/// sends the reader into a `ripr check` that refuses at this root, and each
+/// names the route that does work there.
+#[test]
+fn check_blockers_withhold_the_refused_check_and_name_a_working_route() {
+    use crate::domain::LanguageId;
+    let artifacts = pilot_artifacts();
+    let files = discovered_files(&[(LanguageId::Python, "src/pricing.py")]);
+    for (blocker, expected) in [
+        (
+            CheckBlocker::NotWorkTree,
+            ["git -C", "commit the files there", "--diff PATH"],
+        ),
+        // #15297 review: the bare-repository route names the repository's own
+        // path, so it runs from any directory.
+        (
+            CheckBlocker::BareRepository,
+            ["--git-dir=", "worktree add", "--root <path>"],
+        ),
+        (
+            CheckBlocker::GitMissing,
+            ["install Git", "saved patch", "--diff PATH"],
+        ),
+    ] {
+        let routes = PilotLanguageRoutes::from_discovered(
+            Path::new("."),
+            false,
+            &[LanguageId::Python],
+            false,
+            &files,
+        )
+        .with_check_blocker(Path::new("."), blocker);
+        assert!(
+            PilotLanguageRoutes::commands(&routes.routes).is_empty(),
+            "{blocker:?}"
+        );
+        let python = routes
+            .routes
+            .iter()
+            .find(|route| route.language == LanguageId::Python);
+        assert!(
+            python.is_some_and(|route| route.route() == "needs_git_work_tree"),
+            "{blocker:?}"
+        );
+        let context = PilotSummaryContext {
+            language_routes: Some(&routes),
+            ..pilot_context(&artifacts)
+        };
+        let terminal = render_pilot_terminal(&[], context);
+        for needle in expected {
+            assert!(
+                terminal.contains(needle),
+                "{blocker:?} lacks {needle}: {terminal}"
+            );
+        }
+        assert!(
+            !terminal.contains("run the command below to check the diff"),
+            "{blocker:?}: {terminal}"
+        );
+    }
 }
 
 /// #15302: a nested Python project's project-relative verify command is shown

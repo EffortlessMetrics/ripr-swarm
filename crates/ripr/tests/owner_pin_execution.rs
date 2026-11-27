@@ -33,8 +33,12 @@ mod effect_assertion_sweep;
 mod effect_assertions;
 #[path = "owner_pin_execution/function_pointer.rs"]
 mod function_pointer;
+#[path = "owner_pin_execution/non_empty_array_loop.rs"]
+mod non_empty_array_loop;
 #[path = "owner_pin_execution/path_value.rs"]
 mod path_value;
+#[path = "owner_pin_execution/propagated_helper_try.rs"]
+mod propagated_helper_try;
 
 #[path = "owner_pin_execution/matches_panic.rs"]
 mod matches_panic;

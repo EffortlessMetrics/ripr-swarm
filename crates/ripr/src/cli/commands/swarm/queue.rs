@@ -86,7 +86,7 @@ pub(super) fn run(options: Options) -> Result<(), String> {
 /// diagnostic (#9851): plain `not found` — never a raw OS errno — plus the
 /// producer command, in the sibling `reports gap-ledger` vocabulary.
 fn read_gap_ledger(path: &Path) -> Result<String, String> {
-    crate::bounded_input::read_to_string(path).map_err(|err| {
+    crate::bounded_input::read_artifact_text(path).map_err(|err| {
         let mut message = format!(
             "swarm queue --gap-ledger {} is invalid: {}",
             output::outcome::display_path(path),
@@ -107,7 +107,7 @@ fn render_from_gap_ledger_contents(options: &Options, contents: &str) -> Result<
     let source =
         output::gap_decision_ledger::parse_gap_record_source_json(contents).map_err(|err| {
             format!(
-                "swarm queue --gap-ledger {} is invalid: {err}",
+                "swarm queue --gap-ledger {} is invalid: {err}; regenerate it with `ripr reports gap-ledger` or pass the ledger that command wrote",
                 options.gap_ledger.display()
             )
         })?;

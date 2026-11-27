@@ -1,0 +1,2 @@
+<!-- section: Fixed -->
+- A Rust helper wrapper that calls bare `anyhow!` after `use anyhow::anyhow;` now forwards its helper result, so a boundary test of the wrapper can read `exposed`. The import must be the only binding of `anyhow`, and `anyhow` must be a plain registry dependency locked at an audited release (1.0.100, 1.0.102, 1.0.104). A local `macro_rules! anyhow`, another import, a glob, `#[macro_use]`, or an `anyhow` module, alias or grouped `self` import from another path keeps the wrapper opaque (#10357).

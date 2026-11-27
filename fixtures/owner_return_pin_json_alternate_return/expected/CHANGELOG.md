@@ -316,7 +316,7 @@ Updated:
 ## Pending — owner_return_pin_json_alternate_return (26)
 
 Reason:
-RIPR-SPEC-0108: the default human line says the missing error-variant check in plain words (check-user-text glossary); JSON and human-full keep the classifier wording
+RIPR-SPEC-0122: #15313 Summary names shared candidate lines and says No test gap when State reads no test gap found
 
 Command:
 `cargo xtask goldens bless owner_return_pin_json_alternate_return --reason "..."`

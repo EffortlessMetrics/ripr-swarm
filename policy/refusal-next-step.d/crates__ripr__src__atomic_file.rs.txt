@@ -1,0 +1,3 @@
+crates/ripr/src/atomic_file.rs|refusing to write ripr output: cannot resolve current directory: {error}
+crates/ripr/src/atomic_file.rs|refusing to write ripr output: cannot resolve workspace root {}: {error}
+crates/ripr/src/atomic_file.rs|refusing to write {what}: cannot resolve workspace root {}: {error}

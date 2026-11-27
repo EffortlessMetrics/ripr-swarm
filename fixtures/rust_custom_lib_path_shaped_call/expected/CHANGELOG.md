@@ -13,15 +13,13 @@ Updated:
 - `expected/human.txt`
 - `expected/human-full.txt`
 
-## Pending — rust_custom_lib_path_shaped_call (2)
+## Pending - rust_custom_lib_path_shaped_call (2)
 
 Reason:
-RIPR-SPEC-0172: composed with the public-source import, the directory-shaped call stays weakly_exposed and the strongest-oracle identity gate names it (identity_unresolved) before the pairing summary
+RIPR-SPEC-0186: the repair explanation identifies the missing exact boundary assertion when the fixture has no paired oracle (#15664)
 
 Command:
 `cargo xtask goldens bless rust_custom_lib_path_shaped_call --reason "..."`
 
 Updated:
-- `expected/check.json`
 - `expected/human.txt`
-- `expected/human-full.txt`
