@@ -910,8 +910,26 @@ fn snapshot_identity(
     }
     let bytes = serde_json::to_vec(&payload)
         .map_err(|error| format!("serialize snapshot identity: {error}"))?;
-    let wire = format!("snapshot:sha256:{}", sha256_hex(&bytes));
+    let wire = format!("{SNAPSHOT_ID_WIRE_PREFIX}{}", sha256_hex(&bytes));
     crate::domain::CompletedAnalysisSnapshotId::parse(&wire).map_err(|error| error.to_string())
+}
+
+/// The prefix of the portable snapshot identity this server issues:
+/// `snapshot:sha256:<64 lowercase hex>`.
+const SNAPSHOT_ID_WIRE_PREFIX: &str = "snapshot:sha256:";
+
+/// Whether `value` has the exact snapshot identity shape [`snapshot_identity`]
+/// produces. The one definition of that wire form for argument validation;
+/// the domain parser accepts other handle families, so it cannot serve here.
+pub(crate) fn is_snapshot_identity_wire(value: &str) -> bool {
+    value
+        .strip_prefix(SNAPSHOT_ID_WIRE_PREFIX)
+        .is_some_and(|hex| {
+            hex.len() == 64
+                && hex
+                    .bytes()
+                    .all(|byte| matches!(byte, b'0'..=b'9' | b'a'..=b'f'))
+        })
 }
 
 fn evidence_identity(items: &[GapItem]) -> Result<String, String> {

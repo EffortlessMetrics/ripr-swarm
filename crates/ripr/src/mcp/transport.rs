@@ -146,13 +146,15 @@ impl Admission {
 /// `_meta` (rmcp `missing_request_metadata_error`).
 const META_REFUSAL_PREFIX: &str = "request _meta is missing or has malformed required fields";
 
+/// The params an `initialize` request must carry, as every refusal names them.
+const INITIALIZE_PARAMS_SHAPE: &str = "`protocolVersion` (string), `capabilities` (object) and `clientInfo` (object with string `name` and `version`)";
+
 /// Names what is wrong with the params of an `initialize` request the SDK
 /// could not type, or `None` when no single field explains it.
-fn describe_malformed_initialize(params: Option<&serde_json::Value>) -> Option<String> {
-    const SHAPE: &str = "`protocolVersion` (string), `capabilities` (object) and `clientInfo` (object with string `name` and `version`)";
+pub(super) fn describe_malformed_initialize(params: Option<&serde_json::Value>) -> Option<String> {
     let Some(object) = params.and_then(serde_json::Value::as_object) else {
         return Some(format!(
-            "invalid params for `initialize`: params must be an object with {SHAPE}"
+            "invalid params for `initialize`: params must be an object with {INITIALIZE_PARAMS_SHAPE}"
         ));
     };
     let problem = if !object
@@ -359,11 +361,39 @@ fn unreadable_frame_error(frame: &[u8]) -> std::io::Result<Vec<u8>> {
     if serde_json::from_slice::<serde_json::Value>(frame).is_err() {
         return protocol_error_frame(-32700, "Parse error");
     }
-    protocol_error_frame_with_id(
-        recoverable_request_id(frame).unwrap_or(serde_json::Value::Null),
-        -32600,
-        "Invalid request",
-    )
+    let id = recoverable_request_id(frame);
+    let message = id
+        .as_ref()
+        .and_then(|_id| non_object_params_message(frame))
+        .unwrap_or_else(|| "Invalid request".to_owned());
+    protocol_error_frame_with_id(id.unwrap_or(serde_json::Value::Null), -32600, &message)
+}
+/// The fix for a request the SDK refused only because its `params` is not an
+/// object (for example an array): the SDK decodes params as a map before any
+/// handler sees the request, so neither the initialize hint nor
+/// `on_custom_request` can name the shape. Only a valid `"jsonrpc": "2.0"`
+/// envelope for one of the methods whose params are required gets the
+/// method-specific text; the code and id are those of the generic rejection.
+fn non_object_params_message(frame: &[u8]) -> Option<String> {
+    let value: serde_json::Value = serde_json::from_slice(frame).ok()?;
+    let object = value.as_object()?;
+    if object.get("jsonrpc").and_then(serde_json::Value::as_str) != Some("2.0") {
+        return None;
+    }
+    let params = object.get("params")?;
+    if params.is_object() {
+        return None;
+    }
+    let method = object.get("method")?.as_str()?;
+    let shape = match method {
+        "initialize" => INITIALIZE_PARAMS_SHAPE,
+        "tools/call" => "`name` (string) and, when present, `arguments` (object)",
+        "resources/read" => "`uri` (string)",
+        _ => return None,
+    };
+    Some(format!(
+        "invalid request for `{method}`: params must be an object with {shape}"
+    ))
 }
 /// The request id of an over-cap message, read from its retained prefix.
 ///

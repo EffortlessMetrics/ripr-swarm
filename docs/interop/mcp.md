@@ -1056,7 +1056,8 @@ names one. Still JSON-RPC errors: an unknown tool name, a `tools/call` whose
 catalog `cursor`, and resource-read errors, because in those cases no tool ran.
 
 A tool's `snapshot_id` that is not of the form `snapshot:sha256:<64 lowercase
-hex>` is an `invalid_argument` failure naming that form; a well-formed identity
+hex>` is an `invalid_argument` failure naming that form (ahead of the escaped
+value, so the bounded detail keeps it); a well-formed identity
 that is not current stays `stale_snapshot` (resource reads keep their stale
 handling). Every caller-supplied value echoed into a failure `detail`
 (`canonical_id`, `class`, `language`, `snapshot_id`, `attempt_id`) goes through
@@ -1199,9 +1200,12 @@ A request before the handshake that lacks the inline `_meta` keys answers
 `-32602` naming the missing keys and both lifecycles: send `initialize`
 (then `notifications/initialized`) or put the keys in `params._meta`. A
 malformed `initialize` names the offending field (`protocolVersion`,
-`capabilities` or `clientInfo`) instead. A `tools/call` without a string
-`name` or with non-object `arguments`, and a `resources/read` without a string
-`uri`, answer `-32602` saying what to pass.
+`capabilities` or `clientInfo`) instead, before or after a handshake. A
+`tools/call` without a string `name` or with non-object `arguments`, and a
+`resources/read` without a string `uri`, answer `-32602` saying what to pass.
+An `initialize`, `tools/call` or `resources/read` whose `params` is not an
+object (for example an array) stays `-32600` with its request id, and the
+message names the object shape to send.
 
 Incoming messages are capped at 256 KiB. The complete serialized JSON
 response is capped at 128 KiB, with its newline delimiter appended

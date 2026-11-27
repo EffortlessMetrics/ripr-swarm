@@ -8534,6 +8534,23 @@ fn error_text_names_the_fix_for_lifecycle_params_snapshot_and_limit_errors() -> 
         "ripr_list_gaps",
         json!({"snapshot_id": well_formed}),
     )?);
+    // An escaped preview larger than the detail bound: the form must still
+    // be named, so it comes before the preview.
+    bytes.extend(tool(
+        "snap-long",
+        "ripr_list_gaps",
+        json!({"snapshot_id": "\u{200b}".repeat(300)}),
+    )?);
+    // Non-object params are refused by the SDK before any handler; the
+    // rejection still names the shape for the methods whose params are
+    // required.
+    bytes.extend(request("arr-init", "initialize", json!([]))?);
+    bytes.extend(request(
+        "arr-call",
+        "tools/call",
+        json!(["ripr_list_gaps"]),
+    )?);
+    bytes.extend(request("arr-read", "resources/read", json!([]))?);
     bytes.extend(tool(
         "class-ctl",
         "ripr_list_gaps",
@@ -8618,6 +8635,29 @@ fn error_text_names_the_fix_for_lifecycle_params_snapshot_and_limit_errors() -> 
             ));
         }
     }
+    let long = detail("snap-long")?;
+    if code("snap-long")? != "invalid_argument"
+        || !long.contains("snapshot:sha256:<64 lowercase hex characters>")
+        || !long.contains("omit snapshot_id for the current snapshot")
+        || !long.contains("\\u{200b}")
+    {
+        return Err(format!(
+            "a long escaped snapshot_id preview must not cut off the form: {long}"
+        ));
+    }
+    for (id, needles) in [
+        ("arr-init", ["`initialize`", "`protocolVersion` (string)"]),
+        ("arr-call", ["`tools/call`", "`name` (string)"]),
+        ("arr-read", ["`resources/read`", "`uri` (string)"]),
+    ] {
+        let text = message(id)?;
+        if reply(id)?.pointer("/error/code") != Some(&json!(-32600))
+            || !text.contains("params must be an object")
+            || needles.iter().any(|needle| !text.contains(needle))
+        {
+            return Err(format!("{id} must name the params shape: {text}"));
+        }
+    }
     if code("snap-ok")? != "no_snapshot" {
         return Err(format!(
             "well-formed snapshot_id was misclassified: {}",
@@ -8638,6 +8678,34 @@ fn error_text_names_the_fix_for_lifecycle_params_snapshot_and_limit_errors() -> 
         return Err(format!(
             "oversize error must state the limit: {reply_big:?}",
             reply_big = reply("big")?
+        ));
+    }
+    // After a legacy handshake a malformed repeat `initialize` reaches the
+    // served-method fallback; it names the bad field the same way.
+    let mut legacy = request("init", "initialize", init_params(json!({})))?;
+    legacy.extend(line(
+        json!({"jsonrpc": "2.0", "method": "notifications/initialized"}),
+    )?);
+    legacy.extend(request(
+        "re-init",
+        "initialize",
+        init_params(json!({"capabilities": []})),
+    )?);
+    let legacy_output = run_mcp(&root, &[&legacy])?;
+    let legacy_responses = response_lines(&legacy_output)?;
+    let re_init = legacy_responses
+        .iter()
+        .find(|response| response.get("id") == Some(&json!("re-init")))
+        .ok_or_else(|| format!("no reply for re-init: {legacy_responses:?}"))?;
+    let re_init_text = re_init
+        .pointer("/error/message")
+        .and_then(Value::as_str)
+        .unwrap_or_default();
+    if re_init.pointer("/error/code") != Some(&json!(-32602))
+        || !re_init_text.contains("`capabilities` is required and must be an object")
+    {
+        return Err(format!(
+            "a repeated malformed initialize must name its bad field: {re_init}"
         ));
     }
     Ok(())

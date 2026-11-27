@@ -905,18 +905,14 @@ fn optional_snapshot_id_argument(
     let Some(value) = optional_string_argument(arguments, "snapshot_id")? else {
         return Ok(None);
     };
-    let well_formed = value.strip_prefix("snapshot:sha256:").is_some_and(|hex| {
-        hex.len() == 64
-            && hex
-                .bytes()
-                .all(|byte| matches!(byte, b'0'..=b'9' | b'a'..=b'f'))
-    });
-    if well_formed {
+    if workspace::is_snapshot_identity_wire(&value) {
         return Ok(Some(value));
     }
+    // The form and the omit option come before the echoed preview: the
+    // detail is bounded, and an escaped preview can fill that bound.
     Err(ErrorData::invalid_params(
         format!(
-            "snapshot_id \"{}\" is not a snapshot identity; expected `snapshot:sha256:<64 lowercase hex characters>` as returned by ripr_refresh or ripr_workspace_status, or omit snapshot_id for the current snapshot",
+            "snapshot_id must be `snapshot:sha256:<64 lowercase hex characters>` as returned by ripr_refresh or ripr_workspace_status, or omit snapshot_id for the current snapshot; received \"{}\"",
             super::escape_echoed_argument(&value)
         ),
         Some(serde_json::json!({
@@ -1557,8 +1553,13 @@ impl ServerHandler for McpServer {
         ];
         if SERVED_METHODS.contains(&request.method.as_str()) {
             let message = if request.method == "initialize" {
-                "invalid params for `initialize`: expected `protocolVersion`, `capabilities` and `clientInfo`"
-                    .to_owned()
+                // The same description the pre-handshake path gives, so a
+                // repeated malformed `initialize` names its bad field too.
+                super::transport::describe_malformed_initialize(request.params.as_ref())
+                    .unwrap_or_else(|| {
+                        "invalid params for `initialize`: expected `protocolVersion`, `capabilities` and `clientInfo`"
+                            .to_owned()
+                    })
             } else {
                 match request.method.as_str() {
                     "tools/call" => "invalid params for `tools/call`: `name` (string) is required and `arguments`, when present, must be an object".to_owned(),
