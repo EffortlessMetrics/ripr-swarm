@@ -63,10 +63,10 @@ Change type
   owner:  src/lib.rs::is_small
   gap id (for scripts): gap:rust:src/lib.rs:is_small:return_value:return_value:n==1_n==2
 Static exposure
-  weakly_exposed (warning, confidence 0.92)
+  weakly_exposed (warning, confidence 0.84)
 Evidence
   shared evidence: E1
-  - infection yes: Reachable tests can plausibly activate this changed behavior
+  - infection weak: Every related test asserts the owner only at literal inputs where the changed owner and its baseline evaluate to the same value (for example `is_small(1)`), so no test input reaches a difference
   - propagation yes: Complete propagation witness reaches returned value: n == 1 || n == 2
   shared evidence: E2
   - discriminator weak: Discriminator unconfirmed: no assertion text references the changed expression

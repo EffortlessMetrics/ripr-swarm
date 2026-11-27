@@ -1,0 +1,2 @@
+<!-- section: Fixed -->
+- A Rust helper wrapper that builds a value through `anyhow::anyhow!` (anyhow 1.0.100, 1.0.102, 1.0.104) or `serde_json::json!` (serde_json 1.0.150, 1.0.151, 1.0.154) now forwards its helper result, so a boundary test of the wrapper can read `exposed`. The same rules as the audited logging macros apply: the root must be a plain registry dependency locked at an audited version and not rebound, and the arguments must not mention the helper. `anyhow::bail!` and `anyhow::ensure!` return, so they stay opaque (#10357).

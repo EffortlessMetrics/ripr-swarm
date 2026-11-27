@@ -430,7 +430,9 @@ fn an_out_of_line_module_gate_only_the_test_carries_keeps_the_gap() -> Result<()
     )?;
     assert_gap(&found, "owner and test under different gated declarations");
 
-    // A shared declaration gate that is provably off: neither ever runs.
+    // A shared declaration gate that is provably off: no build compiles
+    // `src/v4.rs`, so its change is not behavior and reports nothing
+    // (#15877).
     let same_file =
         format!("{STAMP}\n#[cfg(test)]\nmod tests {{\n    use super::stamp;\n\n{STAMP_TEST}}}\n");
     let found = finding_in_files(
@@ -440,8 +442,13 @@ fn an_out_of_line_module_gate_only_the_test_carries_keeps_the_gap() -> Result<()
         ],
         "src/v4.rs",
         2,
-    )?;
-    assert_gap(&found, "a shared declaration gate that is provably off");
+    );
+    assert!(
+        found
+            .as_ref()
+            .is_err_and(|error| error.contains("got (None, None)")),
+        "a shared declaration gate that is provably off: {found:?}"
+    );
 
     // A shared gated declaration, plus a gate only the test carries below it:
     // the test needs `slow`, which the owner does not.

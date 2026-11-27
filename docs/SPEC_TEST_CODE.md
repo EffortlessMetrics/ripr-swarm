@@ -73,6 +73,13 @@ test_output
 Golden fixtures should map to specs in a small manifest or README beside the
 fixture.
 
+[RIPR-SPEC-0002](specs/RIPR-SPEC-0002-fixture-laboratory.md) covers human
+golden drift. In xtask, `golden_drift_human_evidence_classification` exercises
+the detail-window swap, semantic change, and malformed fallback through the
+classifier in `xtask/src/reports/fixtures.rs`.
+`golden_drift_human_evidence_reports_preserve_unknown_and_multiword_states`
+checks the Markdown and JSON projections in that module.
+
 ## Code Mapping
 
 Implementation modules should map naturally to concepts. When the mapping is not

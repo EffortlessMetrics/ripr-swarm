@@ -62,11 +62,13 @@ head it analyzed.
   dirty tree reads the working tree. CI checkouts are clean, so CI runs keep
   the committed-history read unchanged.
 - **Submodule inclusion.** Both existing tracked-change status probes and
-  the shared diff byte owner pin `--ignore-submodules=none` (#8209). Git's
-  submodule ignore preferences cannot hide an unstaged pointer from default
-  source selection or doctor guidance, nor suppress the existing skipped-pointer
-  notice after a worktree or committed diff is loaded. Child contents remain
-  outside analysis.
+  the shared diff byte owner pin `--ignore-submodules=dirty` (#8209, #15101).
+  Git's submodule ignore preferences cannot hide an unstaged pointer from
+  default source selection or doctor guidance, nor suppress the existing
+  skipped-pointer notice after a worktree or committed diff is loaded. Git
+  does not examine a submodule's working tree, so uncommitted edits inside a
+  submodule neither select the worktree source nor appear as a pointer change.
+  Child contents remain outside analysis.
 - **`--committed`** forces the committed-history read on a dirty tree. It is
   rejected with `--worktree`, `--diff`, `--candidate-tree`, `--gap-ledger`,
   and repo-scope formats, none of which has a live diff source to choose.
@@ -85,6 +87,14 @@ head it analyzed.
   working-tree diff, and give the repair (`git add -N <path>` or stage them).
   The note never suggests `--worktree`, which is already in effect. An
   untracked test file is still read as test evidence on a working-tree run.
+  The disclosure leaves out an untracked file that neither the adapter's diff
+  loop nor its workspace walk would read even when tracked (an installed
+  `node_modules/` tree, a generated name, a configured excluded pattern):
+  `git add -N` cannot make it analyzable, so it does not count as unanalyzed
+  working-tree source and does not withhold the repair start. A path declared
+  in `handwritten_files` stays disclosed, and so does an untracked
+  TypeScript/JavaScript file under `docs/`, which is skipped as changed scope
+  but still indexed as test evidence.
 - **Empty working-tree read.** When a working-tree read finds no changed
   files, the no-scope note, safe next action and GitHub warning describe the
   working-tree read (the merge base of the base and `HEAD` to the working

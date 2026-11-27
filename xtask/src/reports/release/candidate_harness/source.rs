@@ -234,9 +234,6 @@ impl AdmittedSource {
     pub(crate) fn package_name(&self) -> &str {
         &self.package_name
     }
-    pub(crate) fn package_root(&self) -> PathBuf {
-        self.root.join(&self.package_prefix)
-    }
     pub(crate) fn revalidate(&self) -> Result<(), String> {
         self.authority.revalidate()?;
         verify_source_identity(&self.root, &self.authority)?;
@@ -245,6 +242,9 @@ impl AdmittedSource {
         // Cargo normalization for source inputs or accept ignored file bytes.
         verify_checkout(&self.root, &self.blobs)?;
         Ok(())
+    }
+    pub(super) fn committed_blobs(&self) -> &BTreeMap<String, Vec<u8>> {
+        &self.blobs
     }
     pub(crate) fn committed_file(&self, path: &str) -> Option<&[u8]> {
         self.blobs.get(path).map(Vec::as_slice)

@@ -154,10 +154,11 @@ command or workflow claim.
 ## Required Evidence
 
 Limits of the evidence: `accepts_json_flag` is checked against each own-body
-help row (shared-body rows and the documented gaps `help`, `context`,
-`outcome` and `calibrate cargo-mutants`, whose help bodies omit the flag or
-its typed value set, are exempt and rest on the metadata table, which was
-derived by probing the prior binary). `writes_json_artifacts` has no
+help row (shared-body rows and the rows for `help`, `context` and
+`calibrate cargo-mutants` are exempt and rest on the metadata table, which
+was derived by probing the prior binary). For `outcome --format`, a CLI
+test compares the catalog values with the help usage and exercises each
+spelling through argument parsing. `writes_json_artifacts` has no
 independent runtime oracle; it is a hand-maintained metadata fact.
 
 - Production document integrity is empty of violations and the document is
@@ -232,7 +233,9 @@ independent runtime oracle; it is a hand-maintained metadata fact.
 
 - `crates/ripr/tests/cli_smoke/closed_stderr.rs` pins unknown card, unknown
   stub and resolved async-owner stub JSON refusals with a preclosed stderr
-  pipe, plus ready-stub, operational-failure and human-refusal controls.
+  pipe, plus ready-stub, operational-failure and human-refusal controls,
+  and (Linux) a full stdout on `--version` and `help` keeping exit `2` with a
+  named write failure instead of an internal-error report (#15369).
 - `crates/ripr/src/cli/help_json.rs` unit tests cover production document
   validity, byte stability and explicit ordering, source-reorder
   normalization, duplicate-identity and zero-row fail-closed behavior,

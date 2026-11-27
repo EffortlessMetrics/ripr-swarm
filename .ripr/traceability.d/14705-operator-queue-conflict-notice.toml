@@ -1,0 +1,18 @@
+[[behavior]]
+id = "RIPR-SPEC-0454"
+name = "operator queue conflict notice delivery"
+spec = "docs/specs/RIPR-SPEC-0454-operator-queue-conflict-notice.md"
+tests = [
+  "xtask/src/reports/merge_queue/conflicts/notice/tests.rs::membership_requires_exact_open_queued_subject",
+  "xtask/src/reports/merge_queue/conflicts/notice/tests.rs::only_named_attributed_git_conflicts_can_be_presented",
+  "xtask/src/reports/merge_queue/conflicts/notice/tests.rs::explicit_notice_rechecks_membership_and_suppresses_the_next_serial_post",
+  "xtask/src/reports/merge_queue/conflicts/notice/tests.rs::accepted_comment_with_missing_acknowledgement_is_found_on_retry",
+  "xtask/src/reports/merge_queue/conflicts/notice/tests.rs::failed_intent_commit_prevents_submission",
+  "xtask/src/reports/merge_queue/conflicts/notice/tests.rs::refused_final_reads_are_recorded_as_not_submitted",
+  "xtask/src/reports/merge_queue/conflicts/notice/tests.rs::failed_terminal_commit_preserves_intent_and_remote_outcome",
+  "xtask/src/reports/merge_queue/conflicts/notice/tests.rs::post_acknowledgement_requires_created_id_and_reports_only_numeric_status",
+]
+fixtures = []
+code = ["xtask/src/reports/merge_queue/conflicts/notice.rs", "xtask/src/reports/merge_queue/conflicts.rs"]
+outputs = ["docs/CI.md"]
+metrics = ["unit_test_pass_rate"]

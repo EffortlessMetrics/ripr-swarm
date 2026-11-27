@@ -36,6 +36,7 @@ fn finding() -> Finding {
         id: "probe:src_lib_rs:9:predicate".into(),
         canonical_gap: None,
         probe: Probe {
+            before_condition: None,
             id: ProbeId("probe:src_lib_rs:9:predicate".into()),
             location: SourceLocation::new("src/lib.rs", 9, 1),
             owner: None,

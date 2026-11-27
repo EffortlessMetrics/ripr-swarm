@@ -164,3 +164,16 @@ Command:
 
 Updated:
 - `expected/human-full.txt`
+
+## Pending — python_one_line_def_body_fixture (14)
+
+Reason:
+RIPR-SPEC-0238: explain the unresolved fixture input and expected value in plain language (#14846)
+
+Command:
+`cargo xtask goldens bless python_one_line_def_body_fixture --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
