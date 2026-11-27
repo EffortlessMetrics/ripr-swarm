@@ -195,7 +195,7 @@ Updated:
 ## Pending — inherent_receiver_operand_item_shadow (16)
 
 Reason:
-RIPR-SPEC-0229 (#15359): repair no longer reads a match arm no test input selects as strongly gripped, so its no-repair-start reason matches check
+RIPR-SPEC-0122: the Summary names findings whose reach is a test link ripr could not confirm (#15295)
 
 Command:
 `cargo xtask goldens bless inherent_receiver_operand_item_shadow --reason "..."`

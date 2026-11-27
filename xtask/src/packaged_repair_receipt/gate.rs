@@ -92,10 +92,13 @@ pub(crate) fn evaluate(input: &GateInput<'_>) -> PackagedRepairParityGate {
     }
 
     let parity_failures = compare_channel_semantics(receipt);
+    let matching_semantics = receipt.channels.installed_cli.semantic.is_some()
+        && receipt.channels.packaged_vsix.semantic.is_some()
+        && parity_failures.is_empty();
     failures.extend(parity_failures);
     failures.extend(compare_channel_artifact_identities(receipt));
 
-    if receipt.parity.verdict == ParityVerdict::Qualified && !parity_ready(receipt) {
+    if receipt.parity.verdict == ParityVerdict::Qualified && !matching_semantics {
         failures.push(
             "parity.verdict is qualified but both channels lack matching semantic evidence"
                 .to_string(),
@@ -239,16 +242,37 @@ fn validate_semantic_against_fixture(
 fn compare_channel_artifact_identities(
     receipt: &super::model::PackagedRepairParityReceipt,
 ) -> Vec<String> {
-    let cli = &receipt.channels.installed_cli.artifact_identities;
-    let vsix = &receipt.channels.packaged_vsix.artifact_identities;
-    if cli.is_empty() || vsix.is_empty() {
-        return Vec::new();
+    let cli = &receipt.channels.installed_cli;
+    let vsix = &receipt.channels.packaged_vsix;
+    let mut failures = Vec::new();
+    for channel in [cli, vsix] {
+        let claims_qualification = receipt.parity.verdict == ParityVerdict::Qualified
+            || channel.section_state.is_passing()
+            || receipt.required_sections.iter().any(|section| {
+                section.channel.as_deref() == Some(channel.channel.as_str())
+                    && section.state.is_passing()
+            });
+        if claims_qualification
+            && (channel.artifact_identities.is_empty()
+                || channel
+                    .artifact_identities
+                    .iter()
+                    .any(|id| id.trim().is_empty()))
+        {
+            failures.push(format!(
+                "channel `{}` cannot be qualified without nonempty artifact_identities",
+                channel.channel
+            ));
+        }
     }
-    if cli != vsix {
-        vec!["artifact_identities mismatch between installed_cli and packaged_vsix".to_string()]
-    } else {
-        Vec::new()
+    if !cli.artifact_identities.is_empty()
+        && !vsix.artifact_identities.is_empty()
+        && cli.artifact_identities != vsix.artifact_identities
+    {
+        failures
+            .push("artifact_identities mismatch between installed_cli and packaged_vsix".into());
     }
+    failures
 }
 
 fn push_mismatch(
@@ -379,13 +403,6 @@ fn compare_vec(out: &mut Vec<String>, field: &str, left: &[String], right: &[Str
     if left != right {
         out.push(format!("semantic mismatch on {field}"));
     }
-}
-
-fn parity_ready(receipt: &super::model::PackagedRepairParityReceipt) -> bool {
-    receipt.channels.installed_cli.semantic.is_some()
-        && receipt.channels.packaged_vsix.semantic.is_some()
-        && compare_channel_semantics(receipt).is_empty()
-        && compare_channel_artifact_identities(receipt).is_empty()
 }
 
 fn aggregate_section_state(

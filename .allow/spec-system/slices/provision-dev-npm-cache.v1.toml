@@ -1,0 +1,37 @@
+schema_version = "2.0"
+id = "ripr.slice.provision-dev-npm-cache.v1"
+generation = 1
+source_issue = "issue:14218"
+design_reference = "issue:14218#provisioner-preflight"
+change_class = "behavior_change"
+
+claim_boundary = """
+Before installing or checking the locked editor graph, tools/provision-dev.cjs
+queries npm's effective cache for that editor project. probeNpmCache checks an
+absolute cache outside the checkout, writes and reads one new private file, and
+removes it. A refusal identifies the cache or failed configuration query, retains
+the native cause, and gives a command selecting a writable cache.
+
+tools/provision-dev.test.cjs exercises unwritable default and explicit writable
+caches, offline reuse, native storage and configuration failures, and unsafe
+selections. The Rust entry point is xtask/tests/developer_provisioning.rs::
+cloud_provisioning_handles_pin_updates_and_failure_boundaries.
+"""
+non_goals = ["saved provider environments", "cache integrity checks or cleanup"]
+return_conditions = ["A provider-specific state layout requires a separate environment receipt."]
+owned_seams = ["tools/provision-dev.cjs", "tools/provision-dev.test.cjs"]
+shared_seams = ["xtask/tests/developer_provisioning.rs"]
+forbidden_seams = ["user npm configuration", "provider environment settings"]
+
+[[requirement_delta]]
+requirement_id = "issue:14218#provisioner-preflight"
+requirement_generation = 1
+
+[implementation_claim]
+status = "implemented"
+
+[evidence]
+state = "outstanding"
+
+[support_claim]
+state = "unchanged"

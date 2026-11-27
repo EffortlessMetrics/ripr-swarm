@@ -507,7 +507,7 @@ fn store_open_spelling_matches_disk(
     Ok(())
 }
 
-fn path_escapes_root(root: &Path, candidate: &Path) -> bool {
+pub(crate) fn path_escapes_root(root: &Path, candidate: &Path) -> bool {
     let mut leftover = candidate.components();
     for expected in root.components() {
         match leftover.next() {

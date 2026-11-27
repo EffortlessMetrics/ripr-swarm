@@ -1,0 +1,2 @@
+<!-- section: Fixed -->
+- Diagnostic delivery budgeting refuses machine-sum overflow even with the maximum admitted byte limit, while preserving exact fits and the lone oversized first-item exception. Combined four-item/two-document Kani harnesses now commit actual payload bytes and specify count, byte, detail and omission-reason composition without excluding `usize::MAX`; ordinary production-path controls cover the same boundaries. Native proof results remain separate from harness and test presence (#12109).

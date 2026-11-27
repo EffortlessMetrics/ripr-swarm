@@ -1,0 +1,17 @@
+{
+  "id": "perl_return_without_concrete_discriminator",
+  "language": "perl",
+  "tier": "pure",
+  "source_report": "fixtures/evidence-promotion-honesty-corpus/reports/perl_return_without_concrete_discriminator.json",
+  "vector": "direct_owner_return_with_only_an_opaque_digest",
+  "probe_family": "return_value",
+  "assertions": [
+    { "type": "must_not_report_clean" },
+    { "type": "must_not_promote" },
+    { "type": "must_not_emit_repair_packet" },
+    { "type": "expected_finding_count", "count": 1 },
+    { "type": "expected_finding_owner", "owner": "perl:lib/My/App.pm::discount" },
+    { "type": "expected_oracle", "kind": "exact_value", "strength": "strong" },
+    { "type": "expected_class", "class": "weakly_exposed" }
+  ]
+}

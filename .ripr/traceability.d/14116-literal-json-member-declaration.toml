@@ -1,0 +1,15 @@
+# Literal-JSON root eligibility reads a named member's own declaration (#14116).
+[[extend]]
+id = "RIPR-SPEC-0197"
+tests = [
+  "crates/ripr/src/analysis/classify/owner_pin/tests/json_construction.rs::literal_json_identity_follows_a_member_declaration_under_a_virtual_root",
+  "crates/ripr/src/analysis/workspace/assertion_dependency/json_eligibility_tests.rs::a_named_member_that_declares_serde_json_makes_a_virtual_root_eligible",
+  "crates/ripr/src/analysis/workspace/assertion_dependency/json_eligibility_tests.rs::a_member_declaration_the_root_does_not_reach_stays_ineligible",
+  "crates/ripr/src/analysis/workspace/assertion_dependency/json_eligibility_tests.rs::a_member_table_other_than_normal_or_dev_dependencies_stays_ineligible",
+  "crates/ripr/src/analysis/workspace/assertion_dependency/json_eligibility_tests.rs::member_manifest_changes_are_read_on_every_memo_query",
+  "crates/ripr/src/analysis/workspace/assertion_dependency/json_eligibility_tests.rs::more_member_directories_than_the_budget_stay_ineligible",
+]
+code = [
+  "crates/ripr/src/analysis/workspace/assertion_dependency.rs",
+  "crates/ripr/src/analysis/workspace/assertion_dependency/registry.rs",
+]

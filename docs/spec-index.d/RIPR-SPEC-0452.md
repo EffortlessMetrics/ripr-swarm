@@ -1,0 +1,1 @@
+| [RIPR-SPEC-0452](../specs/RIPR-SPEC-0452-release-milestone-fixture-parity.md) | proposed | Offline release milestone fixture comparison with captured page continuity, exact row coverage, and deterministic comparison and refusal reports (#4781) |

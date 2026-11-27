@@ -167,10 +167,11 @@ fn verify(options: &Options, expected_blobs: Result<Vec<String>, String>) -> Out
     let mut first_environment = String::new();
     let mut first_dir = None;
     let mut used_attempts = BTreeSet::new();
+    let singleton = singleton_shard(options);
 
     for shard in 1..=options.shards {
         let tag = format!("shard {shard}");
-        let (dir, shard_attempt) = match select_shard_dir(options, shard) {
+        let (dir, shard_attempt) = match select_shard_dir(options, shard, &singleton) {
             Ok(Some(selected)) => selected,
             Ok(None) => {
                 problems.push(format!(
@@ -322,7 +323,15 @@ fn verify(options: &Options, expected_blobs: Result<Vec<String>, String>) -> Out
 /// attempts, or name a future attempt, are not evidence. Eligible numeric
 /// suffixes must use canonical decimal spelling: aliases would make selection
 /// depend on directory enumeration order or permit fallback past newer evidence.
-fn select_shard_dir(options: &Options, shard: u32) -> Result<Option<(PathBuf, u32)>, String> {
+fn select_shard_dir(
+    options: &Options,
+    shard: u32,
+    singleton: &Result<Option<(u32, u32)>, String>,
+) -> Result<Option<(PathBuf, u32)>, String> {
+    if let Some((observed_shard, attempt)) = singleton.as_ref().map_err(Clone::clone)? {
+        return Ok((*observed_shard == shard).then(|| (options.dir.clone(), *attempt)));
+    }
+
     let Ok(current) = options.attempt.parse::<u32>() else {
         return Ok(None);
     };
@@ -358,6 +367,95 @@ fn select_shard_dir(options: &Options, shard: u32) -> Result<Option<(PathBuf, u3
         }
     }
     Ok(best)
+}
+
+/// The pinned download action extracts a single pattern match directly into
+/// `--dir`, including any archive-internal nesting. Its artifact name is then
+/// unavailable: the workflow download filter owns that prefix boundary. Never
+/// reinterpret an artifact-named child as flat, or combine the two layouts.
+/// The receipt supplies only discovery identity; all ordinary checks below
+/// still validate its context, status, inputs, XML and complete partition cover.
+fn singleton_shard(options: &Options) -> Result<Option<(u32, u32)>, String> {
+    let Ok(entries) = fs::read_dir(&options.dir) else {
+        return Ok(None);
+    };
+    let mut contexts = Vec::new();
+    let mut named = false;
+    for entry in entries {
+        let entry = entry.map_err(|err| format!("cannot inspect artifact layout: {err}"))?;
+        let path = entry.path();
+        if path.is_dir()
+            && entry
+                .file_name()
+                .to_string_lossy()
+                .contains("-nextest-shard-")
+        {
+            named = true;
+        } else if path.is_dir() {
+            find_files(&path, "run-context.txt", &mut contexts);
+        } else if entry.file_name() == "run-context.txt" {
+            contexts.push(path);
+        }
+    }
+    if contexts.is_empty() {
+        return Ok(None);
+    }
+    if named {
+        return Err("mixed singleton and artifact-named shard layouts".to_string());
+    }
+    let [context_path] = contexts.as_slice() else {
+        return Err(format!(
+            "singleton layout has {} run contexts",
+            contexts.len()
+        ));
+    };
+    let context = fs::read_to_string(context_path)
+        .map_err(|err| format!("cannot read singleton run context: {err}"))?;
+    let identity = |key: &str| -> Result<&str, String> {
+        let values: Vec<_> = context
+            .lines()
+            .filter_map(|line| line.split_once('='))
+            .filter(|(name, _)| name.trim() == key)
+            .collect();
+        match values.as_slice() {
+            [(name, value)] if *name == key => Ok(*value),
+            _ => Err(format!(
+                "singleton run context needs one canonical `{key}` assignment"
+            )),
+        }
+    };
+    let positive = |value: &str| -> Result<u32, String> {
+        match value.parse::<u32>() {
+            Ok(value_number) if value_number > 0 && value_number.to_string() == value => {
+                Ok(value_number)
+            }
+            _ => Err(format!(
+                "singleton identity `{value}` is not a canonical positive integer"
+            )),
+        }
+    };
+    let attempt = positive(identity("run_attempt")?)?;
+    let current = options
+        .attempt
+        .parse::<u32>()
+        .map_err(|err| err.to_string())?;
+    if attempt > current {
+        return Err(format!(
+            "singleton attempt {attempt} is later than verifying attempt {current}"
+        ));
+    }
+    let partition = identity("shard")?;
+    let (number, count) = partition
+        .split_once('/')
+        .ok_or_else(|| "singleton shard identity needs a partition".to_string())?;
+    let shard = positive(number)?;
+    let count = positive(count)?;
+    if count != options.shards || shard > count {
+        return Err(format!(
+            "singleton partition `{partition}` does not name an expected shard"
+        ));
+    }
+    Ok(Some((shard, attempt)))
 }
 
 /// List lines with terminal colour escapes removed: the hosted job sets

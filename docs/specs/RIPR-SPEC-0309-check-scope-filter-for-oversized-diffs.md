@@ -117,6 +117,12 @@ still refused (#14307).
    so a pasted drill-in re-analyzes the scoped files instead of the full
    oversized diff. `ripr repair` still names only the seam and `--root`: it
    reads the live tree and does not re-analyze the git diff.
+8. When a partial-scope run left a file out and no budget pair can select the
+   whole diff (the diff exceeds an analysis-cost limit or the index guard),
+   the human partial-scope block and the JSON continuation disclosure add the
+   route that completes: narrow the diff with a PATH argument or a nearer
+   `--base`. Raising the budgets alone would select one more file per run
+   (#15484). The editor surface does not take this CLI-shaped route.
 
 ## Required Evidence
 

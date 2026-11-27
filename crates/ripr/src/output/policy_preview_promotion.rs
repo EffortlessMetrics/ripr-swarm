@@ -190,6 +190,18 @@ pub(crate) fn default_preview_promotion_md_out(language: &str, candidate_class: 
     )
 }
 
+/// A candidate class is open-ended evidence vocabulary, but it names report
+/// files (`preview-promotion-<language>-<class>.json`), so it must be a plain
+/// label: ASCII letters, digits, `_` and `-`. Path separators and dots would
+/// let the default `--out` escape `target/ripr/reports` (#15258).
+pub(crate) fn is_valid_class_name(class: &str) -> bool {
+    !class.is_empty()
+        && class.len() <= 64
+        && class
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || b == b'_' || b == b'-')
+}
+
 pub(crate) fn is_supported_language(language: &str) -> bool {
     SUPPORTED_LANGUAGES.contains(&language)
 }

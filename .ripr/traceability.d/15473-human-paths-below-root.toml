@@ -1,0 +1,7 @@
+# Registers cwd-relative human location rows below the root (#15473) under RIPR-SPEC-0122.
+[[extend]]
+id = "RIPR-SPEC-0122"
+tests = [
+  "crates/ripr/tests/cli_smoke/implicit_git_root.rs::human_file_paths_open_from_the_invocation_directory_below_the_root",
+  "crates/ripr/src/output/path.rs::tests::invocation_directory_below_root_rewrites_only_the_dot_slash_form",
+]

@@ -481,7 +481,7 @@ impl PacketRun {
 
     /// `ripr ARGS` from the workspace root, its output in the job log.
     fn ripr(&self, args: &[String]) -> StageResult {
-        self.spawn(args, Stdio::inherit())
+        self.spawn(args, None)
     }
 
     /// `ripr ARGS > OUT`: the file is truncated before the command runs, as
@@ -528,14 +528,19 @@ impl PacketRun {
                 .push(format!("{prefix}ripr {} > {out}", args.join(" ")));
             return Ok(());
         }
-        self.spawn_env(args, Stdio::from(file), env)
+        self.spawn_env(args, Some(file), env)
     }
 
-    fn spawn(&self, args: &[String], stdout: Stdio) -> StageResult {
+    fn spawn(&self, args: &[String], stdout: Option<fs::File>) -> StageResult {
         self.spawn_env(args, stdout, &[])
     }
 
-    fn spawn_env(&self, args: &[String], stdout: Stdio, env: &[(&str, &str)]) -> StageResult {
+    fn spawn_env(
+        &self,
+        args: &[String],
+        stdout: Option<fs::File>,
+        env: &[(&str, &str)],
+    ) -> StageResult {
         match self.spawn_code(args, stdout, env)? {
             Some(0) => Ok(()),
             Some(code) => Err(format!("`ripr {}` exited {code}", args.join(" "))),
@@ -547,11 +552,21 @@ impl PacketRun {
     }
 
     /// Runs one child and returns its exit code (`None` when a signal ended
-    /// it). A recorded run reports `Some(0)`.
+    /// it). A recorded run reports `Some(0)`. `stdout` is the file the child's
+    /// report goes to; `None` sends it to the job log.
+    ///
+    /// Everything the child sends to the job log sits inside a
+    /// `::stop-commands::` window. A child's report and notices quote
+    /// repository text (a path, an assertion, a test name), and a pull request
+    /// can name a file `x<newline>::error::...`, which the runner would
+    /// otherwise read as a workflow command. The child's stderr joins this
+    /// process's stdout so both reach the runner as one ordered stream: the
+    /// runner reads the two pipes independently, so a last stderr line could
+    /// otherwise land after the resume marker.
     fn spawn_code(
         &self,
         args: &[String],
-        stdout: Stdio,
+        stdout: Option<fs::File>,
         env: &[(&str, &str)],
     ) -> Result<Option<i32>, String> {
         if let Some(recorded) = &self.recorded {
@@ -560,14 +575,16 @@ impl PacketRun {
                 .push(format!("ripr {}", args.join(" ")));
             return Ok(Some(0));
         }
+        let token = workflow_command_pause_token();
+        println!("::stop-commands::{token}");
         let _ = std::io::stdout().flush();
         let mut command = Command::new(&self.exe);
         command
             .args(args)
             .current_dir(&self.root)
             .stdin(Stdio::null())
-            .stdout(stdout)
-            .stderr(Stdio::inherit());
+            .stdout(stdout.map_or_else(Stdio::inherit, Stdio::from))
+            .stderr(Stdio::from(std::io::stdout()));
         if self.quiet {
             command.env(crate::cli::progress::QUIET_ENV, "1");
         }
@@ -575,13 +592,14 @@ impl PacketRun {
             command.env(name, value);
         }
         let shown = format!("ripr {}", args.join(" "));
-        let status = OwnedProcess::spawn(command)
-            .and_then(|mut child| child.wait())
-            .map_err(|err| {
-                format!(
-                    "`{shown}` could not run: {err}; check that command is installed and on PATH"
-                )
-            })?;
+        let status = OwnedProcess::spawn(command).and_then(|mut child| child.wait());
+        // The marker starts its own line even when the child's last line had
+        // no newline; a marker glued to that line would leave every later
+        // command of the step unread.
+        println!("\n::{token}::");
+        let status = status.map_err(|err| {
+            format!("`{shown}` could not run: {err}; check that command is installed and on PATH")
+        })?;
         Ok(status.code())
     }
 
@@ -1180,7 +1198,7 @@ impl PacketRun {
                     GATE_DECISION,
                     "--receipts-dir",
                     "target/ripr/receipts",
-                    "--out-dir",
+                    "--output-dir",
                     REPORTS,
                 ]))
             },
@@ -1305,7 +1323,7 @@ impl PacketRun {
             "--out",
             "target/ripr/workflow",
         ]);
-        match self.spawn_code(&start, Stdio::inherit(), &[])? {
+        match self.spawn_code(&start, None, &[])? {
             Some(0) => {}
             // Exit 3 is "ripr declined" (docs/EXIT_CODES.md): ripr ran and
             // chose not to start a repair for this seam. That is an expected
@@ -1373,26 +1391,10 @@ impl PacketRun {
         let head_sha = crate::git::run_git(&self.root, &["rev-parse", "--verify", "HEAD^{commit}"])
             .map_err(|err| format!("ripr: cannot resolve HEAD: {err}; run inside a git checkout that has at least one commit"))?;
         let range = format!("{base_sha}...{head_sha}");
-        let diff = git_bytes(
-            &self.root,
-            &[
-                "-c",
-                "core.quotePath=true",
-                "diff",
-                "--binary",
-                "--no-ext-diff",
-                "--no-textconv",
-                "--no-color",
-                // Ambient `diff.ignoreSubmodules=all` (or `.gitmodules`
-                // `ignore = all`) would silently empty a gitlink bump (#8209).
-                "--ignore-submodules=none",
-                "--src-prefix=a/",
-                "--dst-prefix=b/",
-                "--unified=3",
-                "--inter-hunk-context=0",
-                &range,
-            ],
-        )
+        // The shared assembly owns the pinned argv (#9365): no restated
+        // flags here, so an ambient rename limit, diff algorithm or
+        // abbreviation cannot change the recorded bytes.
+        let diff = crate::analysis::load_ci_packet_diff_bytes(&self.root, &range)
         .map_err(|err| format!("ripr: git diff failed for {range}: {err}; fetch the base ref (in CI, check out with full history), then rerun"))?;
         crate::output::file_write::write(&self.path("target/ripr/reports/pr.diff"), &diff)
             .map_err(|err| format!("cannot write target/ripr/reports/pr.diff: {err}; check you can write under target/ripr, then rerun"))?;
@@ -1421,7 +1423,7 @@ impl PacketRun {
                     "core.quotePath=true",
                     "diff",
                     "--name-only",
-                    "--ignore-submodules=none",
+                    crate::git::SUBMODULE_POINTERS_ONLY,
                     "-z",
                     &range,
                 ],
@@ -1569,7 +1571,7 @@ impl PacketRun {
         if !self.settings.gate_baseline.is_empty() {
             argv.extend(args(&["--baseline", &self.settings.gate_baseline]));
         }
-        let code = self.spawn_code(&argv, Stdio::inherit(), &[])?;
+        let code = self.spawn_code(&argv, None, &[])?;
         // #14841: a blocked gate keeps exit 3 for the packet.
         self.gate_blocked = code == Some(3);
         gate_stage_result(
@@ -2000,6 +2002,19 @@ fn recorded_labels(path: &Path) -> Vec<String> {
         .collect()
 }
 
+/// A fresh resume token for one `::stop-commands::` window. The pull request's
+/// content is fixed before the run, so a token it cannot predict is one it
+/// cannot print; `RandomState` draws its keys from the operating system.
+fn workflow_command_pause_token() -> String {
+    use std::hash::{BuildHasher, Hasher};
+    let draw = || {
+        std::collections::hash_map::RandomState::new()
+            .build_hasher()
+            .finish()
+    };
+    format!("ripr-{:016x}{:016x}", draw(), draw())
+}
+
 /// Workflow-command data encoding for an `::error` message.
 fn workflow_data(text: &str) -> String {
     text.replace('%', "%25")
@@ -2307,7 +2322,7 @@ mod tests {
             "ripr assistant-loop health --root . --proof target/ripr/reports/test-oracle-assistant-proof.json --out target/ripr/reports/assistant-loop-health.json --out-md target/ripr/reports/assistant-loop-health.md",
             "ripr first-action --root . --out target/ripr/reports/first-useful-action.json --out-md target/ripr/reports/first-useful-action.md --pr-guidance target/ripr/review/comments.json --assistant-proof target/ripr/reports/test-oracle-assistant-proof.json --ledger target/ripr/reports/pr-evidence-ledger.json --baseline-delta target/ripr/reports/baseline-debt-delta.json --receipt target/ripr/reports/agent-receipt.json --gate-decision target/ripr/reports/gate-decision.json --coverage-frontier target/ripr/reports/coverage-grip-frontier.json --editor-context target/ripr/workflow/evidence-context.json",
             "ripr pr-review front-panel --root . --out target/ripr/reports/pr-review-front-panel.json --out-md target/ripr/reports/pr-review-front-panel.md --pr-guidance target/ripr/review/comments.json --first-action target/ripr/reports/first-useful-action.json --assistant-proof target/ripr/reports/test-oracle-assistant-proof.json --assistant-health target/ripr/reports/assistant-loop-health.json --ledger target/ripr/reports/pr-evidence-ledger.json --baseline-delta target/ripr/reports/baseline-debt-delta.json --zero-status target/ripr/reports/ripr-zero-status.json --gate-decision target/ripr/reports/gate-decision.json --recommendation-calibration target/ripr/reports/recommendation-calibration.json --mutation-calibration target/ripr/reports/mutation-calibration.json --coverage-frontier target/ripr/reports/coverage-grip-frontier.json --receipt target/ripr/reports/agent-receipt.json",
-            "ripr first-pr --root . --base origin/main --head HEAD --gap-ledger target/ripr/reports/gap-decision-ledger.json --first-action target/ripr/reports/first-useful-action.json --review-comments target/ripr/review/comments.json --agent-packet target/ripr/workflow/agent-packet.json --gate-decision target/ripr/reports/gate-decision.json --receipts-dir target/ripr/receipts --out-dir target/ripr/reports",
+            "ripr first-pr --root . --base origin/main --head HEAD --gap-ledger target/ripr/reports/gap-decision-ledger.json --first-action target/ripr/reports/first-useful-action.json --review-comments target/ripr/review/comments.json --agent-packet target/ripr/workflow/agent-packet.json --gate-decision target/ripr/reports/gate-decision.json --receipts-dir target/ripr/receipts --output-dir target/ripr/reports",
             "ripr reports index --root . --reports-dir target/ripr/reports --review-dir target/ripr/review --receipts-dir target/ripr/receipts --workflow-dir target/ripr/workflow --agent-dir target/ripr/agent --pilot-dir target/ripr/pilot --ci-dir target/ci --out target/ripr/reports/index.json --out-md target/ripr/reports/index.md",
             "ripr agent status --root . --json > target/ripr/workflow/agent-status.json",
             "ripr agent status --root . > target/ripr/workflow/agent-status.md",

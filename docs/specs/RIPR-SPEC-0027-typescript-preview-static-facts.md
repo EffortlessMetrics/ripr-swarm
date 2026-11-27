@@ -628,6 +628,13 @@ boundary without changing the guards (#4104 E):
   level, by a non-`declare` `const` with an integer literal initializer, whose
   every other occurrence in the module is a plain read. Anything else emits
   nothing.
+- **Positional comparison witnesses** (#15582): a field read such as `o.ms`
+  or `this.ms` cannot use a standalone literal argument as its value, even
+  when the signature binds a parameter named `ms`. Arithmetic operands have
+  no simple boundary label. A simple parameter, including a Unicode binding,
+  reads its own argument position. When both operands name parameters, only
+  equal arguments at those two positions witness the equality boundary. An
+  empty array passed to the receiver parameter witnesses a length of zero.
 - **Boundary parameters evidence** (#4759): when both sides of that
   discriminator are distinct plain positional parameters of the owner
   (`amount == threshold`), the adapter instead emits

@@ -150,6 +150,38 @@ fn a_bound_local_that_is_rewritten_or_shadowed_reads_weak() -> Result<(), String
     )
 }
 
+/// A rebound receiver or a replaced method never runs the owner's code, so
+/// the call is not an owner call at all (#15950): the finding reads
+/// `no_static_path`, one step more conservative than the weak snapshot read
+/// these bodies had while the relation was still credited.
+#[test]
+fn a_rebound_receiver_or_replaced_method_is_not_an_owner_call() -> Result<(), String> {
+    let bodies = [
+        // The receiver is rebound to something other than the owner's class.
+        format!(
+            "  let box = new Outbox();\n  box = {{ send: (n) => ['shipped 7'] }};\n  expect(box.send(7)).{SNAPSHOT};\n"
+        ),
+        // The method is replaced on the receiver.
+        format!(
+            "  const box = new Outbox();\n  box.send = (n) => ['shipped 7'];\n  expect(box.send(7)).{SNAPSHOT};\n"
+        ),
+        // The owner class's method is patched or spied through its prototype.
+        format!(
+            "  Outbox.prototype.send = () => ['shipped 7'];\n  const box = new Outbox();\n  expect(box.send(7)).{SNAPSHOT};\n"
+        ),
+        format!(
+            "  jest.spyOn(Outbox.prototype, 'send').mockReturnValue(['shipped 7']);\n  const box = new Outbox();\n  expect(box.send(7)).{SNAPSHOT};\n"
+        ),
+    ];
+    for body in &bodies {
+        let class = class_for(CLASS_LIB, CLASS_CHANGED, CLASS_IMPORT, body)?;
+        if !matches!(class, ExposureClass::NoStaticPath) {
+            return Err(format!("{body}: unexpected class {class:?}"));
+        }
+    }
+    Ok(())
+}
+
 #[test]
 fn snapshot_of_an_unrelated_method_subject_reads_weak() -> Result<(), String> {
     expect_class(
@@ -159,14 +191,6 @@ fn snapshot_of_an_unrelated_method_subject_reads_weak() -> Result<(), String> {
         &[
             format!(
                 "  const box = new Outbox();\n  box.send(7);\n  const u = ['shipped 7'];\n  expect(u).{SNAPSHOT};\n"
-            ),
-            // The receiver is rebound to something other than the owner's class.
-            format!(
-                "  let box = new Outbox();\n  box = {{ send: (n) => ['shipped 7'] }};\n  expect(box.send(7)).{SNAPSHOT};\n"
-            ),
-            // The method is replaced on the receiver.
-            format!(
-                "  const box = new Outbox();\n  box.send = (n) => ['shipped 7'];\n  expect(box.send(7)).{SNAPSHOT};\n"
             ),
             // An inner block redeclares the receiver name (#12487 review).
             format!(
@@ -189,13 +213,6 @@ fn snapshot_of_an_unrelated_method_subject_reads_weak() -> Result<(), String> {
                 "  const box = new Outbox() || {{ send: () => ['shipped 7'] }};\n  expect(box.send(7)).{SNAPSHOT};\n"
             ),
             format!("  const box = new Outbox().self();\n  expect(box.send(7)).{SNAPSHOT};\n"),
-            // The owner class's method is patched or spied through its prototype.
-            format!(
-                "  Outbox.prototype.send = () => ['shipped 7'];\n  const box = new Outbox();\n  expect(box.send(7)).{SNAPSHOT};\n"
-            ),
-            format!(
-                "  jest.spyOn(Outbox.prototype, 'send').mockReturnValue(['shipped 7']);\n  const box = new Outbox();\n  expect(box.send(7)).{SNAPSHOT};\n"
-            ),
         ],
         false,
     )

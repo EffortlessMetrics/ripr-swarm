@@ -1,0 +1,12 @@
+diff --git a/src/lib.rs b/src/lib.rs
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -2,7 +2,7 @@
+ pub struct Money(pub i64);
+ pub fn f(a: Money, b: Money) -> Money {
+     if a.0 > 100 {
+-        Money(a.0 + b.0)
++        Money(b.0 + a.0)
+     } else {
+         Money(0)
+     }

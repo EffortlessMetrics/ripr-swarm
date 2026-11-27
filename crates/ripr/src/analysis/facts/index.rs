@@ -189,6 +189,10 @@ pub struct RustIndex {
     /// own crate: its scopes come from this text, not from the file that
     /// holds the comment.
     pub(super) doctest_sources: BTreeMap<(PathBuf, usize), (String, std::sync::Arc<str>)>,
+    /// Per doctested library root, the cfg atoms of attributes that kept a
+    /// fenced doc example from being registered (#14935). Rebuilt with the
+    /// doctests on every registration pass.
+    pub(super) refused_doctest_gate_atoms: BTreeMap<PathBuf, std::collections::BTreeSet<String>>,
     pub(super) proptest_receipts:
         BTreeMap<(PathBuf, usize, String), super::proptest::ProptestReceipt>,
     /// Analysis-local failed verification, never part of raw FileFacts or a

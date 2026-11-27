@@ -1,4 +1,4 @@
-//! Replay the production evidence guard and capture steps without product builds.
+//! Replay the production Windows evidence and result steps without product builds.
 use std::{
     fs,
     path::PathBuf,
@@ -22,7 +22,11 @@ const PRODUCERS: [&str; 4] = [
 static NEXT: AtomicU64 = AtomicU64::new(0);
 
 fn body(name: &str) -> Result<String, String> {
-    let (_, step) = WORKFLOW
+    workflow_body(WORKFLOW, name)
+}
+
+fn workflow_body(workflow: &str, name: &str) -> Result<String, String> {
+    let (_, step) = workflow
         .split_once(&format!("      - name: {name}\n"))
         .ok_or("step missing")?;
     let (_, run) = step.split_once("        run: |\n").ok_or("run missing")?;
@@ -283,6 +287,113 @@ fn producers_preserve_native_verdict_but_fail_capture_write_errors() -> Result<(
             "target creation failure hidden: {label}"
         );
     }
+    Ok(())
+}
+
+#[test]
+fn windows_gate_result_requires_every_subset_to_pass() -> Result<(), String> {
+    const GATE: &str = include_str!("../../.github/workflows/windows-gate.yml");
+    const GATE_LABELS: [&str; 3] = [
+        "gate-subset-gap-artifacts",
+        "gate-subset-cache-warning",
+        "gate-subset-clippy",
+    ];
+    let guard = workflow_body(GATE, "Fail on missing or empty gate subset evidence")?;
+    let verdict = workflow_body(GATE, "Summarize gate subset verdicts")?;
+    let result = workflow_body(GATE, "Summarize gate result")?;
+
+    for fixture in [
+        "all-pass",
+        "command-failure",
+        "missing-status",
+        "missing-log",
+        "zero-tests",
+    ] {
+        for label in GATE_LABELS {
+            if (fixture == "all-pass" && label != GATE_LABELS[0])
+                || (fixture == "zero-tests" && label == GATE_LABELS[2])
+            {
+                continue;
+            }
+            let scratch = Scratch::new()?;
+            for subset in GATE_LABELS {
+                if subset != label || fixture != "missing-status" {
+                    let status = if fixture == "command-failure" && subset == label {
+                        "101\n"
+                    } else {
+                        "0\n"
+                    };
+                    fs::write(scratch.0.join(format!("target/{subset}.status")), status)
+                        .map_err(|e| e.to_string())?;
+                }
+                if subset != label || fixture != "missing-log" {
+                    let log = if subset == GATE_LABELS[2] {
+                        "Clippy command output\n"
+                    } else if subset == label && fixture == "zero-tests" {
+                        "test result: ok. 0 passed; 0 failed; 1 ignored; 0 measured\n"
+                    } else {
+                        "test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured\n"
+                    };
+                    fs::write(scratch.0.join(format!("target/{subset}.log")), log)
+                        .map_err(|e| e.to_string())?;
+                }
+            }
+
+            let expected_verdict = match fixture {
+                "all-pass" => Some("true"),
+                "command-failure" => Some("false"),
+                _ => None,
+            };
+            let evidence_ok = scratch.run(&guard)?;
+            assert_eq!(
+                evidence_ok,
+                expected_verdict.is_some(),
+                "{fixture}: {label}"
+            );
+            let verdict_pass = if let Some(expected) = expected_verdict {
+                assert!(scratch.run(&format!(
+                    "export GITHUB_OUTPUT=./output GITHUB_STEP_SUMMARY=./subset-summary\n{verdict}"
+                ))?);
+                let output =
+                    fs::read_to_string(scratch.0.join("output")).map_err(|e| e.to_string())?;
+                let actual = output
+                    .trim_end()
+                    .strip_prefix("verdict_pass=")
+                    .ok_or("missing aggregate output")?;
+                let expected_line = if expected == "true" {
+                    format!("- {label}: PASS")
+                } else {
+                    format!("- {label}: FAIL (exit 101)")
+                };
+                let report = fs::read_to_string(scratch.0.join("target/windows-gate-verdict.md"))
+                    .map_err(|e| e.to_string())?;
+                assert!(report.lines().any(|line| line == expected_line));
+                assert_eq!(
+                    report,
+                    fs::read_to_string(scratch.0.join("subset-summary"))
+                        .map_err(|e| e.to_string())?
+                );
+                // Join producer to the real Result predicate as Actions does.
+                match actual {
+                    "true" | "false" => actual.to_owned(),
+                    _ => return Err(format!("unexpected verdict output: {actual:?}")),
+                }
+            } else {
+                String::new()
+            };
+            let run_result = if evidence_ok { "success" } else { "failure" };
+            let passed = scratch.run(&format!(
+                "export DETECT_RESULT=success WINDOWS_RELEVANT=true DETECT_REASON=fixture RUN_RESULT={run_result} VERDICT_PASS='{verdict_pass}' GITHUB_STEP_SUMMARY=./result-summary\n{result}"
+            ))?;
+            assert_eq!(passed, fixture == "all-pass", "{fixture}: {label}");
+            assert_eq!(
+                verdict_pass,
+                expected_verdict.unwrap_or(""),
+                "{fixture}: {label}"
+            );
+        }
+    }
+
     Ok(())
 }
 
