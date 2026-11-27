@@ -156,7 +156,10 @@ fn a_commonjs_export_reaches_the_helper_it_calls_like_its_esm_twin() -> Result<(
         (
             "helper-ts-export-equals",
             "ts",
-            format!("{TOTAL}{OTHER}export = other;\n").replace("(n)", "(n: number)"),
+            // Only the declarations take the annotation; `total(n)` stays a call.
+            format!("{TOTAL}{OTHER}export = other;\n")
+                .replace("function total(n)", "function total(n: number)")
+                .replace("function other(n)", "function other(n: number)"),
             test_file("import other = require('../src/cart');", CALL),
         ),
     ] {
@@ -231,6 +234,37 @@ fn an_unknown_commonjs_export_shape_reaches_nothing() -> Result<(), String> {
             ),
             test_file("const other = require('../src/cart');", CALL),
         ),
+        // A later write replaces the exported slot (review of #16403).
+        (
+            "helper-slot-rewritten",
+            format!("{TOTAL}{OTHER}exports.other = other;\nexports.other = (n) => n;\n"),
+            named.clone(),
+        ),
+        (
+            "helper-object-key-rewritten",
+            format!("{TOTAL}{OTHER}module.exports = {{ other, other: (n) => n }};\n"),
+            named.clone(),
+        ),
+        (
+            "helper-object-spread",
+            format!("{TOTAL}{OTHER}const extra = {{}};\nmodule.exports = {{ other, ...extra }};\n"),
+            named.clone(),
+        ),
+        (
+            "helper-object-assign",
+            format!(
+                "{TOTAL}{OTHER}exports.other = other;\nObject.assign(exports, {{ other: (n) => n }});\n"
+            ),
+            named.clone(),
+        ),
+        // The local is rebound before it is exported.
+        (
+            "helper-local-rebound",
+            format!(
+                "{TOTAL}let other = (n) => total(n);\nother = (n) => n;\nexports.other = other;\n"
+            ),
+            named.clone(),
+        ),
         // A named binding reads a property the whole function lacks.
         (
             "helper-named-on-whole-function",
@@ -279,4 +313,15 @@ fn commonjs_exports_reads_only_a_known_export_shape() {
     assert!(read("module.exports = { a };\nexport const b = 1;\n").is_empty());
     assert!(read("module.exports = { a };\nfunction f() { module.exports = {}; }\n").is_empty());
     assert!(read("module.exports = { a };\nmodule.exports = { b };\n").is_empty());
+    // A slot written twice, a spread, a computed key, or the export object
+    // passed to a call is no entry.
+    assert!(read("exports.a = a;\nexports.a = b;\n").is_empty());
+    assert!(read("exports.a = a;\nexports['a'] = b;\n").is_empty());
+    assert!(read("module.exports = { a, ...b };\n").is_empty());
+    assert!(read("module.exports = { [k]: a };\n").is_empty());
+    assert!(read("exports.a = a;\nObject.assign(exports, b);\n").is_empty());
+    assert_eq!(
+        read("module.exports = { a, 'b': c };\n"),
+        [named("a", "a"), named("c", "b")]
+    );
 }

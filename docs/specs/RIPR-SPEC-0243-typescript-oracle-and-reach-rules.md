@@ -1993,10 +1993,15 @@ after the one whole write adds a property to it; `module.exports = local`,
 `export = local` and an inline `module.exports = function NAME() {}` or
 arrow are a whole-export entry, bound by `const x = require(...)`, kept only
 when the owner side proved that function is the whole export. A file with an
-ES export statement, more than one whole write, or a `module.exports =` write
-the top-level statements do not account for has no CommonJS entries.
-CommonJS entries are never outbound edges of the cross-module graph. A method
-of a whole-export class is not an entry, as for an exported ES class.
+ES export statement, more than one whole write, a `module.exports =` write
+the top-level statements do not account for, a computed `exports[key]` write,
+a spread or computed key in the object export, or the export object passed to
+a call (`Object.assign(exports, ...)`) has no CommonJS entries; a property
+written more than once (`exports.run = a; exports.run = b;`) and a local the
+file rebinds are no entry. A CommonJS export's own calls of imported bindings
+are never outbound edges of the cross-module graph, while a barrel that
+re-exports the module continues its entries as it does an ES module's. A
+method of a whole-export class is not an entry, as for an exported ES class.
 
 **Rule 21. A method decorator that passes the original result through
 lends `exposed` to the decorated method's tests (design decision, #10189).**
@@ -3233,8 +3238,10 @@ keys); do not take the next number.
   by `helper_owner_call` at `static_unknown`. A helper the export does not
   call or shadows, an old key name, two or nested whole writes, a detached
   `exports` write, a property replaced by a later whole write, a reassigned
-  whole export and a named binding of a whole function stay `no_static_path`.
-  A parse test pins which export shapes are read.
+  whole export, a slot or object key written twice, a spread, an
+  `Object.assign` onto `exports`, a local rebound before its export and a
+  named binding of a whole function stay `no_static_path`. A parse test pins
+  which export shapes are read.
 
 - #11196 (rule 11, object rows): `tests/object_row_tests.rs` pins the per-row
   literal assertions for the `for...of` and `test.each` object-row forms and

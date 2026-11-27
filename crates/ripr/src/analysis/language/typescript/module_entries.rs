@@ -681,8 +681,13 @@ fn record_commonjs_exports<'a>(
         }
         _ => None,
     };
+    // A local the file rebinds may hold another value when it is exported.
+    let reassigned = reassigned_names(statements);
     let mut locals = BTreeSet::new();
     for export in commonjs {
+        if reassigned.contains(export.local) {
+            continue;
+        }
         let whole = export.property.is_none();
         if whole && inline.is_some() && inline_key != Some(export.local) {
             continue;

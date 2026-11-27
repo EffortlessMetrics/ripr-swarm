@@ -55,6 +55,10 @@ pub(super) fn commonjs_exports<'a>(
     let mut whole_writes = 0usize;
     let mut text_whole_writes = 0usize;
     let mut named: Vec<(usize, CommonJsExport<'a>, bool)> = Vec::new();
+    // Every write to each export property, whatever its value: a slot written
+    // more than once may hold a later value, so it is no entry.
+    let mut slot_writes: std::collections::HashMap<String, usize> =
+        std::collections::HashMap::new();
     for (index, statement) in statements.iter().enumerate() {
         match statement {
             Statement::ExportNamedDeclaration(_)
@@ -79,6 +83,16 @@ pub(super) fn commonjs_exports<'a>(
                         text_whole_writes += 1;
                         whole = Some((index, &assign.right));
                     }
+                    AssignmentTarget::ComputedMemberExpression(member)
+                        if is_exports_object(&member.object) =>
+                    {
+                        // `exports[key] = ...`: only a literal key names the
+                        // slot it writes.
+                        let Expression::StringLiteral(key) = &member.expression else {
+                            return none;
+                        };
+                        *slot_writes.entry(key.value.to_string()).or_default() += 1;
+                    }
                     AssignmentTarget::StaticMemberExpression(member) => {
                         let bare = matches!(
                             member.object.get_inner_expression(),
@@ -93,6 +107,9 @@ pub(super) fn commonjs_exports<'a>(
                         if !(bare || on_module_exports) {
                             continue;
                         }
+                        *slot_writes
+                            .entry(member.property.name.to_string())
+                            .or_default() += 1;
                         if let Expression::Identifier(value) = assign.right.get_inner_expression() {
                             named.push((
                                 index,
@@ -116,12 +133,18 @@ pub(super) fn commonjs_exports<'a>(
         return none;
     }
     // The mask is whole-file, so it runs only when there is a write to check.
-    let text_writes = if source.contains("module.exports") {
-        module_exports_writes_in_text(source)
+    let (text_writes, passed) = if source.contains("exports") {
+        let code = super::ts_mask_literals_and_comments(source);
+        (
+            module_exports_writes_in_text(&code),
+            exports_object_passed(&code),
+        )
     } else {
-        0
+        (0, false)
     };
-    if text_writes != text_whole_writes || whole_writes > 1 {
+    // `Object.assign(exports, ...)` or `defineProperty(module.exports, ...)`
+    // may write any slot.
+    if text_writes != text_whole_writes || whole_writes > 1 || passed {
         return none;
     }
     let mut exports = Vec::new();
@@ -151,20 +174,24 @@ pub(super) fn commonjs_exports<'a>(
                 }
                 Expression::ObjectExpression(object) => {
                     for property in &object.properties {
+                        // A spread or a computed key may define any key.
                         let ObjectPropertyKind::ObjectProperty(property) = property else {
-                            continue;
+                            return none;
                         };
                         if property.computed {
-                            continue;
+                            return none;
                         }
-                        let PropertyKey::StaticIdentifier(key) = &property.key else {
-                            continue;
+                        let key = match &property.key {
+                            PropertyKey::StaticIdentifier(key) => key.name.to_string(),
+                            PropertyKey::StringLiteral(key) => key.value.to_string(),
+                            _ => return none,
                         };
+                        *slot_writes.entry(key.clone()).or_default() += 1;
                         if let Expression::Identifier(value) = property.value.get_inner_expression()
                         {
                             exports.push(CommonJsExport {
                                 local: value.name.as_str(),
-                                property: Some(key.name.to_string()),
+                                property: Some(key),
                             });
                         }
                     }
@@ -182,7 +209,33 @@ pub(super) fn commonjs_exports<'a>(
             );
         }
     }
+    exports.retain(|export| {
+        export
+            .property
+            .as_ref()
+            .is_none_or(|property| slot_writes.get(property).copied().unwrap_or(0) <= 1)
+    });
     (exports, inline)
+}
+
+/// `exports` or `module.exports`.
+fn is_exports_object(object: &Expression<'_>) -> bool {
+    match object.get_inner_expression() {
+        Expression::Identifier(object) => object.name == "exports",
+        Expression::StaticMemberExpression(inner) => is_module_exports(inner),
+        _ => false,
+    }
+}
+
+/// `exports` or `module.exports` passed as a call's first argument in the
+/// masked code (`Object.assign(exports, ...)`).
+fn exports_object_passed(code: &str) -> bool {
+    ["(exports", "(module.exports"].iter().any(|needle| {
+        code.match_indices(needle).any(|(at, _)| {
+            let rest = code[at + needle.len()..].trim_start();
+            !rest.starts_with(|ch: char| super::is_javascript_identifier_char(ch) || ch == '.')
+        })
+    })
 }
 
 fn is_module_exports(member: &oxc_ast::ast::StaticMemberExpression<'_>) -> bool {
@@ -190,10 +243,8 @@ fn is_module_exports(member: &oxc_ast::ast::StaticMemberExpression<'_>) -> bool 
         && matches!(&member.object, Expression::Identifier(object) if object.name == "module")
 }
 
-/// `module.exports` followed by a plain `=` in the code, literals and
-/// comments masked out.
-fn module_exports_writes_in_text(source: &str) -> usize {
-    let code = super::ts_mask_literals_and_comments(source);
+/// `module.exports` followed by a plain `=` in the masked code.
+fn module_exports_writes_in_text(code: &str) -> usize {
     let needle = "module.exports";
     code.match_indices(needle)
         .filter(|(at, _)| {
