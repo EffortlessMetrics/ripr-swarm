@@ -45,7 +45,8 @@ const REPLY_TIMEOUT: Duration = Duration::from_mins(1);
 const REAP_TIMEOUT: Duration = Duration::from_secs(15);
 const UNKNOWN_ATTEMPT_ID: &str = "repair-attempt-000000000000000000000000";
 const UNKNOWN_CANONICAL_ID: &str = "gap:does-not-exist";
-const STALE_SNAPSHOT_ID: &str = "snapshot:stale-probe";
+const STALE_SNAPSHOT_ID: &str =
+    "snapshot:sha256:0000000000000000000000000000000000000000000000000000000000000000";
 const OVERSIZE_ARGUMENT_LEN: usize = 200_000;
 
 static TEMP_COUNTER: AtomicU64 = AtomicU64::new(0);

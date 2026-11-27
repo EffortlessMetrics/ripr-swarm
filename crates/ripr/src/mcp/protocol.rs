@@ -27,8 +27,10 @@ pub(super) const GET_REPAIR_ATTEMPT_TOOL_NAME: &str = "ripr_get_repair_attempt";
 pub(super) const GET_RECEIPT_STATUS_TOOL_NAME: &str = "ripr_get_receipt_status";
 /// One short line per argument the tools share. An argument with no
 /// description leaves the agent to guess: `snapshot_id` is best omitted (each
-/// tool description already names `stale_snapshot`), and a `canonical_id`
-/// only ever comes from the listing.
+/// tool description already names `stale_snapshot`), and when sent it has the
+/// one form the server issues (any other form is `invalid_argument`); a
+/// `canonical_id` only ever comes from the listing. The `invalid_argument`
+/// refusal names that form, so the budgeted description does not repeat it.
 const SNAPSHOT_ID_ARGUMENT: &str = "Omit for the current snapshot.";
 const CANONICAL_ID_ARGUMENT: &str = "From ripr_list_gaps.";
 pub(super) const STATUS_RESOURCE_URI: &str = "ripr://workspace/status";

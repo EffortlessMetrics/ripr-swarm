@@ -1076,6 +1076,16 @@ names one. Still JSON-RPC errors: an unknown tool name, a `tools/call` whose
 `arguments` is not an object or whose `name` is missing, a missing `_meta`, a
 catalog `cursor`, and resource-read errors, because in those cases no tool ran.
 
+A tool's `snapshot_id` that is not of the form `snapshot:sha256:<64 lowercase
+hex>` is an `invalid_argument` failure naming that form (ahead of the escaped
+value, so the bounded detail keeps it); a well-formed identity
+that is not current stays `stale_snapshot` (resource reads keep their stale
+handling). Every caller-supplied value echoed into a failure `detail`
+(`canonical_id`, `class`, `language`, `snapshot_id`, `attempt_id`) goes through
+one escaping rule: control characters, line and paragraph separators, and bidi
+or zero-width format characters appear as visible escapes (`\n`, `\u{202e}`), and the echo is capped at 256
+characters (32 for `class` and `language`).
+
 Unknown argument names are echoed exactly up to 128 Unicode scalar values.
 Longer names use that prefix in `failure.data.argument`, with
 `failure.data.argument_truncated: true` and `failure.data.argument_bytes`
@@ -1205,6 +1215,19 @@ JSON-serialized form is at most 16 KiB. Otherwise the reply carries
 answers `-32600` and continues reading the session. An over-cap input
 message is discarded and answered with `-32600`, retaining its ID only
 when it can be recovered from the first 4 KiB; otherwise the ID is null.
+The oversize reply states the limit in bytes (`262144`).
+
+A request before the handshake that lacks the inline `_meta` keys answers
+`-32602` naming the missing keys and both lifecycles: send `initialize`
+(then `notifications/initialized`) or put the keys in `params._meta`. A
+malformed `initialize` names the offending field (`protocolVersion`,
+`capabilities` or `clientInfo`) instead, before or after a handshake. A
+`tools/call` without a string `name` or with non-object `arguments`, and a
+`resources/read` without a string `uri`, answer `-32602` saying what to pass.
+An `initialize`, `tools/call` or `resources/read` whose `params` is present,
+not `null` and not an object (for example an array) stays `-32600` with its
+request id, and the message names the object shape to send. `params: null`
+decodes as absent params and gets the `-32602` reply above.
 
 Incoming messages are capped at 256 KiB. The complete serialized JSON
 response is capped at 128 KiB, with its newline delimiter appended
