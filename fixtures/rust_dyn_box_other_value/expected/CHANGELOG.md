@@ -34,3 +34,14 @@ Command:
 
 Updated:
 - `expected/human.txt`
+
+## Pending — rust_dyn_box_other_value (4)
+
+Reason:
+RIPR-SPEC-0001: rebless the dyn-box fixtures for main's why-unrevealed wording (#15277)
+
+Command:
+`cargo xtask goldens bless rust_dyn_box_other_value --reason "..."`
+
+Updated:
+- `expected/human.txt`
