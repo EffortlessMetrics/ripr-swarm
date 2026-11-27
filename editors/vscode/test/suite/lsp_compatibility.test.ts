@@ -33,6 +33,27 @@ function processIsRunning(pid: number): boolean {
   return state !== 'Z' && state !== 'X';
 }
 
+// The `.cmd` fixtures below forward `%*` to a receiver that records its argv.
+// The extension host's own `process.execPath` is the Electron binary, whose
+// argv comes from CommandLineToArgvW: there a doubled quote inside a quoted
+// span emits one quote and ends the span, so the cmd.exe encoding does not
+// round-trip (Windows packaged run 45006905751). `ripr.exe` (Rust std) and
+// `node.exe` both follow the C runtime rule the encoding targets, where the
+// doubled quote stays inside the span, so the exact-argv controls record
+// through `node.exe`.
+function shellArgvReceiver(): string {
+  if (process.platform !== 'win32') {
+    return process.execPath;
+  }
+  for (const directory of (process.env.PATH ?? '').split(path.delimiter)) {
+    const candidate = path.join(directory, 'node.exe');
+    if (directory.length > 0 && fs.existsSync(candidate)) {
+      return candidate;
+    }
+  }
+  throw new Error('node.exe is not on PATH; the exact-argv shell controls need a C runtime argv receiver');
+}
+
 suite('Standard LSP compatibility probe', () => {
   const fakeProbeTimeoutMs = 8000;
   const temporaryRoots: string[] = [];
@@ -385,7 +406,7 @@ suite('Standard LSP compatibility probe', () => {
     const command = process.platform === 'win32' ? path.join(root, 'ripr.cmd') : path.join(root, 'ripr');
     const useShell = process.platform === 'win32';
     if (process.platform === 'win32') {
-      fs.writeFileSync(command, `@echo off\r\n"${process.execPath}" "${script}" %*\r\nexit /b %errorlevel%\r\n`);
+      fs.writeFileSync(command, `@echo off\r\n"${shellArgvReceiver()}" "${script}" %*\r\nexit /b %errorlevel%\r\n`);
     } else {
       fs.writeFileSync(command, `#!/bin/sh\nexec "${process.execPath}" "${script}" "$@"\n`, { mode: 0o755 });
     }
@@ -434,7 +455,7 @@ suite('Standard LSP compatibility probe', () => {
         script,
         `require('fs').writeFileSync(${JSON.stringify(argsRecord)}, JSON.stringify(process.argv.slice(2)));\n`
       );
-      fs.writeFileSync(command, `@echo off\r\n"${process.execPath}" "${script}" %*\r\nexit /b %errorlevel%\r\n`);
+      fs.writeFileSync(command, `@echo off\r\n"${shellArgvReceiver()}" "${script}" %*\r\nexit /b %errorlevel%\r\n`);
       const launchArgs = windowsShellArguments(customArgs);
       const child = spawnClientProcess(serverLaunchCommand(command, true), launchArgs, true);
       assert.deepStrictEqual(child.spawnargs.slice(0, 4), [process.env.ComSpec ?? 'cmd.exe', '/d', '/s', '/c']);

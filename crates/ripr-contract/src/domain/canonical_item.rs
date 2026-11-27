@@ -21,11 +21,17 @@ impl<'de> serde::Deserialize<'de> for CanonicalItemId {
     }
 }
 
+/// Why a value was refused as a [`CanonicalItemId`].
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum CanonicalItemParseError {
+    /// The value was empty or only whitespace.
     Empty,
+    /// The value is not a `gap:rust:` id, a `gap:pr:` id, or `gap:` followed
+    /// by 16 hex digits.
     WrongClass {
+        /// The refused value, trimmed.
         value: String,
+        /// The field being parsed, such as `canonical_gap_id`.
         expected: &'static str,
     },
 }
@@ -54,6 +60,8 @@ impl CanonicalItemId {
         parse_gap_class(value, "gap_id alias")
     }
 
+    /// Returns the id string. An id built by a parser is trimmed, with its
+    /// case kept.
     pub fn as_str(&self) -> &str {
         &self.0
     }

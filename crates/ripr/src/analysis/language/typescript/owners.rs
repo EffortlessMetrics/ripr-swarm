@@ -106,6 +106,31 @@ pub(crate) fn owners_from_program(
         source,
         &extract_imports_for_test_file(&program.body),
     );
+    // A CommonJS whole-export entry (#16369) stands for the function the
+    // owner side proved is the whole export; any other is dropped.
+    let whole_exports: std::collections::BTreeSet<String> = owners
+        .iter()
+        .filter(|owner| {
+            owner.commonjs_default_export
+                && owner.class_name.is_none()
+                && matches!(
+                    owner.owner_kind,
+                    OwnerKind::Function | OwnerKind::ArrowFunction
+                )
+        })
+        .map(|owner| owner.name.clone())
+        .collect();
+    let entries: std::collections::BTreeMap<String, Vec<TypeScriptModuleEntry>> = entries
+        .into_iter()
+        .map(|(name, owner_entries)| {
+            let kept = owner_entries
+                .into_iter()
+                .filter(|entry| !entry.commonjs_whole || whole_exports.contains(&entry.name))
+                .collect::<Vec<_>>();
+            (name, kept)
+        })
+        .filter(|(_, owner_entries)| !owner_entries.is_empty())
+        .collect();
     for owner in &mut owners {
         // A `ModuleFunction` owner is a non-callable `const` initializer. A
         // followable read-only value node (#13592 B2) keeps its reader
