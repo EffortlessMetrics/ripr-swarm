@@ -22769,6 +22769,30 @@
       ]
     },
     {
+      "id": "rust_deref_receiver_prelude_value_wrapper",
+      "language": "rust",
+      "tier": "pure",
+      "source_fixture": "fixtures/rust_deref_receiver_prelude_value_wrapper",
+      "vector": "a_deref_wrapper_named_like_a_prelude_value_is_not_the_called_constructor",
+      "probe_family": "return_value",
+      "assertions": [
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "expected_finding_count",
+          "count": 1
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "expected_class",
+          "class": "reachable_unrevealed"
+        }
+      ]
+    },
+    {
       "id": "rust_deref_receiver_reexported_std",
       "language": "rust",
       "tier": "pure",

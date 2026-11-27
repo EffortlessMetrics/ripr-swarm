@@ -1,0 +1,11 @@
+diff --git a/src/lib.rs b/src/lib.rs
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -6,6 +6,6 @@
+ 
+ impl Inner {
+     pub fn is_some(&self) -> bool {
+-        true
++        false
+     }
+ }

@@ -45,7 +45,9 @@
 //!   the owner nor the wrapper name is a `type` alias or an `as` rename
 //!   (`use std::string::String as Inner;`), and no `const`, `static`, `fn`
 //!   or `let` binds the wrapper's name, so `Guard(..)` is its constructor.
-//!   Neither name is a std prelude or primitive type name, no `use` of any
+//!   Neither name is a std prelude type, prelude value (`Some(..)` calls
+//!   `Option::Some`, not a workspace `struct Some`) or primitive name, no
+//!   `use` of any
 //!   root spells either name, no glob other than a bare `self::*`,
 //!   `super::*` or `crate::*` and no `extern crate` exists, so both names
 //!   denote the workspace types everywhere;
@@ -678,12 +680,15 @@ fn declares_plain_struct(masked: &str, wrapper: &str) -> bool {
     })
 }
 
-/// Std prelude and primitive type names: a `type Target = String;` names
-/// the std type wherever no workspace `String` is in scope, whatever a
-/// workspace type of that name declares.
-const PRELUDE_TYPE_NAMES: &[&str] = &[
-    "Box", "Option", "Result", "String", "Vec", "bool", "char", "f32", "f64", "i8", "i16", "i32",
-    "i64", "i128", "isize", "str", "u8", "u16", "u32", "u64", "u128", "usize",
+/// Std prelude type and value names and primitive type names: a
+/// `type Target = String;` names the std type wherever no workspace `String`
+/// is in scope, and a `Some(inner)` call outside the wrapper's module builds
+/// an `Option` whose own `is_some` answers, whatever a workspace type of
+/// that name declares.
+const PRELUDE_NAMES: &[&str] = &[
+    "Some", "None", "Ok", "Err", "Box", "Option", "Result", "String", "Vec", "bool", "char", "f32",
+    "f64", "i8", "i16", "i32", "i64", "i128", "isize", "str", "u8", "u16", "u32", "u64", "u128",
+    "usize",
 ];
 
 /// Whether `name` may denote a type from outside the workspace somewhere: a
@@ -696,7 +701,7 @@ const PRELUDE_TYPE_NAMES: &[&str] = &[
 /// another, so matching it to the workspace owner by name alone may credit
 /// a call that runs std code.
 fn name_may_bind_outside_workspace(files: &[String], name: &str) -> bool {
-    PRELUDE_TYPE_NAMES.contains(&name)
+    PRELUDE_NAMES.contains(&name)
         || files.iter().any(|masked| {
             !whole_word_offsets(masked, "extern").into_iter().all(|at| {
                 !masked[at + "extern".len()..]
@@ -906,7 +911,12 @@ mod tests {
             &files(&["use std::string::String; struct Guard(String);"]),
             "String"
         ));
-        assert!(name_may_bind_outside_workspace(&files(&[owner]), "Vec"));
+        for prelude in ["Vec", "Some", "None", "Ok", "Err"] {
+            assert!(
+                name_may_bind_outside_workspace(&files(&[owner]), prelude),
+                "{prelude}"
+            );
+        }
     }
 
     #[test]
