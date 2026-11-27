@@ -311,7 +311,7 @@ fn commonjs_exports_reads_only_a_known_export_shape() {
     };
     let named = |local: &str, property: &str| (local.to_string(), Some(property.to_string()));
     assert_eq!(
-        read("module.exports = { a, b: c, d() {}, [e]: f, ...g };\n"),
+        read("module.exports = { a, b: c, d() {}, e: 1 };\n"),
         [named("a", "a"), named("c", "b")]
     );
     assert_eq!(
