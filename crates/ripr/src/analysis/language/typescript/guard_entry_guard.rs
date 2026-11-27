@@ -1267,6 +1267,29 @@ fn has_top_level_comparison(text: &str) -> bool {
     false
 }
 
+/// How many word-bounded `name` references the masked test text holds.
+/// The call reader parses the raw text, so a call it cannot read (a comment
+/// between the name and `(`) or one it reads inside a literal makes the two
+/// counts differ, and the guard then keeps the ladder verdict (#16435 review).
+pub(crate) fn owner_reference_count(masked: &str, name: &str) -> usize {
+    if name.is_empty() {
+        return 0;
+    }
+    masked
+        .match_indices(name)
+        .filter(|(at, _)| {
+            !masked[..*at]
+                .chars()
+                .next_back()
+                .is_some_and(is_identifier_char)
+                && !masked[at + name.len()..]
+                    .chars()
+                    .next()
+                    .is_some_and(is_identifier_char)
+        })
+        .count()
+}
+
 /// The registration text with its leading registration root spelled `test`
 /// (#16435). Extraction already proved that root is a known runner
 /// registration, so a renamed root (`import { test as t } from 'vitest'`) is
@@ -2063,6 +2086,15 @@ mod tests {
             &allowed,
             &ns
         ));
+    }
+
+    #[test]
+    fn owner_references_count_only_code_words() {
+        let masked = ts_mask_literals_and_comments(
+            "expect(price(2)).toBe(20); price /* c */ (3); priced(1); \"price(9)\";",
+        );
+        assert_eq!(owner_reference_count(&masked, "price"), 2);
+        assert_eq!(owner_reference_count(&masked, ""), 0);
     }
 
     #[test]

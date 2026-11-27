@@ -698,6 +698,12 @@ fn a_renamed_registration_root_keeps_exposed_when_entered_or_unread() -> Result<
             "alias-nested-call",
             "  t(\"inner\", () => {});\n  expect(price(2)).toBe(20);\n",
         ),
+        // A commented owner call the call reader cannot parse may enter the
+        // arm, so the guard keeps the verdict (#16438 review).
+        (
+            "alias-commented-call",
+            "  expect(price(2)).toBe(20);\n  expect(price /* discounted */ (3, 'HALF')).toBe(15);\n",
+        ),
     ] {
         let finding = then_arm(label, &renamed_registration(prelude, "t", body))?;
         assert_eq!(

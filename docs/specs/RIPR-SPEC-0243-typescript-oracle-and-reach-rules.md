@@ -3446,8 +3446,13 @@ keys); do not take the next number.
   (`import { test as t } from 'vitest'`) reads like its `test` spelling. The
   outer registration callee is read as `test`, since extraction already proved
   it is a known runner registration. A nested call through the alias inside the
-  test is still an unread call and keeps the ladder verdict.
-  `only_the_outer_registration_root_reads_as_test` pins the reader, and
+  test is still an unread call and keeps the ladder verdict. Every owner
+  reference in the masked test text must also be a call the reader parses
+  (`owner_reference_count`); a call it cannot read, such as one with a comment
+  before its `(`, keeps the ladder verdict instead of being dropped.
+  `only_the_outer_registration_root_reads_as_test` and
+  `owner_references_count_only_code_words` pin the reader, the fixture
+  `typescript_vitest_renamed_root_unentered_guard` is the honesty-corpus case, and
   `a_renamed_registration_root_withdraws_exposed_like_its_test_spelling` and
   `a_renamed_registration_root_keeps_exposed_when_entered_or_unread` are the
   production-path positive and negative.
