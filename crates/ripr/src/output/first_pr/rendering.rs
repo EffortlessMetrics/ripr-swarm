@@ -990,13 +990,23 @@ mod tests {
     #[test]
     fn markdown_pairs_redirect_regeneration_with_labeled_shell_bullets() {
         let bash = "ripr check --root . --mode instant --format repo-exposure-json > target/ripr/reports/repo-exposure.json";
-        let selected = serde_json::json!({"regeneration_command": bash});
-        let mut out = String::new();
-        render_missing_artifact_markdown(&selected, &mut out);
-        assert!(out.contains(&format!("- Regeneration command (Bash): `{bash}`")));
-        assert!(out.contains("- Regeneration command (PowerShell): `"));
-        assert!(out.contains("WriteAllText"));
-        assert!(!out.contains("- Regeneration command: `"), "{out}");
+        let selected = serde_json::json!({
+            "regeneration_command": bash,
+            "also_missing": [{"label": "Gap decision ledger"}],
+        });
+        for (command, alternate) in [("first-pr", "start-here"), ("start-here", "first-pr")] {
+            let mut out = String::new();
+            render_missing_artifact_markdown(command, &selected, &mut out);
+            assert!(out.contains(&format!("- Regeneration command (Bash): `{bash}`")));
+            assert!(out.contains("- Regeneration command (PowerShell): `"));
+            assert!(out.contains("WriteAllText"));
+            assert!(!out.contains("- Regeneration command: `"), "{out}");
+            assert!(
+                out.contains(&format!("Later steps (rerun `ripr {command}`")),
+                "{out}"
+            );
+            assert!(!out.contains(&format!("rerun `ripr {alternate}`")), "{out}");
+        }
     }
 
     #[test]
