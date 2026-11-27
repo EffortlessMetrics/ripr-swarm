@@ -3601,15 +3601,12 @@ pub(crate) fn ts_predicate_boundary_row_activation(
     // A renamed import of the owner is called bare (`d(100)`); a member
     // call `x.d(...)` never names it, so aliases take no receivers. A test
     // body that declares its own same-name local calls that local instead.
-    let alias_locals: Vec<&str> =
-        owner_import_alias_locals(candidate.test, owner, alias_map, workspace_root)
-            .filter(|alias| {
-                !local_identifier_declared_in_test_body(&candidate.test.body_text, alias)
-            })
-            .collect();
+    let alias_locals = owner_import_alias_locals(candidate.test, owner, alias_map, workspace_root)
+        .filter(|alias| !local_identifier_declared_in_test_body(&candidate.test.body_text, alias));
+    let no_receivers: &[String] = &[];
     let call_spellings: Vec<(&str, &[String])> =
         std::iter::once((owner.name.as_str(), owner_receivers.as_slice()))
-            .chain(alias_locals.iter().map(|alias| (*alias, &[][..])))
+            .chain(alias_locals.map(|alias| (alias, no_receivers)))
             .collect();
     // #4104-E3: a constant-shaped boundary operand reads its value from
     // the owner's own module declaration. Resolution is per candidate so
