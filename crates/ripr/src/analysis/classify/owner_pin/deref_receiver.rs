@@ -41,7 +41,10 @@
 //!   not `Target` or `Self`, and not a name a `type` item or an `as` rename
 //!   introduces, whatever its `fn deref` does (a deref returning `&OTHER`
 //!   still hands a coerced call an owner value). No `impl` header names
-//!   `Borrow`, so a std `Cow` field derefs without workspace code;
+//!   `Borrow`, so a std `Cow` field derefs without workspace code. Neither
+//!   the owner nor the wrapper name is a `type` alias or an `as` rename
+//!   (`use std::string::String as Inner;`), and no `const`, `static`, `fn`
+//!   or `let` binds the wrapper's name, so `Guard(..)` is its constructor;
 //! - the wrapper is declared exactly once in the workspace, as a non-generic
 //!   `struct` whose only attributes are std derives; no function shares its
 //!   name; no `type` item mentions it; it is never renamed (`Guard as G`);
@@ -287,9 +290,17 @@ pub(super) fn deref_workspace(
             .iter()
             .filter(|other| other.deref && other.wrapper == *wrapper)
             .count();
+        let tuple_wrapper = files
+            .iter()
+            .any(|masked| declares_tuple_struct(masked, wrapper));
         if no_other_deref_may_reach(&deref_impls, position, target, &aliases)
+            && !aliases.contains(target)
+            && !aliases.contains(wrapper)
             && own_impls == 1
             && wrapper != target
+            && files
+                .iter()
+                .all(|masked| wrapper_value_unshadowed(masked, wrapper, tuple_wrapper))
             && workspace_type_name_count(wrapper, index) == 1
             && !index
                 .functions()
@@ -661,6 +672,36 @@ fn declares_plain_struct(masked: &str, wrapper: &str) -> bool {
     })
 }
 
+/// Whether one masked file declares `wrapper` as a tuple struct
+/// (`struct Guard(..)`), whose constructor owns the value namespace.
+fn declares_tuple_struct(masked: &str, wrapper: &str) -> bool {
+    whole_word_offsets(masked, "struct").into_iter().any(|at| {
+        masked[at + "struct".len()..]
+            .trim_start()
+            .strip_prefix(wrapper)
+            .is_some_and(|rest| rest.trim_start().starts_with('('))
+    })
+}
+
+/// Whether no value item or binding of one masked file may answer a
+/// `wrapper(..)` call in place of the wrapper's constructor: no `const`,
+/// `static`, `fn`, `let` or `mut` spelling binds the name (a block item may
+/// shadow a tuple constructor). A wrapper that is not a tuple struct has no
+/// constructor call at all, so any `wrapper(` outside its `struct` item
+/// calls some other value and refuses.
+fn wrapper_value_unshadowed(masked: &str, wrapper: &str, tuple_wrapper: bool) -> bool {
+    whole_word_offsets(masked, wrapper).into_iter().all(|at| {
+        let before = masked[..at].trim_end();
+        let previous = &before[ident_run_start(before, &[])..];
+        if ["const", "static", "fn", "let", "mut"].contains(&previous) {
+            return false;
+        }
+        tuple_wrapper
+            || previous == "struct"
+            || !masked[at + wrapper.len()..].trim_start().starts_with('(')
+    })
+}
+
 /// Whether the text before a `struct` keyword holds only a visibility and
 /// `#[derive(..)]` attributes of [`STD_DERIVES`].
 fn attributes_are_std_derives(prefix: &str) -> bool {
@@ -694,9 +735,10 @@ fn attributes_are_std_derives(prefix: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::{
-        DerefImpl, alias_names, attributes_are_std_derives, deref_body_target, file_deref_impls,
-        first_param_is_shared_self, ident_run_start, impl_header_names, inside_item_macro,
-        no_other_deref_may_reach, wrapper_spellings_inert,
+        DerefImpl, alias_names, attributes_are_std_derives, declares_tuple_struct,
+        deref_body_target, file_deref_impls, first_param_is_shared_self, ident_run_start,
+        impl_header_names, inside_item_macro, no_other_deref_may_reach, wrapper_spellings_inert,
+        wrapper_value_unshadowed,
     };
     use std::collections::BTreeSet;
 
@@ -762,6 +804,38 @@ mod tests {
         assert!(!impl_header_names(
             "fn f(x: &impl Display) { x.borrow() }",
             "Borrow"
+        ));
+        assert!(declares_tuple_struct(
+            "pub struct Guard(pub Inner);",
+            "Guard"
+        ));
+        assert!(!declares_tuple_struct(
+            "struct Guard { inner: Inner }",
+            "Guard"
+        ));
+        let call = "fn t() { assert_eq!(Guard(Inner { cap: 3 }).limit(), 7); }";
+        assert!(wrapper_value_unshadowed(
+            &format!("struct Guard(Inner); {call}"),
+            "Guard",
+            true
+        ));
+        assert!(wrapper_value_unshadowed(
+            "struct Guard { inner: Inner } let g = Guard { inner };",
+            "Guard",
+            false
+        ));
+        for text in [
+            "const Guard: fn(Inner) -> [u8; 7] = unrelated;",
+            "pub static Guard: u8 = 0;",
+            "fn t() { fn Guard(i: Inner) -> Other { todo() } }",
+            "let mut Guard = |i| i;",
+        ] {
+            assert!(!wrapper_value_unshadowed(text, "Guard", true), "{text}");
+        }
+        assert!(!wrapper_value_unshadowed(
+            &format!("struct Guard {{ inner: Inner }} {call}"),
+            "Guard",
+            false
         ));
     }
 

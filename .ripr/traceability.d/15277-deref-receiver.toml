@@ -8,4 +8,5 @@ tests = [
   "crates/ripr/src/analysis/classify/owner_pin/deref_receiver.rs::tests::a_wrapper_spelling_outside_inert_positions_refuses",
   "crates/ripr/src/analysis/classify/owner_pin/deref_receiver.rs::tests::only_a_shared_self_receiver_and_std_derives_pass",
   "crates/ripr/src/analysis/classify/owner_pin/deref_receiver.rs::tests::a_non_ascii_identifier_before_a_bang_is_scanned_by_character",
+  "crates/ripr/src/analysis/classify/owner_pin/deref_receiver.rs::tests::any_other_deref_that_may_reach_the_target_refuses",
 ]
