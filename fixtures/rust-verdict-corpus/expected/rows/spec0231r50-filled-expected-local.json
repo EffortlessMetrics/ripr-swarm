@@ -1,0 +1,39 @@
+{
+  "case_id": "spec0231r50-filled-expected-local",
+  "subject_id": "authored-spec0231-50",
+  "origin": "authored",
+  "anchor": "src/lib.rs:2",
+  "behavior_family": "boundary_predicate",
+  "test_shape": "filled_expected_local",
+  "hard_case": false,
+  "truth": "discriminated",
+  "ideal_verdict": "credited",
+  "observed_verdict": "credited",
+  "followed_retarget": false,
+  "changed_since_labeling": false,
+  "observed_classifications": [
+    "exposed"
+  ],
+  "outcome": "ideal",
+  "contradictions": [],
+  "findings_scored": 1,
+  "findings_contradicted": 0,
+  "contradiction_counts": {},
+  "oracle": {
+    "expected": {
+      "kind": "exact_value",
+      "strength": "strong",
+      "spec": "RIPR-SPEC-0231#50"
+    },
+    "observed_kind": "exact_value",
+    "observed_strength": "strong",
+    "observed_all": [
+      {
+        "test": "boundary_is_not_discounted",
+        "kind": "exact_value",
+        "strength": "strong"
+      }
+    ],
+    "outcome": "match"
+  }
+}

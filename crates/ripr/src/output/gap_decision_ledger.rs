@@ -5919,7 +5919,10 @@ mod tests {
         // `python_get_fallback_no_exposed_credit` keeps a `get` fallback edit
         // whose calls all hold the key weakly exposed; its card names a dict
         // without the key, one more direct-aligned card.
-        if (direct, no_strong, orthogonal, family_selection) != (34, 37, 50, 2) {
+        // #14083: `python_parent_collected_test_shadow` withholds owner credit
+        // from an import a helper in the parent test directory shadows; its
+        // strong assertion observes the helper, one more orthogonal card.
+        if (direct, no_strong, orthogonal, family_selection) != (34, 37, 51, 2) {
             return Err(format!(
                 "corpus inventory drift: direct={direct}, unknown={no_strong}, orthogonal={orthogonal}, family_selection={family_selection}"
             ));

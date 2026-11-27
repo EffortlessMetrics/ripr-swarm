@@ -503,7 +503,9 @@ fn plan_mcp_target(path: PathBuf, force: bool) -> Result<InitTarget, String> {
     // (a shared or dotfiles-managed config) would be swapped for a plain
     // copy and the real target never updated.
     if std::fs::symlink_metadata(&path)
-        .map_err(|err| format!("cannot inspect {shown}: {err}"))?
+        .map_err(|err| {
+            format!("cannot inspect {shown}: {err}; check permissions on that path, then rerun")
+        })?
         .file_type()
         .is_symlink()
     {

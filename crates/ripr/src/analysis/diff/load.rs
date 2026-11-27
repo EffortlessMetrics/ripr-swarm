@@ -181,7 +181,7 @@ pub(crate) fn load_diff_with_effective_base_core(
             // #4480: stdin is bounded by the shared CLI input cap, so a
             // producer that never closes the pipe cannot grow memory forever.
             let buffer = crate::bounded_input::read_reader(std::io::stdin().lock())
-                .map_err(|err| format!("failed to read diff from stdin: {err}"))?;
+                .map_err(|err| format!("failed to read diff from stdin: {err}; check that the command feeding stdin writes a complete unified diff under the input limit, then rerun"))?;
             return Ok(LoadedDiff {
                 text: decode_diff_text("diff from stdin", buffer)?,
                 effective_base: None,
@@ -3159,7 +3159,7 @@ fn run_git_diff_bytes(
     // would be parsed as a diff option, so refuse it at the sink.
     if range.starts_with('-') {
         return Err(
-            format!("refusing to diff `{range}`: a revision range cannot start with `-`").into(),
+            format!("refusing to diff `{range}`: a revision range cannot start with `-`; pass a revision or range such as `origin/main..HEAD`").into(),
         );
     }
     // `diff.orderFile=/dev/null` neutralizes ambient file ordering (#5325):

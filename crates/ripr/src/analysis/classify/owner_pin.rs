@@ -4275,6 +4275,16 @@ impl AssertionRefusal {
         )
     }
 
+    /// The construct an assertion sits in that may keep it from running
+    /// (`a \`for\` loop, which may run zero times`), when that is the
+    /// refusal (#15337). Any other refusal names no construct.
+    pub(in crate::analysis) fn conditional_construct(&self) -> Option<&'static str> {
+        match self {
+            Self::Syntax(AssertionContextRefusal::ConditionalPath(construct)) => Some(construct),
+            _ => None,
+        }
+    }
+
     /// One reader-facing clause: what blocked crediting the assertion.
     pub(in crate::analysis) fn describe(&self) -> String {
         // Evidence text is host-independent: use the stable slash spelling
@@ -19013,6 +19023,16 @@ fn matches_panic_diagnostic(test: &TestSummary, assertion: &OracleFact) -> Optio
         }
     }
     Some(())
+}
+
+/// The scrutinee and pinned value of a plain literal `matches!` assertion
+/// (`assert!(matches!(owner(..), Ok(5)))`), read by the same admission the
+/// RIPR-SPEC-0197 pin uses, so the same-value invisibility check (#15414)
+/// reads exactly the `matches!` shapes the pin would credit.
+pub(in crate::analysis) fn literal_matches_assertion_operands(text: &str) -> Option<[String; 2]> {
+    matches_pin_condition(text)
+        .as_deref()
+        .and_then(literal_matches_operands)
 }
 
 /// A success-only pattern over a direct owner call. Limit the arguments to
