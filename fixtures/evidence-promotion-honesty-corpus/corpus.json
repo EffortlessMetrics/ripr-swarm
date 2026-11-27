@@ -22505,11 +22505,11 @@
       ]
     },
     {
-      "id": "rust_dyn_box_default_overridden_loop",
+      "id": "rust_dyn_box_default_overridden_match_arm",
       "language": "rust",
       "tier": "pure",
-      "source_fixture": "fixtures/rust_dyn_box_default_overridden_loop",
-      "vector": "a_for_loop_over_box_dyn_trait_values_on_a_type_that_overrides_the_default_does_not_reach_the_changed_default",
+      "source_fixture": "fixtures/rust_dyn_box_default_overridden_match_arm",
+      "vector": "a_match_arm_box_dyn_trait_receiver_on_a_type_that_overrides_the_default_does_not_reach_the_changed_default",
       "probe_family": "return_value",
       "assertions": [
         {

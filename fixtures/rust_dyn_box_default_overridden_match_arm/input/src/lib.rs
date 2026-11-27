@@ -25,8 +25,10 @@ mod tests {
     #[test]
     fn boxed_squares_area() {
         let shapes: Vec<Box<dyn Shape>> = vec![Box::new(Square(3))];
-        for s in &shapes {
-            assert_eq!(s.area(), 7);
-        }
+        let got = match shapes.first() {
+            Some(s) => s.area(),
+            None => 0,
+        };
+        assert_eq!(got, 7);
     }
 }

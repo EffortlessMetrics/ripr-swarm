@@ -10132,7 +10132,7 @@ fixtures = [
   "fixtures/rust_turbofish_owner_call",
   "fixtures/rust_trait_default_overridden",
   "fixtures/rust_dyn_box_default_overridden",
-  "fixtures/rust_dyn_box_default_overridden_loop",
+  "fixtures/rust_dyn_box_default_overridden_match_arm",
   "fixtures/rust_dyn_box_default_not_overridden_box",
   "fixtures/rust_trait_inherent_twin",
   "fixtures/rust_trait_inherent_by_value_twin",
