@@ -228,3 +228,14 @@ Command:
 
 Updated:
 - `expected/human-full.txt`
+
+## Pending — python_guarded_write_receiver_rebound (19)
+
+Reason:
+RIPR-SPEC-0122: #15336 unconfirmed-reach note severity, possible-gap State line, legend and Terms glosses
+
+Command:
+`cargo xtask goldens bless python_guarded_write_receiver_rebound --reason "..."`
+
+Updated:
+- `expected/human.txt`

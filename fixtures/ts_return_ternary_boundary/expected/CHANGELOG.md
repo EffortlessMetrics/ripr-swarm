@@ -536,3 +536,14 @@ Command:
 
 Updated:
 - `expected/human-full.txt`
+
+## Pending — ts_return_ternary_boundary (41)
+
+Reason:
+RIPR-SPEC-0122: #15336 unconfirmed-reach note severity, possible-gap State line, legend and Terms glosses
+
+Command:
+`cargo xtask goldens bless ts_return_ternary_boundary --reason "..."`
+
+Updated:
+- `expected/human.txt`

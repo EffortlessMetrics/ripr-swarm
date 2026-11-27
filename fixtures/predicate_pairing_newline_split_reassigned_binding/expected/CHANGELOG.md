@@ -407,3 +407,14 @@ Command:
 
 Updated:
 - `expected/human.txt`
+
+## Pending — predicate_pairing_newline_split_reassigned_binding (32)
+
+Reason:
+RIPR-SPEC-0122: #15336 unconfirmed-reach note severity, possible-gap State line, legend and Terms glosses
+
+Command:
+`cargo xtask goldens bless predicate_pairing_newline_split_reassigned_binding --reason "..."`
+
+Updated:
+- `expected/human.txt`

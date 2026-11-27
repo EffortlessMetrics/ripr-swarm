@@ -45,3 +45,15 @@ Command:
 
 Updated:
 - `expected/human.txt`
+
+## Pending — rust_dyn_box_inherent_owner (5)
+
+Reason:
+RIPR-SPEC-0122: #15336 unconfirmed-reach note severity, possible-gap State line, legend and Terms glosses
+
+Command:
+`cargo xtask goldens bless rust_dyn_box_inherent_owner --reason "..."`
+
+Updated:
+- `expected/human.txt`
+- `expected/human-full.txt`

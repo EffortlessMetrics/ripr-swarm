@@ -281,3 +281,14 @@ Command:
 
 Updated:
 - `expected/human-full.txt`
+
+## Pending — python_wrong_receiver_assertion (23)
+
+Reason:
+RIPR-SPEC-0122: #15336 unconfirmed-reach note severity, possible-gap State line, legend and Terms glosses
+
+Command:
+`cargo xtask goldens bless python_wrong_receiver_assertion --reason "..."`
+
+Updated:
+- `expected/human.txt`

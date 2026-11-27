@@ -615,3 +615,14 @@ Command:
 
 Updated:
 - `expected/human.txt`
+
+## Pending — harness_dead_construction_no_exposed_credit (46)
+
+Reason:
+RIPR-SPEC-0122: #15336 unconfirmed-reach note severity, possible-gap State line, legend and Terms glosses
+
+Command:
+`cargo xtask goldens bless harness_dead_construction_no_exposed_credit --reason "..."`
+
+Updated:
+- `expected/human.txt`

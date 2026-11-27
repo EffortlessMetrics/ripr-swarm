@@ -293,3 +293,14 @@ Command:
 
 Updated:
 - `expected/sarif.json`
+
+## Pending — one_hop_field_projection_discarded (23)
+
+Reason:
+RIPR-SPEC-0122: #15336 unconfirmed-reach note severity, possible-gap State line, legend and Terms glosses
+
+Command:
+`cargo xtask goldens bless one_hop_field_projection_discarded --reason "..."`
+
+Updated:
+- `expected/human.txt`

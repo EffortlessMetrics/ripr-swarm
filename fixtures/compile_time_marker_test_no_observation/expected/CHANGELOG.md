@@ -217,3 +217,15 @@ Command:
 
 Updated:
 - `expected/sarif.json`
+
+## Pending — compile_time_marker_test_no_observation (18)
+
+Reason:
+RIPR-SPEC-0122: #15336 unconfirmed-reach note severity, possible-gap State line, legend and Terms glosses
+
+Command:
+`cargo xtask goldens bless compile_time_marker_test_no_observation --reason "..."`
+
+Updated:
+- `expected/human.txt`
+- `expected/human-full.txt`

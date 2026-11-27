@@ -34,3 +34,15 @@ Command:
 
 Updated:
 - `expected/human.txt`
+
+## Pending — rust_dyn_box_blanket_default_same_file (4)
+
+Reason:
+RIPR-SPEC-0122: #15336 unconfirmed-reach note severity, possible-gap State line, legend and Terms glosses
+
+Command:
+`cargo xtask goldens bless rust_dyn_box_blanket_default_same_file --reason "..."`
+
+Updated:
+- `expected/human.txt`
+- `expected/human-full.txt`

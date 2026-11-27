@@ -784,3 +784,14 @@ Command:
 
 Updated:
 - `expected/human.txt`
+
+## Pending — multi_hunk_removed_line_wrong_target (47)
+
+Reason:
+RIPR-SPEC-0122: #15336 unconfirmed-reach note severity, possible-gap State line, legend and Terms glosses
+
+Command:
+`cargo xtask goldens bless multi_hunk_removed_line_wrong_target --reason "..."`
+
+Updated:
+- `expected/human.txt`

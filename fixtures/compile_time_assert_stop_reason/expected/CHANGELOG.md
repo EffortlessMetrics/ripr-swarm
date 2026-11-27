@@ -116,3 +116,14 @@ Command:
 
 Updated:
 - `expected/human.txt`
+
+## Pending — compile_time_assert_stop_reason (11)
+
+Reason:
+RIPR-SPEC-0122: #15336 unconfirmed-reach note severity, possible-gap State line, legend and Terms glosses
+
+Command:
+`cargo xtask goldens bless compile_time_assert_stop_reason --reason "..."`
+
+Updated:
+- `expected/human.txt`

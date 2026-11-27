@@ -536,3 +536,14 @@ Command:
 
 Updated:
 - `expected/human-full.txt`
+
+## Pending — python_adversarial_default_value_overridden (43)
+
+Reason:
+RIPR-SPEC-0122: #15336 unconfirmed-reach note severity, possible-gap State line, legend and Terms glosses
+
+Command:
+`cargo xtask goldens bless python_adversarial_default_value_overridden --reason "..."`
+
+Updated:
+- `expected/human.txt`

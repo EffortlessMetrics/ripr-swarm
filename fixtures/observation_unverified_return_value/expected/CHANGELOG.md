@@ -548,3 +548,14 @@ Command:
 
 Updated:
 - `expected/human.txt`
+
+## Pending — observation_unverified_return_value (47)
+
+Reason:
+RIPR-SPEC-0122: #15336 unconfirmed-reach note severity, possible-gap State line, legend and Terms glosses
+
+Command:
+`cargo xtask goldens bless observation_unverified_return_value --reason "..."`
+
+Updated:
+- `expected/human.txt`

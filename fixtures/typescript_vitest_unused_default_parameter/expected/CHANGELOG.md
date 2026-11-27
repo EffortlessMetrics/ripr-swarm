@@ -25,3 +25,14 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — typescript_vitest_unused_default_parameter (3)
+
+Reason:
+RIPR-SPEC-0122: #15336 unconfirmed-reach note severity, possible-gap State line, legend and Terms glosses
+
+Command:
+`cargo xtask goldens bless typescript_vitest_unused_default_parameter --reason "..."`
+
+Updated:
+- `expected/human.txt`

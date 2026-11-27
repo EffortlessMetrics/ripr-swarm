@@ -584,3 +584,14 @@ Command:
 
 Updated:
 - `expected/human.txt`
+
+## Pending — decimal_field_observer_non_member_access (49)
+
+Reason:
+RIPR-SPEC-0122: #15336 unconfirmed-reach note severity, possible-gap State line, legend and Terms glosses
+
+Command:
+`cargo xtask goldens bless decimal_field_observer_non_member_access --reason "..."`
+
+Updated:
+- `expected/human.txt`

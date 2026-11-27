@@ -369,3 +369,14 @@ Command:
 
 Updated:
 - `expected/human-full.txt`
+
+## Pending — property_macro_noop_named_test (29)
+
+Reason:
+RIPR-SPEC-0122: #15336 unconfirmed-reach note severity, possible-gap State line, legend and Terms glosses
+
+Command:
+`cargo xtask goldens bless property_macro_noop_named_test --reason "..."`
+
+Updated:
+- `expected/human.txt`

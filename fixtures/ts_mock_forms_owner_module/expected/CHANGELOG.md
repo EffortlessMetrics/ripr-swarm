@@ -419,3 +419,14 @@ Command:
 
 Updated:
 - `expected/human.txt`
+
+## Pending — ts_mock_forms_owner_module (36)
+
+Reason:
+RIPR-SPEC-0122: #15336 unconfirmed-reach note severity, possible-gap State line, legend and Terms glosses
+
+Command:
+`cargo xtask goldens bless ts_mock_forms_owner_module --reason "..."`
+
+Updated:
+- `expected/human.txt`

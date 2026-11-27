@@ -338,7 +338,7 @@ Updated:
 ## Pending — match_arm_shadowed_assert (27)
 
 Reason:
-RIPR-SPEC-0229 (#15359): repair no longer reads a match arm no test input selects as strongly gripped, so the missing evidence names the test input that reaches the changed code
+RIPR-SPEC-0122: #15336 unconfirmed-reach note severity, possible-gap State line, legend and Terms glosses
 
 Command:
 `cargo xtask goldens bless match_arm_shadowed_assert --reason "..."`

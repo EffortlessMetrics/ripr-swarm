@@ -74,3 +74,14 @@ Command:
 
 Updated:
 - `expected/human.txt`
+
+## Pending — inserted_guard_gap (7)
+
+Reason:
+RIPR-SPEC-0122: #15336 unconfirmed-reach note severity, possible-gap State line, legend and Terms glosses
+
+Command:
+`cargo xtask goldens bless inserted_guard_gap --reason "..."`
+
+Updated:
+- `expected/human.txt`

@@ -24,3 +24,14 @@ Command:
 Updated:
 - `expected/sarif.json`
 - `expected/github.txt`
+
+## Pending — python_full_list_selector_integer_pin_no_exposed_credit (3)
+
+Reason:
+RIPR-SPEC-0122: #15336 unconfirmed-reach note severity, possible-gap State line, legend and Terms glosses
+
+Command:
+`cargo xtask goldens bless python_full_list_selector_integer_pin_no_exposed_credit --reason "..."`
+
+Updated:
+- `expected/human.txt`

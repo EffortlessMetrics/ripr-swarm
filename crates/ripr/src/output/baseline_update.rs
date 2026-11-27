@@ -138,7 +138,7 @@ pub(crate) fn build_baseline_update_remove_resolved(
         .and_then(Value::as_array)
         .ok_or_else(|| {
             format!(
-                "baseline update input {} is missing entries array",
+                "baseline update input {} is missing entries array; pass the reviewed baseline ledger, restored from version control if this copy is damaged (`ripr baseline create` starts a new, unreviewed one)",
                 input.baseline_path
             )
         })?;
@@ -147,7 +147,7 @@ pub(crate) fn build_baseline_update_remove_resolved(
         .and_then(Value::as_array)
         .ok_or_else(|| {
             format!(
-                "baseline update current gate-decision input {} is missing decisions array",
+                "baseline update current gate-decision input {} is missing decisions array; pass the gate-decision JSON that `ripr gate evaluate` writes",
                 input.current_gate_decision_path
             )
         })?;
@@ -158,7 +158,7 @@ pub(crate) fn build_baseline_update_remove_resolved(
         .collect::<Option<Vec<_>>>()
         .ok_or_else(|| {
             format!(
-                "baseline update current gate-decision input {} contains a decision without stable identity; refusing to remove or migrate reviewed debt",
+                "baseline update current gate-decision input {} contains a decision without stable identity; refusing to remove or migrate reviewed debt; regenerate it with `ripr gate evaluate`, then rerun",
                 input.current_gate_decision_path
             )
         })?;
