@@ -1,0 +1,9 @@
+diff --git a/src/title.ts b/src/title.ts
+--- a/src/title.ts
++++ b/src/title.ts
+@@ -1,4 +1,4 @@
+ export function title(opts: { name?: string }): string {
+   opts.name = 'Bob';
+-  return opts.name;
++  return opts.name || 'untitled';
+ }

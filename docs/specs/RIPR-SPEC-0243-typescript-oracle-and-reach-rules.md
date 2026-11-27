@@ -3056,6 +3056,37 @@ keys); do not take the next number.
 
 ## Test Mapping
 
+- #15285 case 4 (added input-class fallback): an edit that wraps a read in
+  `|| d` or `?? d` changes behavior only on a falsy or nullish input, so an
+  exact assertion on any other input passes on both versions. The finding
+  reads `exposed` only when a related test's owner call is read as supplying
+  that input class: a `null` literal; a falsy literal for `||` (not `NaN`, a
+  global a test may shadow); and, only for an operand that reads a field or
+  position, `undefined`/`void 0` or a readable literal whose target field or
+  position is absent. A bare parameter never takes `undefined` or an omitted
+  argument, which a parameter default would absorb on both versions. A
+  variable, an unreadable literal (a spread, computed key, accessor,
+  `__proto__`, escape, comment, template literal or non-canonical numeric key
+  such as `0x10`), an `Object.prototype` member name, a later method or
+  shorthand definition of the target key, an operand whose binding is written
+  or shadowed before the read (in the body or by another parameter's
+  default), and a guessed destructured field all withhold the witness. The
+  advice names only input classes that change the result (not an empty
+  operand when the fallback is `''`) and, when the owner writes the operand
+  first, names that write instead of suggesting an input.
+  `crates/ripr/tests/typescript_added_fallback.rs` runs the binary over the
+  issue shape, each credited input class and its withheld twin, the operator
+  and owner-form variants, the unreadable-literal, numeric-key, `NaN` and
+  prototype controls, the member, spaced-member, pattern, nested-pattern,
+  grouped, parenthesized-target, parameter-default and callback-shadowing
+  writes, and the advice wording;
+  `fixtures/typescript_added_fallback_populated_input`,
+  `fixtures/typescript_added_fallback_member_write` and
+  `fixtures/typescript_added_fallback_parameter_default_write` pin the rendered withheld
+  findings against the credited control
+  `fixtures/typescript_added_fallback_empty_input_control` in the
+  cross-language evidence-promotion-honesty corpus.
+
 - #15939 (replaced owner function):
   `crates/ripr/tests/typescript_replaced_owner_function.rs` runs the binary over
   each replacement call in the test body, in a hook and at the top level, the

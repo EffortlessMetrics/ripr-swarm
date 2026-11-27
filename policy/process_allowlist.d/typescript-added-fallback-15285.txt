@@ -1,0 +1,1 @@
+crates/ripr/tests/typescript_added_fallback.rs|Command::new|1|typescript-preview|#15285: integration test runs the worktree-built ripr binary against isolated temp TypeScript workspaces to prove an added fallback reads exposed only when a related call supplies the falsy or null input; no shell, network, or user-repository mutation.
