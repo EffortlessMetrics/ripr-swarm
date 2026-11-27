@@ -7315,6 +7315,29 @@ fn each_refusal_names_the_gate_that_failed() {
         refusal(&format!("if true {{ {pin} }}"), ""),
         conditional("an `if` branch")
     );
+    // A position the construct always evaluates is named as that position,
+    // not as a branch, arm or body that may be skipped (#15337 review).
+    let check = "assert_eq!(weight(4), 12)";
+    assert_eq!(
+        refusal(&format!("if {{ {check}; true }} {{}}"), ""),
+        conditional("the condition of an `if`")
+    );
+    assert_eq!(
+        refusal(&format!("match {{ {check}; true }} {{ _ => {{}} }}"), ""),
+        conditional("the scrutinee of a `match`")
+    );
+    assert_eq!(
+        refusal(&format!("match true {{ _ => {{ {pin} }} }}"), ""),
+        conditional("a `match` arm")
+    );
+    assert_eq!(
+        refusal(&format!("while {{ {check}; false }} {{}}"), ""),
+        conditional("the condition of a `while` loop")
+    );
+    assert_eq!(
+        refusal(&format!("for _ in {{ {check}; 0..2 }} {{}}"), ""),
+        conditional("the iterable of a `for` loop")
+    );
     assert_eq!(
         refusal(&format!("return; {pin}"), ""),
         conditional("a block that an earlier `return` can skip")

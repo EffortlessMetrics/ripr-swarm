@@ -17,3 +17,18 @@ code = [
   "crates/ripr/src/analysis/classify/refusal_miss.rs",
   "crates/ripr/src/output/related_test_miss.rs",
 ]
+
+# Always-evaluated positions are named as those positions (#15337 follow-up).
+[[extend]]
+id = "RIPR-SPEC-0224"
+fixtures = [
+  "fixtures/rust_assertion_inert_names_position",
+]
+outputs = [
+  "fixtures/rust_assertion_inert_names_position/expected/check.json",
+  "fixtures/rust_assertion_inert_names_position/expected/human.txt",
+  "fixtures/rust_assertion_inert_names_position/expected/human-full.txt",
+]
+code = [
+  "crates/ripr/src/analysis/syntax/owner_pin.rs",
+]
