@@ -576,3 +576,68 @@ fn receipt_write_head_refusal_names_the_fix_that_applies() -> Result<(), String>
     }
     Ok(())
 }
+
+/// `reports kani` input refusals say which flag to correct (#16019).
+#[test]
+fn kani_report_input_refusals_name_the_flag_to_fix() -> Result<(), String> {
+    let dir = committed_repo()?;
+    std::fs::write(dir.0.join("binding.json"), "{}")
+        .map_err(|error| format!("write binding.json: {error}"))?;
+    std::fs::create_dir_all(dir.0.join("result-dir"))
+        .map_err(|error| format!("create result-dir: {error}"))?;
+    let kani = |input: &str| {
+        refusal(
+            &dir.0,
+            &[
+                "reports",
+                "kani",
+                "--input",
+                input,
+                "--binding",
+                "binding.json",
+                "--root",
+                ".",
+            ],
+        )
+    };
+    stderr_has_all(
+        &kani("missing-result.json")?,
+        &[
+            "reports kani read --input missing-result.json failed: not found; pass an existing, readable --input file",
+        ],
+    )?;
+    std::fs::write(dir.0.join("result.json"), "{}")
+        .map_err(|error| format!("write result.json: {error}"))?;
+    stderr_has_all(
+        &refusal(
+            &dir.0,
+            &[
+                "reports",
+                "kani",
+                "--input",
+                "result.json",
+                "--binding",
+                "missing-binding.json",
+                "--root",
+                ".",
+            ],
+        )?,
+        &[
+            "reports kani read --binding missing-binding.json failed: not found; pass an existing, readable --binding file",
+        ],
+    )?;
+    // A directory already says what to pass; the flag hint is not stacked on.
+    let stderr = kani("result-dir")?;
+    stderr_has_all(
+        &stderr,
+        &[
+            "reports kani read --input result-dir failed: is a directory, not a file; pass the path of a file",
+        ],
+    )?;
+    if stderr.contains("readable --input file") {
+        return Err(format!(
+            "directory refusal stacked a second next step:\n{stderr}"
+        ));
+    }
+    Ok(())
+}

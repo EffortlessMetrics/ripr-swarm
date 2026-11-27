@@ -33,7 +33,7 @@ use ra_ap_syntax::{AstNode, SyntaxKind, ast, ast::HasName};
 use crate::analysis::facts::{FunctionSummary, RustIndex};
 
 /// The leveled macros tracing and log each export under these names.
-const LEVELED_LOGGING_MACROS: &[&str] = &["trace", "debug", "info", "warn", "error"];
+pub(super) use crate::analysis::syntax::LEVELED_LOGGING_MACROS;
 
 /// The crate roots with audited macros, and the macros audited under each.
 pub(super) const AUDITED_MACRO_ROOTS: &[(&str, &[&str])] = &[

@@ -2063,6 +2063,8 @@ which completed with findings. The published schemas keep `status` and
 compatible for existing readers; ripr always writes both on a refusal, and the
 pairing becomes a schema rule at the next `schema_version` bump.
 
+An explicit empty `--root` is echoed as an empty string in the 0.2 `repository_root_unusable` refusal. Its scope and sole limitation identify the unusable root, its summary is zeroed, and its findings are empty. It can echo an explicit `base`. Fields that carry analysis results, including `analysis_outcome`, are absent. Completed and bounded partial reports and other refusal kinds require a nonempty root.
+
 ### `cli_refusal` (schema `0.1`, #11584)
 
 Argv usage errors and `context` selector misses stay exit `2` with the cause

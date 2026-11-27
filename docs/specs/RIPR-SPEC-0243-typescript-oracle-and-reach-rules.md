@@ -47,6 +47,8 @@ Linked issues:
 - #16365 (TypeScript `export = Name;` and `import x = require()`; rule 19)
 - #16366 (a function beside a one-identifier CommonJS whole export; rule 19)
 - #16369 (a CommonJS export reaches the private helper it calls; rule 19)
+- #16370 (runner loaded with TypeScript `import x = require()`)
+- #16431 (a `tape`, `ava` or `node:test` default bound under another name)
 - #9435 (exact oracle ignored on five changed-line shapes)
 - #9497 (skipped or unexercised tests credited as exposed; rules 17 and 18)
 - #11196 (start rate: a conditional assertion in an unconsulted test no longer
@@ -346,7 +348,11 @@ initializer: no assignment, update, `for` target or redeclaration, and no
 call, so a parenthesised, non-null, cast or destructuring assignment target,
 a `function`/`class` re-declaration and a `globalThis`/`this` member write all
 refuse. A nested-scope shadow such as a `test` parameter is refused too,
-fail-closed) and
+fail-closed; a value TypeScript `import x = require('<literal>')` is such a
+declaration too, because it compiles to a `const` binding TypeScript refuses
+to write, and it also declares a namespace that `const { test } = x` or
+`const test = x.test` picks from, #16370, while `import type x = require()`
+binds no value) and
 either ambient `require` syntax or an immutable loader created by a locally
 imported `node:module`/`module` `createRequire(import.meta.url)`. Mutable loaders
 or runner bindings and same-spelled helper factories remain uncredited.
@@ -3242,6 +3248,26 @@ keys); do not take the next number.
   `Object.assign` onto `exports`, a local rebound before its export and a
   named binding of a whole function stay `no_static_path`. A parse test pins
   which export shapes are read.
+- #16370 (runner bound by `import x = require()`):
+  `crates/ripr/src/analysis/language/typescript/tests/import_equals_runner_tests.rs`
+  runs `analyze_diff` on a TypeScript test file whose runner is
+  `import test = require('tape')`, or a `node:test` namespace bound by
+  `import runner = require('node:test')` and picked by destructuring or by
+  member: each reads `exposed` like its `const ... = require()` reference. A
+  file that declares its own `require`, a written namespace and an inactive
+  member pick stay `no_static_path`, and a renamed pick off a type-only
+  `import type runner = require()` registers nothing while its value twin
+  reads `exposed`.
+- #16431 (renamed default runner binding; registration fact in
+  RIPR-SPEC-0027):
+  `crates/ripr/src/analysis/language/typescript/tests/renamed_default_runner_tests.rs`
+  runs `analyze_diff` on a test registered through `check`, a tape default
+  bound by `require()`, import-equals or an ES default import, and through
+  renamed ava and `node:test` default imports: each reads `exposed` like the
+  `test` reference, as do `import { default as check }` and a call inside a
+  suite. A written binding, a destructured CommonJS `default` (with or
+  without a fallback), a suite-level shadow, mocha's and node-tap's defaults,
+  a local module's default and `check.skip(...)` stay `no_static_path`.
 
 - #11196 (rule 11, object rows): `tests/object_row_tests.rs` pins the per-row
   literal assertions for the `for...of` and `test.each` object-row forms and

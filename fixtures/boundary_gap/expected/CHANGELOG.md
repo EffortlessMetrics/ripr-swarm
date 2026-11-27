@@ -1,17 +1,15 @@
 # Golden Output Changes
 
-## Pending — corpus cache generation 1.214 for receiver kinds read after generics (#16352)
+## Pending — corpus cache generation 1.214 for bare imported logging macros (#16420)
 
-An owner's receiver kind is now read from its parameter list after the
-generics, and typed `self: Self`, `self: &Self` and `self: &mut Self`
-receivers are read, which can move a relation from a direct owner call to a
-name-only match and bumps the analyzer cache schema to 1.214. Move the
-portable unchanged-attempt snapshots to 1.214, recompute the
-`raw_json_placeholder_v1` artifact content commitment, then the dependent
-verify commitments and receipt byte hashes. Weak grip, unchanged movement,
-historical currentness, incomplete receipt status and fail-closed
-first-action routing remain the same. No other fixture output is
-regenerated.
+A helper wrapper that logs through a bare leveled macro imported from an
+audited tracing or log release now forwards its helper result, which bumps
+the analyzer cache schema to 1.214. Move the portable unchanged-attempt
+snapshots to 1.214, recompute the `raw_json_placeholder_v1` artifact
+content commitment, then the dependent verify commitments and receipt byte
+hashes. Weak grip, unchanged movement, historical currentness, incomplete
+receipt status and fail-closed first-action routing remain the same. No
+other fixture output is regenerated.
 
 ## Pending — corpus cache generation 1.213 for type-parameter-shadowed helpers (#12891)
 
