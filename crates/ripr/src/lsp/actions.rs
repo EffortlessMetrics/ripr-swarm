@@ -546,16 +546,35 @@ fn cross_language_disabled_action(
     Some(action)
 }
 
-/// The commit step a seam repair start needs before it can begin (#13636):
-/// `Some(git ... commit ...)` when the shared before-phase preflight
-/// (`app::repair_attempt::seam_start_dirty_premise`) names dirty production
-/// files under `snapshot_root`, spelled with the `root_display` the start
-/// command binds. `None` on a clean premise. An unreadable premise is also
-/// `None`: the start keeps its legacy form and its own before phase stays the
-/// final authority that refuses.
-pub(super) fn seam_start_commit_step(snapshot_root: &Path, root_display: &str) -> Option<String> {
-    let files = seam_start_dirty_files(snapshot_root).ok()?;
-    crate::app::commit_prerequisite_command(root_display, &files)
+/// What the editor may show for a seam repair start (#13636, #16381).
+#[derive(Debug, PartialEq, Eq)]
+pub(super) enum SeamStartStep {
+    /// The start runs as printed, or the premise could not be read and the
+    /// start's own before phase stays the final authority.
+    Runnable,
+    /// The start refuses until this commit runs.
+    Commit(String),
+    /// The start refuses until a dirty file whose name breaks a line is
+    /// committed, and no printed commit can name it: offer no start.
+    Withheld,
+}
+
+/// The [`SeamStartStep`] at `snapshot_root`: the shared before-phase
+/// preflight (`app::repair_attempt::seam_start_dirty_premise`) names dirty
+/// production files under `snapshot_root`, and the commit is spelled with the
+/// `root_display` the start command binds. An unreadable premise is
+/// `Runnable`: the start keeps its legacy form and its own before phase stays
+/// the final authority that refuses. The line-break refusal is matched by
+/// containment, so context a caller adds to the error keeps it `Withheld`.
+pub(super) fn seam_start_step(snapshot_root: &Path, root_display: &str) -> SeamStartStep {
+    match seam_start_dirty_files(snapshot_root) {
+        Ok(files) => crate::app::commit_prerequisite_command(root_display, &files)
+            .map_or(SeamStartStep::Runnable, SeamStartStep::Commit),
+        Err(error) if error.contains(crate::app::repair_attempt::LINE_BREAK_PREMISE) => {
+            SeamStartStep::Withheld
+        }
+        Err(_) => SeamStartStep::Runnable,
+    }
 }
 
 fn seam_start_dirty_files(snapshot_root: &Path) -> Result<Vec<String>, String> {
@@ -1002,14 +1021,15 @@ fn push_seam_actions(
         // the snapshot, so committing re-enables the start without a
         // refresh. A client without disabled support keeps the legacy
         // omission.
-        if let Some(commit) = seam_start_commit_step(&context.snapshot.root, &root) {
+        let step = seam_start_step(&context.snapshot.root, &root);
+        if let SeamStartStep::Commit(commit) = &step {
             if client_features.code_action_disabled
                 && let Some(action) =
-                    uncommitted_start_disabled_action(&commit, context.diagnostic, context.snapshot)
+                    uncommitted_start_disabled_action(commit, context.diagnostic, context.snapshot)
             {
                 actions.push(action);
             }
-        } else {
+        } else if step == SeamStartStep::Runnable {
             actions.push(copy_agent_loop_command_action(
                 AGENT_REPAIR_COMMAND_TITLE,
                 COPY_AGENT_REPAIR_COMMAND,
