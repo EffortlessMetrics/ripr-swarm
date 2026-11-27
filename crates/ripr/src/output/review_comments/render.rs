@@ -245,6 +245,12 @@ pub(super) fn gap_record_comment_json(
     let repair_text = repair_text(repair_route);
     let why = repair_why(record, repair_route);
     let verify_command = record.verification_commands[0].clone();
+    // #15302: prose and guidance run a nested project's command from its
+    // directory; the repair card keeps the raw ledger command.
+    let verify_display = crate::output::python_repair_card::rooted_verify_display(
+        record.verify_cwd.as_deref(),
+        &verify_command,
+    );
     let source_location = source_location_json(file, Some(line as usize));
 
     let mut value = json!({
@@ -295,13 +301,13 @@ pub(super) fn gap_record_comment_json(
             "authority_boundary": record.authority_boundary.as_str(),
         },
         "llm_guidance": {
-            "prompt": repair_prompt(repair_route, &verify_command),
+            "prompt": repair_prompt(repair_route, &verify_display),
             "command": format!(
                 "ripr first-action --root {} --gap-ledger {}",
                 shell_arg(&display_path(root)),
                 shell_arg(gap_ledger_path)
             ),
-            "verify_command": verify_command,
+            "verify_command": verify_display,
         },
     });
     if let Some(seam_id) = seam_id
@@ -511,7 +517,25 @@ pub(super) fn review_recommendation_json(
     let seam = &entry.seam;
     let missing = missing_records_for(entry);
     let recommended = agent_seam_packets::recommended_test_for(entry);
-    let nearest = agent_seam_packets::nearest_strong_test_to_imitate(seam.kind(), &entry.evidence);
+    // A strong assertion in another function can be ranked as navigation
+    // context. The producer's reach rule also has to admit this row (#15805).
+    let mut oracle_candidates = entry
+        .evidence
+        .related_tests
+        .iter()
+        .map(AsRef::as_ref)
+        .filter(|test| {
+            entry.evidence.reach.state == crate::domain::StageState::Yes
+                && matches!(
+                    entry.evidence.observe.state,
+                    crate::domain::StageState::Yes | crate::domain::StageState::Weak
+                )
+                && test
+                    .relation_reason
+                    .establishes_reach(test.assertion_targets_non_function != Some(true))
+        });
+    let nearest =
+        agent_seam_packets::first_strong_test_to_imitate(seam.kind(), oracle_candidates.clone());
     let candidate_values = agent_seam_packets::candidate_values_for(entry, &missing);
     let assertion_shape = agent_seam_packets::assertion_shape_for_entry(entry);
     let seam_id = seam.id().as_str();
@@ -654,8 +678,7 @@ pub(super) fn review_recommendation_json(
     // top-ranked related test, else no oracle observed (`unknown` / `none`).
     // This projects the same oracle facts agent briefs and seam packets carry;
     // the review card does not compute an oracle of its own.
-    let representative_oracle =
-        nearest.or_else(|| entry.evidence.related_tests.first().map(AsRef::as_ref));
+    let representative_oracle = nearest.or_else(|| oracle_candidates.next());
     let oracle_kind = representative_oracle
         .map(|test| test.oracle_kind.as_str())
         .unwrap_or_else(|| crate::domain::OracleKind::Unknown.as_str());
@@ -966,23 +989,30 @@ pub(super) fn push_markdown_items(lines: &mut Vec<String>, heading: &str, value:
                     .to_string(),
             );
         }
-        lines.push(format!("  - command: {}", code_span(command)));
+        push_markdown_command(lines, "command", command);
         if let Some(guidance) = item.get("llm_guidance")
             && let Some(outcome) = string_field(guidance, "analysis_outcome_command")
         {
-            lines.push(format!(
-                "  - analysis_outcome_command: {}",
-                code_span(outcome)
-            ));
+            push_markdown_command(lines, "analysis_outcome_command", outcome);
             if let Some(verify) = string_field(guidance, "verify_command") {
-                lines.push(format!("  - verify_command: {}", code_span(verify)));
+                push_markdown_command(lines, "verify_command", verify);
             }
             if let Some(receipt) = string_field(item, "receipt_command") {
-                lines.push(format!("  - receipt_command: {}", code_span(receipt)));
+                push_markdown_command(lines, "receipt_command", receipt);
             }
         }
     }
     lines.push(String::new());
+}
+
+/// One card command line plus its PowerShell pair from the shared translator
+/// (#15378 put these cards under `--root`, where the paste harness reads them).
+/// No pair when PowerShell runs the Bash spelling unchanged.
+fn push_markdown_command(lines: &mut Vec<String>, label: &str, command: &str) {
+    lines.push(format!("  - {label}: {}", code_span(command)));
+    if let Some(form) = crate::output::markdown::powershell_text_variant(command) {
+        lines.push(format!("  - {label} (PowerShell): {}", code_span(&form)));
+    }
 }
 
 pub(super) fn push_navigation_only_target_markdown(lines: &mut Vec<String>, target: &Value) {

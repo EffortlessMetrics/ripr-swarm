@@ -106,7 +106,7 @@ fn durable_literal_unix_manifest_copy_refuses_slash_decoy() -> Result<(), String
         .ok_or_else(|| "authentic attempt copy was admitted in a different root".to_string())?;
     assert_eq!(
         refusal,
-        "repair attempt manifest root does not match selected repository"
+        "repair attempt manifest root does not match selected repository; run from the repository the attempt was started in, or select that repository as the root"
     );
     assert_eq!(
         std::fs::read(&original).map_err(|error| error.to_string())?,

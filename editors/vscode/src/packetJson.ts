@@ -106,7 +106,7 @@ export const TEST_RUNNER_VERIFY_COMMAND_PREFIXES: readonly string[] = [
   'venv/bin/python -m pytest',
   'pytest',
   'python -m unittest',
-  ...['jest', 'vitest run', 'ava'].flatMap((bin) => [
+  ...['jest', 'vitest run', 'ava', 'mocha'].flatMap((bin) => [
     `npx --no-install ${bin}`,
     `pnpm exec ${bin}`,
     `yarn ${bin}`,

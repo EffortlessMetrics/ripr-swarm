@@ -1,0 +1,16 @@
+[[extend]]
+id = "RIPR-SPEC-0108"
+tests = [
+  "crates/ripr/src/analysis/classify/related_tests/dispatch_target/tests.rs::the_default_method_owner_is_the_trait_declaration",
+  "crates/ripr/src/analysis/classify/related_tests/dispatch_target/tests.rs::calls_on_an_overriding_type_do_not_reach_the_default",
+  "crates/ripr/src/analysis/classify/related_tests/dispatch_target/tests.rs::a_call_that_may_run_the_default_keeps_the_relation",
+  "crates/ripr/src/analysis/classify/related_tests/dispatch_target/tests.rs::method_calls_taken_by_an_inherent_twin_do_not_reach_the_trait_impl",
+  "crates/ripr/src/analysis/classify/related_tests/dispatch_target/tests.rs::a_trait_spelling_keeps_the_relation",
+  "crates/ripr/src/analysis/classify/related_tests/dispatch_target/tests.rs::a_twin_with_another_receiver_kind_keeps_the_relation",
+  "crates/ripr/src/analysis/classify/related_tests/dispatch_target/tests.rs::an_override_that_may_not_apply_keeps_the_relation",
+  "crates/ripr/src/analysis/classify/related_tests/dispatch_target/tests.rs::a_twin_that_may_not_apply_keeps_the_relation",
+  "crates/ripr/src/analysis/classify/related_tests/dispatch_target/tests.rs::an_enclosing_gate_or_private_twin_keeps_the_relation",
+]
+code = [
+  "crates/ripr/src/analysis/classify/related_tests/dispatch_target.rs",
+]

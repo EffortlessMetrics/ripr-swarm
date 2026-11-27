@@ -1,0 +1,9 @@
+diff --git a/fmt/clamp.py b/fmt/clamp.py
+--- a/fmt/clamp.py
++++ b/fmt/clamp.py
+@@ -1,4 +1,4 @@
+ def clamp(value, floor=None):
+-    if floor is not None and value < floor:
++    if floor is not None and value <= floor:
+         return f"<{floor}"
+     return str(value)

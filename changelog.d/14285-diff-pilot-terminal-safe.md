@@ -1,0 +1,2 @@
+<!-- section: Fixed -->
+- The human `ripr diff` report and the `ripr pilot` terminal summary now escape control and bidi characters from repository text the same way `ripr check` does (`\u{XX}`, newline and tab kept), so a changed file whose name carries ESC/OSC/CSI or BEL bytes can no longer retitle the window, clear the screen or recolor the terminal. `ripr diff --json` and the pilot Markdown summary keep the raw value (#14285).

@@ -1,0 +1,7 @@
+# Out-of-root documents disclose the root route, not save-then-refresh (#15462).
+[[extend]]
+id = "RIPR-SPEC-0127"
+tests = [
+  "crates/ripr/src/lsp/tests.rs::out_of_root_document_names_the_root_instead_of_save_then_refresh",
+  "crates/ripr/src/lsp/tests.rs::non_file_document_keeps_save_then_refresh_outside_a_root",
+]

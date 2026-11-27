@@ -522,6 +522,14 @@ fn gate_calibrated_mode_requires_explicit_baseline() -> Result<(), String> {
             .iter()
             .any(|error| error.contains("requires an explicit --baseline"))
     );
+    // The adoption tail names the mode that was requested, not baseline-check.
+    let error = report
+        .config_errors
+        .iter()
+        .find(|error| error.contains("requires an explicit --baseline"))
+        .ok_or("missing baseline config error")?;
+    assert!(error.contains("To adopt calibrated-gate,"), "{error}");
+    assert!(!error.contains("baseline-check"), "{error}");
     Ok(())
 }
 
@@ -2816,7 +2824,7 @@ fn gate_exception_policy_missing_or_malformed_ledger_is_config_error() -> Result
         report
             .config_errors
             .iter()
-            .any(|error| error.contains("failed to read exception policy")),
+            .any(|error| error.contains("failed to read --exception-policy")),
         "config_errors: {:?}",
         report.config_errors
     );

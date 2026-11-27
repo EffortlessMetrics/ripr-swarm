@@ -33,7 +33,10 @@ The selector receives:
 
 - a stable canonical identity;
 - a stable document identity;
-- the UTF-8 byte size of the normalized passive payload;
+- the UTF-8 byte size of the normalized passive payload. The normalized
+  payload leaves out the `data.evidence_identity` member stamped into seam
+  diagnostics: it names the refresh attempt (`snapshot:<generation>`), not
+  evidence, and its width grows with the age of the session;
 - optional inline-detail byte size;
 - producer-owned eligibility;
 - producer-owned repair-route, causal, and evidence-order ranks.
@@ -84,7 +87,11 @@ Lower rank values are selected first. The final identities make ties stable.
 Per-document and workspace item limits are applied before serialized-byte
 limits. If the first eligible item alone exceeds the byte budget, it remains
 selected so the canonical item is never silently hidden; the result remains
-explicitly overflowed.
+explicitly overflowed. The exception permits only that lone first item: later
+items, including zero-byte items, are omitted while the selected total exceeds
+the limit. A sum that exceeds `usize::MAX` is above every admitted byte limit,
+including a limit of `usize::MAX`; saturating accounting must not admit it.
+Exactly fitting totals remain selectable when count limits permit.
 
 Inline detail that exceeds its limit does not remove its canonical item. The
 item remains selected with 'inline_detail_omitted', and a later typed retrieval
@@ -109,13 +116,22 @@ route. It also reports `diagnostic_budget_state` separately:
 
 When inline detail bytes are not produced by the diagnostic producer, the
 projection must say `inline_detail_measurement: "not_available"`; it must not
-present a fabricated zero as measured detail evidence. Producer selection
-ranks remain an explicit limitation until real diagnostic producers populate
-them.
+present a fabricated zero as measured detail evidence.
+
+The delivery bridge populates the causal rank from producer-stamped identity:
+a diff finding (a `finding_id`, no `seam_id`, not a gap-ledger row) is
+change-caused and ranks ahead of repository seam inventory rows and ledger
+rows. The repair-route and evidence ranks remain unset; that is an explicit
+limitation until real diagnostic producers populate them.
 
 ## Required invariants
 
 - Equal inputs in any discovery order produce equal results and bytes.
+- Equal evidence produces an equal selection and equal measured bytes at
+  every refresh generation of a session: a long-lived server and a server
+  started on the same workspace serve the same diagnostics.
+- A finding on a changed line is selected before any repository seam
+  inventory row, so a full refresh never omits it for inventory rows.
 - Adding a lower-ranked item does not reshuffle existing selected identities.
 - Every canonical input is present in exactly one selected or omitted result.
 - Profile-filtered items never consume an item or byte budget.
@@ -208,12 +224,47 @@ The marker exemption and its negative controls are covered by
 `crates/ripr/src/lsp/diagnostic_budget.rs::tests::preview_withheld_marker_is_budget_exempt`,
 and the producer cap by
 `crates/ripr/src/lsp/diagnostics.rs::diagnostic_policy_tests::withheld_preview_markers_are_capped_per_snapshot`.
+Session-independent byte measurement is covered by
+`crates/ripr/src/lsp/diagnostic_budget.rs::tests::byte_budget_measures_a_seam_diagnostic_without_its_session_identity`
+and
+`crates/ripr/src/lsp/diagnostic_budget.rs::tests::byte_budget_selection_does_not_depend_on_session_age`,
+and the causal rank by
+`crates/ripr/src/lsp/diagnostic_budget.rs::tests::change_caused_finding_is_selected_before_seam_inventory_rows`
+and
+`crates/ripr/src/lsp/diagnostic_budget.rs::tests::only_a_diff_finding_gets_the_change_caused_rank`.
+Over the real wire,
+`crates/ripr/tests/lsp_lifecycle/incremental_differential.rs::long_lived_session_serves_what_a_fresh_session_serves`
+compares the pull report of a session past its tenth refresh with a fresh
+session's after each external edit, under an overflowing seam inventory.
 The focused omission payload, identity, alias, retraction, quarantine and
 previous-result controls live in
 `crates/ripr/src/lsp/backend/delivery_selection_parity_tests/omission_tests.rs`.
 Its parity test reads a framed push publication from the real committed-snapshot
 restoration path and compares the complete payload with both pull handlers for
 document, workspace and byte overflow. It does not qualify the editor package.
+
+### Bounded scalar assurance (#12109)
+
+`diagnostic_budget/kani_proofs.rs::budget_item_limits_hold_over_walk` specifies
+one combined four-item walk across two documents, with document/workspace
+limits in `1..=3`, positive byte/detail limits and arbitrary `usize` payloads
+and details. The walk commits actual selected payloads. Independent `u128`
+arithmetic checks exact selection, omission-reason priority, counts, bytes,
+and detail flags, including the maximum admitted byte limit. Reachability
+covers require document-plus-byte pressure and workspace-plus-byte pressure,
+as well as a maximum-limit byte refusal. The byte-only harness retains its
+separate claim without excluding `usize::MAX`.
+
+`diagnostic_budget/budget_composition_tests.rs` supplies ordinary parity:
+73,728 finite four-step scalar walks, plus actual evaluator controls for
+combined document/byte omissions, exact fit at `usize::MAX`, arithmetic
+overflow refusal, and the lone oversized first-item exception. These tests
+use declared sizes; they do not allocate payload buffers of those sizes.
+
+The scalar harnesses do not verify sorting, maps, canonical identity,
+serialization, transport, allocator behavior or filesystem/process behavior.
+Ordinary tests are not native Kani results; native assurance requires exact
+source/configuration execution and complete required covers under SPEC-0371.
 
 ## Implementation Mapping
 

@@ -1,0 +1,2 @@
+<!-- section: Fixed -->
+- A glob import from another crate no longer refuses a test that calls `env!`, `concat!`, `include_str!`, `write!`, `todo!` or any other macro of `core`'s prelude. rustc rejects a bare call whose name both a glob and that prelude supply, so the glob cannot replace them. `vec!`, `format!`, `print!`/`println!`, `eprint!`/`eprintln!` and `dbg!` stay refusable, since a `#![no_std]` crate's prelude lacks them (#16060).

@@ -1,0 +1,2 @@
+crates/ripr/tests/macro_held_owner_call.rs|Command::new|1|macro-held-owner-call|RIPR-SPEC-0197: runs the built ripr binary over a temp one-package workspace to read the owner's repo-exposure return seam; no network or credential operation.
+crates/ripr/tests/macro_held_owner_call.rs|use std::process::Command|1|macro-held-owner-call|RIPR-SPEC-0197: imports Command only for the bounded binary invocation described above.

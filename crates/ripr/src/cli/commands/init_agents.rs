@@ -38,27 +38,28 @@ Only edit tests. Never change production code to make a gap go away.
 Keep the same --base and source options for every check below.
 
 Loop (max 3 rounds per gap):
-1. FIND    `ripr check --quiet --format agent` (add `--base <branch>` if no origin/main|master).
+1. FIND    `ripr check --quiet --format agent` (no default branch: add `--base <branch>`;
+           committed on it yourself: `--base <sha of HEAD~N>`, N = your commits; a sha stays fixed).
            Read gap, test and next lines. Exit 0 can still mean gaps; 2/3 = stop (read stderr).
 2. DETAIL  Skip when `missing=` is one code value (`missing=total == 100`): not `-`, a sentence, `…` or `(+N more)`.
            Otherwise follow the printed `ripr explain ...` with its selector and scope. Add `--format agent`
            only if no `--format` is present; for `--from` plus `--suppression-policy`, keep it as printed.
-           Follow `ripr context ...` as-is (JSON). Optional: `ripr agent stub --at FILE:LINE --kind KIND [--write]`.
-3. WRITE   One focused test next to the related test. Use assert_eq! on exact changed
-           values: every changed field, branch and boundary (below, equal, above). Not
-           `.is_some()`, `.is_empty()`, `<=`, or only whole-struct equality.
+           If it prints `next=ripr context ...`, follow that as-is (JSON). Optional: `ripr agent stub --at FILE:LINE --kind KIND [--write]`.
+3. WRITE   One focused test next to the related test. Pin what the changed code does now:
+           assert_eq! on exact values for every changed field, branch and boundary (below,
+           equal, above). Not `.is_some()`, `.is_empty()`, `<=`, or only whole-struct equality.
 4. VERIFY  `cargo test <your_test_name>` must pass. Then run `ripr check --quiet --format agent`
            once more on the same root, base and saved source (new files need `git add -N PATH`).
            Check its exit status before reading it; do not change inputs before DONE.
-5. DONE    Use that same report; require exit 0 and its last line `verify=complete|...`.
-           `verify=refused`, a missing `verify=` line, or a cut-off report mean STOP.
-           `done=` or an empty gap list alone is never enough.
+5. DONE    Use that same report; require exit 0 and its last line `verify=complete|...` or
+           `verify=complete_with_limits|...` (only analyzer limits remain; report its `limits=`).
+           `verify=refused`, a missing `verify=` line, or a cut-off report mean STOP; `done=` or an empty gap list alone is never enough.
            If gaps remain, return to FIND; if inputs change, repeat VERIFY before DONE.
            Report tests and static result; this does not establish runtime bug detection.
 
 STOP and report instead of looping when:
 - the outcome names empty scope, no changed behavior, partial analysis, unsupported input or failed analysis;
-- the top finding says "Analyzer limit" / "Tests cannot close this static-analysis limitation";
+- verify is refused and the top finding says "Analyzer limit" / "Tests cannot close this static-analysis limitation";
 - the same gap remains after 3 exact-assert tests (it may be an equivalent change, e.g. `>` vs
   `>=` where both branches return the same value); or `ripr check` exits 2 or 3.
 
@@ -201,20 +202,23 @@ Only edit tests. Never change production code to make a gap go away.
 Keep the same --base and source options for every check below.
 
 Loop (max 3 rounds per gap):
-1. FIND    `ripr check --quiet --format agent` (add `--base <branch>` if no origin/main|master).
+1. FIND    `ripr check --quiet --format agent` (no default branch: add `--base <branch>`;
+           committed on it yourself: `--base <sha of HEAD~N>`, N = your commits; a sha stays fixed).
            Read gap, test and next lines. Exit 0 can still mean gaps; 2/3 = stop (read stderr).
            An `open=`, `stop=` or `done=` line saying preview evidence is advisory is expected.
 2. DETAIL  Skip when `missing=` is one code value (`missing=total == 100`): not `-`, a sentence, `…` or `(+N more)`.
            Otherwise follow the printed `ripr explain ...` command as printed, then the
-           `ripr context ...` it names (JSON).
-3. WRITE   One focused test next to the related test. Assert exact changed values: every
+           `ripr context ...` it names, if any (JSON).
+3. WRITE   One focused test next to the related test. Pin what the changed code does now
+           (an input whose behavior did not change keeps its value). Assert exact values: every
            changed field, branch and boundary (below, equal, above). {advice}
 4. VERIFY  Run {verify}; it must pass.
            Then run `ripr check --quiet --format agent` once on the same root, base and
            saved source (new files need `git add -N PATH`). The new test must be in the
            analyzed source: commit it, or pass `--worktree` to both FIND and VERIFY. Check that
            run's exit status before reading it; do not change inputs before DONE.
-5. DONE    Use that same report; require exit 0 and its last line `verify=complete|...`.
+5. DONE    Use that same report; require exit 0 and its last line `verify=complete|...` or
+           `verify=complete_with_limits|...` (only analyzer limits remain; report its `limits=`).
            `verify=refused`, a missing `verify=` line, or a cut-off report mean STOP.
            `done=` or an empty gap list alone is never enough.
            If gaps remain, return to FIND; if inputs change, repeat VERIFY before DONE.
@@ -222,7 +226,7 @@ Loop (max 3 rounds per gap):
 
 STOP and report instead of looping when:
 - the outcome names empty scope, no changed behavior, partial analysis, unsupported input or failed analysis;
-- the top finding says "Analyzer limit" / "Tests cannot close this static-analysis limitation";
+- verify is refused and the top finding says "Analyzer limit" / "Tests cannot close this static-analysis limitation";
 - the same gap remains after 3 exact-assert tests (it may be an equivalent change, e.g. `>` vs
   `>=` where both branches return the same value); or `ripr check` exits 2 or 3.
 
@@ -510,6 +514,7 @@ mod tests {
             "DONE",
             "STOP and report",
             "Analyzer limit",
+            "verify is refused and the top finding says \"Analyzer limit\"",
             "exits 2 or 3",
             "ripr repair",
         ] {
@@ -541,6 +546,7 @@ mod tests {
         for condition in [
             "same report",
             "last line `verify=complete|...`",
+            "`verify=complete_with_limits|...` (only analyzer limits remain; report its `limits=`)",
             "`verify=refused`",
             "a missing `verify=` line",
             "cut-off report",
@@ -675,6 +681,7 @@ mod tests {
             "same report",
             "require exit 0",
             "last line `verify=complete|...`",
+            "`verify=complete_with_limits|...` (only analyzer limits remain; report its `limits=`)",
             "`verify=refused`",
             "a missing `verify=` line",
             "cut-off report",
@@ -787,10 +794,12 @@ mod tests {
         );
         for needle in [
             "last line `verify=complete|...`",
+            "`verify=complete_with_limits|...` (only analyzer limits remain; report its `limits=`)",
             "`verify=refused`",
             "a missing `verify=` line",
             "empty scope, no changed behavior, partial analysis",
             "Analyzer limit",
+            "verify is refused and the top finding says \"Analyzer limit\"",
             "after 3 exact-assert tests",
             "exits 2 or 3",
             "commit it, or pass `--worktree` to both FIND and VERIFY",

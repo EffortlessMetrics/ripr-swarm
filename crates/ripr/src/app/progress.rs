@@ -939,4 +939,37 @@ mod tests {
             ]
         );
     }
+
+    const CAPTURE_HELPER: &str = "app::progress::tests::best_effort_capture_helper";
+    const CAPTURE_MARKER: &str = "ripr-15207-best-effort-marker";
+
+    /// Only meaningful as a child of the test below; ignored in ordinary runs.
+    #[test]
+    #[ignore = "child of best_effort_diagnostics_stay_inside_libtest_capture"]
+    fn best_effort_capture_helper() {
+        eprintln_best_effort!("{CAPTURE_MARKER}");
+    }
+
+    /// #15207: a raw stderr handle bypasses libtest capture and can join an
+    /// outcome row on one physical line. A passing child must show no marker.
+    #[test]
+    fn best_effort_diagnostics_stay_inside_libtest_capture() -> Result<(), String> {
+        let exe = std::env::current_exe().map_err(|e| e.to_string())?;
+        let out = std::process::Command::new(exe)
+            .args(["--exact", CAPTURE_HELPER, "--ignored", "--test-threads=1"])
+            // An inherited no-capture request would print the marker by design.
+            .env_remove("RUST_TEST_NOCAPTURE")
+            .output()
+            .map_err(|e| e.to_string())?;
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        let row = format!("test {CAPTURE_HELPER} ... ok");
+        if !stdout.lines().any(|line| line == row) {
+            return Err(format!("child outcome row missing: {stdout}"));
+        }
+        if stdout.contains(CAPTURE_MARKER) || stderr.contains(CAPTURE_MARKER) {
+            return Err(format!("diagnostic escaped capture: {stdout} / {stderr}"));
+        }
+        Ok(())
+    }
 }

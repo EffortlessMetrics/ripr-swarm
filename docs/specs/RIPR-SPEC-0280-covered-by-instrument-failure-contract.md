@@ -151,8 +151,8 @@ hold:
 - no changed path, including the old path of a rename, is a Rust source, a
   `Cargo.toml` or a `build.rs`, or lies under `policy/`.
 
-Every other run enumerates. Hosted `ci-policy` and the standalone
-`cargo xtask check-file-policy` always enumerate.
+After source validation succeeds, every other run enumerates, including hosted
+`ci-policy` and the standalone `cargo xtask check-file-policy`.
 
 A skipped run still parses the selectors, so a malformed declaration fails. It
 starts no Cargo build, claims no coverage and retains no coverage subject
@@ -197,8 +197,8 @@ path, so a stale pointer is never accepted by source resolution. Every other
 selector kind is built and listed as before.
 
 Source resolution compiles nothing, so it is weaker than a listing. Hosted
-`ci-policy` and the standalone `cargo xtask check-file-policy` always build
-and list every applicable selector.
+`ci-policy` and the standalone `cargo xtask check-file-policy` build
+and list every applicable selector after source validation succeeds.
 
 ### Rule 8: local `precommit` caps build jobs on a memory-constrained host
 
@@ -287,6 +287,11 @@ on stderr that the cap applies. Hosted `ci-policy` and the standalone
   on exact and malformed inputs, and the cgroup walk (v2 and v1, child limited
   under an unlimited root, parent limited, a sibling's limit ignored).
 
+A source path that violates file policy fails the check before Cargo prepares or
+lists selectors. The report names the violating paths, discloses that enumeration
+did not run, and withholds the retained coverage subject. After path validation
+succeeds, the existing enumeration mode and packet acceptance checks apply.
+
 ## Non-Goals
 
 - Changing any retry bound, the ceiling, a classification prefix, or the
@@ -319,7 +324,7 @@ on stderr that the cap applies. Hosted `ci-policy` and the standalone
 7. Local `precommit` with only `docs/guide.md` changed: no test binary is
    built, `file-policy.md` has the `not_enumerated;` row, the run can pass.
    With `crates/a/src/lib.rs` or `policy/non-rust-allowlist.toml` changed, or
-   under `ci-policy`, enumeration runs.
+   under `ci-policy`, enumeration runs after source validation succeeds.
 8. Local `precommit` with `xtask/src/main.rs` changed: the `ripr` library
    selector is resolved in source and its row says `not_listed`; the other
    selectors are built and listed. If the named module were renamed, the
@@ -329,6 +334,9 @@ on stderr that the cap applies. Hosted `ci-policy` and the standalone
    nothing is imposed.
 
 ## Test Mapping
+
+- `xtask/tests/file_policy_packet_acceptance.rs`: invalid source removes stale
+  inventory evidence and starts no Cargo child; the repaired fixture enumerates.
 
 - `xtask/src/policy/file_policy.rs`: rules 1 to 3 and the validator side of
   rule 5.

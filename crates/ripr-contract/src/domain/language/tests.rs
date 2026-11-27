@@ -243,6 +243,52 @@ fn rust_markers_at_sees_cargo_toml_and_rs_and_ignores_nested_only_rust() -> Resu
     Ok(())
 }
 
+/// A crate one or two directories down keeps `rust` in an enablement
+/// tip; a deeper, hidden, vendored or build-output manifest does not.
+#[test]
+fn enablement_tip_keeps_rust_for_a_nested_crate() -> Result<(), String> {
+    let root = std::env::temp_dir().join(format!(
+        "ripr-tip-keeps-rust-{}-{}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|elapsed| elapsed.as_nanos())
+            .unwrap_or(0)
+    ));
+    let manifest = |relative: &str| -> Result<(), String> {
+        let dir = root.join(relative);
+        std::fs::create_dir_all(&dir).map_err(|err| format!("mkdir {relative}: {err}"))?;
+        std::fs::write(dir.join("Cargo.toml"), "[package]\nname = \"nested\"\n")
+            .map_err(|err| format!("write {relative}: {err}"))
+    };
+    std::fs::create_dir_all(&root).map_err(|err| format!("mkdir root: {err}"))?;
+    assert!(!enablement_tip_keeps_rust(&root), "empty root");
+    for skipped in [
+        "a/b/c",
+        ".hidden",
+        "target/package",
+        "node_modules/dep",
+        "vendor/dep",
+        "apps/.cache",
+    ] {
+        manifest(skipped)?;
+    }
+    assert!(
+        !enablement_tip_keeps_rust(&root),
+        "too deep, hidden, vendored and build-output manifests"
+    );
+    manifest("services/api")?;
+    assert!(enablement_tip_keeps_rust(&root), "a grandchild crate");
+    std::fs::remove_dir_all(root.join("services")).map_err(|err| err.to_string())?;
+    assert!(!enablement_tip_keeps_rust(&root), "control: removed again");
+    manifest("backend")?;
+    assert!(enablement_tip_keeps_rust(&root), "a child crate");
+    std::fs::remove_dir_all(root.join("backend")).map_err(|err| err.to_string())?;
+    manifest("")?;
+    assert!(enablement_tip_keeps_rust(&root), "root markers still count");
+    std::fs::remove_dir_all(&root).map_err(|err| err.to_string())
+}
+
 #[test]
 fn language_status_wire_strings_are_stable() {
     assert_eq!(LanguageStatus::Stable.as_str(), "stable");
@@ -391,6 +437,10 @@ fn static_limit_kind_wire_strings_are_stable() {
         StaticLimitKind::ActivationBoundaryInputUnresolved.as_str(),
         "activation_boundary_input_unresolved"
     );
+    assert_eq!(
+        StaticLimitKind::RustGatedDoctestUnread.as_str(),
+        "rust_gated_doctest_unread"
+    );
 }
 
 #[test]
@@ -432,6 +482,7 @@ fn static_limit_kind_describe_is_present_and_distinct() {
         StaticLimitKind::TypescriptWorkspaceReadLimited,
         StaticLimitKind::RustFutureNeverPolled,
         StaticLimitKind::ActivationBoundaryInputUnresolved,
+        StaticLimitKind::RustGatedDoctestUnread,
     ];
     // Every variant has a non-empty, distinct explanation. Conservative
     // static-language vocabulary is enforced repo-wide by
@@ -526,6 +577,51 @@ fn only_a_match_arm_rewrites_the_assertion_context_spelling() {
     assert_eq!(
         kind.describe_for_family(&ProbeFamily::Predicate),
         kind.describe()
+    );
+    let other = StaticLimitKind::DynamicDispatch;
+    assert_eq!(
+        other.describe_for_family(&ProbeFamily::MatchArm),
+        other.describe()
+    );
+}
+
+#[test]
+fn every_language_wire_token_round_trips_and_others_are_unknown() {
+    for language in LanguageId::ALL {
+        assert_eq!(LanguageId::from_wire(language.as_str()), Some(language));
+    }
+    for token in ["", "Rust", "ts", "js", "python3", "perl "] {
+        assert_eq!(LanguageId::from_wire(token), None, "{token:?}");
+    }
+}
+
+#[test]
+fn only_perl_has_an_enable_prerequisite_and_it_names_the_fact_packet() {
+    assert_eq!(
+        LanguageId::Perl.enable_prerequisite(),
+        Some(format!(
+            "Perl also needs a fact packet: pass --perl-facts <packet.json>, or configure [perl].producer with a compatible Perl fact exporter (`{PERL_FACT_EXPORTER}`, not yet published)"
+        ))
+    );
+    for language in LanguageId::ALL {
+        if language != LanguageId::Perl {
+            assert_eq!(language.enable_prerequisite(), None, "{language:?}");
+        }
+    }
+}
+
+#[test]
+fn only_a_match_arm_reads_the_assertion_context_limit_as_assert() {
+    use crate::domain::ProbeFamily;
+    let unresolved = StaticLimitKind::RustAssertionContextUnresolved;
+    let base = unresolved.describe();
+    assert!(base.contains("`assert_eq!`"), "{base}");
+    let arm = unresolved.describe_for_family(&ProbeFamily::MatchArm);
+    assert_eq!(arm, base.replace("`assert_eq!`", "`assert!`"));
+    assert!(!arm.contains("`assert_eq!`"));
+    assert_eq!(
+        unresolved.describe_for_family(&ProbeFamily::Predicate),
+        base
     );
     let other = StaticLimitKind::DynamicDispatch;
     assert_eq!(
