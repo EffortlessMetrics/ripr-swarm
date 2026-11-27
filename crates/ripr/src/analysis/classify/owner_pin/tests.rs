@@ -7042,6 +7042,10 @@ fn pretty_assertions_imported_under_its_own_name_is_the_standard_assertion() -> 
         "use pretty_assertions::{assert_eq, assert_ne};",
         "use pretty_assertions::assert_eq as assert_eq;",
         "mod pretty_assertions {}\nuse ::pretty_assertions::assert_eq;",
+        // #16388: a rootless group verifies each leaf by its own root, and
+        // keeps the `::` of the tree its root comes from.
+        "use {pretty_assertions::assert_eq, std::fmt};",
+        "mod pretty_assertions {}\nuse {::pretty_assertions::{assert_eq, assert_ne}};",
     ];
     let mut outcomes = Vec::new();
     for other in imports {
