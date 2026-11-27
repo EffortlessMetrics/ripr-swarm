@@ -253,11 +253,20 @@ impl<'a> PropertyMacroMentionIndex<'a> {
         &self,
         owner_name: &str,
         owner_file: &std::path::Path,
+        exclude_bindings: bool,
     ) -> Option<&PropertyMacroLocation<'a>> {
         let owner_package = self.owner_package(owner_file);
         self.by_identifier
             .get(owner_name)?
             .iter()
+            .filter(|location| {
+                !exclude_bindings
+                    || !location
+                        .witness
+                        .binding_only_identifiers
+                        .iter()
+                        .any(|binding| binding == owner_name)
+            })
             .filter(|location| {
                 match (owner_package, self.known_package(location.file)) {
                     (Some(owner), Some(mentioned)) => owner == mentioned,
@@ -270,12 +279,14 @@ impl<'a> PropertyMacroMentionIndex<'a> {
 
     /// A source-bound failed provider verification, projected once by the
     /// same sanitized diagnosis/recovery owner used by the diff pipeline.
+    /// A property whose only spelling of the owner declares the property or a
+    /// parameter cannot withhold that owner's repository evidence.
     pub(in crate::analysis) fn provider_failure_summary(
         &self,
         owner_name: &str,
         owner_file: &std::path::Path,
     ) -> Option<String> {
-        let location = self.selected(owner_name, owner_file)?;
+        let location = self.selected(owner_name, owner_file, true)?;
         let failure = location.metadata_failure?;
         Some(format!(
             "Reach unresolved ({}): property macro `{}!` at {}:{} lexically mentions `{owner_name}`; offline provider verification; {failure}. {} No generated test, observed value, owner execution or missing-test certainty is established.",
@@ -334,7 +345,7 @@ pub(super) fn apply_unresolved_property_macro_limit(
         file,
         witness,
         metadata_failure,
-    }) = mentions.selected(owner_name, owner_file)
+    }) = mentions.selected(owner_name, owner_file, false)
     else {
         return false;
     };
@@ -1408,6 +1419,7 @@ mod tests {
             name: "proptest".into(),
             line: 1,
             mentioned_identifiers: vec!["gate".into()],
+            binding_only_identifiers: Vec::new(),
         };
         for (package, valid, limited) in [
             ("owner-manifest", true, true),

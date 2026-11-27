@@ -224,3 +224,148 @@ fn repository_provider_failure_uses_the_same_source_bound_diagnosis() -> Result<
     }
     Ok(())
 }
+
+/// Seeds one source-bound failure on the property invocation in [`FILE`].
+fn index_with_failed_property(files: &[(&str, &str)]) -> Result<RustIndex, String> {
+    let loaded: Vec<_> = files
+        .iter()
+        .map(|(path, text)| (PathBuf::from(path), text.as_bytes().to_vec()))
+        .collect();
+    let mut index = crate::analysis::facts::build_analysis_index_from_loaded_files(
+        Path::new("unused-provider-unit-root"),
+        &loaded,
+        &[],
+    )?
+    .index;
+    let property = files
+        .iter()
+        .find(|(path, _)| *path == FILE)
+        .ok_or("property source")?
+        .1;
+    let witness = index
+        .files()
+        .get(Path::new(FILE))
+        .ok_or("property file")?
+        .data()
+        .unresolved_property_macros
+        .first()
+        .ok_or("property witness")?
+        .clone();
+    index.proptest_metadata_failures.insert(
+        (PathBuf::from(FILE), witness.line, witness.name.clone()),
+        ProptestMetadataFailure {
+            failure: MetadataProbeFailure::UnsuccessfulExit(Some(101)),
+            source: Arc::from(property),
+        },
+    );
+    Ok(index)
+}
+
+fn boundary_seam(file: &str, owner: &str) -> crate::analysis::seams::RepoSeam {
+    use crate::analysis::seams::{ExpectedSink, RepoSeam, RequiredDiscriminator, SeamKind};
+    RepoSeam::new(
+        file,
+        format!("{file}::{owner}"),
+        SeamKind::PredicateBoundary,
+        70,
+        1,
+        "amount >= threshold",
+        RequiredDiscriminator::BoundaryValue {
+            description: "amount == threshold".into(),
+        },
+        ExpectedSink::ReturnValue,
+    )
+}
+
+fn full_and_compact_reach(
+    index: &RustIndex,
+    seam: &crate::analysis::seams::RepoSeam,
+) -> Vec<crate::analysis::test_grip_evidence::TestGripEvidence> {
+    use crate::analysis::test_grip_evidence::{self, CompactGripContext};
+    let context = CompactGripContext::new(index);
+    vec![
+        test_grip_evidence::evidence_for_seam(seam, index),
+        test_grip_evidence::compact_evidence_for_seam(seam, &context),
+    ]
+}
+
+#[test]
+fn provider_failure_ignores_property_and_parameter_declaration_names() -> Result<(), String> {
+    const PROD: &str = "pub fn discounted_total(amount: i32, threshold: i32) -> i32 { if amount >= threshold { amount - 10 } else { amount } }\npub fn final_price(amount: i32) -> i32 { amount }\n";
+    // The owner's name only declares the property (or its input), while the
+    // body calls an unrelated function; the last case is the positive control.
+    for (property, withheld) in [
+        (
+            "proptest::proptest! { #[test] fn discounted_total(amount in proptest::strategy::Just(100i32)) { proptest::prop_assert_eq!(lib_proptest::final_price(amount), 100); } }\n",
+            false,
+        ),
+        (
+            "proptest::proptest! { #[test] fn prices(discounted_total in proptest::strategy::Just(100i32)) { proptest::prop_assert_eq!(lib_proptest::final_price(100), 100); } }\n",
+            false,
+        ),
+        (
+            "proptest::proptest! { #[test] fn discounted_total(amount in proptest::strategy::Just(100i32)) { proptest::prop_assert_eq!(lib_proptest::discounted_total(amount, 100), 90); } }\n",
+            true,
+        ),
+    ] {
+        let index = index_with_failed_property(&[("src/lib.rs", PROD), (FILE, property)])?;
+        let seam = boundary_seam("src/lib.rs", "discounted_total");
+        for evidence in full_and_compact_reach(&index, &seam) {
+            assert_eq!(
+                evidence
+                    .reach
+                    .summary
+                    .contains("offline provider verification"),
+                withheld,
+                "{property}: {}",
+                evidence.reach.summary
+            );
+            assert_eq!(
+                evidence
+                    .activate
+                    .summary
+                    .contains("after offline provider verification"),
+                withheld
+            );
+        }
+    }
+    Ok(())
+}
+
+#[test]
+fn provider_failure_keeps_unlinked_module_wiring_guidance() -> Result<(), String> {
+    use crate::domain::StageState;
+    const OWNER: &str = "pub fn shipping_fee(amount: i32, threshold: i32) -> i32 { if amount >= threshold { 0 } else { 5 } }\n";
+    const PROPERTY: &str = "proptest::proptest! { #[test] fn free_shipping(amount in proptest::strategy::Just(100i32)) { proptest::prop_assert_eq!(lib_proptest::shipping_fee(amount, 100), 0); } }\n";
+    for orphan in [true, false] {
+        let mut index = index_with_failed_property(&[
+            ("src/lib.rs", OWNER),
+            ("src/orphan.rs", OWNER),
+            (FILE, PROPERTY),
+        ])?;
+        // Set the proven #7426 fact directly; its producer needs a manifest.
+        index
+            .files
+            .get_mut(Path::new("src/orphan.rs"))
+            .ok_or("orphan file")?
+            .data
+            .role_provenance
+            .outside_module_tree = orphan;
+        let seam = boundary_seam("src/orphan.rs", "shipping_fee");
+        for evidence in full_and_compact_reach(&index, &seam) {
+            assert_eq!(evidence.reach.state, StageState::Opaque);
+            let summary = &evidence.reach.summary;
+            assert_eq!(
+                summary.contains("not part of any crate's module tree"),
+                orphan,
+                "{summary}"
+            );
+            assert_eq!(
+                summary.contains("offline provider verification"),
+                !orphan,
+                "{summary}"
+            );
+        }
+    }
+    Ok(())
+}
