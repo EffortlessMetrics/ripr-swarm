@@ -213,8 +213,12 @@ fn validate_snapshot_path(root: &Path, path: &Path, flag: &str) -> Result<PathBu
     };
     let candidate = candidate.canonicalize().map_err(|err| {
         format!(
-            "canonicalize agent receipt {flag} {} failed: {err}",
-            path.display()
+            "agent receipt {flag} {} {}",
+            path.display(),
+            crate::bounded_input::unreadable_input_phrase(
+                &err,
+                "pass the snapshot JSON that `ripr check --format repo-exposure-json` wrote"
+            )
         )
     })?;
     if !candidate.starts_with(&root) {
@@ -228,7 +232,7 @@ fn validate_snapshot_path(root: &Path, path: &Path, flag: &str) -> Result<PathBu
 }
 
 fn read_snapshot(path: &Path, label: &str) -> Result<String, String> {
-    crate::bounded_input::read_to_string(path).map_err(|err| {
+    crate::bounded_input::read_artifact_text(path).map_err(|err| {
         format!(
             "read agent receipt {label} snapshot {} failed: {err}",
             output::outcome::display_path(path)

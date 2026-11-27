@@ -1,0 +1,1 @@
+crates/ripr/src/output/suppressions.rs|Command::new|1|suppressions-link-escape-15546|#15546: unit test runs `mkfifo` to create a named pipe inside a throwaway repository and prove the suppressions manifest reader refuses it as not a regular file instead of blocking. No network.

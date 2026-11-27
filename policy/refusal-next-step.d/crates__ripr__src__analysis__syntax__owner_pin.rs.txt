@@ -1,0 +1,1 @@
+crates/ripr/src/analysis/syntax/owner_pin.rs|a closure ripr cannot see invoked exactly once

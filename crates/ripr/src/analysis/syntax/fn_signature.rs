@@ -608,14 +608,25 @@ pub(crate) fn rust_source_parses_cleanly(source: &str) -> bool {
     parse_clean_source_file(source).is_some()
 }
 
+/// The 1-based line of a byte offset into `source` (1 when the offset is
+/// not inside it), answered from newline offsets read once. Counting the
+/// newlines before each function's start and end instead reads the file
+/// once per function, so a lookup in a file of many functions was
+/// quadratic and a check that asks once per finding was cubic (#15621).
+fn source_line_of(source: &str) -> impl Fn(TextSize) -> usize + '_ {
+    let newlines: Vec<usize> = source.match_indices('\n').map(|(at, _)| at).collect();
+    move |at: TextSize| {
+        let at = usize::from(at);
+        source
+            .get(..at)
+            .map_or(1, |_| newlines.partition_point(|&newline| newline < at) + 1)
+    }
+}
+
 /// 1-based inclusive line span of the innermost `fn` containing `line`.
 pub(crate) fn owner_fn_line_span(source: &str, line: usize) -> Option<(usize, usize)> {
     let parse = parse_clean_source_file(source)?;
-    let line_of = |at: TextSize| {
-        source
-            .get(..usize::from(at))
-            .map_or(1, |prefix| prefix.matches('\n').count() + 1)
-    };
+    let line_of = source_line_of(source);
     parse
         .tree()
         .syntax()
@@ -683,11 +694,7 @@ impl OwnerSignature {
 /// owner is worse than declining (#7796 review).
 pub(crate) fn owner_signature_at_line(source: &str, line: usize) -> Option<OwnerSignature> {
     let parse = parse_clean_source_file(source)?;
-    let line_of = |at: TextSize| {
-        source
-            .get(..usize::from(at))
-            .map_or(1, |prefix| prefix.matches('\n').count() + 1)
-    };
+    let line_of = source_line_of(source);
     let covering: Vec<ast::Fn> = parse
         .tree()
         .syntax()
@@ -1344,6 +1351,80 @@ mod tests {
         assert_eq!(owner_fn_line_span(source, 6), Some((5, 7)));
         assert_eq!(owner_fn_line_span(source, 2), Some((1, 3)));
         assert_eq!(owner_fn_line_span(source, 4), None);
+    }
+
+    /// The span lookup answers as the per-function newline count did, on the
+    /// first and last line, past the end, at line 0, for nested and
+    /// same-line functions, and across a CRLF file (#15621).
+    #[test]
+    fn line_lookups_match_counting_newlines_before_each_function() {
+        let counted_span = |source: &str, line: usize| {
+            let parse = parse_clean_source_file(source)?;
+            let line_of = |at: TextSize| {
+                source
+                    .get(..usize::from(at))
+                    .map_or(1, |prefix| prefix.matches('\n').count() + 1)
+            };
+            parse
+                .tree()
+                .syntax()
+                .descendants()
+                .filter_map(ast::Fn::cast)
+                .filter(|function| {
+                    let range = function.syntax().text_range();
+                    line_of(range.start()) <= line && line <= line_of(range.end())
+                })
+                .max_by_key(|function| function.syntax().text_range().start())
+                .map(|function| {
+                    let range = function.syntax().text_range();
+                    (line_of(range.start()), line_of(range.end()))
+                })
+        };
+        let sources = [
+            "fn a() {\n    1;\n}\n\nfn b(x: u8) -> u8 {\n    if x > 1 { 2 } else { 3 }\n}\n",
+            "fn outer() {\n    fn inner() -> u8 {\n        7\n    }\n    inner();\n}",
+            "fn a() {} fn b() {}\nfn c() -> u8 { 1 }\n",
+            "fn a() -> u8 {\r\n    1\r\n}\r\nfn b() {}\r\n",
+            "\n\n   fn late() {\n}\n\n",
+            "",
+        ];
+        for source in sources {
+            let lines = source.matches('\n').count() + 3;
+            for line in 0..lines {
+                assert_eq!(
+                    owner_fn_line_span(source, line),
+                    counted_span(source, line),
+                    "line {line} of {source:?}"
+                );
+            }
+        }
+    }
+
+    /// Each lookup reads the file's newlines once. Counting them again for
+    /// every function made one lookup quadratic in a file of many functions,
+    /// and `ripr check` asks once per finding: 1,900 new functions appended
+    /// to an 8,000-function file took 80 s in a release build (#15621).
+    #[test]
+    fn a_line_lookup_in_a_file_of_many_functions_reads_its_newlines_once() {
+        const FUNCTIONS: usize = 18_000;
+        let source = (0..FUNCTIONS)
+            .map(|n| {
+                format!("pub fn f{n}(x: u64) -> u64 {{ if x > {n} {{ x + {n} }} else {{ x }} }}\n")
+            })
+            .collect::<String>();
+        let started = std::time::Instant::now();
+        for line in [1, FUNCTIONS / 2, FUNCTIONS - 1, FUNCTIONS] {
+            assert_eq!(owner_fn_line_span(&source, line), Some((line, line)));
+            assert_eq!(
+                owner_signature_at_line(&source, line).map(|signature| signature.name),
+                Some(format!("f{}", line - 1))
+            );
+        }
+        let elapsed = started.elapsed();
+        assert!(
+            elapsed < std::time::Duration::from_secs(30),
+            "8 lookups in {FUNCTIONS} functions took {elapsed:?}"
+        );
     }
 
     #[test]

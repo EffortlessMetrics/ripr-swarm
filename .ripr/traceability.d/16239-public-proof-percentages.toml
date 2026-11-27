@@ -1,0 +1,7 @@
+[[extend]]
+id = "RIPR-SPEC-0219"
+tests = [
+  "xtask/src/public_proof.rs::tests::verdict_percentages_round_counts_once",
+  "xtask/src/public_proof.rs::tests::verdict_percentage_uses_canonical_half_up_ties",
+  "xtask/src/public_proof.rs::tests::verdict_zero_denominator_preserves_existing_receipt_behavior",
+]

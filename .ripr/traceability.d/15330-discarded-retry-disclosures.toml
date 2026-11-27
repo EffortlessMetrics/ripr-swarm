@@ -1,0 +1,11 @@
+# Registers the last-commit retry's buffered stderr disclosures (#15330) under RIPR-SPEC-0083.
+[[extend]]
+id = "RIPR-SPEC-0083"
+tests = [
+  "crates/ripr/tests/cli_smoke/leftover_check_honesty.rs::discarded_last_commit_retry_prints_no_deletion_note",
+  "crates/ripr/tests/cli_smoke/leftover_check_honesty.rs::adopted_last_commit_retry_prints_its_buffered_disclosures",
+]
+code = [
+  "crates/ripr/src/analysis/pipeline.rs",
+  "crates/ripr/src/cli/commands/check.rs",
+]

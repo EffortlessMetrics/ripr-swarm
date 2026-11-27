@@ -91,6 +91,17 @@ struct TypeScriptFalseActionableCaseRow {
     source_finding_id: String,
 }
 
+/// Why the audit is `blocked`, empty when its corpus was usable.
+pub(crate) fn typescript_false_actionable_blocked_reasons(
+    report: &TypeScriptFalseActionableAuditReport,
+) -> &[String] {
+    if report.status == "blocked" {
+        &report.warnings
+    } else {
+        &[]
+    }
+}
+
 pub(crate) fn build_typescript_false_actionable_audit_report(
     input: TypeScriptFalseActionableAuditInput,
 ) -> TypeScriptFalseActionableAuditReport {

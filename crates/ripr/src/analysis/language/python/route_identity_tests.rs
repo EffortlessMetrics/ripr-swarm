@@ -308,7 +308,14 @@ fn a_different_symbol_from_the_owners_own_module_does_not_relate() -> Result<(),
 /// The relation of `tests/test_items.py` to the `items` owner in `app/a.py`
 /// when the client comes from a `tests/conftest.py` fixture.
 fn fixture_relation(conftest: &str) -> Result<Option<PythonRelationKind>, String> {
-    let test = "def test_items(client):\n    assert client.get(\"/items\").json() == []\n";
+    fixture_relation_for(
+        conftest,
+        "def test_items(client):\n    assert client.get(\"/items\").json() == []\n",
+    )
+}
+
+/// [`fixture_relation`] with the test module's source named.
+fn fixture_relation_for(conftest: &str, test: &str) -> Result<Option<PythonRelationKind>, String> {
     let (owners, tests) = super::fixtures_tests::workspace(&[
         ("app/a.py", OWN_APP),
         ("tests/conftest.py", conftest),
@@ -406,6 +413,303 @@ fn an_unreadable_client_fixture_reaches_the_route_without_oracle_credit() -> Res
 }
 
 #[test]
+fn a_nested_fixture_client_over_the_owners_app_is_identified() -> Result<(), String> {
+    // #14141 repro: client(invoice_app) where invoice_app returns the owner's app.
+    let nested = format!(
+        "{CLIENT_IMPORTS}from app.a import app\n\n@pytest.fixture\ndef items_app():\n    return app\n\n@pytest.fixture\ndef client(items_app):\n    return TestClient(items_app)\n"
+    );
+    assert_eq!(
+        fixture_relation(&nested)?,
+        Some(PythonRelationKind::ApiClientRouteCall)
+    );
+    Ok(())
+}
+
+#[test]
+fn a_nested_fixture_client_over_a_rival_app_does_not_relate() -> Result<(), String> {
+    let rival = format!(
+        "{CLIENT_IMPORTS}from app.b import app\n\n@pytest.fixture\ndef items_app():\n    return app\n\n@pytest.fixture\ndef client(items_app):\n    return TestClient(items_app)\n"
+    );
+    assert_eq!(fixture_relation(&rival)?, None);
+    Ok(())
+}
+
+#[test]
+fn a_two_hop_nested_fixture_client_is_identified() -> Result<(), String> {
+    let two_hop = format!(
+        "{CLIENT_IMPORTS}from app.a import app\n\n@pytest.fixture\ndef base_app():\n    return app\n\n@pytest.fixture\ndef items_app(base_app):\n    return base_app\n\n@pytest.fixture\ndef client(items_app):\n    return TestClient(items_app)\n"
+    );
+    assert_eq!(
+        fixture_relation(&two_hop)?,
+        Some(PythonRelationKind::ApiClientRouteCall)
+    );
+    Ok(())
+}
+
+#[test]
+fn nested_fixture_chains_that_cannot_be_read_stay_unidentified() -> Result<(), String> {
+    let unidentified = Some(PythonRelationKind::ApiClientRouteUnidentifiedApp);
+    // A fixture with two different returns.
+    let two_returns = format!(
+        "{CLIENT_IMPORTS}from app.a import app\nfrom app.b import other\n\n@pytest.fixture\ndef items_app(request):\n    if request.param:\n        return app\n    return other\n\n@pytest.fixture\ndef client(items_app):\n    return TestClient(items_app)\n"
+    );
+    assert_eq!(fixture_relation(&two_returns)?, unidentified);
+    // A fixture parameter rebound in the fixture body.
+    let rebound = format!(
+        "{CLIENT_IMPORTS}from app.a import app\n\n@pytest.fixture\ndef items_app():\n    return app\n\n@pytest.fixture\ndef client(items_app):\n    items_app = make_app()\n    return TestClient(items_app)\n"
+    );
+    assert_eq!(fixture_relation(&rebound)?, unidentified);
+    // An intermediate parameter rebound in its own body.
+    let rebound_mid = format!(
+        "{CLIENT_IMPORTS}from app.a import app\n\n@pytest.fixture\ndef base_app():\n    return app\n\n@pytest.fixture\ndef items_app(base_app):\n    base_app = make_app()\n    return base_app\n\n@pytest.fixture\ndef client(items_app):\n    return TestClient(items_app)\n"
+    );
+    assert_eq!(fixture_relation(&rebound_mid)?, unidentified);
+    // A chain longer than the cap (4 hops): client -> f1 -> f2 -> f3 -> f4 -> f5 -> app.
+    let mut long = format!(
+        "{CLIENT_IMPORTS}from app.a import app\n\n@pytest.fixture\ndef f5():\n    return app\n"
+    );
+    for (name, param) in [("f4", "f5"), ("f3", "f4"), ("f2", "f3"), ("f1", "f2")] {
+        long.push_str(&format!(
+            "\n@pytest.fixture\ndef {name}({param}):\n    return {param}\n"
+        ));
+    }
+    long.push_str("\n@pytest.fixture\ndef client(f1):\n    return TestClient(f1)\n");
+    assert_eq!(fixture_relation(&long)?, unidentified);
+    Ok(())
+}
+
+/// The relation of the `test_items` test in `tests/test_items.py` to the
+/// `items` owner in `app/a.py` for an explicit multi-file workspace.
+fn workspace_relation(files: &[(&str, &str)]) -> Result<Option<PythonRelationKind>, String> {
+    let (owners, tests) = super::fixtures_tests::workspace(files);
+    let owner = owners
+        .iter()
+        .find(|owner| owner.name == "items")
+        .ok_or_else(|| "expected items owner".to_string())?;
+    Ok(related_test_candidates(owner, &tests)
+        .first()
+        .map(|candidate| candidate.relation))
+}
+
+#[test]
+fn a_test_module_app_override_wins_over_the_conftest_app_fixture() -> Result<(), String> {
+    // pytest resolves a fixture dependency from the requesting test's
+    // scope, so a test-module override replaces the conftest definition
+    // a shared client fixture names.
+    let conftest = format!(
+        "{CLIENT_IMPORTS}from app.a import app\n\n@pytest.fixture\ndef items_app():\n    return app\n\n@pytest.fixture\ndef client(items_app):\n    return TestClient(items_app)\n"
+    );
+    let test = "import pytest\nfrom app.b import app\n\n@pytest.fixture\ndef items_app():\n    return app\n\ndef test_items(client):\n    assert client.get(\"/items\").json() == []\n";
+    assert_eq!(
+        workspace_relation(&[
+            ("app/a.py", OWN_APP),
+            ("tests/conftest.py", &conftest),
+            ("tests/test_items.py", test),
+        ])?,
+        None
+    );
+    // The same override returning the owner's application identifies it,
+    // while the conftest definition alone points at the rival.
+    let test = "import pytest\nfrom app.a import app\n\n@pytest.fixture\ndef items_app():\n    return app\n\ndef test_items(client):\n    assert client.get(\"/items\").json() == []\n";
+    let conftest = format!(
+        "{CLIENT_IMPORTS}from app.b import app\n\n@pytest.fixture\ndef items_app():\n    return app\n\n@pytest.fixture\ndef client(items_app):\n    return TestClient(items_app)\n"
+    );
+    assert_eq!(
+        workspace_relation(&[
+            ("app/a.py", OWN_APP),
+            ("tests/conftest.py", &conftest),
+            ("tests/test_items.py", test),
+        ])?,
+        Some(PythonRelationKind::ApiClientRouteCall)
+    );
+    Ok(())
+}
+
+#[test]
+fn a_directly_parametrized_app_dependency_is_not_followed_to_its_fixture() -> Result<(), String> {
+    let conftest = format!(
+        "{CLIENT_IMPORTS}from app.a import app\n\n@pytest.fixture\ndef items_app():\n    return app\n\n@pytest.fixture\ndef client(items_app):\n    return TestClient(items_app)\n"
+    );
+    // A direct parametrize supplies the dependency itself, so the
+    // application fixture never runs and its import identifies nothing.
+    let direct = "import pytest\n\n@pytest.mark.parametrize(\"items_app\", [object()])\ndef test_items(client):\n    assert client.get(\"/items\").json() == []\n";
+    assert_eq!(
+        workspace_relation(&[
+            ("app/a.py", OWN_APP),
+            ("tests/conftest.py", &conftest),
+            ("tests/test_items.py", direct),
+        ])?,
+        Some(PythonRelationKind::ApiClientRouteUnidentifiedApp)
+    );
+    // `indirect=True` routes the value through the fixture instead, so
+    // the ordinary chain still identifies the owner's application.
+    let indirect = "import pytest\n\n@pytest.mark.parametrize(\"items_app\", [object()], indirect=True)\ndef test_items(client):\n    assert client.get(\"/items\").json() == []\n";
+    assert_eq!(
+        workspace_relation(&[
+            ("app/a.py", OWN_APP),
+            ("tests/conftest.py", &conftest),
+            ("tests/test_items.py", indirect),
+        ])?,
+        Some(PythonRelationKind::ApiClientRouteCall)
+    );
+    Ok(())
+}
+
+#[test]
+fn a_defaulted_app_parameter_is_not_a_fixture_request() -> Result<(), String> {
+    let unidentified = Some(PythonRelationKind::ApiClientRouteUnidentifiedApp);
+    // pytest leaves a defaulted client parameter at its default, so the
+    // same-named fixture returning the owner's application never runs.
+    let root_default = format!(
+        "{CLIENT_IMPORTS}from app.a import app\nfrom app.b import other_app\n\n@pytest.fixture\ndef items_app():\n    return app\n\n@pytest.fixture\ndef client(items_app=other_app):\n    return TestClient(items_app)\n"
+    );
+    assert_eq!(fixture_relation(&root_default)?, unidentified);
+    // The same holds for a defaulted parameter on an intermediate fixture.
+    let mid_default = format!(
+        "{CLIENT_IMPORTS}from app.a import app\nfrom app.b import other_app\n\n@pytest.fixture\ndef base_app():\n    return app\n\n@pytest.fixture\ndef items_app(base_app=other_app):\n    return base_app\n\n@pytest.fixture\ndef client(items_app):\n    return TestClient(items_app)\n"
+    );
+    assert_eq!(fixture_relation(&mid_default)?, unidentified);
+    Ok(())
+}
+
+#[test]
+fn a_positional_only_app_parameter_is_not_a_fixture_request() -> Result<(), String> {
+    let unidentified = Some(PythonRelationKind::ApiClientRouteUnidentifiedApp);
+    // pytest's fixture argument reader skips positional-only parameters, so a
+    // client fixture declared `def client(items_app, /)` never has that
+    // fixture injected and supplies no application.
+    let root_posonly = format!(
+        "{CLIENT_IMPORTS}from app.a import app\n\n@pytest.fixture\ndef items_app():\n    return app\n\n@pytest.fixture\ndef client(items_app, /):\n    return TestClient(items_app)\n"
+    );
+    assert_eq!(fixture_relation(&root_posonly)?, unidentified);
+    // The same holds for a positional-only parameter at an intermediate hop.
+    let mid_posonly = format!(
+        "{CLIENT_IMPORTS}from app.a import app\n\n@pytest.fixture\ndef base_app():\n    return app\n\n@pytest.fixture\ndef items_app(base_app, /):\n    return base_app\n\n@pytest.fixture\ndef client(items_app):\n    return TestClient(items_app)\n"
+    );
+    assert_eq!(fixture_relation(&mid_posonly)?, unidentified);
+    // A keyword-only parameter is injected like an ordinary one.
+    let keyword_only = format!(
+        "{CLIENT_IMPORTS}from app.a import app\n\n@pytest.fixture\ndef items_app():\n    return app\n\n@pytest.fixture\ndef client(*, items_app):\n    return TestClient(items_app)\n"
+    );
+    assert_eq!(
+        fixture_relation(&keyword_only)?,
+        Some(PythonRelationKind::ApiClientRouteCall)
+    );
+    Ok(())
+}
+
+#[test]
+fn an_exit_the_reader_cannot_use_fails_the_chain_closed() -> Result<(), String> {
+    let unidentified = Some(PythonRelationKind::ApiClientRouteUnidentifiedApp);
+    // An early bare return supplies no application on that path.
+    let bare = format!(
+        "{CLIENT_IMPORTS}from app.a import app\n\n@pytest.fixture\ndef items_app(request):\n    if request.param:\n        return\n    return app\n\n@pytest.fixture\ndef client(items_app):\n    return TestClient(items_app)\n"
+    );
+    assert_eq!(fixture_relation(&bare)?, unidentified);
+    // A tab-separated rival return is an exit like any other spelling.
+    let tabbed = format!(
+        "{CLIENT_IMPORTS}from app.a import app\nfrom app.b import other\n\n@pytest.fixture\ndef items_app(request):\n    if request.param:\n        return\tother\n    return app\n\n@pytest.fixture\ndef client(items_app):\n    return TestClient(items_app)\n"
+    );
+    assert_eq!(fixture_relation(&tabbed)?, unidentified);
+    // A bare exit in the client fixture itself supplies no client there.
+    let bare_client = format!(
+        "{CLIENT_IMPORTS}from app.a import app\n\n@pytest.fixture\ndef client(request):\n    if request.param:\n        return\n    return TestClient(app)\n"
+    );
+    assert_eq!(fixture_relation(&bare_client)?, unidentified);
+    Ok(())
+}
+
+/// #14141 review: Python parses `return[other]` as an exit. A reader that
+/// required whitespace after the keyword skipped such an exit and read a
+/// later plain `return app` as the only one, so the client was given an
+/// application its fixture does not always supply. Any exit the reader cannot
+/// use now fails the chain closed, whatever follows the keyword.
+#[test]
+fn an_exit_whose_value_starts_with_punctuation_fails_the_chain_closed() -> Result<(), String> {
+    let unidentified = Some(PythonRelationKind::ApiClientRouteUnidentifiedApp);
+    for (label, items_app) in [
+        (
+            "a list",
+            "def items_app(flag, other):\n    if flag: return[other]\n    return app\n",
+        ),
+        (
+            "a dict",
+            "def items_app(flag, other):\n    if flag: return{0: other}\n    return app\n",
+        ),
+        (
+            "a signed value",
+            "def items_app(flag, other):\n    if flag: return+other\n    return app\n",
+        ),
+        (
+            "a yield of a list",
+            "def items_app(flag, other):\n    if flag: yield[other]\n    yield app\n",
+        ),
+    ] {
+        let source = format!(
+            "{CLIENT_IMPORTS}from app.a import app\n\n@pytest.fixture\n{items_app}\n\n@pytest.fixture\ndef client(items_app):\n    return TestClient(items_app)\n"
+        );
+        assert_eq!(fixture_relation(&source)?, unidentified, "{label}");
+    }
+    // Identifier boundary: a name that merely starts with the keyword is
+    // not an exit, so the plain return is still the only one.
+    let named = format!(
+        "{CLIENT_IMPORTS}from app.a import app\n\n@pytest.fixture\ndef items_app():\n    returns = 1\n    yielded = returns\n    return app\n\n@pytest.fixture\ndef client(items_app):\n    return TestClient(items_app)\n"
+    );
+    assert_eq!(
+        fixture_relation(&named)?,
+        Some(PythonRelationKind::ApiClientRouteCall),
+        "a name that starts with the keyword is not an exit"
+    );
+    Ok(())
+}
+
+/// #14141 review: Python allows a parenthesized `yield`, `held = (yield
+/// other)`. An exit reader that looked for the keyword only after a colon or
+/// whitespace skipped it, so a later plain `yield app` read as the only exit.
+#[test]
+fn a_parenthesized_yield_counts_as_an_exit() -> Result<(), String> {
+    let unidentified = Some(PythonRelationKind::ApiClientRouteUnidentifiedApp);
+    let assigned = format!(
+        "{CLIENT_IMPORTS}from app.a import app\nfrom app.b import other\n\n@pytest.fixture\ndef items_app(request):\n    if request.param:\n        held = (yield other)\n    yield app\n\n@pytest.fixture\ndef client(items_app):\n    return TestClient(items_app)\n"
+    );
+    assert_eq!(fixture_relation(&assigned)?, unidentified);
+    let bare = format!(
+        "{CLIENT_IMPORTS}from app.a import app\nfrom app.b import other\n\n@pytest.fixture\ndef items_app(request):\n    if request.param:\n        (yield other)\n    yield app\n\n@pytest.fixture\ndef client(items_app):\n    return TestClient(items_app)\n"
+    );
+    assert_eq!(fixture_relation(&bare)?, unidentified);
+    Ok(())
+}
+
+/// #14141 review: pytest injects a fixture only into a required
+/// positional-or-keyword or keyword-only parameter of the test. A test
+/// declared with the client positional-only, or with a client of its own as
+/// the default, takes no fixture, so the chain is not walked for it.
+#[test]
+fn a_test_parameter_pytest_does_not_inject_does_not_start_the_chain() -> Result<(), String> {
+    let conftest = format!(
+        "{CLIENT_IMPORTS}from app.a import app\n\n@pytest.fixture\ndef items_app():\n    return app\n\n@pytest.fixture\ndef client(items_app):\n    return TestClient(items_app)\n"
+    );
+    // Control: the ordinary parameter is injected and the chain is walked.
+    assert_eq!(
+        fixture_relation(&conftest)?,
+        Some(PythonRelationKind::ApiClientRouteCall)
+    );
+    let positional_only =
+        "def test_items(client, /):\n    assert client.get(\"/items\").json() == []\n";
+    assert_ne!(
+        fixture_relation_for(&conftest, positional_only)?,
+        Some(PythonRelationKind::ApiClientRouteCall)
+    );
+    // A client the test supplies itself: the fixture is never requested.
+    let defaulted = "from starlette.testclient import TestClient\nfrom app.b import other\n\n\ndef test_items(client=TestClient(other)):\n    assert client.get(\"/items\").json() == []\n";
+    assert_ne!(
+        fixture_relation_for(&conftest, defaulted)?,
+        Some(PythonRelationKind::ApiClientRouteCall)
+    );
+    Ok(())
+}
+
+#[test]
 fn a_shadowed_application_name_is_not_the_import_it_spells() -> Result<(), String> {
     let unidentified = Some(PythonRelationKind::ApiClientRouteUnidentifiedApp);
     let local = "from starlette.testclient import TestClient\nfrom app.a import app\n\ndef test_items():\n    app = build_other_app()\n    client = TestClient(app)\n    assert client.get(\"/items\")\n";
@@ -493,6 +797,105 @@ fn an_owner_modules_reexport_of_its_imported_app_is_its_own_app() -> Result<(), 
     assert_eq!(
         route_relation("app/routes.py", routes, &via("from app.other import app"))?,
         None
+    );
+    Ok(())
+}
+
+/// #15868 review: a list target binds each name in it, as an assignment, a
+/// `for` target and a `del`; the chain does not follow a parameter a list
+/// target rebound. A list built from the parameter binds nothing.
+#[test]
+fn a_list_target_that_rebinds_the_app_parameter_stops_the_chain() -> Result<(), String> {
+    let unidentified = Some(PythonRelationKind::ApiClientRouteUnidentifiedApp);
+    let head = format!(
+        "{CLIENT_IMPORTS}from app.a import app\nfrom app.b import other_app\n\n@pytest.fixture\ndef base_app():\n    return app\n\n@pytest.fixture\ndef rival():\n    return other_app\n\n"
+    );
+    let tail = "\n\n@pytest.fixture\ndef client(items_app):\n    return TestClient(items_app)\n";
+    for rebinding in [
+        "[base_app] = [rival]",
+        "[base_app, other] = [rival, 1]",
+        "for [base_app] in [rival]:\n        pass",
+        "del [base_app]",
+        "other, [base_app] = pair",
+    ] {
+        let source = format!(
+            "{head}@pytest.fixture\ndef items_app(base_app, rival):\n    {rebinding}\n    return base_app{tail}"
+        );
+        assert_eq!(fixture_relation(&source)?, unidentified, "{rebinding}");
+    }
+    // A list built from the parameter is a use, not a rebinding.
+    let used = format!(
+        "{head}@pytest.fixture\ndef items_app(base_app, rival):\n    items = [base_app]\n    return base_app{tail}"
+    );
+    assert_eq!(
+        fixture_relation(&used)?,
+        Some(PythonRelationKind::ApiClientRouteCall)
+    );
+    Ok(())
+}
+
+#[test]
+fn a_case_capture_that_rebinds_the_app_parameter_stops_the_chain() -> Result<(), String> {
+    let unidentified = Some(PythonRelationKind::ApiClientRouteUnidentifiedApp);
+    let head = format!(
+        "{CLIENT_IMPORTS}from app.a import app\nfrom app.b import other_app\n\n@pytest.fixture\ndef base_app():\n    return app\n\n@pytest.fixture\ndef rival():\n    return other_app\n\n"
+    );
+    let tail = "\n\n@pytest.fixture\ndef client(items_app):\n    return TestClient(items_app)\n";
+    // `case base_app:` captures: it binds `base_app` to `rival`, so the
+    // fixture returns the rival application under the name the chain follows
+    // to the `base_app` fixture (#15868 review).
+    let captured = format!(
+        "{head}@pytest.fixture\ndef items_app(base_app, rival):\n    match rival:\n        case base_app:\n            return base_app{tail}"
+    );
+    assert_eq!(fixture_relation(&captured)?, unidentified);
+    // The same capture at an intermediate hop.
+    let mid_captured = format!(
+        "{head}@pytest.fixture\ndef items_app(mid_app):\n    return mid_app\n\n@pytest.fixture\ndef mid_app(base_app, rival):\n    match rival:\n        case base_app:\n            return base_app{tail}"
+    );
+    assert_eq!(fixture_relation(&mid_captured)?, unidentified);
+    // A sequence pattern spells the capture the same way.
+    let in_pattern = format!(
+        "{head}@pytest.fixture\ndef items_app(base_app, rival):\n    match rival:\n        case [base_app]:\n            return base_app{tail}"
+    );
+    assert_eq!(fixture_relation(&in_pattern)?, unidentified);
+    // `case` is a soft keyword: the capture needs no whitespace after it.
+    let grouped = format!(
+        "{head}@pytest.fixture\ndef items_app(base_app, rival):\n    match rival:\n        case(base_app):\n            return base_app{tail}"
+    );
+    assert_eq!(fixture_relation(&grouped)?, unidentified);
+    let sequenced = format!(
+        "{head}@pytest.fixture\ndef items_app(base_app, rival):\n    match rival:\n        case[base_app]:\n            return base_app{tail}"
+    );
+    assert_eq!(fixture_relation(&sequenced)?, unidentified);
+    // A one-line body rebinds the parameter under a pattern that spells
+    // another name.
+    let one_line = format!(
+        "{head}@pytest.fixture\ndef items_app(base_app, rival):\n    match rival:\n        case _: base_app = rival\n    return base_app{tail}"
+    );
+    assert_eq!(fixture_relation(&one_line)?, unidentified);
+    // A one-line body that rebinds nothing: the parameter is still followed.
+    let one_line_kept = format!(
+        "{head}@pytest.fixture\ndef items_app(base_app, rival):\n    match rival:\n        case _: pass\n    return base_app{tail}"
+    );
+    assert_eq!(
+        fixture_relation(&one_line_kept)?,
+        Some(PythonRelationKind::ApiClientRouteCall)
+    );
+    // A dotted name's root is not a capture: the pattern compares against
+    // an attribute, and the parameter is still followed.
+    let dotted = format!(
+        "{head}@pytest.fixture\ndef items_app(base_app, rival):\n    match rival:\n        case base_app.endpoint:\n            return base_app{tail}"
+    );
+    assert_eq!(
+        fixture_relation(&dotted)?,
+        Some(PythonRelationKind::ApiClientRouteCall)
+    );
+    // Without the capture the parameter is followed to the fixture behind it.
+    let plain =
+        format!("{head}@pytest.fixture\ndef items_app(base_app):\n    return base_app{tail}");
+    assert_eq!(
+        fixture_relation(&plain)?,
+        Some(PythonRelationKind::ApiClientRouteCall)
     );
     Ok(())
 }

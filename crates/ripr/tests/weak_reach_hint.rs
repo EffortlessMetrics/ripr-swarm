@@ -73,6 +73,23 @@ fn producer_evidence_and_public_renderers_agree_about_reach() -> Result<(), Stri
         let compact = render_check(&output, &OutputFormat::Human)?;
         let full = render_check(&output, &OutputFormat::HumanFull)?;
         assert!(compact.contains(hint), "{name}: {compact}");
+        // #15295: the Summary bucket carries the same reach judgement as the
+        // reason line, in the bucket this finding is counted under.
+        let summary = compact
+            .lines()
+            .find(|line| line.starts_with("Summary: "))
+            .ok_or_else(|| format!("{name}: no Summary line: {compact}"))?;
+        let note = " (1 through a test link ripr could not confirm)";
+        let bucket = match class {
+            "weakly_exposed" => format!("1 partly noticed{note}, 0 reached but not noticed, "),
+            _ => format!("0 partly noticed, 1 reached but not noticed{note}, "),
+        };
+        if reach == "yes" {
+            assert!(!summary.contains("could not confirm"), "{name}: {summary}");
+            assert!(summary.contains("1 partly noticed, "), "{name}: {summary}");
+        } else {
+            assert!(summary.contains(&bucket), "{name}: {summary}");
+        }
         assert!(full.contains(&format!("reach {reach}:")), "{name}: {full}");
     }
     Ok(())
@@ -102,6 +119,10 @@ fn unestablished_reach_never_takes_the_weak_discriminator_shortcut() -> Result<(
         let human = render_check(&output, &OutputFormat::Human)?;
         assert!(
             human.contains("Why weak: test reach to this change is not established"),
+            "{state:?}: {human}"
+        );
+        assert!(
+            human.contains("1 partly noticed (1 through a test link ripr could not confirm)"),
             "{state:?}: {human}"
         );
     }
@@ -143,6 +164,116 @@ fn guard_refusal_does_not_override_unestablished_reach() -> Result<(), String> {
     assert!(
         human.contains("Why unrevealed: a related test asserts here"),
         "{human}"
+    );
+    Ok(())
+}
+
+/// A withheld finding leaves its Summary bucket, so its unconfirmed-link note
+/// must leave with it. The Rust-only fixture keeps this check in the small profile.
+#[test]
+fn a_withheld_unconfirmed_finding_is_not_counted_in_the_summary_note() -> Result<(), String> {
+    exercise_summary_suppression(
+        &Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/weak_reach_summary"),
+        "src/heuristic.rs",
+        "rust",
+    )
+}
+
+// Keep the real mixed-language CLI configuration and suppression-policy control.
+#[cfg(feature = "lang-typescript")]
+#[test]
+fn mixed_language_suppression_excludes_the_unconfirmed_link() -> Result<(), String> {
+    exercise_summary_suppression(
+        &Path::new(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/mixed_rust_typescript_preview"),
+        "web/discount.ts",
+        "mixed",
+    )
+}
+
+fn exercise_summary_suppression(
+    fixture: &Path,
+    suppressed_path: &str,
+    profile: &str,
+) -> Result<(), String> {
+    let summary_of = |policy: Option<&Path>| -> Result<String, String> {
+        // Exercise the CLI's config and suppression-policy plumbing as well as rendering.
+        let mut command = std::process::Command::new(env!("CARGO_BIN_EXE_ripr"));
+        command
+            .current_dir(fixture.join("input"))
+            .args(["check", "--root", ".", "--diff"])
+            .arg(fixture.join("diff.patch"));
+        if let Some(policy) = policy {
+            command.arg("--suppression-policy").arg(policy);
+        }
+        let output = command.output().map_err(|error| error.to_string())?;
+        if !output.status.success() {
+            return Err(format!(
+                "{profile}: CLI exited {}: {}",
+                output.status,
+                String::from_utf8_lossy(&output.stderr)
+            ));
+        }
+        let stdout = String::from_utf8_lossy(&output.stdout).into_owned();
+        stdout
+            .lines()
+            .find(|line| line.starts_with("Summary: "))
+            .map(str::to_string)
+            .ok_or_else(|| {
+                format!(
+                    "{profile}: no Summary line: {stdout}\n{}",
+                    String::from_utf8_lossy(&output.stderr)
+                )
+            })
+    };
+
+    // Control: only one of two partly noticed findings has established reach.
+    let unsuppressed = summary_of(None)?;
+    assert!(
+        unsuppressed.contains("2 partly noticed (1 through a test link ripr could not confirm), "),
+        "{unsuppressed}"
+    );
+
+    let policy_for = |label: &str, path: &str| -> Result<std::path::PathBuf, String> {
+        let policy = Path::new(env!("CARGO_TARGET_TMPDIR"))
+            .join(format!("weak_reach_hint_15295_{profile}_{label}.toml"));
+        std::fs::write(
+            &policy,
+            format!(
+                "schema_version = 1\n\n[[suppressions]]\nkind = \"exposure_gap\"\npath = \"{path}\"\nreason = \"accepted fixture debt\"\nowner = \"test-fixture\"\n"
+            ),
+        )
+        .map_err(|error| error.to_string())?;
+        Ok(policy)
+    };
+
+    // The finding without established reach is suppressed: it leaves its
+    // Summary bucket, and the unconfirmed-link note leaves with it.
+    let policy = policy_for("policy", suppressed_path)?;
+    let suppressed = summary_of(Some(&policy))?;
+    assert!(
+        suppressed.contains("1 partly noticed, 0 reached but not noticed, "),
+        "{suppressed}"
+    );
+    assert!(!suppressed.contains("could not confirm"), "{suppressed}");
+    assert!(
+        suppressed.contains("1 suppressed by your settings"),
+        "{suppressed}"
+    );
+
+    // The other way round: the finding with established reach is suppressed
+    // (`src/lib.rs` in each fixture) and the other stays, so the note stays.
+    // Under the first policy alone, a Summary that dropped the note whenever
+    // anything is suppressed would read alike.
+    let policy = policy_for("reaching", "src/lib.rs")?;
+    let other_suppressed = summary_of(Some(&policy))?;
+    assert!(
+        other_suppressed
+            .contains("1 partly noticed (1 through a test link ripr could not confirm), "),
+        "{other_suppressed}"
+    );
+    assert!(
+        other_suppressed.contains("1 suppressed by your settings"),
+        "{other_suppressed}"
     );
     Ok(())
 }

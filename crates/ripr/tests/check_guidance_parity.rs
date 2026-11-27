@@ -88,6 +88,15 @@ fn commit(root: &Path, message: &str) -> Result<(), String> {
 
 /// Temp git repo whose HEAD commit replaces `from` with `to` in `src/lib.rs`.
 fn build_repo(label: &str, from: &str, to: &str) -> Result<Fixture, String> {
+    build_repo_from_source(label, BASE_SOURCE, from, to)
+}
+
+fn build_repo_from_source(
+    label: &str,
+    base: &str,
+    from: &str,
+    to: &str,
+) -> Result<Fixture, String> {
     let root = unique_root(label)?;
     std::fs::create_dir_all(root.join("src"))
         .map_err(|error| format!("create {}: {error}", root.display()))?;
@@ -98,14 +107,14 @@ fn build_repo(label: &str, from: &str, to: &str) -> Result<Fixture, String> {
         "[package]\nname = \"guidance-parity\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
     )
     .map_err(|error| format!("write Cargo.toml: {error}"))?;
-    std::fs::write(root.join("src/lib.rs"), BASE_SOURCE)
+    std::fs::write(root.join("src/lib.rs"), base)
         .map_err(|error| format!("write src/lib.rs: {error}"))?;
     fixture_git_ok(root, &["init", "-q"])?;
     fixture_git_ok(root, &["config", "core.autocrlf", "false"])?;
     fixture_git_ok(root, &["add", "Cargo.toml", "src/lib.rs"])?;
     commit(root, "base")?;
-    let changed = BASE_SOURCE.replacen(from, to, 1);
-    if changed == BASE_SOURCE {
+    let changed = base.replacen(from, to, 1);
+    if changed == base {
         return Err(format!("fixture change {from:?} -> {to:?} altered nothing"));
     }
     std::fs::write(root.join("src/lib.rs"), changed)
@@ -559,6 +568,59 @@ fn well_tested_change_lists_nothing_and_the_gate_passes() -> Result<(), String> 
             "well-tested change must not block: {gate:#}\n{}",
             diagnose("gate evaluate", &output)
         ));
+    }
+    Ok(())
+}
+
+#[test]
+fn unrelated_assertion_matches_the_review_card_honesty_corpus() -> Result<(), String> {
+    let base = "pub fn admitted(n: i32) -> bool {
+    n > 4
+}
+
+pub fn quoted(n: i32) -> i32 { n }
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn observes_value() {
+        assert_eq!(super::quoted(9), 9);
+    }
+}
+";
+    let fixture = build_repo_from_source("unrelated-oracle", base, "n > 4", "n >= 5")?;
+    let live = review_comments(&fixture.0)?;
+    let expected = read_json(&Path::new(env!("CARGO_MANIFEST_DIR")).join(
+        "../../fixtures/evidence-promotion-honesty-corpus/reports/rust-review-card-unrelated-oracle.json"
+    ))?;
+    for lane in ["comments", "summary_only"] {
+        let cards = live[lane]
+            .as_array()
+            .ok_or("missing live review card lane")?;
+        let projected = cards
+            .iter()
+            .map(|card| {
+                serde_json::json!({
+                    "seam_id": card.get("seam_id"),
+                    "seam": card.get("seam"),
+                    "oracle_kind": card.get("oracle_kind"),
+                    "oracle_strength": card.get("oracle_strength"),
+                    "suggested_test": {
+                        "near_test": card.pointer("/suggested_test/near_test"),
+                        "related_test": card.pointer("/suggested_test/related_test")
+                    }
+                })
+            })
+            .collect::<Vec<_>>();
+        if cards.iter().any(|card| {
+            card.pointer("/suggested_test/near_test").is_none()
+                || card.pointer("/suggested_test/related_test").is_none()
+        }) || expected.get(lane) != Some(&Value::Array(projected))
+        {
+            return Err(format!(
+                "live {lane} differs from the retained review-card projection: {cards:?}"
+            ));
+        }
     }
     Ok(())
 }

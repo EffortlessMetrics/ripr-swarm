@@ -1,0 +1,19 @@
+[[extend]]
+id = "RIPR-SPEC-0260"
+tests = [
+  "crates/ripr/src/analysis/language/python/arm_activation_tests.rs::literal_or_edit_requires_each_alternative_to_change_the_selected_arm",
+  "crates/ripr/src/analysis/language/python/arm_activation_tests.rs::changing_an_inline_case_suite_keeps_its_existing_evidence",
+  "crates/ripr/src/analysis/language/python/arm_activation_tests.rs::a_row_the_test_cannot_run_supplies_no_witness",
+  "crates/ripr/src/analysis/language/python/arm_activation_tests.rs::a_complex_number_reaches_the_rule_through_a_default_and_a_local",
+  "crates/ripr/src/analysis/language/python/deleted_lines_tests.rs::an_unpaired_match_alternative_line_requires_a_row_that_flips_arms",
+]
+fixtures = ["fixtures/python_match_or_missing_alternative"]
+code = [
+  "crates/ripr/src/analysis/language/python/match_alternatives.rs",
+  "crates/ripr/src/analysis/language/python/range_activation.rs",
+  "crates/ripr/src/analysis/language/python/test_local_literal.rs",
+  "crates/ripr/src/analysis/language/python/deleted_lines.rs",
+]
+outputs = [
+  "fixtures/python_match_or_missing_alternative/expected/check.json",
+]

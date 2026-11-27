@@ -1,0 +1,165 @@
+{
+  "schema_version": "0.2",
+  "tool": "ripr",
+  "mode": "fast",
+  "root": "fixtures/typescript_vitest_unpinned_literal_arm_return/input",
+  "config_path": "<cwd>/fixtures/typescript_vitest_unpinned_literal_arm_return/input/ripr.toml",
+  "summary": {"changed_rust_files":0,"probes":1,"findings":1,"exposed":0,"weakly_exposed":0,"reachable_unrevealed":0,"no_static_path":0,"infection_unknown":1,"propagation_unknown":0,"static_unknown":0,"changed_files_by_language":[{"language":"typescript","files":1}]},
+  "analysis_outcome": {
+    "analysis_complete": true,
+    "outcome": {"schema_version":"0.1","kind":"complete_with_findings","identity":{"repository_identity":null,"root_identity":null,"config_identity":"fnv1a64:48d84ea994c8821b","base_revision":null,"input_identity":"sha256:82106f77d24ad9d0850dee89adcfae6ac763078b7923b43ad2b7b81b5d723c1f","snapshot_identity":null,"git_candidate_subject":null},"counts":{"changed_file_count":1,"changed_line_count":2,"candidate_line_count":1,"probe_count":1,"finding_count":1},"limitations":[],"claim_boundary":"Static analysis outcome only; no correctness, test-adequacy, runtime-execution, or merge-readiness claim."}
+  },
+  "findings": [
+    {
+      "id": "probe:src_dir.ts:typescript_preview:4d8774a1",
+      "canonical_gap_id": "gap:typescript:typescript_preview:4d8774a1",
+      "classification": "infection_unknown",
+      "severity": "warning",
+      "confidence": 0.40,
+      "confidence_basis": [
+        {"code": "preview_stages_not_modeled", "summary": "preview adapter: infection/propagation not modeled (TypeScript)"},
+        {"code": "syntax_first_no_type_resolution", "summary": "syntax-first, no type or import resolution"},
+        {"code": "infection_not_established", "summary": "whether the changed value alters behavior is not established"}
+      ],
+      "confidence_why_capped": "Why capped: preview adapter: infection/propagation not modeled (TypeScript); syntax-first, no type or import resolution; whether the changed value alters behavior is not established. Preview score, not on the same scale as Rust confidence.",
+      "probe": {
+        "id": "probe:src_dir.ts:typescript_preview:4d8774a1",
+        "family": "return_value",
+        "delta": "value",
+        "file": "src/dir.ts",
+        "line": 4,
+        "expression": "      return 'uno';",
+        "owner": "typescript:src/dir.ts::dir"
+       },
+      "ripr": {
+        "reach": {"state":"yes","confidence":"low","summary":"1 related test(s) found for owner `dir`"},
+        "infect": {"state":"unknown","confidence":"low","summary":"TypeScript preview adapter does not model infection for this `literal_return` edit: the edit changes a literal return value, and the adapter does not model whether any test input reaches this return."},
+        "propagate": {"state":"unknown","confidence":"low","summary":"TypeScript preview adapter does not yet model propagation."},
+        "observe": {"state":"unknown","confidence":"low","summary":"Strongest extracted oracle kind: `exact_value` (rank 5)"},
+        "discriminate": {"state":"unknown","confidence":"low","summary":"TypeScript preview adapter: infection is `unknown` for this `literal_return` edit, so whether an assertion discriminates the change is not asked (#10704)."}
+       },
+      "evidence_stages": [
+        {"stage":"reach","state":"yes","confidence":"low"},
+        {"stage":"infect","state":"unknown","confidence":"low","basis":[{"code":"infection_not_established","summary":"whether the changed value alters behavior is not established"}]},
+        {"stage":"propagate","state":"unknown","confidence":"low"},
+        {"stage":"observe","state":"unknown","confidence":"low"},
+        {"stage":"discriminate","state":"unknown","confidence":"low"}
+      ],
+      "evidence_path": ["reach yes: 1 related test(s) found for owner `dir`", "infection unknown: TypeScript preview adapter does not model infection for this `literal_return` edit: the edit changes a literal return value, and the adapter does not model whether any test input reaches this return.", "propagation unknown: TypeScript preview adapter does not yet model propagation.", "observation unknown: Strongest extracted oracle kind: `exact_value` (rank 5)", "discriminator unknown: TypeScript preview adapter: infection is `unknown` for this `literal_return` edit, so whether an assertion discriminates the change is not asked (#10704).", "local flow reaches returned value: return 'uno'; (line 4)", "related test test/dir.test.ts:5 dir maps two uses strong exact value oracle: expect(...).toBe(...)"],
+      "flow_sinks": [
+        {"kind":"return_value","text":"return 'uno';","line":4}
+      ],
+      "evidence": ["owner: dir", "typescript_infection: unknown (literal_return)", "typescript_oracle_observed: dir(2)", "typescript_oracle_expected: 'two'", "typescript_oracle_confidence: high", "typescript_oracle_evidence_ref: test/dir.test.ts:6", "gap_state: unknown", "actionability_category: missing_target_shape", "why_not_actionable: TypeScript preview found related test evidence but cannot name a safe target check or observer shape", "repair_route: add probe-specific discriminator extraction for this expression before repair packet projection", "missing_actionability_fields: repair_kind, target_test_shape, receipt_command, must_not_change, allowed_edit_surface, raw_evidence_refs", "evidence_needed_to_promote: safe probe discriminator, repair kind, target shape, verify command, receipt command, and edit boundaries", "raw_evidence_ref: file=src/dir.ts;line=4;kind=typescript_preview_probe;source_id=probe:src_dir.ts:typescript_preview:4d8774a1;owner=dir", "typescript_package_root: .", "typescript_workspace_root: .", "typescript_framework_hint: vitest", "typescript_test_runner: vitest", "typescript_package_confidence: medium", "typescript_package_limitation: typescript_package_manager_unresolved", "typescript_verify_command: npx --no-install vitest run test/dir.test.ts"],
+      "missing": ["The change to `dir` is a `literal_return` edit: the edit changes a literal return value, and the adapter does not model whether any test input reaches this return. No assertion is requested until a test input is shown to change the behavior.", "No exact assertion on `dir` expects `'one'`, the result only the changed arm returned; the exact assertions on `dir` expect other arms' results (`'two'`).", "TypeScript preview actionability `unknown` / `missing_target_shape`: TypeScript preview found related test evidence but cannot name a safe target check or observer shape. Repair route: add probe-specific discriminator extraction for this expression before repair packet projection"],
+      "assertion_texts": {
+      },
+      "activation": {
+        "observed_values": [
+        ],
+        "missing_discriminators": [
+        ]
+      },
+      "observed_values": [
+      ],
+      "missing_discriminators": [
+      ],
+      "related_tests_total": 1,
+      "related_tests": [
+        {
+          "name": "dir maps two",
+          "file": "test/dir.test.ts",
+          "line": 5,
+          "oracle_strength": "strong",
+          "oracle_kind": "exact_value",
+          "oracle": "expect(...).toBe(...)",
+          "relation_reason": "direct_owner_call",
+          "relation_confidence": "high"
+        }
+      ],
+      "typescript_preview_card": {
+        "authority_boundary": "preview_advisory_only",
+        "bun_cross_language_grip": null,
+        "card_version": "typescript_preview_card.v1",
+        "changed_behavior": "return_value changed at src/dir.ts:4: `return 'uno';`",
+        "language": "typescript",
+        "language_status": "preview",
+        "limits": [
+          "Syntax-first TypeScript/JavaScript preview evidence only.",
+          "No tsc, tsserver, package graph, Jest/Vitest runtime, mutation execution, generated tests, provider calls, source edits, gate authority, or badge authority.",
+          "This card is advisory and is not a repair packet."
+        ],
+        "missing_discriminator": null,
+        "oracle_kind": "exact_value",
+        "oracle_strength": "strong",
+        "owner": "dir",
+        "owner_kind": "function",
+        "probe_family": "return_value",
+        "related_test": {
+          "file": "test/dir.test.ts",
+          "line": 5,
+          "name": "dir maps two"
+        },
+        "repair_packet_ready": false,
+        "repair_route": "add probe-specific discriminator extraction for this expression before repair packet projection",
+        "source": "check_typescript_preview",
+        "static_limits": [],
+        "suggested_assertion_shape": "Exact-value evidence is present; verify it targets the changed discriminator.",
+        "verify": {
+          "command": "npx --no-install vitest run test/dir.test.ts"
+        },
+        "why_not_actionable": "TypeScript preview found related test evidence but cannot name a safe target check or observer shape"
+      },
+      "preview_actionability": {
+        "actionability_category": "missing_target_shape",
+        "authority_boundary": "preview_advisory_only",
+        "evidence_needed_to_promote": "safe probe discriminator, repair kind, target shape, verify command, receipt command, and edit boundaries",
+        "gap_state": "unknown",
+        "missing_actionability_fields": [
+          "repair_kind",
+          "target_test_shape",
+          "receipt_command",
+          "must_not_change",
+          "allowed_edit_surface",
+          "raw_evidence_refs"
+        ],
+        "missing_graph_legs": [],
+        "raw_evidence_refs": [
+          {
+            "file": "src/dir.ts",
+            "kind": "typescript_preview_probe",
+            "leg": null,
+            "line": 4,
+            "owner": "dir",
+            "raw": "file=src/dir.ts;line=4;kind=typescript_preview_probe;source_id=probe:src_dir.ts:typescript_preview:4d8774a1;owner=dir",
+            "sample": null,
+            "source_id": "probe:src_dir.ts:typescript_preview:4d8774a1"
+          }
+        ],
+        "repair_packet_ready": false,
+        "repair_route": "add probe-specific discriminator extraction for this expression before repair packet projection",
+        "unlock_condition": null,
+        "why_not_actionable": "TypeScript preview found related test evidence but cannot name a safe target check or observer shape"
+      },
+      "stop_reasons": ["infection_evidence_unknown"],
+      "oracle_kind": "exact_value",
+      "oracle_strength": "strong",
+      "recommended_next_step": "TypeScript preview advisory: infection is not established for this edit shape, so no assertion is requested and no repair packet is emitted; show a test input that changes the behavior first.",
+      "suggested_next_action": "TypeScript preview advisory: infection is not established for this edit shape, so no assertion is requested and no repair packet is emitted; show a test input that changes the behavior first.",
+      "language": "typescript",
+      "language_status": "preview",
+      "owner_kind": "function",
+      "source_currentness": "candidate_current"
+    }
+  ],
+  "preview_languages": [
+    {
+      "language": "typescript",
+      "file_count": 1,
+      "sample_paths": ["src/dir.ts"],
+      "enabled": true,
+      "analyzed": true,
+      "category": "preview_language_advisory",
+      "why": "preview adapter; advisory; may be incomplete; empty result is not Rust-grade clean"
+    }
+  ]
+}

@@ -1,0 +1,2 @@
+<!-- section: Internal / CI -->
+- The read-only release rehearsal's npm registry journey no longer leaves through `process.exit()`, which deadlocked Node on aarch64-apple-darwin after a fully passed journey and cancelled the row at the 20-minute job timeout; the entrypoint sets the exit code and lets the loop drain, and the workflow step now fails at five minutes with the process table and a macOS stack sample if a journey process is still alive (#15994).
