@@ -371,11 +371,24 @@ impl TypeScriptAdmissionContext {
                     // require('tape')`, `import check from 'ava'`, #16431).
                     // Only the whole module (`require()`, import-equals) or
                     // an ES default import is that function.
-                    || (import.imported.as_deref() == Some("default")
-                        && (import.namespace || self.esm_default_locals.contains(local))
-                        && DEFAULT_TEST_RUNNERS.contains(&import.source.as_str())
-                        && family("test")))
+                    || (family("test") && self.import_is_default_test_runner(import)))
         })
+    }
+
+    /// Whether `local` is bound to the default export of a runner whose
+    /// default export is its `test` function: the whole module (`require()`,
+    /// import-equals) or an ES default import of `tape`, `ava`, `node:test`
+    /// or `test` (#16431, #16436).
+    pub(crate) fn binds_default_test_runner(&self, local: &str) -> bool {
+        self.imports
+            .iter()
+            .any(|import| import.local == local && self.import_is_default_test_runner(import))
+    }
+
+    fn import_is_default_test_runner(&self, import: &TypeScriptImport) -> bool {
+        import.imported.as_deref() == Some("default")
+            && (import.namespace || self.esm_default_locals.contains(&import.local))
+            && DEFAULT_TEST_RUNNERS.contains(&import.source.as_str())
     }
 
     /// The context a registration is resolved in: the runner imports only,

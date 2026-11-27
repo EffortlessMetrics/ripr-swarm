@@ -643,3 +643,14 @@ Command:
 
 Updated:
 - `expected/sarif.json`
+
+## Pending — ts_already_observed (38)
+
+Reason:
+RIPR-SPEC-0122: #15336 unconfirmed-reach note severity, possible-gap State line, legend and Terms glosses
+
+Command:
+`cargo xtask goldens bless ts_already_observed --reason "..."`
+
+Updated:
+- `expected/human.txt`

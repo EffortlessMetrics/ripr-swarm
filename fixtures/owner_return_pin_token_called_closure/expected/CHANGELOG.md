@@ -323,3 +323,25 @@ Command:
 
 Updated:
 - `expected/human.txt`
+
+## Pending — owner_return_pin_token_called_closure (26)
+
+Reason:
+RIPR-SPEC-0122: #15336 unconfirmed-reach note severity, possible-gap State line, legend and Terms glosses
+
+Command:
+`cargo xtask goldens bless owner_return_pin_token_called_closure --reason "..."`
+
+Updated:
+- `expected/human.txt`
+
+## Pending — owner_return_pin_token_called_closure (27)
+
+Reason:
+RIPR-SPEC-0122: #15336 human-full Terms line stops claiming test reach for weakly_exposed and reachable_unrevealed
+
+Command:
+`cargo xtask goldens bless owner_return_pin_token_called_closure --reason "..."`
+
+Updated:
+- `expected/human-full.txt`

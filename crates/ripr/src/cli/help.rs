@@ -947,7 +947,9 @@ mod tests {
         assert!(CHECK_HELP.contains("which one governed"));
         assert!(CHECK_HELP.contains("`--root .`"));
         assert!(CHECK_HELP.contains("needs test-efficiency"));
-        assert!(CHECK_HELP.contains("docs/BADGE_ADOPTION.md"));
+        assert!(CHECK_HELP.contains(
+            "https://github.com/EffortlessMetrics/ripr/blob/main/docs/BADGE_ADOPTION.md"
+        ));
         assert!(CHECK_HELP.contains("--mode ready --json"));
         assert!(CHECK_HELP.contains("--quiet"));
         assert!(CHECK_HELP.contains("ripr progress:"));

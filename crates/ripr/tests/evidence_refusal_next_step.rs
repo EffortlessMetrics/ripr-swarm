@@ -2,11 +2,11 @@
 //! from, not just the read error: `ripr pr-evidence --check`,
 //! `ripr impacted-evidence --check`, `ripr baseline update`,
 //! `ripr calibrate cargo-mutants`, `ripr check --suppression-policy`,
-//! `ripr agent receipt --verify-json` and the `ripr agent repair` attempt
-//! selectors. Each case runs the real binary in a
-//! scratch directory and pins the next-step clause, so a regression that drops
-//! it fails here rather than only in the looser action-word floor
-//! (`refusal_next_step.rs`).
+//! `ripr agent receipt --verify-json`, the `ripr agent repair` attempt
+//! selectors, `ripr first-pr --gap-ledger` and `ripr context --from`. Each
+//! case runs the real binary in a scratch directory and pins the next-step
+//! clause, so a regression that drops it fails here rather than only in the
+//! looser action-word floor (`refusal_next_step.rs`).
 
 #[path = "common/mod.rs"]
 mod common;
@@ -251,6 +251,37 @@ fn baseline_update_refusals_name_the_command_that_writes_each_input() -> Result<
         &[
             "current gate-decision current.json missing schema_version",
             GATE_SOURCE,
+        ],
+    )?;
+    write("current.json", r#"{"schema_version":"0.1"}"#)?;
+    stderr_has_all(
+        &refusal(&dir.0, &update)?,
+        &[
+            "baseline update current gate-decision input current.json is missing decisions array",
+            GATE_SOURCE,
+        ],
+    )?;
+    write(
+        "current.json",
+        r#"{"schema_version":"0.1","decisions":[{}]}"#,
+    )?;
+    stderr_has_all(
+        &refusal(&dir.0, &update)?,
+        &[
+            "contains a decision without stable identity; refusing to remove or migrate reviewed debt",
+            "; regenerate it with `ripr gate evaluate`, then rerun",
+        ],
+    )?;
+    write("current.json", r#"{"schema_version":"0.1","decisions":[]}"#)?;
+    write(
+        "baseline.json",
+        r#"{"schema_version":"0.1","kind":"gate_baseline"}"#,
+    )?;
+    stderr_has_all(
+        &refusal(&dir.0, &update)?,
+        &[
+            "baseline update input baseline.json is missing entries array",
+            BASELINE_SOURCE,
         ],
     )
 }
@@ -669,5 +700,148 @@ fn agent_root_refusal_names_the_fix() -> Result<(), String> {
             root_fix,
         ],
     )?;
+    Ok(())
+}
+
+/// A committed one-crate Cargo workspace, so commands that preflight the
+/// root (first-pr, check) treat it as a Rust project.
+fn committed_cargo_repo() -> Result<ScratchDir, String> {
+    let dir = scratch()?;
+    git(&dir.0, &["init", "-q"])?;
+    std::fs::create_dir_all(dir.0.join("src")).map_err(|error| format!("create src: {error}"))?;
+    std::fs::write(
+        dir.0.join("Cargo.toml"),
+        "[package]\nname = \"fixture\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+    )
+    .map_err(|error| format!("write Cargo.toml: {error}"))?;
+    std::fs::write(dir.0.join("src/lib.rs"), "pub fn f() -> i32 {\n    0\n}\n")
+        .map_err(|error| format!("write src/lib.rs: {error}"))?;
+    git(&dir.0, &["add", "."])?;
+    git(&dir.0, &["commit", "-q", "-m", "fixture"])?;
+    Ok(dir)
+}
+
+fn success_stdout(dir: &Path, args: &[&str]) -> Result<Vec<u8>, String> {
+    let output = ripr(dir, args)
+        .output()
+        .map_err(|error| format!("spawn ripr {args:?}: {error}"))?;
+    if output.status.success() {
+        Ok(output.stdout)
+    } else {
+        Err(format!(
+            "ripr {args:?}: expected success, got {:?}:\n{}",
+            output.status.code(),
+            String::from_utf8_lossy(&output.stderr)
+        ))
+    }
+}
+
+/// A file where the `--gap-ledger` parent directory should be is a wrong flag
+/// value: the refusal names the flag and the fix, not `File exists (os error
+/// 17)` or `Not a directory (os error 20)`.
+#[test]
+fn first_pr_gap_ledger_parent_refusal_names_the_flag_to_fix() -> Result<(), String> {
+    let repo = committed_cargo_repo()?;
+    let check = success_stdout(
+        &repo.0,
+        &["check", "--root", ".", "--base", "HEAD", "--format", "json"],
+    )?;
+    std::fs::write(repo.0.join("check.json"), check)
+        .map_err(|error| format!("write check.json: {error}"))?;
+    std::fs::write(repo.0.join("blocker"), "not a directory\n")
+        .map_err(|error| format!("write blocker: {error}"))?;
+    for ledger in ["blocker/gaps.json", "blocker/sub/gaps.json"] {
+        let stderr = refusal(
+            &repo.0,
+            &[
+                "first-pr",
+                "--root",
+                ".",
+                "--base",
+                "HEAD",
+                "--head",
+                "HEAD",
+                "--check-output",
+                "check.json",
+                "--gap-ledger",
+                ledger,
+            ],
+        )?;
+        stderr_has_all(
+            &stderr,
+            &[
+                "first-pr --gap-ledger directory ",
+                "blocker",
+                " cannot be created: ",
+                "; pass a --gap-ledger path whose parent is a writable directory (or can be created as one)",
+            ],
+        )?;
+        if stderr.contains("os error") {
+            return Err(format!("{ledger}: stderr keeps the host errno:\n{stderr}"));
+        }
+    }
+    Ok(())
+}
+
+/// `ripr context --from` re-reads what the artifact recorded. A missing
+/// asserted `--diff`, or a recorded diff file that has since gone, names how
+/// to make the artifact reusable again.
+#[test]
+fn check_artifact_reuse_refusals_name_the_fix() -> Result<(), String> {
+    let repo = committed_cargo_repo()?;
+    std::fs::write(repo.0.join("change.patch"), "diff --git a/src/lib.rs b/src/lib.rs\n--- a/src/lib.rs\n+++ b/src/lib.rs\n@@ -1,3 +1,3 @@\n pub fn f() -> i32 {\n-    0\n+    1\n }\n")
+        .map_err(|error| format!("write change.patch: {error}"))?;
+    success(
+        &repo.0,
+        &[
+            "check",
+            "--root",
+            ".",
+            "--diff",
+            "change.patch",
+            "--write-artifact",
+            "artifact.json",
+        ],
+    )?;
+
+    let asserted = refusal(
+        &repo.0,
+        &[
+            "context",
+            "--from",
+            "artifact.json",
+            "--diff",
+            "missing.patch",
+            "--at",
+            "src/lib.rs:2",
+        ],
+    )?;
+    stderr_has_all(
+        &asserted,
+        &[
+            "asserted --diff missing.patch cannot be resolved: ",
+            "; pass the diff file the artifact was written from, or drop --diff to reuse the recorded scope",
+        ],
+    )?;
+
+    std::fs::remove_file(repo.0.join("change.patch"))
+        .map_err(|error| format!("remove change.patch: {error}"))?;
+    let recorded = refusal(
+        &repo.0,
+        &["context", "--from", "artifact.json", "--at", "src/lib.rs:2"],
+    )?;
+    stderr_has_all(
+        &recorded,
+        &[
+            "cannot be reused: recorded diff file ",
+            " no longer exists or is unreadable: not found",
+            "; restore that diff file, or regenerate the artifact with `ripr check --write-artifact`",
+        ],
+    )?;
+    for stderr in [&asserted, &recorded] {
+        if stderr.contains("os error") {
+            return Err(format!("stderr keeps the host errno:\n{stderr}"));
+        }
+    }
     Ok(())
 }

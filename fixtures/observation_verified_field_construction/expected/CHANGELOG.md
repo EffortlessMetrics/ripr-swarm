@@ -670,3 +670,14 @@ Command:
 
 Updated:
 - `expected/human.txt`
+
+## Pending — observation_verified_field_construction (56)
+
+Reason:
+RIPR-SPEC-0122: #15336 unconfirmed-reach note severity, possible-gap State line, legend and Terms glosses
+
+Command:
+`cargo xtask goldens bless observation_verified_field_construction --reason "..."`
+
+Updated:
+- `expected/human.txt`

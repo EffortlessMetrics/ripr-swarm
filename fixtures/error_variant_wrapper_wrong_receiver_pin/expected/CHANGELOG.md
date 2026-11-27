@@ -564,3 +564,14 @@ Command:
 
 Updated:
 - `expected/human.txt`
+
+## Pending — error_variant_wrapper_wrong_receiver_pin (44)
+
+Reason:
+RIPR-SPEC-0122: #15336 unconfirmed-reach note severity, possible-gap State line, legend and Terms glosses
+
+Command:
+`cargo xtask goldens bless error_variant_wrapper_wrong_receiver_pin --reason "..."`
+
+Updated:
+- `expected/human.txt`

@@ -420,3 +420,25 @@ Command:
 
 Updated:
 - `expected/human.txt`
+
+## Pending — whole_value_string_from_shadow (32)
+
+Reason:
+RIPR-SPEC-0122: #15336 unconfirmed-reach note severity, possible-gap State line, legend and Terms glosses
+
+Command:
+`cargo xtask goldens bless whole_value_string_from_shadow --reason "..."`
+
+Updated:
+- `expected/human.txt`
+
+## Pending — whole_value_string_from_shadow (33)
+
+Reason:
+RIPR-SPEC-0122: #15336 human-full Terms line stops claiming test reach for weakly_exposed and reachable_unrevealed
+
+Command:
+`cargo xtask goldens bless whole_value_string_from_shadow --reason "..."`
+
+Updated:
+- `expected/human-full.txt`

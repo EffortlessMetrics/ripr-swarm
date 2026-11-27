@@ -58,3 +58,14 @@ Command:
 
 Updated:
 - `expected/human.txt`
+
+## Pending — ts_strong_snapshot_untied (6)
+
+Reason:
+RIPR-SPEC-0122: #15336 unconfirmed-reach note severity, possible-gap State line, legend and Terms glosses
+
+Command:
+`cargo xtask goldens bless ts_strong_snapshot_untied --reason "..."`
+
+Updated:
+- `expected/human.txt`

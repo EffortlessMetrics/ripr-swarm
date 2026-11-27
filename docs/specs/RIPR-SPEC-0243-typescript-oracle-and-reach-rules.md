@@ -49,6 +49,7 @@ Linked issues:
 - #16369 (a CommonJS export reaches the private helper it calls; rule 19)
 - #16370 (runner loaded with TypeScript `import x = require()`)
 - #16431 (a `tape`, `ava` or `node:test` default bound under another name)
+- #16436 (the same default bound under a suite spelling)
 - #9435 (exact oracle ignored on five changed-line shapes)
 - #9497 (skipped or unexercised tests credited as exposed; rules 17 and 18)
 - #11196 (start rate: a conditional assertion in an unconsulted test no longer
@@ -3258,6 +3259,12 @@ keys); do not take the next number.
   member pick stay `no_static_path`, and a renamed pick off a type-only
   `import type runner = require()` registers nothing while its value twin
   reads `exposed`.
+- #16436 (a default runner bound under a suite spelling; registration fact in
+  RIPR-SPEC-0027): `a_default_runner_named_like_a_suite_registers_its_tests`
+  in the same file reads `exposed` for `suite`/`describe` bindings of a tape
+  or `node:test` default (bare, `.only` or inside a `describe`) and for a
+  genuine Vitest `suite`, and `no_static_path` for mocha's default, `.skip`,
+  a suite-level shadowing local and `import { test as describe }`.
 - #16431 (renamed default runner binding; registration fact in
   RIPR-SPEC-0027):
   `crates/ripr/src/analysis/language/typescript/tests/renamed_default_runner_tests.rs`

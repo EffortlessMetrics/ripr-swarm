@@ -735,3 +735,25 @@ Command:
 
 Updated:
 - `expected/sarif.json`
+
+## Pending — python_adversarial_free_function_module_collision (42)
+
+Reason:
+RIPR-SPEC-0122: #15336 unconfirmed-reach note severity, possible-gap State line, legend and Terms glosses
+
+Command:
+`cargo xtask goldens bless python_adversarial_free_function_module_collision --reason "..."`
+
+Updated:
+- `expected/human.txt`
+
+## Pending — python_adversarial_free_function_module_collision (43)
+
+Reason:
+RIPR-SPEC-0122: #15336 human-full Terms line stops claiming test reach for weakly_exposed and reachable_unrevealed
+
+Command:
+`cargo xtask goldens bless python_adversarial_free_function_module_collision --reason "..."`
+
+Updated:
+- `expected/human-full.txt`

@@ -346,3 +346,14 @@ Command:
 
 Updated:
 - `expected/human.txt`
+
+## Pending — currentness_matrix_python_deleted_statement (29)
+
+Reason:
+RIPR-SPEC-0122: #15336 unconfirmed-reach note severity, possible-gap State line, legend and Terms glosses
+
+Command:
+`cargo xtask goldens bless currentness_matrix_python_deleted_statement --reason "..."`
+
+Updated:
+- `expected/human.txt`
