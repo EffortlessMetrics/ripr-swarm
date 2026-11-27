@@ -144,7 +144,9 @@ pub(super) fn test_converts_into_owner(
     let Some(source) = test_source else {
         return false;
     };
-    if test.file != owner.file {
+    // A doctest compiles as a separate crate and may declare its own types
+    // and impls; the library file's declarations say nothing about it.
+    if test.file != owner.file || index.doctest_source(test).is_some() {
         return false;
     }
     let masked = mask_comments_and_strings(&test.body);
@@ -306,7 +308,7 @@ fn receiver_has_source_type(
     receiver: &str,
     let_at: usize,
     source_type: &str,
-    returns_source: &dyn Fn(&str) -> bool,
+    returns_source: &dyn Fn(&str) -> Option<bool>,
 ) -> bool {
     // A reference or a dereference converts through another impl, and a
     // closure or a turbofish is not a value ripr reads.

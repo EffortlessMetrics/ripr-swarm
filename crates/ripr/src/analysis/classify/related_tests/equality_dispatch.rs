@@ -728,7 +728,7 @@ pub(super) fn operand_has_type(
     operand: &str,
     impl_type: &str,
     before: &str,
-    returns_self: &dyn Fn(&str) -> bool,
+    returns_self: &dyn Fn(&str) -> Option<bool>,
 ) -> bool {
     let mut operand = operand.trim();
     while let Some(rest) = operand
@@ -775,7 +775,11 @@ fn count_lets(before: &str, name: &str) -> usize {
     count
 }
 
-fn statement_has_type(stmt: &str, impl_type: &str, returns_self: &dyn Fn(&str) -> bool) -> bool {
+fn statement_has_type(
+    stmt: &str,
+    impl_type: &str,
+    returns_self: &dyn Fn(&str) -> Option<bool>,
+) -> bool {
     let Some(eq) = stmt.find('=') else {
         return false;
     };
@@ -787,7 +791,11 @@ fn statement_has_type(stmt: &str, impl_type: &str, returns_self: &dyn Fn(&str) -
     expression_has_type(&stmt[eq + 1..], impl_type, returns_self)
 }
 
-fn expression_has_type(expr: &str, impl_type: &str, returns_self: &dyn Fn(&str) -> bool) -> bool {
+fn expression_has_type(
+    expr: &str,
+    impl_type: &str,
+    returns_self: &dyn Fn(&str) -> Option<bool>,
+) -> bool {
     let expr = expr.trim();
     if !initializer_is_one_head_expr(expr) || expr.contains("::<") {
         return false;
@@ -797,17 +805,28 @@ fn expression_has_type(expr: &str, impl_type: &str, returns_self: &dyn Fn(&str) 
     };
     match (segments.as_slice(), next) {
         ([ty], Some(b'(' | b'{')) => *ty == impl_type,
-        ([ty, call], Some(b'(')) if *ty == impl_type => returns_self(call) || is_variant_name(call),
+        // A declared associated function decides by its return type, even
+        // when its name is variant-cased: `Celsius::Boiling()` returning
+        // `Kelvin` is no `Celsius` (#15277 review). Only a name no `impl`
+        // of the type declares may be a variant constructor.
+        ([ty, call], Some(b'(')) if *ty == impl_type => {
+            returns_self(call).unwrap_or_else(|| is_variant_name(call))
+        }
         ([ty, variant], Some(b'{')) if *ty == impl_type => is_variant_name(variant),
         _ => false,
     }
 }
 
 /// Whether every function `name` defined in an `impl` of `impl_type` declares
-/// `Self` or `impl_type` as its return type, and at least one exists. The
-/// signature is read from the function's own file, from its line up to the
-/// body or `;`.
-pub(super) fn associated_fn_returns_self(index: &RustIndex, impl_type: &str, name: &str) -> bool {
+/// `Self` or `impl_type` as its return type: `None` when no such function
+/// exists, `Some(false)` when any one returns another type (or is `async`,
+/// so calling it yields a future). The signature is read from the
+/// function's own file, from its line up to the body or `;`.
+pub(super) fn associated_fn_returns_self(
+    index: &RustIndex,
+    impl_type: &str,
+    name: &str,
+) -> Option<bool> {
     let mut found = false;
     for function in index.functions().iter() {
         let in_impl = matches!(
@@ -818,15 +837,15 @@ pub(super) fn associated_fn_returns_self(index: &RustIndex, impl_type: &str, nam
             continue;
         }
         let Some(facts) = index.files().get(&function.file) else {
-            return false;
+            return Some(false);
         };
         let masked = mask_comments_and_strings(facts.data().source.as_ref());
         if !signature_returns(&masked, function.start_line, impl_type) {
-            return false;
+            return Some(false);
         }
         found = true;
     }
-    found
+    found.then_some(true)
 }
 
 /// Whether the signature starting at 1-based `line` ends `-> Self` or
@@ -840,9 +859,16 @@ fn signature_returns(masked: &str, line: usize, ty: &str) -> bool {
         .join(" ");
     let end = text.find(['{', ';']).unwrap_or(text.len());
     let signature = &text[..end];
-    let Some((_, ret)) = signature.rsplit_once("->") else {
+    // An `async fn` returns a future of its declared type.
+    let Some((head, ret)) = signature.rsplit_once("->") else {
         return false;
     };
+    if head
+        .split(|c: char| !c.is_alphanumeric() && c != '_')
+        .any(|word| word == "async")
+    {
+        return false;
+    }
     let ret = ret.split(" where ").next().unwrap_or(ret).trim();
     ret == "Self" || ret == ty
 }
@@ -890,7 +916,7 @@ mod tests {
     #[test]
     fn operands_resolve_only_to_syntactically_established_types() {
         let before = "let a = Key::new(1);\nlet b: Key = make();\nlet c = make();\nlet d = Key::new(1).id();\nlet e = Key::other(1);\n";
-        let ctor = |name: &str| name == "new";
+        let ctor = |name: &str| (name == "new").then_some(true);
         for typed in [
             "a",
             "&a",
@@ -924,6 +950,30 @@ mod tests {
                 "{untyped}"
             );
         }
+        // A declared associated function decides by its return type even
+        // when its name is variant-cased; only an undeclared name may be a
+        // variant constructor.
+        let declared = |name: &str| (name == "Boiling").then_some(false);
+        assert!(!operand_has_type("Key::Boiling()", "Key", "", &declared));
+        assert!(operand_has_type("Key::Circle(1)", "Key", "", &declared));
+    }
+
+    #[test]
+    fn an_async_or_foreign_return_is_no_self_return() {
+        assert!(signature_returns("    fn new() -> Self {", 1, "Key"));
+        assert!(signature_returns(
+            "    pub fn new(v: u8) -> Key {",
+            1,
+            "Key"
+        ));
+        assert!(!signature_returns("    async fn new() -> Self {", 1, "Key"));
+        assert!(!signature_returns(
+            "    pub async fn new() -> Key {",
+            1,
+            "Key"
+        ));
+        assert!(!signature_returns("    fn new() -> Other {", 1, "Key"));
+        assert!(signature_returns("    fn asyncish() -> Self {", 1, "Key"));
     }
 
     #[test]
