@@ -99,6 +99,13 @@ impl Repo {
         std::fs::write(self.0.join(name), text).map_err(|e| e.to_string())
     }
 
+    /// The repository root as pilot spells it in a `git -C <root>` step.
+    fn canonical_root(&self) -> Result<String, String> {
+        std::fs::canonicalize(&self.0)
+            .map(|path| path.to_string_lossy().into_owned())
+            .map_err(|e| e.to_string())
+    }
+
     fn git(&self, args: &[&str]) -> Result<(), String> {
         let output = Command::new("git")
             .current_dir(&self.0)
@@ -1446,6 +1453,12 @@ fn json_repair_route(text: &str) -> Result<serde_json::Value, String> {
 /// change is committed when `commit_change` is set and left dirty otherwise;
 /// the outside file is dirty in both cases.
 fn outer_repo_with_subdir_root(commit_change: bool) -> Result<Repo, String> {
+    outer_repo(commit_change, false)
+}
+
+/// The outer repository, with a repository-level Cargo package when
+/// `top_manifest` is set (one that does not claim `crate`).
+fn outer_repo(commit_change: bool, top_manifest: bool) -> Result<Repo, String> {
     static SEQUENCE: AtomicU64 = AtomicU64::new(0);
     let outer = std::env::temp_dir().join(format!(
         "ripr-check-repair-agree-outer-{}-{}",
@@ -1458,6 +1471,12 @@ fn outer_repo_with_subdir_root(commit_change: bool) -> Result<Repo, String> {
     }
     repo.write(".gitignore", "target/\n")?;
     repo.write("src/lib.rs", "pub fn outer() -> u8 {\n    1\n}\n")?;
+    if top_manifest {
+        repo.write(
+            "Cargo.toml",
+            "[package]\nname = \"outer\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+        )?;
+    }
     repo.write("crate/Cargo.toml", CARGO_TOML)?;
     repo.write("crate/src/lib.rs", CONST_OLD)?;
     repo.write("crate/tests/t.rs", CONST_TEST)?;
@@ -2061,10 +2080,34 @@ fn pilot_names_the_commit_step_before_a_repair_start_that_would_refuse() -> Resu
         let (code, repair) = repo.ripr_status(&args)?;
         assert_eq!(code, Some(2), "{state}: the start must refuse:\n{repair}");
         assert!(
-            repair.contains("ripr repair needs your source changes committed first")
-                && repair.contains("Uncommitted: src/lib.rs"),
-            "{state}: the start must refuse for the file pilot names:\n{repair}"
+            repair.contains("ripr repair needs your source changes committed first"),
+            "{state}: the start must refuse for the dirty premise:\n{repair}"
         );
+        let (commit_root, commit_files) = printed_commit(next)?;
+        assert_eq!(
+            commit_root,
+            repo.canonical_root()?,
+            "{state}: the commit runs at the analyzed root:\n{pilot}"
+        );
+        assert_eq!(
+            commit_files,
+            refused_uncommitted(&repair)?,
+            "{state}: the commit names exactly the files the start refuses over:\n{pilot}\n{repair}"
+        );
+        if state == "unstaged" {
+            // Run the printed commit, then the printed start: it starts.
+            run_printed_commit(repo, &commit_root, &commit_files)?;
+            let (code, started) = repo.ripr_status(&args)?;
+            assert_eq!(
+                code,
+                Some(0),
+                "{state}: after the printed commit the start must start:\n{started}"
+            );
+            assert!(
+                !started.contains("Nothing was started"),
+                "{state}: the start must not refuse after the commit:\n{started}"
+            );
+        }
     }
 
     // A dirty test file is the refusal's allowance: no commit step.
@@ -2079,6 +2122,185 @@ fn pilot_names_the_commit_step_before_a_repair_start_that_would_refuse() -> Resu
     assert!(
         !pilot_md(&test_dirty)?.contains("--literal-pathspecs commit"),
         "a dirty test file adds no Markdown commit step"
+    );
+    Ok(())
+}
+
+/// The `git -C <root> --literal-pathspecs commit -m "<message>" -- <files>`
+/// step a pilot screen prints: its `-C` value and its file list, in order.
+fn printed_commit(screen: &str) -> Result<(String, Vec<String>), String> {
+    let line = screen
+        .lines()
+        .find(|line| line.contains(" --literal-pathspecs commit -m \"<message>\" -- "))
+        .ok_or_else(|| format!("the screen prints no commit step:\n{screen}"))?;
+    let (head, files) = line
+        .split_once(" -- ")
+        .ok_or_else(|| format!("the commit step names no files: {line}"))?;
+    let root = head
+        .split_once("git -C ")
+        .and_then(|(_, rest)| rest.split_whitespace().next())
+        .ok_or_else(|| format!("the commit step names no -C root: {line}"))?;
+    Ok((
+        root.to_string(),
+        files.split_whitespace().map(str::to_string).collect(),
+    ))
+}
+
+/// The exact `Uncommitted:` file list of a dirty-premise refusal.
+fn refused_uncommitted(refusal: &str) -> Result<Vec<String>, String> {
+    refusal
+        .split_once("Uncommitted: ")
+        .and_then(|(_, rest)| rest.split_once(". Commit them"))
+        .map(|(files, _)| files.split(", ").map(str::to_string).collect())
+        .ok_or_else(|| format!("not a dirty-premise refusal:\n{refusal}"))
+}
+
+/// Run the printed commit step's exact command (`-C` root and files) in
+/// `repo`, with a concrete message in place of `<message>`.
+fn run_printed_commit(repo: &Repo, root: &str, files: &[String]) -> Result<(), String> {
+    let mut args = vec![
+        "-C",
+        root,
+        "--literal-pathspecs",
+        "commit",
+        "-q",
+        "--no-gpg-sign",
+        "-m",
+        "commit first",
+        "--",
+    ];
+    args.extend(files.iter().map(String::as_str));
+    repo.git(&args)
+}
+
+/// The pilot screen withholds the repair start behind a prerequisite it
+/// cannot print as one copyable command: no commit step and no runnable
+/// `ripr agent repair` start, in the terminal or the saved Markdown summary.
+fn assert_no_copyable_commit_or_start(case: &str, pilot: &str, markdown: &str) {
+    for (surface, text) in [("terminal", pilot), ("markdown", markdown)] {
+        assert!(
+            !text.contains("--literal-pathspecs commit"),
+            "{case}: the {surface} must print no copyable commit step:\n{text}"
+        );
+    }
+    assert!(
+        !pilot.contains("repair this gap: ripr agent repair")
+            && !pilot.contains("1. ripr agent repair"),
+        "{case}: the terminal must not present the start as runnable:\n{pilot}"
+    );
+    assert!(
+        !markdown.contains("ripr agent repair --root"),
+        "{case}: the Markdown must not present the start as runnable:\n{markdown}"
+    );
+}
+
+/// #16381 review: at a subdirectory `--root` the repair start refuses at the
+/// before phase ("not the exact Git top-level") whatever is committed, so
+/// pilot prints neither a commit step (which would name `../...` paths outside
+/// the analyzed root) nor a start that looks runnable after it; it names the
+/// top-level with `ripr check`'s own subdirectory disclosure. Covered with a
+/// dirty sibling outside the root only, with dirty files on both sides, and
+/// with both sides dirty at a nested Cargo project the enclosing package does
+/// not claim (check's top-level gate keeps that root, but the attempt still
+/// refuses it, so a commit of the in-root file alone would not be enough).
+#[test]
+fn pilot_at_a_subdirectory_root_prints_no_commit_step_and_no_runnable_start() -> Result<(), String>
+{
+    for (case, commit_change, top_manifest) in [
+        ("sibling only", true, false),
+        ("mixed", false, false),
+        ("mixed, standalone nested project", false, true),
+    ] {
+        let repo = outer_repo(commit_change, top_manifest)?;
+        let pilot = repo.ripr(&["pilot", "--root", "crate"])?;
+        let markdown =
+            std::fs::read_to_string(repo.0.join("crate/target/ripr/pilot/pilot-summary.md"))
+                .map_err(|e| format!("{case}: {e}\n{pilot}"))?;
+        assert!(
+            pilot.contains("gap "),
+            "{case}: precondition, pilot ranks the crate's gap:\n{pilot}"
+        );
+        assert_no_copyable_commit_or_start(case, &pilot, &markdown);
+        for (surface, text) in [("terminal", &pilot), ("markdown", &markdown)] {
+            assert!(
+                text.contains("repair start offered: this root is not the exact Git top-level"),
+                "{case}: the {surface} must name check's subdirectory disclosure:\n{text}"
+            );
+        }
+        // The withheld start is one the before phase refuses here, and no
+        // commit clears that: with every file committed it still refuses
+        // over the root (a nested project's start names the dirty premise
+        // first, so the commit-both rerun is what pins the root refusal).
+        let (code, repair) = repo.ripr_status(&["repair", "--root", "crate"])?;
+        assert!(
+            code != Some(0)
+                && (repair.contains("is not the exact Git top-level")
+                    || repair.contains("ripr repair needs your source changes committed first")),
+            "{case}: the start refuses while dirty:\n{repair}"
+        );
+        repo.git(&["commit", "-q", "--no-gpg-sign", "-am", "commit every file"])?;
+        let (code, repair) = repo.ripr_status(&["repair", "--root", "crate"])?;
+        assert!(
+            code != Some(0) && repair.contains("is not the exact Git top-level"),
+            "{case}: after committing every file the start still refuses the root:\n{repair}"
+        );
+    }
+    Ok(())
+}
+
+/// #16381 review: the inline test module the repair edits lives in a dirty
+/// production file the preflight skips (it carries `#[cfg(test)]`), while
+/// another dirty production file holds the premise. Pilot's one commit step
+/// names both, once each, and running it lets the printed start start.
+#[test]
+fn pilot_commit_step_merges_the_dirty_inline_target() -> Result<(), String> {
+    const INLINE_OLD: &str = "pub fn discount(qty: u32, limit: u32) -> u32 {\n    if qty > limit { 10 } else { 0 }\n}\n\n#[cfg(test)]\nmod tests {\n    use super::*;\n    #[test]\n    fn weak() {\n        assert!(discount(12, 10) > 0);\n    }\n}\n";
+    const INLINE_NEW: &str = "pub fn discount(qty: u32, limit: u32) -> u32 {\n    if qty >= limit { 10 } else { 0 }\n}\n\n#[cfg(test)]\nmod tests {\n    use super::*;\n    #[test]\n    fn weak() {\n        assert!(discount(12, 10) > 0);\n    }\n}\n";
+    let repo = Repo::create_uncommitted(INLINE_OLD, INLINE_NEW, "#[test]\nfn unrelated() {}\n")?;
+    repo.git(&["rm", "-q", "tests/t.rs"])?;
+    repo.git(&["commit", "-q", "--no-gpg-sign", "-m", "inline tests only"])?;
+    repo.write("src/extra.rs", "pub fn extra() -> u8 {\n    1\n}\n")?;
+    repo.git(&["add", "src/extra.rs"])?;
+    repo.git(&["commit", "-q", "--no-gpg-sign", "-m", "extra"])?;
+    repo.write("src/extra.rs", "pub fn extra() -> u8 {\n    2\n}\n")?;
+    let pilot = repo.ripr(&["pilot", "--root", "."])?;
+    let next = pilot
+        .split_once("Next, in order:\n")
+        .map(|(_, next)| next)
+        .ok_or_else(|| format!("pilot must keep its ordered list:\n{pilot}"))?;
+    let (commit_root, commit_files) = printed_commit(next)?;
+    assert_eq!(
+        commit_root,
+        repo.canonical_root()?,
+        "the commit runs at the analyzed root:\n{pilot}"
+    );
+    assert_eq!(
+        commit_files,
+        ["src/extra.rs", "src/lib.rs"],
+        "one commit names the premise file and the inline target, once each:\n{pilot}"
+    );
+    assert!(
+        !next.contains("has uncommitted edits, commit or stash them"),
+        "the commit step replaces the inline-target line:\n{pilot}"
+    );
+    let start_at = next
+        .find("  1. ripr agent repair --root ")
+        .ok_or_else(|| format!("pilot must name the repair start:\n{pilot}"))?;
+    let args: Vec<String> = next[start_at + "  1. ".len()..]
+        .lines()
+        .next()
+        .unwrap_or_default()
+        .split_whitespace()
+        .skip(1)
+        .map(str::to_string)
+        .collect();
+    let args: Vec<&str> = args.iter().map(String::as_str).collect();
+    run_printed_commit(&repo, &commit_root, &commit_files)?;
+    let (code, started) = repo.ripr_status(&args)?;
+    assert_eq!(
+        code,
+        Some(0),
+        "after the printed commit the start must start:\n{started}"
     );
     Ok(())
 }

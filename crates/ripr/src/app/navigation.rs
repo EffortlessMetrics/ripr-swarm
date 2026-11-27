@@ -106,6 +106,66 @@ pub(crate) fn commit_prerequisite_command(root_display: &str, files: &[String]) 
     ))
 }
 
+/// What a surface that prints a seam repair start may print before it, from
+/// the before phase's own dirty-premise preflight (#16381). `ripr pilot`
+/// observes it once per run through [`seam_start_premise`], in `ripr check`'s
+/// order (`seam_route` in `task_first`), so the two screens cannot disagree
+/// about whether the printed start can begin.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) enum SeamStartPremise {
+    /// The tracked production files the preflight names, all inside the
+    /// root. Empty when it names none; that
+    /// does not promise the start begins (the preflight skips deleted files
+    /// and files carrying an inline `#[cfg(test)]` module, which the full
+    /// before-phase check may still refuse).
+    Dirty(Vec<String>),
+    /// No start may be printed: `ripr check`'s one-line advisory for the same
+    /// state (an unreadable premise, or a dirty premise under a subdirectory
+    /// root, where the start refuses whatever is committed, #15488).
+    Withheld(String),
+}
+
+/// The [`SeamStartPremise`] at `root`, asking the same authorities as
+/// `ripr check`'s seam route and in its order: an unreadable premise offers
+/// no start ("could not validate the prerequisites"); a dirty premise under a
+/// subdirectory root, or one naming a file outside the root, names the Git
+/// top-level with check's subdirectory advisory instead of a commit step that
+/// cannot clear the attempt's top-level refusal. A clean premise is returned
+/// as is.
+pub(crate) fn seam_start_premise(root: &Path) -> SeamStartPremise {
+    let Ok(files) = super::repair_attempt::seam_start_dirty_premise(root) else {
+        return SeamStartPremise::Withheld(
+            RepairRouteRefusal::SeamRouteUnavailable {
+                reason: "could not validate the prerequisites for the repair start",
+            }
+            .advisory(""),
+        );
+    };
+    // A preflight path outside the root (`../...`, #13962) exists only below
+    // the Git top-level, where the attempt itself refuses ("not the exact Git
+    // top-level") even at a standalone nested Cargo project check's gate
+    // keeps (#15488); no commit spelled from this root can clear that.
+    let top = if files
+        .iter()
+        .any(|file| file == ".." || file.starts_with("../"))
+    {
+        crate::edit_cage::exact_git_top_level_above(root)
+    } else if files.is_empty() {
+        None
+    } else {
+        crate::edit_cage::enclosing_git_top_level_above(root)
+    };
+    if let Some(top) = top {
+        return SeamStartPremise::Withheld(
+            RepairRouteRefusal::SubdirectoryRoot {
+                top_level: root_path_display(&top),
+            }
+            .advisory(""),
+        );
+    }
+    SeamStartPremise::Dirty(files)
+}
+
 /// The gap-bound repair start the check pipeline computed for a TypeScript
 /// finding whose repair packet validates (#9103, RIPR-SPEC-0311): the
 /// canonical gap id and the diff base this run analyzed, which the printed

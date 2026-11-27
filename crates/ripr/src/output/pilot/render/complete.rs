@@ -276,21 +276,21 @@ pub(crate) fn render_pilot_human_summaries(
     classified: &[ClassifiedSeam],
     context: PilotSummaryContext<'_>,
 ) -> (String, String) {
-    render_pilot_human_summaries_with_premise(classified, context, None)
+    render_pilot_human_summaries_with_premise(classified, context, false)
 }
 
 /// Render both human surfaces from one observation of the inline target.
 /// The CLI always writes Markdown and renders the terminal, even for JSON stdout.
 ///
-/// `dirty_premise` is the before phase's own dirty-premise preflight
-/// (`app::repair_attempt::seam_start_dirty_premise`), run once by the pilot
-/// command (#16381): the tracked production files whose uncommitted changes
-/// make the printed repair start refuse. `None` when it was not observed or
-/// could not be read; the start's own refusal then stays authoritative.
+/// With `observe_premise`, the before phase's own dirty-premise preflight is
+/// asked through `app::seam_start_premise` (#16381, in `ripr check`'s order)
+/// only when the top seam's repair start will be printed, once, and the one
+/// answer is shared by both surfaces; a run that prints no start spawns no
+/// probe. The CLI passes `true`; unit renders pass `false`.
 pub(crate) fn render_pilot_human_summaries_with_premise(
     classified: &[ClassifiedSeam],
     context: PilotSummaryContext<'_>,
-    dirty_premise: Option<&[String]>,
+    observe_premise: bool,
 ) -> (String, String) {
     let top = ranked_top(classified, context.max_seams.max(1), context);
     let terminal_top = &top[..top.len().min(1)];
@@ -298,12 +298,16 @@ pub(crate) fn render_pilot_human_summaries_with_premise(
     let target = terminal_top
         .first()
         .and_then(|entry| uncommitted_inline_target(context.root, entry));
-    let commit = terminal_top.first().and_then(|entry| {
-        repair_start_commit_step(context.root, entry, dirty_premise, target.as_deref())
+    let premise = terminal_top
+        .first()
+        .filter(|entry| observe_premise && repair_start_command(context.root, entry).is_some())
+        .map(|_| crate::app::seam_start_premise(context.root));
+    let step = terminal_top.first().and_then(|entry| {
+        repair_start_prerequisite(context.root, entry, premise.as_ref(), target.as_deref())
     });
     let prerequisite = RepairPrerequisite {
         inline_target: target.as_deref(),
-        commit_step: commit.as_deref(),
+        start_step: step.as_ref(),
     };
     (
         render_pilot_summary_md_with_target(classified, context, markdown_top, prerequisite),
@@ -312,13 +316,13 @@ pub(crate) fn render_pilot_human_summaries_with_premise(
 }
 
 /// What the top seam's repair start needs before it can begin: a held inline
-/// target (#9553) and, when the before phase's dirty-premise preflight names
-/// uncommitted production files, the commit that clears it (#16381). The
-/// commit step, when present, already covers the inline target.
+/// target (#9553) and, from the before phase's dirty-premise preflight, the
+/// step pilot prints ahead of the start (#16381). A start step, when present,
+/// already covers the inline target.
 #[derive(Clone, Copy)]
 struct RepairPrerequisite<'a> {
     inline_target: Option<&'a str>,
-    commit_step: Option<&'a str>,
+    start_step: Option<&'a StartStep>,
 }
 
 #[cfg(test)]
@@ -326,34 +330,82 @@ impl<'a> RepairPrerequisite<'a> {
     fn inline_only(inline_target: Option<&'a str>) -> Self {
         Self {
             inline_target,
-            commit_step: None,
+            start_step: None,
         }
     }
 }
 
-/// The commit step that must precede the top seam's repair start (#16381):
-/// `ripr check`'s shared `commit_prerequisite_command` over every file the
-/// start's dirty-premise preflight reported plus a held inline target, the
-/// same set `RepairRoute::commit_prerequisite` commits (#13636). `None` when
-/// pilot offers no start, the premise was not observed, or it is clean.
-fn repair_start_commit_step(
+impl RepairPrerequisite<'_> {
+    /// `ripr check`'s advisory when no start may be printed at all.
+    fn withheld(&self) -> Option<&str> {
+        match self.start_step {
+            Some(StartStep::Withheld(advisory)) => Some(advisory),
+            _ => None,
+        }
+    }
+}
+
+/// The step printed ahead of the top seam's repair start (#16381).
+#[derive(Clone, Debug)]
+enum StartStep {
+    /// The shared copyable commit over every file the preflight names (all
+    /// inside the analyzed root), plus a held inline target.
+    Commit(String),
+    /// No start is printed; `ripr check`'s advisory for the same state.
+    Withheld(String),
+}
+
+/// The step that must precede the top seam's repair start (#16381): `ripr
+/// check`'s shared `commit_prerequisite_command` over every file the start's
+/// dirty-premise preflight reported plus a held inline target (once), the
+/// same set `RepairRoute::commit_prerequisite` commits (#13636), or check's
+/// advisory when the premise withholds the start. A file outside the root
+/// withholds the start (`app::seam_start_premise`); should one reach here,
+/// no commit naming it is printed. `None` when pilot offers no
+/// start, the premise was not observed, or the preflight names no file. The
+/// commit clears the files the preflight names; the full before-phase check
+/// can still refuse files the preflight skips (deleted files, files carrying
+/// an inline `#[cfg(test)]` module other than the held target).
+fn repair_start_prerequisite(
     root: &std::path::Path,
     entry: &ClassifiedSeam,
-    dirty_premise: Option<&[String]>,
+    premise: Option<&crate::app::SeamStartPremise>,
     inline_target: Option<&str>,
-) -> Option<String> {
+) -> Option<StartStep> {
     repair_start_command(root, entry)?;
-    let premise = dirty_premise.filter(|files| !files.is_empty())?;
+    let premise = match premise? {
+        crate::app::SeamStartPremise::Withheld(advisory) => {
+            return Some(StartStep::Withheld(advisory.clone()));
+        }
+        crate::app::SeamStartPremise::Dirty(files) => files,
+    };
+    if premise.is_empty() {
+        return None;
+    }
+    let files = merged_commit_files(premise, inline_target);
+    if files.iter().any(|file| is_outside_root(file)) {
+        return None;
+    }
+    let root_display = crate::agent::loop_commands::bound_root(
+        &crate::agent::loop_commands::root_path_display(root),
+    );
+    crate::app::commit_prerequisite_command(&root_display, &files).map(StartStep::Commit)
+}
+
+/// The premise files plus a held inline target, each once, in that order.
+fn merged_commit_files(premise: &[String], inline_target: Option<&str>) -> Vec<String> {
     let mut files = premise.to_vec();
     if let Some(target) = inline_target
         && !files.iter().any(|file| file == target)
     {
         files.push(target.to_string());
     }
-    let root_display = crate::agent::loop_commands::bound_root(
-        &crate::agent::loop_commands::root_path_display(root),
-    );
-    crate::app::commit_prerequisite_command(&root_display, &files)
+    files
+}
+
+/// Whether a preflight path (relative to the root, #13962) lies outside it.
+fn is_outside_root(file: &str) -> bool {
+    file == ".." || file.starts_with("../")
 }
 
 /// Why the commit step comes first, shared by both human surfaces.
@@ -639,7 +691,17 @@ fn render_pilot_summary_md_with_target(
     let python_card = python_top_repair_card(context.python_first_use).filter(|_| top.is_empty());
     let python_first_pr = python_card_first_pr_command(context.root);
     let python_verify = python_card.map(PythonRepairCard::verify_display);
-    let markdown_commit = prerequisite.commit_step.map(str::to_string);
+    let markdown_commit = match prerequisite.start_step {
+        Some(StartStep::Commit(commit)) => Some(commit.clone()),
+        _ => None,
+    };
+    // #16381: check's advisory replaces a start no commit can clear.
+    if repair.is_some()
+        && let Some(advisory) = prerequisite.withheld()
+    {
+        out.push_str(&format!("{}.\n", capitalized(advisory)));
+        return out;
+    }
     let next_commands: Vec<&String> = match (repair.as_ref(), routes) {
         (Some(command), _) => {
             let scope = top
@@ -999,12 +1061,16 @@ fn render_pilot_terminal_unescaped(
         // would promise a target `agent repair` refuses. The closing block
         // uses the same builder, so the two lines cannot disagree (#3906).
         let repair_command = repair_start_command(context.root, entry);
-        if let Some(command) = repair_command.as_deref() {
-            // #16381: no runnable start ahead of the commit it needs.
-            if let Some(commit) = prerequisite.commit_step {
-                out.push_str(&format!(
+        if let (Some(_), Some(advisory)) = (repair_command.as_deref(), prerequisite.withheld()) {
+            // #16381: no commit clears this premise, so no start is shown.
+            out.push_str(&format!("  repair this gap: {advisory}\n"));
+        } else if let Some(command) = repair_command.as_deref() {
+            // #16381: no runnable start ahead of the step it needs.
+            match prerequisite.start_step {
+                Some(StartStep::Commit(commit)) => out.push_str(&format!(
                     "  commit your production change first ({COMMIT_FIRST_REASON}): {commit}\n"
-                ));
+                )),
+                Some(StartStep::Withheld(_)) | None => {}
             }
             out.push_str(&format!("  repair this gap: {command}\n"));
             if let Some(form) = crate::output::markdown::powershell_text_variant(command) {
@@ -1124,8 +1190,12 @@ fn render_pilot_terminal_unescaped(
         .first()
         .and_then(|entry| repair_start_command(context.root, entry))
     {
+        if let Some(advisory) = prerequisite.withheld() {
+            out.push_str(&format!("Next:\n  {advisory}\n"));
+            return out;
+        }
         out.push_str("Next, in order:\n");
-        if let Some(commit) = prerequisite.commit_step {
+        if let Some(StartStep::Commit(commit)) = prerequisite.start_step {
             out.push_str(&format!(
                 "  Before step 1, commit your production change ({COMMIT_FIRST_REASON}):\n     {commit}\n"
             ));
@@ -2716,4 +2786,36 @@ fn push_assertion_shape(out: &mut String, shape: &str, drafted: bool) {
     crate::output::placeholder_assertion::push_drafted_terminal_assertion(
         out, "  ", shape, drafted,
     );
+}
+
+#[cfg(test)]
+mod start_step_tests {
+    use super::{is_outside_root, merged_commit_files};
+
+    /// #16381: a held inline target joins the premise files once, after
+    /// them; a target the premise already names is not repeated.
+    #[test]
+    fn merged_commit_files_adds_the_inline_target_once() {
+        let premise = vec!["src/extra.rs".to_string()];
+        assert_eq!(
+            merged_commit_files(&premise, Some("src/lib.rs")),
+            ["src/extra.rs", "src/lib.rs"]
+        );
+        let premise = vec!["src/lib.rs".to_string(), "src/extra.rs".to_string()];
+        assert_eq!(
+            merged_commit_files(&premise, Some("src/lib.rs")),
+            ["src/lib.rs", "src/extra.rs"]
+        );
+        assert_eq!(merged_commit_files(&premise, None), premise);
+    }
+
+    /// Only a `../` spelling (#13962) is outside the root; a name that merely
+    /// starts with dots is inside it.
+    #[test]
+    fn is_outside_root_reads_only_parent_spellings() {
+        assert!(is_outside_root("../src/lib.rs"));
+        assert!(is_outside_root(".."));
+        assert!(!is_outside_root("..hidden/lib.rs"));
+        assert!(!is_outside_root("src/lib.rs"));
+    }
 }
