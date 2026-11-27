@@ -1103,3 +1103,40 @@ fn malformed_initialize_hint_names_only_a_field_that_is_wrong() -> Result<(), St
         other => Err(format!("missing params must be named: {other:?}")),
     }
 }
+
+/// #15289 review: the initialize hint belongs to its own request id. An
+/// unrelated `_meta` refusal neither consumes nor receives it, and the reply
+/// for its id takes it (so a stale hint cannot outlive that reply).
+#[test]
+fn initialize_hint_is_taken_only_by_the_reply_for_its_id() -> Result<(), String> {
+    let refusal = |id: &str| {
+        ServerJsonRpcMessage::error(
+            ErrorData::invalid_params(format!("{META_REFUSAL_PREFIX}: x"), None),
+            Some(RequestId::String(id.into())),
+        )
+    };
+    let message = |item: ServerJsonRpcMessage| match item {
+        ServerJsonRpcMessage::Error(error) => Ok(error.error.message.to_string()),
+        other => Err(format!("expected an error reply: {other:?}")),
+    };
+    let admission = Admission::default();
+    admission.note_malformed_initialize(
+        RequestId::String("init".into()),
+        "invalid params for `initialize`: `capabilities` is required".to_owned(),
+    );
+    let other = message(admission.clarify(refusal("other")))?;
+    if other.contains("`capabilities` is required") || !other.contains("send an `initialize`") {
+        return Err(format!(
+            "an unrelated refusal must get the lifecycle text: {other}"
+        ));
+    }
+    let init = message(admission.clarify(refusal("init")))?;
+    if !init.contains("`capabilities` is required") {
+        return Err(format!("the hint must survive for its own id: {init}"));
+    }
+    let again = message(admission.clarify(refusal("init")))?;
+    if again.contains("`capabilities` is required") {
+        return Err(format!("the hint must be taken by its reply: {again}"));
+    }
+    Ok(())
+}

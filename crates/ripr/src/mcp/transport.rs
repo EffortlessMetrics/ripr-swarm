@@ -67,19 +67,20 @@ impl Admission {
     }
     /// Rewrites the SDK's pre-handshake `_meta` refusal so it also names the
     /// session lifecycle (or, for a malformed `initialize`, the bad field).
-    /// The wire code and id are unchanged.
+    /// The wire code and id are unchanged. The stored hint is taken only by
+    /// the reply for its own request id, so an unrelated refusal cannot
+    /// consume it, and any reply for that id (a refusal or not) clears it.
     fn clarify(&self, mut item: ServerJsonRpcMessage) -> ServerJsonRpcMessage {
+        let reply_id = match &item {
+            ServerJsonRpcMessage::Response(response) => Some(&response.id),
+            ServerJsonRpcMessage::Error(error) => error.id.as_ref(),
+            _ => None,
+        };
+        let hint = reply_id.and_then(|reply_id| self.take_initialize_hint(reply_id));
         if let ServerJsonRpcMessage::Error(error) = &mut item
             && error.error.code == ErrorCode::INVALID_PARAMS
             && error.error.message.starts_with(META_REFUSAL_PREFIX)
         {
-            let hint = self
-                .initialize_hint
-                .lock()
-                .ok()
-                .and_then(|mut hint| hint.take())
-                .filter(|(id, _message)| Some(id) == error.id.as_ref())
-                .map(|(_id, message)| message);
             error.error.message = match hint {
                 Some(message) => message.into(),
                 None => format!(
@@ -90,6 +91,18 @@ impl Admission {
             };
         }
         item
+    }
+    /// The stored `initialize` hint, removed only when it belongs to `id`.
+    fn take_initialize_hint(&self, id: &RequestId) -> Option<String> {
+        let mut slot = self.initialize_hint.lock().ok()?;
+        if slot
+            .as_ref()
+            .is_some_and(|(hint_id, _message)| hint_id == id)
+        {
+            slot.take().map(|(_id, message)| message)
+        } else {
+            None
+        }
     }
     fn slots(&self) -> Result<std::sync::MutexGuard<'_, AdmissionSlots>, Error> {
         self.slots
