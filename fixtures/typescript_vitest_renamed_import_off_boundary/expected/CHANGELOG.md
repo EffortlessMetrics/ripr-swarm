@@ -23,3 +23,14 @@ Command:
 
 Updated:
 - `expected/human.txt`
+
+## Pending — typescript_vitest_renamed_import_off_boundary (3)
+
+Reason:
+RIPR-SPEC-0224: refresh Terms wording after #16460
+
+Command:
+`cargo xtask goldens bless typescript_vitest_renamed_import_off_boundary --reason "..."`
+
+Updated:
+- `expected/human-full.txt`
