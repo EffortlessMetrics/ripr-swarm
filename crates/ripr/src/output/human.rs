@@ -812,7 +812,7 @@ pub(super) fn render_header_summary(
         // #10691: the stable tokens stay (they are the schema vocabulary);
         // each is glossed once so the line reads without the specs.
         out.push_str(&wrap_human_prose(
-            "Terms: exposed = tests appear to notice the change; weakly_exposed = tests reach it but check it only loosely; reachable_unrevealed = tests reach it but nothing appears to notice a change; no_static_path = no test path found; infection_unknown, propagation_unknown, static_unknown = ripr could not tell from the code (analysis limited, not a verdict); finding = one reported gap; unsuppressed = not hidden by your suppression policy",
+            "Terms: exposed = tests appear to notice the change; weakly_exposed = linked to a test, but checked only loosely; reachable_unrevealed = linked to a test, but nothing appears to notice a change (both can rest on a test link ripr could not confirm; the reach stage says which); no_static_path = no test path found; infection_unknown, propagation_unknown, static_unknown = ripr could not tell from the code (analysis limited, not a verdict); finding = one reported gap; unsuppressed = not hidden by your suppression policy",
             "",
             "  ",
         ));
@@ -4207,9 +4207,9 @@ mod tests {
     }
 
     /// #15336: the `State:` words follow the selected finding's reach, and
-    /// the first-run legend (the same render `--legend` forces) and the
-    /// repeat pointer never say these buckets prove a reaching test (the
-    /// `human-full` `Terms:` line is a follow-up). The rendered check JSON keeps the same summary,
+    /// the first-run legend (the same render `--legend` forces), the repeat
+    /// pointer and the `human-full` `Terms:` line never say these buckets
+    /// prove a reaching test. The rendered check JSON keeps the same summary,
     /// class and severity for both cases.
     #[test]
     fn unconfirmed_reach_state_and_glossaries_do_not_claim_reach() -> Result<(), String> {
@@ -4239,6 +4239,7 @@ mod tests {
             ));
             let first = super::render_bounded_with_config(&output, &RiprConfig::default());
             let repeat = super::render_bounded_with_config(&output, &pointer_config);
+            let full = super::render_full_with_config(&output, &RiprConfig::default());
             for rendered in [&first, &repeat] {
                 assert_eq!(rendered.contains(possible), unconfirmed_reach, "{rendered}");
                 assert_eq!(
@@ -4247,13 +4248,17 @@ mod tests {
                     "{rendered}"
                 );
             }
-            assert!(!first.contains("tests reach it but"), "{first}");
-            assert!(
-                first.contains(
-                    "both can rest on a test link ripr could not confirm; the reach stage says which"
-                ),
-                "{first}"
-            );
+            for rendered in [&first, &full] {
+                // `human-full` wraps its `Terms:` line; compare flowed text.
+                let flowed = rendered.split_whitespace().collect::<Vec<_>>().join(" ");
+                assert!(!flowed.contains("tests reach it but"), "{rendered}");
+                assert!(
+                    flowed.contains(
+                        "both can rest on a test link ripr could not confirm; the reach stage says which"
+                    ),
+                    "{rendered}"
+                );
+            }
             assert!(first.contains(super::HUMAN_EVIDENCE_LEGEND), "{first}");
             assert!(!repeat.contains("Summary terms:"), "{repeat}");
             assert_eq!(
