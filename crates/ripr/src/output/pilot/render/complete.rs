@@ -379,6 +379,17 @@ fn repair_start_prerequisite(
         }
         crate::app::SeamStartPremise::Dirty(files) => files,
     };
+    // #16381: a held target whose name breaks a line can be named in no
+    // printed commit or prose, and the start refuses until it is committed,
+    // so the start is withheld as `ripr check` withholds it.
+    if inline_target.is_some_and(crate::app::repair_attempt::breaks_line) {
+        return Some(StartStep::Withheld(
+            crate::app::RepairRouteRefusal::SeamRouteUnavailable {
+                reason: "could not validate the prerequisites for the repair start",
+            }
+            .advisory(""),
+        ));
+    }
     if premise.is_empty() {
         return None;
     }

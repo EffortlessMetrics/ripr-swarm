@@ -1418,13 +1418,22 @@ fn push_editor_commands(
     if let Some(repair) = super::actions::seam_repair_start_command(entry, snapshot, &root) {
         // #13636: the start refuses a dirty production premise; name the
         // commit step first, as the inert "Start repair" action does.
-        if let Some(commit) = super::actions::seam_start_commit_step(&snapshot.root, &root) {
-            lines.push(format!(
-                "- commit first (the repair start refuses to begin while source files are uncommitted): `{commit}`"
-            ));
-            lines.push(format!("- then repair: `{repair}`"));
-        } else {
-            lines.push(format!("- repair (start here): `{repair}`"));
+        match super::actions::seam_start_step(&snapshot.root, &root) {
+            super::actions::SeamStartStep::Commit(commit) => {
+                lines.push(format!(
+                    "- commit first (the repair start refuses to begin while source files are uncommitted): `{commit}`"
+                ));
+                lines.push(format!("- then repair: `{repair}`"));
+            }
+            // #16381: a dirty file whose name breaks a line can be named in
+            // no printed commit, and the start refuses until it is committed.
+            super::actions::SeamStartStep::Withheld => lines.push(
+                "- repair: no start offered while a dirty file whose name holds a line break is uncommitted"
+                    .to_string(),
+            ),
+            super::actions::SeamStartStep::Runnable => {
+                lines.push(format!("- repair (start here): `{repair}`"));
+            }
         }
     }
     lines.push(format!(

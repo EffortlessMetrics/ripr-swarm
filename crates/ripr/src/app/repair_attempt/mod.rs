@@ -5890,12 +5890,22 @@ pub(crate) fn seam_start_dirty_premise(root: &Path) -> Result<Vec<String>, Strin
 /// Callers treat the error as an unreadable premise and withhold the start,
 /// so no surface offers a start that would refuse without its commit.
 pub(crate) fn refuse_line_break_paths(paths: Vec<String>) -> Result<Vec<String>, String> {
-    if paths.iter().any(|path| path.contains(['\n', '\r'])) {
-        return Err(
-            "a dirty file name holds a line break, so no commit step can be printed".to_string(),
-        );
+    if paths.iter().any(|path| breaks_line(path)) {
+        return Err(LINE_BREAK_PREMISE.to_string());
     }
     Ok(paths)
+}
+
+/// The error [`refuse_line_break_paths`] returns, so a caller that can show
+/// an inert start (the editor) tells it from an unreadable premise.
+pub(crate) const LINE_BREAK_PREMISE: &str =
+    "a dirty file name holds a line break, so no commit step can be printed";
+
+/// Whether a path would split a printed line (#16381): a newline, which the
+/// shell quoting keeps literal, or a carriage return, which ends a Markdown
+/// line.
+pub(crate) fn breaks_line(path: &str) -> bool {
+    path.contains(['\n', '\r'])
 }
 
 /// The before-phase refusal for a dirty production premise (#5262), for a
