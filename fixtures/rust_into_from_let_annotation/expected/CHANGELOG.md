@@ -12,3 +12,14 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — rust_into_from_let_annotation (2)
+
+Reason:
+RIPR-SPEC-0001: summary wording from main; no classification change
+
+Command:
+`cargo xtask goldens bless rust_into_from_let_annotation --reason "..."`
+
+Updated:
+- `expected/human.txt`
