@@ -1596,6 +1596,31 @@ mod tests {
         let selected = "tests/pric%ing.rs";
         let unrelated = "tests/pric%25ing.rs";
         let mut entry = weakly_gripped_entry();
+        // Make the seam actionable, the shape the packet producer's own
+        // targeted-test fixture uses: a free owner call, a passing
+        // discriminate stage with an observed value, and one missing
+        // equality-boundary discriminator.
+        entry.seam = entry
+            .seam
+            .clone()
+            .with_owner_call(crate::analysis::seams::OwnerCallShape::Free);
+        entry.evidence.discriminate = stage(crate::domain::StageState::Yes);
+        entry.evidence.observed_values = vec![
+            crate::domain::ValueFact {
+                line: 12,
+                text: "discounted_total(50, 100)".to_string(),
+                value: "50".to_string(),
+                context: crate::domain::ValueContext::FunctionArgument,
+            }
+            .into(),
+        ];
+        entry.evidence.missing_discriminators = vec![crate::domain::MissingDiscriminatorFact {
+            value: "discount_threshold (equality boundary)".to_string(),
+            reason: "observed values do not include the equality-boundary case".to_string(),
+            flow_sink: None,
+            shape: crate::domain::DiscriminatorShape::Other,
+            drafted_boundary: None,
+        }];
         let grip = entry
             .evidence
             .related_tests
