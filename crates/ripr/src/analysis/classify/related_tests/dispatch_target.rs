@@ -693,12 +693,24 @@ fn parameter_list(body: &str) -> Option<&str> {
 
 /// The text after the balanced `<...>` that `text` starts with. Brackets
 /// of every kind nest, a `<` or `>` inside a `{ ... }` const block is a
-/// comparison, and a `>` right after `-` is an arrow. `None` when the
-/// brackets do not balance.
+/// comparison, and a `>` right after `-` is an arrow. A char literal's
+/// contents are not brackets (`Marker<'>'>`), while a lifetime (`'a`) is
+/// read as code. `None` when the brackets do not balance.
 fn past_generic_parameters(text: &str) -> Option<&str> {
     let mut stack: Vec<char> = Vec::new();
     let mut previous = ' ';
+    let mut literal_end = 0;
     for (at, ch) in text.char_indices() {
+        if at < literal_end {
+            continue;
+        }
+        if ch == '\'' {
+            if let Some(len) = char_literal_len(&text[at..]) {
+                literal_end = at + len;
+                previous = '\'';
+                continue;
+            }
+        }
         let in_braces = stack.last() == Some(&'{');
         match ch {
             '<' | '>' if in_braces => {}
@@ -723,6 +735,31 @@ fn past_generic_parameters(text: &str) -> Option<&str> {
         previous = ch;
     }
     None
+}
+
+/// The byte length of the char literal `text` starts with (`'x'`, `'\\''`,
+/// `'\\u{3e}'`), or `None` when the quote opens a lifetime or label.
+fn char_literal_len(text: &str) -> Option<usize> {
+    let rest = text.strip_prefix('\'')?;
+    let mut chars = rest.char_indices();
+    let (_, first) = chars.next()?;
+    if first == '\\' {
+        let mut escaped = true;
+        for (at, ch) in chars {
+            if escaped {
+                escaped = false;
+            } else if ch == '\\' {
+                escaped = true;
+            } else if ch == '\'' {
+                return Some(1 + at + 1);
+            } else if ch == '\n' {
+                return None;
+            }
+        }
+        return None;
+    }
+    let (at, close) = chars.next()?;
+    (close == '\'').then_some(1 + at + 1)
 }
 
 /// Ordered as method probing tries the steps for an owned receiver.

@@ -519,6 +519,24 @@ fn the_receiver_is_read_from_the_parameter_list() {
         ),
         // A name with a combining mark is read whole.
         ("fn cafe\u{301}(&self) {}", ReceiverKind::Shared),
+        // A char literal's bracket closes nothing; a lifetime stays code
+        // (#16419 review).
+        (
+            "fn area<T: Marker<'>'>>(&self, value: T) {}",
+            ReceiverKind::Shared,
+        ),
+        (
+            "fn area<T: Marker<'\\''>, 'a>(&'a self, value: T) {}",
+            ReceiverKind::Shared,
+        ),
+        (
+            "fn area<T: Marker<'\\u{3e}'>>(&mut self, value: T) {}",
+            ReceiverKind::Exclusive,
+        ),
+        (
+            "fn area<'a, T: 'a>(&'a self, value: T) {}",
+            ReceiverKind::Shared,
+        ),
     ] {
         assert_eq!(receiver_kind(signature), Some(kind), "{signature}");
     }
