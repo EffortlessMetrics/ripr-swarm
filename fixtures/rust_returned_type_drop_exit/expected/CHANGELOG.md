@@ -327,3 +327,14 @@ Command:
 
 Updated:
 - `expected/human-full.txt`
+
+## Pending — rust_returned_type_drop_exit (26)
+
+Reason:
+RIPR-SPEC-0122: describe the Hidden and removed-code test evidence without assuming owner reach (#16456)
+
+Command:
+`cargo xtask goldens bless rust_returned_type_drop_exit --reason "..."`
+
+Updated:
+- `expected/human.txt`

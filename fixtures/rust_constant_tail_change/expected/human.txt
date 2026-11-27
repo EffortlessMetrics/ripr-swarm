@@ -59,7 +59,7 @@ Hidden:
     - ./src/lib.rs:50 (unknown: propagation unclear, lower-priority candidate); kind: return_value; reason: same as above
   Hidden classes:
     exposed = tests appear to notice the change
-    weak = tests reach it but check it only loosely
+    weak = linked to a test, with only weak evidence of a check
     unknown: infection unclear = ripr could not tell what input makes the change take effect
     unknown: propagation unclear = ripr could not follow the change through an opaque boundary
   Full evidence: rerun with --format human-full

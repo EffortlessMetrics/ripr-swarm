@@ -231,6 +231,43 @@ fn render_with_classes(classes: &[crate::domain::ExposureClass]) -> String {
 }
 
 #[test]
+fn hidden_class_reach_wording_is_independent_of_finding_reach() {
+    use crate::domain::{CALLEE_ONLY_REACH_PREFIX, ExposureClass, StageState};
+    for (class, gloss) in [
+        (
+            ExposureClass::WeaklyExposed,
+            "    weak = linked to a test, with only weak evidence of a check",
+        ),
+        (
+            ExposureClass::ReachableUnrevealed,
+            "    unrevealed = linked to a test, with no apparent check",
+        ),
+    ] {
+        for (state, summary) in [
+            (StageState::Yes, "A test calls the changed owner"),
+            (StageState::Unknown, "Reach is unknown"),
+            (StageState::Yes, CALLEE_ONLY_REACH_PREFIX),
+        ] {
+            let mut finding = sample_finding();
+            finding.class = class.clone();
+            // Unresolved currentness puts the row in Hidden without also
+            // sending it through the removed-code renderer.
+            finding.source_currentness = SourceCurrentness::UnresolvedSubject;
+            finding.ripr.reach.state = state;
+            finding.ripr.reach.summary = summary.to_string();
+            let output = bounded_output_with_findings(vec![finding]);
+            let rendered = render(&output);
+            let hidden = hidden_section(&rendered);
+            assert!(hidden.contains("  Hidden classes:\n"), "{rendered}");
+            assert!(
+                hidden.lines().any(|line| line == gloss),
+                "{summary}: {hidden}"
+            );
+        }
+    }
+}
+
+#[test]
 fn hidden_rows_distinguish_unknown_classes_and_gloss_each_once() {
     use crate::domain::ExposureClass as C;
     let rendered =
@@ -250,10 +287,7 @@ fn hidden_rows_distinguish_unknown_classes_and_gloss_each_once() {
         1,
         "{rendered}"
     );
-    assert!(
-        !rendered.contains("tests reach it but check it only loosely"),
-        "{rendered}"
-    );
+    assert!(!rendered.contains("    weak = "), "{rendered}");
 }
 
 #[test]
@@ -261,7 +295,7 @@ fn hidden_classes_gloss_only_listed_classes() {
     use crate::domain::ExposureClass as C;
     let rendered = render_with_classes(&[C::WeaklyExposed, C::WeaklyExposed]);
     assert!(
-        rendered.contains("    weak = tests reach it but check it only loosely\n"),
+        rendered.contains("    weak = linked to a test, with only weak evidence of a check\n"),
         "{rendered}"
     );
     assert_eq!(rendered.matches("    weak = ").count(), 1, "{rendered}");

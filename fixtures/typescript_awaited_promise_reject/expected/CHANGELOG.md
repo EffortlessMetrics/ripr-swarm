@@ -897,3 +897,14 @@ Command:
 
 Updated:
 - `expected/human.txt`
+
+## Pending — typescript_awaited_promise_reject (42)
+
+Reason:
+RIPR-SPEC-0122: describe the Hidden and removed-code test evidence without assuming owner reach (#16456)
+
+Command:
+`cargo xtask goldens bless typescript_awaited_promise_reject --reason "..."`
+
+Updated:
+- `expected/human.txt`

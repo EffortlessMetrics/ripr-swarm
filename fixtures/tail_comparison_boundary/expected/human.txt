@@ -48,6 +48,6 @@ Hidden:
     - ./src/lib.rs:17 (exposed); 2 changed behaviors in `earns_gift`; kinds: predicate, return_value; reason: Strong oracle found: exact value or pattern assertion
   Hidden classes:
     exposed = tests appear to notice the change
-    weak = tests reach it but check it only loosely
+    weak = linked to a test, with only weak evidence of a check
   Full evidence: rerun with --format human-full
   Machine data: rerun with --format json

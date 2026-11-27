@@ -442,3 +442,14 @@ Command:
 
 Updated:
 - `expected/human-full.txt`
+
+## Pending — predicate_pairing_reassigned_binding (35)
+
+Reason:
+RIPR-SPEC-0122: describe the Hidden and removed-code test evidence without assuming owner reach (#16456)
+
+Command:
+`cargo xtask goldens bless predicate_pairing_reassigned_binding --reason "..."`
+
+Updated:
+- `expected/human.txt`

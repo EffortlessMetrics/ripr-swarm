@@ -340,3 +340,14 @@ Command:
 
 Updated:
 - `expected/human-full.txt`
+
+## Pending — cross_crate_trait_impl_direct_owner_positive (27)
+
+Reason:
+RIPR-SPEC-0122: describe the Hidden and removed-code test evidence without assuming owner reach (#16456)
+
+Command:
+`cargo xtask goldens bless cross_crate_trait_impl_direct_owner_positive --reason "..."`
+
+Updated:
+- `expected/human.txt`

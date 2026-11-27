@@ -40,7 +40,9 @@ Linked issues:
   beside the selected finding; items 2 and 3 name the unknown stage on each
   `Hidden:` row (`unknown: infection unclear`, `unknown: propagation unclear`,
   `unknown: static analysis limited`) and gloss each listed class once under
-  `Hidden classes:`. The shared `ExposureClass::plain_label` is unchanged.
+  `Hidden classes:`. The `weak` and `unrevealed` glosses describe a test link
+  without assuming that the test reaches a particular listed finding (#16456).
+  The shared `ExposureClass::plain_label` is unchanged.
 
 - [#10716](https://github.com/EffortlessMetrics/ripr-swarm/issues/10716) -
   non-Rust stub paths receive a typed capability refusal and a manual-test
@@ -1228,8 +1230,8 @@ location is where the code stood in the current file):` heading
 is followed by one row per finding on a removed line: its location, the code
 that stood there in a code span, the finding kind as `(kind: predicate)` so two
 findings on one line stay distinct, and what the class says about the old line
-(`a related test appears to check this behavior`, `tests reach it but check it
-only loosely`, `tests reach it but none appears to check it`, `no test path
+(`a related test appears to check this behavior`, `linked to a test, with only
+weak evidence of a check`, `linked to a test, with no apparent check`, `no test path
 was found`, or `ripr could not tell whether a test checks it (analysis limited,
 not a verdict)`). At most three rows are listed; identical rows print once,
 and a final `N more: rerun with --format human-full` row counts the rest

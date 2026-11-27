@@ -346,3 +346,14 @@ Command:
 
 Updated:
 - `expected/human-full.txt`
+
+## Pending — owner_return_pin_json_uncalled_closure (29)
+
+Reason:
+RIPR-SPEC-0122: describe the Hidden and removed-code test evidence without assuming owner reach (#16456)
+
+Command:
+`cargo xtask goldens bless owner_return_pin_json_uncalled_closure --reason "..."`
+
+Updated:
+- `expected/human.txt`

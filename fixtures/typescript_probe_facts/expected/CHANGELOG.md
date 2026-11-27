@@ -970,3 +970,14 @@ Command:
 
 Updated:
 - `expected/human.txt`
+
+## Pending — typescript_probe_facts (48)
+
+Reason:
+RIPR-SPEC-0122: describe the Hidden and removed-code test evidence without assuming owner reach (#16456)
+
+Command:
+`cargo xtask goldens bless typescript_probe_facts --reason "..."`
+
+Updated:
+- `expected/human.txt`

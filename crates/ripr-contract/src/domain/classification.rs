@@ -201,14 +201,13 @@ impl ExposureClass {
     }
 
     /// #9373: a one-line plain meaning for this class, the vocabulary of
-    /// `plain_label_with_stage`. Prose only, no schema tokens.
+    /// `plain_label_with_stage`. These class glosses carry no finding-specific
+    /// reach evidence or schema tokens.
     pub fn plain_gloss(&self) -> &'static str {
         match self {
             ExposureClass::Exposed => "tests appear to notice the change",
-            ExposureClass::WeaklyExposed => "tests reach it but check it only loosely",
-            ExposureClass::ReachableUnrevealed => {
-                "tests reach it but nothing appears to notice a change"
-            }
+            ExposureClass::WeaklyExposed => "linked to a test, with only weak evidence of a check",
+            ExposureClass::ReachableUnrevealed => "linked to a test, with no apparent check",
             ExposureClass::NoStaticPath => "no test path was found",
             ExposureClass::InfectionUnknown => {
                 "ripr could not tell what input makes the change take effect"

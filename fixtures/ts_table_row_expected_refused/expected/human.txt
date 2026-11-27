@@ -62,7 +62,7 @@ Hidden:
     - src/pushedTable.ts:2 (weak); kind: predicate; reason: Related tests reach `pushedTable` with a strong oracle, but no strong assertion observes a `pushedTable(...)` call at the changed predicate boundary `points == 1000`; inputs on…
     - src/titleMutation.ts:2 (weak); kind: predicate; reason: Related tests reach `titleMutation` with a strong oracle, but no strong assertion observes a `titleMutation(...)` call at the changed predicate boundary `point.points == 1000`;…
   Hidden classes:
-    weak = tests reach it but check it only loosely
+    weak = linked to a test, with only weak evidence of a check
     unknown: static analysis limited = reading the code was not enough for ripr to judge (analysis limited, not a verdict)
   Full evidence: rerun with --format human-full
   Machine data: rerun with --format json

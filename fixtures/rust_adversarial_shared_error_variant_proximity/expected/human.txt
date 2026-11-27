@@ -46,6 +46,6 @@ Hidden:
   1 lower-priority finding(s) omitted from default human output.
     - ./src/lib.rs:17 (weak); kind: return_value; reason: No strong assertion was detected
   Hidden classes:
-    weak = tests reach it but check it only loosely
+    weak = linked to a test, with only weak evidence of a check
   Full evidence: rerun with --format human-full
   Machine data: rerun with --format json

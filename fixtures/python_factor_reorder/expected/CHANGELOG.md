@@ -246,3 +246,14 @@ Command:
 
 Updated:
 - `expected/human-full.txt`
+
+## Pending — python_factor_reorder (21)
+
+Reason:
+RIPR-SPEC-0122: describe the Hidden and removed-code test evidence without assuming owner reach (#16456)
+
+Command:
+`cargo xtask goldens bless python_factor_reorder --reason "..."`
+
+Updated:
+- `expected/human.txt`

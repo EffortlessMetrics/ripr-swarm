@@ -455,3 +455,14 @@ Command:
 
 Updated:
 - `expected/human-full.txt`
+
+## Pending — human_full_shared_parse_port (36)
+
+Reason:
+RIPR-SPEC-0122: describe the Hidden and removed-code test evidence without assuming owner reach (#16456)
+
+Command:
+`cargo xtask goldens bless human_full_shared_parse_port --reason "..."`
+
+Updated:
+- `expected/human.txt`

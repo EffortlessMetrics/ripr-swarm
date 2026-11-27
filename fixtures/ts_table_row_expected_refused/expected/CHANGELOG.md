@@ -161,3 +161,14 @@ Command:
 
 Updated:
 - `expected/human.txt`
+
+## Pending — ts_table_row_expected_refused (15)
+
+Reason:
+RIPR-SPEC-0122: describe the Hidden and removed-code test evidence without assuming owner reach (#16456)
+
+Command:
+`cargo xtask goldens bless ts_table_row_expected_refused --reason "..."`
+
+Updated:
+- `expected/human.txt`

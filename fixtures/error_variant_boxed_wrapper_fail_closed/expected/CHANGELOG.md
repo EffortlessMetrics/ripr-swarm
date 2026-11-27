@@ -682,3 +682,14 @@ Command:
 
 Updated:
 - `expected/human-full.txt`
+
+## Pending — error_variant_boxed_wrapper_fail_closed (50)
+
+Reason:
+RIPR-SPEC-0122: describe the Hidden and removed-code test evidence without assuming owner reach (#16456)
+
+Command:
+`cargo xtask goldens bless error_variant_boxed_wrapper_fail_closed --reason "..."`
+
+Updated:
+- `expected/human.txt`

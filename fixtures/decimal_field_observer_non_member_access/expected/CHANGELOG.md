@@ -595,3 +595,14 @@ Command:
 
 Updated:
 - `expected/human.txt`
+
+## Pending — decimal_field_observer_non_member_access (50)
+
+Reason:
+RIPR-SPEC-0122: describe the Hidden and removed-code test evidence without assuming owner reach (#16456)
+
+Command:
+`cargo xtask goldens bless decimal_field_observer_non_member_access --reason "..."`
+
+Updated:
+- `expected/human.txt`

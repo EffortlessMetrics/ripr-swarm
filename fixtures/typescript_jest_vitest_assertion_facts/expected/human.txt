@@ -59,7 +59,7 @@ Hidden:
     - src/signals.ts:29 (weak); kind: side_effect; reason: Related test reaches `notifyAudit` with bounded mock payload evidence `expect(record).toHaveBeenCalledWith("audit")`; keep the item advisory until mock-shape actionability can…
   Hidden classes:
     exposed = tests appear to notice the change
-    weak = tests reach it but check it only loosely
+    weak = linked to a test, with only weak evidence of a check
   Full evidence: rerun with --format human-full
   Machine data: rerun with --format json
 

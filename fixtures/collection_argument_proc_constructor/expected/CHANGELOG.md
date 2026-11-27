@@ -416,3 +416,14 @@ Command:
 
 Updated:
 - `expected/human-full.txt`
+
+## Pending — collection_argument_proc_constructor (33)
+
+Reason:
+RIPR-SPEC-0122: describe the Hidden and removed-code test evidence without assuming owner reach (#16456)
+
+Command:
+`cargo xtask goldens bless collection_argument_proc_constructor --reason "..."`
+
+Updated:
+- `expected/human.txt`
