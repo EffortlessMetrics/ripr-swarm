@@ -1024,6 +1024,7 @@ fn imported_anyhow_wrapper_forwards_unless_anyhow_is_rebound() -> Result<(), Str
         // #16388: a rootless group verifies each leaf by its own root.
         "use {anyhow::anyhow, std::path::Path};",
         "use {anyhow::{anyhow, Result}};",
+        "use {anyhow, anyhow::anyhow};",
     ] {
         let (source, diff, line) = with_prelude(prelude)?;
         for family in ["predicate", "return_value"] {
