@@ -716,6 +716,797 @@ fn issue_14355_negated_change_phrase_is_not_a_blocker() -> Result<(), String> {
     Ok(())
 }
 
+/// #15980: a negated blocker phrase reports a resolved finding, not a blocker.
+/// The witness is the #15525 body; the controls are the genuine blocker forms.
+#[test]
+fn issue_15980_negated_blocker_phrase_is_not_a_blocker() -> Result<(), String> {
+    let head = "a".repeat(40);
+    let at = "2026-11-21T21:52:20Z";
+    let cases: [(&str, bool); 200] = [
+        // The strip-exercising witness: this admits only because the strip ran.
+        (
+            "SOURCE_REVIEW_READY\nNo source blocker found. The old hosted result predates \
+             current main; the current head is clean.",
+            true,
+        ),
+        ("SOURCE_REVIEW_READY\nno blockers found.", true),
+        ("SOURCE_REVIEW_READY\nNo source blockers remain.", true),
+        ("SOURCE_REVIEW_READY\nNO   SOURCE   BLOCKERS   REMAIN", true),
+        // #15980 review: the remainder scan now covers "still wrong", so a
+        // stripped phrase followed by a live defect refuses. This row used to
+        // admit because NEGATION's vocabulary did not cover the form.
+        (
+            "SOURCE_REVIEW_READY\nNo source blocker found. The fixture is still wrong.",
+            false,
+        ),
+        // Un-negated control: a genuine blocker refuses.
+        ("SOURCE_REVIEW_READY\nBlocker found.", false),
+        // A later blocker sentence keeps its own refusal.
+        (
+            "SOURCE_REVIEW_READY\nNo source blocker found. The build is red.",
+            false,
+        ),
+        // A same-line continuation after a comma is not a sentence end.
+        (
+            "SOURCE_REVIEW_READY\nNo source blocker found, but the fixture is still wrong.",
+            false,
+        ),
+        // A later refutation of the negated phrase refuses.
+        (
+            "SOURCE_REVIEW_READY\nNo source blocker found. That is false.",
+            false,
+        ),
+        (
+            "SOURCE_REVIEW_READY\nNo source blockers remain. That is not true.",
+            false,
+        ),
+        // A refutation ahead of the phrase refuses.
+        (
+            "SOURCE_REVIEW_READY\nIt is not true that no source blockers remain.",
+            false,
+        ),
+        // #15980 review: Markdown emphasis is formatting, not content. A
+        // refutation wrapped in single `*` or `_` must refuse exactly like the
+        // plain form; bold is already stripped by normalize_body and is the
+        // control that keeps the plain path covered.
+        (
+            "SOURCE_REVIEW_READY\nNo source blocker found. *That is false.*",
+            false,
+        ),
+        (
+            "SOURCE_REVIEW_READY\nNo source blocker found. _That is false._",
+            false,
+        ),
+        (
+            "SOURCE_REVIEW_READY\nNo source blocker found. **That is false.**",
+            false,
+        ),
+        // #15980 review: the same tolerance covers a `>` quote, `~~` strike and
+        // `-` bullet before the cue. A bulleted continuation that is not a cue
+        // still fails the match, so this does not make bullets refutations.
+        (
+            "SOURCE_REVIEW_READY\nNo source blocker found. > That is false.",
+            false,
+        ),
+        (
+            "SOURCE_REVIEW_READY\nNo source blocker found. ~~That is false.~~",
+            false,
+        ),
+        (
+            "SOURCE_REVIEW_READY\nNo source blocker found. - That is false.",
+            false,
+        ),
+        // Reverse-risk controls: the tolerance must not hide a real blocker
+        // behind the same markers. NEGATION still catches the phrase itself.
+        ("SOURCE_REVIEW_READY\n*Blocker found.*", false),
+        ("SOURCE_REVIEW_READY\n> Blocker found.", false),
+        // Filler widening: the 5 words the PR's set omits.
+        ("SOURCE_REVIEW_READY\nNo new source blocker found.", true),
+        (
+            "SOURCE_REVIEW_READY\nNo new source blocker found; all three previous threads were resolved at readback.",
+            true,
+        ),
+        ("SOURCE_REVIEW_READY\nNo other blocker found.", true),
+        ("SOURCE_REVIEW_READY\nNo additional blocker found.", true),
+        ("SOURCE_REVIEW_READY\nNo known blocker found.", true),
+        ("SOURCE_REVIEW_READY\nNo outstanding blocker found.", true),
+        // Quotation guard: a quoted phrase is not a claim.
+        (
+            "SOURCE_REVIEW_READY\nThe earlier review said 'No blocker found.' That is false.",
+            false,
+        ),
+        (
+            "SOURCE_REVIEW_READY\nThe earlier review said 'No blocker found.'",
+            false,
+        ),
+        (
+            "SOURCE_REVIEW_READY\n> No blocker found.\n> That is false.",
+            false,
+        ),
+        // The interaction: the widened filler must not open a new quoted fail-open.
+        (
+            "SOURCE_REVIEW_READY\nThe earlier review said 'No new source blocker found.' That is false.",
+            false,
+        ),
+        // Reverse risk: the widened filler must not hide a real blocker.
+        (
+            "SOURCE_REVIEW_READY\nNo new blocker found. The build is red.",
+            false,
+        ),
+        // Same-line state token after a stripped phrase: the PR head admits this, main refuses.
+        (
+            "SOURCE_REVIEW_READY\nNo blocker found. REPAIR_REQUIRED.",
+            false,
+        ),
+        (
+            "SOURCE_REVIEW_READY\nNo change is needed. REPAIR_REQUIRED.",
+            false,
+        ),
+        // The widened filler must not strip a phrase whose remainder reports a
+        // live defect in a form NEGATION did not cover before.
+        (
+            "SOURCE_REVIEW_READY\nNo new blocker found. The build still fails.",
+            false,
+        ),
+        (
+            "SOURCE_REVIEW_READY\nNo new blocker found. The test is still failing.",
+            false,
+        ),
+        (
+            "SOURCE_REVIEW_READY\nNo new blocker found. The fixture is still wrong.",
+            false,
+        ),
+        (
+            "SOURCE_REVIEW_READY\nNo new blocker found. The owner is still misattributed.",
+            false,
+        ),
+        (
+            "SOURCE_REVIEW_READY\nNo new blocker found. The golden still disagrees.",
+            false,
+        ),
+        // The bare BLOCK and INCOMPLETE tokens are scoped to the same-line
+        // guard and stay case-sensitive, so ordinary prose still admits.
+        ("SOURCE_REVIEW_READY\nThe block layout is unchanged.", true),
+        ("SOURCE_REVIEW_READY\n```\nblock\n```", true),
+        ("SOURCE_REVIEW_READY\nNo blocker found. BLOCK.", false),
+        ("SOURCE_REVIEW_READY\nNo blocker found. INCOMPLETE.", false),
+        // A bare BLOCK/INCOMPLETE line is a disposition, whatever the markup.
+        ("SOURCE_REVIEW_READY\nBLOCK", false),
+        ("SOURCE_REVIEW_READY\nBLOCK.", false),
+        ("SOURCE_REVIEW_READY\n**BLOCK**", false),
+        ("SOURCE_REVIEW_READY\n> BLOCK", false),
+        ("SOURCE_REVIEW_READY\n- BLOCK", false),
+        ("SOURCE_REVIEW_READY\nINCOMPLETE.", false),
+        ("SOURCE_REVIEW_READY\n**INCOMPLETE**", false),
+        ("SOURCE_REVIEW_READY\nBLOCK\nNo blocker found.", false),
+        ("SOURCE_REVIEW_READY\nINCOMPLETE\nNo blocker found.", false),
+        // A fenced uppercase token is a disposition; a fenced lowercase "block"
+        // is ordinary prose and still admits.
+        ("SOURCE_REVIEW_READY\n```\nBLOCK\n```", false),
+        ("SOURCE_REVIEW_READY\n```\nINCOMPLETE\n```", false),
+        ("SOURCE_REVIEW_READY\n```\nBLOCK: no\n```", false),
+        // The property form: a live defect in the remainder keeps the phrase.
+        (
+            "SOURCE_REVIEW_READY\nNo new blocker found. The build is still red.",
+            false,
+        ),
+        (
+            "SOURCE_REVIEW_READY\nNo source blocker found. The build is still red.",
+            false,
+        ),
+        (
+            "SOURCE_REVIEW_READY\nNo blocker found. The CI is still broken.",
+            false,
+        ),
+        (
+            "SOURCE_REVIEW_READY\nNo blocker found. The build remains red.",
+            false,
+        ),
+        (
+            "SOURCE_REVIEW_READY\nNo blocker found. The build continues to be red.",
+            false,
+        ),
+        (
+            "SOURCE_REVIEW_READY\nNo blocker found. The suite is still incomplete.",
+            false,
+        ),
+        (
+            "SOURCE_REVIEW_READY\nNo blocker found. The gap is still reported.",
+            false,
+        ),
+        (
+            "SOURCE_REVIEW_READY\nNo blocker found. The owner is still unreadable.",
+            false,
+        ),
+        // Deliberate trade: the widened vocabulary also refuses these ordinary
+        // prose forms, which admit on main.
+        (
+            "SOURCE_REVIEW_READY\nThe earlier bot claim is still wrong.",
+            false,
+        ),
+        (
+            "SOURCE_REVIEW_READY\nThe Devin thread is still wrong about the receiver.",
+            false,
+        ),
+        (
+            "SOURCE_REVIEW_READY\nNo code change needed. The BLOCK was cleared.",
+            false,
+        ),
+        // Subject-agnostic remainder predicate: any subject plus a defect.
+        (
+            "SOURCE_REVIEW_READY\nNo blocker found. The suite is incomplete.",
+            false,
+        ),
+        (
+            "SOURCE_REVIEW_READY\nNo blocker found. The suite is unreadable.",
+            false,
+        ),
+        (
+            "SOURCE_REVIEW_READY\nNo blocker found. The gap is reported.",
+            false,
+        ),
+        (
+            "SOURCE_REVIEW_READY\nNo blocker found. The suite is broken.",
+            false,
+        ),
+        (
+            "SOURCE_REVIEW_READY\nNo blocker found. The lane is red.",
+            false,
+        ),
+        (
+            "SOURCE_REVIEW_READY\nNo blocker found. The lane is failing.",
+            false,
+        ),
+        (
+            "SOURCE_REVIEW_READY\nNo blocker found. The lane fails.",
+            false,
+        ),
+        (
+            "SOURCE_REVIEW_READY\nNo blocker found. The run is broken.",
+            false,
+        ),
+        (
+            "SOURCE_REVIEW_READY\nNo blocker found. The run is red.",
+            false,
+        ),
+        (
+            "SOURCE_REVIEW_READY\nNo blocker found. The check is failing.",
+            false,
+        ),
+        (
+            "SOURCE_REVIEW_READY\nNo blocker found. The check fails.",
+            false,
+        ),
+        (
+            "SOURCE_REVIEW_READY\nNo blocker found. The job is broken.",
+            false,
+        ),
+        (
+            "SOURCE_REVIEW_READY\nNo blocker found. The job is red.",
+            false,
+        ),
+        (
+            "SOURCE_REVIEW_READY\nNo blocker found. The job fails.",
+            false,
+        ),
+        (
+            "SOURCE_REVIEW_READY\nNo blocker found. The test is failing.",
+            false,
+        ),
+        (
+            "SOURCE_REVIEW_READY\nNo blocker found. The tests are failing.",
+            false,
+        ),
+        (
+            "SOURCE_REVIEW_READY\nNo blocker found. The tests are red.",
+            false,
+        ),
+        (
+            "SOURCE_REVIEW_READY\nNo blocker found. The build is incomplete.",
+            false,
+        ),
+        (
+            "SOURCE_REVIEW_READY\nNo blocker found. The build is unreadable.",
+            false,
+        ),
+        (
+            "SOURCE_REVIEW_READY\nNo blocker found. The build is reported.",
+            false,
+        ),
+        (
+            "SOURCE_REVIEW_READY\nNo blocker found. The CI is incomplete.",
+            false,
+        ),
+        (
+            "SOURCE_REVIEW_READY\nNo blocker found. The CI is unreadable.",
+            false,
+        ),
+        (
+            "SOURCE_REVIEW_READY\nNo blocker found. The CI is reported.",
+            false,
+        ),
+        (
+            "SOURCE_REVIEW_READY\nNo blocker found. The evidence is incomplete.",
+            false,
+        ),
+        (
+            "SOURCE_REVIEW_READY\nNo blocker found. The evidence is unreadable.",
+            false,
+        ),
+        (
+            "SOURCE_REVIEW_READY\nNo blocker found. The evidence is missing.",
+            false,
+        ),
+        (
+            "SOURCE_REVIEW_READY\nNo blocker found. The evidence is absent.",
+            false,
+        ),
+        (
+            "SOURCE_REVIEW_READY\nNo blocker found. The lane is stuck.",
+            false,
+        ),
+        (
+            "SOURCE_REVIEW_READY\nNo blocker found. The lane is stalled.",
+            false,
+        ),
+        (
+            "SOURCE_REVIEW_READY\nNo blocker found. The lane is hung.",
+            false,
+        ),
+        (
+            "SOURCE_REVIEW_READY\nNo blocker found. The lane is dead.",
+            false,
+        ),
+        (
+            "SOURCE_REVIEW_READY\nNo blocker found. The lane is down.",
+            false,
+        ),
+        (
+            "SOURCE_REVIEW_READY\nNo blocker found. The lane is unavailable.",
+            false,
+        ),
+        (
+            "SOURCE_REVIEW_READY\nNo blocker found. The lane is unreachable.",
+            false,
+        ),
+        (
+            "SOURCE_REVIEW_READY\nNo blocker found. The lane is missing.",
+            false,
+        ),
+        (
+            "SOURCE_REVIEW_READY\nNo blocker found. The lane is absent.",
+            false,
+        ),
+        (
+            "SOURCE_REVIEW_READY\nNo blocker found. The lane is empty.",
+            false,
+        ),
+        (
+            "SOURCE_REVIEW_READY\nNo blocker found. The lane is stale.",
+            false,
+        ),
+        (
+            "SOURCE_REVIEW_READY\nNo blocker found. The lane is outdated.",
+            false,
+        ),
+        (
+            "SOURCE_REVIEW_READY\nNo blocker found. The lane is revoked.",
+            false,
+        ),
+        (
+            "SOURCE_REVIEW_READY\nNo blocker found. The lane is rejected.",
+            false,
+        ),
+        (
+            "SOURCE_REVIEW_READY\nNo blocker found. The lane is nacked.",
+            false,
+        ),
+        (
+            "SOURCE_REVIEW_READY\nNo blocker found. The lane is not green.",
+            false,
+        ),
+        (
+            "SOURCE_REVIEW_READY\nNo blocker found. The lane is not passing.",
+            false,
+        ),
+        (
+            "SOURCE_REVIEW_READY\nNo blocker found. The lane is not complete.",
+            false,
+        ),
+        (
+            "SOURCE_REVIEW_READY\nNo blocker found. The lane is not done.",
+            false,
+        ),
+        (
+            "SOURCE_REVIEW_READY\nNo blocker found. The lane is not finished.",
+            false,
+        ),
+        (
+            "SOURCE_REVIEW_READY\nNo blocker found. The lane is not merged.",
+            false,
+        ),
+        // Must-admit controls for the subject-agnostic predicate.
+        (
+            "SOURCE_REVIEW_READY\nNo source blocker found. The old hosted result predates current main; the hosted lane has not run on this head.",
+            true,
+        ),
+        (
+            "SOURCE_REVIEW_READY\nNo blocker found. The block layout is unchanged.",
+            true,
+        ),
+        (
+            "SOURCE_REVIEW_READY\nNo blocker found. The build is green.",
+            true,
+        ),
+        (
+            "SOURCE_REVIEW_READY\nNo blocker found. All checks pass.",
+            true,
+        ),
+        (
+            "SOURCE_REVIEW_READY\nNo blocker found. The tests pass.",
+            true,
+        ),
+        (
+            "SOURCE_REVIEW_READY\nNo blocker found. The suite is complete.",
+            true,
+        ),
+        (
+            "SOURCE_REVIEW_READY\nNo blocker found. No changes needed.",
+            true,
+        ),
+        ("SOURCE_REVIEW_READY\nNo source blocker found.", true),
+        ("SOURCE_REVIEW_READY\nNo code change needed.", true),
+        // Broader defect vocabulary: adjectives and verbs.
+        (
+            "SOURCE_REVIEW_READY\nNo blocker found. The suite crashes.",
+            false,
+        ),
+        (
+            "SOURCE_REVIEW_READY\nNo blocker found. The suite is crashing.",
+            false,
+        ),
+        (
+            "SOURCE_REVIEW_READY\nNo blocker found. The suite is not working.",
+            false,
+        ),
+        (
+            "SOURCE_REVIEW_READY\nNo blocker found. The suite is not yet green.",
+            false,
+        ),
+        (
+            "SOURCE_REVIEW_READY\nNo blocker found. The suite is still not green.",
+            false,
+        ),
+        (
+            "SOURCE_REVIEW_READY\nNo blocker found. The suite is corrupt.",
+            false,
+        ),
+        (
+            "SOURCE_REVIEW_READY\nNo blocker found. The suite is invalid.",
+            false,
+        ),
+        (
+            "SOURCE_REVIEW_READY\nNo blocker found. The suite is misconfigured.",
+            false,
+        ),
+        // Homograph exceptions: these are benign in context.
+        (
+            "SOURCE_REVIEW_READY\nNo blocker found. The lane is down to the last check.",
+            true,
+        ),
+        (
+            "SOURCE_REVIEW_READY\nNo blocker found. The build is down to one job.",
+            true,
+        ),
+        (
+            "SOURCE_REVIEW_READY\nNo blocker found. The queue is empty.",
+            true,
+        ),
+        (
+            "SOURCE_REVIEW_READY\nNo blocker found. The backlog is empty.",
+            true,
+        ),
+        (
+            "SOURCE_REVIEW_READY\nNo blocker found. The queue is empty and the lane is green.",
+            true,
+        ),
+        (
+            "SOURCE_REVIEW_READY\nNo blocker found. The result is reported in the run log.",
+            true,
+        ),
+        // The same words stay defects for the other subjects.
+        (
+            "SOURCE_REVIEW_READY\nNo blocker found. The evidence is empty.",
+            false,
+        ),
+        (
+            "SOURCE_REVIEW_READY\nNo blocker found. The diff is empty.",
+            false,
+        ),
+        (
+            "SOURCE_REVIEW_READY\nNo blocker found. The gap is still reported.",
+            false,
+        ),
+        // Auxiliary negation: has/have/had/did/do/does/is/are/was/were + not.
+        (
+            "SOURCE_REVIEW_READY\nNo blocker found. The build is not fully green.",
+            false,
+        ),
+        (
+            "SOURCE_REVIEW_READY\nNo blocker found. The build has not been green.",
+            false,
+        ),
+        (
+            "SOURCE_REVIEW_READY\nNo blocker found. The build has not passed.",
+            false,
+        ),
+        (
+            "SOURCE_REVIEW_READY\nNo blocker found. The build did not pass.",
+            false,
+        ),
+        (
+            "SOURCE_REVIEW_READY\nNo blocker found. The build didn't pass.",
+            false,
+        ),
+        (
+            "SOURCE_REVIEW_READY\nNo blocker found. The tests have not run.",
+            false,
+        ),
+        (
+            "SOURCE_REVIEW_READY\nNo blocker found. The lane has not finished.",
+            false,
+        ),
+        (
+            "SOURCE_REVIEW_READY\nNo blocker found. The build is not yet green.",
+            false,
+        ),
+        (
+            "SOURCE_REVIEW_READY\nNo blocker found. The build is not yet passing.",
+            false,
+        ),
+        (
+            "SOURCE_REVIEW_READY\nNo blocker found. The build is not yet done.",
+            false,
+        ),
+        // "has not been <participle>" for the defect vocabulary.
+        (
+            "SOURCE_REVIEW_READY\nNo blocker found. The build has not been tested.",
+            false,
+        ),
+        (
+            "SOURCE_REVIEW_READY\nNo blocker found. The build has not been verified.",
+            false,
+        ),
+        (
+            "SOURCE_REVIEW_READY\nNo blocker found. The build has not been reviewed.",
+            false,
+        ),
+        (
+            "SOURCE_REVIEW_READY\nNo blocker found. The build has not been qualified.",
+            false,
+        ),
+        (
+            "SOURCE_REVIEW_READY\nNo blocker found. The build has not been checked.",
+            false,
+        ),
+        (
+            "SOURCE_REVIEW_READY\nNo blocker found. The build has not been validated.",
+            false,
+        ),
+        (
+            "SOURCE_REVIEW_READY\nNo blocker found. The build has not been confirmed.",
+            false,
+        ),
+        (
+            "SOURCE_REVIEW_READY\nNo blocker found. The build has not been deployed.",
+            false,
+        ),
+        (
+            "SOURCE_REVIEW_READY\nNo blocker found. The build has not been released.",
+            false,
+        ),
+        (
+            "SOURCE_REVIEW_READY\nNo blocker found. The build has not been shipped.",
+            false,
+        ),
+        (
+            "SOURCE_REVIEW_READY\nNo blocker found. The build has not been landed.",
+            false,
+        ),
+        (
+            "SOURCE_REVIEW_READY\nNo blocker found. The build has not been completed.",
+            false,
+        ),
+        (
+            "SOURCE_REVIEW_READY\nNo blocker found. The build has not been finished.",
+            false,
+        ),
+        (
+            "SOURCE_REVIEW_READY\nNo blocker found. The build has not been ready.",
+            false,
+        ),
+        (
+            "SOURCE_REVIEW_READY\nNo blocker found. The build has not been working.",
+            false,
+        ),
+        (
+            "SOURCE_REVIEW_READY\nNo blocker found. The build has not been functional.",
+            false,
+        ),
+        (
+            "SOURCE_REVIEW_READY\nNo blocker found. The build has not been operational.",
+            false,
+        ),
+        (
+            "SOURCE_REVIEW_READY\nNo blocker found. The build has not been available.",
+            false,
+        ),
+        (
+            "SOURCE_REVIEW_READY\nNo blocker found. The build has not been reachable.",
+            false,
+        ),
+        (
+            "SOURCE_REVIEW_READY\nNo blocker found. The build has not been responsive.",
+            false,
+        ),
+        (
+            "SOURCE_REVIEW_READY\nNo blocker found. The build has not been stable.",
+            false,
+        ),
+        (
+            "SOURCE_REVIEW_READY\nNo blocker found. The build has not been healthy.",
+            false,
+        ),
+        (
+            "SOURCE_REVIEW_READY\nNo blocker found. The build has not been correct.",
+            false,
+        ),
+        (
+            "SOURCE_REVIEW_READY\nNo blocker found. The build has not been valid.",
+            false,
+        ),
+        (
+            "SOURCE_REVIEW_READY\nNo blocker found. The build has not been sound.",
+            false,
+        ),
+        (
+            "SOURCE_REVIEW_READY\nNo blocker found. The build has not been solid.",
+            false,
+        ),
+        (
+            "SOURCE_REVIEW_READY\nNo blocker found. The build has not been clean.",
+            false,
+        ),
+        (
+            "SOURCE_REVIEW_READY\nNo blocker found. The build has not been covered.",
+            false,
+        ),
+        (
+            "SOURCE_REVIEW_READY\nNo blocker found. The build has not been documented.",
+            false,
+        ),
+        (
+            "SOURCE_REVIEW_READY\nNo blocker found. The build has not been recorded.",
+            false,
+        ),
+        (
+            "SOURCE_REVIEW_READY\nNo blocker found. The build has not been noted.",
+            false,
+        ),
+        (
+            "SOURCE_REVIEW_READY\nNo blocker found. The build has not been described.",
+            false,
+        ),
+        (
+            "SOURCE_REVIEW_READY\nNo blocker found. The build has not been explained.",
+            false,
+        ),
+        (
+            "SOURCE_REVIEW_READY\nNo blocker found. The build has not been linked.",
+            false,
+        ),
+        (
+            "SOURCE_REVIEW_READY\nNo blocker found. The build has not been attached.",
+            false,
+        ),
+        (
+            "SOURCE_REVIEW_READY\nNo blocker found. The build has not been included.",
+            false,
+        ),
+        // The #15525 benign negations still admit.
+        (
+            "SOURCE_REVIEW_READY\nNo source blocker found. The old hosted result is not native composed-tree proof.",
+            true,
+        ),
+        (
+            "SOURCE_REVIEW_READY\nNo source blocker found. I did not rerun the hosted lane.",
+            true,
+        ),
+        // "still fails" is subject-anchored, so narration admits.
+        (
+            "SOURCE_REVIEW_READY\na wrongly gated control still fails",
+            true,
+        ),
+        (
+            "SOURCE_REVIEW_READY\nA `>` redirect's CRLF therefore still fails",
+            true,
+        ),
+        (
+            "SOURCE_REVIEW_READY\na UTF-16 redirect still fails it on CRLF",
+            true,
+        ),
+        (
+            "SOURCE_REVIEW_READY\nscalar roles still fail (existing tests)",
+            true,
+        ),
+        (
+            "SOURCE_REVIEW_READY\nwhich is still an error and still fail-closed",
+            true,
+        ),
+        (
+            "SOURCE_REVIEW_READY\nIt still fails when no string value carries the missing root",
+            true,
+        ),
+        // Standalone defect lines: the subject-anchored still-fails form now
+        // covers probe/fixture/golden/mutant/assertion.
+        ("SOURCE_REVIEW_READY\nThe probe still fails.", false),
+        ("SOURCE_REVIEW_READY\nThe fixture still fails.", false),
+        ("SOURCE_REVIEW_READY\nThe golden still fails.", false),
+        ("SOURCE_REVIEW_READY\nThe mutant still fails.", false),
+        ("SOURCE_REVIEW_READY\nThe assertion still fails.", false),
+        // Benign combined shapes: the homograph narrowings cover these too.
+        (
+            "SOURCE_REVIEW_READY\nNo blocker found. The result is reported in the summary.",
+            true,
+        ),
+        (
+            "SOURCE_REVIEW_READY\nNo blocker found. The cache is empty.",
+            true,
+        ),
+        (
+            "SOURCE_REVIEW_READY\nNo blocker found. The lane is down for maintenance.",
+            true,
+        ),
+    ];
+    for (body, admit) in cases {
+        let reviews = serde_json::json!([review("author", "COMMENTED", &head, at, body)]);
+        expect_outcome(&check_reviews(&reviews, &head)?, admit, body)?;
+    }
+    // #15980 review: the verdict carrier strips the resolved negated phrases
+    // before its alternative scan, so "no source blocking findings found" is
+    // not read as "blocking"; a real alternative, a later blocker sentence and
+    // an italicized refutation still refuse.
+    let verdict_cases: [(String, bool); 4] = [
+        (
+            format!(
+                "SOURCE_REVIEW_READY\nVERDICT: APPROVE {head} - no source blocking findings found"
+            ),
+            true,
+        ),
+        (
+            format!("SOURCE_REVIEW_READY\nVERDICT: APPROVE {head} - blocking findings found"),
+            false,
+        ),
+        (
+            format!(
+                "SOURCE_REVIEW_READY\nVERDICT: APPROVE {head} - no source blocking findings found. The build is red."
+            ),
+            false,
+        ),
+        (
+            format!(
+                "SOURCE_REVIEW_READY\nVERDICT: APPROVE {head} - no source blocking findings found. *That is false.*"
+            ),
+            false,
+        ),
+    ];
+    for (body, admit) in verdict_cases {
+        let reviews = serde_json::json!([review("author", "COMMENTED", &head, at, &body)]);
+        expect_outcome(&check_reviews(&reviews, &head)?, admit, &body)?;
+    }
+    Ok(())
+}
+
 /// Full, untrimmed bodies of real review-of-record comments: every `ready-*`
 /// body must admit and every `refuse-*` body (REVIEW_INCOMPLETE shapes) must refuse.
 #[test]
@@ -2000,6 +2791,159 @@ fn issue_14728_stated_marker_selection_and_neutral_tail() -> Result<(), String> 
     ];
     for (name, reviews, admit) in cases {
         expect_outcome(&check_reviews(&reviews, &head)?, admit, name)?;
+    }
+    Ok(())
+}
+
+/// #14929: a refusal names the evidence that refused it. A carrier refused by its
+/// own later narration line, or a later body that superseded an attesting review
+/// at an unchanged head, must not read like "no review at this head". The detail
+/// lines explain the decision; the admit/refuse outcome is unchanged.
+#[test]
+fn issue_14929_refusal_names_the_refusing_review_and_line() -> Result<(), String> {
+    let head = "a".repeat(40);
+    let other = "b".repeat(40);
+    let verdict = format!("VERDICT: APPROVE {head} \u{2014} no blocking findings on this head.");
+    let detail_lines = |output: &Output| -> Vec<String> {
+        String::from_utf8_lossy(&output.stderr)
+            .lines()
+            .filter(|line| line.starts_with("::error::source review refusal detail: "))
+            .map(str::to_string)
+            .collect()
+    };
+
+    // A neutral residual admits under both carriers and prints no detail.
+    let residual = "- Residual: the hosted lane on this head has not run.";
+    for (name, body) in [
+        (
+            "marker with residual",
+            format!("SOURCE_REVIEW_READY\n\n{residual}"),
+        ),
+        ("verdict with residual", format!("{verdict}\n\n{residual}")),
+    ] {
+        let reviews = serde_json::json!([review(
+            "author",
+            "COMMENTED",
+            &head,
+            "2026-10-15T01:00:01Z",
+            &body
+        )]);
+        let output = check_reviews(&reviews, &head)?;
+        expect_outcome(&output, true, name)?;
+        if !detail_lines(&output).is_empty() {
+            return Err(format!("{name}: an admitted head printed refusal details"));
+        }
+    }
+
+    // A retraction word used as narration refuses under both carriers, and the
+    // detail names the matched phrase and the line it sits on.
+    let narration = "- The final commit message still states the withdrawn timing attribution.";
+    for (name, body) in [
+        (
+            "marker with retraction word",
+            format!("SOURCE_REVIEW_READY\n\n{narration}"),
+        ),
+        (
+            "verdict with retraction word",
+            format!("{verdict}\n\n{narration}"),
+        ),
+    ] {
+        let reviews = serde_json::json!([review(
+            "author",
+            "COMMENTED",
+            &head,
+            "2026-10-15T01:00:01Z",
+            &body
+        )]);
+        let output = check_reviews(&reviews, &head)?;
+        expect_outcome(&output, false, name)?;
+        let details = detail_lines(&output);
+        let named = details.iter().any(|line| {
+            line.contains("author's review at 2026-10-15T01:00:01Z")
+                && line.contains("phrase 'withdrawn'")
+                && line.contains("timing attribution")
+        });
+        if !named {
+            return Err(format!(
+                "{name}: detail did not name the refusing line: {details:?}"
+            ));
+        }
+    }
+
+    // A short-SHA verdict posted after an attesting marker at the same head
+    // supersedes it; the detail says so and names the earlier review.
+    let reviews = serde_json::json!([
+        review(
+            "author",
+            "COMMENTED",
+            &head,
+            "2026-10-15T01:00:01Z",
+            "SOURCE_REVIEW_READY"
+        ),
+        review(
+            "author",
+            "COMMENTED",
+            &head,
+            "2026-10-15T01:00:02Z",
+            &format!(
+                "VERDICT: APPROVE {} \u{2014} no blocking findings on this head.",
+                &head[..10]
+            )
+        ),
+    ]);
+    let output = check_reviews(&reviews, &head)?;
+    expect_outcome(&output, false, "short-SHA verdict superseding a marker")?;
+    let details = detail_lines(&output);
+    if details.len() != 1
+        || !details[0].contains("short SHA")
+        || !details[0]
+            .contains("supersedes the same login's attesting review at 2026-10-15T01:00:01Z")
+    {
+        return Err(format!(
+            "short-SHA supersession detail missing: {details:?}"
+        ));
+    }
+
+    // With no review at the head, the detail says that instead.
+    let reviews = serde_json::json!([review(
+        "author",
+        "COMMENTED",
+        &other,
+        "2026-10-15T01:00:01Z",
+        "SOURCE_REVIEW_READY"
+    )]);
+    let output = check_reviews(&reviews, &head)?;
+    expect_outcome(&output, false, "review only at another commit")?;
+    let details = detail_lines(&output);
+    if details
+        != [format!(
+            "::error::source review refusal detail: no trusted review on head {head} carries an attestation; 1 trusted review(s) target other commits"
+        )]
+    {
+        return Err(format!("missing-review detail wrong: {details:?}"));
+    }
+
+    // Review fields are untrusted log text: a login or timestamp carrying a line
+    // break cannot start a workflow command of its own.
+    let mut forged = review(
+        "u\r\n::warning::EVIL",
+        "COMMENTED",
+        &head,
+        "2026-10-15T01:00:01Z\n::error::PWN",
+        "x\n\nThe earlier REVIEW_READY is withdrawn.",
+    );
+    forged["id"] = serde_json::json!(7);
+    let output = check_reviews(&serde_json::json!([forged]), &head)?;
+    expect_outcome(&output, false, "forged login and timestamp")?;
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    if stderr
+        .lines()
+        .any(|line| line.starts_with("::warning::EVIL") || line.starts_with("::error::PWN"))
+        || detail_lines(&output).is_empty()
+    {
+        return Err(format!(
+            "review fields reached the log as commands: {stderr}"
+        ));
     }
     Ok(())
 }

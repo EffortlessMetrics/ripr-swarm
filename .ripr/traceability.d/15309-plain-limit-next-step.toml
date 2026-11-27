@@ -1,0 +1,10 @@
+# #15309: the next step for a Rust reach limit names no internal analyzer route, and a proc-macro abstention keeps its own next step.
+[[extend]]
+id = "RIPR-SPEC-0118"
+tests = [
+  "crates/ripr/src/output/next_step.rs::tests::proc_macro_abstention_keeps_its_own_next_step_over_the_helper_path",
+  "crates/ripr/tests/human_output_no_route_names.rs::committed_human_goldens_name_no_internal_analyzer_route",
+]
+code = [
+  "crates/ripr/src/output/next_step.rs",
+]

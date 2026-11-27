@@ -35,16 +35,19 @@ Expected:
 - scan uses `custom:MiniMax-M3-0`;
 - scan window is 7 days;
 - severity threshold is `medium`;
-- critical findings block (`security_block_on_critical: true`);
-- high findings do not block (`security_block_on_high: false`);
+- the workflow passes `security_block_on_critical: true` and
+  `security_block_on_high: false`; the pinned action does not use these inputs
+  to set the job result;
 - no secrets are printed in output;
 - `show_full_output: false` is set;
 - `upload_debug_artifacts: false` is set;
 - no raw Droid debug artifact is uploaded.
 
-Validate after triggering manually:
-- no secrets appear in workflow logs;
-- findings include severity and fix direction.
+After a manual dispatch, check that the scan step completed and that the logs
+contain no secrets. A green run confirms execution only. Full model output is
+hidden, and the read-only contents token cannot push the report branch. See
+[#14668](https://github.com/EffortlessMetrics/ripr-swarm/issues/14668) for
+work on making findings visible.
 
 ## Artifact hygiene
 

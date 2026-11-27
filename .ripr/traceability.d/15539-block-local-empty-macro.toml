@@ -1,0 +1,10 @@
+# Registers the block-local empty-macro call masking (#15539): an owner call
+# discarded by an empty catch-all macro is no boundary input, under
+# RIPR-SPEC-0001.
+[[extend]]
+id = "RIPR-SPEC-0001"
+tests = [
+  "crates/ripr/tests/empty_macro_boundary_input.rs::a_boundary_call_inside_a_test_local_empty_macro_is_no_input",
+  "crates/ripr/tests/empty_macro_boundary_input.rs::a_boundary_call_inside_a_file_level_empty_macro_is_no_input",
+  "crates/ripr/tests/empty_macro_boundary_input.rs::a_boundary_call_a_macro_keeps_still_reaches_the_change",
+]

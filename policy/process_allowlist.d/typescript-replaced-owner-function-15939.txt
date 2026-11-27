@@ -1,0 +1,1 @@
+crates/ripr/tests/typescript_replaced_owner_function.rs|Command::new|1|typescript-preview|#15939: integration test runs the worktree-built ripr binary against isolated temp TypeScript workspaces to prove a function owner replaced on its module object is not credited and call-through controls stay exposed; no shell, network, or user-repository mutation.

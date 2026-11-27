@@ -125,7 +125,8 @@ pub(crate) use explain::{
 pub use explain::{explain_finding, explain_finding_with_input};
 pub(crate) use navigation::{
     CheckDiffProvenance, CheckRepairRoute, FindingDrillIn, FindingNavigation, GapRepairRoute,
-    RepairRoute, RepairRouteRefusal, finding_navigation, finding_navigation_with_worktree,
+    RepairRoute, RepairRouteRefusal, commit_prerequisite_command, finding_navigation,
+    finding_navigation_with_worktree,
 };
 pub(crate) use progress::{
     AnalysisProgressEvent, AnalysisProgressScope, AnalysisProgressSink, AnalysisProgressStage,
@@ -268,7 +269,7 @@ pub(crate) fn git_timeout_from_env_value(
         Ok(value) => parse_git_timeout_seconds("RIPR_GIT_TIMEOUT", &value).map(Some),
         Err(std::env::VarError::NotPresent) => Ok(None),
         Err(std::env::VarError::NotUnicode(_)) => {
-            Err("RIPR_GIT_TIMEOUT must be valid UTF-8".to_string())
+            Err("RIPR_GIT_TIMEOUT must be valid UTF-8; set it to a whole number of seconds (0 disables the deadline), or unset it to use the default".to_string())
         }
     }
 }

@@ -15,6 +15,10 @@ use super::kani_report;
 use super::{non_empty_path_arg, non_empty_string_arg};
 use super::{read_optional_text_for_report, write_text_file};
 
+/// No-source refusal for `reports gap-ledger` (#14076): names a concrete
+/// source and the command that produces it.
+const GAP_LEDGER_REQUIRES_SOURCE: &str = "reports gap-ledger requires --records PATH, --repo-exposure PATH, or --check-output PATH; pass one source, for example `--check-output check.json` saved by `ripr check --format json > check.json`";
+
 /// The binary's `ripr reports` entry. `ci-packet` keeps the gate's decision
 /// exit (`3` when the gate blocked); every other route maps its error to `2`.
 pub(in crate::cli) fn reports_command(args: &[String]) -> Result<(), crate::cli::CommandError> {
@@ -109,8 +113,11 @@ fn gap_decision_ledger(args: &[String]) -> Result<(), String> {
     let records_json = read_optional_text_for_report(options.source.label(), options.source.path())
         .map_err(|error| {
             format!(
-                "{error}; generate it first (for example `ripr pilot --root {}`) or pass the correct path",
-                crate::agent::loop_commands::shell_arg(&options.root)
+                "{error}; generate it first with {} or pass the correct path",
+                gap_ledger_source_producer(
+                    &options.source,
+                    &crate::agent::loop_commands::shell_arg(&options.root)
+                )
             )
         })?;
     let input = output::gap_decision_ledger::GapDecisionLedgerInput {
@@ -197,23 +204,15 @@ fn ledger_source_path(path: &Path) -> Result<String, String> {
 /// written as `blocked`, and the command that produces a valid input (#14311).
 fn gap_ledger_source_refusal(source: &GapDecisionLedgerSource, root: &str, cause: &str) -> String {
     let root = crate::agent::loop_commands::shell_arg(root);
-    let (flag, expected, producer) = match source {
+    let (flag, expected) = match source {
         GapDecisionLedgerSource::Records(_) => (
             "--records",
             "GapRecord JSON (a records/gap_records/cases object or a record array)",
-            "`ripr reports gap-ledger --repo-exposure PATH` or `--check-output PATH` to derive records instead".to_string(),
         ),
-        GapDecisionLedgerSource::RepoExposure(_) => (
-            "--repo-exposure",
-            "repo-exposure JSON",
-            format!("`ripr pilot --root {root}` (pass the repo-exposure.json it writes)"),
-        ),
-        GapDecisionLedgerSource::CheckOutput(_) => (
-            "--check-output",
-            "`ripr check` JSON output",
-            "`ripr check --format json > check.json`".to_string(),
-        ),
+        GapDecisionLedgerSource::RepoExposure(_) => ("--repo-exposure", "repo-exposure JSON"),
+        GapDecisionLedgerSource::CheckOutput(_) => ("--check-output", "`ripr check` JSON output"),
     };
+    let producer = gap_ledger_source_producer(source, &root);
     // The parsers end their causes with a generic regenerate remedy; this
     // refusal names the concrete producer instead, so keep one remedy.
     let cause = cause
@@ -223,6 +222,21 @@ fn gap_ledger_source_refusal(source: &GapDecisionLedgerSource, root: &str, cause
         "reports gap-ledger {flag} {} could not be read as {expected}: {cause}; the ledger was written as `blocked` with no records. Pass the right file, or generate one with {producer}",
         output::path::human_path(source.path()),
     )
+}
+
+/// The command that produces a valid input for the ledger source flag the
+/// user passed. A missing `--check-output` file must not be sent to
+/// `ripr pilot`, which writes repo-exposure evidence, not check JSON (#15257).
+fn gap_ledger_source_producer(source: &GapDecisionLedgerSource, shell_root: &str) -> String {
+    match source {
+        GapDecisionLedgerSource::Records(_) => {
+            "`ripr reports gap-ledger --repo-exposure PATH` or `--check-output PATH` to derive records instead".to_string()
+        }
+        GapDecisionLedgerSource::RepoExposure(_) => {
+            format!("`ripr pilot --root {shell_root}` (pass the repo-exposure.json it writes)")
+        }
+        GapDecisionLedgerSource::CheckOutput(_) => "`ripr check --format json > check.json`".to_string(),
+    }
 }
 
 fn typescript_limitations(args: &[String]) -> Result<(), String> {
@@ -247,11 +261,24 @@ fn typescript_limitations(args: &[String]) -> Result<(), String> {
     write_text_file(&options.out_md, &rendered_md)?;
     println!("Wrote {}", output::path::human_path(&options.out));
     println!("Wrote {}", output::path::human_path(&options.out_md));
+    let reasons = output::typescript_limitations::typescript_limitation_blocked_reasons(&report);
+    if !reasons.is_empty() {
+        return Err(format!(
+            "reports ts-limitations could not use --check-output: {}; the report was written as `blocked`. Pass --check-output naming `ripr check --format json` output, e.g. `ripr check --format json > check.json`",
+            reasons.join("; ")
+        ));
+    }
     Ok(())
 }
 
 fn typescript_false_actionable(args: &[String]) -> Result<(), String> {
     let options = parse_typescript_false_actionable_options(args)?;
+    // #15249: the shared root refusal, before the corpus is read or a report
+    // is written. `--root` is the report's label; its outputs follow `--out`.
+    crate::cli::commands_context::ensure_command_root_dir(
+        Path::new(&options.root),
+        "reports ts-false-actionable",
+    )?;
     // An unreadable corpus means the command could not complete: surface the
     // read failure (exit 2 per docs/EXIT_CODES.md) instead of writing a
     // `blocked` report and exiting 0 as if the run succeeded.
@@ -277,6 +304,14 @@ fn typescript_false_actionable(args: &[String]) -> Result<(), String> {
     write_text_file(&options.out_md, &rendered_md)?;
     println!("Wrote {}", output::path::human_path(&options.out));
     println!("Wrote {}", output::path::human_path(&options.out_md));
+    let reasons =
+        output::typescript_false_actionable::typescript_false_actionable_blocked_reasons(&report);
+    if !reasons.is_empty() {
+        return Err(format!(
+            "reports ts-false-actionable could not use --corpus: {}; the report was written as `blocked`. Pass --corpus naming a TypeScript false-actionable audit corpus JSON with schema_version 0.1",
+            reasons.join("; ")
+        ));
+    }
     Ok(())
 }
 
@@ -430,10 +465,7 @@ fn parse_gap_decision_ledger_options(args: &[String]) -> Result<GapDecisionLedge
     let supplied_sources =
         records.is_some() as u8 + repo_exposure.is_some() as u8 + check_output.is_some() as u8;
     if supplied_sources == 0 {
-        return Err(
-            "reports gap-ledger requires --records PATH, --repo-exposure PATH, or --check-output PATH"
-                .to_string(),
-        );
+        return Err(GAP_LEDGER_REQUIRES_SOURCE.to_string());
     }
     if supplied_sources > 1 {
         return Err(
@@ -448,10 +480,7 @@ fn parse_gap_decision_ledger_options(args: &[String]) -> Result<GapDecisionLedge
     } else if let Some(check_output) = check_output {
         GapDecisionLedgerSource::CheckOutput(check_output)
     } else {
-        return Err(
-            "reports gap-ledger requires --records PATH, --repo-exposure PATH, or --check-output PATH"
-                .to_string(),
-        );
+        return Err(GAP_LEDGER_REQUIRES_SOURCE.to_string());
     };
 
     let source_flag = match &source {
@@ -593,7 +622,7 @@ fn parse_typescript_false_actionable_options(
     let Some(corpus) = corpus else {
         return Err(crate::cli::usage_refusal::missing_required(
             "--corpus",
-            "reports ts-false-actionable requires --corpus PATH; pass the TypeScript preview audit corpus JSON (run `ripr help reports` for the format)",
+            "reports ts-false-actionable requires --corpus PATH; pass the TypeScript preview audit corpus JSON (`ripr reports ts-false-actionable --help` documents the corpus format)",
         ));
     };
 
@@ -631,18 +660,16 @@ mod tests {
     use super::super::tests::{
         args, repo_root, unique_command_test_dir, unique_repo_relative_test_dir,
     };
+    use super::GAP_LEDGER_REQUIRES_SOURCE;
     use super::reports;
     use std::path::Path;
 
     #[test]
     fn reports_gap_ledger_requires_records_input() {
         assert_eq!(
-        super::reports(&args(&["gap-ledger"])),
-        Err(
-            "reports gap-ledger requires --records PATH, --repo-exposure PATH, or --check-output PATH"
-                .to_string()
-        )
-    );
+            super::reports(&args(&["gap-ledger"])),
+            Err(GAP_LEDGER_REQUIRES_SOURCE.to_string())
+        );
         assert_eq!(
             super::reports(&args(&["gap-ledger", "--records"])),
             Err("missing value for --records; pass a value right after it".to_string())
@@ -697,12 +724,9 @@ mod tests {
         // Negative control: the retired root-only example still returns
         // the required-source diagnostic.
         assert_eq!(
-        super::parse_gap_decision_ledger_options(&args(&["--root", "."])),
-        Err(
-            "reports gap-ledger requires --records PATH, --repo-exposure PATH, or --check-output PATH"
-                .to_string()
-        )
-    );
+            super::parse_gap_decision_ledger_options(&args(&["--root", "."])),
+            Err(GAP_LEDGER_REQUIRES_SOURCE.to_string())
+        );
         Ok(())
     }
 
@@ -790,7 +814,7 @@ mod tests {
     fn reports_ts_false_actionable_requires_corpus_input() {
         assert_eq!(
             super::reports(&args(&["ts-false-actionable"])),
-            Err("reports ts-false-actionable requires --corpus PATH; pass the TypeScript preview audit corpus JSON (run `ripr help reports` for the format)".to_string())
+            Err("reports ts-false-actionable requires --corpus PATH; pass the TypeScript preview audit corpus JSON (`ripr reports ts-false-actionable --help` documents the corpus format)".to_string())
         );
         assert_eq!(
             super::reports(&args(&["ts-false-actionable", "--corpus"])),

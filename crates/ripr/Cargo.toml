@@ -10,16 +10,20 @@ description = "Static check for Rust changes: does your test suite notice if the
 readme = "README.md"
 keywords = ["mutation-testing", "testing", "rust", "static-analysis", "lsp"]
 categories = ["development-tools", "development-tools::testing"]
-# The source distribution carries what a build of `ripr` reads, the sample
-# workspace, and the one integration target qualified to run from an extracted
-# package (`cli_help_hierarchy` and its two shared helpers). Test-only sources
-# are left out because the crate otherwise exceeds the crates.io 10 MiB upload
-# limit (#14071): out-of-line unit-test modules (`tests.rs`, `tests/`,
-# `*_tests.rs`, all declared under `#[cfg(test)]`) and the rest of `tests/`.
+# Ship production sources and the sample workspace. Development tests stay out
+# of the source archive (#15216), which keeps it under the crates.io 10 MiB
+# limit (#14071). Release qualification runs the rendered-help harness against
+# the installed executable. The publish rehearsal checks both archives for
+# test-only modules, unreferenced source files and unused source data.
 # Include patterns are gitignore-style and the last match wins, so the
 # production modules whose names end in `_tests.rs` are listed again after the
 # exclusion. A new production module with such a name must be added there, or
-# the packaged crate will not compile. See docs/RELEASE.md before changing it.
+# the packaged crate will not compile. Even so the crate is packaged and
+# published from the publish stage (`cargo xtask publish-dry-run`, which leaves
+# it at target/publish-stage), whose `src` has its inline `#[cfg(test)]`
+# modules removed (#14198); packaged straight from the checkout it is over the
+# limit. The stage writes `.ripr-publish-stage` (its commit), which identifies
+# the package as that commit. See docs/RELEASE.md before changing it.
 # The example paths are enumerated rather than globbed as `examples/**` so that
 # `examples/*/target/` test residue cannot enter the package. `ripr` runs
 # against the sample workspace during tests and writes a fact cache there; that
@@ -30,6 +34,24 @@ include = [
   "!src/**/tests.rs",
   "!src/**/tests/**",
   "!src/**/*_tests.rs",
+  "!src/analysis/language/python/bool_oracle_tests/**",
+  "!src/testing/**",
+  "!src/**/kani_proofs.rs",
+  "!src/**/*_kani.rs",
+  "!src/kani_smoke.rs",
+  "!src/app/kani_import/fixtures/**",
+  "!src/analysis/classification_properties.rs",
+  "!src/analysis/classify/activation/method_hop_rows.rs",
+  "!src/analysis/classify/activation/rebinding_scan.rs",
+  "!src/analysis/classify/stop_reason_contract.rs",
+  "!src/analysis/language/python/may_reach.rs",
+  "!src/analysis/source_role_corpus.rs",
+  "!src/analysis/test_grip_evidence/value_contradiction/fold_plan.rs",
+  "!src/analysis/verification_plan/resources.rs",
+  "!src/analysis/witness/language_projection_fixtures.rs",
+  "!src/analysis/witness/parity.rs",
+  "!src/lsp/saved_edit_measurement.rs",
+  "!src/lsp/saved_edit_sequence.rs",
   "src/analysis/classify/related_tests.rs",
   "src/analysis/facts/macro_generated_tests.rs",
   "src/analysis/facts/parameterized_tests.rs",
@@ -39,9 +61,6 @@ include = [
   "src/analysis/language/typescript/related_tests.rs",
   "src/analysis/test_grip_evidence/related_tests.rs",
   "vendor/**",
-  "tests/cli_help_hierarchy.rs",
-  "tests/common/help_contract.rs",
-  "tests/common/help_workspace.rs",
   "examples/*/example.diff",
   "examples/*/src/**",
   "examples/*/tests/**",
@@ -49,6 +68,7 @@ include = [
   "examples/*.rs",
   "examples/support/*.rs",
   "/README.md",
+  "/.ripr-publish-stage",
   "LICENSE-*",
   "Cargo.toml",
   "build.rs"
@@ -102,6 +122,7 @@ oxc_ast = { version = "0.130", optional = true }
 oxc_ast_visit = { version = "=0.130.0", optional = true }
 oxc_parser = { version = "0.130", optional = true }
 oxc_span = { version = "0.130", optional = true }
+oxc_syntax = { version = "0.130", optional = true }
 ra_ap_syntax = { version = "0.0.349", optional = true }
 rayon = "1"
 rmcp = { version = "=3.9.0", default-features = false, features = ["server", "transport-async-rw"] }
@@ -192,7 +213,7 @@ win32job = "2.0.3"
 [features]
 default = ["lang-rust", "lang-typescript", "lang-python"]
 lang-rust = ["dep:ra_ap_syntax", "dep:unicode-properties", "ripr-contract/lang-rust"]
-lang-typescript = ["dep:oxc_allocator", "dep:oxc_ast", "dep:oxc_ast_visit", "dep:oxc_parser", "dep:oxc_span", "ripr-contract/lang-typescript"]
+lang-typescript = ["dep:oxc_allocator", "dep:oxc_ast", "dep:oxc_ast_visit", "dep:oxc_parser", "dep:oxc_span", "dep:oxc_syntax", "ripr-contract/lang-typescript"]
 lang-python = ["dep:rustpython-parser", "ripr-contract/lang-python"]
 lang-perl = ["ripr-contract/lang-perl"]
 

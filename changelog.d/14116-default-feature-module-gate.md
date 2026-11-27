@@ -1,0 +1,2 @@
+<!-- section: Fixed -->
+- A test inside a module mounted by `#[cfg(feature = "x")] mod name;` is now read like any other test when `x` is on in its package's default features, so its exact assertions count again. Before, every such test was "not credited" with "gated by a `cfg` ripr cannot evaluate", even though a plain `cargo test` compiles it; on ripr's own repository this covered every test under the default-on `lang-python` module. A feature that is off by default, a negation, a gate with another unresolved condition, and `cfg_attr` keep the old reading (#14116).

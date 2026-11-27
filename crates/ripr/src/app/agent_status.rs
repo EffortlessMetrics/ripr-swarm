@@ -35,6 +35,7 @@ use serde_json::Value;
 use std::path::Path;
 use std::time::{SystemTime, UNIX_EPOCH};
 
+pub(crate) mod complete_summary;
 pub(crate) mod test_run;
 
 pub(crate) const AGENT_STATUS_SCHEMA_VERSION: &str = "0.1";
@@ -148,7 +149,7 @@ const AFTER_TEST_EDIT_STEPS: &[&str] = &[
 ];
 
 /// Human note printed with a next command that belongs after the test edit.
-pub(crate) const AFTER_TEST_EDIT_NOTE: &str = "Run this after the focused test edit, not before: it needs a snapshot taken after the edit. Inside a repair transaction, the `--attempt ... --phase after` command runs this step instead.";
+pub(crate) const AFTER_TEST_EDIT_NOTE: &str = "Run this after the focused test edit, not before: it needs a snapshot taken after the edit. Inside a repair transaction, the after-phase command the before phase prints runs this step instead.";
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct AgentStatusReport {
@@ -256,7 +257,7 @@ pub(crate) enum AgentStatusAttemptReceipt {
     /// receipt owner. `path` is the exact artifact that was read.
     Issued {
         path: String,
-        reading: AgentReceiptReading,
+        reading: Box<AgentReceiptReading>,
     },
 }
 
@@ -336,18 +337,32 @@ impl AgentStatusCommand {
 }
 
 impl AgentStatusReport {
-    /// The first issued receipt that records no test run. A cold agent reads
-    /// `status: complete` plus movement `improved` as a pass, even when the
-    /// focused test fails; this names the missing test run explicitly.
-    pub(crate) fn unrun_test_receipt(&self) -> Option<&AgentReceiptReading> {
-        self.repair_attempts
+    /// Every issued receipt that records no ripr-run test, paired with its
+    /// attempt id, most telling first (#14146): a caller-reported failure,
+    /// then `none recorded`, then a caller-reported pass, attempt order within
+    /// each. A cold agent reads `status: complete` plus movement `improved` as
+    /// a pass, even when the focused test fails; this names the test-run axis
+    /// explicitly, and one attempt's `none recorded` never hides another
+    /// attempt's reported failure.
+    pub(crate) fn unrun_test_receipts(&self) -> Vec<(&str, &AgentReceiptReading)> {
+        let mut readings = self
+            .repair_attempts
             .iter()
-            .find_map(|attempt| match &attempt.receipt {
+            .filter_map(|attempt| match &attempt.receipt {
                 AgentStatusAttemptReceipt::Issued { reading, .. } if reading.test_not_run() => {
-                    Some(reading)
+                    Some((attempt.attempt_id.as_str(), &**reading))
                 }
                 _ => None,
             })
+            .collect::<Vec<_>>();
+        readings.sort_by_key(|(_, reading)| test_run::aggregate_rank(reading));
+        readings
+    }
+
+    /// The one test-run reading the aggregate JSON `test_run` object reports:
+    /// the most telling of [`Self::unrun_test_receipts`].
+    pub(crate) fn unrun_test_receipt(&self) -> Option<(&str, &AgentReceiptReading)> {
+        self.unrun_test_receipts().into_iter().next()
     }
 
     /// #10984: a current gap-bound attempt that finished with its own retained
@@ -597,7 +612,7 @@ fn attempt_receipt(
     match load_attempt_terminal_receipt(root, manifest) {
         AttemptTerminalReceipt::Issued { path, value } => AgentStatusAttemptReceipt::Issued {
             path,
-            reading: test_run::issued_reading(manifest, &value),
+            reading: Box::new(test_run::issued_reading(manifest, &value)),
         },
         AttemptTerminalReceipt::Unavailable { path, reason } => {
             AgentStatusAttemptReceipt::Unavailable { path, reason }
@@ -693,7 +708,7 @@ fn legacy_workflow_attempt_receipt(
     }
     AgentStatusAttemptReceipt::Issued {
         path: WORKFLOW_AGENT_RECEIPT_ARTIFACT.to_string(),
-        reading: AgentReceiptReading::from_value(receipt),
+        reading: Box::new(AgentReceiptReading::from_value(receipt)),
     }
 }
 
@@ -1426,6 +1441,7 @@ fn select_next_command(
                     attempt.attempt_id, attempt.seam_id
                 ),
             };
+            let reason = with_focused_result_requirement(reason, attempt.command.as_deref());
             return Some(AgentStatusCommand {
                 step: "repair_attempt_after".to_string(),
                 artifact: attempt.manifest.clone(),
@@ -1701,9 +1717,16 @@ fn pilot_python_repair_card_ready(root: &Path) -> Option<PilotPythonCard> {
             .filter(|value| !value.trim().is_empty())
             .map(str::to_string)
     };
+    // #15302: a nested project's command is relative to its `verify_cwd`.
+    let verify_cwd = text_at("/verify_cwd");
     Some(PilotPythonCard {
         missing_discriminator: text_at("/missing_discriminator"),
-        verify_command: text_at("/verify_command"),
+        verify_command: text_at("/verify_command").map(|command| {
+            crate::output::python_repair_card::rooted_verify_display(
+                verify_cwd.as_deref(),
+                &command,
+            )
+        }),
     })
 }
 
@@ -2684,7 +2707,7 @@ pub(crate) fn render_agent_status_json(report: &AgentStatusReport) -> Result<Str
         "repair_attempts": report.repair_attempts.iter().map(agent_status_repair_attempt_json).collect::<Vec<_>>(),
         "missing_commands": report.missing_commands.iter().map(agent_status_command_json).collect::<Vec<_>>(),
         "next_command": next_command,
-        "test_run": report.unrun_test_receipt().map(test_run::test_run_json),
+        "test_run": report.unrun_test_receipt().map(|(attempt_id, reading)| test_run::aggregate_test_run_json(attempt_id, reading)),
         "warnings": report.warnings.iter().map(agent_status_warning_json).collect::<Vec<_>>()
     });
     serde_json::to_string_pretty(&value)
@@ -2710,8 +2733,19 @@ pub(crate) fn render_agent_status_markdown(report: &AgentStatusReport) -> String
         None if nothing_started => rendered.push_str("No repair in progress.\n"),
         None => rendered.push_str("Seam: unknown\n"),
     }
-    if let Some(reading) = report.unrun_test_receipt() {
-        rendered.push_str(&format!("{}\n", test_run::test_run_line(reading)));
+    let test_runs = report.unrun_test_receipts();
+    match test_runs.as_slice() {
+        [(_, reading)] => rendered.push_str(&format!("{}\n", test_run::test_run_line(reading))),
+        // #14146: several finished attempts each speak for themselves, so a
+        // reported failure on one is never hidden behind another's reading.
+        several => {
+            for (attempt_id, reading) in several {
+                rendered.push_str(&format!(
+                    "{}\n",
+                    test_run::attempt_test_run_line(attempt_id, reading)
+                ));
+            }
+        }
     }
 
     if !nothing_started {
@@ -2868,7 +2902,7 @@ fn attempt_receipt_json(receipt: &AgentStatusAttemptReceipt) -> Value {
             Some(reason.as_str()),
         ),
         AgentStatusAttemptReceipt::Issued { path, reading } => {
-            (path.as_str(), Some(reading), None, false, None)
+            (path.as_str(), Some(&**reading), None, false, None)
         }
     };
     serde_json::json!({
@@ -3207,7 +3241,7 @@ pub(crate) fn build_agent_attempt_status(
     );
     let test_run = match &view.receipt {
         AgentStatusAttemptReceipt::Issued { reading, .. } if reading.test_not_run() => {
-            Some(reading.clone())
+            Some((**reading).clone())
         }
         _ => None,
     };
@@ -3669,8 +3703,25 @@ fn after_attempt_command(
     AgentStatusCommand {
         step: "repair_attempt_after".to_string(),
         artifact: manifest_label.to_string(),
-        reason,
+        reason: with_focused_result_requirement(reason, view.command.as_deref()),
         command: view.command.clone().unwrap_or_default(),
+    }
+}
+
+/// #16164: an attempt that follows a new-test proposal committed an after
+/// command naming `--test-result FILE` when it began; the after-phase reason
+/// then says how to produce FILE, in the finish gate's own words. Any other
+/// attempt's reason is returned unchanged.
+fn with_focused_result_requirement(reason: String, command: Option<&str>) -> String {
+    if command.is_some_and(|command| {
+        command.ends_with(crate::app::focused_run::PROPOSAL_FOCUSED_RESULT_FLAG)
+    }) {
+        format!(
+            "{reason}. {}",
+            crate::app::focused_run::proposal_focused_result_requirement("This attempt", None)
+        )
+    } else {
+        reason
     }
 }
 
@@ -3844,6 +3895,34 @@ pub(crate) fn render_agent_attempt_status_json(
         .map_err(|err| format!("failed to render agent attempt status JSON: {err}; this is a ripr bug, report it with the command you ran"))
 }
 
+/// The re-check an unreadable attempt's status points at (#15903): the
+/// selected root only, because nothing the attempt recorded is trusted.
+fn unreadable_attempt_recheck_command(root_display: &str) -> String {
+    format!("ripr check --root {}", shell_arg(root_display))
+}
+
+/// The one-line receipt reading shared by the status page and the
+/// already-complete `continue` summary (#15282).
+fn receipt_summary(receipt: &AgentStatusAttemptReceipt) -> String {
+    match receipt {
+        AgentStatusAttemptReceipt::Issued { path, reading } => format!(
+            "issued (`{}`, status `{}`, movement `{}`)",
+            path,
+            reading.status.as_deref().unwrap_or("unknown"),
+            reading.movement.as_deref().unwrap_or("unknown")
+        ),
+        AgentStatusAttemptReceipt::NotApplicable => "not applicable".to_string(),
+        AgentStatusAttemptReceipt::NotIssued => "not issued".to_string(),
+        AgentStatusAttemptReceipt::Superseded { by_attempt_id } => {
+            format!("superseded by `{by_attempt_id}`")
+        }
+        AgentStatusAttemptReceipt::Unreadable => "unreadable".to_string(),
+        AgentStatusAttemptReceipt::Unavailable { reason, .. } => {
+            format!("unavailable: {reason}")
+        }
+    }
+}
+
 pub(crate) fn render_agent_attempt_status_markdown(report: &AgentAttemptStatusReport) -> String {
     let attempt = &report.attempt;
     let mut rendered = String::new();
@@ -3878,24 +3957,7 @@ pub(crate) fn render_agent_attempt_status_markdown(report: &AgentAttemptStatusRe
         ));
     }
     if let Some(receipt) = &attempt.receipt {
-        let summary = match receipt {
-            AgentStatusAttemptReceipt::Issued { path, reading } => format!(
-                "issued (`{}`, status `{}`, movement `{}`)",
-                path,
-                reading.status.as_deref().unwrap_or("unknown"),
-                reading.movement.as_deref().unwrap_or("unknown")
-            ),
-            AgentStatusAttemptReceipt::NotApplicable => "not applicable".to_string(),
-            AgentStatusAttemptReceipt::NotIssued => "not issued".to_string(),
-            AgentStatusAttemptReceipt::Superseded { by_attempt_id } => {
-                format!("superseded by `{by_attempt_id}`")
-            }
-            AgentStatusAttemptReceipt::Unreadable => "unreadable".to_string(),
-            AgentStatusAttemptReceipt::Unavailable { reason, .. } => {
-                format!("unavailable: {reason}")
-            }
-        };
-        rendered.push_str(&format!("Receipt: {summary}\n"));
+        rendered.push_str(&format!("Receipt: {}\n", receipt_summary(receipt)));
     }
 
     if let Some(next) = &report.next_action {
@@ -3923,6 +3985,16 @@ pub(crate) fn render_agent_attempt_status_markdown(report: &AgentAttemptStatusRe
         }
     } else {
         rendered.push_str("\nStatus names no next action; the claim boundary below says why.\n");
+        // #15903: an attempt status cannot validate (a missing before
+        // snapshot, a broken manifest) has no gap status may trust, so no
+        // restart is named. `ripr check` trusts nothing from the attempt and
+        // reads the tree as it is now, so it is the one honest way forward.
+        if report.attempt.unreadable_reason.is_some() {
+            rendered.push_str(&format!(
+                "\nThis attempt cannot be finished and cannot produce a receipt. To read the current state without it, run `{}`. If the gap is still open and the check can offer a repair, it prints a new start; set any test edit aside before you run that start, then reapply the edit. If it prints no start, it says why. If the gap already reads as noticed, the test is in place and only the receipt is missing.\n",
+                unreadable_attempt_recheck_command(&report.root)
+            ));
+        }
     }
 
     if let Some(reading) = &report.test_run {
@@ -4880,6 +4952,16 @@ mod tests {
                 .map_err(|err| format!("parse attempt status JSON: {err}"))?;
             if value["attempt"]["status_class"] != "corrupt_or_unavailable" {
                 return Err(format!("JSON dropped the corrupt class: {value}"));
+            }
+            // #15903: the human status still invents no restart, but it no
+            // longer ends in a dead end: it names the one command that reads
+            // the current state without trusting the unreadable attempt.
+            let human = render_agent_attempt_status_markdown(&report);
+            let recheck = format!("ripr check --root {}", shell_arg(&report.root));
+            if !human.contains(&recheck) || !human.contains("cannot produce a receipt") {
+                return Err(format!(
+                    "unreadable attempt status named no way forward:\n{human}"
+                ));
             }
             Ok(())
         })();
@@ -6962,9 +7044,9 @@ mod tests {
             "{cleaned}"
         );
 
-        // Receipt recommended action: the generic `--phase after` mention
+        // Receipt recommended action: the generic after-phase command mention
         // belongs to the new attempt and goes with it.
-        let receipt = "This receipt is not review evidence; rerun agent verify and agent receipt; in the repair loop, start a new attempt with `ripr agent repair --seam-id <seam-id> --phase before` and run the `--phase after` command it prints.";
+        let receipt = "This receipt is not review evidence; rerun agent verify and agent receipt; in the repair loop, start a new attempt with `ripr agent repair --seam-id <seam-id> --phase before` and run the after-phase command it prints.";
         let cleaned = without_start_recipe(receipt);
         assert!(
             !cleaned.contains("--phase before")
@@ -7922,6 +8004,29 @@ mod tests {
             "{rendered}"
         );
 
+        // #15302: a nested project's card names its directory.
+        #[cfg(not(windows))]
+        {
+            let nested = r#"{"status": "ready", "repair_cards_total": 1, "top_repair_card": {"missing_discriminator": "qty >= 5", "verify_command": "python -m pytest tests/test_price.py::test_discount", "verify_cwd": "py"}}"#;
+            write_file(
+                &root.join(PILOT_SUMMARY_ARTIFACT),
+                &summary("complete", "[]", nested, "null"),
+            )?;
+            let report = build_agent_status_report(&root, Path::new("."));
+            let warning = report
+                .warnings
+                .iter()
+                .find(|warning| warning.kind == "pilot_python_repair_card_no_agent_repair")
+                .ok_or_else(|| format!("expected a nested card warning: {:?}", report.warnings))?;
+            assert!(
+                warning.message.contains(
+                    "(`(cd -- py && python -m pytest tests/test_price.py::test_discount)`)"
+                ),
+                "{}",
+                warning.message
+            );
+        }
+
         // Controls: a ranked seam, a recorded repair start, an incomplete run,
         // or a ready status without cards keeps status on `select_seam`.
         for control in [
@@ -8222,7 +8327,7 @@ mod tests {
             attempt.command = None;
             attempt.receipt = AgentStatusAttemptReceipt::Issued {
                 path: "receipt.json".to_string(),
-                reading: improved(),
+                reading: Box::new(improved()),
             };
             attempt
         };
@@ -8270,17 +8375,17 @@ mod tests {
         let mut not_advisory = finished();
         not_advisory.receipt = AgentStatusAttemptReceipt::Issued {
             path: "receipt.json".to_string(),
-            reading: AgentReceiptReading {
+            reading: Box::new(AgentReceiptReading {
                 status: Some("invalid".to_string()),
                 ..improved()
-            },
+            }),
         };
         assert_eq!(report(not_advisory).status(), "incomplete");
 
         let mut open_gap = finished();
         open_gap.receipt = AgentStatusAttemptReceipt::Issued {
             path: "receipt.json".to_string(),
-            reading: open_gap_reading(),
+            reading: Box::new(open_gap_reading()),
         };
         assert_eq!(report(open_gap).status(), "incomplete");
     }
@@ -8339,7 +8444,7 @@ mod tests {
                 manifest_state: RepairAttemptState::ReadyToFinish,
                 receipt: || AgentStatusAttemptReceipt::Issued {
                     path: "receipt.json".to_string(),
-                    reading: open_gap_reading(),
+                    reading: Box::new(open_gap_reading()),
                 },
                 dto_class: crate::domain::NextActionClass::RetryCurrentSubject,
                 step: Some("repair_attempt_before"),
@@ -8370,7 +8475,7 @@ mod tests {
                 manifest_state: RepairAttemptState::ReadyToFinish,
                 receipt: || AgentStatusAttemptReceipt::Issued {
                     path: "receipt.json".to_string(),
-                    reading: open_gap_reading(),
+                    reading: Box::new(open_gap_reading()),
                 },
                 dto_class: crate::domain::NextActionClass::InspectDetails,
                 step: None,
@@ -8380,7 +8485,7 @@ mod tests {
                 manifest_state: RepairAttemptState::ReadyToFinish,
                 receipt: || AgentStatusAttemptReceipt::Issued {
                     path: "receipt.json".to_string(),
-                    reading: open_gap_reading(),
+                    reading: Box::new(open_gap_reading()),
                 },
                 dto_class: crate::domain::NextActionClass::TerminalNoAction,
                 step: None,
@@ -8390,7 +8495,7 @@ mod tests {
                 manifest_state: RepairAttemptState::ReadyToFinish,
                 receipt: || AgentStatusAttemptReceipt::Issued {
                     path: "receipt.json".to_string(),
-                    reading: open_gap_reading(),
+                    reading: Box::new(open_gap_reading()),
                 },
                 dto_class: crate::domain::NextActionClass::TerminalNoAction,
                 step: None,
@@ -8647,7 +8752,7 @@ mod tests {
                     path:
                         "target/ripr/repair-attempts/repair-attempt-01/artifacts/agent-receipt.json"
                             .to_string(),
-                    reading: open_gap_reading(),
+                    reading: Box::new(open_gap_reading()),
                 }),
             },
             Row {
@@ -8751,6 +8856,113 @@ mod tests {
                     "{label}: human lost the empty next action:\n{human}"
                 ));
             }
+            // #15903 control: the re-check sentence belongs to an attempt
+            // status could not read, never to a readable one.
+            if human.contains("cannot produce a receipt") {
+                return Err(format!(
+                    "{label}: a readable attempt got the unreadable-attempt recovery:\n{human}"
+                ));
+            }
+        }
+        Ok(())
+    }
+
+    /// #14146: with several finished attempts, the aggregate test-run reading
+    /// names the attempt it speaks for, and one attempt's `none recorded`
+    /// never hides another attempt's caller-reported failure.
+    #[test]
+    fn aggregate_test_run_names_each_attempt_and_never_hides_a_reported_failure()
+    -> Result<(), String> {
+        use crate::output::agent_receipt::ReportedTestRun;
+        let issued = |id: &str, run: Option<ReportedTestRun>| {
+            let mut reading = AgentReceiptReading::from_value(&serde_json::json!({
+                "verification": {"status": "verification_not_run"},
+                "test_changed": "tests/p.rs"
+            }));
+            reading.reported_test_run = run;
+            let mut attempt = synthetic_attempt(id, &format!("seam-{id}"), "finished", None);
+            attempt.receipt = AgentStatusAttemptReceipt::Issued {
+                path: format!("{id}/receipt.json"),
+                reading: Box::new(reading),
+            };
+            attempt
+        };
+        let report_of = |repair_attempts: Vec<AgentStatusRepairAttempt>| AgentStatusReport {
+            root: ".".to_string(),
+            seam: None,
+            artifacts: Vec::new(),
+            repair_attempts,
+            missing_commands: Vec::new(),
+            next_command: None,
+            warnings: Vec::new(),
+        };
+        let failing = ReportedTestRun {
+            file: "tests/p.rs".to_string(),
+            ran: 1,
+            passed: 0,
+            failed: 1,
+            edited_test: None,
+        };
+
+        // A (earlier, no run recorded) and B (reported failure): the reading
+        // first in attempt order is A's, which the old aggregate printed alone.
+        let report = report_of(vec![issued("a", None), issued("b", Some(failing.clone()))]);
+        let markdown = render_agent_status_markdown(&report);
+        if !markdown.contains("Test run (attempt `a`): none recorded. ") {
+            return Err(format!("A's reading must name its attempt:\n{markdown}"));
+        }
+        if !markdown.contains(
+            "Test run (attempt `b`): reported by the caller, not run by ripr: 1 test(s) ran in `tests/p.rs` (0 passed, 1 failed). The reported run has a failing test",
+        ) {
+            return Err(format!("B's reported failure must be shown:\n{markdown}"));
+        }
+        if markdown.find("attempt `b`") > markdown.find("attempt `a`") {
+            return Err(format!("the reported failure must come first:\n{markdown}"));
+        }
+        let json: Value = serde_json::from_str(&render_agent_status_json(&report)?)
+            .map_err(|error| format!("parse status JSON: {error}"))?;
+        if json["test_run"]["attempt_id"] != "b"
+            || json["test_run"]["status"] != "caller_reported"
+            || json["test_run"]["failed"] != 1
+        {
+            return Err(format!(
+                "JSON must report B's failure: {}",
+                json["test_run"]
+            ));
+        }
+
+        // One finished attempt keeps the unlabeled line; JSON names it.
+        let report = report_of(vec![issued("a", None)]);
+        let markdown = render_agent_status_markdown(&report);
+        if !markdown.contains("\nTest run: none recorded. ")
+            || markdown.contains("Test run (attempt")
+        {
+            return Err(format!("one attempt keeps the plain line:\n{markdown}"));
+        }
+        let json: Value = serde_json::from_str(&render_agent_status_json(&report)?)
+            .map_err(|error| format!("parse status JSON: {error}"))?;
+        if json["test_run"]["attempt_id"] != "a" || json["test_run"]["status"] != "not_recorded" {
+            return Err(format!(
+                "JSON must name the one attempt: {}",
+                json["test_run"]
+            ));
+        }
+
+        // A reported pass ranks behind a missing run on another attempt.
+        let passing = ReportedTestRun {
+            passed: 1,
+            failed: 0,
+            edited_test: None,
+            ..failing
+        };
+        let report = report_of(vec![issued("a", Some(passing)), issued("b", None)]);
+        let json: Value = serde_json::from_str(&render_agent_status_json(&report)?)
+            .map_err(|error| format!("parse status JSON: {error}"))?;
+        if json["test_run"]["attempt_id"] != "b" || json["test_run"]["status"] != "not_recorded" {
+            return Err(format!(
+                "a missing run outranks a reported pass: {}",
+                json["test_run"]
+            ));
         }
         Ok(())
     }

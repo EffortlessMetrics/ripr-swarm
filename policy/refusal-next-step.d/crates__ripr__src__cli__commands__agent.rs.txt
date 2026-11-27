@@ -1,0 +1,4 @@
+crates/ripr/src/cli/commands/agent.rs|create {} failed: {error}
+crates/ripr/src/cli/commands/agent.rs|focused test result is not UTF-8: {error}
+crates/ripr/src/cli/commands/agent.rs|read the selected test file `{file}` failed: {error}
+crates/ripr/src/cli/commands/agent.rs|the attempt retains no inline test module for its selected target

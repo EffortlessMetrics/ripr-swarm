@@ -114,8 +114,10 @@ struct LabelFile {
     mutants: Vec<Label>,
 }
 
-/// One viable mutant's location and outcome: the facts the judge reads from
-/// cargo-mutants' `mutants.json` and `outcomes.json`.
+/// One mutant's location and outcome: the facts the judge reads from
+/// cargo-mutants' `mutants.json` and `outcomes.json`. A `timeout` label
+/// keeps its location so the shared judge can leave a timeout-only line
+/// unscored; it is never a viable caught or missed label.
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
 struct Label {
@@ -402,9 +404,9 @@ fn validate_labels(repo: &RepoEntry, labels: &LabelFile) -> Result<(), String> {
     }
     let mut names = BTreeSet::new();
     for mutant in &labels.mutants {
-        if !matches!(mutant.outcome.as_str(), "caught" | "missed") {
+        if !matches!(mutant.outcome.as_str(), "caught" | "missed" | "timeout") {
             return Err(format!(
-                "mutant `{}` has outcome `{}`; only caught and missed are labels",
+                "mutant `{}` has outcome `{}`; only caught, missed and timeout are labels",
                 mutant.name, mutant.outcome
             ));
         }
@@ -741,9 +743,11 @@ fn labels_from_mutants_out(
         let outcome = match summary {
             "CaughtMutant" => "caught",
             "MissedMutant" => "missed",
+            // Keep the location as a non-viable label so the shared judge
+            // can apply its timeout gate in the ranking path as well.
             "Timeout" => {
                 *unlabeled.entry("timeout".to_string()).or_default() += 1;
-                continue;
+                "timeout"
             }
             "Unviable" => {
                 *unlabeled.entry("unviable".to_string()).or_default() += 1;
@@ -847,7 +851,11 @@ fn judge_inputs(labels: &LabelFile) -> (Value, Value) {
         .map(|label| {
             json!({
                 "scenario": {"Mutant": {"name": label.name}},
-                "summary": if label.outcome == "missed" { "MissedMutant" } else { "CaughtMutant" },
+                "summary": match label.outcome.as_str() {
+                    "missed" => "MissedMutant",
+                    "timeout" => "Timeout",
+                    _ => "CaughtMutant",
+                },
             })
         })
         .collect::<Vec<_>>();

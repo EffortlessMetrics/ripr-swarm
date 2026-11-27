@@ -1,0 +1,2 @@
+<!-- section: Fixed -->
+- Python collection config: a pytest `norecursedirs` entry that is a plain relative path (`tests/mypy_test_cases`, as marshmallow writes it) is now evaluated, so tests outside that directory keep their credit instead of every Python finding reading `static_unknown`. A slash-bearing entry with a glob character, a backslash, an empty, `.` or `..` segment, a leading `/`, or a trailing `/` after a multi-segment path still marks the configuration unevaluated (#15293).

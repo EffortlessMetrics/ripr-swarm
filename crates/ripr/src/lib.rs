@@ -146,6 +146,7 @@ pub mod output;
 /// Exact-snapshot, read-only provider DTOs for external proof orchestrators.
 pub mod provider_contract;
 mod terminal_text;
+mod work_tree_route;
 mod workspace_status;
 
 pub use analysis::DiffScopeFilter;

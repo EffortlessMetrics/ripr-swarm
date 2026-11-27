@@ -331,3 +331,59 @@ fn equal_text_that_changed_meaning_keeps_its_finding() -> Result<(), String> {
         Err(failures.join("\n"))
     }
 }
+
+/// #15232: a block comment inside the line added, removed or reworded is
+/// not code either. A comment that held two tokens apart, a documentation
+/// block comment and a code edit beside a kept comment keep their finding.
+#[test]
+fn inline_block_comment_edits_report_nothing_and_code_edits_beside_them_still_do()
+-> Result<(), String> {
+    let plain = "    if total > 100 {";
+    let commented = "    if total > 100 /* threshold */ {";
+    let reworded = "    if total > 100 /* the threshold for big orders */ {";
+    let mut failures = Vec::new();
+    for (label, removed, added) in [
+        ("block comment added", plain, commented),
+        ("block comment removed", commented, plain),
+        ("block comment reworded", commented, reworded),
+        (
+            "block comment beside punctuation removed",
+            "    if total > 100 /* threshold */{",
+            "    if total > 100{",
+        ),
+        (
+            "line comment turned block comment",
+            "    if total > 100 { // threshold",
+            "    if total > 100 /* threshold */ {",
+        ),
+    ] {
+        let observed = check(
+            &source_with(added, "\n", true),
+            &line_two_hunk(removed, added),
+        )?;
+        failures.extend(expect_no_findings(label, &observed, &[]));
+    }
+    for (label, removed, added) in [
+        (
+            "code beside a kept block comment",
+            commented,
+            "    if total >= 100 /* threshold */ {",
+        ),
+        (
+            "code and block comment",
+            plain,
+            "    if total >= 100 /* threshold */ {",
+        ),
+    ] {
+        let observed = check(
+            &source_with(added, "\n", true),
+            &line_two_hunk(removed, added),
+        )?;
+        failures.extend(expect_line_two_only(label, &observed));
+    }
+    if failures.is_empty() {
+        Ok(())
+    } else {
+        Err(failures.join("\n"))
+    }
+}

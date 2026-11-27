@@ -1,0 +1,1 @@
+crates/ripr/tests/repair_inline_anchor_label.rs|Command::new|2|cli-tests|#15323: runs git (fixture setup with a local identity, gpg signing off and an empty template dir) and the built ripr binary (check, then repair) against a unique temp repository removed on drop. No shell, network, or user-repository mutation.
