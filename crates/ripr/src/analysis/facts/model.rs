@@ -621,6 +621,12 @@ pub struct UnresolvedPropertyMacroFact {
     pub name: String,
     pub line: usize,
     pub mentioned_identifiers: Vec<String>,
+    /// Mentions whose every occurrence declares the property function or one
+    /// of its parameters (#10864). They name no callee, so they never bind a
+    /// failed provider verification to a same-named owner. The lexical
+    /// fallback leaves this empty, which keeps its withholding conservative.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub binding_only_identifiers: Vec<String>,
 }
 
 /// Text that shares its file's `source` allocation instead of copying it
