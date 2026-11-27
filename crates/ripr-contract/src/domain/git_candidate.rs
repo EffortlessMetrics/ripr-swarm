@@ -240,9 +240,11 @@ pub enum GitCandidateSubjectError {
     /// The object producer (#3277) resolved the subject's identity but a
     /// Git plumbing or materialization step failed. The detail names the
     /// exact step and identity; execution never falls back to worktree
-    /// analysis or an empty result.
+    /// analysis or an empty result. Repository mode also uses it to refuse a
+    /// subject, which it cannot execute, before any Git step runs.
     ExecutionFailed {
-        /// The failed step and the underlying error.
+        /// The failed step and the underlying error, or the refusal text when
+        /// repository mode rejects the subject.
         detail: String,
     },
     /// A Git plumbing step exceeded its deadline and was terminated

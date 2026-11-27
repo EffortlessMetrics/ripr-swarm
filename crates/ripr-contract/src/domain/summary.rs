@@ -3,6 +3,8 @@ use crate::domain::ExposureClass;
 /// Changed-file count for one language: the count an adapter that returned a
 /// result reported, or the path-routed count for a changed language whose
 /// adapter produced none (not enabled, not compiled in, or errored; #10719).
+/// In repository mode the count is the adapter's production-file total
+/// instead, so it is nonzero even on a clean checkout.
 ///
 /// `language` is the stable wire string from `LanguageId::as_str`
 /// (`"rust"`, `"typescript"`, `"javascript"`, `"python"`, `"perl"`).
@@ -10,15 +12,19 @@ use crate::domain::ExposureClass;
 pub struct LanguageFileCount {
     /// Stable language wire string, such as `"rust"`.
     pub language: String,
-    /// Changed files counted for this language.
+    /// Files counted for this language: changed files in diff mode,
+    /// production files in repository mode.
     pub files: usize,
 }
 
-/// Run-level counts for one analysis result: changed files, findings, and
-/// findings per exposure class.
+/// Run-level counts for one analysis result: files counted, findings, and
+/// findings per exposure class. In diff mode the file counts are changed
+/// files; in repository mode they are the production files the adapters
+/// analyzed.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Summary {
-    /// Changed files attributed to the Rust adapter only (#2103). Preview
+    /// Files attributed to the Rust adapter only (#2103): changed files in
+    /// diff mode, production files in repository mode. Preview
     /// language adapters report their own counts in
     /// `changed_files_by_language`; they must never inflate this field.
     pub changed_rust_files: usize,
