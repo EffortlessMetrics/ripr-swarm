@@ -825,3 +825,14 @@ Command:
 
 Updated:
 - `expected/human.txt`
+
+## Pending — error_variant_boxed_wrapper_downcast_witness (61)
+
+Reason:
+RIPR-SPEC-0108: compose PR #16016 history-sync with protected swarm main (baaaa92024)
+
+Command:
+`cargo xtask goldens bless error_variant_boxed_wrapper_downcast_witness --reason "..."`
+
+Updated:
+- `expected/human.txt`

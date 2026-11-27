@@ -59,3 +59,14 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — boundary_gap_equality_closed (6)
+
+Reason:
+RIPR-SPEC-0108: compose PR #16016 history-sync with protected swarm main (baaaa92024)
+
+Command:
+`cargo xtask goldens bless boundary_gap_equality_closed --reason "..."`
+
+Updated:
+- `expected/human.txt`

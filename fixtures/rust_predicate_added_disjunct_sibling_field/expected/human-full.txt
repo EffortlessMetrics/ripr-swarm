@@ -53,7 +53,7 @@ Weakness
   - No strong discriminator was detected
 
 Next step
-  Strengthen the related assertion so it discriminates the changed behavior
+  The related test `reads_verbose_only_from_the_old_flag` already asserts an exact value; the gap is not the assertion shape. Check whether the value that test asserts includes the changed field. If it does, the assertion may already notice this change, which ripr could not confirm from the source. If it does not, assert that field's exact value
 Drill in:
   (finding id, for explain/context)
   ripr explain --root <cwd>/fixtures/rust_predicate_added_disjunct_sibling_field/input --diff <cwd>/fixtures/rust_predicate_added_disjunct_sibling_field/diff.patch --mode fast probe:src_lib.rs:field_construction:9e9fd805

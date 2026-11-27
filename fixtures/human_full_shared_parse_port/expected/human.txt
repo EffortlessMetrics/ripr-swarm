@@ -51,7 +51,7 @@ Hidden:
     - ./src/lib.rs:3 (weak, base-side); 2 changed behaviors in `parse_port`; kinds: match_arm, return_value; reason: No assertion was tied to the changed value
     - ./src/lib.rs:3 (weak, lower-priority candidate); kind: predicate; reason: Missing check value: p == 0
     - ./src/lib.rs:3 (weak, lower-priority candidate); kind: return_value; reason: No assertion was tied to the changed value
-    - ./src/lib.rs:4 (weak, lower-priority candidate); kind: error_path; reason: No exact error variant discriminator was detected
+    - ./src/lib.rs:4 (weak, lower-priority candidate); kind: error_path; reason: No assertion on the exact error variant was detected
     - ./src/lib.rs:4 (weak, lower-priority candidate); kind: match_arm; reason: No assertion was tied to the changed value
   Hidden classes:
     weak = tests reach it but check it only loosely

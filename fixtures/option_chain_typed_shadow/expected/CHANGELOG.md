@@ -35,3 +35,14 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — option_chain_typed_shadow (4)
+
+Reason:
+RIPR-SPEC-0108: compose PR #16016 history-sync with protected swarm main (baaaa92024)
+
+Command:
+`cargo xtask goldens bless option_chain_typed_shadow --reason "..."`
+
+Updated:
+- `expected/human.txt`

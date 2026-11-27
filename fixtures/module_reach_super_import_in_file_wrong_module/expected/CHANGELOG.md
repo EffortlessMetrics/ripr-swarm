@@ -226,3 +226,14 @@ Command:
 
 Updated:
 - `expected/human.txt`
+
+## Pending — module_reach_super_import_in_file_wrong_module (19)
+
+Reason:
+RIPR-SPEC-0108: compose PR #16016 history-sync with protected swarm main (baaaa92024)
+
+Command:
+`cargo xtask goldens bless module_reach_super_import_in_file_wrong_module --reason "..."`
+
+Updated:
+- `expected/human.txt`

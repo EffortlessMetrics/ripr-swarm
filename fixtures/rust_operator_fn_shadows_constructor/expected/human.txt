@@ -19,12 +19,12 @@ Start here:
     ripr does not infer (`dyn Trait`, a second impl of the trait), but ripr does not follow that
     call to the changed method. ripr does not claim a gap; this is a named limitation, not a
     coverage claim
-  Related test: src/lib.rs:29 adds
+  Related test: src/lib.rs:29 adds (ripr could not confirm that this assertion observes the changed behavior)
   Next step: `adds` (src/lib.rs:29) names `Money` and uses it, and the language may call `add` from
     an operator, a scope exit, a loop or an index, and ripr does not follow that call to `add`, so
     it does not report a gap. Check that an assertion in that test would fail if `add` returned the
     wrong value; add a test only if none does
-  Evidence: reach weak · infection yes · propagation yes · observation yes · assertion not established
+  Evidence: reach weak · infection yes · propagation yes · observation yes · assertion weak
     Stages (static evidence): reach = test path to changed owner; infection = inputs can activate change;
       propagation = changed effect reaches output; observation = related test/assertion evidence;
       assertion = a test assertion tells intended from wrong behavior

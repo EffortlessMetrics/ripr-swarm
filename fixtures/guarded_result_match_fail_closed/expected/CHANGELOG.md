@@ -769,3 +769,14 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human-full.txt`
+
+## Pending — guarded_result_match_fail_closed (58)
+
+Reason:
+RIPR-SPEC-0108: compose PR #16016 history-sync with protected swarm main (baaaa92024)
+
+Command:
+`cargo xtask goldens bless guarded_result_match_fail_closed --reason "..."`
+
+Updated:
+- `expected/human.txt`

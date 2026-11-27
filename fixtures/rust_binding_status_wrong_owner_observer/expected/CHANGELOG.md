@@ -143,3 +143,14 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — rust_binding_status_wrong_owner_observer (13)
+
+Reason:
+RIPR-SPEC-0108: compose PR #16016 history-sync with protected swarm main (baaaa92024)
+
+Command:
+`cargo xtask goldens bless rust_binding_status_wrong_owner_observer --reason "..."`
+
+Updated:
+- `expected/human.txt`

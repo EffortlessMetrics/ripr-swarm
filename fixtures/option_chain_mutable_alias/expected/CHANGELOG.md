@@ -59,3 +59,14 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — option_chain_mutable_alias (6)
+
+Reason:
+RIPR-SPEC-0108: compose PR #16016 history-sync with protected swarm main (baaaa92024)
+
+Command:
+`cargo xtask goldens bless option_chain_mutable_alias --reason "..."`
+
+Updated:
+- `expected/human.txt`

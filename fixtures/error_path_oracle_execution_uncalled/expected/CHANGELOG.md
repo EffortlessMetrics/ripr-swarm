@@ -591,3 +591,14 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — error_path_oracle_execution_uncalled (45)
+
+Reason:
+RIPR-SPEC-0108: compose PR #16016 history-sync with protected swarm main (baaaa92024)
+
+Command:
+`cargo xtask goldens bless error_path_oracle_execution_uncalled --reason "..."`
+
+Updated:
+- `expected/human.txt`

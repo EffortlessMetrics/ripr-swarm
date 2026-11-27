@@ -33,3 +33,15 @@ Command:
 
 Updated:
 - `expected/human.txt`
+
+## Pending — rust_macro_declared_flags_vec_contains (4)
+
+Reason:
+RIPR-SPEC-0108: compose PR #16016 history-sync with protected swarm main (baaaa92024)
+
+Command:
+`cargo xtask goldens bless rust_macro_declared_flags_vec_contains --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

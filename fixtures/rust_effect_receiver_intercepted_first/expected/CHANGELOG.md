@@ -47,3 +47,16 @@ Command:
 
 Updated:
 - `expected/human-full.txt`
+
+## Pending — rust_effect_receiver_intercepted_first (5)
+
+Reason:
+RIPR-SPEC-0108: compose PR #16016 history-sync with protected swarm main (baaaa92024)
+
+Command:
+`cargo xtask goldens bless rust_effect_receiver_intercepted_first --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`

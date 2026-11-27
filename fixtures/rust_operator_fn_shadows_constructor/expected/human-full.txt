@@ -33,9 +33,9 @@ Evidence
   - infection yes: Reachable tests can plausibly activate this changed behavior
   - propagation yes: Complete propagation witness reaches returned value: Money(self.0 + other.0)
   - observation yes: A related test observes a value or effect near the changed behavior
-  - discriminator not established (static_unknown); related oracle: Strong oracle found: exact value or pattern assertion
+  - discriminator weak: Discriminator unconfirmed: no assertion text references the changed expression
   - local flow reaches returned value: Money(self.0 + other.0) (line 9)
-  - related test src/lib.rs:29 adds uses strong exact value oracle: assert_eq!(Money(1) + Money(2), Cash(3));
+  - related test src/lib.rs:29 adds uses strong exact value oracle: assert_eq!(Money(1) + Money(2), Cash(3)); unconfirmed: ripr could not confirm that this assertion observes the changed behavior
   - source assertion argument value 1 at line 30
   - source assertion argument value 2 at line 30
   - source assertion argument value 3 at line 30

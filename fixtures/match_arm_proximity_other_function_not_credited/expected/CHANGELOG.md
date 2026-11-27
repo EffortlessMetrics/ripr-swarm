@@ -90,3 +90,14 @@ Command:
 
 Updated:
 - `expected/check.json`
+
+## Pending — match_arm_proximity_other_function_not_credited (9)
+
+Reason:
+RIPR-SPEC-0108: compose PR #16016 history-sync with protected swarm main (baaaa92024)
+
+Command:
+`cargo xtask goldens bless match_arm_proximity_other_function_not_credited --reason "..."`
+
+Updated:
+- `expected/human.txt`
