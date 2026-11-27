@@ -409,8 +409,10 @@ fn verify_scope_assertions(
         }
         let asserted = std::fs::canonicalize(asserted_diff).map_err(|err| {
             format!(
-                "asserted --diff {} cannot be resolved: {err}",
-                asserted_diff.display()
+                "asserted --diff {} cannot be resolved: {}; pass the diff file the artifact was \
+                 written from, or drop --diff to reuse the recorded scope",
+                asserted_diff.display(),
+                crate::bounded_input::read_failure_detail(&err)
             )
         })?;
         let matches = matches!(
@@ -480,7 +482,11 @@ fn resolve_diff_bytes(
 ) -> Result<Vec<u8>, String> {
     match source {
         DiffSourceIdentity::DiffFile { path } => crate::bounded_input::read(path).map_err(|err| {
-            format!("recorded diff file {path} no longer exists or is unreadable: {err}")
+            format!(
+                "recorded diff file {path} no longer exists or is unreadable: {}; restore that \
+                 diff file, or regenerate the artifact with `ripr check --write-artifact`",
+                crate::bounded_input::read_failure_detail(&err)
+            )
         }),
         DiffSourceIdentity::BaseHead { base, .. } => {
             crate::analysis::load_diff(root, base.as_deref(), None, git_timeout)
@@ -546,8 +552,10 @@ fn analysis_options_identity(
         Some(path) => {
             let text = crate::bounded_input::read_to_string(path).map_err(|err| {
                 format!(
-                    "recorded Perl facts packet {} no longer exists or is unreadable: {err}",
-                    path.display()
+                    "recorded Perl facts packet {} no longer exists or is unreadable: {}; restore \
+                     that packet, or regenerate the artifact with `ripr check --write-artifact`",
+                    path.display(),
+                    crate::bounded_input::read_failure_detail(&err)
                 )
             })?;
             Some(config_fingerprint(&text))

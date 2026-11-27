@@ -4448,6 +4448,37 @@ mod tests {
     }
 
     #[test]
+    fn evidence_record_renders_withheld_property_provider_failure_as_static_limitation() {
+        // The evidence shape `withhold_unverified_property_provider` produces
+        // for a failed offline provider probe (#10864): opaque reach with the
+        // provider diagnosis and recovery step, every later stage unknown.
+        let summary = "Reach unresolved (rust_macro_reach_unresolved): property macro `proptest!` at tests/props.rs:3 lexically mentions `discounted_total`; offline provider verification; Offline Cargo metadata exited unsuccessfully (status 101). From the same analysis root and environment, run `cargo metadata --offline --locked --format-version 1 --manifest-path Cargo.toml` to inspect Cargo's own diagnostic. Check the installed Cargo/toolchain and locked local inputs, then rerun RIPR after addressing the reported problem. RIPR did not fetch dependencies, install a toolchain or retry online. No generated test, observed value, owner execution or missing-test certainty is established.";
+        let mut entry = example_23_macro_witness_classified(summary);
+        for stage_evidence in [
+            &mut entry.evidence.activate,
+            &mut entry.evidence.propagate,
+            &mut entry.evidence.observe,
+            &mut entry.evidence.discriminate,
+        ] {
+            *stage_evidence = stage(StageState::Unknown, "provider verification failed");
+        }
+        entry.evidence.new_test_target = None;
+        entry.class = crate::analysis::classify_seam(&entry.seam, &entry.evidence);
+
+        let record = evidence_record_for(&entry, None);
+        assert_eq!(record.actionability.class, "static_limitation");
+        assert!(!record.actionability.has_concrete_guidance);
+        assert!(
+            record
+                .static_limitations
+                .iter()
+                .any(|limit| limit.reason.contains("same analysis root and environment")),
+            "{:?}",
+            record.static_limitations
+        );
+    }
+
+    #[test]
     fn evidence_record_keeps_macro_generated_value_for_actual_macro_value_limitations() {
         let mut entry = sample_classified(StageState::Unknown, SeamGripClass::ActivationUnknown);
         entry.evidence.activate = stage(StageState::Unknown, "macro generated value hides literal");

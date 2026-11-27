@@ -803,7 +803,8 @@ fn perl_facts_packet_content_is_part_of_the_identity() -> Result<(), String> {
             &[
                 "cannot be reused",
                 "recorded Perl facts packet",
-                "no longer exists",
+                "no longer exists or is unreadable: not found",
+                "; restore that packet, or regenerate the artifact with `ripr check --write-artifact`",
             ],
         )
     })();
