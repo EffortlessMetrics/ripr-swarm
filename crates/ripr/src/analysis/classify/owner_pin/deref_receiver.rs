@@ -260,11 +260,11 @@ pub(super) fn deref_workspace(
         return None;
     }
     let mut wrappers = BTreeMap::new();
-    let mut targets: BTreeMap<&str, usize> = BTreeMap::new();
-    for target in deref_impls.iter().filter_map(|item| item.target.as_deref()) {
-        *targets.entry(target).or_default() += 1;
-    }
-    for item in &deref_impls {
+    let aliases: BTreeSet<String> = files
+        .iter()
+        .flat_map(|masked| type_item_names(masked))
+        .collect();
+    for (position, item) in deref_impls.iter().enumerate() {
         let Some(target) = item.target.as_deref() else {
             continue;
         };
@@ -273,7 +273,7 @@ pub(super) fn deref_workspace(
             .iter()
             .filter(|other| other.deref && other.wrapper == *wrapper)
             .count();
-        if targets.get(target) == Some(&1)
+        if no_other_deref_may_reach(&deref_impls, position, target, &aliases)
             && own_impls == 1
             && wrapper != target
             && workspace_type_name_count(wrapper, index) == 1
@@ -324,6 +324,57 @@ fn workspace_sources_indexed(index: &RustIndex) -> bool {
             .all(|file| indexed.contains(file.strip_prefix("./").unwrap_or(file)))
 }
 
+/// Whether no `Deref` impl other than `deref_impls[position]` may hand a
+/// call `target`. Every other `Deref` impl must declare a plain-identifier
+/// `type Target` that is neither `target` nor a name some `type` item
+/// declares (an alias may name `target`). An impl whose `Target` cannot be
+/// read refuses whatever its body: a deref that runs other code (`&OTHER`)
+/// still reaches `target`, and the projection's field coerces through it.
+fn no_other_deref_may_reach(
+    deref_impls: &[DerefImpl],
+    position: usize,
+    target: &str,
+    aliases: &BTreeSet<String>,
+) -> bool {
+    deref_impls
+        .iter()
+        .enumerate()
+        .filter(|(other, item)| *other != position && item.deref)
+        .all(|(_, item)| {
+            item.declared
+                .as_deref()
+                .is_some_and(|declared| declared != target && !aliases.contains(declared))
+        })
+}
+
+/// Every name a `type` item declares in one masked file, `Target` aside
+/// (the associated type every `Deref` impl declares).
+fn type_item_names(masked: &str) -> Vec<String> {
+    whole_word_offsets(masked, "type")
+        .into_iter()
+        .filter_map(|at| {
+            let rest = masked[at + "type".len()..].trim_start();
+            let rest = rest.strip_prefix("r#").unwrap_or(rest);
+            let end = rest.bytes().take_while(|&byte| is_ident_byte(byte)).count();
+            (end > 0 && &rest[..end] != "Target").then(|| rest[..end].to_string())
+        })
+        .collect()
+}
+
+/// The plain-identifier `type Target` a `Deref` impl body declares exactly
+/// once, whatever its `fn deref` does; `None` for any other declaration.
+fn declared_target(body: &str) -> Option<String> {
+    let compact: String = body.split_whitespace().collect();
+    let mut found = compact.match_indices("typeTarget=");
+    let (at, _) = found.next()?;
+    if found.next().is_some() {
+        return None;
+    }
+    let rest = &compact[at + "typeTarget=".len()..];
+    let target = &rest[..rest.find(';')?];
+    is_plain_identifier(target).then(|| target.to_string())
+}
+
 /// One `impl Deref for W` or `impl DerefMut for W` header the gates admit.
 #[derive(Clone, Debug)]
 struct DerefImpl {
@@ -333,6 +384,9 @@ struct DerefImpl {
     /// The `type Target` of a `Deref` impl whose body passes
     /// [`deref_body_target`]; `None` for any other body.
     target: Option<String>,
+    /// The plain `type Target` a `Deref` impl's body declares, whatever its
+    /// `fn deref` does ([`declared_target`]); `None` when unreadable.
+    declared: Option<String>,
 }
 
 /// Whether the first parameter of `fn method(..)` in `body` is exactly
@@ -434,17 +488,17 @@ fn file_deref_impls(masked: &str) -> Option<Vec<DerefImpl>> {
         {
             return None;
         }
-        let target = if deref && rest.as_bytes().get(header_end) == Some(&b'{') {
+        let body = if deref && rest.as_bytes().get(header_end) == Some(&b'{') {
             let open = at + "impl".len() + header_end;
-            matching_close(masked, open, b'{', b'}')
-                .and_then(|close| deref_body_target(&masked[open + 1..close]))
+            matching_close(masked, open, b'{', b'}').map(|close| &masked[open + 1..close])
         } else {
             None
         };
         impls.push(DerefImpl {
             deref,
             wrapper: wrapper.to_string(),
-            target,
+            target: body.and_then(deref_body_target),
+            declared: body.and_then(declared_target),
         });
         accounted += 1;
     }
@@ -606,9 +660,55 @@ fn attributes_are_std_derives(prefix: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::{
-        attributes_are_std_derives, deref_body_target, file_deref_impls,
-        first_param_is_shared_self, ident_run_start, inside_item_macro, wrapper_spellings_inert,
+        DerefImpl, attributes_are_std_derives, deref_body_target, file_deref_impls,
+        first_param_is_shared_self, ident_run_start, inside_item_macro, no_other_deref_may_reach,
+        type_item_names, wrapper_spellings_inert,
     };
+    use std::collections::BTreeSet;
+
+    fn deref_impls(text: &str) -> Vec<DerefImpl> {
+        file_deref_impls(text).unwrap_or_default()
+    }
+
+    #[test]
+    fn any_other_deref_that_may_reach_the_target_refuses() {
+        let none = BTreeSet::new();
+        let admitted = |text: &str, aliases: &BTreeSet<String>| {
+            let impls = deref_impls(text);
+            let position = impls
+                .iter()
+                .position(|item| item.wrapper == "Guard")
+                .unwrap_or(usize::MAX);
+            impls.get(position).and_then(|item| item.target.as_deref()) == Some("Inner")
+                && no_other_deref_may_reach(&impls, position, "Inner", aliases)
+        };
+        let guard = "use std::ops::Deref; \
+            impl Deref for Guard { type Target = Inner; fn deref(&self) -> &Inner { &self.0 } } ";
+        assert!(admitted(guard, &none));
+        assert!(admitted(
+            &format!(
+                "{guard} impl Deref for Mid {{ type Target = Other; fn deref(&self) -> &Other {{ &OTHER }} }}"
+            ),
+            &none
+        ));
+        for other in [
+            // A deref that runs other code still hands the call an `Inner`.
+            "impl Deref for Mid { type Target = Inner; fn deref(&self) -> &Inner { &OTHER } }",
+            "impl Deref for Mid { type Target = Inner; fn deref(&self) -> &Inner { &self.0 } }",
+            "impl Deref for Mid { type Target = crate::Inner; fn deref(&self) -> &crate::Inner { &self.0 } }",
+            "impl Deref for Mid { #[allow(x)] fn deref(&self) -> &Self::Target { &self.0 } type Target = Inner; type Target = Inner; }",
+            "impl Deref for Mid;",
+        ] {
+            assert!(!admitted(&format!("{guard} {other}"), &none), "{other}");
+        }
+        let alias = format!(
+            "{guard} impl Deref for Mid {{ type Target = Alias; fn deref(&self) -> &Alias {{ &OTHER }} }}"
+        );
+        let aliases: BTreeSet<String> =
+            type_item_names("type Alias = Inner;").into_iter().collect();
+        assert!(!admitted(&alias, &aliases));
+        assert_eq!(type_item_names("type Target = Inner; type r#A = B;"), ["A"]);
+    }
 
     #[test]
     fn a_non_ascii_identifier_before_a_bang_is_scanned_by_character() {
