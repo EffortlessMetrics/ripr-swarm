@@ -32,7 +32,7 @@
       "limited"
     ]
   },
-  "reasoning": "The only rows are `3` and `20`, both on one side of the boundary at 10, so moving `>=` to `>` changes no row and every test passes. Spec cells: RIPR-SPEC-0231 example 46.",
+  "reasoning": "The only rows are `3` and `20`, which straddle the boundary at 10 but neither equals it, so changing `>=` to `>` affects neither row and every test passes. Spec cells: RIPR-SPEC-0231 example 46.",
   "labeling_observation": {
     "ripr_commit": "783bcd6c22",
     "full_checkout_verdict": "gap",
