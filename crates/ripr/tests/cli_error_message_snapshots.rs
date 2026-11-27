@@ -519,8 +519,9 @@ fn wrong_shape_config_values_say_what_to_write() -> Result<(), String> {
 /// nothing on stderr), the same text as `ripr check --help`.
 #[test]
 fn a_real_help_topic_still_prints_its_help() -> Result<(), String> {
+    let here = std::env::temp_dir();
     let run = |args: &[&str]| {
-        Command::new(env!("CARGO_BIN_EXE_ripr"))
+        ripr_in(&here)
             .args(args)
             .output()
             .map_err(|error| format!("run ripr {args:?}: {error}"))
