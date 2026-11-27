@@ -145,7 +145,13 @@ The static classification may remain unknown. Neither macro expansion nor
 fixture/builder value mapping is unlocked by choosing a wider analysis mode or
 an undocumented `ripr.toml` key.
 
-Decidable findings retain their concrete `To change the verdict` recipes.
+Decidable findings retain their concrete `To change the verdict` recipes,
+except where the finding's own Next step rules a test of the owner out: base-side
+evidence (`base_deleted`, `moved_or_renamed`) is not an edit target (#15271), a
+Cargo build script cannot be called by a package test, and a test of an
+assertion-shaped helper would test the oracle (#15538). A finding whose reach
+stops at a named unresolved edge likewise prints that edge's guidance
+instead. Those findings print their Next step and no recipe.
 Unknown explain glosses must preserve the domain's meaning: a changed Rust
 declaration can lack an analyzed function owner, a macro need not be procedural,
 and fixture/async mentions are heuristic limits rather than execution facts.
