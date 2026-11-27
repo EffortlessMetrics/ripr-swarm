@@ -624,3 +624,14 @@ Command:
 
 Updated:
 - `expected/human.txt`
+
+## Pending — match_arm_tuple_derived_return_before_assertion (48)
+
+Reason:
+RIPR-SPEC-0122: #15336 human-full Terms line stops claiming test reach for weakly_exposed and reachable_unrevealed
+
+Command:
+`cargo xtask goldens bless match_arm_tuple_derived_return_before_assertion --reason "..."`
+
+Updated:
+- `expected/human-full.txt`

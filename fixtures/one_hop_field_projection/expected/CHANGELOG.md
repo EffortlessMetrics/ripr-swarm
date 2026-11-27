@@ -256,3 +256,14 @@ Command:
 
 Updated:
 - `expected/human.txt`
+
+## Pending — one_hop_field_projection (21)
+
+Reason:
+RIPR-SPEC-0122: #15336 human-full Terms line stops claiming test reach for weakly_exposed and reachable_unrevealed
+
+Command:
+`cargo xtask goldens bless one_hop_field_projection --reason "..."`
+
+Updated:
+- `expected/human-full.txt`

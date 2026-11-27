@@ -45,3 +45,14 @@ Command:
 Updated:
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — rust_computed_return_tail_crate_rebound (5)
+
+Reason:
+RIPR-SPEC-0122: #15336 human-full Terms line stops claiming test reach for weakly_exposed and reachable_unrevealed
+
+Command:
+`cargo xtask goldens bless rust_computed_return_tail_crate_rebound --reason "..."`
+
+Updated:
+- `expected/human-full.txt`
