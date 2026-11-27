@@ -76,6 +76,7 @@ pub(super) fn render_start_here_markdown(packet: &Value) -> String {
 }
 
 pub(super) fn start_here_cli_summary(
+    command: &str,
     packet: &Value,
     json_path: &Path,
     markdown_path: &Path,
@@ -170,7 +171,7 @@ pub(super) fn start_here_cli_summary(
             if let Some(command) = string_path(selected, &["regeneration_command"]) {
                 push_recovery_command(&mut out, "Regeneration command", &command);
             }
-            if let Some(line) = later_steps_line(selected) {
+            if let Some(line) = later_steps_line(command, selected) {
                 out.push_str(&line);
                 out.push('\n');
             }
@@ -720,7 +721,7 @@ fn needed_when_suffix(artifact: &Value) -> String {
 /// chain. The later inputs are named without commands so the operator knows
 /// they exist; rerunning first-pr prints each command when it becomes next.
 /// The packet JSON keeps the full `also_missing` chain for machine readers.
-fn later_steps_line(selected: &Value) -> Option<String> {
+fn later_steps_line(command: &str, selected: &Value) -> Option<String> {
     let names: Vec<String> = selected
         .get("also_missing")
         .and_then(Value::as_array)?
@@ -735,7 +736,7 @@ fn later_steps_line(selected: &Value) -> Option<String> {
         return None;
     }
     Some(format!(
-        "Later steps (rerun `ripr first-pr` after the command above; it prints each next command): {}",
+        "Later steps (rerun `ripr {command}` after the command above; it prints each next command): {}",
         names.join("; ")
     ))
 }
@@ -761,7 +762,7 @@ fn render_missing_artifact_markdown(selected: &Value, out: &mut String) {
     if let Some(command) = selected.get("regeneration_command").and_then(Value::as_str) {
         push_recovery_command(out, "- Regeneration command", command);
     }
-    if let Some(line) = later_steps_line(selected) {
+    if let Some(line) = later_steps_line("first-pr", selected) {
         out.push_str(&format!("- {line}\n"));
     }
 }
@@ -930,7 +931,7 @@ mod tests {
         let packet = serde_json::json!({
             "selected": {"state": "no_action", "reason": "nothing to do"},
         });
-        let summary = start_here_cli_summary(&packet, &json_path, &markdown_path);
+        let summary = start_here_cli_summary("first-pr", &packet, &json_path, &markdown_path);
         assert!(summary.contains("Start here: /Repo/out/Reports/start-here.md"));
         assert!(summary.contains(
             "Artifacts: `/Repo/out/Reports/start-here.json`, `/Repo/out/Reports/start-here.md`"
@@ -952,6 +953,7 @@ mod tests {
     fn cli_summary_pairs_redirect_regeneration_with_labeled_shell_forms() {
         let bash = "ripr check --root . --mode instant --format repo-exposure-json > target/ripr/reports/repo-exposure.json";
         let summary = start_here_cli_summary(
+            "first-pr",
             &missing_artifact_packet(bash),
             Path::new("target/ripr/reports/start-here.json"),
             Path::new("target/ripr/reports/start-here.md"),
@@ -1002,6 +1004,7 @@ mod tests {
         let bash = "ripr check --root . --base origin/main --json > target/ripr/reports/check.json && ripr reports gap-ledger --check-output target/ripr/reports/check.json --root . --out target/ripr/reports/gap-decision-ledger.json --out-md target/ripr/reports/gap-decision-ledger.md";
         let packet = missing_artifact_packet(bash);
         let summary = start_here_cli_summary(
+            "first-pr",
             &packet,
             Path::new("target/ripr/reports/start-here.json"),
             Path::new("target/ripr/reports/start-here.md"),
@@ -1017,6 +1020,7 @@ mod tests {
         let bash = "ripr check --root $(whoami) --json > check.json && ripr reports gap-ledger --out ledger.json";
         let packet = missing_artifact_packet(bash);
         let summary = start_here_cli_summary(
+            "first-pr",
             &packet,
             Path::new("target/ripr/reports/start-here.json"),
             Path::new("target/ripr/reports/start-here.md"),
@@ -1029,6 +1033,7 @@ mod tests {
     fn cli_summary_leaves_plain_regeneration_without_powershell_line() {
         let bash = "ripr reports gap-ledger --repo-exposure target/ripr/reports/repo-exposure.json --out target/ripr/reports/gap-decision-ledger.json --out-md target/ripr/reports/gap-decision-ledger.md";
         let summary = start_here_cli_summary(
+            "first-pr",
             &missing_artifact_packet(bash),
             Path::new("target/ripr/reports/start-here.json"),
             Path::new("target/ripr/reports/start-here.md"),

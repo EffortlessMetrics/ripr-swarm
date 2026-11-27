@@ -167,6 +167,7 @@ use validation::{validate_selected_command_root, validate_start_here_packet};
 /// Run `first-pr` for already-parsed options. Argv parsing and `--help` live in
 /// the CLI adapter (`cli::commands::first_pr`), so this layer never imports it.
 pub(crate) fn first_pr_with_options(mut options: FirstPrOptions) -> Result<(), String> {
+    let command = options.command;
     let repo = repo_root()?;
     // A root that is not a directory cannot be analyzed: refuse (exit 2) before
     // the disclosure and before writing a recovery packet, so a mistyped path
@@ -174,7 +175,7 @@ pub(crate) fn first_pr_with_options(mut options: FirstPrOptions) -> Result<(), S
     // that exist but are not workspaces.
     if !resolve_path(&repo, &options.root).is_dir() {
         return Err(format!(
-            "first-pr: --root {} is not a directory, so nothing was written. Pass the repository root with `--root`, or run from inside the repository.",
+            "{command}: --root {} is not a directory, so nothing was written. Pass the repository root with `--root`, or run from inside the repository.",
             options.root
         ));
     }
@@ -192,7 +193,7 @@ pub(crate) fn first_pr_with_options(mut options: FirstPrOptions) -> Result<(), S
     }
     match resolution {
         Some(Ok(base)) => options.base = base,
-        Some(Err(err)) => return Err(format!("first-pr: {err}")),
+        Some(Err(err)) => return Err(format!("{command}: {err}")),
         None => {}
     }
     if options.check {
@@ -263,7 +264,10 @@ fn omitted_base_resolution(
 /// write behavior rather than always claiming the defaults. Rendered after
 /// `parse_options` and before any filesystem write.
 fn print_side_effect_disclosure(repo: &Path, options: &FirstPrOptions) {
-    println!("ripr first-pr - side effects and cost disclosure");
+    println!(
+        "ripr {} - side effects and cost disclosure",
+        options.command
+    );
     if options.run_chain {
         print_run_chain_disclosure(&resolve_path(repo, &options.root), options);
         return;
@@ -340,7 +344,7 @@ fn write_first_pr(repo: &Path, options: &FirstPrOptions) -> Result<(), String> {
     let json_path = out_dir.join(START_HERE_JSON);
     let markdown_path = out_dir.join(START_HERE_MD);
     let json_text = serde_json::to_string_pretty(&packet)
-        .map_err(|err| format!("failed to serialize first-pr packet: {err}"))?;
+        .map_err(|err| format!("failed to serialize {} packet: {err}", options.command))?;
     crate::output::file_write::write(&json_path, format!("{json_text}\n").as_bytes())
         .map_err(|err| crate::output::file_write::write_failure_message(&json_path, &err))?;
     crate::output::file_write::write(
@@ -348,10 +352,10 @@ fn write_first_pr(repo: &Path, options: &FirstPrOptions) -> Result<(), String> {
         render_start_here_markdown(&packet).as_bytes(),
     )
     .map_err(|err| crate::output::file_write::write_failure_message(&markdown_path, &err))?;
-    validate_start_here_packet(&json_path, &markdown_path)?;
+    validate_start_here_packet(&json_path, &markdown_path, options.command)?;
     print!(
         "{}",
-        start_here_cli_summary(&packet, &json_path, &markdown_path)
+        start_here_cli_summary(options.command, &packet, &json_path, &markdown_path)
     );
     println!("Wrote {}", crate::output::path::human_path(&json_path));
     println!("Wrote {}", crate::output::path::human_path(&markdown_path));
@@ -387,6 +391,7 @@ fn check_packet_paths(
 }
 
 fn check_first_pr(repo: &Path, options: &FirstPrOptions) -> Result<(), String> {
+    let command = options.command;
     let root = resolve_path(repo, &options.root);
     let root_recovery = root_preflight_recovery(&root, options);
     let (json_path, markdown_path) =
@@ -394,10 +399,10 @@ fn check_first_pr(repo: &Path, options: &FirstPrOptions) -> Result<(), String> {
     let preflight_recovery = root_recovery.or_else(|| git_preflight_recovery(&root, options));
     let current_preflight_no_action =
         matches!(&preflight_recovery, Some(Selection::NoAction { .. }));
-    let packet = validate_start_here_packet(&json_path, &markdown_path)?;
+    let packet = validate_start_here_packet(&json_path, &markdown_path, options.command)?;
     let out_dir = json_path.parent().ok_or_else(|| {
         format!(
-            "first-pr start-here packet {} is missing a parent directory",
+            "{command} start-here packet {} is missing a parent directory",
             json_path.display()
         )
     })?;
@@ -405,14 +410,14 @@ fn check_first_pr(repo: &Path, options: &FirstPrOptions) -> Result<(), String> {
         start_here_version_stale_detail(&start_here_packet_version_freshness(&packet))
     {
         return Err(format!(
-            "first-pr start-here packet is {detail}; rerun `{}` before relying on it",
+            "{command} start-here packet is {detail}; rerun `{}` before relying on it",
             first_pr_write_command(options, out_dir, false)
         ));
     }
     validate_current_preflight_recovery(&packet, &root, options, preflight_recovery)?;
     validate_selected_command_root(&packet, &root).map_err(|detail| {
         format!(
-            "first-pr start-here packet command context is stale or unavailable for the selected repository root: {detail}; rerun `{}` before relying on it",
+            "{command} start-here packet command context is stale or unavailable for the selected repository root: {detail}; rerun `{}` before relying on it",
             first_pr_write_command(options, out_dir, false)
         )
     })?;
@@ -428,30 +433,36 @@ fn check_first_pr(repo: &Path, options: &FirstPrOptions) -> Result<(), String> {
             .and_then(Value::as_str)
             .is_some();
         let ledger_path = string_path(&packet, &["inputs", "gap_ledger"])
-            .ok_or("first-pr --check: no-action source ledger is unavailable; run `ripr first-pr` again with the packet's original inputs, then rerun --check")?;
+            .ok_or_else(|| format!("{command} --check: no-action source ledger is unavailable; run `ripr {command}` again with the packet's original inputs, then rerun --check"))?;
         // Recomposing alone does not rebuild a standalone `--gap-ledger`
         // input, so the advice names the ledger and how each route restores it.
         let (ledger, ledger_digest) = read_json_with_digest(&resolve_path(&root, &ledger_path)).map_err(|_ledger_error| {
-            format!("first-pr --check: no-action source ledger is missing or malformed (`{ledger_path}`); regenerate or restore that file, then rerun --check. Rerunning `ripr first-pr` with the packet's original --check-output rebuilds it; a ledger passed with --gap-ledger comes from `ripr reports gap-ledger` with its original inputs")
+            format!("{command} --check: no-action source ledger is missing or malformed (`{ledger_path}`); regenerate or restore that file, then rerun --check. Rerunning `ripr {command}` with the packet's original --check-output rebuilds it; a ledger passed with --gap-ledger comes from `ripr reports gap-ledger` with its original inputs")
         })?;
-        let recorded_digest = string_path(&packet, &["inputs", "gap_ledger_sha256"]).ok_or(
-            "first-pr --check: source_currentness_unavailable; this historical no-action packet does not bind its source ledger bytes. Recompose it: run `ripr first-pr` again with the packet's original inputs, then rerun --check",
-        )?;
+        let recorded_digest = string_path(&packet, &["inputs", "gap_ledger_sha256"]).ok_or_else(|| format!(
+            "{command} --check: source_currentness_unavailable; this historical no-action packet does not bind its source ledger bytes. Recompose it: run `ripr {command}` again with the packet's original inputs, then rerun --check",
+        ))?;
         if recorded_digest != ledger_digest {
-            return Err("first-pr --check: stale_evidence; the no-action source ledger differs from the bytes used to compose the packet. Recompose it: run `ripr first-pr` again with the packet's original inputs, then rerun --check".to_string());
+            return Err(format!(
+                "{command} --check: stale_evidence; the no-action source ledger differs from the bytes used to compose the packet. Recompose it: run `ripr {command}` again with the packet's original inputs, then rerun --check"
+            ));
         }
         let source_kind = string_path(&ledger, &["inputs", "source_kind"])
-            .ok_or("first-pr --check: no-action source kind is unavailable; run `ripr first-pr` again with the packet's original inputs, then rerun --check")?;
+            .ok_or_else(|| format!("{command} --check: no-action source kind is unavailable; run `ripr {command}` again with the packet's original inputs, then rerun --check"))?;
         if direct_check_output || requires_no_action_source_limit(&ledger) {
-            return Err("first-pr --check: source_currentness_unavailable; this historical no-action packet cannot establish current source-corpus identity. Recompose it (run `ripr first-pr` again with its original inputs) and inspect a fresh selected-workspace check; a fresh check alone cannot establish unavailable preview/mixed corpus provenance (#7452).".to_string());
+            return Err(format!(
+                "{command} --check: source_currentness_unavailable; this historical no-action packet cannot establish current source-corpus identity. Recompose it (run `ripr {command}` again with its original inputs) and inspect a fresh selected-workspace check; a fresh check alone cannot establish unavailable preview/mixed corpus provenance (#7452)."
+            ));
         }
         if !matches!(source_kind.as_str(), "records" | "repo_exposure") {
-            return Err("first-pr --check: no-action source kind is unrecognized; run `ripr first-pr` again with the packet's original inputs, then rerun --check".to_string());
+            return Err(format!(
+                "{command} --check: no-action source kind is unrecognized; run `ripr {command}` again with the packet's original inputs, then rerun --check"
+            ));
         }
     }
     print!(
         "{}",
-        start_here_cli_summary(&packet, &json_path, &markdown_path)
+        start_here_cli_summary(options.command, &packet, &json_path, &markdown_path)
     );
     // A valid packet can still record a fail-closed state (wrong root, missing,
     // stale or malformed artifacts). `--check` is the gate, so it must not
@@ -462,7 +473,7 @@ fn check_first_pr(repo: &Path, options: &FirstPrOptions) -> Result<(), String> {
             .as_str()
             .unwrap_or("blocked");
         return Err(format!(
-            "first-pr --check: the start-here packet is current but records the blocked state `{state}`; follow its safe next action before repair work ({})",
+            "{command} --check: the start-here packet is current but records the blocked state `{state}`; follow its safe next action before repair work ({})",
             json_path.display()
         ));
     }
@@ -477,6 +488,7 @@ fn first_pr_missing_packet_recovery_error(
     out_dir: &Path,
     base_error: Option<&str>,
 ) -> String {
+    let command = options.command;
     let missing = if !json_path.exists() {
         json_path
     } else {
@@ -487,7 +499,7 @@ fn first_pr_missing_packet_recovery_error(
     // from a different working directory, and paths render with stable
     // separators on every host.
     let mut message = format!(
-        "first-pr --check validates an existing start-here packet; it does not create one.\n\nMissing:\n  {}\n\nCreate and validate it with:\n  {}",
+        "{command} --check validates an existing start-here packet; it does not create one.\n\nMissing:\n  {}\n\nCreate and validate it with:\n  {}",
         display_path(missing),
         first_pr_write_command(options, out_dir, base_error.is_some())
     );
@@ -504,7 +516,7 @@ fn first_pr_missing_packet_recovery_error(
 fn first_pr_write_command(options: &FirstPrOptions, out_dir: &Path, base_required: bool) -> String {
     let mut parts = vec![
         "ripr".to_string(),
-        "first-pr".to_string(),
+        options.command.to_string(),
         "--root".to_string(),
         shell_arg(&options.command_root()),
     ];
@@ -539,6 +551,7 @@ fn validate_current_preflight_recovery(
     options: &FirstPrOptions,
     preflight_recovery: Option<Selection>,
 ) -> Result<(), String> {
+    let command = options.command;
     let Some(selection) = preflight_recovery else {
         return Ok(());
     };
@@ -549,7 +562,7 @@ fn validate_current_preflight_recovery(
         return Ok(());
     }
     Err(format!(
-        "first-pr start-here packet is stale for current root/git preflight; rerun `ripr first-pr --root {} --base {} --head {}` before relying on it",
+        "{command} start-here packet is stale for current root/git preflight; rerun `ripr {command} --root {} --base {} --head {}` before relying on it",
         shell_arg(&options.command_root()),
         shell_arg(&options.base),
         shell_arg(&options.head)
@@ -565,6 +578,18 @@ fn render_start_here_packet(root: &Path, options: &FirstPrOptions) -> Value {
             Some(digest),
         ),
         Err(ArtifactReadError::Missing) => (missing_gap_ledger_selection(root, options), None),
+        Err(ArtifactReadError::Malformed(message)) if options.gap_ledger_explicit => (
+            Selection::Blocked {
+                state: "malformed_artifact".to_string(),
+                message: format!(
+                    "The gap decision ledger could not be parsed: {message}. Choose a new output path for the regenerated ledger and pass that path with --gap-ledger on your next run. Leave the original file unchanged."
+                ),
+                next_command: None,
+                reason_code: None,
+                withhold_gap_ledger_regeneration: true,
+            },
+            None,
+        ),
         Err(ArtifactReadError::Malformed(message)) => (
             Selection::blocked(
                 "malformed_artifact",
@@ -639,8 +664,7 @@ fn render_start_here_packet_with_selection(
             "gap_ledger",
             "Gap decision ledger",
             &options.gap_ledger,
-            (!selection.is_unbound_no_action_limit())
-                .then(|| regenerate_gap_ledger_command(root, options)),
+            selection.gap_ledger_regeneration_command(root, options),
         ),
         artifact_status(
             root,
@@ -786,7 +810,8 @@ fn materialize_check_output_gap_ledger(
     let check_output_path = resolve_path(root, check_output);
     let contents = crate::bounded_input::read_artifact_text(&check_output_path).map_err(|err| {
         format!(
-            "first-pr --check-output {} {}",
+            "{} --check-output {} {}",
+            options.command,
             check_output_path.display(),
             crate::bounded_input::unreadable_input_phrase(
                 &err,
@@ -1136,6 +1161,7 @@ enum Selection {
         message: String,
         next_command: Option<String>,
         reason_code: Option<String>,
+        withhold_gap_ledger_regeneration: bool,
     },
     NoAction {
         state: String,
@@ -1167,6 +1193,7 @@ impl Selection {
             message,
             next_command,
             reason_code: None,
+            withhold_gap_ledger_regeneration: false,
         }
     }
 
@@ -1181,6 +1208,7 @@ impl Selection {
             message,
             next_command,
             reason_code: Some(reason_code.to_string()),
+            withhold_gap_ledger_regeneration: false,
         }
     }
 
@@ -1222,13 +1250,28 @@ impl Selection {
         top_gap.agent_packet_command.clone()
     }
 
+    fn gap_ledger_regeneration_command(
+        &self,
+        root: &Path,
+        options: &FirstPrOptions,
+    ) -> Option<String> {
+        // The normal generator writes to the selected ledger path, so it
+        // cannot be offered for an explicitly supplied malformed input.
+        (!self.is_unbound_no_action_limit()
+            && !matches!(
+                self,
+                Self::Blocked {
+                    withhold_gap_ledger_regeneration: true,
+                    ..
+                }
+            ))
+        .then(|| regenerate_gap_ledger_command(root, options))
+    }
+
     fn commands_json(&self, root: &Path, options: &FirstPrOptions) -> Value {
         let mut commands = Map::new();
-        if !self.is_unbound_no_action_limit() {
-            commands.insert(
-                "regenerate_gap_ledger".to_string(),
-                Value::String(regenerate_gap_ledger_command(root, options)),
-            );
+        if let Some(command) = self.gap_ledger_regeneration_command(root, options) {
+            commands.insert("regenerate_gap_ledger".to_string(), Value::String(command));
         }
         match self {
             Self::TopGap(top_gap) => {
@@ -1305,6 +1348,7 @@ impl Selection {
                 message,
                 next_command,
                 reason_code,
+                ..
             } => {
                 let mut value = json!({
                     "state": state,
@@ -3557,6 +3601,10 @@ mod tests {
     }
 
     use super::*;
+
+    fn start_here_cli_summary(packet: &Value, json_path: &Path, markdown_path: &Path) -> String {
+        super::start_here_cli_summary("first-pr", packet, json_path, markdown_path)
+    }
     use std::time::{SystemTime, UNIX_EPOCH};
 
     /// The selected root as first-pr binds it into generated commands (#4000).

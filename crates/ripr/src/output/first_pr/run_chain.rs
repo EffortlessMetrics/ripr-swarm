@@ -320,7 +320,10 @@ pub(super) fn run_steps(
     steps: &[ChainStep],
 ) -> Result<(), String> {
     let exe = std::env::current_exe().map_err(|err| {
-        format!("first-pr --run-chain: cannot resolve the running ripr executable: {err}")
+        format!(
+            "{} --run-chain: cannot resolve the running ripr executable: {err}",
+            options.command
+        )
     })?;
     run_steps_with(
         &exe,
@@ -359,6 +362,7 @@ fn run_steps_with(
     steps: &[ChainStep],
     step_timeout: Option<Duration>,
 ) -> Result<(), String> {
+    let command = options.command;
     let total = steps.len();
     for (index, step) in steps.iter().enumerate() {
         let number = index + 1;
@@ -387,7 +391,15 @@ fn run_steps_with(
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
             .spawn()
-            .map_err(|err| stopped(number, total, step, &format!("could not start: {err}")))?;
+            .map_err(|err| {
+                stopped(
+                    command,
+                    number,
+                    total,
+                    step,
+                    &format!("could not start: {err}"),
+                )
+            })?;
         // Diagnostics stream live as if the step ran directly; the tail is
         // kept so a failure can name the step's own last diagnostic.
         let tail = child.stderr.take().map(|pipe| {
@@ -412,6 +424,7 @@ fn run_steps_with(
         let (status, stdout) = wait_for_step(
             &mut child,
             step_timeout,
+            command,
             number,
             total,
             step,
@@ -429,17 +442,18 @@ fn run_steps_with(
                 Some(line) => format!("failed ({code}); {line}"),
                 None => format!("failed ({code})"),
             };
-            return Err(stopped(number, total, step, &reason));
+            return Err(stopped(command, number, total, step, &reason));
         }
         if let Some(target) = &step.stdout_to {
             // Validate before publishing: a bad stdout never reaches the
             // final path, so a rerun cannot mistake it for evidence.
             if let Some(problem) = bytes_problem(target, &stdout) {
-                return Err(stopped(number, total, step, &problem));
+                return Err(stopped(command, number, total, step, &problem));
             }
             if let Some(parent) = target.parent() {
                 std::fs::create_dir_all(parent).map_err(|err| {
                     stopped(
+                        command,
                         number,
                         total,
                         step,
@@ -449,6 +463,7 @@ fn run_steps_with(
             }
             crate::output::file_write::write(target, &stdout).map_err(|err| {
                 stopped(
+                    command,
                     number,
                     total,
                     step,
@@ -459,7 +474,7 @@ fn run_steps_with(
             // The step wrote its own files; take back what it just created
             // so the next run re-attempts it instead of skipping it.
             discard(&fresh_outputs);
-            return Err(stopped(number, total, step, &problem));
+            return Err(stopped(command, number, total, step, &problem));
         }
     }
     Ok(())
@@ -468,6 +483,7 @@ fn run_steps_with(
 fn wait_for_step(
     child: &mut Child,
     step_timeout: Option<Duration>,
+    command: &str,
     number: usize,
     total: usize,
     step: &ChainStep,
@@ -482,9 +498,15 @@ fn wait_for_step(
         bytes
     });
     let status = match step_timeout {
-        None => child
-            .wait()
-            .map_err(|err| stopped(number, total, step, &format!("could not run: {err}")))?,
+        None => child.wait().map_err(|err| {
+            stopped(
+                command,
+                number,
+                total,
+                step,
+                &format!("could not run: {err}"),
+            )
+        })?,
         Some(limit) => {
             let deadline = Instant::now() + limit;
             loop {
@@ -500,6 +522,7 @@ fn wait_for_step(
                             // past its bound.
                             let seconds = limit.as_secs();
                             return Err(stopped(
+                                command,
                                 number,
                                 total,
                                 step,
@@ -513,6 +536,7 @@ fn wait_for_step(
                     Err(err) => {
                         discard(fresh_outputs);
                         return Err(stopped(
+                            command,
                             number,
                             total,
                             step,
@@ -525,6 +549,7 @@ fn wait_for_step(
     };
     let stdout = stdout_handle.join().map_err(|join| {
         stopped(
+            command,
             number,
             total,
             step,
@@ -600,9 +625,9 @@ pub(super) fn review_cards_needed(root: &Path, options: &FirstPrOptions) -> bool
     selected["state"] == "missing_artifact" && selected["artifact"]["id"] == "review_comments"
 }
 
-fn stopped(number: usize, total: usize, step: &ChainStep, reason: &str) -> String {
+fn stopped(command: &str, number: usize, total: usize, step: &ChainStep, reason: &str) -> String {
     format!(
-        "first-pr --run-chain stopped at step {number}/{total} ({}): {reason}. Later steps did not run and no start-here packet was written from partial artifacts. Fix the cause and rerun, or run the printed command yourself: {}",
+        "{command} --run-chain stopped at step {number}/{total} ({}): {reason}. Later steps did not run and no start-here packet was written from partial artifacts. Fix the cause and rerun, or run the printed command yourself: {}",
         step.label, step.display
     )
 }

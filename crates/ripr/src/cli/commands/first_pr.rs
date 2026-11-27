@@ -19,7 +19,7 @@ fn run_named(args: &[String], command: &'static str) -> Result<(), String> {
         print_help();
         return Ok(());
     }
-    let options = parse_options(args)?;
+    let options = parse_options(args, command)?;
     // #15249: a missing or non-directory `--root` is the shared root refusal,
     // naming the command actually run, before any disclosure or write.
     // This is the directory check only: packet writes follow `--out-dir`, and
@@ -32,8 +32,9 @@ fn run_named(args: &[String], command: &'static str) -> Result<(), String> {
     first_pr_with_options(options)
 }
 
-pub(crate) fn parse_options(args: &[String]) -> Result<FirstPrOptions, String> {
+fn parse_options(args: &[String], command: &'static str) -> Result<FirstPrOptions, String> {
     let mut options = FirstPrOptions {
+        command,
         preflight: true,
         ..FirstPrOptions::default()
     };
@@ -43,83 +44,98 @@ pub(crate) fn parse_options(args: &[String]) -> Result<FirstPrOptions, String> {
         match args[i].as_str() {
             "--root" => {
                 i += 1;
-                let value = non_empty_arg(args, i, "--root")?.to_string();
+                let value = non_empty_arg(args, i, "--root", command)?.to_string();
                 let reconciled = reconcile_root(
                     std::path::Path::new(&options.root),
                     root_explicit,
                     &value,
-                    "first-pr",
+                    command,
                 )?;
                 options.root = reconciled.display().to_string();
                 root_explicit = true;
             }
             "--base" => {
                 i += 1;
-                options.base = non_empty_arg(args, i, "--base")?.to_string();
+                options.base = non_empty_arg(args, i, "--base", command)?.to_string();
                 options.base_explicit = true;
             }
             "--head" => {
                 i += 1;
-                options.head = non_empty_arg(args, i, "--head")?.to_string();
+                options.head = non_empty_arg(args, i, "--head", command)?.to_string();
             }
             "--check-output" => {
                 i += 1;
-                options.check_output = Some(non_empty_arg(args, i, "--check-output")?.to_string());
+                options.check_output =
+                    Some(non_empty_arg(args, i, "--check-output", command)?.to_string());
             }
             "--gap-ledger" => {
                 i += 1;
-                options.gap_ledger = non_empty_arg(args, i, "--gap-ledger")?.to_string();
+                options.gap_ledger = non_empty_arg(args, i, "--gap-ledger", command)?.to_string();
                 options.gap_ledger_explicit = true;
             }
             "--first-action" => {
                 i += 1;
-                options.first_action = non_empty_arg(args, i, "--first-action")?.to_string();
+                options.first_action =
+                    non_empty_arg(args, i, "--first-action", command)?.to_string();
             }
             "--review-comments" => {
                 i += 1;
-                options.review_comments = non_empty_arg(args, i, "--review-comments")?.to_string();
+                options.review_comments =
+                    non_empty_arg(args, i, "--review-comments", command)?.to_string();
             }
             "--agent-packet" => {
                 i += 1;
-                options.agent_packet = non_empty_arg(args, i, "--agent-packet")?.to_string();
+                options.agent_packet =
+                    non_empty_arg(args, i, "--agent-packet", command)?.to_string();
             }
             "--gate-decision" => {
                 i += 1;
-                options.gate_decision = non_empty_arg(args, i, "--gate-decision")?.to_string();
+                options.gate_decision =
+                    non_empty_arg(args, i, "--gate-decision", command)?.to_string();
             }
             "--receipts-dir" => {
                 i += 1;
-                options.receipts_dir = non_empty_arg(args, i, "--receipts-dir")?.to_string();
+                options.receipts_dir =
+                    non_empty_arg(args, i, "--receipts-dir", command)?.to_string();
             }
             // `--output-dir` is the directory spelling `check` uses (#10543
             // item 4); `--out-dir` stays accepted as a hidden alias so
             // existing scripts keep working.
             "--output-dir" | "--out-dir" => {
                 i += 1;
-                options.out_dir = non_empty_arg(args, i, "--output-dir")?.to_string();
+                options.out_dir = non_empty_arg(args, i, "--output-dir", command)?.to_string();
             }
             "--check" => options.check = true,
             "--run-chain" => options.run_chain = true,
-            other => return Err(unknown_argument("first-pr", other)),
+            other => return Err(unknown_argument(command, other)),
         }
         i += 1;
     }
     if options.run_chain && options.check {
-        return Err("first-pr --run-chain cannot be combined with --check: --check only validates an existing packet and never runs analysis; run first-pr with only one of the two".to_string());
+        return Err(format!(
+            "{command} --run-chain cannot be combined with --check: --check only validates an existing packet and never runs analysis; run {command} with only one of the two"
+        ));
     }
     if options.run_chain && options.check_output.is_some() {
-        return Err("first-pr --run-chain cannot be combined with --check-output: a supplied check output already provides the gap ledger input, so there is no chain to run; run first-pr with only one of the two".to_string());
+        return Err(format!(
+            "{command} --run-chain cannot be combined with --check-output: a supplied check output already provides the gap ledger input, so there is no chain to run; run {command} with only one of the two"
+        ));
     }
     Ok(options)
 }
 
-fn non_empty_arg<'a>(args: &'a [String], index: usize, flag: &str) -> Result<&'a str, String> {
+fn non_empty_arg<'a>(
+    args: &'a [String],
+    index: usize,
+    flag: &str,
+    command: &str,
+) -> Result<&'a str, String> {
     let Some(value) = args.get(index) else {
         return Err(crate::cli::parse::missing_value(flag));
     };
     if value.trim().is_empty() {
         let message =
-            format!("first-pr {flag} requires a non-empty value; pass a value right after {flag}");
+            format!("{command} {flag} requires a non-empty value; pass a value right after {flag}");
         crate::cli::usage_refusal::note_missing_value(flag, &message);
         return Err(message);
     }
@@ -133,8 +149,12 @@ fn print_help() {
 #[cfg(test)]
 mod tests {
     use super::super::tests::args;
-    use super::{first_pr, parse_options};
+    use super::first_pr;
     use crate::output::first_pr::FirstPrOptions;
+
+    fn parse_options(args: &[String]) -> Result<FirstPrOptions, String> {
+        super::parse_options(args, "first-pr")
+    }
 
     #[test]
     fn first_pr_dispatch_wiring_help_exits_cleanly() {

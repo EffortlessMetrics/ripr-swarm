@@ -385,3 +385,198 @@ fn help_text_matches_behavior() -> TestResult {
     }
     Ok(())
 }
+
+#[test]
+fn first_pr_spellings_own_their_usage_errors_and_help() -> TestResult {
+    let (root, _cleanup) = scratch("err-first-pr-usage")?;
+    let before = super::snapshot_tree(&root)?;
+    for (command, other) in [("first-pr", "start-here"), ("start-here", "first-pr")] {
+        let output = ripr(&root, &[command, "--gap-ledgr"])?;
+        let text = stderr(&output);
+        let label = format!("unknown {command} argument");
+        let help_command = format!("ripr {command} --help");
+        assert_eq!(output.status.code(), Some(2), "{text}");
+        assert!(output.stdout.is_empty(), "{}", stdout(&output));
+        assert!(text.contains(&label), "{text}");
+        assert!(text.contains("Did you mean `--gap-ledger`?"), "{text}");
+        assert!(text.contains(&format!("Run `{help_command}`.")), "{text}");
+        assert!(!text.contains(&format!("ripr {other} --help")), "{text}");
+
+        // A JSON request still produces the same typed refusal for the first
+        // rejected token. --json itself remains unsupported by this parser.
+        let output = ripr(&root, &[command, "--gap-ledgr", "--json"])?;
+        let refusal =
+            super::assert_cli_refusal(&output, "unknown_argument", "--gap-ledgr", &label)?;
+        let message = refusal["error"]["message"]
+            .as_str()
+            .ok_or("missing message")?;
+        assert!(message.contains(&label), "{message}");
+        assert_eq!(stderr(&output).trim_end(), format!("ripr: {message}"));
+        assert_eq!(refusal["error"]["next"]["command"], help_command);
+        assert_eq!(refusal["error"]["next"]["purpose"], "list_valid_arguments");
+
+        let help = ripr(&root, &[command, "--help"])?;
+        assert!(help.status.success(), "{}", stderr(&help));
+        assert!(stdout(&help).contains("--gap-ledger"), "{}", stdout(&help));
+
+        let output = ripr(&root, &[command, "--root", ".", "--root", "other"])?;
+        let text = stderr(&output);
+        assert_eq!(output.status.code(), Some(2), "{text}");
+        assert!(
+            text.contains(&format!("{command} takes --root once")),
+            "{text}"
+        );
+        assert!(
+            !text.contains(&format!("{other} takes --root once")),
+            "{text}"
+        );
+        assert!(output.stdout.is_empty(), "{}", stdout(&output));
+        for (args, diagnostic) in [
+            (
+                &[command, "--gap-ledger", ""][..],
+                "--gap-ledger requires a non-empty value",
+            ),
+            (
+                &[command, "--run-chain", "--check"][..],
+                "--run-chain cannot be combined with --check:",
+            ),
+            (
+                &[command, "--run-chain", "--check-output", "saved check.json"][..],
+                "--run-chain cannot be combined with --check-output:",
+            ),
+        ] {
+            let output = ripr(&root, args)?;
+            let text = stderr(&output);
+            assert_eq!(output.status.code(), Some(2), "{text}");
+            assert!(text.contains(&format!("{command} {diagnostic}")), "{text}");
+            assert!(!text.contains(&format!("{other} {diagnostic}")), "{text}");
+            assert!(output.stdout.is_empty(), "{}", stdout(&output));
+        }
+        assert_eq!(super::snapshot_tree(&root)?, before);
+    }
+    Ok(())
+}
+
+#[test]
+fn first_pr_spellings_recover_a_missing_check_packet() -> TestResult {
+    let (root, _cleanup) = scratch("err-first-pr-check")?;
+    init_producer_fixture_repo(&root)?;
+    for (command, other) in [("first-pr", "start-here"), ("start-here", "first-pr")] {
+        let output_dir = format!("{command} reports");
+        let output = ripr(
+            &root,
+            &[
+                command,
+                "--base",
+                "HEAD",
+                "--output-dir",
+                &output_dir,
+                "--check",
+            ],
+        )?;
+        let text = stderr(&output);
+        assert_eq!(output.status.code(), Some(2), "{text}");
+        assert!(
+            text.contains(&format!("{command} --check validates an existing")),
+            "{text}"
+        );
+        assert!(
+            !text.contains(&format!("{other} --check validates")),
+            "{text}"
+        );
+        assert!(text.contains("start-here.json"), "{text}");
+        assert!(!root.join(&output_dir).exists());
+        assert!(!root.join("target").exists());
+
+        let suggested = super::suggested_first_pr_write(&text)?;
+        assert_eq!(
+            suggested.first().map(String::as_str),
+            Some(command),
+            "{text}"
+        );
+        let args = suggested.iter().map(String::as_str).collect::<Vec<_>>();
+        let write = ripr(&root, &args)?;
+        assert!(write.status.success(), "{}", stderr(&write));
+        for name in ["start-here.json", "start-here.md"] {
+            assert!(root.join(&output_dir).join(name).is_file(), "{text}");
+        }
+    }
+    Ok(())
+}
+
+#[test]
+fn first_pr_spellings_protect_an_explicit_malformed_gap_ledger() -> TestResult {
+    let (scratch, _cleanup) = scratch("err-first-pr-malformed-ledger")?;
+    let root = scratch.join("fixture");
+    std::fs::create_dir(&root)?;
+    init_producer_fixture_repo(&root)?;
+    let ledger_name = "malformed user ledger.json";
+    let ledger = root.join(ledger_name);
+    let original = b"{not valid JSON\n";
+    std::fs::write(&ledger, original)?;
+    let before = super::snapshot_tree(&root)?;
+    let advice = "Choose a new output path for the regenerated ledger";
+
+    for command in ["first-pr", "start-here"] {
+        let reports = scratch.join(format!("{command} reports"));
+        let reports_arg = reports.to_str().ok_or("fixture path must be UTF-8")?;
+        let args = [
+            command,
+            "--base",
+            "HEAD",
+            "--gap-ledger",
+            ledger_name,
+            "--output-dir",
+            reports_arg,
+        ];
+        let write = ripr(&root, &args)?;
+        assert!(write.status.success(), "{}", stderr(&write));
+        let text = stdout(&write);
+        assert!(text.contains(advice), "{text}");
+        assert!(!text.contains("Next command:"), "{text}");
+
+        let packet: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(reports.join("start-here.json"))?)?;
+        assert_eq!(packet["status"], "blocked");
+        assert_eq!(packet["selected"]["state"], "malformed_artifact");
+        assert_eq!(packet["selected"]["output_state"], "malformed_artifact");
+        assert_eq!(packet["inputs"]["gap_ledger"], ledger_name);
+        assert!(packet["selected"]["next_command"].is_null(), "{packet}");
+        assert!(packet["commands"].get("next").is_none(), "{packet}");
+        assert!(
+            packet["commands"].get("regenerate_gap_ledger").is_none(),
+            "{packet}"
+        );
+        let artifact = packet["artifacts"]
+            .as_array()
+            .and_then(|artifacts| artifacts.iter().find(|entry| entry["id"] == "gap_ledger"))
+            .ok_or("missing gap ledger artifact")?;
+        assert!(artifact["regeneration_command"].is_null(), "{artifact}");
+        let markdown = std::fs::read_to_string(reports.join("start-here.md"))?;
+        assert!(markdown.contains(advice), "{markdown}");
+        assert!(!markdown.contains("ripr reports gap-ledger"), "{markdown}");
+        assert_eq!(super::snapshot_tree(&reports)?.len(), 2);
+        assert_eq!(super::snapshot_tree(&root)?, before);
+        assert_eq!(std::fs::read(&ledger)?.as_slice(), original);
+
+        let reports_before_check = super::snapshot_tree(&reports)?;
+        let mut check_args = args.to_vec();
+        check_args.push("--check");
+        let check = ripr(&root, &check_args)?;
+        let diagnostic = stderr(&check);
+        assert_eq!(check.status.code(), Some(2), "{diagnostic}");
+        assert!(
+            diagnostic.contains(&format!("{command} --check:")),
+            "{diagnostic}"
+        );
+        assert!(
+            diagnostic.contains("blocked state `malformed_artifact`"),
+            "{diagnostic}"
+        );
+        assert!(stdout(&check).contains(advice), "{}", stdout(&check));
+        assert_eq!(super::snapshot_tree(&reports)?, reports_before_check);
+        assert_eq!(super::snapshot_tree(&root)?, before);
+        assert_eq!(std::fs::read(&ledger)?.as_slice(), original);
+    }
+    Ok(())
+}

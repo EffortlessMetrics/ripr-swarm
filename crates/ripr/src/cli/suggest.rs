@@ -210,10 +210,10 @@ fn switch_given_value<'a>(command: &str, arg: &'a str) -> Option<&'a str> {
 /// usage lines and so propose `gate check`'s `--base` to a parser that
 /// rejects it (#14086).
 fn flag_owner(command: &str) -> &str {
-    if command == "gate" {
-        "gate evaluate"
-    } else {
-        command
+    match command {
+        "gate" => "gate evaluate",
+        "start-here" => "first-pr",
+        _ => command,
     }
 }
 
