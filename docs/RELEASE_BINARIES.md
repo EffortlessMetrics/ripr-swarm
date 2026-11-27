@@ -154,9 +154,14 @@ The `package-smoke` matrix installs that artifact on each native runner
 (Linux x64 on Ubuntu 22.04 for the glibc 2.34 floor, Linux ARM64, macOS Intel,
 macOS ARM64, Windows x64), with no ripr on `PATH`:
 
-- `pip install --no-index --pre --find-links wheels ripr-rs` from the full five-wheel
-  directory, so pip must select the wheel whose tag matches the host; the job
-  fails if it picks any other tag;
+- `pip install --no-index --pre --find-links wheels --report pip-report.json ripr-rs`
+  from the full five-wheel directory. Before launching ripr, the verifier checks
+  the selected wheel's exact filename (including the host tag), SHA-256,
+  distribution name, and normalized version against the same-run native wheel
+  receipt. The receipt must name the requested source, version, and target and
+  bind the raw qualified payload identity bytes. The verifier separately checks
+  the installed executable against that payload identity; a mismatch stops
+  the smoke test even if the other checks agree;
 - `npm install --offline` of the launcher tarball plus the host's own native
   package, with scripts disabled and an empty cache;
 - both installed commands must print `ripr <version> (<commit>)` and run
@@ -227,12 +232,26 @@ ripr-server-v<VERSION>-<target>.zip
 ripr-server-v<VERSION>-<target>.tar.gz
 ripr-server-manifest-v<VERSION>.json
 SHA256SUMS
+ripr-server-v<VERSION>-<target>.zip.sha256
+ripr-server-v<VERSION>-<target>.tar.gz.sha256
 ```
 
-The `SHA256SUMS` sidecar is `sha256sum -c SHA256SUMS`-compatible (one
-`<sha256>  <file_name>` line per asset). Releases through `v0.7.0` published the
-same manifest under the legacy name `checksums.txt`; the content format is
-unchanged.
+Each per-archive `.sha256` file holds only the bare lowercase digest and a
+newline, not `<sha256>  <file_name>`, so `sha256sum -c <archive>.sha256` fails
+with "no properly formatted checksum lines". Check one with
+`echo "$(cat <archive>.sha256)  <archive>" | sha256sum -c -` (the quickstart
+snippet), or use the release's combined checksum file. The archives are flat
+(members are `./ripr`, `./LICENSE-MIT`, ...), so extract into a newly created,
+empty directory (`mkdir <dir> && tar xzf <archive> -C <dir>`, which stops if
+`<dir>` already exists) rather than into a repository or a reused directory,
+where existing files with those names would be replaced.
+
+The current producer writes the combined checksum file as `SHA256SUMS`, which
+is `sha256sum -c SHA256SUMS`-compatible (one `<sha256>  <file_name>` line per
+asset). Published releases up to and including `v0.10.0` carry it under the
+legacy name `checksums.txt` (same format; `v0.10.0` has `checksums.txt` and no
+`SHA256SUMS`, read back from the release download URLs on 2026-11-19), so use
+`checksums.txt` for the release the quickstart pins.
 
 ### RC placement and the embedded manifest digest (#3798)
 

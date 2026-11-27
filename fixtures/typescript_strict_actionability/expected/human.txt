@@ -3,7 +3,7 @@ mode: fast
 root: fixtures/typescript_strict_actionability/input
 config: <cwd>/fixtures/typescript_strict_actionability/input/ripr.toml
 
-Summary: 3 changed behaviors checked: 0 appear noticed by tests, 2 partly noticed, 0 reached but not noticed, 1 no test path. 3 found, 0 suppressed by your settings
+Summary: 3 changed behaviors checked: 0 appear noticed by tests, 2 partly noticed (2 through a test link ripr could not confirm), 0 reached but not noticed, 1 no test path. 3 found, 0 suppressed by your settings
 
 Changed file(s) by language: typescript = 3
 

@@ -45,3 +45,15 @@ Command:
 
 Updated:
 - `expected/check.json`
+
+## Pending — rust_tolerance_ne_assertion_macro_limitation (5)
+
+Reason:
+RIPR-SPEC-0120: a test checking only through an unread assertion-like macro reads assertion_admission_unproven, not has no assertion (#15237)
+
+Command:
+`cargo xtask goldens bless rust_tolerance_ne_assertion_macro_limitation --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

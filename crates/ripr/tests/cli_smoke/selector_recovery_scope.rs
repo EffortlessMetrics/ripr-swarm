@@ -147,6 +147,21 @@ fn selector_recovery_replays_committed_worktree_and_supplied_diff_scopes() -> Re
                     "committed recovery must pin its diff source: {emitted}"
                 ));
             }
+            // #15260: under `--json` the refusal document's `next` is the
+            // listing the prose leads with, so a JSON consumer replays the
+            // same scope (the dirty default leads with the committed one).
+            if command == "context" {
+                let mut json_args = args.clone();
+                json_args.push("--json");
+                let refusal = run_ripr(&json_args);
+                let document: serde_json::Value = serde_json::from_slice(&refusal.stdout)
+                    .map_err(|err| format!("{label} context --json refusal: {err}: {refusal:?}"))?;
+                if document["error"]["next"]["command"].as_str() != Some(emitted) {
+                    return Err(format!(
+                        "{label} context --json next must be `{emitted}`: {document}"
+                    ));
+                }
+            }
         }
     }
     ignore_remove_dir_all(&root);

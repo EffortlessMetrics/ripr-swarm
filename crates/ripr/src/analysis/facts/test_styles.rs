@@ -222,6 +222,67 @@ pub(crate) fn attributes_define_test<'attribute>(
     })
 }
 
+/// Attributes that cannot rewrite a function body: they gate, document,
+/// lint, or carry harness arguments. An attribute outside this set and the
+/// built-in test harnesses may be an attribute macro, which can add a `use`
+/// or replace the body (#12857).
+const BODY_PRESERVING_ATTRIBUTE_PATHS: &[&str] = &[
+    "ignore",
+    "should_panic",
+    "cfg",
+    "allow",
+    "warn",
+    "deny",
+    "forbid",
+    "expect",
+    "doc",
+    "inline",
+    "track_caller",
+    "must_use",
+    "deprecated",
+    "rustfmt::skip",
+    "case",
+    "serial",
+    "serial_test::serial",
+];
+
+/// Whether every attribute is a known test harness or a body-preserving
+/// built-in. `false` means an unrecognised attribute macro could rewrite the
+/// body, so a macro-generated test must not borrow invocation-site scopes.
+pub(crate) fn attributes_preserve_body<'attribute>(
+    attributes: impl IntoIterator<Item = &'attribute str>,
+) -> bool {
+    attributes.into_iter().all(|attribute| {
+        attribute_path_before_arguments(attribute).is_some_and(|path| {
+            is_test_attribute_path(&path)
+                || BODY_PRESERVING_ATTRIBUTE_PATHS.contains(&path.as_str())
+        }) || cfg_predicates::attribute_introduces_only_test(attribute)
+    })
+}
+
+/// The attribute's path, read up to its first `(`, `=` or `]`. Only the path
+/// decides whether an attribute can rewrite a body, so the arguments are not
+/// scanned: a `#[doc = "an opening ( token"]` string must not hide a
+/// body-preserving `doc` (#12857). `normalized_test_attribute_path` stays
+/// strict because `attributes_define_test` must keep rejecting
+/// `#[test = "x"]` and unbalanced arguments. Anything that is not
+/// `#[` + path + one of those delimiters reads as unknown, which withholds.
+fn attribute_path_before_arguments(attribute: &str) -> Option<String> {
+    let body = attribute.trim().strip_prefix("#[")?;
+    let delimiter = body.find(['(', '=', ']'])?;
+    let path = body
+        .get(..delimiter)?
+        .chars()
+        .filter(|character| !character.is_whitespace())
+        .collect::<String>();
+    let path = path.trim_start_matches("::");
+    let is_path = !path.is_empty()
+        && path
+            .chars()
+            .all(|character| character.is_ascii_alphanumeric() || matches!(character, '_' | ':'));
+    is_path.then(|| path.to_string())
+}
+
 /// Whether any attribute is `#[crate::test]` / `#[self::test]` and the file's
 /// crate establishes a local test-wrapper alias for it (#9001).
 fn attributes_use_local_alias<'attribute>(

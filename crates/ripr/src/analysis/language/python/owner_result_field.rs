@@ -750,7 +750,7 @@ fn exact_field_assertion<'a>(stmt: &'a Stmt, binding: &str, field: &str) -> Opti
 }
 
 /// A plain literal: a constant, or a negated numeric constant.
-fn is_literal(expr: &Expr) -> bool {
+pub(super) fn is_literal(expr: &Expr) -> bool {
     match expr {
         Expr::Constant(_) => true,
         Expr::UnaryOp(unary) => {
@@ -862,7 +862,7 @@ fn owner_result_call_class<'a>(value: &'a Expr, owner_name: &str) -> Option<&'a 
 }
 
 /// Whether a class-body statement binds `name` at class level.
-fn class_level_binds(stmt: &Stmt, name: &str) -> bool {
+pub(super) fn class_level_binds(stmt: &Stmt, name: &str) -> bool {
     let target = |expr: &Expr| matches!(expr, Expr::Name(bound) if bound.id.as_str() == name);
     match stmt {
         Stmt::FunctionDef(function) => function.name.as_str() == name,
@@ -928,7 +928,7 @@ fn stmt_start(stmt: &Stmt) -> usize {
     usize::from(stmt.range().start())
 }
 
-fn text_of(source: &str, range: TextRange) -> Option<&str> {
+pub(super) fn text_of(source: &str, range: TextRange) -> Option<&str> {
     source.get(usize::from(range.start())..usize::from(range.end()))
 }
 
@@ -937,7 +937,7 @@ fn line_of(source: &str, offset: usize) -> Option<usize> {
     Some(source.get(..offset)?.matches('\n').count() + 1)
 }
 
-fn plain_identifier(value: &str) -> bool {
+pub(super) fn plain_identifier(value: &str) -> bool {
     let mut chars = value.chars();
     chars
         .next()
@@ -945,7 +945,7 @@ fn plain_identifier(value: &str) -> bool {
         && chars.all(|ch| ch == '_' || ch.is_ascii_alphanumeric())
 }
 
-fn dedent(source: &str) -> String {
+pub(super) fn dedent(source: &str) -> String {
     let indent = source
         .lines()
         .filter(|line| !line.trim().is_empty())
@@ -989,7 +989,7 @@ fn straight_line_method_body(body: &[Stmt]) -> bool {
 }
 
 /// Whether `text` holds `name` as a whole identifier.
-fn names_identifier(text: &str, name: &str) -> bool {
+pub(super) fn names_identifier(text: &str, name: &str) -> bool {
     let is_ident = |c: char| c == '_' || c.is_alphanumeric();
     text.match_indices(name).any(|(start, _)| {
         let before = text.get(..start).and_then(|head| head.chars().next_back());

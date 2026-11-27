@@ -147,14 +147,18 @@ fn shadowed_and_deferred_helper_assertions_are_refused() -> Result<(), String> {
         false,
     )
 }
+/// `vec!` is a name a foreign glob can bind; a glob cannot rebind the bare
+/// `assert!` or `matches!` (#16060).
+const GLOB_BINDABLE_BODY: &str =
+    "let _ = vec![0u8];\nassert!(matches!(actual, super::SelectionRequest::Unresolved(_)));";
 #[test]
 fn plain_import_binding_the_std_root_keeps_the_glob_foreign() -> Result<(), String> {
-    let body = "assert!(matches!(actual, super::SelectionRequest::Unresolved(_)));";
+    let body = GLOB_BINDABLE_BODY;
     check("use other::std;\nuse std::prelude::v1::*;", body, false)
 }
 #[test]
 fn self_import_binding_the_std_root_keeps_the_glob_foreign() -> Result<(), String> {
-    let body = "assert!(matches!(actual, super::SelectionRequest::Unresolved(_)));";
+    let body = GLOB_BINDABLE_BODY;
     check(
         "use other::std::{self};\nuse std::prelude::v1::*;",
         body,
@@ -163,7 +167,7 @@ fn self_import_binding_the_std_root_keeps_the_glob_foreign() -> Result<(), Strin
 }
 #[test]
 fn grouped_and_nested_imports_binding_the_std_root_keep_the_glob_foreign() -> Result<(), String> {
-    let body = "assert!(matches!(actual, super::SelectionRequest::Unresolved(_)));";
+    let body = GLOB_BINDABLE_BODY;
     for binding in [
         "use other::{std};",
         "use other::{inner::{std}};",
@@ -186,10 +190,7 @@ fn unrelated_assertion_remains_unconfirmed() -> Result<(), String> {
 }
 #[test]
 fn unestablished_plain_assertion_names_its_macro_in_human_and_json() -> Result<(), String> {
-    let output = analyze_output(
-        "use rayon::prelude::*;",
-        "assert!(matches!(actual, super::SelectionRequest::Unresolved(_)));",
-    )?;
+    let output = analyze_output("use rayon::prelude::*;", GLOB_BINDABLE_BODY)?;
     let finding = output
         .findings
         .iter()

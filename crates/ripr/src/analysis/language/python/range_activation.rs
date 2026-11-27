@@ -200,7 +200,19 @@ fn direct_integer_pin(
 
 /// The shared binding reader inventories values, but deliberately tolerates
 /// unmatched arguments. The range model needs a call that actually binds.
-fn valid_owner_call(owner: &PythonOwner, call: &rustpython_parser::ast::ExprCall) -> bool {
+pub(super) fn valid_owner_call(
+    owner: &PythonOwner,
+    call: &rustpython_parser::ast::ExprCall,
+) -> bool {
+    valid_owner_call_with(owner, call, plain_argument)
+}
+
+/// `binds` decides which argument expressions bind a parameter.
+pub(super) fn valid_owner_call_with(
+    owner: &PythonOwner,
+    call: &rustpython_parser::ast::ExprCall,
+    binds: impl Fn(&rustpython_parser::ast::Expr) -> bool,
+) -> bool {
     let Some(skip) = receiver_skip(owner) else {
         return false;
     };
@@ -217,7 +229,7 @@ fn valid_owner_call(owner: &PythonOwner, call: &rustpython_parser::ast::ExprCall
     }
     let mut bound = std::collections::BTreeSet::new();
     for (argument, parameter) in call.args.iter().zip(positional) {
-        if !plain_argument(argument) || !bound.insert(parameter.name.as_str()) {
+        if !binds(argument) || !bound.insert(parameter.name.as_str()) {
             return false;
         }
     }
@@ -229,7 +241,7 @@ fn valid_owner_call(owner: &PythonOwner, call: &rustpython_parser::ast::ExprCall
             .iter()
             .any(|p| p.name == name && !p.positional_only)
             || !bound.insert(name)
-            || !plain_argument(&keyword.value)
+            || !binds(&keyword.value)
         {
             return false;
         }
@@ -239,7 +251,7 @@ fn valid_owner_call(owner: &PythonOwner, call: &rustpython_parser::ast::ExprCall
         .all(|p| bound.contains(p.name.as_str()) || p.default.is_some())
 }
 
-fn receiver_skip(owner: &PythonOwner) -> Option<usize> {
+pub(super) fn receiver_skip(owner: &PythonOwner) -> Option<usize> {
     use crate::domain::OwnerKind;
     match owner.owner_kind {
         Some(OwnerKind::Method) => Some(1),
@@ -251,7 +263,7 @@ fn receiver_skip(owner: &PythonOwner) -> Option<usize> {
     }
 }
 
-fn plain_argument(value: &rustpython_parser::ast::Expr) -> bool {
+pub(super) fn plain_argument(value: &rustpython_parser::ast::Expr) -> bool {
     use rustpython_parser::ast::{self, Expr};
     match value {
         Expr::Constant(_) | Expr::Name(_) => true,

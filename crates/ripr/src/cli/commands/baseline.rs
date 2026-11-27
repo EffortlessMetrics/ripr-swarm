@@ -13,9 +13,7 @@ use crate::cli::suggest::{unknown_argument, unknown_value};
 use crate::output;
 use std::path::{Path, PathBuf};
 
-use super::{
-    baseline_created_at, non_empty_path_arg, read_optional_text_for_report, write_text_file,
-};
+use super::{baseline_created_at, non_empty_path_arg, write_text_file};
 
 /// Recovery route for a missing gate-decision input, in the sibling commands'
 /// vocabulary (#9851): `baseline create --from` / `baseline update --current`
@@ -136,8 +134,9 @@ fn baseline_diff(args: &[String]) -> Result<(), String> {
     let options = parse_baseline_diff_options(args)?;
     let baseline_path = output::baseline_delta::display_path(&options.baseline);
     let current_path = output::baseline_delta::display_path(&options.current);
-    let baseline_json = read_optional_text_for_report("baseline", &options.baseline);
-    let current_json = read_optional_text_for_report("current gate-decision", &options.current);
+    let mut reads = super::SuppliedInputReads::default();
+    let baseline_json = reads.read_json("--baseline", "baseline", &options.baseline);
+    let current_json = reads.read_json("--current", "current gate-decision", &options.current);
     let report = output::baseline_delta::build_baseline_delta_report(
         output::baseline_delta::BaselineDeltaInput {
             root: ".".to_string(),
@@ -161,7 +160,7 @@ fn baseline_diff(args: &[String]) -> Result<(), String> {
     // (#9856): a run that routed from nothing must not look like a healthy
     // "no debt movement" run in the terminal or in `2>&1` CI logs.
     super::emit_report_warnings(output::baseline_delta::baseline_delta_warnings(&report));
-    Ok(())
+    reads.finish("baseline diff")
 }
 
 fn baseline_update(args: &[String]) -> Result<(), String> {
@@ -602,18 +601,16 @@ mod tests {
     }
 
     #[test]
-    fn baseline_diff_missing_inputs_complete_with_warnings() -> Result<(), String> {
-        // #9856 contract: two missing inputs keep the documented exit-0
-        // contract (the typed answer completed) while the warnings that were
-        // previously report-only become visible on stderr; the report itself
-        // is unchanged.
+    fn baseline_diff_missing_inputs_write_report_then_refuse() -> Result<(), String> {
+        // Two missing inputs write the report with its warnings (#9856) and
+        // then refuse with exit 2 (#15254).
         let dir = unique_command_test_dir("baseline-diff-missing-inputs");
         std::fs::create_dir_all(&dir).map_err(|error| format!("create dir: {error}"))?;
         let missing_a = dir.join("missing-a.json");
         let missing_b = dir.join("missing-b.json");
         let out = dir.join("baseline-debt-delta.json");
         let out_md = dir.join("baseline-debt-delta.md");
-        baseline(&args(&[
+        let refusal = baseline(&args(&[
             "diff",
             "--baseline",
             &missing_a.display().to_string(),
@@ -624,7 +621,12 @@ mod tests {
             "--out-md",
             &out_md.display().to_string(),
         ]))
-        .map_err(|error| format!("missing-input baseline diff must complete (exit 0): {error}"))?;
+        .err()
+        .ok_or("missing-input baseline diff must refuse (exit 2)")?;
+        assert!(
+            refusal.contains("--baseline") && refusal.contains("--current"),
+            "{refusal}"
+        );
         let json = std::fs::read_to_string(&out)
             .map_err(|error| format!("read baseline delta JSON: {error}"))?;
         let value: serde_json::Value = serde_json::from_str(&json)

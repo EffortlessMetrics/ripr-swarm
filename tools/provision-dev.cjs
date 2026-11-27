@@ -20,6 +20,7 @@ const HELP = `Usage: node tools/provision-dev.cjs [--ensure] [--rust-only]
 Requires the checked Node major, Bash, curl, Git, tar and GNU timeout on glibc Linux.
 Default: provision the checkout Rust pin and stable, matching components, Nextest,
 locked editor dependencies, and run the existing native editor prerequisite smoke.
+Editor provisioning checks npm's effective cache in the editor project before npm ci.
 --ensure reuses installed stable and matching npm dependencies; it still installs
 a newly checked Rust pin and missing components. This is an explicit online action.
 --rust-only omits editor dependencies and editor verification.
@@ -245,6 +246,61 @@ function selectNextestRelease(metadata, host) {
     throw failure(`The official Nextest metadata did not identify one verified archive for ${host}.`);
   }
   return { version, url, sha256: checksum.toLowerCase() };
+}
+
+// Resolve the caller's existing home as a trusted prefix. Below that boundary
+// (or the filesystem root for other selections), never follow cache symlinks.
+function probeNpmCache(cache, checkout, home) {
+  if (!path.isAbsolute(cache) || /[\x00-\x1f\x7f]/.test(cache) || cache.split(path.sep).includes('..')) {
+    throw failure('Expected one absolute cache directory without traversal or control characters.');
+  }
+  let absolute = path.resolve(cache);
+  if (home && path.isAbsolute(home) && absolute.startsWith(path.resolve(home) + path.sep)) {
+    try { absolute = path.join(fs.realpathSync.native(home), path.relative(home, absolute)); }
+    catch (error) { if (error.code !== 'ENOENT') throw error; } // A new home can be created below.
+  }
+  const root = path.parse(absolute).root;
+  const source = fs.realpathSync(checkout);
+  if (absolute === root || absolute === source || absolute.startsWith(source + path.sep)) {
+    throw failure('Choose a cache directory outside the checkout and below the filesystem root.');
+  }
+  // Node does not export Linux O_PATH (asm-generic/fcntl.h, x64/arm64).
+  // It requires search permission on ancestors without opening them for reading.
+  const searchOnly = process.platform === 'linux' ? 0o10000000 : 0;
+  const flags = searchOnly | fs.constants.O_DIRECTORY | fs.constants.O_NOFOLLOW;
+  let fd = fs.openSync(root, flags);
+  let directory = root;
+  const anchored = () => process.platform === 'linux' ? `/proc/self/fd/${fd}` : directory;
+  let created = false;
+  try {
+    for (const component of absolute.slice(root.length).split(path.sep)) {
+      const child = path.join(anchored(), component);
+      let next;
+      try { next = fs.openSync(child, flags); }
+      catch (error) {
+        if (error.code !== 'ENOENT') throw error;
+        try { fs.mkdirSync(child, { mode: 0o700 }); created = true; }
+        catch (mkdirError) { if (mkdirError.code !== 'EEXIST') throw mkdirError; }
+        next = fs.openSync(child, flags);
+      }
+      fs.closeSync(fd);
+      fd = next;
+      directory = path.join(directory, component);
+    }
+    const probe = path.join(anchored(), `.ripr-provision-${crypto.randomUUID()}`);
+    const file = fs.openSync(probe, 'wx+', 0o600);
+    try {
+      const expected = Buffer.from('ripr');
+      fs.writeFileSync(file, expected);
+      const actual = Buffer.alloc(expected.length);
+      if (fs.readSync(file, actual, 0, actual.length, 0) !== actual.length || !actual.equals(expected)) {
+        throw failure('Cache probe read did not match the bytes written.');
+      }
+    } finally {
+      try { fs.closeSync(file); } finally { fs.unlinkSync(probe); }
+    }
+    return created ? 'created' : 'existing';
+  } finally { fs.closeSync(fd); }
 }
 
 async function provision(options, deps = {}) {
@@ -498,6 +554,21 @@ async function provision(options, deps = {}) {
     await call(cargo, ['nextest', '--version'], { env: activeEnv, timeoutMs: 30_000 });
     if (!options.rustOnly) {
       const editor = path.join(root, 'editors', 'vscode');
+      let cache;
+      try {
+        // Even "config get" can mkdir the cache or rotate logs. Give this Node
+        // lookup read access only. Install, graph checks and smoke use activeEnv.
+        const queryEnv = { ...activeEnv, NODE_OPTIONS: '--permission --allow-fs-read=*' };
+        const lookup = await call(commands.npm, ['config', 'get', 'cache'],
+          { cwd: editor, env: queryEnv, capture: true, timeoutMs: 30_000 });
+        cache = lookup.stdout.replace(/\r?\n$/, '');
+        const state = probeNpmCache(cache, root, activeEnv.HOME);
+        print(`npm cache ${JSON.stringify(cache)} (${state}): write, read and cleanup passed.`);
+      } catch (error) {
+        const subject = cache === undefined ? 'npm cache configuration' : `npm cache ${JSON.stringify(cache).slice(0, 2048)}`;
+        throw failure(`${subject}: ${error.message}. Retry with an explicit writable cache, for example: `
+          + 'npm_config_cache="$(mktemp -d)" node tools/provision-dev.cjs --ensure', error.exitCode);
+      }
       const modules = path.join(editor, 'node_modules');
       const stamp = path.join(modules, '.ripr-provision-lock.json');
       const fingerprintFor = () => JSON.stringify({ node_major: requirements.node_major, platform, arch,

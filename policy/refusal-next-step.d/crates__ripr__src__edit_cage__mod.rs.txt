@@ -1,0 +1,18 @@
+crates/ripr/src/edit_cage/mod.rs|Git path record is not UTF-8: {err}
+crates/ripr/src/edit_cage/mod.rs|a renamed path change requires previous_path
+crates/ripr/src/edit_cage/mod.rs|a {} path change must not carry previous_path
+crates/ripr/src/edit_cage/mod.rs|baseline workflow projection `{path}` is not a regular file
+crates/ripr/src/edit_cage/mod.rs|git ls-files emitted malformed index record `{record}`
+crates/ripr/src/edit_cage/mod.rs|git ls-files emitted malformed stage metadata `{metadata}`
+crates/ripr/src/edit_cage/mod.rs|git merge-base --is-ancestor {baseline_head} {current_head} failed in {}: {}
+crates/ripr/src/edit_cage/mod.rs|git {args:?} failed in {}: {}
+crates/ripr/src/edit_cage/mod.rs|invalid number of missing workflow projections
+crates/ripr/src/edit_cage/mod.rs|missing workflow projection `{path}` is not eligible for reconstruction
+crates/ripr/src/edit_cage/mod.rs|path component is not valid UTF-8
+crates/ripr/src/edit_cage/mod.rs|path contains no repository-relative component
+crates/ripr/src/edit_cage/mod.rs|path is not repository-relative
+crates/ripr/src/edit_cage/mod.rs|path is not valid UTF-8
+crates/ripr/src/edit_cage/mod.rs|workflow projection `{path}` is not absent
+crates/ripr/src/edit_cage/mod.rs|workflow projection reconstruction exceeds the capture path budget
+crates/ripr/src/edit_cage/mod.rs|writable Windows path is not valid UTF-8
+crates/ripr/src/edit_cage/mod.rs|writable path {} is not a regular non-reparse file

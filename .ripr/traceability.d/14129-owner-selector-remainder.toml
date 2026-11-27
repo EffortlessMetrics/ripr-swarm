@@ -1,0 +1,8 @@
+# Owner-scoped selector remainder: stale-id warning, suppression-health, negatives (#14129).
+[[extend]]
+id = "RIPR-SPEC-0007"
+tests = [
+  "crates/ripr/tests/check_to_gate_chain.rs::function_selector_spares_same_named_owners_and_ownerless_findings",
+  "crates/ripr/tests/check_to_gate_chain.rs::stale_finding_id_warning_names_the_owner_selector",
+  "crates/ripr/tests/check_to_gate_chain.rs::suppression_health_reads_a_function_selector_and_reports_a_malformed_one",
+]

@@ -72,6 +72,7 @@ fn a_computed_operand_names_the_typed_limit_in_the_activate_stage() -> Result<()
         assert_eq!(expression, "cents % 100 > 49");
         assert!(named, "{activate:?}");
         assert!(shared, "{activate:?}");
+        assert_eq!(activate.static_limit_kind, Some(LIMIT));
         assert_eq!(activate.state, StageState::Unknown);
         assert!(
             activate

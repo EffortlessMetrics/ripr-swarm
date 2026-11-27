@@ -48,7 +48,7 @@
         {"stage":"observe","state":"yes","confidence":"medium"},
         {"stage":"discriminate","state":"weak","confidence":"medium"}
       ],
-      "evidence_path": ["reach yes: Related tests appear to reach discounted_total: below_threshold, boundary_discriminator, far_above_threshold", "infection yes: Detected related test input at the changed boundary", "propagation yes: Changed behavior appears to influence returned value: amount - 10", "observation yes: A related test observes a value or effect near the changed behavior", "discriminator weak: Check unconfirmed: no supported assertion that distinguishes the changed behavior is paired with the owner's boundary call (same_test_pairing_missing); a boundary input and a separate exact assertion do not establish that pairing", "local flow reaches returned value: amount - 10 (line 3)", "related test src/lib.rs:13 below_threshold uses strong exact value oracle: assert_eq!(discounted_total(50, 100), 50);", "related test src/lib.rs:18 boundary_discriminator uses an unclassified oracle, not graded against this probe: assert_eq!(discounted_total(amount, threshold), expected);", "related test src/lib.rs:15 far_above_threshold uses strong exact value oracle: assert_eq!(discounted_total(10_000, 100), 9_990);", "source assertion argument value 50 at line 13", "source function argument value amount = 50 at line 13", "source function argument value discount_threshold = 100 at line 13", "source assertion argument value 9_990 at line 15", "source function argument value amount = 10_000 at line 15", "source function argument value discount_threshold = 100 at line 15", "source function argument value amount = 100 at line 22", "source function argument value amount == discount_threshold at line 22"],
+      "evidence_path": ["reach yes: Related tests appear to reach discounted_total: below_threshold, boundary_discriminator, far_above_threshold", "infection yes: Detected related test input at the changed boundary", "propagation yes: Changed behavior appears to influence returned value: amount - 10", "observation yes: A related test observes a value or effect near the changed behavior", "discriminator weak: Check unconfirmed: no supported assertion that distinguishes the changed behavior is paired with the owner's boundary call (same_test_pairing_missing); a boundary input and a separate exact assertion do not establish that pairing", "local flow reaches returned value: amount - 10 (line 3)", "related test src/lib.rs:13 below_threshold uses strong exact value oracle: assert_eq!(discounted_total(50, 100), 50);", "related test src/lib.rs:18 boundary_discriminator uses an unclassified oracle, not graded against this probe: assert_eq!(discounted_total(amount, threshold), expected);", "related test src/lib.rs:15 far_above_threshold uses strong exact value oracle: assert_eq!(discounted_total(10_000, 100), 9_990);", "related test src/lib.rs:28 raw_template_boundary uses an unclassified oracle, not graded against this probe: assert_eq!(discounted_total(100, 100).to_string(), format!(r\"{expected}\"));", "source assertion argument value 50 at line 13", "source function argument value amount = 50 at line 13", "source function argument value discount_threshold = 100 at line 13", "source assertion argument value 9_990 at line 15", "source function argument value amount = 10_000 at line 15", "source function argument value discount_threshold = 100 at line 15", "source function argument value amount = 100 at line 22", "source function argument value amount == discount_threshold at line 22"],
       "flow_sinks": [
         {"kind":"return_value","text":"amount - 10","line":3}
       ],
@@ -57,7 +57,8 @@
       "assertion_texts": {
         "13": "assert_eq!(discounted_total(50, 100), 50);",
         "15": "assert_eq!(discounted_total(10_000, 100), 9_990);",
-        "22": "assert_eq!(discounted_total(amount, threshold), expected);"
+        "22": "assert_eq!(discounted_total(amount, threshold), expected);",
+        "30": "assert_eq!(discounted_total(100, 100).to_string(), format!(r\"{expected}\"));"
       },
       "activation": {
         "observed_values": [
@@ -108,6 +109,27 @@
           },
           {
             "line": 22,
+            "value": "discount_threshold = 100",
+            "context": "function_argument"
+          },
+          {
+            "line": 30,
+            "value": "\"{expected}\"",
+            "context": "assertion_argument"
+          },
+          {
+            "line": 30,
+            "value": "amount = 100",
+            "context": "function_argument"
+          },
+          {
+            "line": 30,
+            "value": "amount == discount_threshold",
+            "context": "function_argument",
+            "provenance": "assert_eq!(discounted_total(100, 100).to_string(), format!(r\"{expected}\")); | exact input amount = 100; exact input discount_threshold = 100"
+          },
+          {
+            "line": 30,
             "value": "discount_threshold = 100",
             "context": "function_argument"
           }
@@ -165,11 +187,32 @@
           "line": 22,
           "value": "discount_threshold = 100",
           "context": "function_argument"
+        },
+        {
+          "line": 30,
+          "value": "\"{expected}\"",
+          "context": "assertion_argument"
+        },
+        {
+          "line": 30,
+          "value": "amount = 100",
+          "context": "function_argument"
+        },
+        {
+          "line": 30,
+          "value": "amount == discount_threshold",
+          "context": "function_argument",
+          "provenance": "assert_eq!(discounted_total(100, 100).to_string(), format!(r\"{expected}\")); | exact input amount = 100; exact input discount_threshold = 100"
+        },
+        {
+          "line": 30,
+          "value": "discount_threshold = 100",
+          "context": "function_argument"
         }
       ],
       "missing_discriminators": [
       ],
-      "related_tests_total": 3,
+      "related_tests_total": 4,
       "related_tests": [
         {
           "name": "below_threshold",
@@ -198,6 +241,16 @@
           "oracle_strength": "strong",
           "oracle_kind": "exact_value",
           "oracle": "assert_eq!(discounted_total(10_000, 100), 9_990);",
+          "relation_reason": "direct_owner_call",
+          "relation_confidence": "high"
+        },
+        {
+          "name": "raw_template_boundary",
+          "file": "src/lib.rs",
+          "line": 28,
+          "oracle_strength": "unknown",
+          "oracle_kind": "unknown",
+          "oracle": "assert_eq!(discounted_total(100, 100).to_string(), format!(r\"{expected}\"));",
           "relation_reason": "direct_owner_call",
           "relation_confidence": "high"
         }

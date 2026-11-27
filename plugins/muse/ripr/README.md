@@ -230,7 +230,7 @@ new snapshot, report the reason instead of inferring that it closed.
 | No tools; `ripr mcp --help` fails | Check the binary on Muse's inherited `PATH`. The recorded 0.10.0 build predates MCP. Use an MCP-capable build and restart. |
 | Tools refer to the wrong workspace | Check the session startup directory. Start a fresh session in the target repository; the no-argument status tool cannot change roots. |
 | `analysis_failed` names missing base candidates | Choose an existing base, such as `trunk`, and pass it on every refresh. |
-| Empty results | Read the outcome, scope counts, and `empty_scope_hint`. Confirm that the selected base/source contains the intended change. |
+| Empty results | Read the outcome, scope counts, and `empty_scope_hint` (or `worktree_base_hint` after a worktree refresh). Confirm that the selected base/source contains the intended change. |
 | A saved test edit is absent | Pass `source: "worktree"` again; check whether a new file is still untracked and whether the refresh failed. |
 | `stale_snapshot` or a retained `last_known_good` snapshot | Follow the typed recovery route, obtain current evidence, and restart the dependent reads with its ID. |
 | No ready gap, refused card, or `card.readiness.repair_ready` is not `true` | Report the limitation and stop the automated repair route. Do not invent a test target or upgrade readiness. |

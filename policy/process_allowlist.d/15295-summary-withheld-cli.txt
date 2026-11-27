@@ -1,0 +1,1 @@
+crates/ripr/tests/weak_reach_hint.rs|Command::new|1|output|runs the built ripr binary on the mixed-language fixture so its ripr.toml preview setting applies with a suppression policy (#15295)

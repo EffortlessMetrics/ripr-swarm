@@ -4,9 +4,12 @@
 //! `include` list in `crates/ripr/Cargo.toml` already leaves out out-of-line
 //! unit-test files, but about a third of the remaining source is inline
 //! `#[cfg(test)] mod tests { .. }` blocks, and that share grows with every
-//! test added. Moving those blocks into files is a 400k-line diff.
+//! test added.
 //!
-//! Instead the package is built from a publish stage: a sparse local clone of
+//! This stage is a temporary uploadability bridge, not the test/payload
+//! boundary: the intended layout keeps tests in owner-local files that the
+//! package rules exclude (see `docs/RELEASE.md`, Crate tarball contents). Until
+//! then the package is built from a publish stage: a sparse local clone of
 //! the workspace checked out at `HEAD`, holding the workspace members and the
 //! root files, in which `crates/ripr/src` has each inline module whose
 //! attributes include exactly `#[cfg(test)]` removed with its attributes and
@@ -30,9 +33,10 @@ use std::process::Command;
 
 use ra_ap_syntax::ast::{self, HasAttrs};
 use ra_ap_syntax::{AstNode, Edition, SourceFile, TextRange};
+use sha2::Digest as _;
 
 /// The crate whose inline test modules are stripped in the stage.
-const STRIPPED_SOURCE_ROOT: &str = "crates/ripr/src";
+pub(crate) const STRIPPED_SOURCE_ROOT: &str = "crates/ripr/src";
 
 /// The marker file, relative to the `ripr` package root, that names the
 /// commit a publish stage was checked out at. Packaged by the `include` list.
@@ -56,6 +60,37 @@ pub(crate) struct StageReport {
     pub(crate) stripped_files: usize,
     pub(crate) stripped_modules: usize,
     pub(crate) stripped_bytes: usize,
+    /// Fingerprint of the exact stripped path/content set, so a later check
+    /// can tell this stage from one whose stripped file was restored.
+    pub(crate) strip_digest: String,
+}
+
+impl StageReport {
+    /// The strip identity a later verification must reproduce.
+    pub(crate) fn identity(&self) -> StripIdentity {
+        StripIdentity {
+            files: self.stripped_files,
+            modules: self.stripped_modules,
+            bytes: self.stripped_bytes,
+            digest: self.strip_digest.clone(),
+        }
+    }
+}
+
+/// The strip identity of a stage: how many files were stripped, how much was
+/// removed, and a digest over the exact `path -> stripped content` set.
+///
+/// A count alone is not enough. `verify_stage` walks `git status`, so a
+/// stripped file restored byte-for-byte to its `HEAD` content stops being
+/// reported as modified and silently leaves the walk. The digest keeps the
+/// restored path in the expected set, so the stage is refused instead of
+/// accepted with its inline test modules back.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub(crate) struct StripIdentity {
+    pub(crate) files: usize,
+    pub(crate) modules: usize,
+    pub(crate) bytes: usize,
+    pub(crate) digest: String,
 }
 
 /// Check out `HEAD` of `workspace` into `stage` (which must not exist) as a
@@ -81,6 +116,15 @@ pub(crate) fn stage_workspace(workspace: &Path, stage: &Path) -> Result<StageRep
         &[
             "clone",
             "--quiet",
+            // Stage the committed bytes on every host: a global
+            // `core.autocrlf=true` would otherwise rewrite the checkout to
+            // CRLF and `verify_stage` compares against `git show` (LF).
+            // `core.eol=lf` covers `text=auto` attributes, which otherwise
+            // check out with the native (CRLF) ending on Windows.
+            "-c",
+            "core.autocrlf=false",
+            "-c",
+            "core.eol=lf",
             "--shared",
             "--no-checkout",
             workspace_arg.as_str(),
@@ -108,12 +152,21 @@ pub(crate) fn stage_workspace(workspace: &Path, stage: &Path) -> Result<StageRep
     fs::write(&marker, format!("{commit}\n"))
         .map_err(|e| format!("cannot write {}: {e}", marker.display()))?;
     let verified = verify_stage(stage)?;
-    if verified != report.stripped_files {
+    if verified.files != report.stripped_files
+        || verified.modules != report.stripped_modules
+        || verified.bytes != report.stripped_bytes
+    {
         return Err(format!(
-            "publish stage verification saw {verified} stripped files, the strip wrote {}",
-            report.stripped_files
+            "publish stage verification saw {} stripped files / {} modules / {} bytes, the strip wrote {} / {} / {}",
+            verified.files,
+            verified.modules,
+            verified.bytes,
+            report.stripped_files,
+            report.stripped_modules,
+            report.stripped_bytes
         ));
     }
+    report.strip_digest = verified.digest;
     Ok(report)
 }
 
@@ -185,9 +238,13 @@ fn git_raw(dir: &Path, args: &[&str]) -> Result<String, String> {
 /// modified `.rs` file under `crates/ripr/src` whose content is exactly the
 /// strip of that file at `HEAD`. Anything else (a hand edit, a rewritten
 /// lockfile, a stray file) is an error, because the marker would otherwise
-/// identify such a package as a clean build of the commit. Returns the number
-/// of stripped files.
-pub(crate) fn verify_stage(stage: &Path) -> Result<usize, String> {
+/// identify such a package as a clean build of the commit.
+///
+/// Returns the strip identity of what it saw. Because the walk only visits
+/// paths Git reports as changed, a stripped file restored to its `HEAD`
+/// content disappears from it; callers that know the expected set must use
+/// [`verify_stage_matches`] rather than trusting the count alone.
+pub(crate) fn verify_stage(stage: &Path) -> Result<StripIdentity, String> {
     let head = git_output(stage, &["rev-parse", "--verify", "HEAD"])?;
     let status = git_raw(
         stage,
@@ -195,7 +252,8 @@ pub(crate) fn verify_stage(stage: &Path) -> Result<usize, String> {
     )?;
     let marker_path = format!("crates/ripr/{PUBLISH_STAGE_MARKER}");
     let mut marker_seen = false;
-    let mut stripped = 0;
+    let mut identity = StripIdentity::default();
+    let mut stripped: Vec<(String, String)> = Vec::new();
     for entry in status.split('\0').filter(|entry| !entry.is_empty()) {
         let (code, path) = entry
             .split_at_checked(3)
@@ -220,7 +278,10 @@ pub(crate) fn verify_stage(stage: &Path) -> Result<usize, String> {
                         "publish stage file {path} is not its HEAD content with inline test modules stripped"
                     ));
                 }
-                stripped += 1;
+                identity.files += 1;
+                identity.modules += expected.modules;
+                identity.bytes += original.len().saturating_sub(actual.len());
+                stripped.push((path.to_string(), sha256_hex(actual.as_bytes())));
             }
             _ => {
                 return Err(format!(
@@ -233,7 +294,49 @@ pub(crate) fn verify_stage(stage: &Path) -> Result<usize, String> {
     if !marker_seen {
         return Err("publish stage has no marker".to_string());
     }
-    Ok(stripped)
+    stripped.sort();
+    let mut listing = String::new();
+    for (path, digest) in &stripped {
+        listing.push_str(path);
+        listing.push('\0');
+        listing.push_str(digest);
+        listing.push('\n');
+    }
+    identity.digest = sha256_hex(listing.as_bytes());
+    Ok(identity)
+}
+
+/// Prove that `stage` is the same strip the rehearsal recorded, not merely a
+/// self-consistent one. A stage whose stripped file was restored to `HEAD`
+/// passes [`verify_stage`] with a smaller count; this refuses it, and also
+/// refuses a swap that keeps the count but changes which files were stripped.
+pub(crate) fn verify_stage_matches(stage: &Path, expected: &StripIdentity) -> Result<(), String> {
+    let actual = verify_stage(stage)?;
+    if actual.files != expected.files {
+        return Err(format!(
+            "publish stage strips {} file(s) but the rehearsal stripped {}; a stripped file was restored to its HEAD content",
+            actual.files, expected.files
+        ));
+    }
+    if actual.digest != expected.digest {
+        return Err(format!(
+            "publish stage strip digest {} does not match the rehearsal's {}; the stripped path/content set changed",
+            actual.digest, expected.digest
+        ));
+    }
+    if actual.modules != expected.modules || actual.bytes != expected.bytes {
+        return Err(format!(
+            "publish stage strip is {} modules / {} bytes, the rehearsal recorded {} / {}",
+            actual.modules, actual.bytes, expected.modules, expected.bytes
+        ));
+    }
+    Ok(())
+}
+
+fn sha256_hex(bytes: &[u8]) -> String {
+    let mut hasher = sha2::Sha256::new();
+    hasher.update(bytes);
+    format!("{:x}", hasher.finalize())
 }
 
 /// One source file after the strip.
@@ -339,12 +442,20 @@ mod tests {
         let io = |e: std::io::Error| e.to_string();
         let _ = fs::remove_dir_all(root);
         let workspace = root.join("workspace");
+        // Pin checkout bytes to the committed bytes. The host's global
+        // `core.autocrlf` would otherwise rewrite this fixture to CRLF, and
+        // the strip comparison would fail for a reason the product never
+        // sees: the real repository pins `eol=lf` in `.gitattributes`.
+        fs::create_dir_all(&workspace).map_err(io)?;
+        fs::write(workspace.join(".gitattributes"), "* -text\n").map_err(io)?;
         for (path, body) in files.iter().chain(untracked) {
             let file = workspace.join(path);
             fs::create_dir_all(file.parent().ok_or("no parent")?).map_err(io)?;
             fs::write(&file, body).map_err(io)?;
         }
         git_output(&workspace, &["init", "-q"])?;
+        git_output(&workspace, &["config", "core.autocrlf", "false"])?;
+        git_output(&workspace, &["add", "--", ".gitattributes"])?;
         for (path, _) in files {
             git_output(&workspace, &["add", "--", path])?;
         }
@@ -465,14 +576,14 @@ mod tests {
             fs::read_to_string(stage.join("crates/ripr").join(PUBLISH_STAGE_MARKER)).map_err(io)?,
             format!("{head}\n")
         );
-        assert_eq!(verify_stage(&stage)?, 2);
+        assert_eq!(verify_stage(&stage)?.files, 2);
         // Any other difference from HEAD fails verification: a hand edit of a
         // stripped file, an edit outside the stripped source, a stray file.
         let lib = stage.join("crates/ripr/src/lib.rs");
         fs::write(&lib, "pub fn live() {}\npub fn extra() {}\n").map_err(io)?;
         assert!(matches!(verify_stage(&stage), Err(e) if e.contains("is not its HEAD content")));
         fs::write(&lib, "pub fn live() {}\n\n").map_err(io)?;
-        assert_eq!(verify_stage(&stage)?, 2);
+        assert_eq!(verify_stage(&stage)?.files, 2);
         fs::write(stage.join("Cargo.toml"), "[workspace]\nmembers = []\n").map_err(io)?;
         assert!(matches!(verify_stage(&stage), Err(e) if e.contains("beyond the strip")));
         fs::write(stage.join("Cargo.toml"), "[workspace]\n").map_err(io)?;
@@ -487,6 +598,56 @@ mod tests {
         // An existing stage is never staged over.
         assert!(
             matches!(stage_workspace(&workspace, &stage), Err(e) if e.contains("already exists"))
+        );
+        let _ = fs::remove_dir_all(&root);
+        Ok(())
+    }
+
+    #[test]
+    fn a_stripped_file_restored_to_head_is_refused_against_the_recorded_strip() -> Result<(), String>
+    {
+        let io = |e: std::io::Error| e.to_string();
+        let root = std::env::temp_dir().join(format!("ripr-stage-restore-{}", std::process::id()));
+        let test_module =
+            "pub fn live() {}\n\n#[cfg(test)]\nmod tests {\n    #[test]\n    fn t() {}\n}\n";
+        let workspace = committed_workspace(
+            &root,
+            &[
+                ("Cargo.toml", "[workspace]\n"),
+                ("crates/ripr/src/lib.rs", test_module),
+                ("crates/ripr/src/nested/deep.rs", test_module),
+            ],
+            &[],
+        )?;
+        let stage = root.join("stage");
+        let report = stage_workspace(&workspace, &stage)?;
+        assert_eq!(report.stripped_files, 2);
+        verify_stage_matches(&stage, &report.identity())?;
+
+        // A stage with the right counts but a different stripped set is
+        // refused by the digest, not only by the count.
+        let mut wrong_set = report.identity();
+        wrong_set.digest = "0".repeat(64);
+        let swapped = verify_stage_matches(&stage, &wrong_set);
+        assert!(
+            matches!(swapped, Err(ref e) if e.contains("strip digest")),
+            "a different stripped path/content set must be refused: {swapped:?}"
+        );
+
+        // Restore one stripped file byte-for-byte to its HEAD content. Git no
+        // longer reports it as modified, so the status walk drops it and the
+        // self-consistent check still passes with a smaller count.
+        let restored = stage.join("crates/ripr/src/nested/deep.rs");
+        fs::write(&restored, test_module).map_err(io)?;
+        assert_eq!(
+            verify_stage(&stage)?.files,
+            1,
+            "the restored path leaves the status walk, which is why a count alone cannot catch it"
+        );
+        let refused = verify_stage_matches(&stage, &report.identity());
+        assert!(
+            matches!(refused, Err(ref e) if e.contains("restored to its HEAD content")),
+            "a restored stripped file must be refused against the recorded strip: {refused:?}"
         );
         let _ = fs::remove_dir_all(&root);
         Ok(())

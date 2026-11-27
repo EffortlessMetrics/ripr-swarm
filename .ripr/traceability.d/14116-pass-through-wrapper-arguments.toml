@@ -1,0 +1,10 @@
+# Audited pass-through wrappers confine their argument mentions to the call (#14116).
+[[extend]]
+id = "RIPR-SPEC-0369"
+tests = [
+  "crates/ripr/src/analysis/classify/owner_pin/tests.rs::audited_pass_through_wrappers_confine_their_arguments_to_the_call",
+]
+code = [
+  "crates/ripr/src/analysis/syntax/owner_pin.rs",
+  "crates/ripr/src/analysis/classify/owner_pin.rs",
+]

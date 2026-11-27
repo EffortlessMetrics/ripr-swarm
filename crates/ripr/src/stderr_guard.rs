@@ -36,8 +36,17 @@ macro_rules! eprintln_best_effort {
     ($($arg:tt)*) => {{
         let __ripr_notice = $crate::terminal_text::terminal_safe(::std::format!($($arg)*));
         if !$crate::cli::progress::try_emit_notice(&__ripr_notice) {
-            use ::std::io::Write as _;
-            let _ = ::std::writeln!(::std::io::stderr(), "{}", __ripr_notice);
+            // Unit-test builds go through libtest's output capture. A raw
+            // `io::stderr()` handle bypasses it and lands mid-line in the
+            // runner's stdout rows (#15207). Capture-aware `eprintln!`
+            // cannot fail on a closed pipe because capture owns the sink.
+            #[cfg(test)]
+            ::std::eprintln!("{}", __ripr_notice);
+            #[cfg(not(test))]
+            {
+                use ::std::io::Write as _;
+                let _ = ::std::writeln!(::std::io::stderr(), "{}", __ripr_notice);
+            }
         }
     }};
 }

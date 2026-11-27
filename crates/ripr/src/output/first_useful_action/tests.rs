@@ -2269,12 +2269,16 @@ fn display_path_converts_backslashes() -> Result<(), String> {
     let result = display_path(path);
     assert!(
         !(result.contains('\\')),
-        "expected forward slashes but got: {result}"
+        "expected no raw backslash but got: {result}"
     );
-    assert!(
-        result.contains("some/windows/path.json"),
-        "unexpected path: {result}"
-    );
+    // A backslash is a separator on Windows and a file-name byte, spelled
+    // `%5C`, on Unix (#15908).
+    let expected = if cfg!(unix) {
+        "some%5Cwindows%5Cpath.json"
+    } else {
+        "some/windows/path.json"
+    };
+    assert!(result.contains(expected), "unexpected path: {result}");
     Ok(())
 }
 
@@ -2710,10 +2714,10 @@ fn carried_repair_start_leads_a_fresh_pr_and_its_absence_keeps_the_missing_proof
     // #3906 (F60-14): the after phase follows the start in both places, and
     // verify and receipt are the manual alternative.
     assert!(markdown.contains(&format!(
-        "- Repair start: `{EXACT_LINE_REPAIR}`\n- After the test edit: run the `--attempt ... --phase after` command"
+        "- Repair start: `{EXACT_LINE_REPAIR}`\n- After the test edit: run the after-phase command"
     )));
     assert!(markdown.contains(&format!(
-        "## Start Repair\n\n`{EXACT_LINE_REPAIR}`\n\nAfter the test edit: run the `--attempt ... --phase after` command"
+        "## Start Repair\n\n`{EXACT_LINE_REPAIR}`\n\nAfter the test edit: run the after-phase command"
     )));
     assert!(markdown.contains(&format!("- {MANUAL_VERIFY_LABEL}: `")));
     assert!(markdown.contains(&format!("- {MANUAL_RECEIPT_LABEL}: `")));

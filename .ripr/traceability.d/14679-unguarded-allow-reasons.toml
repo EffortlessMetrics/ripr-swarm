@@ -1,0 +1,8 @@
+[[extend]]
+id = "RIPR-SPEC-0253"
+tests = [
+  "xtask/src/tests.rs::unguarded_allow_requires_its_own_reason",
+  "xtask/src/tests.rs::allow_attributes_gate_requires_a_reason_outside_the_budget",
+]
+code = ["xtask/src/main.rs::check_allow_attributes_impl", "xtask/src/main.rs::unguarded_allows_without_reason"]
+outputs = ["docs/POLICY_ALLOWLISTS.md"]

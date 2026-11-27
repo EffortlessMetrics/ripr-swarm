@@ -1,0 +1,1 @@
+crates/ripr/tests/default_base_advice.rs|Command::new|2|cli-tests|Builds isolated temp Git work clones and bare origins with `git` and runs the built ripr binary (`init`, `check --base`) against them to prove the default-base advice (#15338). No shell, network, or user-repository mutation.

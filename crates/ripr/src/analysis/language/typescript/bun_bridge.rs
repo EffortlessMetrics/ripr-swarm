@@ -1252,6 +1252,7 @@ pub(crate) fn bun_cross_language_finding_for_changed_rust_line_with_profile(
         1,
     );
     let probe = Probe {
+        before_condition: None,
         id: bun_probe_id,
         location: SourceLocation::new(file.to_string_lossy().as_ref(), line, 1),
         owner: Some(SymbolId(bun_owner_id)),

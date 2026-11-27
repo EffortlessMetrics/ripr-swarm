@@ -7,7 +7,7 @@
 //! token and the `gh api` loop. Nothing here reads a token or the network.
 //!
 //! Each function mirrors the retired program's output; the tests below and
-//! `tests/generated_review_workflow.rs` hold it to that program's results.
+//! `tests/generated_review_workflow/main.rs` hold it to that program's results.
 
 use serde_json::{Map, Value, json};
 

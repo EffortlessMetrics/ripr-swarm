@@ -2174,19 +2174,66 @@ fn refresh_publishes_diagnostics_under_a_spaced_unicode_root() -> Result<(), Str
     assert_lsp_refresh_publishes_under_root(&root)
 }
 
-/// Reads publishes until one whose path ends with the root-relative
-/// `expected` satisfies `accept` (given its diagnostic count), failing at
-/// `ANALYSIS_TIMEOUT`. A suffix match needs no canonicalization, so it also
-/// names a file that no longer exists.
+/// Compare the full decoded fixture paths, not a root-relative suffix. Valid
+/// URI encodings may differ; Windows paths also need case/separator folding.
+/// This lexical comparison still works after the fixture file is deleted.
+fn same_fixture_file_uri(left: &str, right: &str) -> bool {
+    let (Some(left), Some(right)) = (editor_uri_path(left), editor_uri_path(right)) else {
+        return false;
+    };
+    #[cfg(windows)]
+    {
+        let normalize = |path: PathBuf| path.to_string_lossy().replace('\\', "/").to_lowercase();
+        normalize(left) == normalize(right)
+    }
+    #[cfg(not(windows))]
+    {
+        left == right
+    }
+}
+
+/// Reads publishes until one whose full decoded path is `expected` satisfies
+/// `accept` (given its diagnostic count), failing at `ANALYSIS_TIMEOUT`.
 fn await_publish_for(
     session: &mut LspSession,
-    expected: &Path,
+    expected: &str,
     waiting_for: &str,
+    pending_response: Option<u64>,
     accept: impl Fn(usize) -> bool,
 ) -> Result<(), String> {
     let deadline = Instant::now() + ANALYSIS_TIMEOUT;
-    loop {
-        let message = session.await_message(deadline, waiting_for)?;
+    await_publish_and_response(
+        || session.await_message(deadline, waiting_for),
+        expected,
+        pending_response,
+        accept,
+    )
+}
+
+/// A refresh publishes diagnostics and returns a response on independent
+/// output paths. Observe both before issuing another request; neither arrival
+/// order may discard the other obligation. No response is expected for a
+/// watched-file notification.
+fn await_publish_and_response(
+    mut next: impl FnMut() -> Result<serde_json::Value, String>,
+    expected: &str,
+    mut pending_response: Option<u64>,
+    accept: impl Fn(usize) -> bool,
+) -> Result<(), String> {
+    let mut published = false;
+    while !published || pending_response.is_some() {
+        let message = next()?;
+        if message.get("result").is_some() || message.get("error").is_some() {
+            let id = message.get("id").and_then(serde_json::Value::as_u64);
+            if pending_response.is_none() || id != pending_response {
+                return Err(format!(
+                    "unexpected response while awaiting publication: {message}"
+                ));
+            }
+            expect_result(&message, "ripr.refresh")?;
+            pending_response = None;
+            continue;
+        }
         if message.get("method").and_then(serde_json::Value::as_str)
             != Some("textDocument/publishDiagnostics")
         {
@@ -2195,25 +2242,34 @@ fn await_publish_for(
         let names_expected = message
             .pointer("/params/uri")
             .and_then(serde_json::Value::as_str)
-            .and_then(editor_uri_path)
-            .is_some_and(|path| path.ends_with(expected));
-        let count = message
+            .is_some_and(|uri| same_fixture_file_uri(uri, expected));
+        let accepted = message
             .pointer("/params/diagnostics")
             .and_then(serde_json::Value::as_array)
-            .map_or(0, Vec::len);
-        if names_expected && accept(count) {
-            return Ok(());
-        }
+            .is_some_and(|diagnostics| accept(diagnostics.len()));
+        published |= names_expected && accepted;
     }
+    Ok(())
 }
+
+#[path = "lsp_lifecycle/publication_response_order.rs"]
+mod publication_response_order;
+
+#[cfg(all(
+    feature = "lang-rust",
+    feature = "lang-python",
+    feature = "lang-typescript"
+))]
+#[path = "lsp_lifecycle/incremental_differential.rs"]
+mod incremental_differential;
 
 /// #14099: a file that is not open has no document-sync path. Deleting it
 /// outside the editor reaches the server only as a watched-file event, and
 /// the server must then retract the diagnostics it published for that file
 /// without waiting for a manual refresh. A watched-file event for the same
-/// file while its bytes are unchanged (a `touch`) is sent first: it must not
-/// be what clears the rows, so the empty publish is awaited only after the
-/// delete.
+/// file while its bytes are unchanged (a `touch`) is sent first and settled
+/// with a refresh round-trip while the file still exists: it must not be what
+/// clears the rows, so the empty publish is awaited only after the delete.
 #[test]
 fn deleting_an_unopened_file_outside_the_editor_retracts_its_diagnostics() -> Result<(), String> {
     let base = unique_compat_fixture_root("external-delete")?;
@@ -2223,11 +2279,26 @@ fn deleting_an_unopened_file_outside_the_editor_retracts_its_diagnostics() -> Re
     let lib_uri = editor_file_uri(&lib)?;
     let mut session = start_session_with_published_diagnostics(&root, &relative)?;
 
-    // Unchanged bytes: nothing to refresh. Then the real deletion.
+    // Unchanged bytes: the touch itself schedules nothing. Settle it with an
+    // explicit refresh while the file still exists so a delayed touch cannot
+    // observe the deletion and satisfy the retraction assertion instead.
     session.notify(
         "workspace/didChangeWatchedFiles",
         Some(serde_json::json!({"changes": [{"uri": lib_uri, "type": 2}]})),
     )?;
+    let touch_refresh_id = fire(
+        &mut session,
+        "workspace/executeCommand",
+        serde_json::json!({"command": "ripr.refresh", "arguments": []}),
+    )?;
+    await_publish_for(
+        &mut session,
+        &lib_uri,
+        "the post-touch diagnostics and refresh response",
+        Some(touch_refresh_id),
+        |count| count > 0,
+    )?;
+
     fs::remove_file(&lib).map_err(|err| format!("delete fixture file failed: {err}"))?;
     session.notify(
         "workspace/didChangeWatchedFiles",
@@ -2235,8 +2306,9 @@ fn deleting_an_unopened_file_outside_the_editor_retracts_its_diagnostics() -> Re
     )?;
     await_publish_for(
         &mut session,
-        &relative,
+        &lib_uri,
         "the retraction for the deleted file (no manual refresh was sent)",
+        None,
         |count| count == 0,
     )?;
     shutdown_exit_and_wait(&mut session)
@@ -2254,6 +2326,7 @@ fn deleting_a_folder_outside_the_editor_retracts_the_diagnostics_below_it() -> R
     let relative = Path::new("src").join("lib.rs");
     let folder = root.join("src");
     let folder_uri = editor_file_uri(&folder)?;
+    let lib_uri = editor_file_uri(&root.join(&relative))?;
     let mut session = start_session_with_published_diagnostics(&root, &relative)?;
 
     // The folder still exists: not a deletion, nothing to refresh.
@@ -2268,8 +2341,9 @@ fn deleting_a_folder_outside_the_editor_retracts_the_diagnostics_below_it() -> R
     )?;
     await_publish_for(
         &mut session,
-        &relative,
+        &lib_uri,
         "the retraction for the file below the deleted folder (no manual refresh was sent)",
+        None,
         |count| count == 0,
     )?;
     shutdown_exit_and_wait(&mut session)
@@ -3253,6 +3327,17 @@ fn refreshed_seam_session(
     }
     let (uri, diagnostic) = seam_diagnostic
         .ok_or("fixture setup: the boundary change must publish a seam diagnostic")?;
+    // These tests exercise a reached seam whose existing tests miss the
+    // boundary, independently of instant mode's changed-line finding.
+    if diagnostic
+        .pointer("/data/evidence/reach")
+        .and_then(serde_json::Value::as_str)
+        != Some("yes")
+    {
+        return Err(format!(
+            "fixture setup: the seam must be reached: {diagnostic}"
+        ));
+    }
     // Precondition: this is the production payload, not an injected summary.
     for injected in ["fix_instruction", "witness", "finding_id"] {
         if diagnostic.pointer(&format!("/data/{injected}")).is_some() {
@@ -3418,4 +3503,258 @@ fn real_seam_diagnostic_names_the_commit_step_on_an_uncommitted_change() -> Resu
         return Err(format!("the committed start must be enabled: {start}"));
     }
     shutdown_exit_and_wait(&mut session)
+}
+
+#[cfg(feature = "lang-rust")]
+#[path = "common/repair_start_fixture.rs"]
+mod repair_start_fixture;
+
+/// The inspection card can retain a proposed target on an unreached seam.
+/// Starting a repair from the editor requires the stronger producer fact.
+#[cfg(feature = "lang-rust")]
+#[test]
+fn no_test_path_start_uses_the_saved_workspace_finding_over_stdio() -> Result<(), String> {
+    use repair_start_fixture::{CALLED_BASE, CALLED_NEW, LOYALTY_BASE, LOYALTY_NEW, LOYALTY_TEST};
+    use serde_json::{Value, json};
+
+    const CANONICAL_GAP: &str =
+        "gap:rust:src/lib.rs:loyalty_price:predicate_boundary:predicate:member_years==5";
+
+    for (base, changed, line, mode, cap, startable) in [
+        (LOYALTY_BASE, LOYALTY_NEW, 6, "deep", "0", true),
+        (CALLED_BASE, CALLED_NEW, 10, "deep", "0", false),
+        (LOYALTY_BASE, LOYALTY_NEW, 6, "instant", "0", false),
+        (LOYALTY_BASE, LOYALTY_NEW, 6, "deep", "2", false),
+    ] {
+        let fixture = unique_compat_fixture_root("repair-start")?;
+        let root = &fixture.path;
+        fs::create_dir_all(root.join("src")).map_err(|e| e.to_string())?;
+        fs::create_dir_all(root.join("tests")).map_err(|e| e.to_string())?;
+        for (file, source) in [
+            (
+                "Cargo.toml",
+                "[package]\nname = \"fx\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+            ),
+            (".gitignore", "/target/\n"),
+            ("src/lib.rs", base),
+            ("tests/t.rs", LOYALTY_TEST),
+        ] {
+            fs::write(root.join(file), source).map_err(|e| e.to_string())?;
+        }
+        run_compat_git(root, &["-c", "init.defaultBranch=main", "init", "-q"])?;
+        run_compat_git(root, &["add", "."])?;
+        run_compat_git(
+            root,
+            &[
+                "-c",
+                "user.name=RIPR fixture",
+                "-c",
+                "user.email=fixture@ripr.invalid",
+                "-c",
+                "commit.gpgSign=false",
+                "commit",
+                "-qm",
+                "base",
+            ],
+        )?;
+        run_compat_git(root, &["checkout", "-qb", "feature"])?;
+        fs::write(root.join("src/lib.rs"), changed).map_err(|e| e.to_string())?;
+        run_compat_git(root, &["add", "."])?;
+        run_compat_git(
+            root,
+            &[
+                "-c",
+                "user.name=RIPR fixture",
+                "-c",
+                "user.email=fixture@ripr.invalid",
+                "-c",
+                "commit.gpgSign=false",
+                "commit",
+                "-qm",
+                "change",
+            ],
+        )?;
+
+        let uri = editor_file_uri(&root.join("src/lib.rs"))?;
+        let mut session = LspSession::spawn_with_env(&[("RIPR_REPO_EXPOSURE_SEAM_LIMIT", cap)])?;
+        let initialize = session.request("initialize", json!({
+            "rootUri": editor_file_uri(root)?,
+            "initializationOptions": {"baseRef":"main", "checkMode":mode, "diagnosticProfile":"full"},
+            "capabilities": {
+                "textDocument":{"codeAction":{"disabledSupport":true,
+                    "codeActionLiteralSupport":{"codeActionKind":{"valueSet":["quickfix"]}}}},
+                "experimental":{"riprEditor":{"version":"0.10.0","commands":[
+                    "ripr.copyContext","ripr.copyAgentRepairCommand"], "guardedTestEdit":false}}
+            }
+        }))?;
+        expect_result(&initialize, "initialize")?;
+        session.notify("initialized", Some(json!({})))?;
+        let refresh = fire(
+            &mut session,
+            "workspace/executeCommand",
+            json!({
+                "command":"ripr.refresh", "arguments":[]
+            }),
+        )?;
+        let deadline = Instant::now() + ANALYSIS_TIMEOUT;
+        let mut diagnostic = None;
+        let mut refreshed = false;
+        while !refreshed || diagnostic.is_none() {
+            let message = session.await_message(deadline, "repair-start seam diagnostics")?;
+            if message["id"].as_u64() == Some(refresh) {
+                expect_result(&message, "ripr.refresh")?;
+                refreshed = true;
+            }
+            if message["method"] == "textDocument/publishDiagnostics"
+                && message["params"]["uri"] == uri
+                && let Some(entries) = message
+                    .pointer("/params/diagnostics")
+                    .and_then(Value::as_array)
+                && let Some(seam) = entries.iter().find(|entry| {
+                    entry["code"] == "ripr-seam-ungripped"
+                        && entry.pointer("/range/start/line").and_then(Value::as_u64)
+                            == Some(line - 1)
+                        && entry["data"]["seam_kind"] == "predicate_boundary"
+                })
+            {
+                diagnostic = Some(seam.clone());
+            }
+        }
+        let diagnostic = diagnostic.ok_or("missing current seam")?;
+        assert_eq!(diagnostic["data"]["evidence"]["reach"], "no");
+        let seam = diagnostic["data"]["seam_id"]
+            .as_str()
+            .ok_or("missing seam id")?;
+        let reply = session.request(
+            "textDocument/codeAction",
+            json!({
+                "textDocument":{"uri":uri}, "range":diagnostic["range"],
+                "context":{"diagnostics":[diagnostic]}
+            }),
+        )?;
+        let actions = expect_result(&reply, "textDocument/codeAction")?
+            .as_array()
+            .ok_or("missing code action array")?;
+        let start = actions.iter().find(|action| {
+            action["command"]["command"] == "ripr.copyAgentRepairCommand"
+                && action["disabled"].is_null()
+        });
+        assert_eq!(
+            start.is_some(),
+            startable,
+            "{mode} seam at line {line}, cap {cap}: unexpected Start repair"
+        );
+        let start_command = if let Some(start) = start {
+            let command = start
+                .pointer("/command/arguments/0/command")
+                .and_then(Value::as_str)
+                .ok_or("missing start command")?;
+            assert!(command.starts_with("ripr agent repair --root "));
+            assert!(command.ends_with(&format!(" --seam-id {seam} --phase before")));
+            assert_eq!(
+                start["data"]["evidence_identity"],
+                diagnostic["data"]["evidence_identity"]
+            );
+            Some(command)
+        } else {
+            None
+        };
+
+        // Request the server's read-only packet for the same current spot.
+        // The command string is data, and none of the offered commands run.
+        let reply = session.request(
+            "workspace/executeCommand",
+            json!({"command":"ripr.collectEvidenceContext","arguments":[{
+                "seam_id": seam,
+                "evidence_identity": diagnostic["data"]["evidence_identity"]
+            }]}),
+        )?;
+        let context = expect_result(&reply, "ripr.collectEvidenceContext")?;
+        assert_eq!(context["seam_id"], seam);
+        assert_eq!(context["base"], "main");
+        assert_eq!(context["mode"], mode);
+        assert_eq!(context["range"]["start"], line);
+        assert_eq!(context["evidence_path"]["reach"], "missing");
+        assert_eq!(context["suggested_test"]["file"], "tests/loyalty_price.rs");
+        assert_eq!(context.get("repair_command"), Some(&json!(start_command)));
+        let inspection = context["agent_packet_command"]
+            .as_str()
+            .ok_or("missing inspection command")?;
+        assert!(inspection.contains(&format!("--seam-id {seam}")));
+
+        let card_action = actions.iter().find(|action| {
+            action["command"]["command"] == "ripr.copyContext"
+                && action
+                    .pointer("/command/arguments/0/label")
+                    .and_then(Value::as_str)
+                    == Some("repair_card")
+        });
+        if cap == "0" {
+            let card_action = card_action.ok_or("missing direct-copy RepairCard")?;
+            assert_eq!(
+                card_action["data"]["evidence_identity"],
+                diagnostic["data"]["evidence_identity"]
+            );
+            let card: Value = serde_json::from_str(
+                card_action
+                    .pointer("/command/arguments/0/packet")
+                    .and_then(Value::as_str)
+                    .ok_or("missing card payload")?,
+            )
+            .map_err(|e| e.to_string())?;
+            assert_eq!(card["subject"]["seam_id"], seam);
+            assert_eq!(card["subject"]["canonical_gap_id"], CANONICAL_GAP);
+            assert_eq!(card["snapshot"]["currentness"], "current");
+            assert_eq!(card["selected_target"]["file"], "tests/loyalty_price.rs");
+            if startable {
+                assert_eq!(card["canonical_next_action"]["action_class"], "run_command");
+                assert_eq!(
+                    card["canonical_next_action"]["command"]["role"],
+                    "inspection"
+                );
+            } else {
+                assert_eq!(card["instruction"]["state"], "static_limitation");
+                assert!(card["next_action"].is_null(), "{card}");
+            }
+        } else {
+            assert!(card_action.is_none(), "capped inventory cannot bind a card");
+            let status = execute_compat_command(&mut session, "ripr.collectWorkspaceStatus")?;
+            assert_eq!(status["run_status"], "limited");
+            let components = status
+                .pointer("/analysis_status/components")
+                .and_then(Value::as_array)
+                .ok_or("missing component outcomes")?;
+            assert!(
+                components.iter().any(|outcome| {
+                    outcome["component"] == "seam_inventory"
+                        && outcome["state"] == "limited"
+                        && outcome["kind"] == "seam_inventory_truncated"
+                }),
+                "{components:?}"
+            );
+        }
+        let hover = session.request(
+            "textDocument/hover",
+            json!({
+                "textDocument":{"uri":uri}, "position":diagnostic["range"]["start"]
+            }),
+        )?;
+        let contents = expect_result(&hover, "textDocument/hover")?
+            .pointer("/contents/value")
+            .and_then(Value::as_str)
+            .ok_or("missing seam hover")?;
+        assert!(
+            contents.contains("## Handoff, verify, and receipt commands"),
+            "{contents}"
+        );
+        assert_eq!(
+            contents.contains("repair (start here)"),
+            startable,
+            "{contents}"
+        );
+        shutdown_exit_and_wait(&mut session)?;
+        assert!(!root.join("tests/loyalty_price.rs").exists());
+        assert!(!root.join("target/ripr/repair-attempts").exists());
+    }
+    Ok(())
 }
