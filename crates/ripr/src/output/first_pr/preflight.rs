@@ -207,7 +207,7 @@ pub(super) fn first_pr_preflight(root: &Path, options: &FirstPrOptions) -> First
         preflight_diff_check(root, options, &mut checks);
     }
     checks.push(preflight_project_check(root));
-    checks.push(preflight_config_check(root));
+    checks.push(preflight_config_check(root, command));
     checks.push(preflight_output_check(root, options));
     checks.push(PreflightCheck::ok(
         "mode",
@@ -524,7 +524,7 @@ fn preflight_project_check(root: &Path) -> PreflightCheck {
     }
 }
 
-fn preflight_config_check(root: &Path) -> PreflightCheck {
+fn preflight_config_check(root: &Path, command: &str) -> PreflightCheck {
     let config = root.join(CONFIG_FILE_NAME);
     match std::fs::metadata(&config) {
         Ok(meta) if meta.is_file() => match crate::bounded_input::read_to_string(&config) {
@@ -534,9 +534,9 @@ fn preflight_config_check(root: &Path) -> PreflightCheck {
                 format!("{CONFIG_FILE_NAME} was found."),
             )
             .with_path(human_path(&config)),
-            Err(_) => unreadable_ripr_config(&config),
+            Err(_) => unreadable_ripr_config(&config, command),
         },
-        Ok(_) => unreadable_ripr_config(&config),
+        Ok(_) => unreadable_ripr_config(&config, command),
         Err(err)
             if err.kind() == std::io::ErrorKind::NotFound
                 && !crate::config::config_present_at_root(root) =>
@@ -548,17 +548,17 @@ fn preflight_config_check(root: &Path) -> PreflightCheck {
             )
             .with_path(human_path(&config))
         }
-        Err(_) => unreadable_ripr_config(&config),
+        Err(_) => unreadable_ripr_config(&config, command),
     }
 }
 
-fn unreadable_ripr_config(config: &Path) -> PreflightCheck {
+fn unreadable_ripr_config(config: &Path, command: &str) -> PreflightCheck {
     PreflightCheck::needs_attention(
         "ripr_config",
         "RIPR config",
         format!("{CONFIG_FILE_NAME} is present but unreadable."),
         Some(format!(
-            "Replace the unreadable {CONFIG_FILE_NAME} with a readable file, then rerun first-pr."
+            "Replace the unreadable {CONFIG_FILE_NAME} with a readable file, then rerun {command}."
         )),
     )
     .with_path(human_path(config))
@@ -632,7 +632,7 @@ mod tests {
         }
         let _cleanup = Cleanup(root.clone());
 
-        let absent = preflight_config_check(&root);
+        let absent = preflight_config_check(&root, "first-pr");
         if absent.status != "defaulted" || !absent.message.contains("built-in advisory defaults") {
             return Err(format!(
                 "an absent ripr.toml must stay defaulted built-in defaults: {} / {}; regenerate the input with the command that wrote it, then rerun",
@@ -648,7 +648,7 @@ mod tests {
             }
             Err(error) => error,
         };
-        let check = preflight_config_check(&root);
+        let check = preflight_config_check(&root, "first-pr");
         if !load_error.contains("ripr.toml") {
             return Err(format!(
                 "load_for_root must name ripr.toml for a dangling link: {load_error}; regenerate the input with the command that wrote it, then rerun"
@@ -716,7 +716,7 @@ mod tests {
             file: config.clone(),
         };
 
-        let readable = preflight_config_check(&root);
+        let readable = preflight_config_check(&root, "first-pr");
         if readable.status != "ok" {
             return Err(format!(
                 "a readable ripr.toml must stay ok, not {}: {}; regenerate the input with the command that wrote it, then rerun",
@@ -744,7 +744,7 @@ mod tests {
                 "load_for_root must name ripr.toml for a chmod-000 file: {load_error}; check that the config loader error includes the file path"
             ));
         }
-        let check = preflight_config_check(&root);
+        let check = preflight_config_check(&root, "first-pr");
         if check.status != "needs_attention" {
             return Err(format!(
                 "an unreadable regular ripr.toml must need attention, not {}: {}; regenerate the input with the command that wrote it, then rerun",
@@ -805,7 +805,7 @@ mod tests {
         if !file_type.is_fifo() {
             return Err("fixture must be a FIFO named ripr.toml; regenerate the input with the command that wrote it, then rerun".to_string());
         }
-        let check = preflight_config_check(&root);
+        let check = preflight_config_check(&root, "first-pr");
         if check.status != "needs_attention" {
             return Err(format!(
                 "a FIFO ripr.toml must need attention, not {}: {}; regenerate the input with the command that wrote it, then rerun",

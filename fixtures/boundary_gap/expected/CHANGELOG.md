@@ -1,5 +1,15 @@
 # Golden Output Changes
 
+## Pending — corpus cache generation 1.216 for source-bound provider failures (#10864)
+
+A property test whose provider verification failed is now an opaque repository
+limit with typed failure outcomes in the provider identity, which bumps the
+analyzer cache schema to 1.216. Move the portable unchanged-attempt snapshots to
+1.216, recompute the `raw_json_placeholder_v1` artifact content commitment, then
+the dependent verify commitments and receipt byte hashes. Weak grip, unchanged
+movement, historical currentness, incomplete receipt status and fail-closed
+first-action routing remain unchanged. No other fixture output is regenerated.
+
 ## Pending — corpus cache generation 1.215 for item macros naming serde_json (#16388)
 
 An item-position macro whose tokens name `serde_json` now refuses bare
@@ -1954,3 +1964,14 @@ Command:
 
 Updated:
 - `expected/human.txt`
+
+## Pending — boundary_gap (41)
+
+Reason:
+RIPR-SPEC-0122: #15336 human-full Terms line stops claiming test reach for weakly_exposed and reachable_unrevealed
+
+Command:
+`cargo xtask goldens bless boundary_gap --reason "..."`
+
+Updated:
+- `expected/human-full.txt`

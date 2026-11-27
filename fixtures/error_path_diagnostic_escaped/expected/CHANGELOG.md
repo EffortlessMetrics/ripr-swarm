@@ -593,3 +593,14 @@ Command:
 
 Updated:
 - `expected/human.txt`
+
+## Pending — error_path_diagnostic_escaped (45)
+
+Reason:
+RIPR-SPEC-0122: #15336 human-full Terms line stops claiming test reach for weakly_exposed and reachable_unrevealed
+
+Command:
+`cargo xtask goldens bless error_path_diagnostic_escaped --reason "..."`
+
+Updated:
+- `expected/human-full.txt`

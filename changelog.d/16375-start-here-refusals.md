@@ -1,3 +1,3 @@
 <!-- section: Fixed -->
 
-- `ripr start-here` and `ripr first-pr` now name the command you ran in errors and packet recovery instructions while retaining the shared flag suggestions. An explicitly supplied malformed `--gap-ledger` now asks for a fresh output path and withholds recovery commands that could overwrite the original. (#16375)
+- `ripr start-here` and `ripr first-pr` now name the command you ran in usage errors and in Git base/head and unreadable-config recovery, and in the missing-artifact later-steps line. Ordinary artifact-read mode withholds in-place regeneration commands for an explicitly supplied gap ledger that is malformed or could not be inspected, and points to a fresh output path. (#16375)

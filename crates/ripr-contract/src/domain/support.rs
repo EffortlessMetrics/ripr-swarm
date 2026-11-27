@@ -1,15 +1,24 @@
+//! Small identity and location types shared across the domain: source
+//! locations, probe ids and symbol ids.
+
 use serde::{Deserialize, Serialize};
 use std::fmt;
 use std::path::PathBuf;
 
+/// A position in a source file: the file path and a 1-based line and column.
+/// The GitHub and SARIF renderers read a line of 0 as unlocated and omit it.
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 pub struct SourceLocation {
+    /// Path of the source file, as the producer reported it.
     pub file: PathBuf,
+    /// 1-based line number, or 0 when the position has no line.
     pub line: usize,
+    /// 1-based column number.
     pub column: usize,
 }
 
 impl SourceLocation {
+    /// Builds a location from a path and a 1-based line and column.
     pub fn new(file: impl Into<PathBuf>, line: usize, column: usize) -> Self {
         Self {
             file: file.into(),
@@ -19,6 +28,7 @@ impl SourceLocation {
     }
 }
 
+/// Identifier of one probe within a run. It displays as the inner string.
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 pub struct ProbeId(pub String);
 
@@ -28,6 +38,10 @@ impl fmt::Display for ProbeId {
     }
 }
 
+/// Identity of the code symbol, such as a function, that owns a probe. For
+/// Rust it is a `::`-joined path of the file, enclosing modules, impl owner
+/// and name, so same-named functions in different files stay distinct. It
+/// displays as the inner string.
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 pub struct SymbolId(pub String);
 

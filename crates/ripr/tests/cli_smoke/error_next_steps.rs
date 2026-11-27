@@ -708,3 +708,83 @@ fn first_pr_spellings_name_themselves_in_saved_missing_report_markdown() -> Test
     }
     Ok(())
 }
+
+#[test]
+fn first_pr_spellings_name_themselves_in_unreadable_config_recovery() -> TestResult {
+    let (scratch, _cleanup) = scratch("err-first-pr-unreadable-config")?;
+    let root = scratch.join("fixture root");
+    std::fs::create_dir(&root)?;
+    init_producer_fixture_repo(&root)?;
+    std::fs::write(root.join("src/lib.rs"), "pub fn changed() {}\n")?;
+    super::run_git(&root, &["add", "src/lib.rs"])?;
+    super::run_git(
+        &root,
+        &[
+            "-c",
+            "user.name=RIPR test",
+            "-c",
+            "user.email=ripr@example.invalid",
+            "commit",
+            "-m",
+            "change",
+        ],
+    )?;
+    let config = root.join("ripr.toml");
+    std::fs::create_dir(&config)?;
+    let before = super::snapshot_tree(&root)?;
+
+    for (command, other) in [("first-pr", "start-here"), ("start-here", "first-pr")] {
+        let reports = scratch.join(format!("{command} reports"));
+        let output = ripr(
+            &root,
+            &[
+                command,
+                "--base",
+                "HEAD~1",
+                "--head",
+                "HEAD",
+                "--output-dir",
+                reports.to_str().ok_or("fixture path must be UTF-8")?,
+            ],
+        )?;
+        assert_eq!(output.status.code(), Some(0), "{}", stderr(&output));
+        let packet: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(reports.join("start-here.json"))?)?;
+        assert_eq!(packet["status"], "blocked");
+        assert_eq!(packet["selected"]["state"], "missing_artifact");
+        let preflight = &packet["preflight"];
+        assert_eq!(preflight["status"], "needs_attention");
+        let checks = preflight["checks"]
+            .as_array()
+            .ok_or("missing preflight checks")?;
+        for id in ["git_repo", "git_base", "git_head", "git_diff"] {
+            assert!(
+                checks
+                    .iter()
+                    .any(|check| check["id"] == id && check["status"] == "ok"),
+                "{checks:?}"
+            );
+        }
+        let check = checks
+            .iter()
+            .find(|check| check["id"] == "ripr_config")
+            .ok_or("missing config check")?;
+        assert_eq!(check["status"], "needs_attention");
+        assert_eq!(check["path"], config.to_string_lossy().replace('\\', "/"));
+        assert_eq!(check["message"], "ripr.toml is present but unreadable.");
+        let expected =
+            format!("Replace the unreadable ripr.toml with a readable file, then rerun {command}.");
+        assert_eq!(check["next_command"], expected);
+        assert_eq!(preflight["next_command"], expected);
+        let markdown = std::fs::read_to_string(reports.join("start-here.md"))?;
+        assert!(markdown.contains(&expected), "{markdown}");
+        assert!(
+            !markdown.contains(&format!("with a readable file, then rerun {other}.")),
+            "{markdown}"
+        );
+        assert_eq!(super::snapshot_tree(&reports)?.len(), 2);
+        assert!(config.is_dir());
+        assert_eq!(super::snapshot_tree(&root)?, before);
+    }
+    Ok(())
+}
