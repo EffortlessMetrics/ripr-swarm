@@ -58,8 +58,9 @@ pub const ASSERTION_SHAPED_REACHABLE_UNREVEALED_NEXT_STEP: &str = "The changed o
 outside tests calls it); it is the observation, not the code under observation. Ensure at least one test \
 calls this helper over inputs that exercise the changed check.";
 
-/// Next step for an `infection_unknown` finding whose changed owner is an
-/// assertion-shaped helper.
+/// Leading next step for an `infection_unknown`, `propagation_unknown` or
+/// `static_unknown` finding whose changed owner is an assertion-shaped
+/// helper. The classifier may append stop-reason guidance after it.
 pub const ASSERTION_SHAPED_INFECTION_UNKNOWN_NEXT_STEP: &str = "The changed owner is an assertion helper (its body is dominated by assert*/expect calls and nothing \
 outside tests calls it); inspect the inputs and behavior this helper checks, including any existing \
 boundary or negative-path assertions.";
