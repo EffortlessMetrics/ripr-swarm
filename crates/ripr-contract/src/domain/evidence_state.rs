@@ -5,17 +5,31 @@
 
 use serde::{Deserialize, Serialize};
 
+/// How a consumer should present one review gap. Serialized as the
+/// snake_case word that [`EvidenceState::as_str`] returns.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum EvidenceState {
+    /// The gap carries concrete repair guidance. The only state that
+    /// [`EvidenceState::is_actionable`] accepts.
     Actionable,
+    /// Related tests already grip the seam strongly (`strongly_gripped`).
     AlreadyObserved,
+    /// The seam's grip class is `intentional`, so it is shown but is not a
+    /// repair target.
     InternalOnly,
+    /// The gap's actionability class is `static_limitation`: no concrete
+    /// repair can be offered. It covers analyzer limits and also real test
+    /// gaps with no proposed first-test target, such as a changed owner no
+    /// test reaches. Never actionable.
     StaticLimitation,
+    /// No other state applies: no concrete guidance, and no strong or
+    /// intentional grip.
     Unknown,
 }
 
 impl EvidenceState {
+    /// Returns the snake_case wire word, such as `"already_observed"`.
     pub const fn as_str(self) -> &'static str {
         match self {
             Self::Actionable => "actionable",
@@ -26,6 +40,7 @@ impl EvidenceState {
         }
     }
 
+    /// Returns `true` only for [`EvidenceState::Actionable`].
     pub const fn is_actionable(self) -> bool {
         matches!(self, Self::Actionable)
     }
