@@ -656,8 +656,8 @@ mod tests {
         let typo = CliCommand::from_parts(Some("help"), args(&["chekc", "--all"]));
         assert_eq!(
             typo,
-            Err(unknown_command_error("chekc", false)),
-            "`ripr help <typo> --all` should still report the typo"
+            Err(unknown_help_topic_error("chekc").unwrap_or_default()),
+            "`ripr help <typo> --all` should still report the typo (as a help topic, #16374)"
         );
     }
 
