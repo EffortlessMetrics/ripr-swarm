@@ -23,6 +23,7 @@ exclude = [
   "src/**/*_kani.rs",
   "src/domain/language_capability_drift.rs",
   "src/domain/proof_domains.rs",
+  "src/analysis/language_outcome/test_support.rs",
 ]
 
 [features]
