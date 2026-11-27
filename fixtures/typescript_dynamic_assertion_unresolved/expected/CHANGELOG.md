@@ -861,3 +861,14 @@ Command:
 
 Updated:
 - `expected/human.txt`
+
+## Pending — typescript_dynamic_assertion_unresolved (47)
+
+Reason:
+RIPR-SPEC-0122: #15336 human-full Terms line stops claiming test reach for weakly_exposed and reachable_unrevealed
+
+Command:
+`cargo xtask goldens bless typescript_dynamic_assertion_unresolved --reason "..."`
+
+Updated:
+- `expected/human-full.txt`

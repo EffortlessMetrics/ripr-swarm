@@ -23,3 +23,14 @@ Command:
 
 Updated:
 - `expected/human.txt`
+
+## Pending — rust_alloc_vec_import_assertion (3)
+
+Reason:
+RIPR-SPEC-0122: #15336 human-full Terms line stops claiming test reach for weakly_exposed and reachable_unrevealed
+
+Command:
+`cargo xtask goldens bless rust_alloc_vec_import_assertion --reason "..."`
+
+Updated:
+- `expected/human-full.txt`

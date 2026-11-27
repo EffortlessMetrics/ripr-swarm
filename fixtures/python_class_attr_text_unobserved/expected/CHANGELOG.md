@@ -33,3 +33,14 @@ Command:
 
 Updated:
 - `expected/human.txt`
+
+## Pending — python_class_attr_text_unobserved (4)
+
+Reason:
+RIPR-SPEC-0122: #15336 human-full Terms line stops claiming test reach for weakly_exposed and reachable_unrevealed
+
+Command:
+`cargo xtask goldens bless python_class_attr_text_unobserved --reason "..."`
+
+Updated:
+- `expected/human-full.txt`
