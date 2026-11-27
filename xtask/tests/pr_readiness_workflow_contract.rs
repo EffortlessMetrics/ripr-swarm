@@ -223,23 +223,25 @@ fn staleness_watchdog_reports_without_dispatching() -> Result<(), String> {
     Ok(())
 }
 
-/// The required check run appears only when `result` starts, so a head whose
-/// Ready-triggered run is still queued or running has no required check yet.
-/// Calling that head dark tells the author to re-toggle Draft -> Ready, which
+/// The required check run appears only when `result` starts, so a queued or
+/// running merge-ready request can have no required check yet.
+/// Calling that head dark tells the author to re-apply merge-ready, which
 /// cancels the real run (`cancel-in-progress` for pull_request).
 const WATCHDOG_IN_FLIGHT_QUERY: &str =
-    "actions/workflows/routed-rust.yml/runs?event=pull_request&head_sha=$head_sha";
+    "actions/workflows/routed-rust.yml/runs?event=pull_request&head_sha=$2";
+const WATCHDOG_IN_FLIGHT_LOOKUP: &str = r#"request="$(routed_result "$number" "$head_sha")""#;
 
 fn watchdog_reports_in_flight_before_dark(source: &str) -> bool {
-    let Some(query) = source.find(WATCHDOG_IN_FLIGHT_QUERY) else {
+    let Some(lookup) = source.find(WATCHDOG_IN_FLIGHT_LOOKUP) else {
         return false;
     };
     let Some(dark) = source.find("dark=$((dark + 1))") else {
         return false;
     };
-    source.contains("select(.status != \"completed\")")
+    source.contains(WATCHDOG_IN_FLIGHT_QUERY)
+        && source.contains("select(.status != \"completed\")")
         && source.contains("  actions: read\n")
-        && query < dark
+        && lookup < dark
 }
 
 #[test]
@@ -247,7 +249,7 @@ fn staleness_watchdog_does_not_call_an_in_flight_run_dark() -> Result<(), String
     let source = repo_file(WATCHDOG)?;
     assert!(
         watchdog_reports_in_flight_before_dark(&source),
-        "watchdog must look for a queued or in-progress Ready-triggered run before reporting DARK",
+        "watchdog must look for a queued or in-progress merge-ready request before reporting DARK",
     );
     Ok(())
 }
@@ -255,7 +257,7 @@ fn staleness_watchdog_does_not_call_an_in_flight_run_dark() -> Result<(), String
 #[test]
 fn contract_rejects_a_watchdog_without_the_in_flight_check() -> Result<(), String> {
     let source = repo_file(WATCHDOG)?;
-    let changed = source.replace(WATCHDOG_IN_FLIGHT_QUERY, "actions/runs?head_sha=$head_sha");
+    let changed = source.replace(WATCHDOG_IN_FLIGHT_LOOKUP, r#"request="missing""#);
     assert_ne!(changed, source, "in-flight mutation must engage");
     assert!(
         !watchdog_reports_in_flight_before_dark(&changed),

@@ -1294,3 +1294,80 @@ fn a_re_export_of_a_private_module_is_not_followed() -> Result<(), String> {
         NO_PATH,
     )
 }
+
+/// The public check wire contract for an indexed test in a direct dependent,
+/// a facade with a specific unresolved-path witness, and an independent crate.
+fn dependent_host_evidence(
+    dependency: &str,
+    facade_lib: &str,
+) -> Result<serde_json::Value, String> {
+    let before = "pub fn bump_counter(buf: &mut Vec<u8>, byte: u8) -> usize {\n    buf.push(byte);\n    buf.len()\n}\n";
+    let case = Case {
+        files: vec![
+            ("Cargo.toml", "[workspace]\nmembers = [\"inner\", \"facade\"]\nresolver = \"2\"\n".into()),
+            ("inner/Cargo.toml", "[package]\nname = \"inner\"\nversion = \"0.1.0\"\nedition = \"2024\"\n".into()),
+            ("inner/src/lib.rs", before.into()),
+            ("facade/Cargo.toml", format!("[package]\nname = \"facade\"\nversion = \"0.1.0\"\nedition = \"2024\"\n{dependency}")),
+            ("facade/src/lib.rs", facade_lib.into()),
+            ("facade/tests/t.rs", "use facade::*;\n\n#[test]\nfn payload() {\n    let mut buf = Vec::new();\n    WRITE(&mut buf, 7);\n    assert_eq!(buf, [7]);\n}\n".into()),
+        ],
+        changed: ("inner/src/lib.rs", before.replace("push(byte)", "push(byte + 1)")),
+        location: "./inner/src/lib.rs:2",
+    };
+    let repo = Repo::create(&case)?;
+    let output = repo.ripr(&["check", "--base", "main", "--mode", "ready", "--json"])?;
+    let report: serde_json::Value = serde_json::from_slice(&output.stdout)
+        .map_err(|e| format!("check JSON: {e}\n{}", text(&output)))?;
+    let finding = report["findings"]
+        .as_array()
+        .and_then(|rows| {
+            rows.iter().find(|row| {
+                let probe = &row["probe"];
+                probe["family"] == "call_deletion"
+                    && probe["file"] == "./inner/src/lib.rs"
+                    && probe["line"] == 2
+                    && probe["expression"] == "buf.push(byte + 1)"
+            })
+        })
+        .ok_or("missing rendered call-deletion finding")?;
+    let evidence: Vec<_> = finding["evidence"]
+        .as_array()
+        .ok_or("missing rendered evidence")?
+        .iter()
+        .filter_map(serde_json::Value::as_str)
+        .filter(|line| {
+            line.contains("hosts indexed tests")
+                || line.starts_with("For example, the test `payload`")
+        })
+        .collect();
+    Ok(serde_json::json!({
+        "classification": finding["classification"],
+        "static_limit_kind": finding["static_limit_kind"],
+        "related_tests": finding["related_tests"],
+        "has_canonical_gap": !finding["canonical_gap"].is_null(),
+        "stop_reasons": finding["stop_reasons"],
+        "host_evidence": evidence,
+    }))
+}
+
+#[test]
+fn dependent_test_host_hint_yields_to_the_facade_witness() -> Result<(), String> {
+    let dependency = "\n[dependencies]\ninner = { path = \"../inner\" }\n";
+    let pointer = "pub const WRITE: fn(&mut Vec<u8>, u8) -> usize = inner::bump_counter;\n";
+    let dependent = dependent_host_evidence(dependency, pointer)?;
+    let facade = dependent_host_evidence(dependency, &format!("pub use inner::*;\n{pointer}"))?;
+    let independent = dependent_host_evidence(
+        "",
+        "pub const WRITE: fn(&mut Vec<u8>, u8) -> usize = |buf, byte| { buf.push(byte); buf.len() };\n",
+    )?;
+    let actual = serde_json::json!({
+        "dependent": dependent,
+        "facade": facade,
+        "independent": independent,
+    });
+    let expected: serde_json::Value =
+        serde_json::from_str(include_str!("fixtures/dependent-test-host.check.json"))
+            .map_err(|e| e.to_string())?;
+    assert_eq!(actual, expected);
+    Ok(())
+}

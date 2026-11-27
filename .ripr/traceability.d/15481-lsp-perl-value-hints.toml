@@ -1,0 +1,7 @@
+# lsp.diagnostic_profile and perl.producer typos name the accepted value (#15481).
+[[extend]]
+id = "RIPR-SPEC-0007"
+tests = [
+  "crates/ripr/src/config/value_hint_tests.rs::near_miss_values_name_the_accepted_value",
+  "crates/ripr/src/config/value_hint_tests.rs::unrelated_values_get_no_hint",
+]

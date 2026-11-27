@@ -198,6 +198,12 @@ pub(crate) fn string_literal_spans(text: &str) -> Vec<(usize, usize, bool)> {
     scan(text).string_spans
 }
 
+/// Masked code and string delimiter spans from the same lexical pass.
+pub(crate) fn mask_with_string_spans(text: &str) -> (String, Vec<(usize, usize, bool)>) {
+    let scanned = scan(text);
+    (scanned.masked, scanned.string_spans)
+}
+
 /// Byte offset of the `//` that opens each actual line comment in `text`, in
 /// order, read by the same scan: a `//` inside a string, a character literal,
 /// a block comment or another line comment never opens one.

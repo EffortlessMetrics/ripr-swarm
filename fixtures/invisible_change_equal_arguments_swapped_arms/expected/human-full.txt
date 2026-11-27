@@ -1,0 +1,54 @@
+ripr static RIPR exposure analysis
+mode: fast
+root: fixtures/invisible_change_equal_arguments_swapped_arms/input
+
+Summary: 1 changed behavior(s) checked: 0 exposed, 1 weakly_exposed, 0 reachable_unrevealed, 0 no_static_path, 0 infection_unknown, 0 propagation_unknown, 0 static_unknown; 1 of 1 finding(s) unsuppressed
+Terms: exposed = tests appear to notice the change; weakly_exposed = tests reach it but check it
+  only loosely; reachable_unrevealed = tests reach it but nothing appears to notice a change;
+  no_static_path = no test path found; infection_unknown, propagation_unknown, static_unknown = ripr
+  could not tell from the code (analysis limited, not a verdict); finding = one reported gap;
+  unsuppressed = not hidden by your suppression policy
+
+Analysis outcome: findings below (analysis complete; complete_with_findings)
+  Counts: 1 changed file(s), 2 changed line(s), 1 candidate line(s), 1 changed behavior(s) checked, 1 finding(s)
+
+WARNING ./src/lib.rs:2
+  id: probe:src_lib.rs:predicate:2e1d2b55
+
+Changed
+  before: if a > b { a } else { b }
+  after:  a > b
+          (condition only; before is the whole old line; open ./src/lib.rs:2 to read the new line)
+
+Change type
+  a condition or comparison changed
+  family: predicate
+  delta:  control (changes which code path runs)
+  owner:  src/lib.rs::largest
+  gap id (for scripts): gap:rust:src/lib.rs:largest:predicate_boundary:predicate:a==b
+
+Static exposure
+  weakly_exposed (warning, confidence 0.92)
+
+Evidence
+  - reach yes: Related tests appear to reach largest: equal_arguments_give_either
+  - infection weak: Every related test asserts the owner only at literal inputs where the changed owner and its baseline evaluate to the same value (for example `largest(2, 2)`), so no test input reaches a difference
+  - propagation yes: Changed behavior appears to influence returned value: b
+  - observation yes: A related test observes a value or effect near the changed behavior
+  - discriminator not established (weakly_exposed); related oracle: Strong oracle found: exact value or pattern assertion
+  - local flow reaches returned value: b (line 2)
+  - related test tests/largest.rs:4 equal_arguments_give_either uses strong exact value oracle: assert_eq!(largest(2, 2), 2);
+  - source assertion argument value 2 at line 5
+  - source function argument value a = 2 at line 5
+  - source function argument value a == b at line 5
+  - source function argument value b = 2 at line 5
+
+Weakness
+  - No detected boundary input for the changed predicate
+
+Next step
+  Add boundary tests for below, equal, and above the changed threshold with exact assertions
+Drill in:
+  (finding id, for explain/context)
+  ripr explain --root <cwd>/fixtures/invisible_change_equal_arguments_swapped_arms/input --diff <cwd>/fixtures/invisible_change_equal_arguments_swapped_arms/diff.patch --mode fast probe:src_lib.rs:predicate:2e1d2b55
+  ripr context --root <cwd>/fixtures/invisible_change_equal_arguments_swapped_arms/input --diff <cwd>/fixtures/invisible_change_equal_arguments_swapped_arms/diff.patch --mode fast --at probe:src_lib.rs:predicate:2e1d2b55

@@ -1,0 +1,7 @@
+# Registers the #15249 `diff --json` missing-root refusal under the typed
+# `repository_root_unusable` envelope of RIPR-SPEC-0241.
+[[extend]]
+id = "RIPR-SPEC-0241"
+tests = [
+  "crates/ripr/tests/cli_smoke/missing_root_refusal.rs::diff_json_refuses_a_missing_root_with_a_json_envelope",
+]

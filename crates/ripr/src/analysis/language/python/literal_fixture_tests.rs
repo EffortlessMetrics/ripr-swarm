@@ -59,6 +59,31 @@ fn the_inlined_construction_is_exposed() -> Result<(), String> {
     Ok(())
 }
 
+/// #14141 review, the test-side twin of the fixture reader: pytest's fixture
+/// argument reader skips a positional-only parameter of a test as it does for
+/// a fixture. A test declared `def test_deposit_through_fixture(account, /)`
+/// never has the fixture injected, so the fixture resolves no limit there.
+#[test]
+fn a_positional_only_test_parameter_is_not_a_fixture_request() -> Result<(), String> {
+    let positional_only = TEST.replace(
+        "test_deposit_through_fixture(account)",
+        "test_deposit_through_fixture(account, /)",
+    );
+    assert_fixture_limited(
+        &with_files(CONFTEST, &positional_only)?,
+        "a positional-only test parameter",
+    );
+    // Control: a keyword-only parameter is injected like an ordinary one.
+    let keyword_only = TEST.replace(
+        "test_deposit_through_fixture(account)",
+        "test_deposit_through_fixture(*, account)",
+    );
+    let finding = with_files(CONFTEST, &keyword_only)?;
+    assert_eq!(finding.static_limit_kind, None, "{finding:?}");
+    assert_eq!(finding.class, ExposureClass::Exposed, "{finding:?}");
+    Ok(())
+}
+
 #[test]
 fn a_literal_owner_instance_fixture_reads_like_the_inlined_construction() -> Result<(), String> {
     let finding = with_conftest(CONFTEST)?;

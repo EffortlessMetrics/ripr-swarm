@@ -1,0 +1,2 @@
+<!-- section: Added -->
+- A caller-reported focused run (`ripr agent repair --phase after --test-result FILE`) now records whether it included a test the attempt's edit added or changed. The reading is `edited_test` on the `test_run` object of `ripr agent status --json` and of MCP `ripr_get_receipt_status`: `covered`, `not_covered` or `unknown`. A passing run of an untouched sibling test no longer reads as if the edited test passed, and the finish's next step names the missing run. ripr still runs nothing (#16311).

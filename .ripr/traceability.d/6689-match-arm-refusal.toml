@@ -1,0 +1,5 @@
+[[extend]]
+id = "RIPR-SPEC-0122"
+tests = [
+  "crates/ripr/tests/agent_stub_compiles.rs::same_line_match_arms_use_parser_spans_for_ambiguity",
+]

@@ -166,3 +166,14 @@ Command:
 
 Updated:
 - `expected/human-full.txt`
+
+## Pending — python_dunder_truthiness_replaced_test (14)
+
+Reason:
+RIPR-SPEC-0122: the Summary names findings whose reach is a test link ripr could not confirm (#15295)
+
+Command:
+`cargo xtask goldens bless python_dunder_truthiness_replaced_test --reason "..."`
+
+Updated:
+- `expected/human.txt`

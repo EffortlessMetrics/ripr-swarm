@@ -59,6 +59,13 @@ pub(in crate::analysis::language::python) struct PythonClassFacts {
     /// a call result and never rebound, objects the function can mutate
     /// through an attribute write. Filled after extraction; empty when unknown.
     pub(in crate::analysis::language::python) module_objects: Vec<String>,
+    /// For a function owner: the module-scope names of its file that may not
+    /// hold their single binding (`*` when the module's bindings cannot be
+    /// enumerated), so an imported name it spells may be rebound at module
+    /// level (`is_adult = lambda ...` after the import, #14150). Filled after
+    /// extraction like [`Self::module_objects`]; empty when unknown.
+    #[serde(default)]
+    pub(in crate::analysis::language::python) module_rebound_names: Vec<String>,
     /// For a function owner: the names its own body binds (parameters, locals,
     /// walrus targets). None when unknown, which keeps every consumer closed.
     pub(in crate::analysis::language::python) bound_names: Option<Vec<String>>,

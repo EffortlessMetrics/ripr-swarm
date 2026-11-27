@@ -1,0 +1,11 @@
+[[extend]]
+id = "RIPR-SPEC-0060"
+tests = [
+  "tools/repo-policy/tests/frontdoor.rs::gemini_route_controls_invalidate_preflight",
+]
+code = [
+  "GEMINI.md",
+  "tools/repo-policy/src/agent_skills.rs::validate_gemini_route",
+  "tools/repo-policy/src/agent_skills.rs::gemini_route_inputs",
+  "tools/repo-policy/src/identity.rs::input_identity",
+]

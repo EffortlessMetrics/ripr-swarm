@@ -427,7 +427,7 @@ pub(crate) fn discover_preview_language_files(root: &Path) -> Vec<(LanguageId, P
 /// that may include non-production files (fail-closed).
 pub(crate) fn discover_routed_language_files(root: &Path) -> Vec<(LanguageId, PathBuf)> {
     let mut out: Vec<(LanguageId, PathBuf)> = Vec::new();
-    visit_classified(root, root, &mut out, &route);
+    visit_classified(root, root, &mut out, &route, false);
     out.sort_by(|a, b| a.1.cmp(&b.1));
     out
 }
@@ -443,8 +443,8 @@ pub(crate) struct UnlinkedPythonTests {
 }
 
 /// Directories holding installed third-party Python packages or tool caches,
-/// whose `tests/` folders are not the repository's own tests. Skipped only by
-/// [`discover_python_test_files`].
+/// whose files are not the repository's own source. Skipped by
+/// [`discover_python_test_files`] and [`discover_unanalyzed_source_files`].
 const PYTHON_VENDOR_DIRS: &[&str] = &[
     ".venv",
     "venv",
@@ -455,6 +455,13 @@ const PYTHON_VENDOR_DIRS: &[&str] = &[
     ".mypy_cache",
     ".pytest_cache",
 ];
+
+/// Whether a directory holds installed dependencies or tool caches rather than
+/// repository source: a known vendor name, or any virtualenv (a `pyvenv.cfg`
+/// marker, which also covers custom names such as `env/` or `.uv-venv/`).
+fn is_vendored_dir(path: &Path, name: &str) -> bool {
+    PYTHON_VENDOR_DIRS.contains(&name) || path.join("pyvenv.cfg").is_file()
+}
 
 /// Upper bound on directory entries inspected by [`discover_python_test_files`].
 const PYTHON_TEST_WALK_ENTRY_CAP: usize = 50_000;
@@ -564,11 +571,13 @@ pub(crate) fn discover_python_test_files(
 
 /// Discover source files in languages no ripr adapter reads (Go, Java, C,
 /// shell, ...), with their language names, skipping the same directories as
-/// the other discovery walks. Pilot uses it so a repository written in such a
-/// language gets a named non-claim instead of an empty "complete" ranking.
+/// the other discovery walks plus virtualenv and tool-cache directories (a
+/// `.venv`'s `activate.ps1` is not repository source). Pilot uses it so a
+/// repository written in such a language gets a named non-claim instead of an
+/// empty "complete" ranking.
 pub(crate) fn discover_unanalyzed_source_files(root: &Path) -> Vec<(&'static str, PathBuf)> {
     let mut out: Vec<(&'static str, PathBuf)> = Vec::new();
-    visit_classified(root, root, &mut out, &unanalyzed_source_language);
+    visit_classified(root, root, &mut out, &unanalyzed_source_language, true);
     out.sort_by(|a, b| a.1.cmp(&b.1));
     out
 }
@@ -578,8 +587,12 @@ pub(crate) fn discover_unanalyzed_source_files(root: &Path) -> Vec<(&'static str
 /// One short-circuiting walk with the same ignored directories as the other
 /// discovery walks; only regular files count, so a dangling link or FIFO
 /// named like a source file does not make a root look inspectable (#9922).
+/// Inside virtualenv and tool-cache directories an unanalyzed-language file
+/// does not count, matching [`discover_unanalyzed_source_files`] (#15283); a
+/// Rust or preview-language file there still counts, as routed discovery
+/// still reads it.
 pub(crate) fn has_inspectable_source_file(root: &Path) -> bool {
-    fn inspectable(path: &Path) -> bool {
+    fn inspectable(path: &Path, in_vendored: bool) -> bool {
         RustAdapter.accepts_path(path)
             || route(path).is_some_and(|language| {
                 matches!(
@@ -590,9 +603,9 @@ pub(crate) fn has_inspectable_source_file(root: &Path) -> bool {
                         | LanguageId::Perl
                 )
             })
-            || unanalyzed_source_language(path).is_some()
+            || (!in_vendored && unanalyzed_source_language(path).is_some())
     }
-    fn walk(dir: &Path) -> bool {
+    fn walk(dir: &Path, in_vendored: bool) -> bool {
         let Ok(entries) = std::fs::read_dir(dir) else {
             return false;
         };
@@ -606,16 +619,18 @@ pub(crate) fn has_inspectable_source_file(root: &Path) -> bool {
             };
             if kind.is_dir() {
                 let name = path.file_name().and_then(|s| s.to_str()).unwrap_or("");
-                if !DEFAULT_IGNORED_DIRS.contains(&name) && walk(&path) {
+                if !DEFAULT_IGNORED_DIRS.contains(&name)
+                    && walk(&path, in_vendored || is_vendored_dir(&path, name))
+                {
                     return true;
                 }
-            } else if kind.is_file() && inspectable(&path) {
+            } else if kind.is_file() && inspectable(&path, in_vendored) {
                 return true;
             }
         }
         false
     }
-    walk(root)
+    walk(root, false)
 }
 
 fn visit_classified<T>(
@@ -623,6 +638,7 @@ fn visit_classified<T>(
     dir: &Path,
     out: &mut Vec<(T, PathBuf)>,
     classify: &dyn Fn(&Path) -> Option<T>,
+    skip_vendored: bool,
 ) {
     let Ok(entries) = std::fs::read_dir(dir) else {
         return;
@@ -637,10 +653,12 @@ fn visit_classified<T>(
         let path = entry.path();
         let name = path.file_name().and_then(|s| s.to_str()).unwrap_or("");
         if entry.file_type().map(|t| t.is_dir()).unwrap_or(false) {
-            if DEFAULT_IGNORED_DIRS.contains(&name) {
+            if DEFAULT_IGNORED_DIRS.contains(&name)
+                || (skip_vendored && is_vendored_dir(&path, name))
+            {
                 continue;
             }
-            visit_classified(root, &path, out, classify);
+            visit_classified(root, &path, out, classify, skip_vendored);
         } else if let Some(class) = classify(&path) {
             let relative = path.strip_prefix(root).unwrap_or(&path).to_path_buf();
             out.push((class, relative));
@@ -719,6 +737,12 @@ mod tests {
             ("python", "app.py", true),
             ("go", "main.go", true),
             ("ignored", "node_modules/pkg/index.js", false),
+            // #15283: an unanalyzed-language file inside a virtualenv is not
+            // repository source, by name or by `pyvenv.cfg` marker; a Python
+            // file there still routes, matching routed discovery.
+            ("venv-script", ".venv/bin/activate.ps1", false),
+            ("marked-venv", "env/pyvenv.cfg", false),
+            ("venv-python", ".venv/lib/site.py", true),
         ] {
             let case = root.join(dir);
             let path = case.join(file);
@@ -726,6 +750,9 @@ mod tests {
                 fs::create_dir_all(parent).map_err(io)?;
             }
             fs::write(&path, "x\n").map_err(io)?;
+            if dir == "marked-venv" {
+                fs::write(case.join("env/run.sh"), "x\n").map_err(io)?;
+            }
             assert_eq!(has_inspectable_source_file(&case), expected, "{dir}");
         }
         #[cfg(unix)]
