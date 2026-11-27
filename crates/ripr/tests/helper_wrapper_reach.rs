@@ -840,6 +840,13 @@ fn imported_json_wrapper_forwards_unless_json_is_rebound() -> Result<(), String>
             AUDITED,
             "use serde_json::json;\nmod serde_json { macro_rules! json { ($($t:tt)*) => { return 5 }; } }",
         ),
+        // #16388: an item macro whose expansion is not read may alias the
+        // root (`cfg_if! { .. use compat as serde_json; }`).
+        (
+            "item macro alias",
+            AUDITED,
+            "use serde_json::json;\nshim! { use compat as serde_json; }",
+        ),
     ] {
         let (source, diff, line) = with_prelude(prelude)?;
         for family in ["predicate", "return_value"] {
