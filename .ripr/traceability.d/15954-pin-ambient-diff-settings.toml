@@ -5,4 +5,5 @@ id = "RIPR-SPEC-0170"
 tests = [
   "crates/ripr/src/analysis/diff/load/contract_tests.rs::ambient_hunk_and_index_config_does_not_change_the_source_patch",
   "crates/ripr/tests/cli_smoke/diff_ambient_settings.rs::ambient_git_diff_settings_do_not_change_the_analyzed_input",
+  "crates/ripr/tests/cli_smoke/diff_ambient_settings.rs::a_diff_driver_algorithm_does_not_change_the_analyzed_input",
 ]

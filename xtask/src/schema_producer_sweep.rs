@@ -325,6 +325,24 @@ pub(crate) const VERIFICATION_CORPUS_BINDINGS: &[Binding] = &[
         excluded: &[],
     },
     Binding {
+        schema_path: "schemas/ripr/context-refusal.schema.json",
+        pointer: None,
+        corpus: Corpus::Authority(
+            "narrower authority: context_json_refusals_conform_to_the_published_schema in crates/ripr/tests/refusal_envelope_schemas.rs validates real pretty and compact CLI refusals, and published_refusal_schemas_reject_documents_they_forbid exercises invalid variants; the edge fixture captures an unusable root",
+        ),
+        edge_fixtures: &["tests/fixtures/verification/ripr/context-refusal.valid.json"],
+        excluded: &[],
+    },
+    Binding {
+        schema_path: "schemas/ripr/context.schema.json",
+        pointer: None,
+        corpus: Corpus::Authority(
+            "narrower authority: context_json_conforms_for_every_finding_of_the_covering_fixtures in crates/ripr/tests/context_json_schema.rs validates the real CLI bytes of every finding's packet over eight committed fixtures and a git fixture (also checking --format json-compact and that each packet's top-level missing_discriminators equal its check finding's), and requires the corpus to reach every classification, both source-currentness states, a null and an exposed witness, preview confidence caps, owner_signature, before_condition, a null and an object top-level flow_sink and each discriminator shape; confidence_basis_is_the_check_finding_definition holds the shared field equal to check.schema.json, and published_context_schema_rejects_documents_it_forbids is the negative experiment; the packet names the host root in witness.explain_command, so the committed fixture is a portable capture kept as an edge fixture",
+        ),
+        edge_fixtures: &["tests/fixtures/verification/ripr/context.valid.json"],
+        excluded: &[],
+    },
+    Binding {
         schema_path: "schemas/ripr/gate-decision.schema.json",
         pointer: None,
         corpus: Corpus::FileName("gate-decision.json"),

@@ -378,7 +378,7 @@ fn outcome_snapshot_shape_refusals_name_the_snapshot_to_pass() -> Result<(), Str
                     "--after",
                     "art/broken.json",
                 ],
-                "failed to parse repo exposure JSON: EOF while parsing an object at line 2 column 0; regenerate it with the same command as the other snapshot, either `ripr check --format repo-exposure-json` or `ripr check --json`, so both sides use one format",
+                "before snapshot art/broken.json is not valid JSON: EOF while parsing an object at line 2 column 0; regenerate it with the same command as the other snapshot, either `ripr check --format repo-exposure-json` or `ripr check --json`, so both sides use one format",
             )
         });
     let _ = fs::remove_dir_all(&dir);

@@ -37,6 +37,15 @@ Linked issues:
 - #14241 (class exported as default by a later statement)
 - #14088 (class imported by a named `require()`; re-declared `var` import)
 - #15092 (class as a CommonJS module's whole export)
+- #16252 (inline class expression as a CommonJS module's whole export)
+- #16261 (class method overwritten by a later same-key member; rule 26)
+- #16275 (class expression as a CommonJS named export; rule 27)
+- #16353 (getter read straight off `new Class(...)`)
+- #16306 (class method shadowed by a same-key field; rule 28)
+- #16314 (class method replaced by an assignment; rule 29)
+- #16349 (methods of an anonymous default-exported class; rule 19)
+- #16365 (TypeScript `export = Name;` and `import x = require()`; rule 19)
+- #16366 (a function beside a one-identifier CommonJS whole export; rule 19)
 - #9435 (exact oracle ignored on five changed-line shapes)
 - #9497 (skipped or unexercised tests credited as exposed; rules 17 and 18)
 - #11196 (start rate: a conditional assertion in an unconsulted test no longer
@@ -927,8 +936,11 @@ Candidates come from the first non-empty tier:
      `expect(...)` actual, same file or through an import of the owner
      module;
    - method: `ReceiverOwnerCall`, a receiver bound by `new Class(...)` in
-     the body or in describe or `beforeEach` scope, a getter read, or a
-     constructor call;
+     the body or in describe or `beforeEach` scope, a getter read (on such a
+     receiver, or straight off `new Class(...)`, as in `expect(new
+     Cart(100).total)`, since #16353; like the inline call, a parenthesized
+     `(new Cart(100)).total` or an explicit `new Cart<T>(...)` is not read), or
+     a constructor call;
    - static method: `ClassMethodCall` through the class name or an import;
    - function, arrow or component, in order: an owner-module mock or a
      spy fabrication blocks every relation; then `DirectOwnerCall` (a
@@ -949,11 +961,17 @@ Candidates come from the first non-empty tier:
    strings, templates and comments do not count), a name defined twice in the
    class, a name some method assigns, deletes or defines on `this`, a name an
    instance field of the class defines (a computed field defines any name),
-   an arrow body that is not the first argument of a synchronous array method
+   an arrow, parameter defaults included, that is not an unannotated,
+   non-async first argument of a synchronous array method
    (`forEach`, `map`, `filter`, `reduce`, `some`, `every`, `find`, `sort` and
-   their kin; `map`'s `thisArg` is a stored value; `const later = () => this.helper()`, an array element, a logical
+   their kin; `map`'s `thisArg` is a stored value; `const later = () => this.helper()`,
+   `const later = (k = this.helper()) => k`, an array element, a logical
    operand, a stored callback, and a deferred callee such as `setTimeout`,
-   an event listener, `subscribe` or `then` are created or run later), the body
+   an event listener, `subscribe` or `then` are created or run later; an
+   async callback runs past its first `await` later, and an arrow with a
+   return type annotation is never read as a synchronous callback; an
+   annotation the scan cannot bound, a function or conditional type, drops
+   the caller), the body
    of a nested `function`, parameter defaults included (a call the method makes
    outside it still counts; a
    function whose parameters are followed by a return type annotation, or a
@@ -1000,6 +1018,136 @@ Candidates come from the first non-empty tier:
    bare-call edges does not extend to its own `ModuleFunction` owner.
    Module-const (`ModuleFunction` value) reach stays same-module only: it
    does not continue across an import, and an exported value is not followed.
+   **Built values and function references (#15928).** Two more forms are
+   edges of the same graph, under the same hop bound and the same limits.
+   `new X(...)` is a read of a module-level `const X`: constructing an
+   instance binds nothing to the name. A `const` built by an immediately
+   invoked function with no arguments (`const X = (function () { class X
+   { ... } return X; })()`, or the arrow form; not `async`, not a generator)
+   also calls what that function's text bare-calls, methods of a class it
+   declares included, because the owner is the whole `const`: an exported
+   entry that constructs the class reaches the module functions the class's
+   code calls. The entry reaches the value only from code that runs when it
+   runs, under the same header and nesting rule as the class constructions
+   below: a read inside a stored or deferred arrow (`const later = () => new
+   X().m()`, `setTimeout(() => ...)`) is no edge. An expression-bodied
+   arrow runs its whole expression when it is the entry itself or the
+   function a factory product returns (`export const f = (x) => new
+   X().m(x)`, `export const f = make()` where `make` returns that arrow),
+   so it keeps the edge; the factory itself, which only makes the arrow,
+   does not. When the building function declares the binding's own name,
+   mentions of the name inside it are the inner binding and are left out of
+   the module-wide scan; every mention outside it must be an allowlisted read
+   and, when the building function's parsed body holds any block or arrow
+   (a class, a method, a nested function or a block statement whose code
+   may run later), a construction that goes straight into a member call,
+   `new X(...).member(` (not `constructor`, `valueOf`, `toString`,
+   `toLocaleString` or `__proto__`), with no text outside it,
+   literals and comments included, naming `prototype`, `__proto__`,
+   `constructor`, `getPrototypeOf`, `setPrototypeOf` or `Reflect`, and no
+   `this` in the body other than `this.x`, `this?.x`, `this[...]`, a call
+   `this.x(` of a member the body declares (`this.valueOf()` hands the
+   instance back), or the receiver of `NAME.call(` / `NAME.apply(` where the
+   body binds `NAME` from `this[...]` or a member it declares
+   (`const h = this["$" + t]; h.call(this, v)`)
+   (an allowlisted read such as
+   `patch(X.prototype)`, a kept instance, `new X()["__proto__"]`, or a method
+   that returns `this` or hands it to other code, could replace a method
+   every later instance runs). A top-level name the building function also declares as
+   a member (`compare(a, b) { ... }`) is no edge, and neither is a call
+   followed by `:` (a conditional arm reads like a return type). A function
+   passed by reference as the whole first argument of a synchronous array
+   callback method (`keys.sort(compare)`, `values.reduce(add, 0)`) is a call
+   of it when the function is declared in this module, the module never
+   reassigns it, and the reference is code, not a comment or a literal; an imported binding passed by reference
+   is no edge, so cross-module reach stays bare calls only. An explicit type
+   argument list and whitespace before the argument list are read through
+   (`new Box<string>()`, `new Box ()`, `values.map<string>(format)`); `new
+   Box` with no argument list is not a construction here. Any other mention of the name in the enclosing function (stored,
+   an array element, a later argument, an argument of a bare call,
+   `setTimeout`, `then`, an event listener) leaves no call edge; the
+   closure edges below may still read it as value-passing reach. Limits: the
+   class is one node, so a method no entry calls is reached with the rest of
+   the class, and so is a function only a method the building function itself
+   replaces calls (static text reach, as for the bare-call graph); a
+   member reached through a computed `this[...]` is trusted not to hand the
+   instance back, and a prototype key built at run time
+   (`o["__pro" + "to__"]`) is not seen; every guard reads the shared
+   literal and comment mask, so text that desynchronizes it (#16244) is a limit of
+   all masked checks; the receiver of the array method is not typed.
+   **Methods of a module-private class (#15928).** A top-level `class X`
+   declaration that is not exported has one node per plain instance method,
+   `X.method`, in the same graph under the same hop bound. A function or
+   method reaches `X.method` by `new X(...).method(` written as one
+   expression in code that runs when it runs (not inside a nested function,
+   or an arrow, parameter defaults included, other than an unannotated,
+   non-async synchronous array callback, such as
+   `const later = () => new X().m()`, `const later = (v = new X().m()) => v`
+   or `setTimeout(() => ...)`; a generator function or method, whose body
+   runs only when its iterator is advanced, reaches no class or built value
+   (#16249); a function
+   whose header is not `(params) [: Type] [=>] {` gives no construction
+   edge, except an arrow `(params) [: Type] => expression` whose
+   expression holds no nested function, class or block, which runs it
+   all), when every
+   mention of `X` in that function is a construction.
+   `X.method` calls what its text bare-calls, the sibling methods it calls
+   as `this.other(` (or hands by reference to a synchronous array callback),
+   and the methods it runs on a class it constructs the same way. A method
+   owner then carries the exported entries that reach its node, and so does
+   a module function only such a method calls. Fail-closed: the class has no
+   `extends`, no decorator (on the class, a member or a parameter: any `@`
+   in the class's code, outside comments and literals, refuses it; a JSDoc
+   `@param` does not), no computed member and no `return` in a constructor
+   spelled `constructor` or `"constructor"`, no `this.m` of a method other
+   than a direct call (`this.m(`, `this.m?.(`, `this.m<T>(`) or an argument
+   of a call whose `(` follows a callee name, not a keyword or `)`
+   (`.sort(this.m)`), since any other spelling may be an assignment target
+   that replaces it (`[this.m] = ...`, `({ k: this.m } = ...)`,
+   `for (this.m of ...)`, `(this.m as T) = f`, `this.m! = f`,
+   `(this.m) = f`, `if (c) (this.m) &&= f`); its name is declared once
+   in the file and every other mention outside the declaration is a
+   construction `new X(...)` (a property of the same name `o.X`, which
+   text cannot tell from the binding after `1.` and a line break, an alias,
+   a read such as `X.prototype` even
+   when nothing writes through it, a type position, a re-export, a subclass,
+   a prototype write or any other mention refuses the whole class); the class text uses `this` only
+   as a plain access `this.name` / `this?.name` / `this.#name` to a member
+   the class body declares or a field it assigns as `this.name = ...`, calls
+   `this.name(...)` only for an instance method the class declares that no
+   field, accessor or quoted key shares the name of and that nothing in the
+   module reassigns (a field
+   or getter may hold `Object.prototype.valueOf`, which returns the
+   instance; any other member must be followed by a separator or operator
+   that cannot call it, so `(this.f)()`, `this.f!()`, `this.f<T>()` and a
+   comment before `(` refuse the class), has no static member or static
+   block (whose `this` is the class), and never uses `super` or
+   `new.target` (`Object.assign(this, o)`,
+   `this[key] = f`, `(this as any).name`, `const self = this`, an inherited
+   member such as `this.constructor`, `this.__proto__`, `this.valueOf()` or
+   `this.__defineGetter__`, a static block's `this.prototype`,
+   `super.valueOf()` or `new.target.prototype` refuses every method, since
+   any of them can replace a method on the instance the entry calls; the
+   class text is not masked, so a `this` in a comment, a string or a type
+   position is scanned like code and may refuse the class, and a member name
+   spelled with a unicode escape refuses it); every `new X(...)` in the
+   module is the direct receiver of a call to one of its methods,
+   `new X(...).method(` (a kept, passed or inspected instance, such as
+   `Object.getPrototypeOf(new X())`, refuses the class); a method is a node only when
+   no other member of the class has its name (a field, an accessor, a
+   static, or a member whose key is the same name quoted, `"write" = ...`),
+   it is not a generator, nothing in the module assigns a member of that
+   name on any receiver, and no literal bracket key of that name
+   (`["write"]`) appears anywhere in the module, even as a read. Limits: an instance kept in a
+   variable (`const s = new X(); s.method()`) refuses the whole class, and neither
+   is a class expression, a static method, an accessor or a constructor body.
+   A module whose code (outside comments and literals) names `eval` or
+   `Function` (other than `Function.prototype.toString.call(`, which only
+   reads a function's source), or holds a `\` (an identifier spelled with a unicode escape),
+   follows no module value, built value or class, since either can write one
+   under a spelling the scan cannot see; and a mention after `.` reads as
+   another binding only when the `.` does not follow a digit, which may end a
+   numeric literal before a line break (`1.\nX.prototype.m = f`).
    **Cross-module continuation (#13592).** The same chain continues across an
    import: an exported function of module X that bare-calls a binding it
    imported from module Y reaches the owner Y declares (or the owner Y's own
@@ -1055,7 +1203,9 @@ Candidates come from the first non-empty tier:
    call-built constant, callee included). As for calls, a function's directly
    returned functions are not its own code: calling a factory does not run
    them, so only a value the factory builds reaches what they reference. This covers a function passed as
-   a value (`JSON.parse(text, reviver)`, `keys.sort(compare)`), a call-built
+   a value (`JSON.parse(text, reviver)`, `setTimeout(tick)`; a synchronous
+   array callback such as `keys.sort(compare)` is a call edge above, so
+   it is no closure edge), a call-built
    constant passed or referenced as a value (`parse(input, Grammar)`), the
    callbacks of such a constant (`const Rule = match(re, (s) => upper(s))`)
    and the combinator that built it (`match`). A name the referencing code
@@ -1262,7 +1412,12 @@ the relation, since it could reach the sibling outside `local.member(` calls
 (`u2.extend()`, `ns.default.extend()`, `extend()`); this is a blanket
 fail-closed rule, not a check of which names the second binding uses (#13750).
 Known limits: a second binding whose source the import resolver cannot match
-to the owner module, and a sibling that reaches the module only through a
+to the owner module (for example a named import through a barrel,
+`import { extend } from '../src/index'` where the index has
+`export * from './utils'`, which resolves to the barrel and not to the owner's
+module), an inline loader call such as
+`createRequire(import.meta.url)('../src/utils')` (only the callees `import`,
+`require`, `requireActual` and `importActual` are read as loads), and a sibling that reaches the module only through a
 path alias such as `@/utils` (only sources starting with `.` count as possibly
 self-reachable), are not covered. The test file must use `local` for nothing but direct
 calls `local.member(` (any number of distinct members, each credited only to
@@ -1285,6 +1440,96 @@ components, re-export chains, member tags, explicit type arguments on the tag
 (`<Local<T> />`) and a tag directly after JSX text (`Count<Local />`) are not
 credited. A component owner with only heuristic links is advised to render
 `<Local .../>`, not to add a direct owner call.
+
+**Rule 26. A class method that a later same-key member overwrites relates
+to no test (#16261).** A class body defines its members in order, so a later
+method, getter or setter with the same property key (`total`, `'total'`,
+`"total"` and `['total']` are one key; `#total` is a distinct private key) and
+the same `static` placement replaces an earlier one: in `class Cart { total() {...} total()
+{...} }` only the second `total` runs. The earlier body stays an owner (a
+changed line in it is still reported) but relates to no test, by any relation
+tier, so it reads `no_static_path`, and its guidance names the later
+definition instead of suggesting a direct call (which would run the later
+body); the later body keeps its relations. Owners are chosen per changed line,
+so when both definitions share one line the line reads as the earlier,
+overwritten owner: an edit there is not credited, the fail-closed side. This
+holds for every class owner shape (declared, ES default, CommonJS whole
+export, inline `module.exports = class`). Not an overwrite: a getter and a
+setter of one key (one accessor property), a static and an instance member of
+one name (different objects), body-less TypeScript overload signatures, and a
+computed key other than a string literal (`[name]()`), which is never
+compared.
+
+**Rule 27. A class expression assigned to a CommonJS named export is a class
+named by the export property (#16275).** `exports.Cart = class { ... }` and
+`module.exports.Cart = class ... { ... }` are the inline twins of
+`class Cart {}` followed by `exports.Cart = Cart;`: their methods are owners
+whose class name is the property `Cart`, whatever the expression's own id
+says, since that id binds only inside the class body. A named `require` of
+`Cart` relates a changed method as it does for the declared class; a test that
+destructures the inner id or another export stays unrelated. The members of
+one class share the one export slot `Cart`: a later top-level assignment to the
+same slot (another class, a class with no method, or any other value) leaves the
+earlier class dead, so it yields no owner, the fail-closed rule of a reassigned
+function export (#4638), which now also counts a non-function value assigned to
+the slot after the definition. An earlier one, such as the hoisted
+`exports.Cart = void 0;` of compiled TypeScript and Babel output, is overwritten
+by the definition and does not drop it. A whole-module
+`module.exports = function NAME` has its own slot, apart from every property:
+a property write on it (`module.exports.NAME = ...`, a function or a class)
+leaves both live. Instance fields and the repeated-class-name guard read such a
+class under the property name, not its inner id, and its `#private` methods
+(like those of `module.exports = class`) are owners whose changed lines reach
+owner lookup, as for a declared class.
+
+**Rule 28. A class method that a field of the same key shadows relates to no
+test (#16306).** A class field is defined on each instance when it is
+constructed (a static field on the constructor when the class is evaluated),
+after the prototype (or the constructor) already holds the methods, so in
+`class Cart { total = (n) => n; total(n) {...} }` a call `new Cart().total()`
+runs the field's value, whatever the source order. A method, getter or setter
+whose key and `static` placement match a field, keyed as in rule 26 (a bare
+`total;` field counts), stays an owner (a changed line is still reported) but
+relates to no test, so it reads `no_static_path`, and its guidance names the
+field instead of suggesting a direct call. Not a shadow: a `declare` or
+`abstract` field (no runtime definition), a field of the other placement, a
+`#private` field beside a public method, a computed key other than a string
+literal, and a field initialized from the method itself (`total = this.total;`
+or `total = this.total.bind(this);`, `this` being the class for a static
+field), which reads the method before the field is installed, so calling the
+field runs the method body. Any other initializer still shadows. Because the
+method has its own no-reach cause, a test importing a same-named package symbol
+does not replace this guidance with an unresolved-alias disclosure; the same
+holds for an overwritten method (rule 26). Sibling reach already treated such a
+field as shadowing.
+
+**Rule 29. A class method that an assignment replaces relates to no test
+(#16314).** An unconditional `this.NAME = ...` statement at the top level of a
+class's constructor, before any statement that can `return` from it, defines
+`NAME` on each instance; an unconditional top-level `Class.prototype.NAME =
+...` statement of the same file overwrites the method on the prototype; and a
+top-level `Class.NAME = ...` replaces a static method. In each case
+`new Class().NAME()` (or `Class.NAME()`) runs the assigned value. The receiver
+is read through parentheses and TypeScript casts (`(Cart.prototype as
+any).total = ...`, `(this as any).total = ...`), and a top-level assignment
+counts only for a class a top-level declaration binds in module scope (the
+class name of an inline `exports.Cart = class {}` is an export property, not a
+binding), and only for a method of that declaration itself, not of an
+inline `exports.Cart = class {}` sharing its name, even on the same line. Such an ordinary method (not a getter, setter or constructor) stays
+an owner (a changed line is still reported) but relates to no test, so it
+reads `no_static_path`, and its guidance names the assignment it found. Not a
+replacement: any read of the same member in the same scope (the constructor
+body and its parameter initializers, or the file's top level) outside the assignment's own target, dotted or
+bracketed with a string key (`this.total = this.total.bind(this)`,
+`this['total'].bind(this)`, `Class.prototype.total =
+wrap(Class.prototype.total)`, `const original = Class.prototype.total;`),
+since the replacement may still call the method; an assignment nested in a
+condition, loop or callback, or after a possible `return`; an assignment of
+the other placement (`Class.total = ...` beside an instance method,
+`Class.prototype.total = ...` beside a static method); and an assignment to
+an accessor, which calls its setter. As for rules 26 and 28, a same-named
+package import in a test does not replace this guidance with an
+unresolved-alias disclosure.
 
 ### Observation guard
 
@@ -1673,7 +1918,69 @@ require(...)`, ES `import Name from` of the CommonJS module) is refused as for
 a function export, and a `require()` of an ES default class stays a namespace
 object. A `let`/`var` local the test file writes again, a re-declared `var`,
 and a binding of the local in a `describe` body, a hook or the test body
-(including a `class Local {}` declared there) are not the class. `module.exports = class Name {}` inline is not read.
+(including a `class Local {}` declared there) are not the class.
+
+Amended 2026-11-25 (#16252): an inline `module.exports = class Name { ... }`
+is the same whole export. Its methods are owners (before, a changed method
+produced no finding at all), and while the file gate above holds and the file
+adds no named export beside the class (no `exports.` or `exports[` spelling)
+they relate through a whole-module `require` exactly as the declared form
+does. Otherwise the members stay owners but lose the class name: a class
+expression's name binds only inside its body, so no named import or same-file
+construction reaches them. A static method of a whole-export class (inline
+or declared) relates through the whole-module `require` binding
+(`Local.method()`), never through a named binding, which reads a static
+property of the class. An instance field of an inline class shadows the
+prototype method of the same name for sibling calls, as for a declared class.
+Amended 2026-11-26 (#16349): an anonymous `module.exports = class { ... }`
+and an anonymous ES `export default class { ... }` are default exports like
+their named twins, reached under any local name, so a missing class name is
+no reason to withhold the relation. Their members carry the class name
+`default` (the ES class's runtime name; a reserved word, so no same-file
+construction or static call can spell it) and relate through the whole-module
+`require` or the default import respectively; their instance fields are keyed by
+the same name, so a field (a computed one included) still shadows a method a
+sibling calls, and two anonymous default classes in one file repeat it. Every
+other gate above is unchanged (a named import or `require`, a default-named `require` of the
+CommonJS form, and a named export beside the inline class stay unrelated).
+Before, both read `no_static_path`. Named property
+exports of a class expression (`exports.Name = class ...`) and `const Name =
+class ...; module.exports = Name;` are not read.
+Amended 2026-11-26 (#16365): TypeScript's CommonJS syntax reads as its
+compiled twin. `export = Name;` is `module.exports = Name;`: one such
+statement naming an identifier, with no ES export statement beside it, is the
+whole-export target, and every gate above applies unchanged except that the
+file must hold no `module.exports =` write (a file with both forms is
+refused). In a test, a value `import x = require("<literal>")` is `const x =
+require("<literal>")`: the same default-named namespace binding, under the
+same ambient-`require` and member-mutation gates, so a whole-export function
+or class relates through the local and a member is read off it
+(`x.name(...)`, `new x.Name()`). A type-only `import type x = require(...)`
+and the entity-name forms (`import x = Ns.y`) load nothing and record no
+import. An ES `import Name from` of an `export =` class stays refused, as for
+its `module.exports` twin. A CommonJS barrel (#15284) reads both forms the same
+way: `export = require('./x')`, or `export = local` of an `import local =
+require('./x')` or `const local = require('./x')`, forwards the whole module,
+and an `export =` beside a `module.exports =` write is a second whole write,
+which refuses every edge from that barrel. Before, both sides read `no_static_path`. An
+inline `export = class { ... }` or `export = function ...`, and a class
+merged with a same-named `namespace` (two file-level declarations of the
+name), are not read.
+Amended 2026-11-26 (#16366): when the whole export is one identifier
+(`module.exports = name;` or `export = name;`) and the file gate holds, every
+other top-level function of the file is no property of it unless the file
+adds one, so a named binding (`const { f } = require(...)`, `require(...).f`)
+or a namespace member (`lib.f`) of such a sibling reads `undefined` and is not
+related, as for a member of the export itself. The sibling keeps the named
+reading when the file may add the property: any `exports.` or `exports[`
+spelling, any ES export statement, a member written onto the export name or
+an `Object.assign` / `defineProperty` onto it, a second file-level
+declaration of the name (a merged `namespace`), any use of the name other than
+its declaration, a call or construction and the whole-export write (an alias
+may add the property), or an export that is not a declared function or a
+declared class without heritage, static member or static block (`const api =
+{ total }; module.exports = api;` carries the sibling from the start). Before,
+such a binding related as `exposed`.
 
 **Rule 21. A method decorator that passes the original result through
 lends `exposed` to the decorated method's tests (design decision, #10189).**
@@ -1809,6 +2116,41 @@ deeper member record nothing. A namespace whose members the file may replace
 reading a member or destructuring it, such as `Object.assign(lib, stubs)`,
 `const alias = lib` or `{ lib }`) no longer holds the module's export
 there, so members read off it record nothing.
+
+A loop that runs one suite over a table of namespace imports calls each
+module's export (#13592, unjs/ohash `test/crypto.test.ts`). With
+`import * as cryptoJS from "<module>"`, a file-level `const impls = { js:
+cryptoJS, node: cryptoNode }` (or `{ cryptoJS }`, or `[cryptoJS, cryptoNode]`)
+and `for (const [name, { digest }] of Object.entries(impls))`, a bare
+`digest(...)` in a test the loop registers is `ImportedOwnerCall` of
+`digest` in each listed namespace's module, as `cryptoJS.digest(...)` would
+be, and module-entry reach continues from it. `Object.values(impls)` with
+`{ digest }`, and an array table iterated directly, are the same. Refused:
+a table value that is not an identifier, a table naming no namespace import,
+an exported table (another file could swap an entry), a table name mentioned
+anywhere in the file except as the argument of `Object.entries(` /
+`Object.values(` or the iterable after `of` (so no write, alias or call can
+swap an entry), a table a describe or loop level re-declares, an `Object`
+the file binds or imports, a `var` or `let` loop binding (one shared or
+reassignable binding), a renamed, defaulted or rest destructure
+(`{ digest: run }`), an `await` loop, and a body-local declaration of the
+name. Every iteration must register the same tests: the path from the loop
+to its tests (the loop body and `describe` / `context` / `suite` callbacks)
+holds only call statements with a bare identifier callee
+(`describe.only`, `describe.skipIf(c)` and `it.each` are refused) and
+blocks, with no `if`,
+`switch`, `continue`, `break`, `return`, `try`, label or `cond && it(...)`,
+and no declaration (one can carry per-iteration state), and no test body,
+registration argument after the title (Vitest's `it(name, { skip }, fn)`),
+or argument of a call that takes no title (a hook's
+`beforeEach(skipUnless(supported))`) reads another loop binding:
+the `Object.entries` key or another destructured member (`{ digest,
+supported }` with `if (!supported) return;` refuses `digest`). A suite or
+test title may read the key. A nested or defaulted member pattern refuses
+the loop. `as const`, `satisfies` and other type-only wrappers around the
+table literal keep it; a repeated key or a `__proto__` key refuses it.
+The binding is recorded on the test's
+scope binding as `namespace_member_of`; file-fact schema 14 carries it.
 
 Two bindings this rule and the destructured form share are refused (#10401).
 A test file that binds its own `require` at top level (`const require = ...`,
@@ -2717,6 +3059,26 @@ keys); do not take the next number.
   assigned and module-mutated refusals, the unused and uncalled-reader controls
   (`no_static_path`), and the called-reader `static_unknown` reading.
 
+- #15928 (built values and function references): `tests/built_value_entry_tests.rs`
+  pins the constructing entry, the class's callees, the arrow form, the
+  parameter, local, passed-along and unconstructed refusals, module-level
+  writes outside the building function, the same-name member, the synchronous
+  callback methods against stored and deferred references, and the
+  `static_unknown` and `no_static_path` readings;
+  `fixtures/typescript_built_class_entry_reach` pins the rendered check.
+
+- #15928 (methods of a module-private class): `tests/plain_class_entry_tests.rs`
+  pins the constructed method, the sibling called on `this`, the function only
+  a method calls, the hop bound, the method off the call path, the parameter,
+  local-class, stored-instance, method-reference, namespace and string
+  refusals, the replaced, aliased, typed, re-exported and subclassed class,
+  the field, accessor, constructor and member-assignment refusals, the
+  deferred `this` call, the parameter default of an arrow never called (typed
+  or not) against the default of a synchronous callback, the async and
+  annotated callbacks, the returning constructor, and the `static_unknown`
+  and `no_static_path` readings;
+  `fixtures/typescript_plain_class_entry_reach` pins the rendered check.
+
 - #10314 (decorated-method reach, constructor spellings): `crates/ripr/src/analysis/language/typescript/tests/decorated_reach_tests.rs`
   pins `aliased_constructor_import_credits_the_return_edit` (a named-import alias
   such as `import { Ledger as Book }`) and
@@ -2731,6 +3093,121 @@ keys); do not take the next number.
   import of a default-only class, a class that is not the default, a rewritten
   class binding, and a type-only default export. A class with a named export as
   well keeps its named-import relation.
+
+- #16252 (rule 19, inline whole-export class):
+  `crates/ripr/src/analysis/language/typescript/tests/commonjs_inline_class_tests.rs`
+  pins every method of `module.exports = class Cart {...}` as an owner and a
+  whole-module `require` under any local name as related, beside the controls
+  that stay unrelated: named, default-named and ES imports, another module, a
+  named export beside the class, an ambiguous whole export, a rebound or
+  shadowed require local (an anonymous class relates since #16349). End-to-end `analyze_diff`
+  cases pin that a changed method yields a finding, a static method relates
+  only through the whole-module binding, and an instance field shadows a
+  sibling-called method.
+
+- #16261 (rule 26, overwritten class method):
+  `crates/ripr/src/analysis/language/typescript/tests/overwritten_method_tests.rs`
+  runs `analyze_diff` on a declared class, an ES default class and an inline
+  `module.exports = class` that define `total` twice: a change to the earlier
+  body relates to no test and a change to the later body keeps its relation.
+  A later quoted or bracketed string key overwrites as well, and the finding on
+  an overwritten body names the later definition in its guidance. Controls
+  that keep their relation: a getter beside its setter, an instance method
+  beside a static member of the same name, and an implementation after
+  TypeScript overload signatures.
+
+- #16275 (rule 27, CommonJS named-export class expression):
+  `crates/ripr/src/analysis/language/typescript/tests/commonjs_named_class_export_tests.rs`
+  pins the owner shape (class name is the property, not the inner id) for
+  `exports.Cart = class` and `module.exports.Cart = class`, and runs
+  `analyze_diff` to show a named `require` relates a changed method while an
+  inner-id import and a sibling export stay unrelated. A later assignment of the
+  slot (class, empty class, `null`) drops the earlier class, a function export
+  reassigned to `null` drops as well, an earlier hoisted `exports.Cart = void 0;`
+  does not, a whole-module function keeps its owner beside a same-named class
+  property, a changed `#private` method of either CommonJS class shape yields a
+  finding, and the field and repeated-name guards key the class by the
+  property.
+- #16353 (getter read off a fresh instance):
+  `crates/ripr/src/analysis/language/typescript/tests/inline_new_getter_read_tests.rs`
+  runs `analyze_diff` on a changed getter read as `new Cart(100).total`, through
+  `?.`, wrapped across lines and chained (`.total.toFixed(0)`): each relates,
+  as does the named-receiver control. A longer property (`.totalPrice`),
+  another class's same-named getter, the read inside a comment or string, a
+  spied getter, an assignment through the fresh instance and a `delete` of the
+  member (fresh instance or receiver; a `delete` does not run the getter) stay
+  unrelated, and so does a bare read of an ordinary method, which does not run
+  it.
+- #16306 (rule 28, field-shadowed class method):
+  `crates/ripr/src/analysis/language/typescript/tests/field_shadowed_method_tests.rs`
+  runs `analyze_diff` on a method shadowed by an instance field before or after
+  it, a bare field, a quoted field key, an ES export and a static field beside a
+  static method: each relates to no test, the owner is marked `FieldShadowed`,
+  and the guidance names the field. Controls that keep their relation: no
+  field, a field of another name, a static field beside an instance method, a
+  `#private` field, a TypeScript `declare` field, and a field bound or read
+  from the method itself (instance and static). A test that also imports a
+  same-named package symbol keeps the field guidance. Each test body asserts
+  the runtime value (the field's for a shadowed case, the method's for a
+  control).
+- #16314 (rule 29, replaced class method):
+  `crates/ripr/src/analysis/language/typescript/tests/replaced_method_tests.rs`
+  runs `analyze_diff` on a method replaced by a constructor `this.total = ...`
+  (an arrow, or a read of another object's member), a top-level
+  `Cart.prototype.total = ...`, a static `Cart.total = ...` and a constructor
+  replacement in an ES-exported class, plus the three receivers behind a
+  TypeScript `as any` cast in a `.ts` file: each relates to no test, and the guidance
+  names the assignment and keeps the method through the same receiver
+  (`this.total = this.total.bind(this)`, `Cart.prototype.total =
+  wrap(Cart.prototype.total)`). A wrapper that
+  calls a different saved method still replaces. Controls that keep their
+  relation: no assignment, a constructor self-bind (dotted or bracketed), a
+  saved original in the constructor, a constructor parameter default
+  (`constructor(original = this.total)`) or at the top level, a prototype or static
+  wrap of the same member, a conditional constructor assignment, one after an
+  early `return`, assignments of another name, assignments of the other
+  placement, and a write to a local named like an inline
+  `exports.Cart = class {}`, including one beside a declared `class Cart`
+  whose own method the write does replace. The owner is marked `Replaced`, while a
+  constructor assignment to an accessor leaves the setter and getter as they
+  are. Each test body asserts the runtime value.
+- #16349 (rule 19, anonymous default class):
+  `crates/ripr/src/analysis/language/typescript/tests/anonymous_default_class_tests.rs`
+  runs `analyze_diff` on a method of `export default class {}` (also
+  `extends Base`) and `module.exports = class {}`: a default import or
+  whole-module `require` under any local name relates, while a named import or
+  `require`, a default-named `require` and a named export beside the inline
+  class stay unrelated; owner extraction names the members `default` and leaves
+  a named or non-default anonymous class alone. A method the constructor
+  replaces stays unrelated (rule 29), and a computed instance field blocks the
+  edge from a sibling that calls the method, in both forms; the field inventory
+  keys such a class by `default`, and two anonymous default classes in one file
+  repeat that name. `commonjs_inline_class_tests.rs` now credits the anonymous
+  inline class through a whole-module `require`.
+- #16365 (rule 19, TypeScript `export =` and `import x = require()`):
+  `crates/ripr/src/analysis/language/typescript/tests/export_equals_tests.rs`
+  runs `analyze_diff` on a changed line of an `export = Cart;` class and an
+  `export = total;` function: `import x = require(...)` and `const x =
+  require(...)` relate (and an ES default import of the function), as do
+  members read off an `import lib = require(...)` namespace (`lib.total(...)`
+  of `export = { total }`, `new m.Cart()` of a named export). An ES default
+  import of the class, another function as the export, a `module.exports`
+  write beside `export =`, a class rewritten after the export, a type-only
+  import and an import spelled only in a comment stay unrelated. A parse test
+  pins that only one identifier `export =` with no ES export beside it is a
+  target. Through a TypeScript barrel, `export =` of an import-equals local,
+  of a `require()` local or of an inline `require()` forwards to the owner,
+  while a barrel that also writes `module.exports` (a forward TypeScript's
+  trailing `export =` overwrites) or forwards another module does not.
+- #16366 (rule 19, sibling of a whole export):
+  `crates/ripr/src/analysis/language/typescript/tests/commonjs_unexported_sibling_tests.rs`
+  runs `analyze_diff` on a function beside `module.exports = other;` (and a
+  class export, and TypeScript `export = other;`): a named, member or
+  namespace binding of it stays unrelated, while `module.exports.total =
+  total`, `other.total = total`, `Object.assign(other, { total })`, an
+  object whole export, an object bound to the export name, a static field, a
+  class with heritage and a write through an alias keep the relation. Owner extraction marks the sibling
+  only without a named export or ES export statement.
 
 - #11196 (rule 11, object rows): `tests/object_row_tests.rs` pins the per-row
   literal assertions for the `for...of` and `test.each` object-row forms and

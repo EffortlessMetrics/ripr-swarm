@@ -35,6 +35,10 @@ pub(crate) fn extract_owners(file: &Path, source: &str) -> Vec<TypeScriptOwner> 
 /// line index from `source`; behavior is identical to the dedicated
 /// extraction. The second value is the module's outbound imported-binding
 /// calls (#13592), derived from the same module graph as the entries.
+/// The export slot of a bare `module.exports = <function>` owner; no
+/// property name can spell it.
+const WHOLE_MODULE_SLOT: &str = "\0module.exports";
+
 pub(crate) fn owners_from_program(
     program: &oxc_ast::ast::Program<'_>,
     file: &Path,
@@ -44,17 +48,50 @@ pub(crate) fn owners_from_program(
     // One line index per source; every owner line below is a binary
     // search against it rather than a rescan from byte 0.
     let source = &SourceText::new(source);
-    // `(owner, is a CommonJS assignment export)`, in source order.
+    // `(owner, CommonJS export slot it is assigned to, assignment)`, in
+    // source order. An assignment is `(statement index, value position)`:
+    // every member of one inline `exports.Cart = class ...` is the one value
+    // `(index, 0)`, while each entry of `module.exports = { f, f }` is its own
+    // value, so a duplicated object key still reads as two assignments.
     let mut owners = Vec::new();
-    for stmt in &program.body {
+    let replaced = super::overwritten_methods::top_level_replaced_members(&program.body);
+    for (index, stmt) in program.body.iter().enumerate() {
+        let named_class = commonjs_named_class_export(stmt).map(|(property, _)| property);
         let commonjs = matches!(stmt, Statement::ExpressionStatement(_));
+        let declared_class = super::overwritten_methods::declared_class_name(stmt);
         owners.extend(
             owners_from_statement(stmt, file, source, &imports)
                 .into_iter()
-                .map(|owner| (owner, commonjs)),
+                .map(|mut owner| {
+                    mark_replaced_by_assignment(&mut owner, declared_class, &replaced);
+                    owner
+                })
+                .enumerate()
+                // Members of an inline `module.exports = class ...` are not
+                // export names: two accessors or overloads sharing a name
+                // must not read as a reassigned export. Members of an inline
+                // `exports.Cart = class ...` share the one slot `Cart`.
+                .map(|(position, owner)| {
+                    let slot = match named_class {
+                        Some(property) => Some(property.to_string()),
+                        // A bare `module.exports = function NAME` is the
+                        // whole-module slot, never the property `NAME`: a
+                        // property written on it (`module.exports.NAME = ...`)
+                        // leaves it live. `\0` keeps it apart from any
+                        // property name; `bare_default_count` handles a
+                        // repeated whole-module assignment.
+                        None if commonjs && owner.exported_as_default => {
+                            Some(WHOLE_MODULE_SLOT.to_string())
+                        }
+                        None if commonjs && !owner.class_default_export => Some(owner.name.clone()),
+                        None => None,
+                    };
+                    let value = if named_class.is_some() { 0 } else { position };
+                    (owner, slot, (index, value))
+                }),
         );
     }
-    let mut owners = without_reassigned_commonjs_exports(owners);
+    let mut owners = without_reassigned_commonjs_exports(&program.body, owners);
     mark_default_exported_bindings(&program.body, &mut owners);
     mark_commonjs_default_binding(program, &mut owners);
     mark_default_object_members(&program.body, &mut owners);
@@ -99,6 +136,19 @@ pub(crate) fn owners_from_program(
     let instance_fields = class_instance_field_names(program);
     let repeated_names = repeated_class_names(program);
     assign_class_entries(&mut owners, &instance_fields, &repeated_names);
+    // A method of a module-private class an exported entry constructs
+    // (`Class.method` graph node, #15928) also carries those entries.
+    for owner in &mut owners {
+        if owner.owner_kind == OwnerKind::Method
+            && owner.method_kind == TypeScriptMethodKind::Ordinary
+            && let Some(class_name) = owner.class_name.as_ref()
+            && !repeated_names.contains(class_name)
+            && let Some(owner_entries) = entries.get(&format!("{class_name}.{}", owner.name))
+        {
+            owner.module_entries.extend(owner_entries.iter().cloned());
+            owner.module_entries.sort();
+        }
+    }
     assign_instance_factories(
         program,
         source,
@@ -188,6 +238,18 @@ fn owners_from_commonjs_export(
         _ => false,
     };
     if named_export_object {
+        // `exports.Cart = class { ... }` / `module.exports.Cart = class ...`:
+        // the class is reachable only as the export property `Cart`, the
+        // inline twin of `class Cart {}` followed by `exports.Cart = Cart;`.
+        // A class expression's own name binds only inside its body, so the
+        // members carry the property name (RIPR-SPEC-0243 rule 27).
+        if let Expression::ClassExpression(class) = assign.right.get_inner_expression() {
+            let mut owners = owners_from_class(class, file, source, imports);
+            for owner in &mut owners {
+                owner.class_name = Some(property.to_string());
+            }
+            return owners;
+        }
         return commonjs_function_owner(
             &assign.right,
             property,
@@ -241,6 +303,20 @@ fn owners_from_commonjs_export(
             vec![owner]
         })
         .unwrap_or_default(),
+        // `module.exports = class Cart { ... }`: the class itself is the
+        // whole export, the inline twin of `class Cart {}` followed by
+        // `module.exports = Cart;` (#15092). Its members carry both markers;
+        // the file-level gate in `mark_commonjs_default_binding` clears them
+        // when the export is not provably this class.
+        Expression::ClassExpression(class) => {
+            let mut owners = owners_from_class(class, file, source, imports);
+            name_anonymous_default_class(class, &mut owners);
+            for owner in &mut owners {
+                owner.class_default_export = true;
+                owner.commonjs_default_export = true;
+            }
+            owners
+        }
         Expression::ObjectExpression(object) => object
             .properties
             .iter()
@@ -273,7 +349,8 @@ fn owners_from_commonjs_export(
 /// walk does not model; crediting the dead one would report an exposure for
 /// code no test reaches. Fail-closed: no owner for a reassigned export.
 fn without_reassigned_commonjs_exports(
-    owners: Vec<(TypeScriptOwner, bool)>,
+    body: &[Statement<'_>],
+    owners: Vec<(TypeScriptOwner, Option<String>, (usize, usize))>,
 ) -> Vec<TypeScriptOwner> {
     // #7507: every bare `module.exports = <fn>` assigns the SAME default
     // slot, whatever the function id names it. Two such assignments mean the
@@ -282,41 +359,137 @@ fn without_reassigned_commonjs_exports(
     // `exported_as_default`; more than one of them fails closed together.
     let bare_default_count = owners
         .iter()
-        .filter(|(owner, commonjs)| *commonjs && owner.exported_as_default)
+        .filter(|(owner, slot, _)| slot.is_some() && owner.exported_as_default)
         .count();
-    // Name multiplicity in one pass over borrowed names: a large CommonJS
-    // module otherwise pays an O(owners x names) scan (#10017), and cloning
-    // every CommonJS owner name into a counting map allocates one string per
-    // export (#10087). Only the rare duplicated names are kept, as owned
-    // strings, so the counting map's borrow of `owners` ends before the
-    // consuming filter below.
-    let duplicated: std::collections::HashSet<String> = {
-        let mut commonjs_name_counts: std::collections::HashMap<&str, usize> =
-            std::collections::HashMap::new();
-        for (owner, commonjs) in &owners {
-            if *commonjs {
-                *commonjs_name_counts.entry(owner.name.as_str()).or_insert(0) += 1;
+    // Two owner assignments of one slot fail closed together (#4638): which
+    // one a test reaches is left unmodeled. The members of one inline
+    // `exports.Cart = class` share one assignment, so they count once; each
+    // entry of `module.exports = { f, f }` is its own. Every other top-level
+    // `exports.NAME = ...` / `module.exports.NAME = ...` statement (another
+    // value, a class with no method) replaces an owner only when it comes
+    // AFTER the owner's statement: an earlier one, such as the
+    // `exports.total = void 0;` that compiled TypeScript and Babel hoist above
+    // the real definition, is overwritten by it. Only slots an owner uses are
+    // tracked; borrowing them keeps a large CommonJS module from cloning one
+    // string per export (#10017, #10087).
+    let mut slot_assignments: std::collections::HashMap<
+        &str,
+        std::collections::BTreeSet<(usize, usize)>,
+    > = std::collections::HashMap::new();
+    for (_, slot, assignment) in &owners {
+        if let Some(slot) = slot.as_deref() {
+            slot_assignments
+                .entry(slot)
+                .or_default()
+                .insert(*assignment);
+        }
+    }
+    let duplicated: std::collections::HashSet<String> = slot_assignments
+        .iter()
+        .filter(|(_, assignments)| assignments.len() > 1)
+        .map(|(slot, _)| (*slot).to_string())
+        .collect();
+    // The last top-level statement writing each named slot an owner uses. A
+    // bare `module.exports = function total` is the default slot, not the
+    // property `total`: a later `exports.total = 1` writes a property and
+    // leaves that function live, so only named-export owners consult this.
+    let mut last_named_write: std::collections::HashMap<String, usize> =
+        std::collections::HashMap::new();
+    if owners
+        .iter()
+        .any(|(owner, slot, _)| slot.is_some() && !owner.exported_as_default)
+    {
+        for (index, stmt) in body.iter().enumerate() {
+            if let Some(property) = commonjs_named_export_property(stmt)
+                && slot_assignments.contains_key(property)
+            {
+                last_named_write.insert(property.to_string(), index);
             }
         }
-        commonjs_name_counts
-            .into_iter()
-            .filter(|(_, count)| *count > 1)
-            .map(|(name, _)| name.to_string())
-            .collect()
-    };
+    }
     owners
         .into_iter()
-        .filter(|(owner, commonjs)| {
-            if !*commonjs {
+        .filter(|(owner, slot, (statement, _))| {
+            let Some(slot) = slot else {
                 return true;
+            };
+            if owner.exported_as_default {
+                return bare_default_count <= 1;
             }
-            if owner.exported_as_default && bare_default_count > 1 {
-                return false;
-            }
-            !duplicated.contains(&owner.name)
+            !duplicated.contains(slot)
+                && last_named_write
+                    .get(slot)
+                    .is_none_or(|last| *last <= *statement)
         })
-        .map(|(owner, _)| owner)
+        .map(|(owner, _, _)| owner)
         .collect()
+}
+
+/// The property `NAME` and the assignment of a top-level `exports.NAME = ...`
+/// or `module.exports.NAME = ...` plain assignment statement, whatever its
+/// value.
+fn commonjs_named_export_assignment<'a>(
+    stmt: &'a Statement<'a>,
+) -> Option<(&'a str, &'a oxc_ast::ast::AssignmentExpression<'a>)> {
+    let Statement::ExpressionStatement(expression) = stmt else {
+        return None;
+    };
+    let Expression::AssignmentExpression(assign) = &expression.expression else {
+        return None;
+    };
+    if assign.operator != AssignmentOperator::Assign {
+        return None;
+    }
+    let AssignmentTarget::StaticMemberExpression(target) = &assign.left else {
+        return None;
+    };
+    let named_export_object = match &target.object {
+        Expression::Identifier(object) => object.name == "exports",
+        Expression::StaticMemberExpression(object) => is_module_exports(object),
+        _ => false,
+    };
+    named_export_object.then(|| (target.property.name.as_str(), &**assign))
+}
+
+/// The property `NAME` of a top-level `exports.NAME = ...` or
+/// `module.exports.NAME = ...` plain assignment statement, whatever its value.
+fn commonjs_named_export_property<'a>(stmt: &'a Statement<'a>) -> Option<&'a str> {
+    commonjs_named_export_assignment(stmt).map(|(property, _)| property)
+}
+
+/// The property and class of a top-level `exports.NAME = class ...` or
+/// `module.exports.NAME = class ...` statement.
+pub(crate) fn commonjs_named_class_export<'a>(
+    stmt: &'a Statement<'a>,
+) -> Option<(&'a str, &'a Class<'a>)> {
+    let (property, assign) = commonjs_named_export_assignment(stmt)?;
+    match assign.right.get_inner_expression() {
+        Expression::ClassExpression(class) => Some((property, class)),
+        _ => None,
+    }
+}
+
+/// The class of a top-level `module.exports = class ...` statement.
+pub(crate) fn commonjs_whole_class_export<'a>(stmt: &'a Statement<'a>) -> Option<&'a Class<'a>> {
+    let Statement::ExpressionStatement(expression) = stmt else {
+        return None;
+    };
+    let Expression::AssignmentExpression(assign) = &expression.expression else {
+        return None;
+    };
+    if assign.operator != AssignmentOperator::Assign {
+        return None;
+    }
+    let AssignmentTarget::StaticMemberExpression(target) = &assign.left else {
+        return None;
+    };
+    if !is_module_exports(target) {
+        return None;
+    }
+    match &assign.right {
+        Expression::ClassExpression(class) => Some(class),
+        _ => None,
+    }
 }
 
 /// Drop every ESM owner whose binding is reassigned after its declaration
@@ -347,7 +520,11 @@ fn without_reassigned_esm_bindings(
             // A class method shares only the binding name with a reassigned
             // top-level binding; its receiver keeps it live, so the
             // name-only drop must not take it.
-            owner.class_name.is_some() || !reassigned.contains(owner.name.as_str())
+            // A member of an inline `module.exports = class ...` whose class
+            // name was cleared (#16252) is still a class method.
+            owner.class_name.is_some()
+                || matches!(owner.owner_kind, OwnerKind::Method | OwnerKind::ClassMethod)
+                || !reassigned.contains(owner.name.as_str())
         })
         .collect()
 }
@@ -736,6 +913,14 @@ fn mark_commonjs_default_binding(
             target = Some(ident.name.as_str());
         }
     }
+    // TypeScript `export = Name;` is `module.exports = Name;` once compiled
+    // (#16365). The gate below then expects no `module.exports =` write, so
+    // a file with both forms fails it.
+    let export_equals = super::export_equals::export_equals_target(program);
+    let module_writes = usize::from(export_equals.is_none());
+    if export_equals.is_some() {
+        target = export_equals;
+    }
     // No `module.exports = <ident>` twin to find and no inline default-export
     // owner whose gate could clear it: the whole pass is a no-op, including
     // its three full-source mask builds — the expensive part on a large ESM
@@ -778,22 +963,33 @@ fn mark_commonjs_default_binding(
         .collect();
     let visible = super::tests_extract::blank_ranges(source, &comments);
     let both = super::tests_extract::byte_preserving_code_mask(source)
-        .filter(|code| commonjs_default_gate(code))
+        .filter(|code| commonjs_default_gate(code, module_writes))
         .zip(
             super::tests_extract::byte_preserving_division_mask(source)
-                .filter(|code| commonjs_default_gate(code)),
+                .filter(|code| commonjs_default_gate(code, module_writes)),
         )
-        .filter(|_| commonjs_visible_text_gate(&visible))
+        .filter(|_| commonjs_visible_text_gate(&visible, module_writes))
         .filter(|_| !names_the_module_object_in_text(source));
     let Some((code, division_code)) = both else {
         // Only the inline owners this pass flagged lose their default
         // export; every other file (ESM, no `module.exports`) fails the gate.
         for owner in owners.iter_mut().filter(|o| o.commonjs_default_export) {
+            super::commonjs_default_class::unmark_inline_class_member(owner);
             owner.commonjs_default_export = false;
             owner.exported_as_default = false;
         }
         return;
     };
+    super::commonjs_default_class::keep_inline_class_whole_export(&code, &division_code, owners);
+    if let Some(name) = target {
+        super::commonjs_default_class::mark_unexported_siblings(
+            program,
+            name,
+            &code,
+            &division_code,
+            owners,
+        );
+    }
     if let Some(class_name) = target
         && super::commonjs_default_class::mark_whole_export_class(
             program,
@@ -837,13 +1033,13 @@ fn mark_commonjs_default_binding(
 /// comments are blanked: strings, templates and regex literals stay visible,
 /// so a mis-lexed delimiter cannot hide a write. `eval` and `with` count
 /// anywhere; `\u` escapes are not read here (they are legal in strings).
-fn commonjs_visible_text_gate(visible: &str) -> bool {
+fn commonjs_visible_text_gate(visible: &str, module_writes: usize) -> bool {
     let opaque = super::tests_extract::identifier_occurrences(visible, "eval")
         .next()
         .is_some()
         || super::tests_extract::identifier_occurrences(visible, "with")
             .any(|at| visible[at + "with".len()..].trim_start().starts_with('('));
-    !opaque && commonjs_module_reach_gate(visible)
+    !opaque && commonjs_module_reach_gate(visible, module_writes)
 }
 
 /// `true` when `needle` occurs as a bare word (not a member name, not part of
@@ -874,13 +1070,16 @@ fn names_the_module_object_in_text(source: &str) -> bool {
 /// other use (an alias, `module?.exports`, `module[...]`, compound or update
 /// writes, `Object.assign(module, ...)`, `typeof module` guards) makes the
 /// value unknowable. `eval`, `with` and `\u` escapes refuse the file.
-fn commonjs_default_gate(code: &str) -> bool {
-    !super::tests_extract::file_is_opaque(code) && commonjs_module_reach_gate(code)
+/// `module_writes` is how many `module.exports=` writes the file may hold:
+/// one, or none when the whole export is a TypeScript `export = Name;`
+/// (#16365).
+fn commonjs_default_gate(code: &str, module_writes: usize) -> bool {
+    !super::tests_extract::file_is_opaque(code) && commonjs_module_reach_gate(code, module_writes)
 }
 
-/// Every use of the module object in `code` is `module.exports = ...` once or
-/// a property access of it.
-fn commonjs_module_reach_gate(code: &str) -> bool {
+/// Every use of the module object in `code` is `module.exports = ...`
+/// (`module_writes` times) or a property access of it.
+fn commonjs_module_reach_gate(code: &str, module_writes: usize) -> bool {
     let word = |ch: Option<char>| {
         ch.is_some_and(|ch| ch == '_' || ch == '$' || ch.is_alphanumeric() || !ch.is_ascii())
     };
@@ -945,7 +1144,7 @@ fn commonjs_module_reach_gate(code: &str) -> bool {
         }
         return false;
     }
-    assignments == 1
+    assignments == module_writes
 }
 
 /// Mark top-level function (or const arrow) owners held by the module's `export default {
@@ -1386,7 +1585,9 @@ pub(crate) fn owners_from_default_export(
             )]
         }
         ExportDefaultDeclarationKind::ClassDeclaration(class) => {
-            owners_from_class(class, file, source, imports)
+            let mut owners = owners_from_class(class, file, source, imports);
+            name_anonymous_default_class(class, &mut owners);
+            owners
         }
         ExportDefaultDeclarationKind::ArrowFunctionExpression(arrow) => vec![owner_from_arrow(
             file,
@@ -1637,6 +1838,50 @@ pub(crate) fn owner_from_arrow(
     }
 }
 
+/// Marks an ordinary method [`TypeScriptMethodKind::ReplacedByAssignment`]
+/// when a top-level `Class.prototype.NAME = ...` (instance) or
+/// `Class.NAME = ...` (static) statement of the file replaces it (#16314,
+/// RIPR-SPEC-0243 rule 29). `declared_class` is the class name the owner's
+/// own statement declares in module scope: an owner of an inline
+/// `exports.Cart = class {}` has none, so a same-named declaration or local
+/// never marks it.
+fn mark_replaced_by_assignment(
+    owner: &mut TypeScriptOwner,
+    declared_class: Option<&str>,
+    replaced: &std::collections::BTreeSet<(String, String, bool)>,
+) {
+    let is_static = match owner.owner_kind {
+        OwnerKind::Method => false,
+        OwnerKind::ClassMethod => true,
+        _ => return,
+    };
+    if owner.method_kind == TypeScriptMethodKind::Ordinary
+        && let Some(class_name) = declared_class
+        && owner.class_name.as_deref() == Some(class_name)
+        && replaced.contains(&(class_name.to_string(), owner.name.clone(), is_static))
+    {
+        owner.method_kind = TypeScriptMethodKind::ReplacedByAssignment;
+    }
+}
+
+/// The class name an anonymous default-exported class carries: an ES
+/// `export default class {}` is named `default` at runtime, and an inline
+/// `module.exports = class {}` is the module's whole export under any local
+/// name. Its members get that name so the class-method relation, which needs
+/// one, can credit a default import or a whole-module `require` (#16349).
+/// `default` is a reserved word, so no same-file `new default()` or
+/// `default.member()` can match it; a named class keeps its own name.
+fn name_anonymous_default_class(class: &Class<'_>, owners: &mut [TypeScriptOwner]) {
+    if class.id.is_some() {
+        return;
+    }
+    for owner in owners {
+        if owner.class_name.is_none() {
+            owner.class_name = Some("default".to_string());
+        }
+    }
+}
+
 pub(crate) fn owners_from_class(
     class: &Class<'_>,
     file: &Path,
@@ -1649,9 +1894,12 @@ pub(crate) fn owners_from_class(
         .id
         .as_ref()
         .map(|identifier| identifier.name.as_str().to_string());
+    let overwritten = super::overwritten_methods::overwritten_method_starts(class);
+    let shadowed = super::overwritten_methods::field_shadowed_method_starts(class);
+    let replaced = super::overwritten_methods::constructor_replaced_method_starts(class);
     for element in &class.body.body {
         if let ClassElement::MethodDefinition(method) = element
-            && let Some(owner) = owner_from_method(
+            && let Some(mut owner) = owner_from_method(
                 method,
                 file,
                 source,
@@ -1660,6 +1908,13 @@ pub(crate) fn owners_from_class(
                 imports,
             )
         {
+            if overwritten.contains(&method.span.start) {
+                owner.method_kind = TypeScriptMethodKind::Overwritten;
+            } else if shadowed.contains(&method.span.start) {
+                owner.method_kind = TypeScriptMethodKind::FieldShadowed;
+            } else if replaced.contains(&method.span.start) {
+                owner.method_kind = TypeScriptMethodKind::ReplacedInConstructor;
+            }
             owners.push(owner);
         }
     }
@@ -1719,7 +1974,7 @@ pub(crate) fn binding_identifier_name<'a>(pattern: &'a BindingPattern<'a>) -> Op
 /// A class method's owner name: a plain identifier, or a `#private` name kept
 /// with its `#` so it can never collide with a public member of the same name
 /// and cannot match a test's `receiver.name(` needle (#10440).
-fn method_key_name(method: &MethodDefinition<'_>) -> Option<String> {
+pub(super) fn method_key_name(method: &MethodDefinition<'_>) -> Option<String> {
     if method.computed {
         return None;
     }
@@ -1971,6 +2226,30 @@ fn extract_imports_from_statements_inner(
                     );
                 }
             }
+            continue;
+        }
+
+        // TypeScript `import x = require('./y')` compiles to `const x =
+        // require('./y')` and records the same namespace binding (#16365).
+        if let Some((name, source_str)) = super::export_equals::import_equals_require(stmt) {
+            if !require_is_ambient {
+                continue;
+            }
+            if !mutated_names
+                .get_or_insert_with(|| member_mutations(statements))
+                .contains(name)
+            {
+                namespaces.insert(name.to_string(), source_str.clone());
+            }
+            push_unique_import(
+                &mut out,
+                TypeScriptImport {
+                    source: source_str,
+                    imported: Some("default".to_string()),
+                    local: name.to_string(),
+                    namespace: true,
+                },
+            );
             continue;
         }
 
@@ -2557,6 +2836,12 @@ fn collect_private_member_boundaries(
                 ExportDefaultDeclarationKind::ClassDeclaration(class) => Some(class.as_ref()),
                 _ => None,
             },
+            // The CommonJS class expressions whose members are owners:
+            // `exports.Cart = class ...` / `module.exports.Cart = class ...`
+            // (#16275) and `module.exports = class ...` (#16252).
+            Statement::ExpressionStatement(_) => commonjs_named_class_export(statement)
+                .map(|(_, class)| class)
+                .or_else(|| commonjs_whole_class_export(statement)),
             _ => None,
         };
         if let Some(class) = class {

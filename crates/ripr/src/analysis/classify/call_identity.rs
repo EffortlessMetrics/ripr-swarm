@@ -173,6 +173,13 @@ pub(crate) struct CallIdentityMemos {
     /// Test-only scaling probe: repeated probes must not rescan.
     #[cfg(test)]
     rebound_scans: std::sync::atomic::AtomicUsize,
+    /// #16277: whether any indexed file exports a macro under a std macro's
+    /// name, read once per index rather than once per renamed-call query.
+    std_macro_export: std::sync::OnceLock<bool>,
+    /// #16277: how many workspace `macro_export` inventory scans ran on this
+    /// index. Test-only: repeated queries must reuse the first scan.
+    #[cfg(test)]
+    std_macro_export_scans: std::sync::atomic::AtomicUsize,
     /// #8917: whether a type name carries a unique workspace `Default` derive.
     pub(in crate::analysis) type_derives_default: Mutex<BTreeMap<String, bool>>,
     /// Exact-source, requested-name binding scans used by the closed assertion
@@ -3578,6 +3585,7 @@ fn bare_owner_call_names_owner(
             CallTarget::Unsettled => {
                 !name_bound_outside_owner_crate(index, owner, test)
                     && !bare_name_renames_another_function(index, owner, test)
+                    && !bare_name_renamed_in_nested_blocks(index, owner, test)
                     && !super::helper_transfer::test_body_shadows_name(
                         index,
                         test,
@@ -3764,28 +3772,15 @@ pub(super) fn bare_name_renames_another_function(
                     let UseBinding::Renamed(path) = binding else {
                         return false;
                     };
-                    let Some((last, module)) = path.split_last() else {
-                        return false;
-                    };
-                    let target = last.trim_start_matches("r#");
-                    if target == name || module.is_empty() {
-                        return false;
-                    }
-                    // The renamed path must place a function: the module it
-                    // spells holds a module-level `fn` of the target name in
-                    // the owner's package. A same-named function elsewhere
-                    // says nothing about a path that names a module.
-                    let Some(placed) =
-                        use_target(module, base.as_deref(), scope, &test_scope.crate_names)
-                    else {
-                        return false;
-                    };
-                    index.functions().iter().any(|function| {
-                        function.item.container == FunctionContainer::Free
-                            && function.name.trim_start_matches("r#") == target
-                            && package_key_in(index, &function.file) == owner_package
-                            && definition_module_path_in(index, function).as_ref() == Some(&placed)
-                    })
+                    renamed_path_places_another_function(
+                        index,
+                        owner_package.as_deref(),
+                        name,
+                        path,
+                        base.as_deref(),
+                        scope,
+                        &test_scope.crate_names,
+                    )
                 });
         }
         if scope.defines.contains(name) {
@@ -3806,6 +3801,188 @@ pub(super) fn bare_name_renames_another_function(
         }
     }
     false
+}
+
+/// Whether `path`, imported under `name` by a renaming `use` read against
+/// `scope` in module `base`, places a module-level function of the owner's
+/// package with a different name: the module the path spells holds a free
+/// `fn` of the path's last segment. A same-named function elsewhere says
+/// nothing about a path that names a module, and a path the scope cannot
+/// place answers no.
+fn renamed_path_places_another_function(
+    index: &RustIndex,
+    owner_package: Option<&str>,
+    name: &str,
+    path: &[String],
+    base: Option<&[String]>,
+    scope: &NameScope,
+    crate_names: &BTreeSet<String>,
+) -> bool {
+    let Some((last, module)) = path.split_last() else {
+        return false;
+    };
+    let target = last.trim_start_matches("r#");
+    if target == name || module.is_empty() {
+        return false;
+    }
+    let Some(placed) = use_target(module, base, scope, crate_names) else {
+        return false;
+    };
+    index.functions().iter().any(|function| {
+        function.item.container == FunctionContainer::Free
+            && function.name.trim_start_matches("r#") == target
+            && package_key_in(index, &function.file).as_deref() == owner_package
+            && definition_module_path_in(index, function).as_ref() == Some(&placed)
+    })
+}
+
+/// Whether the package manifest confirms that `root`, which the module
+/// chain's path shape already admits, is a Cargo target root: `src/lib.rs`
+/// or `src/main.rs` as a default target root, a binary target root, or a
+/// file directly under `tests/`, `benches/` or `examples/` that automatic
+/// target discovery alone makes a root and no sibling root mounts. A synthetic index without manifest authority keeps the path
+/// shape alone, as the other crate-identity checks do (#7097).
+fn manifest_confirms_crate_root(index: &RustIndex, root: &Path) -> bool {
+    let members = &index.member_crates;
+    if !members.has_manifest_root() {
+        return true;
+    }
+    let in_src = root
+        .parent()
+        .and_then(Path::file_name)
+        .is_some_and(|name| name == "src");
+    if in_src && members.is_default_target_root_in_selected_epoch(root) {
+        return true;
+    }
+    members.is_binary_target_root(root)
+        || (members.auto_discovers_target_root(root) && !sibling_mounts_as_module(index, root))
+}
+
+/// Whether another indexed file in the root's directory may declare it as a
+/// module: every file directly under `tests/` is a root of its own, and
+/// `mod it;` in `tests/all.rs` mounts `tests/it.rs` beneath it, with any
+/// textual macro `tests/all.rs` defines. An unparsed sibling that spells the
+/// name counts too.
+fn sibling_mounts_as_module(index: &RustIndex, root: &Path) -> bool {
+    let (Some(directory), Some(stem)) = (root.parent(), root.file_stem().and_then(|s| s.to_str()))
+    else {
+        return true;
+    };
+    index.files().iter().any(|(path, facts)| {
+        path != root
+            && path.parent() == Some(directory)
+            && facts.source.contains(stem.trim_start_matches("r#"))
+            && index
+                .source_syntax
+                .get(index, path)
+                .and_then(|snapshot| snapshot.tree())
+                .is_none_or(|tree| crate::analysis::syntax::declares_module_named(&tree, stem))
+    })
+}
+
+/// Whether any indexed file defines a `#[macro_export]` macro under a std
+/// macro's name. Such a macro sits at its crate root, where a `super` glob
+/// can import it from a file the module chain does not read, so the chain
+/// is not trusted to settle which macro a test invokes.
+fn crate_may_export_a_std_macro(index: &RustIndex) -> bool {
+    let memos = &index.call_identity_memos;
+    *memos.std_macro_export.get_or_init(|| {
+        #[cfg(test)]
+        memos
+            .std_macro_export_scans
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        index.files().iter().any(|(path, facts)| {
+            facts.source.contains("macro_export")
+                && index
+                    .source_syntax
+                    .get(index, path)
+                    .and_then(|snapshot| snapshot.tree())
+                    .is_none_or(|tree| crate::analysis::syntax::file_exports_a_std_macro(&tree))
+        })
+    })
+}
+
+/// Whether every bare mention of the owner's name in `test` sits inside a
+/// nested block whose own renaming `use` binds that name to another
+/// function of the owner's package (`{ use super::other as discount;
+/// assert!(discount(60)); }` beside a changed `discount`, #14069). The body
+/// scope reads such a block binding as unsettled, so
+/// `bare_name_renames_another_function` fails open there; this answers it
+/// from the block positions. Each renamed path is placed against the
+/// function-body scope and its module, as a block-level `use` resolves.
+///
+/// Fails open on a macro-generated test, an unparsed file, any mention
+/// outside such a block, and any path the scope cannot place.
+fn bare_name_renamed_in_nested_blocks(
+    index: &RustIndex,
+    owner: &FunctionSummary,
+    test: &TestSummary,
+) -> bool {
+    if owner.item.container != FunctionContainer::Free {
+        return false;
+    }
+    let name = owner.name.trim_start_matches("r#");
+    let spells_rename = index.files().get(&test.file).is_some_and(|facts| {
+        index
+            .call_identity_memos
+            .file_spellings(&test.file, &facts.source)
+            .spells_rename_to(&facts.source, name)
+    });
+    if !spells_rename {
+        return false;
+    }
+    let Some(identity) = shared_solo_owner_call_identity(index, owner) else {
+        return false;
+    };
+    let test_scope = identity.test_scope(test, index);
+    let Some(body_scope) = test_scope
+        .scopes
+        .as_deref()
+        .and_then(|scopes| scopes.scopes.first())
+        .filter(|scope| scope.fn_body)
+    else {
+        return false;
+    };
+    let ancestors = macro_scope_ancestors(index, test);
+    let Some(paths) = index
+        .source_syntax
+        .get(index, &test.file)
+        .and_then(|snapshot| snapshot.nested_block_renames(test, ancestors.as_deref(), name))
+    else {
+        return false;
+    };
+    let base = test_scope
+        .file_segments
+        .as_deref()
+        .map(|file| join(file, &body_scope.modules));
+    let owner_package = package_key_in(index, &owner.file);
+    !paths.is_empty()
+        && paths.iter().all(|path| {
+            renamed_path_places_another_function(
+                index,
+                owner_package.as_deref(),
+                name,
+                path,
+                base.as_deref(),
+                body_scope,
+                &test_scope.crate_names,
+            )
+        })
+}
+
+/// The files of the modules enclosing `test`'s file, nearest first, up to
+/// the crate root, for settling which macros reach its body; `None` when
+/// that chain is not known or a crate file may export a macro under a std
+/// macro's name.
+fn macro_scope_ancestors(
+    index: &RustIndex,
+    test: &TestSummary,
+) -> Option<Vec<ra_ap_syntax::ast::SourceFile>> {
+    let tree_of = |path: &std::path::Path| index.source_syntax.get(index, path)?.tree();
+    crate::analysis::syntax::enclosing_module_files(&test.file, tree_of, |root| {
+        manifest_confirms_crate_root(index, root)
+    })
+    .filter(|_| !crate_may_export_a_std_macro(index))
 }
 
 /// Whether the module scope a bare call of the owner's name resolves in
@@ -3939,6 +4116,7 @@ pub(in crate::analysis) fn test_calls_only_a_renamed_other_function(
     // every test without masking and scanning the body.
     if !bare_name_renames_another_function(index, owner, test)
         && !bare_name_bound_only_by_std_globs(index, owner, test)
+        && !bare_name_renamed_in_nested_blocks(index, owner, test)
     {
         return false;
     }
@@ -3950,6 +4128,75 @@ pub(in crate::analysis) fn test_calls_only_a_renamed_other_function(
         && value_mentions(&test.body, &owner.name)
             .iter()
             .all(|qualifier| matches!(qualifier, Some(segments) if segments.is_empty()))
+}
+
+/// #14552: whether every mention of the free owner's name in `test` is
+/// bound by a local of the test body (`let dt = |x| x + 1;`, `let dt =
+/// other;`, a closure parameter, a nested `fn dt`), so the test never calls
+/// the owner. The parsed tree decides each mention block by block; anything
+/// it cannot settle as a local (a qualified call, an import or glob in an
+/// enclosing block, a mention before the binding or past its block, a
+/// non-std macro) keeps the prior relation.
+pub(in crate::analysis) fn test_calls_only_a_local_binding(
+    index: &RustIndex,
+    owner: &FunctionSummary,
+    test: &TestSummary,
+) -> bool {
+    if owner.item.container != FunctionContainer::Free {
+        return false;
+    }
+    let name = owner.name.trim_start_matches("r#");
+    if !spells_a_local_binder(&test.body, name) {
+        return false;
+    }
+    // A generated test is read from its expanded body, so it reads as its
+    // hand-written twin does; an expansion that declares its own items may
+    // import the name and keeps the earlier reading.
+    let generated_body = match test.generated.as_ref() {
+        None => None,
+        Some(origin) if origin.body_declares_items => return false,
+        Some(_) => match index.source_syntax.parse_fragment(&test.body) {
+            Some(parse) => Some(parse.tree()),
+            None => return false,
+        },
+    };
+    let ancestors = macro_scope_ancestors(index, test);
+    index
+        .source_syntax
+        .get(index, &test.file)
+        .is_some_and(|snapshot| {
+            snapshot.every_mention_bound_locally(
+                test,
+                ancestors.as_deref(),
+                generated_body.as_ref(),
+                name,
+            )
+        })
+}
+
+/// Text prefilter for [`test_calls_only_a_local_binding`]: whether `body`
+/// spells `name` where a binder may stand (after `let`, `mut`, `ref`, `fn`,
+/// `|`, `,`, `(`, `{`, `[`, `&` or `:`, as in tuple, field, slice and
+/// reference patterns), not
+/// followed by a call or path. Most tests spell their owner only as a call
+/// and stop here.
+fn spells_a_local_binder(body: &str, name: &str) -> bool {
+    let masked = mask_comments_and_strings(body);
+    masked.match_indices(name).any(|(start, _)| {
+        let end = start + name.len();
+        if ident_char_before(&masked, start) || ident_char_at(&masked, end) {
+            return false;
+        }
+        let before = &masked[..start];
+        let head = before.strip_suffix("r#").unwrap_or(before).trim_end();
+        if head_word(head) == "fn" {
+            return true;
+        }
+        let tail = masked[end..].trim_start();
+        let binder_head = matches!(head_word(head), "let" | "mut" | "ref")
+            || head.ends_with(['|', ',', '(', '{', '[', '&', ':']);
+        binder_head && !tail.starts_with('(') && !tail.starts_with("::")
+    })
 }
 
 /// RIPR-SPEC-0186: a boundary oracle must observe the changed definition,
@@ -5049,6 +5296,25 @@ fn qualifier_before(head: &str) -> Option<Vec<String>> {
 mod tests {
     use super::*;
     use crate::analysis::rust_index::summarize_file;
+
+    #[test]
+    fn the_local_binder_prefilter_admits_every_supported_pattern_spelling() {
+        for body in [
+            "let dt = |x: i32| x; dt(1);",
+            "let mut dt = other; dt(1);",
+            "let (a, dt) = (1, other); dt(a);",
+            "let Pair { dt } = pair; dt(1);",
+            "let Pair { callback: dt } = pair; dt(1);",
+            "let [dt] = [other]; dt(1);",
+            "let &dt = &other; dt(1);",
+            "let apply = |dt: fn(i32) -> i32| dt(1);",
+            "fn dt(x: i32) -> i32 { x } dt(1);",
+        ] {
+            assert!(spells_a_local_binder(body, "dt"), "{body}");
+        }
+        assert!(!spells_a_local_binder("assert_eq!(dt(1), 2);", "dt"));
+        assert!(!spells_a_local_binder("let x = super::dt(1);", "dt"));
+    }
 
     #[test]
     fn std_impl_source_computes_each_trait_and_head_once() {
@@ -7052,6 +7318,107 @@ mod sibling_without_glob {
         assert_eq!(discount(100), 0);
     }
 }
+
+#[cfg(test)]
+mod nested_block_rename {
+    #[test]
+    fn nested_block_rename_case() {
+        {
+            use super::other as discount;
+            assert_eq!(discount(100), 10);
+        }
+    }
+
+    #[test]
+    fn nested_block_rename_beside_module_alias_case() {
+        {
+            use super::pricing as discount;
+            discount::unrelated();
+        }
+        {
+            use super::other as discount;
+            assert_eq!(discount(100), 10);
+        }
+    }
+
+    #[test]
+    fn deeper_nested_block_rename_case() {
+        let total = {
+            use super::other as discount;
+            if true { discount(100) } else { discount(0) }
+        };
+        assert_eq!(total, 10);
+    }
+}
+
+#[cfg(test)]
+mod nested_block_rename_beside_owner {
+    use super::*;
+
+    #[test]
+    fn nested_block_rename_with_outer_call_case() {
+        {
+            use super::other as discount;
+            assert_eq!(discount(100), 10);
+        }
+        assert_eq!(discount(100), 10);
+    }
+
+    #[test]
+    fn nested_block_module_alias_case() {
+        {
+            use super::pricing as discount;
+            discount::unrelated();
+        }
+        assert_eq!(discount(100), 10);
+    }
+
+    #[test]
+    fn nested_block_alias_of_owner_case() {
+        {
+            use super::discount as discount;
+            assert_eq!(discount(100), 10);
+        }
+    }
+
+    #[test]
+    fn nested_block_inner_module_case() {
+        {
+            use super::other as discount;
+            mod inner {
+                use super::*;
+                pub fn check() {
+                    assert_eq!(discount(100), 10);
+                }
+            }
+            inner::check();
+        }
+    }
+
+    macro_rules! scoped_check {
+        ($e:expr) => {{
+            use super::*;
+            assert_eq!($e, 10);
+        }};
+    }
+
+    #[test]
+    fn nested_block_macro_scope_case() {
+        {
+            use super::other as discount;
+            scoped_check!(discount(100));
+        }
+    }
+
+    #[test]
+    fn nested_block_cfg_rename_case() {
+        {
+            #[cfg(not(test))]
+            use super::other as discount;
+            assert_eq!(discount(100), 10);
+        }
+    }
+}
 ";
 
     const RENAMED_OTHER_INTEGRATION: &str = "\
@@ -7063,7 +7430,10 @@ fn integration_rename_case() {
 }
 ";
 
-    const RENAMED_CASES: [&str; 7] = [
+    const RENAMED_CASES: [&str; 10] = [
+        "nested_block_rename_case",
+        "nested_block_rename_beside_module_alias_case",
+        "deeper_nested_block_rename_case",
         "commented_rename_case",
         "line_commented_rename_case",
         "module_rename_case",
@@ -7073,7 +7443,10 @@ fn integration_rename_case() {
         "integration_rename_case",
     ];
 
-    const KEPT_CASES: [&str; 5] = [
+    const KEPT_CASES: [&str; 8] = [
+        "nested_block_rename_with_outer_call_case",
+        "nested_block_module_alias_case",
+        "nested_block_alias_of_owner_case",
         "real_case",
         "self_rename_case",
         "module_alias_case",
@@ -7108,14 +7481,301 @@ fn integration_rename_case() {
     /// #14069: a bare call bound by a renaming import of another function
     /// is not a call of the owner; every other binding keeps the prior
     /// reading.
+    /// #14069: a glob that may import a macro named like a std expression
+    /// macro (`assert_eq!`) could expand around the call with its own
+    /// imports, so the nested block cannot decide it. The shared fixture,
+    /// whose only globs are in-file `super::*`, keeps refusing its nested
+    /// cases.
+    #[test]
+    fn a_foreign_glob_voids_the_nested_block_reading_inside_a_std_macro() -> Result<(), String> {
+        const SRC: &str = "\
+pub fn discount(amount: u32) -> u32 {
+    if amount > 100 { 10 } else { 0 }
+}
+
+pub fn other(a: u32) -> u32 {
+    if a >= 100 { 10 } else { 0 }
+}
+
+pub mod helpers {
+    pub fn unrelated() {}
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::helpers::*;
+
+    #[test]
+    fn foreign_glob_case() {
+        {
+            use super::other as discount;
+            assert_eq!(discount(100), 10);
+        }
+    }
+}
+";
+        let foreign = index(&[("src/lib.rs", SRC)]);
+        let (owner, test) = renamed_other_parts(&foreign, "foreign_glob_case")?;
+        assert!(!bare_name_renamed_in_nested_blocks(&foreign, owner, test));
+        assert!(!test_calls_only_a_renamed_other_function(
+            &foreign, owner, test
+        ));
+        // `core` may be a renamed Cargo dependency, so its glob is not
+        // trusted either; a `std` glob is.
+        for (glob, refused) in [
+            ("core::prelude::v1::*", false),
+            ("std::prelude::v1::*", true),
+        ] {
+            let src = SRC.replace("crate::helpers::*", glob);
+            let globbed = index(&[("src/lib.rs", src.as_str())]);
+            let (owner, test) = renamed_other_parts(&globbed, "foreign_glob_case")?;
+            assert_eq!(
+                bare_name_renamed_in_nested_blocks(&globbed, owner, test),
+                refused,
+                "{glob}"
+            );
+        }
+        Ok(())
+    }
+
+    /// #16277: a test module file's `use super::*;` reaches the file that
+    /// declares it, so the nested-block reading inside `assert_eq!` follows
+    /// the plain `mod tests;` declaration and reads that file's macros,
+    /// imports and globs. A parent that defines or imports such a macro, a
+    /// foreign glob in it, or a `#[path]` declaration keeps the prior
+    /// reading.
+    #[test]
+    fn a_file_module_super_glob_reads_the_declaring_file_inside_a_std_macro() -> Result<(), String>
+    {
+        const LIB: &str = "\
+pub fn discount(amount: u32) -> u32 {
+    if amount > 100 { 10 } else { 0 }
+}
+
+pub fn other(a: u32) -> u32 {
+    if a >= 100 { 10 } else { 0 }
+}
+
+pub mod helpers {
+    pub fn unrelated() {}
+}
+
+#[cfg(test)]
+mod tests;
+";
+        const TESTS: &str = "\
+use super::*;
+
+#[test]
+fn file_module_case() {
+    {
+        use super::other as discount;
+        assert_eq!(discount(100), 10);
+    }
+}
+";
+        for (lib, tests_path, refused, label) in [
+            (LIB.to_string(), "src/tests.rs", true, "plain declaration"),
+            (
+                format!("macro_rules! assert_eq {{ ($a:expr, $b:expr) => {{}}; }}\n{LIB}"),
+                "src/tests.rs",
+                false,
+                "parent defines assert_eq",
+            ),
+            (
+                format!("use other_crate::assert_eq;\n{LIB}"),
+                "src/tests.rs",
+                false,
+                "parent imports assert_eq",
+            ),
+            (
+                format!("use crate::helpers::*;\n{LIB}"),
+                "src/tests.rs",
+                false,
+                "parent holds a foreign glob",
+            ),
+            (
+                LIB.replace("mod tests;", "#[path = \"t.rs\"]\nmod tests;"),
+                "src/t.rs",
+                false,
+                "path declaration",
+            ),
+            (
+                format!("#[macro_use]\nmod macros;\n{LIB}"),
+                "src/tests.rs",
+                false,
+                "parent brings in macros through macro_use",
+            ),
+            (
+                format!("#[cfg_attr(test, macro_use)]\nmod macros;\n{LIB}"),
+                "src/tests.rs",
+                false,
+                "parent may bring in macros through a cfg_attr macro_use",
+            ),
+            (
+                format!("#[r#macro_use]\nmod macros;\n{LIB}"),
+                "src/tests.rs",
+                false,
+                "a raw macro_use spelling is the same attribute",
+            ),
+            (
+                format!("mod sibling {{ use crate::helpers::*; }}\n{LIB}"),
+                "src/tests.rs",
+                true,
+                "a foreign glob inside a sibling module is not imported by super::*",
+            ),
+            (
+                format!("#[doc = \"happy path\"]\n{LIB}")
+                    .replace("mod tests;", "#[doc = \"path\"]\nmod tests;"),
+                "src/tests.rs",
+                true,
+                "a doc attribute keeps default resolution",
+            ),
+        ] {
+            let files = index(&[("src/lib.rs", lib.as_str()), (tests_path, TESTS)]);
+            let (owner, test) = renamed_other_parts(&files, "file_module_case")?;
+            assert_eq!(
+                bare_name_renamed_in_nested_blocks(&files, owner, test),
+                refused,
+                "{label}"
+            );
+            assert_eq!(
+                test_calls_only_a_renamed_other_function(&files, owner, test),
+                refused,
+                "{label}"
+            );
+        }
+        // A `#[macro_export]` macro named like a std macro sits at the crate
+        // root, where `super::*` can import it from a file the chain does
+        // not read; an export of another name changes nothing.
+        for (macros, refused) in [
+            (
+                "#[macro_export]\nmacro_rules! assert_eq { ($a:expr, $b:expr) => {}; }\n",
+                false,
+            ),
+            (
+                "#[cfg_attr(test, macro_export)]\nmacro_rules! assert_eq { ($a:expr, $b:expr) => {}; }\n",
+                false,
+            ),
+            (
+                "#[macro_export]\nmacro_rules! check { ($a:expr) => {}; }\n",
+                true,
+            ),
+        ] {
+            let lib = format!("mod macros;\n{LIB}");
+            let files = index(&[
+                ("src/lib.rs", lib.as_str()),
+                ("src/macros.rs", macros),
+                ("src/tests.rs", TESTS),
+            ]);
+            let (owner, test) = renamed_other_parts(&files, "file_module_case")?;
+            assert_eq!(
+                bare_name_renamed_in_nested_blocks(&files, owner, test),
+                refused,
+                "{macros}"
+            );
+            // Repeated queries on one index reuse the first inventory scan,
+            // whichever way it answered.
+            assert_eq!(
+                bare_name_renamed_in_nested_blocks(&files, owner, test),
+                refused,
+                "{macros}"
+            );
+            assert_eq!(
+                files
+                    .call_identity_memos
+                    .std_macro_export_scans
+                    .load(std::sync::atomic::Ordering::Relaxed),
+                1,
+                "{macros}"
+            );
+        }
+        // An unknown module chain (here a `#[path]` declaration) may hide a
+        // textual macro in an unread enclosing module, so even a test file
+        // with no glob keeps the prior reading inside a macro.
+        let moved = index(&[
+            (
+                "src/lib.rs",
+                LIB.replace("mod tests;", "#[path = \"t.rs\"]\nmod tests;")
+                    .as_str(),
+            ),
+            (
+                "src/t.rs",
+                TESTS
+                    .replace("use super::*;", "use super::discount;")
+                    .as_str(),
+            ),
+        ]);
+        let (owner, test) = renamed_other_parts(&moved, "file_module_case")?;
+        assert!(!bare_name_renamed_in_nested_blocks(&moved, owner, test));
+        // A `std` glob beside `super::*` is trusted only when no file of
+        // the chain rebinds `std` (`use self::shim as std;`).
+        let std_globbed = TESTS.replace("use super::*;", "use super::*;\nuse std::*;");
+        for (lib, refused, label) in [
+            (LIB.to_string(), true, "ordinary std glob"),
+            (
+                format!("pub mod shim {{}}\nuse self::shim as std;\n{LIB}"),
+                false,
+                "parent rebinds std",
+            ),
+        ] {
+            let files = index(&[
+                ("src/lib.rs", lib.as_str()),
+                ("src/tests.rs", std_globbed.as_str()),
+            ]);
+            let (owner, test) = renamed_other_parts(&files, "file_module_case")?;
+            assert_eq!(
+                bare_name_renamed_in_nested_blocks(&files, owner, test),
+                refused,
+                "{label}"
+            );
+        }
+        // Without a glob leaving the test file, the declaring file's globs
+        // are not read at all; its macro definitions still are.
+        let named = TESTS.replace("use super::*;", "use super::discount;");
+        for (lib, refused, label) in [
+            (
+                format!("use crate::helpers::*;\n{LIB}"),
+                true,
+                "parent glob unread",
+            ),
+            (
+                format!("macro_rules! assert_eq {{ ($a:expr, $b:expr) => {{}}; }}\n{LIB}"),
+                false,
+                "parent macro_rules still read",
+            ),
+        ] {
+            let files = index(&[
+                ("src/lib.rs", lib.as_str()),
+                ("src/tests.rs", named.as_str()),
+            ]);
+            let (owner, test) = renamed_other_parts(&files, "file_module_case")?;
+            assert_eq!(
+                bare_name_renamed_in_nested_blocks(&files, owner, test),
+                refused,
+                "{label}"
+            );
+        }
+        Ok(())
+    }
+
     #[test]
     fn a_renaming_import_of_another_function_is_not_a_call_of_the_owner() -> Result<(), String> {
         let index = renamed_other_index();
         for name in RENAMED_CASES {
             let (owner, test) = renamed_other_parts(&index, name)?;
-            assert!(
+            // A nested block's rename is read from the block positions; the
+            // body scope alone leaves it unsettled.
+            let nested = name.contains("nested_block");
+            assert_eq!(
                 bare_name_renames_another_function(&index, owner, test),
-                "{name}: the bare name is `other` under a rename"
+                !nested,
+                "{name}: the body scope decides only a rename it binds itself"
+            );
+            assert_eq!(
+                bare_name_renamed_in_nested_blocks(&index, owner, test),
+                nested,
+                "{name}: only a nested block's rename is answered by position"
             );
             assert!(
                 test_calls_only_a_renamed_other_function(&index, owner, test),
@@ -7124,6 +7784,25 @@ fn integration_rename_case() {
         }
         for name in KEPT_CASES {
             let (owner, test) = renamed_other_parts(&index, name)?;
+            assert!(
+                !test_calls_only_a_renamed_other_function(&index, owner, test),
+                "{name}: the owner may still be called"
+            );
+        }
+        // A `mod` inside the renaming block does not see the block's `use`;
+        // its glob reaches the owner, so the block cannot decide that call.
+        // So may a non-std macro around the call (its expansion can add a
+        // glob), and a `cfg`-gated rename may be absent from the build.
+        for name in [
+            "nested_block_inner_module_case",
+            "nested_block_macro_scope_case",
+            "nested_block_cfg_rename_case",
+        ] {
+            let (owner, test) = renamed_other_parts(&index, name)?;
+            assert!(
+                !bare_name_renamed_in_nested_blocks(&index, owner, test),
+                "{name}: the block cannot decide the call"
+            );
             assert!(
                 !test_calls_only_a_renamed_other_function(&index, owner, test),
                 "{name}: the owner may still be called"

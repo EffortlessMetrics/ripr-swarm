@@ -2,11 +2,14 @@
 use super::{DeclaredHunkScratch, run_command, run_command_with_env, unique_external_workspace};
 use std::fs;
 use std::path::Path;
+use std::process::Output;
+use std::time::{SystemTime, UNIX_EPOCH};
 
 type TestResult<T = ()> = Result<T, Box<dyn std::error::Error>>;
 
 const LEGEND: &str = "Stages (static evidence)";
 const POINTER: &str = "Terms: rerun with `--legend`";
+const FANOUT_DRIFT: &str = "ripr: --output-dir input drift: diff, config, source, suppression, date or rendering environment changed; retry on stable inputs";
 
 fn workspace(label: &str) -> TestResult<(std::path::PathBuf, DeclaredHunkScratch)> {
     let project = unique_external_workspace(label)?;
@@ -111,6 +114,55 @@ fn a_forced_legend_is_not_a_first_run_and_a_run_without_a_digest_does_not_count(
     Ok(())
 }
 
+fn utc_day() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs()
+        / 86_400
+}
+
+fn run_fanout(project: &Path, label: &str) -> TestResult<(Output, bool)> {
+    let before = utc_day();
+    let output = run_command(
+        env!("CARGO_BIN_EXE_ripr"),
+        Some(project),
+        &[
+            "check",
+            "--diff",
+            "change.diff",
+            "--quiet",
+            "--output-dir",
+            label,
+        ],
+    )?;
+    Ok((output, before != utc_day()))
+}
+
+fn fanout_human(
+    project: &Path,
+    label: &str,
+    mut run: impl FnMut(&str) -> TestResult<(Output, bool)>,
+) -> TestResult<String> {
+    let (output, day_changed) = run(label)?;
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    // A midnight refusal can leave files in the first output directory.
+    // Fanout requires a fresh destination, including when the first set is partial.
+    let (output, destination) = if !output.status.success()
+        && day_changed
+        && stderr.lines().any(|line| line == FANOUT_DRIFT)
+    {
+        let retry_label = format!("{label}-retry");
+        (run(&retry_label)?.0, project.join(retry_label))
+    } else {
+        (output, project.join(label))
+    };
+    if !output.status.success() {
+        return Err(String::from_utf8_lossy(&output.stderr).into_owned().into());
+    }
+    Ok(fs::read_to_string(destination.join("human.txt"))?)
+}
+
 // Fanout members always carry the full legend and never consume the standalone
 // first run: the `--output-dir` branch returns before any legend logic, so a
 // refactor that moved it after that logic would record state here.
@@ -118,24 +170,7 @@ fn a_forced_legend_is_not_a_first_run_and_a_run_without_a_digest_does_not_count(
 fn fanout_members_keep_the_full_legend_and_record_no_first_run() -> TestResult {
     let (project, _cleanup) = workspace("legend-fanout")?;
     for label in ["first", "second"] {
-        let output = run_command(
-            env!("CARGO_BIN_EXE_ripr"),
-            Some(&project),
-            &[
-                "check",
-                "--diff",
-                "change.diff",
-                "--quiet",
-                "--output-dir",
-                label,
-            ],
-        )?;
-        assert!(
-            output.status.success(),
-            "{}",
-            String::from_utf8_lossy(&output.stderr)
-        );
-        let human = fs::read_to_string(project.join(label).join("human.txt"))?;
+        let human = fanout_human(&project, label, |label| run_fanout(&project, label))?;
         assert!(human.contains(LEGEND), "{label}: {human}");
         assert!(!human.contains(POINTER), "{label}: {human}");
     }
@@ -143,6 +178,54 @@ fn fanout_members_keep_the_full_legend_and_record_no_first_run() -> TestResult {
         !project.join("target/ripr/legend-seen").exists(),
         "a fanout run must not record the standalone first run"
     );
+    Ok(())
+}
+
+#[test]
+fn fanout_legend_retries_only_midnight_drift_with_a_fresh_destination() -> TestResult {
+    let (project, _cleanup) = workspace("legend-fanout-midnight")?;
+    let success = run_command(env!("CARGO_BIN_EXE_ripr"), Some(&project), &["--version"])?;
+    assert!(success.status.success());
+    for (label, day_changed, diagnostic, expected_attempts) in [
+        ("midnight", true, FANOUT_DRIFT, 2),
+        ("same-day", false, FANOUT_DRIFT, 1),
+        ("other-error", true, "ripr: another output error", 1),
+        ("twice", true, FANOUT_DRIFT, 2),
+    ] {
+        let first = project.join(label);
+        fs::create_dir(&first)?;
+        fs::write(first.join("human.txt"), "partial output")?;
+        let mut attempts = 0;
+        let result = fanout_human(&project, label, |destination| {
+            attempts += 1;
+            if attempts == 1 || label == "twice" {
+                // Use the real CLI's unsuccessful status for an occupied
+                // destination for the simulated refusal.
+                fs::create_dir_all(project.join(destination))?;
+                let (mut output, _) = run_fanout(&project, destination)?;
+                assert!(!output.status.success());
+                output.stderr = format!("{diagnostic}\n").into_bytes();
+                Ok((output, day_changed))
+            } else {
+                // The simulated refusal already spent the retry. Keep the
+                // simulated success independent of the real fanout clock.
+                let destination = project.join(destination);
+                fs::create_dir(&destination)?;
+                fs::write(destination.join("human.txt"), LEGEND)?;
+                Ok((success.clone(), false))
+            }
+        });
+        assert_eq!(attempts, expected_attempts, "{label}");
+        if label == "midnight" {
+            assert!(result?.contains(LEGEND));
+        } else {
+            assert_eq!(result.unwrap_err().to_string().trim(), diagnostic);
+        }
+        assert_eq!(
+            fs::read_to_string(first.join("human.txt"))?,
+            "partial output"
+        );
+    }
     Ok(())
 }
 

@@ -3,6 +3,7 @@ use super::action_contract::{
     action_data, disabled_reason_emittable, parse_validated_action_data,
 };
 use super::client_features::ClientFeatureProfile;
+use super::component_outcome::{AnalysisComponent, ComponentState};
 use super::fix_instruction_authority;
 use super::gap_artifacts::{
     ValidatedGapArtifact, bind_portable_command, editor_command_is_safe, workspace_path_is_safe,
@@ -85,13 +86,16 @@ pub(super) fn code_action_response(
             diagnostic,
             snapshot,
         ));
+        // #13636: with no spot inventory (deferred by a quick save, or not
+        // built in this configuration) the finding has no seam-bound start.
+        // A disabled-capable client sees the start inert with the blocker
+        // and next step named; other clients keep the legacy omission. A
+        // gap record in the same request carries its own repair-packet
+        // actions, so no inert finding start is added beside them.
         if client_features.code_action_disabled
-            && let Some(action) = deferred_seam_start_disabled_action(diagnostic, snapshot)
+            && !params.context.diagnostics.iter().any(is_gap_diagnostic)
+            && let Some(action) = finding_start_blocked_action(diagnostic, snapshot)
         {
-            // #13636: an interactive refresh deferred the full spot
-            // inventory, so the finding has no seam-bound start. A
-            // disabled-capable client sees the start inert with the full
-            // refresh named; other clients keep the legacy omission.
             actions.push(action);
         }
     }
@@ -642,22 +646,32 @@ pub(super) mod test_premise {
     }
 }
 
-/// The inert "Start repair" action for a gap-class finding whose snapshot
-/// came from an interactive refresh that deferred the full spot inventory
-/// (#13636). `None` unless the snapshot is `seams_deferred`, a full refresh
-/// under its configuration builds the spot inventory, and the cited finding
-/// is a candidate-current actionable Rust gap with no static limit: an
-/// exposed or base-side finding never had a start to defer, and a preview,
-/// non-Rust or static-limited finding gets no spot start from a full refresh
-/// either. Under the default actionable profile, or with spot diagnostics
-/// off, a full refresh builds no spots, so naming it would mislead; the
-/// status already names that setting.
-fn deferred_seam_start_disabled_action(
+/// The inert "Start repair" action for a gap-class finding that has no
+/// seam-bound start because the snapshot carries no spot inventory (#13636).
+/// The cited finding must be a candidate-current actionable Rust gap with no
+/// static limit: an exposed or base-side finding has no start to explain, and
+/// a preview, non-Rust or static-limited finding gets no spot start in any
+/// configuration. The reason names the real blocker:
+/// - `seam_inventory_not_enabled` when even a full refresh builds no spots
+///   under the snapshot's configuration (the default actionable profile, or
+///   spot diagnostics off), naming the setting;
+/// - `seam_evidence_deferred` when an interactive refresh deferred the
+///   inventory a full refresh would build, naming that refresh.
+///
+/// `None` for a full snapshot whose configuration builds spots: the seam
+/// diagnostics carry their own start.
+fn finding_start_blocked_action(
     diagnostic: &Diagnostic,
     snapshot: Option<&AnalysisSnapshot>,
 ) -> Option<CodeActionOrCommand> {
-    let snapshot = snapshot
-        .filter(|snapshot| snapshot.seams_deferred && snapshot.seam_inventory_on_full_refresh)?;
+    let snapshot = snapshot?;
+    let reason = if !snapshot.seam_inventory_on_full_refresh {
+        ActionDisabledReason::SeamInventoryNotEnabled
+    } else if snapshot.seams_deferred {
+        ActionDisabledReason::SeamEvidenceDeferred
+    } else {
+        return None;
+    };
     let finding_id = diagnostic
         .data
         .as_ref()
@@ -679,7 +693,7 @@ fn deferred_seam_start_disabled_action(
         COPY_AGENT_REPAIR_COMMAND,
         diagnostic,
         Some(snapshot),
-        ActionDisabledReason::SeamEvidenceDeferred,
+        reason,
     )
 }
 
@@ -867,6 +881,36 @@ fn gap_identities_overlap(left: &Value, right: &Value) -> bool {
     false
 }
 
+/// A saved-workspace finding may withhold a start the classified seam could
+/// otherwise format. This ceiling leaves the packet and card readable and
+/// lets code actions, hover, and the standard context packet agree.
+pub(super) fn seam_repair_start_command(
+    entry: &ClassifiedSeam,
+    snapshot: &AnalysisSnapshot,
+    root: &str,
+) -> Option<String> {
+    // Retained diagnostics still support inspection after truncation, but
+    // a partial inventory cannot promise a Start. An absent card witness
+    // without a recorded inventory limit keeps the ordinary seam route.
+    if snapshot.component_outcomes.iter().any(|outcome| {
+        outcome.component == AnalysisComponent::SeamInventory
+            && outcome.state == ComponentState::Limited
+    }) {
+        return None;
+    }
+    if let Some(candidate_seams) = snapshot.repair_card_candidate_seams.as_deref()
+        && crate::app::repair_card_handoff::bound_no_path_start_refusal(
+            &snapshot.findings,
+            entry,
+            candidate_seams,
+        )
+        .is_some()
+    {
+        return None;
+    }
+    repair_start_command_for(entry, root)
+}
+
 fn push_seam_actions(
     actions: &mut CodeActionResponse,
     params: &CodeActionParams,
@@ -949,7 +993,7 @@ fn push_seam_actions(
     // payload's `root` field stays the portable role (`COMMAND_ROOT`).
     let root = loop_commands::bound_root(&context.snapshot.root.to_string_lossy());
     if !instruction_blocks_repair
-        && let Some(command) = repair_start_command_for(context.seam, &root)
+        && let Some(command) = seam_repair_start_command(context.seam, context.snapshot, &root)
     {
         // #13636: `ripr agent repair` refuses a dirty production premise
         // ("commit first ... Nothing was started"). Ask its own preflight so

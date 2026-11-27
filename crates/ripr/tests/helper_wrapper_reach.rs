@@ -74,6 +74,72 @@ fn family_finding(source: &str, diff: &str, family: &str) -> Result<Value, Strin
         .ok_or_else(|| format!("no {family} finding: {json}"))
 }
 
+/// [`family_finding`] in a crate whose `Cargo.toml` carries `dependencies`
+/// and whose `Cargo.lock` locks `locked` (`(name, version)` pairs from the
+/// crates.io registry).
+fn finding_with_dependencies(
+    dependencies: &str,
+    locked: &[(&str, &str)],
+    source: &str,
+    diff: &str,
+    family: &str,
+) -> Result<Value, String> {
+    finding_in_files(
+        dependencies,
+        locked,
+        &[("src/lib.rs", source)],
+        diff,
+        family,
+    )
+}
+
+/// [`finding_with_dependencies`] with every source file given as
+/// `(path, text)`.
+fn finding_in_files(
+    dependencies: &str,
+    locked: &[(&str, &str)],
+    sources: &[(&str, &str)],
+    diff: &str,
+    family: &str,
+) -> Result<Value, String> {
+    let scratch = Scratch::create()?;
+    let manifest = format!("{MANIFEST}\n[dependencies]\n{dependencies}\n");
+    let mut lock =
+        String::from("version = 3\n\n[[package]]\nname = \"wrapper_reach\"\nversion = \"0.1.0\"\n");
+    for (name, version) in locked {
+        lock.push_str(&format!(
+            "\n[[package]]\nname = \"{name}\"\nversion = \"{version}\"\nsource = \"registry+https://github.com/rust-lang/crates.io-index\"\n"
+        ));
+    }
+    for (relative, text) in [
+        ("Cargo.toml", manifest.as_str()),
+        ("Cargo.lock", lock.as_str()),
+        ("change.diff", diff),
+    ]
+    .into_iter()
+    .chain(sources.iter().copied())
+    {
+        std::fs::write(scratch.0.join(relative), text).map_err(|error| error.to_string())?;
+    }
+    let report = check_workspace(CheckInput {
+        root: scratch.0.clone(),
+        diff_file: Some(scratch.0.join("change.diff")),
+        mode: Mode::Fast,
+        format: OutputFormat::Json,
+        include_unchanged_tests: true,
+        ..CheckInput::default()
+    })?;
+    let json: Value = serde_json::from_str(&render_check(&report, &OutputFormat::Json)?)
+        .map_err(|error| error.to_string())?;
+    json["findings"]
+        .as_array()
+        .ok_or("missing findings")?
+        .iter()
+        .find(|finding| finding["probe"]["family"] == family)
+        .cloned()
+        .ok_or_else(|| format!("no {family} finding: {json}"))
+}
+
 fn relation_of<'a>(finding: &'a Value, test: &str) -> Option<&'a str> {
     finding["related_tests"]
         .as_array()?
@@ -427,6 +493,431 @@ fn env_reading_wrapper_forwards_unless_env_is_rebound() -> Result<(), String> {
     ] {
         assert_eq!(finding["probe"]["line"], 2, "{finding}");
         assert_eq!(finding["classification"], "exposed", "{finding}");
+    }
+    Ok(())
+}
+
+#[test]
+fn include_reading_wrapper_forwards_unless_include_is_rebound() -> Result<(), String> {
+    for call in [
+        "let _text = include_str!(\"../Cargo.toml\");",
+        "let _bytes = include_bytes!(\"../Cargo.toml\");",
+    ] {
+        let source = bulk_source(
+            &format!("    {call}\n    if is_bulk(qty) {{ 5 }} else {{ 0 }}"),
+            BOUNDARY_TESTS,
+        );
+        for finding in [
+            predicate_finding(&source, BULK_DIFF)?,
+            family_finding(&source, BULK_DIFF, "return_value")?,
+        ] {
+            assert_eq!(finding["probe"]["line"], 2, "{call}\n{finding}");
+            assert_eq!(finding["classification"], "exposed", "{call}\n{finding}");
+        }
+    }
+    for (prelude, call) in [
+        (
+            "macro_rules! include_str { ($q:expr) => { if $q == 10 { return 5; } }; }",
+            "include_str!(qty);",
+        ),
+        (
+            "macro_rules! include_bytes { ($q:expr) => { if $q == 10 { return 5; } }; }",
+            "include_bytes!(qty);",
+        ),
+        // A foreign import of the name.
+        ("use dep::include_str;", "include_str!(qty);"),
+        // A qualified path may name any crate's macro.
+        ("", "std::include_str!(\"../Cargo.toml\");"),
+    ] {
+        let source = format!(
+            "{prelude}\n{}",
+            bulk_source(
+                &format!("    {call}\n    if is_bulk(qty) {{ 5 }} else {{ 0 }}"),
+                BOUNDARY_TESTS,
+            )
+        );
+        let first = source
+            .lines()
+            .position(|line| line.contains("10 <= qty"))
+            .ok_or("probe")?;
+        let diff = BULK_DIFF.replace("@@ -1,3 +1,3 @@", &format!("@@ -{0},3 +{0},3 @@", first));
+        for finding in [
+            predicate_finding(&source, &diff)?,
+            family_finding(&source, &diff, "return_value")?,
+        ] {
+            assert_eq!(finding["probe"]["line"], first + 1, "{call}\n{finding}");
+            assert_ne!(finding["classification"], "exposed", "{call}\n{finding}");
+        }
+    }
+    // A rebound `include_str` elsewhere cannot change a wrapper that only
+    // logs, so that wrapper keeps its credit.
+    let source = format!(
+        "{}\nmod other {{\n    macro_rules! include_str {{ () => {{ \"other\" }}; }}\n}}\n",
+        bulk_source(
+            "    println!(\"{qty}\");\n    if is_bulk(qty) { 5 } else { 0 }",
+            BOUNDARY_TESTS,
+        )
+    );
+    for finding in [
+        predicate_finding(&source, BULK_DIFF)?,
+        family_finding(&source, BULK_DIFF, "return_value")?,
+    ] {
+        assert_eq!(finding["probe"]["line"], 2, "{finding}");
+        assert_eq!(finding["classification"], "exposed", "{finding}");
+    }
+    Ok(())
+}
+
+/// #10357: a path-qualified leveled logging macro of an audited `tracing`
+/// or `log` release expands to no early exit, so a wrapper that logs through
+/// one forwards its helper result. Its root must be the registry crate,
+/// locked at an audited version and not rebound in the file, and its
+/// arguments must not hold the helper call, which runs only when the level
+/// is enabled.
+#[test]
+fn audited_qualified_logging_wrapper_forwards_the_helper_result() -> Result<(), String> {
+    const TRACING: &str = "tracing = \"0.1\"";
+    const LOG: &str = "log = \"0.4\"";
+    let wrapper = |call: &str| format!("    {call}\n    if is_bulk(qty) {{ 5 }} else {{ 0 }}");
+    for (dependency, locked, call) in [
+        (
+            TRACING,
+            ("tracing", "0.1.44"),
+            "tracing::info!(\"order of {qty}\");",
+        ),
+        (
+            TRACING,
+            ("tracing", "0.1.44"),
+            "tracing::debug!(qty, \"order\");",
+        ),
+        (LOG, ("log", "0.4.34"), "log::warn!(\"order of {}\", qty);"),
+        (LOG, ("log", "0.4.29"), "log::error!(\"order of {}\", qty);"),
+    ] {
+        let source = bulk_source(&wrapper(call), BOUNDARY_TESTS);
+        for family in ["predicate", "return_value"] {
+            let finding =
+                finding_with_dependencies(dependency, &[locked], &source, BULK_DIFF, family)?;
+            assert_eq!(finding["probe"]["line"], 2, "{call}\n{finding}");
+            assert_eq!(finding["classification"], "exposed", "{call}\n{finding}");
+        }
+    }
+    let info = "tracing::info!(\"order of {qty}\");";
+    for (label, dependency, locked, prelude, call) in [
+        // An unaudited release, and a lockfile that does not lock the crate.
+        ("unaudited", TRACING, &[("tracing", "0.1.43")][..], "", info),
+        ("unlocked", TRACING, &[][..], "", info),
+        // No manifest dependency, or one Cargo may route to another package.
+        ("undeclared", "", &[("tracing", "0.1.44")][..], "", info),
+        (
+            "renamed package",
+            "tracing = { package = \"other\", version = \"1\" }",
+            &[("other", "1.0.0")][..],
+            "",
+            info,
+        ),
+        // The file may rebind the root.
+        (
+            "local module",
+            TRACING,
+            &[("tracing", "0.1.44")][..],
+            "mod tracing {\n    macro_rules! info { ($($t:tt)*) => { return 5 }; }\n}",
+            info,
+        ),
+        (
+            "glob import",
+            TRACING,
+            &[("tracing", "0.1.44")][..],
+            "use std::collections::*;",
+            info,
+        ),
+        // The helper call sits in the arguments, which run only when the
+        // level is enabled. The wrapper then names the helper twice, which
+        // the one-call-site rule already refuses; the argument check keeps
+        // the logging route closed on its own.
+        (
+            "callee in arguments",
+            TRACING,
+            &[("tracing", "0.1.44")][..],
+            "",
+            "tracing::info!(\"bulk {}\", is_bulk(qty));",
+        ),
+        // Only the leveled leaves were audited.
+        (
+            "other leaf",
+            TRACING,
+            &[("tracing", "0.1.44")][..],
+            "",
+            "tracing::event!(tracing::Level::INFO, qty);",
+        ),
+    ] {
+        let source = format!("{prelude}\n{}", bulk_source(&wrapper(call), BOUNDARY_TESTS));
+        let first = source
+            .lines()
+            .position(|line| line.contains("10 <= qty"))
+            .ok_or("probe")?;
+        let diff = BULK_DIFF.replace("@@ -1,3 +1,3 @@", &format!("@@ -{0},3 +{0},3 @@", first));
+        for family in ["predicate", "return_value"] {
+            let finding = finding_with_dependencies(dependency, locked, &source, &diff, family)?;
+            assert_eq!(finding["probe"]["line"], first + 1, "{label}\n{finding}");
+            assert_ne!(finding["classification"], "exposed", "{label}\n{finding}");
+        }
+    }
+    // `extern crate self as tracing;` at the crate root puts the crate's own
+    // exported `info!` behind `tracing::` in every file of the crate, so a
+    // wrapper in another file stays opaque even though that file binds
+    // nothing.
+    let lib = "extern crate self as tracing;\n#[macro_export]\nmacro_rules! info { ($q:expr) => { if $q == 10 { return 5; } }; }\nmod pricing;\n";
+    let pricing = bulk_source(&wrapper("tracing::info!(qty);"), BOUNDARY_TESTS);
+    let diff = BULK_DIFF.replace("src/lib.rs", "src/pricing.rs");
+    for family in ["predicate", "return_value"] {
+        let finding = finding_in_files(
+            TRACING,
+            &[("tracing", "0.1.44")],
+            &[("src/lib.rs", lib), ("src/pricing.rs", &pricing)],
+            &diff,
+            family,
+        )?;
+        assert_eq!(finding["probe"]["line"], 2, "{finding}");
+        assert_ne!(finding["classification"], "exposed", "{finding}");
+    }
+    Ok(())
+}
+
+#[test]
+fn audited_qualified_value_macro_wrapper_forwards_the_helper_result() -> Result<(), String> {
+    const ANYHOW: &str = "anyhow = \"1\"";
+    const SERDE_JSON: &str = "serde_json = \"1\"";
+    let wrapper = |call: &str| format!("    {call}\n    if is_bulk(qty) {{ 5 }} else {{ 0 }}");
+    for (dependency, locked, call) in [
+        (
+            ANYHOW,
+            ("anyhow", "1.0.104"),
+            "let _ = anyhow::anyhow!(\"order of {}\", qty);",
+        ),
+        (
+            ANYHOW,
+            ("anyhow", "1.0.100"),
+            "let _ = anyhow::anyhow!(\"order\");",
+        ),
+        (
+            SERDE_JSON,
+            ("serde_json", "1.0.154"),
+            "let _ = serde_json::json!({ \"qty\": qty });",
+        ),
+        (
+            SERDE_JSON,
+            ("serde_json", "1.0.150"),
+            "let _ = serde_json::json!([qty, null]);",
+        ),
+    ] {
+        let source = bulk_source(&wrapper(call), BOUNDARY_TESTS);
+        for family in ["predicate", "return_value"] {
+            let finding =
+                finding_with_dependencies(dependency, &[locked], &source, BULK_DIFF, family)?;
+            assert_eq!(finding["probe"]["line"], 2, "{call}\n{finding}");
+            assert_eq!(finding["classification"], "exposed", "{call}\n{finding}");
+        }
+    }
+    let json = "let _ = serde_json::json!({ \"qty\": qty });";
+    for (label, dependency, locked, call) in [
+        // Releases outside the audit, and a lockfile that does not lock the
+        // crate.
+        (
+            "unaudited anyhow",
+            ANYHOW,
+            &[("anyhow", "1.0.99")][..],
+            "let _ = anyhow::anyhow!(\"order\");",
+        ),
+        (
+            "unaudited serde_json",
+            SERDE_JSON,
+            &[("serde_json", "1.0.149")][..],
+            json,
+        ),
+        ("unlocked", SERDE_JSON, &[][..], json),
+        ("undeclared", "", &[("serde_json", "1.0.154")][..], json),
+        // anyhow's bail! and ensure! return, so they were never audited.
+        (
+            "bail",
+            ANYHOW,
+            &[("anyhow", "1.0.104")][..],
+            "if qty == 10 { anyhow::bail!(\"ten\"); }",
+        ),
+        (
+            "ensure",
+            ANYHOW,
+            &[("anyhow", "1.0.104")][..],
+            "anyhow::ensure!(qty != 10, \"ten\");",
+        ),
+        // A leaf audited under another root is not audited under this one.
+        (
+            "other root's leaf",
+            ANYHOW,
+            &[("anyhow", "1.0.104")][..],
+            "let _ = anyhow::json!({ \"qty\": qty });",
+        ),
+        // The helper call sits in the arguments.
+        (
+            "callee in arguments",
+            SERDE_JSON,
+            &[("serde_json", "1.0.154")][..],
+            "let _ = serde_json::json!({ \"bulk\": is_bulk(qty) });",
+        ),
+    ] {
+        let source = bulk_source(&wrapper(call), BOUNDARY_TESTS);
+        for family in ["predicate", "return_value"] {
+            let finding =
+                finding_with_dependencies(dependency, locked, &source, BULK_DIFF, family)?;
+            assert_eq!(finding["probe"]["line"], 2, "{label}\n{finding}");
+            assert_ne!(finding["classification"], "exposed", "{label}\n{finding}");
+        }
+    }
+    Ok(())
+}
+
+#[test]
+fn imported_json_wrapper_forwards_unless_json_is_rebound() -> Result<(), String> {
+    const SERDE_JSON: &str = "serde_json = \"1\"";
+    const AUDITED: &[(&str, &str)] = &[("serde_json", "1.0.154")];
+    let wrapper = "    let _ = json!({ \"qty\": qty });\n    if is_bulk(qty) { 5 } else { 0 }";
+    let with_prelude = |prelude: &str| -> Result<(String, String, usize), String> {
+        let source = format!("{prelude}\n{}", bulk_source(wrapper, BOUNDARY_TESTS));
+        let first = source
+            .lines()
+            .position(|line| line.contains("10 <= qty"))
+            .ok_or("probe")?;
+        let diff = BULK_DIFF.replace("@@ -1,3 +1,3 @@", &format!("@@ -{0},3 +{0},3 @@", first));
+        Ok((source, diff, first + 1))
+    };
+    // `use serde_json::json;` with an audited locked release forwards, and
+    // so do the spellings that also import the crate itself under its own
+    // name, which rustfmt merges into one list (#16350).
+    for prelude in [
+        "use serde_json::json;",
+        "use serde_json::{self, json};",
+        "use serde_json::{self};\nuse serde_json::json;",
+        "use serde_json;\nuse serde_json::json;",
+    ] {
+        let (source, diff, line) = with_prelude(prelude)?;
+        for family in ["predicate", "return_value"] {
+            let finding = finding_with_dependencies(SERDE_JSON, AUDITED, &source, &diff, family)?;
+            assert_eq!(finding["probe"]["line"], line, "{prelude}\n{finding}");
+            assert_eq!(finding["classification"], "exposed", "{prelude}\n{finding}");
+        }
+    }
+    for (label, locked, prelude) in [
+        // A release outside the audit.
+        (
+            "unaudited",
+            &[("serde_json", "1.0.149")][..],
+            "use serde_json::json;",
+        ),
+        // Anything else that may bind `json`.
+        (
+            "local definition",
+            AUDITED,
+            "macro_rules! json { ($($t:tt)*) => { return 5 }; }",
+        ),
+        ("foreign import", AUDITED, "use other::json;"),
+        ("glob import", AUDITED, "use serde_json::*;"),
+        (
+            "macro_use",
+            AUDITED,
+            "#[macro_use]\nextern crate serde_json;",
+        ),
+        (
+            "grouped self import",
+            AUDITED,
+            "use serde_json::json;\nuse other::{serde_json::{self}};",
+        ),
+        (
+            "commented foreign path",
+            AUDITED,
+            "use serde_json::json;\nuse other::/* note */serde_json;",
+        ),
+        (
+            "namespace alias",
+            AUDITED,
+            "use serde_json::json;\nmod serde_json { macro_rules! json { ($($t:tt)*) => { return 5 }; } }",
+        ),
+    ] {
+        let (source, diff, line) = with_prelude(prelude)?;
+        for family in ["predicate", "return_value"] {
+            let finding = finding_with_dependencies(SERDE_JSON, locked, &source, &diff, family)?;
+            assert_eq!(finding["probe"]["line"], line, "{label}\n{finding}");
+            assert_ne!(finding["classification"], "exposed", "{label}\n{finding}");
+        }
+    }
+    Ok(())
+}
+
+#[test]
+fn imported_anyhow_wrapper_forwards_unless_anyhow_is_rebound() -> Result<(), String> {
+    const ANYHOW: &str = "anyhow = \"1\"";
+    const AUDITED: &[(&str, &str)] = &[("anyhow", "1.0.104")];
+    let wrapper = "    let _ = anyhow!(\"qty {qty}\");\n    if is_bulk(qty) { 5 } else { 0 }";
+    let with_prelude = |prelude: &str| -> Result<(String, String, usize), String> {
+        let source = format!("{prelude}\n{}", bulk_source(wrapper, BOUNDARY_TESTS));
+        let first = source
+            .lines()
+            .position(|line| line.contains("10 <= qty"))
+            .ok_or("probe")?;
+        let diff = BULK_DIFF.replace("@@ -1,3 +1,3 @@", &format!("@@ -{0},3 +{0},3 @@", first));
+        Ok((source, diff, first + 1))
+    };
+    // A verified `use anyhow::anyhow;` at an audited locked release forwards,
+    // alone or grouped with the crate's other items.
+    for prelude in [
+        "use anyhow::anyhow;",
+        "use anyhow::{anyhow, Result};",
+        "use ::anyhow::anyhow;",
+        "use anyhow;\nuse anyhow::anyhow;",
+    ] {
+        let (source, diff, line) = with_prelude(prelude)?;
+        for family in ["predicate", "return_value"] {
+            let finding = finding_with_dependencies(ANYHOW, AUDITED, &source, &diff, family)?;
+            assert_eq!(finding["probe"]["line"], line, "{prelude}\n{finding}");
+            assert_eq!(finding["classification"], "exposed", "{prelude}\n{finding}");
+        }
+    }
+    for (label, locked, prelude) in [
+        // A release outside the audit.
+        (
+            "unaudited",
+            &[("anyhow", "1.0.99")][..],
+            "use anyhow::anyhow;",
+        ),
+        // Anything else that may bind `anyhow`.
+        (
+            "local definition",
+            AUDITED,
+            "macro_rules! anyhow { ($($t:tt)*) => { return 5 }; }",
+        ),
+        ("foreign import", AUDITED, "use other::anyhow;"),
+        ("glob import", AUDITED, "use anyhow::*;"),
+        ("macro_use", AUDITED, "#[macro_use]\nextern crate anyhow;"),
+        (
+            "grouped self import",
+            AUDITED,
+            "use anyhow::anyhow;\nuse other::{anyhow::{self}};",
+        ),
+        (
+            "namespace alias",
+            AUDITED,
+            "use anyhow::anyhow;\nmod anyhow { macro_rules! anyhow { ($($t:tt)*) => { return 5 }; } }",
+        ),
+        (
+            "crate alias",
+            AUDITED,
+            "use anyhow::anyhow;\nextern crate other as anyhow;",
+        ),
+    ] {
+        let (source, diff, line) = with_prelude(prelude)?;
+        for family in ["predicate", "return_value"] {
+            let finding = finding_with_dependencies(ANYHOW, locked, &source, &diff, family)?;
+            assert_eq!(finding["probe"]["line"], line, "{label}\n{finding}");
+            assert_ne!(finding["classification"], "exposed", "{label}\n{finding}");
+        }
     }
     Ok(())
 }

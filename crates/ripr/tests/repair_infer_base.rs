@@ -450,7 +450,34 @@ fn refusal_on_the_default_branch_says_nothing_differs_from_the_base() -> Result<
             && repair.contains("nothing differs from the base"),
         "{repair}"
     );
+    // A refusal that lists spots keeps pointing at them (#16113 control).
+    assert!(
+        repair.contains("the spots below are not narrowed"),
+        "{repair}"
+    );
     assert!(offered_starts(&repair).is_empty(), "{repair}");
+    Ok(())
+}
+
+/// #16113: a repository with no repairable spot lists none, so its unscoped
+/// note must not point at a list below.
+#[test]
+fn a_zero_spot_refusal_does_not_point_at_a_list_below() -> Result<(), String> {
+    let repo = Repo::package(
+        "pub struct Price;\n",
+        "pub struct Price(pub u32);\n",
+        "use fx::Price;\n\n#[test]\nfn builds() {\n    let _ = Price(1);\n}\n",
+        Form::RootOnDefaultBranch,
+    )?;
+    repo.assert_changed_paths(Form::RootOnDefaultBranch, "src/lib.rs")?;
+    let repair = repo.ripr(&["repair", "--root", "."])?;
+    assert!(
+        repair.contains("no gaps visible under ")
+            && repair.contains("nothing differs from the base")
+            && repair.contains("the search for repairable spots is not narrowed to your change"),
+        "{repair}"
+    );
+    assert!(!repair.contains("below"), "{repair}");
     Ok(())
 }
 

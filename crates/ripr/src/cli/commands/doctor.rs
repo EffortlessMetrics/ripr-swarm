@@ -716,9 +716,16 @@ fn render_doctor_human_screen(screen: DoctorHumanScreen<'_>) -> Vec<String> {
             lines.push(compact_tilde_line(evidence));
         }
     }
-    if let Some(check) = check_named(report, "git_default_base") {
+    for check in ["git_default_base", "git_base", "git_origin_head"]
+        .into_iter()
+        .filter_map(|name| check_named(report, name))
+    {
         let evidence = check.evidence.as_deref().unwrap_or(check.name.as_str());
-        lines.push(compact_tilde_line(evidence));
+        if check.status == output::doctor::DoctorCheckStatus::Pass {
+            lines.push(format!("✓ {}", display_text(evidence)));
+        } else {
+            lines.push(compact_tilde_line(evidence));
+        }
     }
     if let Some(check) = check_named(report, "git_operation") {
         let evidence = check.evidence.as_deref().unwrap_or(check.name.as_str());
@@ -997,7 +1004,7 @@ Point RIPR_CACHE_DIR at a writable directory.",
                 );
             }
             if let Some(line) =
-                enable_before_first_command_line(environment.preview_enablement.as_ref())
+                enable_before_first_command_line(environment.preview_enablement.as_ref(), first)
             {
                 lines.push(line);
             }
@@ -1300,6 +1307,7 @@ fn doctor_start_here_lines(
         output::doctor::DoctorFirstCommand::SavedDiff => {}
         output::doctor::DoctorFirstCommand::MissingRoot
         | output::doctor::DoctorFirstCommand::OutsideGit
+        | output::doctor::DoctorFirstCommand::BareRepository
         | output::doctor::DoctorFirstCommand::InvalidConfig
         | output::doctor::DoctorFirstCommand::DamagedRefs
         | output::doctor::DoctorFirstCommand::FailedPrerequisites => {}
@@ -1318,13 +1326,27 @@ fn doctor_start_here_lines(
     // A detected preview language that is not enabled is skipped by `ripr
     // check`, so in a TypeScript-only repository the recommended command is a
     // guaranteed no-op. Name the enable step next to the command.
-    if let Some(line) = enable_before_first_command_line(preview_enablement) {
+    if let Some(line) = enable_before_first_command_line(preview_enablement, first) {
         lines.push(line);
     }
     lines
 }
 
-fn enable_before_first_command_line(enablement: Option<&PreviewEnablement>) -> Option<String> {
+fn enable_before_first_command_line(
+    enablement: Option<&PreviewEnablement>,
+    first: output::doctor::DoctorFirstCommand,
+) -> Option<String> {
+    // The enable step gates a `ripr check`. A first command that is not a
+    // check (whole-repository pilot outside Git, or a missing root) does not
+    // read the language setting, so it is no prerequisite there (#15297).
+    if matches!(
+        first,
+        output::doctor::DoctorFirstCommand::OutsideGit
+            | output::doctor::DoctorFirstCommand::BareRepository
+            | output::doctor::DoctorFirstCommand::MissingRoot
+    ) {
+        return None;
+    }
     // Name the config entries here: this line says what to write in
     // ripr.toml, while the Tip names the detected source.
     let names = enablement?
@@ -1681,7 +1703,15 @@ fn detected_languages_lines(
         let entries: Vec<String> = detected
             .iter()
             .map(|language| {
-                if language.adapter_available {
+                if language.adapter_available && language.enabled == Some(false) {
+                    // The Tip below says "detected but not enabled"; the line
+                    // naming the language says the same (#15297).
+                    format!(
+                        "{} ({}) [not enabled]",
+                        language.language,
+                        language.status.as_str()
+                    )
+                } else if language.adapter_available {
                     format!("{} ({})", language.language, language.status.as_str())
                 } else {
                     format!(
@@ -3517,7 +3547,10 @@ fn nearest_existing_dir(path: &Path) -> Result<Option<PathBuf>, String> {
                     std::io::ErrorKind::NotFound | std::io::ErrorKind::NotADirectory
                 ) =>
             {
-                return Err(format!("cannot inspect {}: {error}", probe_dir.display()));
+                return Err(format!(
+                    "cannot inspect {}: {error}; check permissions on that path, then rerun",
+                    probe_dir.display()
+                ));
             }
             Err(_) => match probe_dir.parent() {
                 Some(parent) if parent.as_os_str().is_empty() => {
@@ -8893,7 +8926,10 @@ mod tests {
     }
 
     fn test_enable_before_first_command(root: &Path) -> Option<String> {
-        enable_before_first_command_line(test_preview_enablement(root).as_ref())
+        enable_before_first_command_line(
+            test_preview_enablement(root).as_ref(),
+            output::doctor::DoctorFirstCommand::DefaultCheck,
+        )
     }
 
     /// #13788: after `ripr init` writes its config for a root package.json

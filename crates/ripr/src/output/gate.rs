@@ -219,7 +219,7 @@ pub(crate) fn build_gate_decision_report(
             let resolved = resolve_root_path(&input.root, path);
             let display = display_path(path);
             let ledger_result = consumed
-                .read_toml_text_and_record(&resolved, &display)
+                .read_toml_text_and_record(&resolved, &display, "--exception-policy")
                 .and_then(|(text, digest)| {
                     consumed.exception_policy = Some(digest);
                     exception_policy::load_exception_ledger_from_text(&text, &display)
@@ -245,7 +245,7 @@ pub(crate) fn build_gate_decision_report(
             let resolved = resolve_root_path(&input.root, path);
             let display = display_path(path);
             let ledger_result = consumed
-                .read_toml_text_and_record(&resolved, &display)
+                .read_toml_text_and_record(&resolved, &display, "--acknowledgements")
                 .and_then(|(text, digest)| {
                     consumed.acknowledgements = Some(digest);
                     structured_acknowledgements::load_structured_acknowledgements_from_text(
@@ -291,14 +291,21 @@ pub(crate) fn build_gate_decision_report(
     // so a baseline entry elsewhere is not evidence of resolution.
     let analysis_scope = if config_errors.is_empty() {
         match gap_ledger.as_ref() {
-            Some(records) => Some(
-                crate::output::review_comments::gap_ledger_analysis_scope_json(
+            Some(records) => {
+                let mut scope = crate::output::review_comments::gap_ledger_analysis_scope_json(
                     records,
                     gap_ledger_coverage.as_ref(),
                     &gap_ledger_refusal,
                     gap_ledger_owner_opt_outs.as_ref(),
-                ),
-            ),
+                );
+                // The ledger owns coverage; only review-comments knows which changed files
+                // its parser declined. Preserve malformed disclosures for the existing warning.
+                if let Some(declined) = pr_guidance.pointer("/analysis_scope/parser_declined_files")
+                {
+                    scope["parser_declined_files"] = declined.clone();
+                }
+                Some(scope)
+            }
             None => {
                 let scope = pr_guidance
                     .get("analysis_scope")

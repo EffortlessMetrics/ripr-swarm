@@ -165,6 +165,11 @@ read-only and without execution authority (ADR 0022):
   failing gate except that `seam_inventory_truncated` outranks it. MCP never reads readiness from finding facts alone and keeps
   no parallel validator: `ripr_prepare_repair` cannot return a ready packet
   or an `awaiting_edit` attempt for an item `ripr repair` refuses.
+- When the resolved seam and its bound candidate-current finding both
+  report no static test path, preparation also requires the producer to
+  establish that its owner is unreferenced in the workspace (#4668).
+  The refusal remains `seam_gate_refused` through list, detail, and
+  prepare. The RepairCard can still show the proposed target for inspection.
 - When every gate is established, the tool creates one session repair
   transaction with a deterministic, root-bound `repair-attempt-` identity
   (the first 24 hex digits of a SHA-256 over schema version, snapshot id,

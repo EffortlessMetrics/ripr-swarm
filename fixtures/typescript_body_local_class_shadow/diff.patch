@@ -1,0 +1,12 @@
+diff --git a/src/url.ts b/src/url.ts
+index 0000000..1111111 100644
+--- a/src/url.ts
++++ b/src/url.ts
+@@ -1,6 +1,6 @@
+ export class Url {
+   readonly scheme: string;
+   constructor(input: string) {
+-    this.scheme = input.split(":")[0];
++    this.scheme = input.split(":")[0].toLowerCase();
+   }
+ }

@@ -17,7 +17,7 @@ use std::path::{Path, PathBuf};
 /// Files whose directory marks a Python project: pytest puts that directory
 /// (or a `pythonpath` entry under it) on `sys.path`, so a module below it is
 /// importable by its project-relative name.
-const PYTHON_PROJECT_MARKERS: [&str; 5] = [
+pub(super) const PYTHON_PROJECT_MARKERS: [&str; 5] = [
     "pyproject.toml",
     "setup.py",
     "setup.cfg",

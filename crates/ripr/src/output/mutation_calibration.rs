@@ -677,11 +677,15 @@ pub(crate) fn render_mutation_calibration_md(report: &MutationCalibrationReport)
 
 fn parse_repo_exposure_static_seams(json: &str) -> Result<Vec<StaticSeamRecord>, String> {
     let value: Value = serde_json::from_str(json)
-        .map_err(|err| format!("failed to parse repo exposure JSON: {err}"))?;
+        .map_err(|err| {
+        format!(
+            "repo exposure input is not valid JSON ({err}); pass a file written by `ripr check --format repo-exposure-json`"
+        )
+    })?;
     let seams = value
         .get("seams")
         .and_then(Value::as_array)
-        .ok_or_else(|| "repo exposure JSON is missing `seams` array".to_string())?;
+        .ok_or_else(|| "repo exposure JSON is missing `seams` array; pass a file written by `ripr check --format repo-exposure-json`".to_string())?;
     // #12108: a byte-bounded pilot file lists only some seams, so mutants on
     // the cut seams would be counted as unmatched. Refuse it.
     let cut = crate::output::repo_exposure::seam_limit_cut_controls(&value);
@@ -1652,14 +1656,14 @@ fn required_json_string(value: &Value, key: &str) -> Result<String, String> {
     value
         .get(key)
         .and_then(json_scalar_as_string)
-        .ok_or_else(|| format!("repo exposure seam is missing string field `{key}`"))
+        .ok_or_else(|| format!("repo exposure seam is missing string field `{key}`; pass a file written by `ripr check --format repo-exposure-json`"))
 }
 
 fn required_json_usize(value: &Value, key: &str) -> Result<usize, String> {
     value
         .get(key)
         .and_then(json_scalar_as_usize)
-        .ok_or_else(|| format!("repo exposure seam is missing numeric field `{key}`"))
+        .ok_or_else(|| format!("repo exposure seam is missing numeric field `{key}`; pass a file written by `ripr check --format repo-exposure-json`"))
 }
 
 fn strongest_related_oracle(seam: &Value) -> (String, String) {

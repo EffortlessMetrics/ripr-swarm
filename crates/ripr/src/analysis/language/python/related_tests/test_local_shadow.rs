@@ -10,6 +10,7 @@
 //! non-test files, so this records the modules that precede on a test's path.
 
 use super::super::source_utils::is_test_file;
+use super::project_names::PYTHON_PROJECT_MARKERS;
 use super::{PythonOwner, owner_module_paths};
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
@@ -33,9 +34,21 @@ pub(in crate::analysis::language::python) struct TestLocalShadow {
 /// - the same basedir for every directory at or above the test that holds a
 ///   `conftest.py`, since a collected conftest inserts its basedir into the
 ///   process-wide `sys.path` too;
+/// - the same basedir for every directory above the test, up to and including
+///   the test's nearest project root (a directory with a project marker such
+///   as `pyproject.toml`), that holds a file pytest collects by default
+///   (`test_*.py`, `*_test.py`): a run that collects that directory imports
+///   the module and inserts its basedir into the process-wide `sys.path`
+///   (#14083 A5). Collection order, a run of the subdirectory alone and sibling
+///   directories collected in the same run are not modelled, and test modules
+///   above the project root belong to another project's run;
 /// - the repository root (a root conftest, `python -m pytest` or an editable
 ///   install reach it).
-fn prepend_path_dirs(dir: &Path, files: &BTreeSet<&Path>) -> Vec<PathBuf> {
+fn prepend_path_dirs(
+    dir: &Path,
+    files: &BTreeSet<&Path>,
+    collected_dirs: &BTreeSet<PathBuf>,
+) -> Vec<PathBuf> {
     let basedir = |start: &Path| {
         let mut current = start.to_path_buf();
         while !current.as_os_str().is_empty()
@@ -47,8 +60,13 @@ fn prepend_path_dirs(dir: &Path, files: &BTreeSet<&Path>) -> Vec<PathBuf> {
     };
     let mut dirs = vec![basedir(dir)];
     let mut ancestor = dir.to_path_buf();
+    // Collected modules count only inside the test's own project; the
+    // repository root's modules count only when no nearer project root exists.
+    let mut within_project = true;
     loop {
-        if files.contains(ancestor.join("conftest.py").as_path()) {
+        let collected_here =
+            within_project && ancestor != dir && collected_dirs.contains(&ancestor);
+        if files.contains(ancestor.join("conftest.py").as_path()) || collected_here {
             let base = basedir(&ancestor);
             if !dirs.contains(&base) {
                 dirs.push(base);
@@ -57,12 +75,28 @@ fn prepend_path_dirs(dir: &Path, files: &BTreeSet<&Path>) -> Vec<PathBuf> {
         if ancestor.as_os_str().is_empty() {
             break;
         }
+        if PYTHON_PROJECT_MARKERS
+            .iter()
+            .any(|marker| files.contains(ancestor.join(marker).as_path()))
+        {
+            within_project = false;
+        }
         ancestor = ancestor.parent().unwrap_or(Path::new("")).to_path_buf();
     }
     if !dirs.iter().any(|dir| dir.as_os_str().is_empty()) {
         dirs.push(PathBuf::new());
     }
     dirs
+}
+
+/// Whether pytest's default `python_files` (`test_*.py`, `*_test.py`)
+/// collects `file`. Narrower than [`is_test_file`], which also counts helper
+/// modules under a `tests` directory that pytest never imports on its own.
+fn is_default_collected_module(file: &Path) -> bool {
+    file.file_name()
+        .and_then(|name| name.to_str())
+        .and_then(|name| name.strip_suffix(".py"))
+        .is_some_and(|stem| stem.starts_with("test_") || stem.ends_with("_test"))
 }
 
 /// The top-level module a workspace `.py` file defines and the directory that
@@ -119,9 +153,13 @@ impl TestLocalShadowIndex {
         let files = files.map(PathBuf::as_path).collect::<BTreeSet<_>>();
         let mut locals_by_name: BTreeMap<String, Vec<(PathBuf, PathBuf)>> = BTreeMap::new();
         let mut test_dirs: BTreeSet<PathBuf> = BTreeSet::new();
+        let mut collected_dirs: BTreeSet<PathBuf> = BTreeSet::new();
         for file in &files {
             if is_test_file(file) {
                 test_dirs.insert(file.parent().unwrap_or(Path::new("")).to_path_buf());
+            }
+            if is_default_collected_module(file) {
+                collected_dirs.insert(file.parent().unwrap_or(Path::new("")).to_path_buf());
             }
             if let Some((name, dir)) = local_module(file) {
                 locals_by_name
@@ -135,7 +173,7 @@ impl TestLocalShadowIndex {
         } else {
             test_dirs
                 .iter()
-                .map(|dir| (dir.clone(), prepend_path_dirs(dir, &files)))
+                .map(|dir| (dir.clone(), prepend_path_dirs(dir, &files, &collected_dirs)))
                 .collect()
         };
         Self {

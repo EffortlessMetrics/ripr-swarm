@@ -6,3 +6,38 @@ tests = [
   "crates/ripr/tests/evidence_refusal_next_step.rs::pr_evidence_check_with_a_broken_packet_names_the_regeneration",
   "crates/ripr/tests/evidence_refusal_next_step.rs::impacted_evidence_check_without_outputs_names_the_command_that_writes_them",
 ]
+
+# `ripr baseline update` input refusals name the reviewed ledger or `ripr gate evaluate` (#16019).
+[[extend]]
+id = "RIPR-SPEC-0016"
+tests = [
+  "crates/ripr/tests/evidence_refusal_next_step.rs::baseline_update_refusals_name_the_command_that_writes_each_input",
+]
+
+# `ripr calibrate cargo-mutants` repo-exposure refusals name `ripr check --format repo-exposure-json` (#16019).
+[[extend]]
+id = "RIPR-SPEC-0006"
+tests = [
+  "crates/ripr/tests/evidence_refusal_next_step.rs::calibrate_refusal_names_the_snapshot_command",
+]
+
+# `--suppression-policy` read and validation refusals name the fix (#16019).
+[[extend]]
+id = "RIPR-SPEC-0007"
+tests = [
+  "crates/ripr/tests/evidence_refusal_next_step.rs::suppression_policy_refusals_name_the_fix",
+]
+
+# `ripr agent repair` attempt-selection refusals name the fix (#16019).
+[[extend]]
+id = "RIPR-SPEC-0011"
+tests = [
+  "crates/ripr/tests/evidence_refusal_next_step.rs::agent_repair_attempt_refusals_name_the_fix",
+]
+
+# `ripr agent receipt --verify-json` shape refusals name `ripr agent verify` (#16019).
+[[extend]]
+id = "RIPR-SPEC-0011"
+tests = [
+  "crates/ripr/tests/evidence_refusal_next_step.rs::agent_receipt_verify_json_refusals_name_the_producer",
+]

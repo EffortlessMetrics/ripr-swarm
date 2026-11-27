@@ -181,7 +181,7 @@ pub(crate) fn load_diff_with_effective_base_core(
             // #4480: stdin is bounded by the shared CLI input cap, so a
             // producer that never closes the pipe cannot grow memory forever.
             let buffer = crate::bounded_input::read_reader(std::io::stdin().lock())
-                .map_err(|err| format!("failed to read diff from stdin: {err}"))?;
+                .map_err(|err| format!("failed to read diff from stdin: {err}; check that the command feeding stdin writes a complete unified diff under the input limit, then rerun"))?;
             return Ok(LoadedDiff {
                 text: decode_diff_text("diff from stdin", buffer)?,
                 effective_base: None,
@@ -1116,12 +1116,13 @@ pub(crate) fn not_a_work_tree_message(root: &Path) -> String {
 
 /// The refusal for a bare repository: it is a repository, but it has no
 /// checked-out source for the analysis to read, so the next action is a
-/// work tree, not "run inside a repository" (#14104).
+/// work tree, not "run inside a repository" (#14104). The work-tree route
+/// has one owner: bound to the repository, and aware of an empty repository.
 pub(crate) fn bare_repository_message(root: &Path) -> String {
     format!(
         "This root is a bare Git repository with no work tree (the analysis did not run). \
-         Check out a work tree from it (`git worktree add <path>` or `git clone`), then pass \
-         `--root <path>` to that work tree. Root: `{}`",
+         {}, then pass `--root <path>` to that work tree. Root: `{}`",
+        crate::work_tree_route::bare_root_work_tree_route_or_plain(root),
         root.display(),
     )
 }
@@ -1501,6 +1502,33 @@ pub(crate) fn default_base_unresolved_message(
     resolve_default_base(root, git_timeout).err()
 }
 
+/// Check only fetched history and preserve the loader's repair for Git's
+/// quiet exit 1. Other failures do not establish unrelated histories.
+pub(crate) fn doctor_base_history(
+    root: &Path,
+    base: &str,
+    timeout: Option<Duration>,
+) -> Result<(), CoreError> {
+    let output = crate::git::local_merge_base(root, base, timeout)?;
+    if output.status.success() && !output.stdout.trim_ascii().is_empty() {
+        return Ok(());
+    }
+    if output.status.code() == Some(1)
+        && output.stdout.trim_ascii().is_empty()
+        && output.stderr.trim_ascii().is_empty()
+    {
+        let (diagnosis, _) = no_merge_base_diagnosis(root, base, "HEAD", timeout);
+        return Err(CoreError::message(format!(
+            "Default base `{base}` has no merge base with HEAD. {diagnosis}"
+        )));
+    }
+    let reason =
+        git_reason_line(&output.stderr).unwrap_or_else(|| "Git did not return a merge base".into());
+    Err(CoreError::message(format!(
+        "Could not verify history between `{base}` and HEAD: {reason}"
+    )))
+}
+
 /// A quiet failed HEAD lookup is not enough to establish an unborn branch:
 /// loose-ref damage and inaccessible ref targets can also return silent exit 1.
 /// Git's recursive symbolic lookup distinguishes those without assuming a ref
@@ -1735,14 +1763,25 @@ fn default_base_failure_context(root: &Path, git_timeout: Option<Duration>) -> S
 /// origin --auto` creates it once the default branch's tracking ref exists,
 /// hence the `git fetch origin` before it. False when there is no `origin` or
 /// Git cannot answer, so the advice is only given where it can apply.
-fn origin_lacks_head_pointer(root: &Path, git_timeout: Option<Duration>) -> bool {
+pub(crate) fn origin_lacks_head_pointer(root: &Path, git_timeout: Option<Duration>) -> bool {
     let succeeds = |args: &[&str]| {
         crate::git::run_git_output_with_deadline(root, args, git_timeout)
             .ok()
             .map(|output| output.status.success())
     };
     succeeds(&["remote", "get-url", "origin"]) == Some(true)
-        && succeeds(&["symbolic-ref", "--quiet", "refs/remotes/origin/HEAD"]) == Some(false)
+        && (succeeds(&["symbolic-ref", "--quiet", "refs/remotes/origin/HEAD"]) == Some(false)
+            || crate::git::run_git_output_with_deadline(
+                root,
+                &[
+                    "show-ref",
+                    "--verify",
+                    "--quiet",
+                    "refs/remotes/origin/HEAD",
+                ],
+                git_timeout,
+            )
+            .is_ok_and(|output| output.status.code() == Some(1)))
 }
 
 /// Widens a single-branch clone so a fetch brings every branch of `origin`.
@@ -3120,7 +3159,7 @@ fn run_git_diff_bytes(
     // would be parsed as a diff option, so refuse it at the sink.
     if range.starts_with('-') {
         return Err(
-            format!("refusing to diff `{range}`: a revision range cannot start with `-`").into(),
+            format!("refusing to diff `{range}`: a revision range cannot start with `-`; pass a revision or range such as `origin/main..HEAD`").into(),
         );
     }
     // `diff.orderFile=/dev/null` neutralizes ambient file ordering (#5325):
@@ -3137,11 +3176,10 @@ fn run_git_diff_bytes(
     // as a copy section that carries only its difference from another file.
     // It is a config pin, not a flag, so a caller extra such as
     // `--no-renames` still decides for its own invocation.
-    // The next four pins restore git's own defaults so the analyzed patch
+    // The next three pins restore git's own defaults so the analyzed patch
     // and its identities do not depend on the machine (#15954):
-    // `diff.algorithm` (histogram or patience give different hunks, so
-    // different changed lines, for an ambiguous edit), `diff.indentHeuristic`
-    // (off, a sliding insertion is reported one line later),
+    // `diff.indentHeuristic` (off, a sliding insertion is reported one line
+    // later),
     // `diff.renameLimit` (below the rename count, each rename becomes a
     // deletion plus a whole new file) and `core.bigFileThreshold` (below a
     // source file's size, the file arrives as `Binary files differ`).
@@ -3152,8 +3190,6 @@ fn run_git_diff_bytes(
         "diff.orderFile=/dev/null",
         "-c",
         "diff.renames=true",
-        "-c",
-        "diff.algorithm=myers",
         "-c",
         "diff.indentHeuristic=true",
         "-c",
@@ -3184,10 +3220,17 @@ fn run_git_diff_bytes(
     // The abbreviated form follows `core.abbrev` and, unset, an automatic
     // length that grows with the object count, so a shallow CI clone and a
     // full local clone produced different patch bytes for one range.
+    // `--diff-algorithm=myers` restores git's default hunk algorithm
+    // (#15954): histogram or patience give different hunks, so different
+    // changed lines, for an ambiguous edit. It is a flag, not a
+    // `diff.algorithm` config pin, because a path's diff driver
+    // (`*.rs diff=rust` with `diff.rust.algorithm` set) outranks the config
+    // key and only the flag outranks the driver.
     let unified_arg = format!("--unified={unified}");
     args.extend_from_slice(&[
         "--no-ext-diff",
         "--full-index",
+        "--diff-algorithm=myers",
         "--no-textconv",
         "--no-color",
         crate::git::SUBMODULE_POINTERS_ONLY,

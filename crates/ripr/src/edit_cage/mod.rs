@@ -815,6 +815,19 @@ fn inline_target_copies_at_head(
 /// would resolve from the top-level rather than `root`), HEAD is unborn, or
 /// any git command fails for a reason other than the file being absent.
 pub(crate) fn inline_target_is_uncommitted(root: &Path, path: &str) -> bool {
+    target_is_uncommitted(root, path, true)
+}
+
+/// Whether `ripr repair` would refuse `path` as a selected external test
+/// file because its tracked worktree or index copy differs from HEAD (#15265).
+/// The same predicate as [`inline_target_is_uncommitted`] for a file HEAD
+/// carries; a file HEAD does not carry stays with the attempt, which admits a
+/// new external test only when its absence is established.
+pub(crate) fn external_test_target_is_uncommitted(root: &Path, path: &str) -> bool {
+    target_is_uncommitted(root, path, false)
+}
+
+fn target_is_uncommitted(root: &Path, path: &str, absent_at_head: bool) -> bool {
     let Ok(root) = canonical_repository_root(root) else {
         return false;
     };
@@ -833,8 +846,9 @@ pub(crate) fn inline_target_is_uncommitted(root: &Path, path: &str) -> bool {
         return false;
     };
     if listing.is_empty() {
-        // HEAD exists but does not carry the file: the attempt refuses it too.
-        return true;
+        // HEAD exists but does not carry the file: the attempt refuses an
+        // inline target too, and judges a new external test file itself.
+        return absent_at_head;
     }
     // Only a regular-file blob is comparable with `hash-object`; a symlink,
     // directory or submodule entry defers to the attempt.
@@ -4617,6 +4631,42 @@ mod tests {
         assert!(!inline_target_is_uncommitted(
             &unborn.root,
             "src/pricing.rs"
+        ));
+        Ok(())
+    }
+
+    /// #15265: the external test predicate shares the inline one for a file
+    /// HEAD carries, but leaves a file HEAD lacks to the attempt, which may
+    /// create a new external test file there.
+    #[test]
+    fn external_test_uncommitted_predicate_leaves_new_files_to_the_attempt() -> Result<(), String> {
+        let fixture = git_fixture("external-test-uncommitted-predicate")?;
+        fs::create_dir_all(fixture.root.join("tests"))
+            .map_err(|err| format!("create tests dir: {err}"))?;
+        let committed = "#[test]\nfn a() {}\n";
+        fs::write(fixture.root.join("tests/pricing.rs"), committed)
+            .map_err(|err| format!("write external test: {err}"))?;
+        git_ok(&fixture.root, &["add", "."])?;
+        git_ok(&fixture.root, &["commit", "-qm", "external test"])?;
+
+        assert!(!external_test_target_is_uncommitted(
+            &fixture.root,
+            "tests/pricing.rs"
+        ));
+        fs::write(
+            fixture.root.join("tests/pricing.rs"),
+            format!("{committed}\n#[test]\nfn b() {{}}\n"),
+        )
+        .map_err(|err| format!("dirty external test: {err}"))?;
+        assert!(external_test_target_is_uncommitted(
+            &fixture.root,
+            "tests/pricing.rs"
+        ));
+        // Absent from HEAD: the inline predicate refuses, the external one defers.
+        assert!(inline_target_is_uncommitted(&fixture.root, "tests/new.rs"));
+        assert!(!external_test_target_is_uncommitted(
+            &fixture.root,
+            "tests/new.rs"
         ));
         Ok(())
     }

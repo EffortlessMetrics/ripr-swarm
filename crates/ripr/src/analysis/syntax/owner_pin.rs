@@ -10,8 +10,8 @@ mod fallible_check;
 mod literal_json;
 mod scan_memo;
 use literal_json::{
-    json_namespace_rebound, literal_json_import_visible_among, literal_json_tokens,
-    literal_json_tree, literal_json_uses,
+    crate_namespace_rebound, json_namespace_rebound, literal_json_import_visible_among,
+    literal_json_tokens, literal_json_tree, literal_json_uses,
 };
 mod slice_table;
 pub(crate) use fallible_check::{decimal_u8, literal_check_syntax, literal_owner_syntax};
@@ -516,6 +516,13 @@ pub(crate) fn macro_binding_scan(
     .collect()
 }
 
+/// Drop-in value macros outside [`TRUSTED_MACRO_NAMES`] whose binding sites
+/// the scan also records: `serde_json`'s `json!` and `anyhow`'s `anyhow!`
+/// build a value and cannot return. Each is trusted only through a
+/// manifest-verified import from its own crate whose root the file does not
+/// rebind (#10357).
+pub(crate) const DROP_IN_VALUE_MACROS: &[&str] = &["json", "anyhow"];
+
 /// Standard macros that cannot return a value from the enclosing function,
 /// whose workspace rebinding the owner-pin scans look for.
 pub(crate) const TRUSTED_MACRO_NAMES: &[&str] = &[
@@ -606,12 +613,14 @@ impl MacroBindingCandidates {
         }
     }
 
-    /// Whether the scan may report a site for any trusted name. `Names`
-    /// only ever holds trusted names, so this is its emptiness.
+    /// Whether the scan may report a site for any trusted name or `json`.
+    /// `Names` only ever holds trusted names and the drop-in value macros.
     pub(crate) fn may_bind_any_trusted(&self) -> bool {
         match self {
             Self::Any => true,
-            Self::Names(names) => !names.is_empty(),
+            // `anyhow` is a forwarding-only candidate: no assertion or
+            // reference-count consumer reads it (#10357).
+            Self::Names(names) => names.iter().any(|name| name != "anyhow"),
         }
     }
 }
@@ -625,7 +634,8 @@ impl MacroBindingCandidates {
 pub(crate) fn macro_binding_candidates(source: &ast::SourceFile) -> MacroBindingCandidates {
     let trusted = |text: &str| {
         let name = text.trim_start_matches("r#");
-        (TRUSTED_MACRO_NAMES.contains(&name) || name == "json").then(|| name.to_string())
+        (TRUSTED_MACRO_NAMES.contains(&name) || DROP_IN_VALUE_MACROS.contains(&name))
+            .then(|| name.to_string())
     };
     let binds_any = |text: &str| {
         matches!(
@@ -637,6 +647,9 @@ pub(crate) fn macro_binding_candidates(source: &ast::SourceFile) -> MacroBinding
     for node in source.syntax().descendants() {
         if json_namespace_rebound(&node) {
             names.insert("json".to_string());
+        }
+        if crate_namespace_rebound(&node, "anyhow") {
+            names.insert("anyhow".to_string());
         }
         if renames_standard_crate(&node) {
             return MacroBindingCandidates::Any;
@@ -1011,6 +1024,7 @@ fn renames_standard_crate(node: &SyntaxNode) -> bool {
 // `FILE_FACT_CACHE_SCHEMA_VERSION`, or cached candidates hide the new sites.
 fn macro_binding_scan_needed(source: &str, trusted: &[&str]) -> bool {
     trusted.contains(&"json") && source.contains("serde_json")
+        || trusted.contains(&"anyhow") && source.contains("anyhow")
         || source.contains("macro")
         || source.contains("use")
         || source.contains("extern")
@@ -1359,6 +1373,19 @@ fn macro_binding_sites_in_tree(
         if trusted.contains(&"json") && json_namespace_rebound(node) {
             ambiguous.push((
                 "json".to_string(),
+                MacroBindingSite {
+                    line: line_of(node),
+                    kind: MacroBindingKind::Import,
+                    scope: None,
+                    scope_bytes: None,
+                    crate_local: false,
+                    module_local: false,
+                },
+            ));
+        }
+        if trusted.contains(&"anyhow") && crate_namespace_rebound(node, "anyhow") {
+            ambiguous.push((
+                "anyhow".to_string(),
                 MacroBindingSite {
                     line: line_of(node),
                     kind: MacroBindingKind::Import,
@@ -1960,6 +1987,10 @@ fn macro_binding_sites_in_tree(
                         // #15263: `use std::vec;` / `use alloc::vec;` names
                         // the standard macro itself, like a standard-root glob.
                         None
+                    } else if item.rename().is_none() && imports_bare_drop_in_crate(&item, name) {
+                        // `use anyhow;` names the extern crate, which lives in
+                        // the type namespace only and binds no macro (#10357).
+                        None
                     } else if !is_drop_in_assertion(&item, name)
                         || drop_in_shadowed(root, external)
                         // A plain import that binds a standard root's name
@@ -2163,6 +2194,7 @@ fn drop_in_crates(name: &str) -> &'static [&'static str] {
         "assert_eq" | "assert_ne" => DROP_IN_ASSERTION_CRATES,
         "expect" | "expect_file" => EXPECT_TEST_CRATES,
         "json" => &["serde_json"],
+        "anyhow" => &["anyhow"],
         // `use std::env;` names the module and, in the macro namespace, the
         // standard `env!` itself; `use std::include_str;` is the standard
         // macro as well.
@@ -2908,27 +2940,48 @@ fn is_assertion_free_prelude_glob(item: &ast::UseTree) -> bool {
         .any(|glob| segments.iter().map(String::as_str).eq(glob.iter().copied()))
 }
 
-/// Whether `name` is a macro of `core`'s macro prelude, which every crate
+/// The trusted macro names of `core`'s macro prelude, which every crate
 /// that compiles with an implicit prelude has, `#![no_std]` included.
 ///
 /// A glob import cannot rebind a bare call of such a name (#16060): rustc
 /// rejects a call whose name both a glob import and the macro prelude
-/// supply (E0659, every edition). `#[no_implicit_prelude]` lifts that rule,
-/// and it reports its own site. A glob can still bind every other trusted
-/// name, `vec` and `format` too, which a `#![no_std]` prelude lacks.
+/// supply (E0659, every edition since 2018, std and `#![no_std]`; each name
+/// was checked with rustc). `#[no_implicit_prelude]` lifts that rule, and it
+/// reports its own site. A glob can still bind every other trusted name:
+/// `vec`, `format`, `print`, `println`, `eprint`, `eprintln` and `dbg`,
+/// which a `#![no_std]` prelude lacks, and the claims, expect-test and
+/// `json` macros, which no prelude has.
+pub(crate) const CORE_PRELUDE_MACROS: &[&str] = &[
+    "assert",
+    "assert_eq",
+    "assert_ne",
+    "cfg",
+    "column",
+    "concat",
+    "debug_assert",
+    "debug_assert_eq",
+    "debug_assert_ne",
+    "env",
+    "file",
+    "format_args",
+    "include_bytes",
+    "include_str",
+    "line",
+    "matches",
+    "module_path",
+    "option_env",
+    "panic",
+    "stringify",
+    "todo",
+    "unimplemented",
+    "unreachable",
+    "write",
+    "writeln",
+];
+
+/// Whether `name` is in [`CORE_PRELUDE_MACROS`].
 fn is_core_prelude_macro(name: &str) -> bool {
-    matches!(
-        name,
-        "assert"
-            | "assert_eq"
-            | "assert_ne"
-            | "debug_assert"
-            | "debug_assert_eq"
-            | "debug_assert_ne"
-            | "matches"
-            | "panic"
-            | "unreachable"
-    )
+    CORE_PRELUDE_MACROS.contains(&name)
 }
 
 /// Whether a plain `use` names a standard-library macro at its own path
@@ -2938,7 +2991,12 @@ fn is_core_prelude_macro(name: &str) -> bool {
 fn is_standard_macro_import(item: &ast::UseTree, name: &str) -> bool {
     let exporters: &[&str] = match name {
         "vec" | "format" => &["std", "alloc"],
-        name if is_core_prelude_macro(name) => &["std", "core"],
+        // The assertion family only (#15263). The rest of the core prelude
+        // keeps its explicit-import site: in a `#![no_std]` target a glob
+        // may supply a module named `std`, which the manifest check does
+        // not see (#16182 review).
+        "assert" | "assert_eq" | "assert_ne" | "debug_assert" | "debug_assert_eq"
+        | "debug_assert_ne" | "matches" | "panic" | "unreachable" => &["std", "core"],
         _ => &[],
     };
     let segments = use_tree_segments(item);
@@ -2950,6 +3008,32 @@ fn is_standard_macro_import(item: &ast::UseTree, name: &str) -> bool {
         segments.as_slice(),
         [root, imported] if exporters.contains(root) && *imported == name
     )
+}
+
+/// Whether `item` is a top-level `use krate;` or `use ::krate;` of a drop-in
+/// crate whose own name is the trusted macro name (`anyhow`).
+fn imports_bare_drop_in_crate(item: &ast::UseTree, name: &str) -> bool {
+    let top_level = item
+        .syntax()
+        .ancestors()
+        .skip(1)
+        .filter_map(ast::UseTree::cast)
+        .next()
+        .is_none();
+    let path: String = item
+        .path()
+        .map(|path| {
+            path.syntax()
+                .descendants_with_tokens()
+                .filter_map(|element| element.into_token())
+                .filter(|token| !token.kind().is_trivia())
+                .map(|token| token.text().trim_start_matches("r#").to_string())
+                .collect()
+        })
+        .unwrap_or_default();
+    top_level
+        && drop_in_crates(name).contains(&name)
+        && path.strip_prefix("::").unwrap_or(&path) == name
 }
 
 fn is_drop_in_assertion(item: &ast::UseTree, name: &str) -> bool {
@@ -4982,8 +5066,10 @@ fn admitted_assertions(
 ///   nested item or `use` item anywhere in its body;
 /// - the helper is a plain function: no attributes other than
 ///   `#[track_caller]`, no generics or `where` clause, not `async`, `const`
-///   or `unsafe`, no `self` parameter, and no `return` or `?`
-///   in its body, so the assertion cannot be skipped by an early exit;
+///   or `unsafe`, no `self` parameter, and no `return` in its body, so
+///   the assertion cannot be skipped by an early exit; a `?` is allowed
+///   only when every eager call is `check(..)?`, so its error fails the
+///   test (#14116);
 /// - the helper passes the test's own escape gate (only trusted macros, no
 ///   closure exits or `yield`) and its supported item context.
 ///
@@ -5019,6 +5105,8 @@ fn local_helper_assertions(
         .collect();
     let mut called = BTreeMap::<String, Vec<usize>>::new();
     let mut eager_called = BTreeMap::<String, Vec<usize>>::new();
+    // Names with an eager call whose error the test does not propagate.
+    let mut unpropagated = BTreeSet::<String>::new();
     let mut calls_per_line = BTreeMap::<usize, usize>::new();
     // Method calls and macro invocations count too: a macro's operand is
     // an unparsed token tree that may hold another call.
@@ -5048,9 +5136,26 @@ fn local_helper_assertions(
             continue;
         }
         let name = name.text().to_string();
+        // `check(..)?` evaluates its call before the `?` reads the result,
+        // so the call is eager wherever its `?` is.
+        let propagated = propagates_to_test(&call);
+        let evaluated = if propagated {
+            call.syntax().parent()
+        } else {
+            Some(call.syntax().clone())
+        };
         if !bound.contains(&name)
-            && eager_path(call.syntax().clone(), test, false, first_return).is_ok()
+            && evaluated.is_some_and(|node| eager_path(node, test, false, first_return).is_ok())
         {
+            if !propagated {
+                unpropagated.insert(name.clone());
+            }
+            // An argument runs before the helper is entered, so a `return`,
+            // `break`, `continue` or `yield` there can leave without calling
+            // it. `eager_path` reads only exits that start before the call.
+            if arguments_may_leave(&call) {
+                continue;
+            }
             let line = lines.line(call.syntax().text_range().start());
             if lines.line(call.syntax().text_range().end()) == line {
                 eager_called.entry(name.clone()).or_default().push(line);
@@ -5071,7 +5176,13 @@ fn local_helper_assertions(
         };
         if helper.syntax() == test.syntax()
             || helper.syntax().parent().as_ref() != Some(&module)
-            || !plain_check_helper(helper, trusted, empty_macros, json_uses)
+            || !plain_check_helper(
+                helper,
+                trusted,
+                empty_macros,
+                json_uses,
+                !unpropagated.contains(&name),
+            )
         {
             continue;
         }
@@ -5164,15 +5275,43 @@ fn plain_parameter_names(helper: &ast::Fn) -> Vec<String> {
     if rebound { Vec::new() } else { names }
 }
 
+/// Whether an argument of `call` holds a `return`, `break`, `continue` or
+/// `yield`, which may leave before the call is made. Fails closed: one in
+/// a closure argument counts too.
+fn arguments_may_leave(call: &ast::CallExpr) -> bool {
+    call.arg_list().is_some_and(|arguments| {
+        arguments.syntax().descendants().any(|node| {
+            ast::ReturnExpr::can_cast(node.kind())
+                || ast::BreakExpr::can_cast(node.kind())
+                || ast::ContinueExpr::can_cast(node.kind())
+                || ast::YieldExpr::can_cast(node.kind())
+        })
+    })
+}
+
+/// Whether `call`'s value is the operand of a `?` (`check(..)?`), so an
+/// error it returns leaves the test and fails it. [`eager_path`] already
+/// keeps the call out of closures and `async` blocks, so the `?` returns
+/// from the test itself.
+fn propagates_to_test(call: &ast::CallExpr) -> bool {
+    call.syntax()
+        .parent()
+        .is_some_and(|parent| ast::TryExpr::can_cast(parent.kind()))
+}
+
 /// A synchronous helper with no early exit: see [`local_helper_assertions`].
 /// Its return type does not swallow a panic from the borrowed `assert_eq!`,
-/// even if the caller discards a returned `Result`. Fallible macros and `?`
-/// remain refused; their errors could otherwise skip the assertion unnoticed.
+/// even if the caller discards a returned `Result`. Fallible macros remain
+/// refused, and so does a `?` unless `errors_fail_test`: every eager call
+/// of the helper is `check(..)?`, so an error that skips the assertion
+/// fails the test instead of leaving it passing (#14116). A `return` still
+/// refuses: `return Ok(())` skips the assertion without an error.
 fn plain_check_helper(
     helper: &ast::Fn,
     trusted: &[&str],
     empty_macros: &BTreeMap<String, ast::MacroRules>,
     json_uses: &[ast::Use],
+    errors_fail_test: bool,
 ) -> bool {
     let Some(body) = helper.body() else {
         return false;
@@ -5189,7 +5328,8 @@ fn plain_check_helper(
             .param_list()
             .is_some_and(|params| params.self_param().is_none())
         && !body.syntax().descendants().any(|node| {
-            ast::ReturnExpr::can_cast(node.kind()) || ast::TryExpr::can_cast(node.kind())
+            ast::ReturnExpr::can_cast(node.kind())
+                || (ast::TryExpr::can_cast(node.kind()) && !errors_fail_test)
         })
         && has_escape(body.syntax(), trusted, empty_macros, json_uses, false).is_none()
         && supported_item_context(helper.syntax())
@@ -7714,12 +7854,15 @@ fn eager_path(
                 return Err("a `loop` after a `break` or `continue` that can skip it");
             }
         } else if let Some(table) = ast::ForExpr::cast(parent.clone()) {
-            // A `for` over a non-empty table of constant rows runs its body
-            // at least once, like `loop` above (RIPR-SPEC-0197 rule 8). Any
-            // other iterable may be empty and stays refused.
+            // A `for` over a non-empty array runs its body at least once,
+            // like `loop` above (RIPR-SPEC-0197 rule 8), unless a row exits
+            // the process first ([`rows_reach_the_loop`]). Any other iterable
+            // may be empty and stays refused. This admits execution only: an
+            // expected value read from rows that are not constant is refused
+            // through [`opaque_row_names`] (#14116).
             if table.loop_body().is_none_or(|body| body.syntax() != &node)
                 || table.label().is_some()
-                || !constant_row_table(&table, function)
+                || row_array(&table, function, rows_reach_the_loop).is_none()
             {
                 return Err(conditional_construct(&parent));
             }
@@ -7773,18 +7916,22 @@ fn conditional_construct(node: &SyntaxNode) -> &'static str {
     }
 }
 
-/// Whether `table` iterates a non-empty array of constant rows, written
-/// inline (`for row in [..]`, `&[..]`) or bound once by a plain `let` in the
-/// statement list that holds the loop and named nowhere else in the test.
+/// The non-empty array of constant rows `table` iterates, per [`row_array`].
 /// A row is constant when every leaf is a literal, a variant or tuple-struct
 /// constructor, or `vec![..]` of literal tokens: it cannot call the owner,
 /// so an expected value in the row is never the owner's own output.
-fn constant_row_table(table: &ast::ForExpr, function: &ast::Fn) -> bool {
-    constant_row_array(table, function).is_some()
+fn constant_row_array(table: &ast::ForExpr, function: &ast::Fn) -> Option<ast::ArrayExpr> {
+    row_array(table, function, constant_rows)
 }
 
-/// The constant-row array `table` iterates, per [`constant_row_table`].
-fn constant_row_array(table: &ast::ForExpr, function: &ast::Fn) -> Option<ast::ArrayExpr> {
+/// The array `table` iterates when `rows_hold` accepts it: written inline
+/// (`for row in [..]`, `&[..]`) or bound once by a plain `let` in the
+/// statement list that holds the loop and named nowhere else in the test.
+fn row_array(
+    table: &ast::ForExpr,
+    function: &ast::Fn,
+    rows_hold: fn(&ast::ArrayExpr) -> bool,
+) -> Option<ast::ArrayExpr> {
     let mut iterable = table.iterable()?;
     while let ast::Expr::RefExpr(reference) = &iterable {
         if reference.mut_token().is_some() || reference.raw_token().is_some() {
@@ -7793,7 +7940,7 @@ fn constant_row_array(table: &ast::ForExpr, function: &ast::Fn) -> Option<ast::A
         iterable = reference.expr()?;
     }
     match iterable {
-        ast::Expr::ArrayExpr(rows) => constant_rows(&rows).then_some(rows),
+        ast::Expr::ArrayExpr(rows) => rows_hold(&rows).then_some(rows),
         ast::Expr::PathExpr(path) => {
             let name = path
                 .path()
@@ -7801,16 +7948,17 @@ fn constant_row_array(table: &ast::ForExpr, function: &ast::Fn) -> Option<ast::A
                 .and_then(|path| path.segment())
                 .and_then(|segment| segment.name_ref())
                 .map(|name| name.text().to_string())?;
-            bound_constant_rows(table, function, &name)
+            bound_rows(table, function, &name, rows_hold)
         }
         _ => None,
     }
 }
 
-fn bound_constant_rows(
+fn bound_rows(
     table: &ast::ForExpr,
     function: &ast::Fn,
     name: &str,
+    rows_hold: fn(&ast::ArrayExpr) -> bool,
 ) -> Option<ast::ArrayExpr> {
     let scope = table
         .syntax()
@@ -7849,7 +7997,7 @@ fn bound_constant_rows(
                 )
         })
         .find_map(|binding| match binding.initializer() {
-            Some(ast::Expr::ArrayExpr(rows)) if constant_rows(&rows) => Some(rows),
+            Some(ast::Expr::ArrayExpr(rows)) if rows_hold(&rows) => Some(rows),
             _ => None,
         })
 }
@@ -8240,15 +8388,97 @@ fn skip_list(source: &str, name: &str) -> Option<Vec<String>> {
 }
 
 fn constant_rows(rows: &ast::ArrayExpr) -> bool {
-    // `[#[cfg(any())] (4, 0)]` is an empty array: an attribute anywhere in
-    // the rows may remove one, so none is allowed.
+    non_empty_rows(rows) && rows.exprs().all(|row| constant_value(&row))
+}
+
+/// Whether `rows` is a non-empty list array whose rows reach the loop: no
+/// row holds a loop or a call that names a process exit (`exit`, `abort`
+/// or any path through `process`, as `std::process::exit(0)` ends the test
+/// before the loop starts). Other calls are admitted as they are in a
+/// statement before the assertion: a call that panics fails the test, and
+/// the expected-value check keeps a row holding the owner's own output from
+/// counting as a discriminator ([`opaque_row_names`]). An alias of a
+/// process exit in a row is not recognised, as in a `let` initializer.
+fn rows_reach_the_loop(rows: &ast::ArrayExpr) -> bool {
+    non_empty_rows(rows)
+        && !rows.syntax().descendants().any(|node| {
+            ast::LoopExpr::can_cast(node.kind())
+                || ast::WhileExpr::can_cast(node.kind())
+                || ast::ForExpr::can_cast(node.kind())
+                || ast::CallExpr::cast(node)
+                    .and_then(|call| call.expr())
+                    .is_some_and(|callee| {
+                        let path: String = callee
+                            .syntax()
+                            .text()
+                            .to_string()
+                            .split_whitespace()
+                            .collect();
+                        let leaf = path.rsplit("::").next().unwrap_or(&path);
+                        matches!(leaf, "exit" | "abort")
+                            || path.split("::").any(|segment| segment == "process")
+                    })
+        })
+}
+
+/// The names a test binds from loop rows that are not constant: every name
+/// in the pattern of a `for` whose body [`eager_path`] admits over rows
+/// that are not constant, and every name a `let` inside such
+/// a loop's body binds. A row may hold the owner's own output (`const
+/// EXPECTED: u32 = weight(4);` in `for want in [EXPECTED]`), so the
+/// owner-return pin refuses an expected operand naming one of them; a
+/// constant-row table's names stay readable (#14116).
+pub(crate) fn opaque_row_names(fn_text: &str) -> Vec<String> {
+    if !fn_text.contains("for") {
+        return Vec::new();
+    }
+    let Some(parse) = parse_clean_source_file(fn_text) else {
+        return Vec::new();
+    };
+    let Some(function) = parse.tree().syntax().descendants().find_map(ast::Fn::cast) else {
+        return Vec::new();
+    };
+    let mut names = Vec::new();
+    for table in function
+        .syntax()
+        .descendants()
+        .filter_map(ast::ForExpr::cast)
+    {
+        if row_array(&table, &function, rows_reach_the_loop).is_none()
+            || row_array(&table, &function, constant_rows).is_some()
+        {
+            continue;
+        }
+        let pattern = table.pat().map(|pat| pat.syntax().clone());
+        let lets = table
+            .loop_body()
+            .into_iter()
+            .flat_map(|body| body.syntax().descendants().filter_map(ast::LetStmt::cast))
+            .filter_map(|binding| binding.pat().map(|pat| pat.syntax().clone()));
+        for scope in pattern.into_iter().chain(lets) {
+            names.extend(
+                scope
+                    .descendants()
+                    .filter_map(ast::IdentPat::cast)
+                    .filter_map(|ident| ident.name())
+                    .map(|name| name.text().trim_start_matches("r#").to_string()),
+            );
+        }
+    }
+    names
+}
+
+/// Whether `rows` is a list array with at least one element that no
+/// attribute can remove: `[#[cfg(any())] (4, 0)]` is an empty array, so an
+/// attribute anywhere in the rows refuses, as does a repeat array
+/// (`[r; n]`, whose count may be zero).
+fn non_empty_rows(rows: &ast::ArrayExpr) -> bool {
     !rows
         .syntax()
         .descendants()
         .any(|node| ast::Attr::can_cast(node.kind()))
         && rows.semicolon_token().is_none()
         && rows.exprs().next().is_some()
-        && rows.exprs().all(|row| constant_value(&row))
 }
 
 fn constant_value(value: &ast::Expr) -> bool {

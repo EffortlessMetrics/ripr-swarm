@@ -318,13 +318,17 @@ fn load_review_comments_analysis_outcome(
     };
     let text = crate::bounded_input::read_artifact_text(path).map_err(|error| {
         format!(
-            "review-comments --check-output {} is invalid: read failed: {error}",
-            path.display()
+            "review-comments --check-output {} {}",
+            path.display(),
+            crate::bounded_input::unreadable_input_phrase(
+                &error,
+                "pass the file written by `ripr check --json`"
+            )
         )
     })?;
     let value: serde_json::Value = serde_json::from_str(&text).map_err(|error| {
         format!(
-            "review-comments --check-output {} is invalid: JSON parse failed: {error}",
+            "review-comments --check-output {} is not valid JSON ({error}); pass the file written by `ripr check --json`",
             path.display()
         )
     })?;
@@ -477,13 +481,17 @@ fn load_check_output_suppressed_findings(
 ) -> Result<Vec<output::review_comments::CheckOutputSuppressedFinding>, String> {
     let text = crate::bounded_input::read_artifact_text(path).map_err(|error| {
         format!(
-            "review-comments --check-output {} is invalid: read failed: {error}",
-            path.display()
+            "review-comments --check-output {} {}",
+            path.display(),
+            crate::bounded_input::unreadable_input_phrase(
+                &error,
+                "pass the file written by `ripr check --json`"
+            )
         )
     })?;
     let document: serde_json::Value = serde_json::from_str(&text).map_err(|error| {
         format!(
-            "review-comments --check-output {} is invalid: JSON parse failed: {error}",
+            "review-comments --check-output {} is not valid JSON ({error}); pass the file written by `ripr check --json`",
             path.display()
         )
     })?;
@@ -621,8 +629,12 @@ fn review_comments_with_admission(
                     &receipt_path,
                     "configuration",
                     format!(
-                        "review-comments --gap-ledger {} is invalid: read failed: {err}",
-                        output::pr_inline_comment_publish_plan::display_path(gap_ledger)
+                        "review-comments --gap-ledger {} {}",
+                        output::pr_inline_comment_publish_plan::display_path(gap_ledger),
+                        crate::bounded_input::unreadable_input_phrase(
+                            &err,
+                            "pass the file written by `ripr reports gap-ledger`"
+                        )
                     ),
                 )
             })?;
@@ -1234,7 +1246,7 @@ fn parse_review_comments_options(args: &[String]) -> Result<ReviewCommentsOption
                 if value.trim().is_empty() {
                     return Err(crate::cli::usage_refusal::empty_value(
                         "--gap-ledger",
-                        "review-comments --gap-ledger requires a non-empty path",
+                        "review-comments --gap-ledger requires a non-empty path; pass a path right after it (an empty value usually means an unset shell variable)",
                     ));
                 }
                 gap_ledger = Some(PathBuf::from(value));
@@ -1245,7 +1257,7 @@ fn parse_review_comments_options(args: &[String]) -> Result<ReviewCommentsOption
                 if value.trim().is_empty() {
                     return Err(crate::cli::usage_refusal::empty_value(
                         "--check-output",
-                        "review-comments --check-output requires a non-empty path",
+                        "review-comments --check-output requires a non-empty path; pass a path right after it (an empty value usually means an unset shell variable)",
                     ));
                 }
                 check_output = Some(PathBuf::from(value));
@@ -1254,10 +1266,10 @@ fn parse_review_comments_options(args: &[String]) -> Result<ReviewCommentsOption
                 i += 1;
                 let value = expect_value(args, i, "--suppression-policy")?;
                 if value.trim().is_empty() {
-                    return Err(
-                        "review-comments --suppression-policy requires a non-empty path"
-                            .to_string(),
-                    );
+                    return Err(crate::cli::usage_refusal::empty_value(
+                        "--suppression-policy",
+                        "review-comments --suppression-policy requires a non-empty path; pass a path right after it (an empty value usually means an unset shell variable)",
+                    ));
                 }
                 suppression_policy = Some(PathBuf::from(value));
             }
@@ -1267,7 +1279,7 @@ fn parse_review_comments_options(args: &[String]) -> Result<ReviewCommentsOption
                 if value.trim().is_empty() {
                     return Err(crate::cli::usage_refusal::empty_value(
                         "--out",
-                        "review-comments --out requires a non-empty path",
+                        "review-comments --out requires a non-empty path; pass a path right after it (an empty value usually means an unset shell variable)",
                     ));
                 }
                 out = Some(PathBuf::from(value));
@@ -1630,7 +1642,7 @@ mod tests {
                 " ",
             ]))
             .map(|_| ()),
-            Err("review-comments --suppression-policy requires a non-empty path".to_string())
+            Err("review-comments --suppression-policy requires a non-empty path; pass a path right after it (an empty value usually means an unset shell variable)".to_string())
         );
     }
 
@@ -1664,7 +1676,7 @@ mod tests {
             parse_review_comments_options(&args(&[
                 "--base", "main", "--head", "HEAD", "--out", "",
             ])),
-            Err("review-comments --out requires a non-empty path".to_string())
+            Err("review-comments --out requires a non-empty path; pass a path right after it (an empty value usually means an unset shell variable)".to_string())
         );
         assert_eq!(
             parse_review_comments_options(&args(&[
@@ -1675,7 +1687,7 @@ mod tests {
                 "--gap-ledger",
                 "",
             ])),
-            Err("review-comments --gap-ledger requires a non-empty path".to_string())
+            Err("review-comments --gap-ledger requires a non-empty path; pass a path right after it (an empty value usually means an unset shell variable)".to_string())
         );
         assert_eq!(
             parse_review_comments_options(&args(&[
@@ -1686,7 +1698,7 @@ mod tests {
                 "--check-output",
                 "",
             ])),
-            Err("review-comments --check-output requires a non-empty path".to_string())
+            Err("review-comments --check-output requires a non-empty path; pass a path right after it (an empty value usually means an unset shell variable)".to_string())
         );
         assert_eq!(
             parse_review_comments_options(&args(&["--base", "main", "--head", "HEAD", "--bad"])),
@@ -2926,7 +2938,8 @@ mod tests {
             Err(err) => err,
         };
         assert!(read_err.contains("review-comments --gap-ledger"));
-        assert!(read_err.contains("read failed"));
+        assert!(read_err.contains("does not exist"), "{read_err}");
+        assert!(!read_err.contains("os error"), "{read_err}");
 
         // Pin the read-failure receipt before the next run overwrites it.
         let receipt_path = out.with_file_name("run-receipt.json");

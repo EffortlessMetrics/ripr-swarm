@@ -308,6 +308,25 @@ impl Counter {
     }
 }
 
+pub fn tier(qty: u32) -> (u32, &'static str) {
+    if qty > 30 { (20, "bulk") } else { (0, "retail") }
+}
+
+pub const MIN_NAME: usize = 3;
+
+pub fn name_ok(s: &str) -> bool {
+    let n = s.chars().count();
+    n > MIN_NAME
+}
+
+pub fn longer<'a>(a: &'a str, b: &'a str) -> &'a str {
+    if a.len() > b.len() { a } else { b }
+}
+
+pub fn fee(amount: i64, rate: u32) -> i64 {
+    if rate > 500 { amount } else { 0 }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum State {
     Idle,
@@ -362,6 +381,11 @@ mod tests {
     fn drains() {
         let mut b = Bucket::new(5);
         assert!(b.allow(2));
+    }
+
+    #[test]
+    fn charges() {
+        assert_eq!(fee(-3, 900), -3);
     }
 }
 "#;
@@ -487,6 +511,24 @@ fn written_stubs_compile_and_stop_at_their_own_todo() -> Result<(), String> {
             "sum > cap",
             Expect::BuildsReceiver("let subject: Ledger = Ledger::empty();"),
         ),
+        // The written input decides the path to a constant: the expected
+        // fill-in names both candidates and still stops the test (#8361).
+        (
+            "qty > 30",
+            Expect::WritesInput(
+                r#"the changed code returns (0, \"retail\"); with `>=` it returns (20, \"bulk\")"#,
+            ),
+        ),
+        // A boundary on a `&str` length writes a string of that length,
+        // through a local bound from `.chars().count()` or between two
+        // parameters (#8361).
+        (
+            "n > MIN_NAME",
+            Expect::WritesInput("let s: &str = \"xxx\";"),
+        ),
+        ("a.len() > b.len()", Expect::WritesInput("= \"cd\";")),
+        // The boundary's other input comes from an existing test's call.
+        ("rate > 500", Expect::WritesInput("let amount: i64 = -3;")),
         // A match arm's own pattern names the event that reaches it.
         (
             "(State::Running, Event::Fail) =>",

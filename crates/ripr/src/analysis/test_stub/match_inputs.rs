@@ -391,7 +391,7 @@ fn distinct(a: &Value, b: &Value) -> bool {
 /// item of the name, a rename to it, an import of it other than through
 /// `super::` or `self::`, a glob import other than `super::*` / `self::*`,
 /// or an item-position macro call or macro definition that mentions it.
-fn unit_variants(file: &SourceFile, name: &str) -> Option<Vec<String>> {
+pub(super) fn unit_variants(file: &SourceFile, name: &str) -> Option<Vec<String>> {
     let mut found = None;
     for node in file.syntax().descendants() {
         let kind = node.kind();
@@ -469,7 +469,7 @@ fn unit_variants(file: &SourceFile, name: &str) -> Option<Vec<String>> {
 
 /// The segments of a leaf use tree's full path, outermost first, with `*`
 /// for a glob.
-fn full_use_path(tree: &ast::UseTree) -> Vec<String> {
+pub(super) fn full_use_path(tree: &ast::UseTree) -> Vec<String> {
     let mut segments = Vec::new();
     let mut current = Some(tree.clone());
     while let Some(tree) = current {
@@ -499,7 +499,7 @@ fn full_use_path(tree: &ast::UseTree) -> Vec<String> {
 /// `_`, or a plain lowercase binding. A bare identifier can also name a
 /// constant or an imported unit variant (`RUNNING`), so an uppercase one, or
 /// one the file declares as a `const` or `static`, does not count.
-fn catches_all(pat: &ast::Pat, file: &SourceFile) -> bool {
+pub(super) fn catches_all(pat: &ast::Pat, file: &SourceFile) -> bool {
     match pat {
         ast::Pat::WildcardPat(_) => true,
         ast::Pat::IdentPat(ident) => {
@@ -527,6 +527,11 @@ fn catches_all(pat: &ast::Pat, file: &SourceFile) -> bool {
 /// (a `let`, closure or pattern binding), assigns it, or names it inside a
 /// macro call.
 fn unstable_before(owner: &ast::Fn, name: &str, match_expr: &ast::MatchExpr) -> bool {
+    unstable_before_offset(owner, name, match_expr.syntax().text_range().start())
+}
+
+/// [`unstable_before`] for any position `start` in the owner's body.
+pub(super) fn unstable_before_offset(owner: &ast::Fn, name: &str, start: TextSize) -> bool {
     let Some(body) = owner.body() else {
         return true;
     };
@@ -556,7 +561,6 @@ fn unstable_before(owner: &ast::Fn, name: &str, match_expr: &ast::MatchExpr) -> 
     if declared_mut || local_item {
         return true;
     }
-    let start = match_expr.syntax().text_range().start();
     body.syntax()
         .descendants()
         .filter(|node| node.text_range().start() < start)
@@ -575,7 +579,7 @@ fn binds_or_assigns(node: &SyntaxNode, name: &str) -> bool {
 }
 
 /// Whether an identifier token spelled `name` appears under `node`.
-fn mentions(node: &SyntaxNode, name: &str) -> bool {
+pub(super) fn mentions(node: &SyntaxNode, name: &str) -> bool {
     node.descendants_with_tokens()
         .filter_map(|element| element.into_token())
         .any(|token| token.kind() == SyntaxKind::IDENT && unraw(token.text()) == unraw(name))
@@ -583,7 +587,7 @@ fn mentions(node: &SyntaxNode, name: &str) -> bool {
 
 /// An integer literal's value: optional `-`, `0x`/`0o`/`0b` radix,
 /// underscores and a type suffix.
-fn parse_integer(text: &str) -> Option<i128> {
+pub(super) fn parse_integer(text: &str) -> Option<i128> {
     let text: String = text
         .chars()
         .filter(|c| !c.is_whitespace() && *c != '_')
@@ -631,7 +635,7 @@ fn is_integer_type(ty: &str) -> bool {
 }
 
 /// `&str` or `&'a str`, as written.
-fn is_str_ref(raw: &str) -> bool {
+pub(super) fn is_str_ref(raw: &str) -> bool {
     let Some(rest) = raw.trim().strip_prefix('&') else {
         return false;
     };
@@ -644,7 +648,7 @@ fn is_str_ref(raw: &str) -> bool {
 }
 
 /// An identifier without its `r#` raw prefix, for comparing names.
-fn unraw(name: &str) -> &str {
+pub(super) fn unraw(name: &str) -> &str {
     name.strip_prefix("r#").unwrap_or(name)
 }
 

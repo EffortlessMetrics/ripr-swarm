@@ -1,7 +1,8 @@
 use super::actions::{SERVER_EXECUTED_COMMANDS, code_action_response, resolve_action};
 use super::backend::{
     Backend, RefreshLogSummary, WatchedFileChanges, deadline_exceeded_log_message,
-    refresh_completed_log_message, refresh_failed_log_message, workspace_input_path_is_relevant,
+    disclosed_staleness_reason, refresh_completed_log_message, refresh_failed_log_message,
+    workspace_input_path_is_relevant,
 };
 use super::capabilities::{
     ADVERTISED_CODE_ACTION_KINDS, WorkspaceRootResolution, initialize_result,
@@ -9363,7 +9364,7 @@ fn seam_code_actions_keep_legacy_finding_context_when_both_diagnostics_are_prese
 /// keeps the omission; a full (non-deferred) snapshot and an exposed
 /// finding never get the inert start.
 #[test]
-fn deferred_seam_snapshot_lists_an_inert_start_naming_the_full_refresh() -> Result<(), String> {
+fn snapshot_without_spot_inventory_lists_an_inert_start_naming_the_blocker() -> Result<(), String> {
     let finding = sample_finding();
     assert!(finding.is_candidate_actionable());
     let finding_diagnostic = diagnostic_for_finding(Path::new("/workspace"), &finding);
@@ -9465,17 +9466,77 @@ fn deferred_seam_snapshot_lists_an_inert_start_naming_the_full_refresh() -> Resu
 
     // Under a configuration whose full refresh builds no spots (the default
     // actionable profile, or spot diagnostics off) the refresh would not
-    // bring a start back, so none is promised.
-    let mut no_inventory = snapshot.clone();
-    no_inventory.seam_inventory_on_full_refresh = false;
-    let no_inventory_actions = code_action_response(&params, Some(&no_inventory), &disabled_client);
-    let no_inventory_literals = code_action_literals(&no_inventory_actions)?;
-    assert!(
-        no_inventory_literals
+    // bring a start back: the start names the setting instead, deferred or
+    // not. While a refresh runs (often the one a setting change started) the
+    // retained start says to wait instead.
+    for deferred in [true, false] {
+        let mut no_inventory = snapshot.clone();
+        no_inventory.seams_deferred = deferred;
+        no_inventory.seam_inventory_on_full_refresh = false;
+        let no_inventory_actions =
+            code_action_response(&params, Some(&no_inventory), &disabled_client);
+        let no_inventory_literals = code_action_literals(&no_inventory_actions)?;
+        let blocked = no_inventory_literals
             .iter()
-            .all(|action| action.title != start_title),
-        "{no_inventory_literals:?}"
-    );
+            .find(|action| action.title == start_title)
+            .ok_or_else(|| format!("the settings-blocked start: {no_inventory_literals:?}"))?;
+        assert!(blocked.command.is_none(), "{blocked:?}");
+        let blocked_data = blocked.data.as_ref().ok_or("blocked start data")?;
+        assert_eq!(
+            blocked_data["disabled_reason"],
+            "seam_inventory_not_enabled"
+        );
+        let reason = blocked
+            .disabled
+            .as_ref()
+            .map(|disabled| disabled.reason.as_str())
+            .unwrap_or_default();
+        // The full text is pinned: the VS Code e2e mocks this exact string.
+        assert_eq!(
+            reason,
+            "Your ripr settings skip repair spots, so there is no repair start here; set ripr.diagnosticProfile to \"full\" and ripr.seamDiagnostics to true in your editor settings (diagnostic_profile and seam_diagnostics under [lsp] in ripr.toml apply only where no editor setting overrides them, and \"rust\" must be enabled under [languages]), then run \"ripr: Refresh Full Analysis\"."
+        );
+        let mut retained = no_inventory_actions.clone();
+        super::actions::disable_retained_analysis_actions(
+            &mut retained,
+            &AnalysisHealth {
+                state: AnalysisAttemptState::Running,
+                ..AnalysisHealth::default()
+            },
+        );
+        let retained_literals = code_action_literals(&retained)?;
+        let retained_start = retained_literals
+            .iter()
+            .find(|action| action.title == start_title)
+            .ok_or("retained settings-blocked start")?;
+        let retained_data = retained_start.data.as_ref().ok_or("retained data")?;
+        assert_eq!(retained_data["disabled_reason"], "analysis_not_current");
+        // A client without disabled support keeps the legacy omission.
+        let legacy = code_action_commands(&code_action_response(
+            &params,
+            Some(&no_inventory),
+            &vscode_client_features()?,
+        ))?;
+        assert!(
+            legacy.iter().all(|(title, _, _)| title != start_title),
+            "{legacy:?}"
+        );
+        // A gap record in the same request carries its own repair-packet
+        // actions, so the finding adds no inert start beside them.
+        let mut gap_record = finding_diagnostic.clone();
+        gap_record.data = Some(serde_json::json!({ "gap_id": "gap:0011223344556677" }));
+        let with_gap = code_action_params(vec![finding_diagnostic.clone(), gap_record])?;
+        let with_gap_actions =
+            code_action_response(&with_gap, Some(&no_inventory), &disabled_client);
+        let with_gap_literals = code_action_literals(&with_gap_actions)?;
+        assert!(
+            with_gap_literals.iter().all(|action| action
+                .data
+                .as_ref()
+                .is_none_or(|data| data["disabled_reason"] != "seam_inventory_not_enabled")),
+            "{with_gap_literals:?}"
+        );
+    }
     // A non-Rust finding gets no spot start from a full refresh either.
     let mut python = snapshot.clone();
     python.findings[0].language = Some(crate::domain::LanguageId::Python);
@@ -12805,6 +12866,301 @@ fn framed_lsp_rejected_pulled_settings_warn_naming_each_key_and_accepted_values(
         .await;
         server_task.abort();
         outcome
+    })
+}
+
+/// #15312, push half: a client without `workspace/configuration` pushes its
+/// settings, and the push path ignores a malformed value. The rejection must
+/// reach the log and the screen with the key, the accepted values and the
+/// value received; a second typo in the same key warns again; a verbatim
+/// re-push does not; a payload that cannot carry a ripr section is reported
+/// instead of dropped.
+#[test]
+#[serial]
+fn framed_lsp_rejected_pushed_settings_warn_naming_key_and_accepted_values_per_mistake()
+-> Result<(), String> {
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .map_err(|err| format!("failed to start test runtime: {err}"))?;
+
+    runtime.block_on(async {
+        let root = unique_lsp_test_root("framed-config-push-rejected")?;
+        let root_uri = file_uri_for_path(root.path())?;
+        let (client_io, server_io) = tokio::io::duplex(1024 * 1024);
+        let (mut client_read, mut client_write) = tokio::io::split(client_io);
+        let (server_read, server_write) = tokio::io::split(server_io);
+        let (service, socket) = LspService::new(|client| Backend::new(client, PathBuf::from(".")));
+        let server_task = tokio::spawn(async move {
+            Server::new(server_read, server_write, socket)
+                .serve(service)
+                .await;
+        });
+        let outcome = tokio::time::timeout(std::time::Duration::from_mins(2), async {
+            write_lsp_message(
+                &mut client_write,
+                serde_json::json!({
+                    "jsonrpc": "2.0",
+                    "id": 1,
+                    "method": "initialize",
+                    "params": {
+                        "processId": null,
+                        "rootUri": root_uri.as_str(),
+                        "capabilities": {}
+                    }
+                }),
+            )
+            .await?;
+            read_lsp_response(&mut client_read, 1).await?;
+            write_lsp_message(
+                &mut client_write,
+                serde_json::json!({"jsonrpc": "2.0", "method": "initialized", "params": {}}),
+            )
+            .await?;
+            // The logged and shown copies of the next pushed-settings warning.
+            async fn pushed_warning(
+                client_read: &mut (impl tokio::io::AsyncRead + Unpin),
+            ) -> Result<[String; 2], String> {
+                let mut logged = None;
+                let mut shown = None;
+                loop {
+                    if let (Some(logged), Some(shown)) = (&logged, &shown) {
+                        return Ok([String::clone(logged), String::clone(shown)]);
+                    }
+                    let message = tokio::time::timeout(
+                        std::time::Duration::from_secs(10),
+                        read_lsp_message(client_read),
+                    )
+                    .await
+                    .map_err(|elapsed| {
+                        format!(
+                            "no pushed-settings warning arrived ({elapsed}): logged={logged:?} shown={shown:?}"
+                        )
+                    })??;
+                    let text = message["params"]["message"]
+                        .as_str()
+                        .unwrap_or_default()
+                        .to_string();
+                    if !text.contains("ignored pushed ripr settings") {
+                        continue;
+                    }
+                    match message["method"].as_str() {
+                        Some("window/logMessage") => logged = Some(text),
+                        Some("window/showMessage") => shown = Some(text),
+                        _ => {}
+                    }
+                }
+            }
+            let push = |settings: serde_json::Value| {
+                serde_json::json!({
+                    "jsonrpc": "2.0",
+                    "method": "workspace/didChangeConfiguration",
+                    "params": {"settings": settings}
+                })
+            };
+            let require_texts = |texts: &[String; 2], needles: &[&str]| {
+                for text in texts {
+                    for needle in needles {
+                        if !text.contains(needle) {
+                            return Err(format!("warning must contain {needle}: {text}"));
+                        }
+                    }
+                }
+                Ok::<(), String>(())
+            };
+
+            write_lsp_message(
+                &mut client_write,
+                push(serde_json::json!({"ripr": {"checkMode": "depe", "unrelatedKey": 1}})),
+            )
+            .await?;
+            let first = pushed_warning(&mut client_read).await?;
+            require_texts(
+                &first,
+                &[
+                    "`checkMode`",
+                    "\"instant\", \"draft\", \"fast\", \"deep\" or \"ready\"",
+                    "got \"depe\"",
+                    "keeps its repository or default value",
+                ],
+            )?;
+            if first.iter().any(|text| {
+                text.contains("unrelatedKey") || text.contains("initializationOption")
+            }) {
+                return Err(format!("wrong subject in the pushed warning: {first:?}"));
+            }
+
+            // A second typo in the same key is a new mistake and warns again.
+            write_lsp_message(
+                &mut client_write,
+                push(serde_json::json!({"ripr": {"checkMode": "deeep"}})),
+            )
+            .await?;
+            let second = pushed_warning(&mut client_read).await?;
+            require_texts(&second, &["`checkMode`", "got \"deeep\""])?;
+
+            // A verbatim re-push of the unrepaired mistake is not shown again:
+            // the next warning the client reads is the shape one below. A
+            // payload that cannot carry a ripr section is reported.
+            write_lsp_message(
+                &mut client_write,
+                push(serde_json::json!({"ripr": {"checkMode": "deeep"}})),
+            )
+            .await?;
+            write_lsp_message(&mut client_write, push(serde_json::json!("instant"))).await?;
+            let shape = pushed_warning(&mut client_read).await?;
+            require_texts(
+                &shape,
+                &["must be an object of ripr settings", "got \"instant\""],
+            )?;
+            if shape.iter().any(|text| text.contains("deeep")) {
+                return Err(format!("the verbatim re-push must not warn again: {shape:?}"));
+            }
+
+            // The unrepaired mistake stays in force through a push of
+            // another server's settings, so re-pushing it verbatim afterwards
+            // is still not shown: the next warning is the array shape.
+            write_lsp_message(
+                &mut client_write,
+                push(serde_json::json!({"editor": {"formatOnSave": true}})),
+            )
+            .await?;
+            write_lsp_message(
+                &mut client_write,
+                push(serde_json::json!({"ripr": {"checkMode": "deeep"}})),
+            )
+            .await?;
+            write_lsp_message(&mut client_write, push(serde_json::json!(["a"]))).await?;
+            let still_retained = pushed_warning(&mut client_read).await?;
+            require_texts(&still_retained, &["must be an object of ripr settings"])?;
+            if still_retained.iter().any(|text| text.contains("deeep")) {
+                return Err(format!(
+                    "a retained mistake must not warn again after an unrelated push: {still_retained:?}"
+                ));
+            }
+
+            // A repair clears the mistake from the retained layer, so making
+            // it again warns again.
+            write_lsp_message(
+                &mut client_write,
+                push(serde_json::json!({"ripr": {"checkMode": "fast"}})),
+            )
+            .await?;
+            write_lsp_message(
+                &mut client_write,
+                push(serde_json::json!({"ripr": {"checkMode": "deeep"}})),
+            )
+            .await?;
+            let again = pushed_warning(&mut client_read).await?;
+            require_texts(&again, &["`checkMode`", "got \"deeep\""])?;
+            Ok::<(), String>(())
+        })
+        .await
+        .map_err(|elapsed| format!("pushed-settings sequence did not finish ({elapsed})"))
+        .and_then(|outcome| outcome);
+        server_task.abort();
+        outcome
+    })
+}
+
+#[test]
+#[serial]
+fn pushed_settings_commit_before_their_warning_waits_on_a_wedged_client() -> Result<(), String> {
+    // #15312 review: a push commits its settings before it awaits warning
+    // egress. If the warning went first, an older invalid push suspended on
+    // a slow client could resume after a newer repair of the same key and
+    // overwrite it. Hold the capacity-1 client channel full with the peer
+    // socket undriven, then require each blocked push to have already
+    // committed its value.
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .start_paused(true)
+        .build()
+        .map_err(|err| format!("failed to start test runtime: {err}"))?;
+    runtime.block_on(async {
+        use tower::Service as _;
+        let root = unique_lsp_test_root("pushed-settings-wedged-egress")?;
+        let (mut service, _socket) = build_service(
+            PathBuf::from("."),
+            super::transport_bounds::CLIENT_REQUEST_TIMEOUT,
+        );
+        // Initialize through the service so client deliveries are no longer
+        // suppressed and reach the real capacity-1 channel.
+        let initialized = tower::ServiceExt::ready(&mut service)
+            .await
+            .map_err(|err| format!("service never became ready: {err:?}"))?
+            .call(
+                tower_lsp_server::jsonrpc::Request::build("initialize")
+                    .params(
+                        serde_json::to_value(initialize_params(
+                            None,
+                            Some(file_uri_for_path(root.path())?),
+                        ))
+                        .map_err(|err| format!("initialize params serialize failed: {err}"))?,
+                    )
+                    .id(1)
+                    .finish(),
+            )
+            .await
+            .map_err(|err| format!("initialize failed: {err:?}"))?;
+        if initialized
+            .as_ref()
+            .and_then(|response| response.error())
+            .is_some()
+        {
+            return Err("initialize must succeed".to_string());
+        }
+        let backend = service.inner();
+        let held = |backend: &Backend| {
+            backend
+                .analysis_config()
+                .and_then(|config| config.session_options)
+                .and_then(|options| options.get("checkMode").cloned())
+        };
+        // Each invalid push warns; push distinct invalid values until one
+        // blocks on egress. Every push, blocked or not, must already hold
+        // its own value.
+        let mut blocked = false;
+        for attempt in 0..16 {
+            let value = format!("wedged-{attempt}");
+            let finished = tokio::time::timeout(
+                Duration::from_secs(5),
+                backend.apply_session_configuration_change_for_test(
+                    &serde_json::json!({"ripr": {"checkMode": value}}),
+                ),
+            )
+            .await
+            .is_ok();
+            if held(backend) != Some(serde_json::json!(value)) {
+                return Err(format!(
+                    "push {attempt} must commit `{value}` before awaiting client egress; held {:?}",
+                    held(backend)
+                ));
+            }
+            if !finished {
+                blocked = true;
+                break;
+            }
+        }
+        if !blocked {
+            return Err("the undriven client channel never filled".to_string());
+        }
+        // A newer valid push of the same key also commits while the client
+        // stays wedged.
+        let _ = tokio::time::timeout(
+            Duration::from_secs(5),
+            backend.apply_session_configuration_change_for_test(
+                &serde_json::json!({"ripr": {"checkMode": "fast"}}),
+            ),
+        )
+        .await;
+        if held(backend) != Some(serde_json::json!("fast")) {
+            return Err(format!(
+                "the repair must be committed: held {:?}",
+                held(backend)
+            ));
+        }
+        Ok(())
     })
 }
 
@@ -25525,6 +25881,103 @@ async fn external_rewrite_reloaded_into_a_buffer_is_analyzed_without_a_save() ->
 }
 
 #[tokio::test]
+async fn out_of_root_document_names_the_root_instead_of_save_then_refresh() -> Result<(), String> {
+    // A document from a second repository (outside the selected root) can
+    // never get an analyzed baseline: analysis covers only the selected
+    // root, so "save the file, then refresh" is a route that cannot work.
+    // The served marker must name the out-of-root cause and its route, while
+    // a never-analyzed file inside the root keeps the save-then-refresh route.
+    let fixture = quarantine_fixture("out-of-root-marker")?;
+    let other = unique_lsp_test_root("out-of-root-marker-other")?;
+    let other_file = other.path().join("lib.rs");
+    std::fs::write(&other_file, QUARANTINE_TEXT_B)
+        .map_err(|err| format!("write other file failed: {err}"))?;
+    let (service, socket) = LspService::new(|client| Backend::new(client, fixture.root.clone()));
+    drop(socket);
+    let backend = service.inner();
+    backend
+        .initialize(initialize_params(
+            None,
+            Some(
+                file_uri_for_path(&fixture.root)
+                    .map_err(|err| format!("root URI failed: {err}"))?,
+            ),
+        ))
+        .await
+        .map_err(|err| format!("initialize failed: {err}"))?;
+    let outside = file_uri_for_path(&other_file).map_err(|err| format!("URI failed: {err}"))?;
+    let inside = file_uri_for_path(&fixture.root.join("src").join("new_file.rs"))
+        .map_err(|err| format!("new file URI failed: {err}"))?;
+    backend
+        .did_open(quarantine_open_params(&outside, QUARANTINE_TEXT_B))
+        .await;
+    backend
+        .did_open(quarantine_open_params(&inside, QUARANTINE_TEXT_A))
+        .await;
+    commit_quarantine_snapshot(backend, &fixture, QUARANTINE_TEXT_A)?;
+    match backend.document_quarantine(&outside) {
+        Some((_, DocumentStalenessReason::OutsideAnalyzedRoot)) => {}
+        other => {
+            return Err(format!(
+                "outside document must disclose out-of-root, got {other:?}"
+            ));
+        }
+    }
+    match backend.document_quarantine(&inside) {
+        Some((_, DocumentStalenessReason::NoAnalyzedSavedContent)) => {}
+        other => return Err(format!("inside new file keeps its reason, got {other:?}")),
+    }
+    let report = pull_document_json(backend, &outside, None).await?;
+    let marker = &report["items"][0];
+    let message = marker["message"].as_str().unwrap_or_default();
+    if marker["data"]["reason"] != "outside_analyzed_root"
+        || marker["data"]["recovery"] != "open_repository_in_own_session"
+        || !message.contains("outside the analyzed workspace root")
+        || !message.contains("open this file's repository in its own editor window or session")
+        || message.contains("Save the file")
+        || message.contains("no analyzed baseline")
+    {
+        return Err(format!(
+            "out-of-root marker must name the root route: {report}"
+        ));
+    }
+    if !report["resultId"]
+        .as_str()
+        .is_some_and(|id| id.ends_with(":outside_analyzed_root:quarantined"))
+    {
+        return Err(format!(
+            "out-of-root result id must carry its reason: {report}"
+        ));
+    }
+    let inside_report = pull_document_json(backend, &inside, None).await?;
+    if inside_report["items"][0]["data"]["reason"] != "no_analyzed_saved_content"
+        || inside_report["items"][0]["data"]["recovery"] != "save_then_refresh"
+    {
+        return Err(format!(
+            "inside new file keeps save-then-refresh: {inside_report}"
+        ));
+    }
+    // #15462 review: workspace status (read by agents and MCP) discloses the
+    // same reason as the pull marker, not the stored save-then-refresh one.
+    let status = workspace_status_json(backend).await?;
+    for (uri, expected) in [
+        (&outside, "outside_analyzed_root"),
+        (&inside, "no_analyzed_saved_content"),
+    ] {
+        let entry = open_document_entry(&status, uri.as_str())?;
+        if entry
+            .get("staleness_reason")
+            .and_then(serde_json::Value::as_str)
+            != Some(expected)
+        {
+            return Err(format!("status must disclose {expected}: {entry}"));
+        }
+    }
+    drop(other);
+    Ok(())
+}
+
+#[tokio::test]
 async fn hover_without_evidence_routes_an_unanalyzed_file_to_refresh() -> Result<(), String> {
     // A document with no analyzed saved content (here a new file that is
     // not on disk yet, so no refresh can record a baseline for it) is
@@ -37106,4 +37559,35 @@ fn hover_names_a_head_only_arm_result() -> Result<(), String> {
         return Err(format!("off-line sink was joined:\n{hover}"));
     }
     Ok(())
+}
+
+#[test]
+fn non_file_document_keeps_save_then_refresh_outside_a_root() {
+    let root = std::env::temp_dir().join("ripr-15462-root");
+    let untitled = Path::new("untitled:Untitled-1");
+    assert_eq!(
+        disclosed_staleness_reason(
+            Some(&root),
+            untitled,
+            DocumentStalenessReason::NoAnalyzedSavedContent,
+        ),
+        DocumentStalenessReason::NoAnalyzedSavedContent,
+    );
+    let outside = std::env::temp_dir().join("ripr-15462-other").join("lib.rs");
+    assert_eq!(
+        disclosed_staleness_reason(
+            Some(&root),
+            &outside,
+            DocumentStalenessReason::NoAnalyzedSavedContent,
+        ),
+        DocumentStalenessReason::OutsideAnalyzedRoot,
+    );
+    assert_eq!(
+        disclosed_staleness_reason(
+            None,
+            &outside,
+            DocumentStalenessReason::NoAnalyzedSavedContent
+        ),
+        DocumentStalenessReason::NoAnalyzedSavedContent,
+    );
 }

@@ -474,9 +474,9 @@ fn inventory_classified_seams_report_collect(
         key.seam_limit_key.push_str(&format!("_repair_{ceiling}"));
         key
     };
-    let load = |key: RepoSeamCacheKey| {
+    let load = |key: &RepoSeamCacheKey| {
         let started = Instant::now();
-        let ordinary = reject_stand_in_entry(cache.load_classified_seams_with_fallback(&key));
+        let ordinary = reject_stand_in_entry(cache.load_classified_seams_with_fallback(key));
         if let Some(ceiling) = repair_ceiling {
             match &ordinary {
                 CacheLoad::Miss => {}
@@ -491,13 +491,13 @@ fn inventory_classified_seams_report_collect(
                     trace_latency_phase("cache_load", "corrupt_ignored", started.elapsed());
                     eprintln!("ripr: repo seam cache entry ignored ({reason})");
                 }
-                _ => return (key, ordinary),
+                _ => return (None, ordinary),
             }
-            let widened = repair_key(&key, ceiling);
+            let widened = repair_key(key, ceiling);
             let loaded = reject_stand_in_entry(cache.load_classified_seams_with_fallback(&widened));
-            return (widened, loaded);
+            return (Some(widened), loaded);
         }
-        (key, ordinary)
+        (None, ordinary)
     };
     let collect_started = Instant::now();
     let selection = match changed_paths {
@@ -544,7 +544,7 @@ fn inventory_classified_seams_report_collect(
         // Cooperative cancellation (#1972): a superseded or
         // deadline-expired refresh stops before the cache load path.
         cancellation::checkpoint()?;
-        let (key, loaded) = load(key);
+        let (widened_key, loaded) = load(&key);
         match loaded {
             CacheLoad::Hit((cached, cached_limit_info, lexical_fallback_files)) => {
                 trace_latency_phase("cache_load", "hit", cache_started.elapsed());
@@ -560,7 +560,7 @@ fn inventory_classified_seams_report_collect(
                 // a warm hit still discloses files added after the cache write.
                 return Ok(ClassifiedSeamsReport {
                     classified: cached,
-                    corpus_key: Some(key),
+                    corpus_key: Some(widened_key.unwrap_or(key)),
                     analyzed_production_files,
                     diff_bound_corpus,
                     limit_info: cached_limit_info.map(SeamLimitInfo::from),
@@ -577,7 +577,8 @@ fn inventory_classified_seams_report_collect(
                 trace_latency_phase("cache_load", "miss", cache_started.elapsed());
                 // The stat-only key is byte-identical to the key the
                 // single-pass build below derives, so a load under that
-                // same key cannot hit; record it and disclose the miss
+                // same ordinary lookup input cannot hit (including its
+                // widened candidate); record it and disclose the miss
                 // once at the authoritative load point (#12505).
                 fingerprint_miss_key = Some(key);
             }
@@ -668,7 +669,10 @@ fn inventory_classified_seams_report_collect(
         trace_latency_phase("cache_load", "miss", cache_started.elapsed());
         disclose_seam_facts_cache_miss(false);
     } else {
-        match reject_stand_in_entry(cache.load_classified_seams_with_fallback(&key)) {
+        // The content-hash path (always used on Windows) must apply the
+        // same ordinary-versus-widened selection and trust checks.
+        let (widened_key, loaded) = load(&key);
+        match loaded {
             CacheLoad::Hit((cached, cached_limit_info, lexical_fallback_files)) => {
                 trace_latency_phase("cache_load", "hit", cache_started.elapsed());
                 trace_latency_phase("total", "cache_hit", total_started.elapsed());
@@ -681,7 +685,7 @@ fn inventory_classified_seams_report_collect(
                 // its SeamLimitInfo in the envelope; a complete run stored None.
                 return Ok(ClassifiedSeamsReport {
                     classified: cached,
-                    corpus_key: Some(key),
+                    corpus_key: Some(widened_key.unwrap_or(key)),
                     analyzed_production_files,
                     diff_bound_corpus,
                     limit_info: cached_limit_info.map(SeamLimitInfo::from),
@@ -2969,9 +2973,9 @@ fn review_evidence_window_size() -> Result<usize, String> {
     match std::env::var("RIPR_REVIEW_EVIDENCE_WINDOW_SIZE") {
         Ok(value) => value.parse::<usize>().ok()
             .filter(|size| (1..=MAX_REVIEW_EVIDENCE_WINDOW).contains(size))
-            .ok_or_else(|| format!("RIPR_REVIEW_EVIDENCE_WINDOW_SIZE must be between 1 and {MAX_REVIEW_EVIDENCE_WINDOW}")),
+            .ok_or_else(|| format!("RIPR_REVIEW_EVIDENCE_WINDOW_SIZE must be between 1 and {MAX_REVIEW_EVIDENCE_WINDOW}; set it to a whole number in that range, or unset it to use the default of {DEFAULT_REVIEW_EVIDENCE_WINDOW}")),
         Err(std::env::VarError::NotPresent) => Ok(DEFAULT_REVIEW_EVIDENCE_WINDOW),
-        Err(error) => Err(format!("invalid RIPR_REVIEW_EVIDENCE_WINDOW_SIZE: {error}")),
+        Err(error) => Err(format!("invalid RIPR_REVIEW_EVIDENCE_WINDOW_SIZE: {error}; set it to a whole number from 1 to {MAX_REVIEW_EVIDENCE_WINDOW}, or unset it to use the default of {DEFAULT_REVIEW_EVIDENCE_WINDOW}")),
     }
 }
 

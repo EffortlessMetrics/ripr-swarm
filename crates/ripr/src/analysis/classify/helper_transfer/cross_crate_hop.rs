@@ -132,6 +132,9 @@ pub(super) fn cross_crate_free_hop(
         module_qualified: true,
         crate_qualifier: Some(qualifier),
         transparent_macros_rebound: super::transparent_macro_name_rebound(&caller.body, index),
+        // The admission gate above already refused every macro in the
+        // caller, audited or not, so no audited root can apply here.
+        verified_macro_roots: Vec::new(),
         diverging_handlers: Vec::new(),
     })
 }
@@ -194,6 +197,9 @@ pub(super) fn cross_crate_imported_free_hop(
         module_qualified: true,
         crate_qualifier: Some(qualifier),
         transparent_macros_rebound: super::transparent_macro_name_rebound(&caller.body, index),
+        // The admission gate above already refused every macro in the
+        // caller, audited or not, so no audited root can apply here.
+        verified_macro_roots: Vec::new(),
         diverging_handlers: Vec::new(),
     })
 }

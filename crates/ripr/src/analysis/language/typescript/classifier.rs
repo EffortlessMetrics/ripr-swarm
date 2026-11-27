@@ -9194,13 +9194,28 @@ pub(crate) fn classify_resolved_owner(
         .iter()
         .map(|c| c.test.file.clone())
         .collect();
-    let alias_gap: Option<TsAliasGapDisclosure> = alias_gap_for_unresolved_import(
-        owner,
-        all_tests,
-        |test| credited_test_files.contains(&test.file),
-        alias_map,
-        alias_unavailable,
+    // A method no call can reach (overwritten by a later member, rule 26,
+    // shadowed by a same-named field, rule 28, or replaced by an assignment,
+    // rule 29) has its own no-reach cause; a same-named package import in
+    // some test must not replace it (#16306).
+    let unreachable_method = matches!(
+        owner.method_kind,
+        TypeScriptMethodKind::Overwritten
+            | TypeScriptMethodKind::FieldShadowed
+            | TypeScriptMethodKind::ReplacedInConstructor
+            | TypeScriptMethodKind::ReplacedByAssignment
     );
+    let alias_gap: Option<TsAliasGapDisclosure> = if unreachable_method {
+        None
+    } else {
+        alias_gap_for_unresolved_import(
+            owner,
+            all_tests,
+            |test| credited_test_files.contains(&test.file),
+            alias_map,
+            alias_unavailable,
+        )
+    };
     // Ghost relative import disclosure (#4104-C): when an uncredited test
     // name-calls the owner through a relative specifier that resolves to no
     // workspace file, the exclusion is correct but was silent — name it.
@@ -10126,7 +10141,28 @@ pub(crate) fn classify_resolved_owner(
         && has_owner_call_evidence
         && static_limit.is_none()
     {
-        typescript_missing_discriminators(&probe_shape, line, boundary_text, flow_sink.as_ref())
+        let mut facts = typescript_missing_discriminators(
+            &probe_shape,
+            line,
+            boundary_text,
+            flow_sink.as_ref(),
+        );
+        if facts.is_empty() {
+            let change = old_line_text
+                .and_then(|old| NullishChainChange::read(old, line_text, &owner.params));
+            facts.extend(change.and_then(|change| {
+                ts_unexercised_default_discriminator(
+                    owner,
+                    &change,
+                    line,
+                    related_candidates,
+                    alias_map,
+                    workspace_root,
+                    flow_sink.as_ref(),
+                )
+            }));
+        }
+        facts
     } else {
         Vec::new()
     };
@@ -11797,6 +11833,39 @@ pub(crate) fn ts_spread_override_unseen(
     }
 }
 
+/// #15357: the missing check for a changed `??` default (`const x = o.p ?? 1;`
+/// edited to another literal) when the source shows that every observed owner
+/// call passes `p` explicitly, so none reaches the default: call the owner
+/// without `p`. Fail-closed through `ts_nullish_operand_unreached`, which
+/// refuses unreadable arguments, calls that omit or may drop `p`, and owners
+/// whose parameter has a non-empty default.
+pub(crate) fn ts_unexercised_default_discriminator(
+    owner: &TypeScriptOwner,
+    change: &NullishChainChange,
+    line: usize,
+    candidates: &[TypeScriptRelatedCandidate<'_>],
+    alias_map: Option<&TsAliasMap>,
+    workspace_root: Option<&Path>,
+    flow_sink: Option<&FlowSinkFact>,
+) -> Option<MissingDiscriminatorFact> {
+    let (prop, default) = change.changed_default()?;
+    if !ts_nullish_operand_unreached(change, owner, candidates, alias_map, workspace_root) {
+        return None;
+    }
+    Some(MissingDiscriminatorFact {
+        value: format!(
+            "call `{}` without `{prop}` and assert the result of the `{default}` default",
+            owner.name
+        ),
+        reason: format!(
+            "every call read under a strong assertion passes `{prop}`, so the changed default at line {line} is not exercised there"
+        ),
+        flow_sink: flow_sink.cloned(),
+        shape: crate::domain::DiscriminatorShape::Other,
+        drafted_boundary: None,
+    })
+}
+
 /// RIPR-SPEC-0246 rule 5: `true` when at least one owner call has its whole
 /// result observed by a strong assertion, every such call's argument is
 /// readable, and none reaches the changed `??` operand with a differing value.
@@ -11824,6 +11893,10 @@ pub(crate) fn ts_nullish_operand_unreached(
     }) {
         return false;
     }
+    let empty_object_default = owner
+        .source_text
+        .as_deref()
+        .is_some_and(|source| parameter_has_empty_object_default(source, &change.subject));
     let mut observed = false;
     for candidate in candidates
         .iter()
@@ -11866,12 +11939,15 @@ pub(crate) fn ts_nullish_operand_unreached(
             let Some(argument) = arguments.get(index).map(|argument| argument.trim()) else {
                 return false;
             };
-            let object =
-                if argument.starts_with('{') || argument == "undefined" || argument == "null" {
-                    Some(argument.to_string())
-                } else {
-                    ts_test_local_object(&candidate.test.body_text, argument, &callees)
-                };
+            // `p = {}` binds `{}` for an explicit `undefined`, so its
+            // inherited members stay readable (#15357).
+            let object = if argument == "undefined" && empty_object_default {
+                Some("{}".to_string())
+            } else if argument.starts_with('{') || argument == "undefined" || argument == "null" {
+                Some(argument.to_string())
+            } else {
+                ts_test_local_object(&candidate.test.body_text, argument, &callees)
+            };
             match object.map_or(ChainInput::Unknown, |object| change.input(&object)) {
                 ChainInput::Unreached => {}
                 ChainInput::Differs | ChainInput::Unknown => return false,
@@ -12987,6 +13063,32 @@ pub(crate) fn cross_module_fan_in_limit_missing(owner: &TypeScriptOwner) -> Stri
 }
 
 pub(crate) fn no_static_path_missing(owner: &TypeScriptOwner) -> String {
+    if matches!(
+        owner.method_kind,
+        TypeScriptMethodKind::ReplacedInConstructor | TypeScriptMethodKind::ReplacedByAssignment
+    ) {
+        let assignment = if owner.method_kind == TypeScriptMethodKind::ReplacedInConstructor {
+            format!("`this.{} = ...` in the constructor", owner.name)
+        } else {
+            format!("`{}.{} = ...`", replaced_member_target(owner), owner.name)
+        };
+        return format!(
+            "An assignment in this file ({assignment}) replaces this body, so a call of `{}` runs the assigned value, not the changed code (RIPR-SPEC-0243 rule 29).",
+            owner.name
+        );
+    }
+    if owner.method_kind == TypeScriptMethodKind::FieldShadowed {
+        return format!(
+            "A field of the same class is also named `{}` and shadows this body, so a call of `{}` runs the field's value, not the changed code (RIPR-SPEC-0243 rule 28).",
+            owner.name, owner.name
+        );
+    }
+    if owner.method_kind == TypeScriptMethodKind::Overwritten {
+        return format!(
+            "A later member of the same class defines `{}` again and replaces this body, so no call runs the changed code (RIPR-SPEC-0243 rule 26).",
+            owner.name
+        );
+    }
     match owner.owner_kind {
         OwnerKind::Method => format!(
             "No trusted TypeScript method receiver relation for `{}`. Direct `new ClassName(...)` receiver calls are supported, but factories, dependency injection, mocked modules, prototype aliases, and dynamic property access stay ambiguous in preview.",
@@ -13011,7 +13113,60 @@ pub(crate) fn no_static_path_missing(owner: &TypeScriptOwner) -> String {
     }
 }
 
+/// `Class.prototype` (instance) or `Class` (static), the receiver a top-level
+/// assignment replacing `owner` writes to.
+fn replaced_member_target(owner: &TypeScriptOwner) -> String {
+    let class_name = owner.class_name.as_deref().unwrap_or("Class");
+    if owner.owner_kind == OwnerKind::ClassMethod {
+        class_name.to_string()
+    } else {
+        format!("{class_name}.prototype")
+    }
+}
+
 pub(crate) fn no_static_path_recommendation(owner: &TypeScriptOwner) -> String {
+    if matches!(
+        owner.method_kind,
+        TypeScriptMethodKind::ReplacedInConstructor | TypeScriptMethodKind::ReplacedByAssignment
+    ) {
+        // #16314: a direct receiver call runs the assigned value, so the
+        // usual "add a direct call" advice would point at code that never
+        // runs.
+        // The example keeps the method through the receiver the assignment
+        // writes to.
+        let keep = if owner.method_kind == TypeScriptMethodKind::ReplacedInConstructor {
+            format!(
+                "bind the method itself (`this.{0} = this.{0}.bind(this)`)",
+                owner.name
+            )
+        } else {
+            let target = replaced_member_target(owner);
+            format!(
+                "call the method from the new value (`{target}.{0} = wrap({target}.{0})`)",
+                owner.name
+            )
+        };
+        return format!(
+            "TypeScript preview advisory: an assignment to `{0}` in this file replaces the method, so a test calling `{0}` runs the assigned value, not the changed body. Remove the assignment, {keep}, or make the change in the assigned function, then rerun `ripr check`.",
+            owner.name
+        );
+    }
+    if owner.method_kind == TypeScriptMethodKind::FieldShadowed {
+        // #16306: a direct receiver call reaches the field, so the usual
+        // "add a direct call" advice would point at code that never runs.
+        return format!(
+            "TypeScript preview advisory: the field `{}` of this class shadows the method, so a test calling `{}` runs the field's value, not the changed body. Rename or remove the field or the method, then rerun `ripr check`.",
+            owner.name, owner.name
+        );
+    }
+    if owner.method_kind == TypeScriptMethodKind::Overwritten {
+        // #16261: a direct receiver call runs the replacement, so the usual
+        // "add a direct call" advice would point at the wrong body.
+        return format!(
+            "TypeScript preview advisory: a later definition of `{}` in the same class replaces this one, so a test calling `{}` runs the later body, not the changed one. Remove or rename the earlier definition, or make the change in the definition that remains, then rerun `ripr check`.",
+            owner.name, owner.name
+        );
+    }
     match owner.owner_kind {
         OwnerKind::Method => {
             "TypeScript preview advisory: method receiver relation is missing context; use a direct `new ClassName(...)` receiver observer when safe, and keep factories, dependency injection, mocked modules, prototype aliases, and dynamic property access advisory.".to_string()

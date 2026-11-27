@@ -723,13 +723,22 @@ available: edit the test by hand, run the native test command, then refresh
 with `ripr check`. No stub is written for an unsupported language.
 
 The stub calls the changed function with its real receiver and parameters,
-fills a boundary input when the changed comparison names one, fills the input
+fills a boundary input when the changed comparison names one (for a `&str`
+length boundary such as `s.len() > 3`, a string of that length), copies a
+free function's other inputs from the first call with all-literal arguments
+in an existing test of its inline test module, when the copied values do not
+steer the function away from the changed comparison, fills the input
 a changed match arm's own pattern names (`Event::Fail`, `2`), builds a method's
 receiver from a constructor when the impl has one (the first literal-argument
 call an existing test in that module makes, else a no-argument `new`, `empty`
 or `default`, else a derived `Default`), and stops at a labelled `todo!()` for the value
 the behavior should produce. It compiles and
-fails until that value is written; ripr never invents the expected value.
+fails until that value is written. When the written inputs decide a plain
+`if`/`match` path to a constant, the `todo!()` label names what the changed
+code returns there and, for a changed `>`, `>=`, `<` or `<=`
+comparison, what it returns with the other bound (`>` and `>=` swap, as do
+`<` and `<=`), so you keep the intended one; ripr never writes the expected
+value itself.
 `--at --kind` still selects from that one file's seams without using
 classification to pick the seam; after selection it looks up the inventory
 grip so the stub can disclose it. A strongly_gripped seam is still a
@@ -1567,19 +1576,22 @@ Options:
                            Apply a suppressions TOML (same schema as
                            .ripr/suppressions.toml) to the findings-based
                            formats (human, human-full, json, json-compact,
-                           github, missed-txt). exposure_gap
-                           entries select findings by finding_id or by a
-                           path glob (with optional static_class narrowing).
-                           Suppressed findings stay visible in JSON with
-                           suppressed: true; per-class summary counts cover
+                           github, missed-txt) and to sarif and
+                           sarif-compact. exposure_gap entries select
+                           findings by finding_id, by path + function, or by
+                           a path glob (with optional static_class
+                           narrowing). Suppressed findings stay visible in
+                           JSON with suppressed: true and in SARIF with a
+                           suppressions entry; per-class summary counts cover
                            unsuppressed findings only. Relative PATH
                            resolves against --root; a missing or malformed
-                           policy fails the run. Every other format (sarif,
-                           sarif-compact, agent, json-terse, badge and repo
-                           formats) refuses the flag as a usage error. sarif,
+                           policy fails the run. Every other format (agent,
+                           json-terse, badge and repo formats) refuses the
+                           flag as a usage error. Without the flag, sarif,
                            sarif-compact, badge-json, badge-shields and the
                            badge-plus formats read [suppressions] path from
-                           ripr.toml (default .ripr/suppressions.toml) instead.
+                           ripr.toml (default .ripr/suppressions.toml); the
+                           flag replaces that file for sarif.
   --output-dir DIR         With a named --diff file, write native badge.json,
                            detail.json and human.txt from one analysis. DIR must
                            be new (parent exists). Verify manifest.json and member
@@ -3954,7 +3966,7 @@ Write reviewer-first report projections from explicit artifacts.
 Usage:
   ripr reports index [--root PATH] [--reports-dir PATH] [--review-dir PATH] [--receipts-dir PATH] [--workflow-dir PATH] [--agent-dir PATH] [--pilot-dir PATH] [--ci-dir PATH] [--out PATH] [--out-md PATH]
   ripr reports ci-packet [--root PATH] [--step NAME]... [--quiet]
-  ripr reports ci-summary [--root PATH] [--base-ref REF] [--upload-sarif VALUE] [--gate-baseline VALUE] [--comment-mode MODE]
+  ripr reports ci-summary [--full] [--root PATH] [--base-ref REF] [--upload-sarif VALUE] [--gate-baseline VALUE] [--comment-mode MODE]
   ripr reports gap-ledger --records PATH [--root PATH] [--out PATH] [--out-md PATH]
   ripr reports gap-ledger --check-output PATH [--root PATH] [--out PATH] [--out-md PATH]
   ripr reports gap-ledger --repo-exposure PATH [--root PATH] [--out PATH] [--out-md PATH]
@@ -3980,6 +3992,7 @@ CI packet options:
   --quiet               Run every step with RIPR_QUIET=1, dropping their progress and `wrote <path>` lines.
 
 CI summary options:
+  --full                Preview the detailed report sections locally from the same artifacts.
   --root PATH           Checkout whose target/ripr and target/ci artifacts to read. Defaults to current directory.
   --base-ref REF        PR base branch named in the regeneration route. Defaults to GITHUB_BASE_REF, then the event's default branch, then main.
   --upload-sarif VALUE  `true` reports SARIF generation; anything else reports the upload as disabled. Defaults to RIPR_UPLOAD_SARIF.
@@ -4140,9 +4153,10 @@ Run `ripr help reports` for every reports subcommand.
 Print the generated CI workflow's step summary from existing artifacts.
 
 Usage:
-  ripr reports ci-summary [--root PATH] [--base-ref REF] [--upload-sarif VALUE] [--gate-baseline VALUE] [--comment-mode MODE]
+  ripr reports ci-summary [--full] [--root PATH] [--base-ref REF] [--upload-sarif VALUE] [--gate-baseline VALUE] [--comment-mode MODE]
 
 CI summary options:
+  --full                Preview the detailed report sections locally from the same artifacts.
   --root PATH           Checkout whose target/ripr and target/ci artifacts to read. Defaults to current directory.
   --base-ref REF        PR base branch named in the regeneration route. Defaults to GITHUB_BASE_REF, then the event's default branch, then main.
   --upload-sarif VALUE  `true` reports SARIF generation; anything else reports the upload as disabled. Defaults to RIPR_UPLOAD_SARIF.

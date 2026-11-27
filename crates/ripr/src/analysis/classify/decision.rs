@@ -197,6 +197,10 @@ pub(in crate::analysis) fn missing_evidence(
 /// match is on the written text only; anything else keeps its generic reason.
 pub(super) fn is_compile_time_assertion(expression: &str) -> bool {
     let text = expression.trim_start();
+    // #15933: `compile_error!(..)` is the build-time refusal itself.
+    if crate::analysis::probes::is_compile_error_line(text) {
+        return true;
+    }
     if let Some(rest) = text.strip_prefix("const _") {
         let Some((_, value)) = rest.split_once('=') else {
             return false;
@@ -220,10 +224,24 @@ pub(super) fn is_compile_time_assertion(expression: &str) -> bool {
 /// #11549 / #12174: the probe label of a changed `unsafe fn` or of an `unsafe`
 /// block holding an unchecked assumption, only for `static_unknown` probes.
 /// The shape extractor owns the parsing.
-fn is_unsafe_obligation(probe: &Probe) -> bool {
+pub(in crate::analysis) fn is_unsafe_obligation(probe: &Probe) -> bool {
     matches!(probe.family, ProbeFamily::StaticUnknown)
         && (probe.expression.starts_with("unsafe fn ")
             || probe.expression == crate::analysis::syntax::ra::UNCHECKED_ASSUMPTION_LABEL)
+}
+
+/// #16302: a classified probe that replaced an enclosing `unsafe fn` or
+/// unchecked-assumption boundary's finding on its line (#15348) carries that
+/// boundary's `unsafe_obligation` stop reason. It is a note only: the
+/// contract marks the reason as not changing classification, so the class,
+/// stages and gap stay what the probe's own evidence gives.
+pub(in crate::analysis) fn carry_enclosing_unsafe_obligation(finding: &mut Finding) {
+    if !finding.stop_reasons.contains(&StopReason::UnsafeObligation) {
+        finding.stop_reasons.push(StopReason::UnsafeObligation);
+        finding
+            .stop_reasons
+            .sort_by(|a, b| a.as_str().cmp(b.as_str()));
+    }
 }
 
 /// Typed spellings of the substring heuristics that mark related-test bodies or
@@ -308,12 +326,14 @@ fn name_segments(token: &str) -> Vec<&str> {
 
 /// #14181: whether file line `line` sits inside a (possibly rustfmt-split)
 /// inline const assertion block in `owner`'s body, whose first body line is
-/// the owner's `start_line`.
+/// the owner's `start_line`. #15933: or inside a split `compile_error!`
+/// invocation there.
 fn in_owner_const_assertion(owner: &FunctionSummary, line: usize) -> bool {
     line.checked_sub(owner.start_line).is_some_and(|offset| {
-        owner.body.contains("const")
+        (owner.body.contains("const")
             && crate::analysis::probes::inline_const_assertion_lines(&owner.body)
-                .contains(&(offset + 1))
+                .contains(&(offset + 1)))
+            || crate::analysis::probes::compile_error_lines(&owner.body).contains(&(offset + 1))
     })
 }
 
@@ -331,6 +351,7 @@ pub(in crate::analysis) fn stop_reasons(
         }
     } else if probe.family == ProbeFamily::StaticUnknown
         && (crate::analysis::probes::is_inline_const_assertion_line(&probe.expression)
+            || crate::analysis::probes::is_compile_error_line(&probe.expression)
             || (probe.after.is_some()
                 && owner_fn
                     .is_some_and(|owner| in_owner_const_assertion(owner, probe.location.line))))
@@ -730,6 +751,150 @@ fn uncertainty_next_step(
     }
     step.push_str(" Add or tighten a test only if this finds a gap; compare old and new code with the project's configured test runner (`cargo test` for ordinary Cargo tests). The static class may remain unknown.");
     step
+}
+
+/// #15149: for an owner that declares `-> bool`, `assert!(owner(..))` is
+/// `assert_eq!(owner(..), true)` and `assert!(!owner(..))` is
+/// `assert_eq!(owner(..), false)`: each already checks the exact result. The
+/// return-value template ("replace broad assertions with exact equality")
+/// then names a rewrite that checks the same values, which cannot tell the
+/// old code from the new on the inputs already tested. What is missing is an
+/// input on which the two versions return different booleans.
+///
+/// Fires only for a weakly exposed return-value probe of a `-> bool` owner
+/// when every contributing row that establishes reach to the owner asserts
+/// the owner call's result directly in one of those two forms. Any other row
+/// (a broad or unreadable oracle, a method receiver, a turbofish, a bound
+/// result) keeps the family template. Guidance only: the exposure class,
+/// stages and repair eligibility are decided elsewhere and are unchanged.
+pub(in crate::analysis) fn bool_owner_exact_result_next_step(
+    probe: &Probe,
+    class: &ExposureClass,
+    owner: Option<&FunctionSummary>,
+    related: &[RelatedTest],
+    asserted_call_is_owner: &dyn Fn(&RelatedTest, &[String]) -> bool,
+) -> Option<String> {
+    if *class != ExposureClass::WeaklyExposed || probe.family != ProbeFamily::ReturnValue {
+        return None;
+    }
+    let owner = owner?;
+    if super::owner_pin::declared_return_type(&owner.body).as_deref() != Some("bool") {
+        return None;
+    }
+    let mut reaching = related
+        .iter()
+        .filter(|test| {
+            test.is_contributing()
+                && test
+                    .relation_reason
+                    .is_none_or(|reason| reason.establishes_reach(true))
+        })
+        .peekable();
+    reaching.peek()?;
+    // A row annotated `missing_exact_assertion` says the assertion shape IS
+    // the gap (the same exclusion `exact_oracle_gap_next_step` makes), so it
+    // keeps the family template here rather than being read as exact.
+    // The row's relation reason is test-level reach: the test calls the
+    // owner somewhere, not necessarily in this assertion. A same-named rival
+    // asserted beside an unasserted owner call must not borrow the owner's
+    // step, so the asserted call itself must settle on the owner (#15537
+    // review); anything unsettled keeps the family template.
+    if !reaching.all(|test| {
+        test.miss != Some(RelatedTestMiss::MissingExactAssertion)
+            && test
+                .oracle
+                .as_deref()
+                .and_then(|oracle| asserted_bool_owner_call(oracle, &owner.name))
+                .is_some_and(|qualifier| asserted_call_is_owner(test, &qualifier))
+    }) {
+        return None;
+    }
+    Some(format!(
+        "The related tests already assert the exact boolean result of `{}`, so rewriting them with exact equality would check the same values. Add a test with an input whose boolean result differs between the old and new code, and assert that result.",
+        owner.name
+    ))
+}
+
+/// Whether `text` is `assert!(owner(..))` or `assert!(!owner(..))` (plain,
+/// `std::` or `core::` rooted, with optional message arguments), where the
+/// condition is exactly one call of `owner` through an optional plain path.
+/// Returns the call's module-path qualifier in source order (empty for a
+/// bare call), or `None` for any other shape. The text match is by the
+/// path's last segment only; which definition the qualified call names is
+/// the caller's `asserted_call_is_owner` question.
+fn asserted_bool_owner_call(text: &str, owner: &str) -> Option<Vec<String>> {
+    let text = text.trim().trim_end_matches(';').trim_end();
+    let masked = crate::analysis::extract::mask_comments_and_strings(text);
+    if masked.len() != text.len() {
+        return None;
+    }
+    let bang = masked.find("assert!")?;
+    if !matches!(
+        masked[..bang].trim(),
+        "" | "std::" | "core::" | "::std::" | "::core::"
+    ) {
+        return None;
+    }
+    let open = masked[bang..].find('(')? + bang;
+    if !masked[bang + "assert!".len()..open].trim().is_empty()
+        || matching_close(&masked, open) != Some(masked.len() - 1)
+    {
+        return None;
+    }
+    let inner = &masked[open + 1..masked.len() - 1];
+    let condition = inner[..top_level_comma(inner).unwrap_or(inner.len())].trim();
+    let condition = condition
+        .strip_prefix('!')
+        .map_or(condition, str::trim_start);
+    let call_open = condition.find('(')?;
+    let mut segments: Vec<String> = condition[..call_open]
+        .trim_end()
+        .split("::")
+        .map(|segment| segment.trim().to_string())
+        .collect();
+    let readable = segments.pop().as_deref() == Some(owner)
+        && segments.iter().all(|segment| {
+            !segment.is_empty()
+                && segment
+                    .chars()
+                    .all(|ch| ch == '_' || ch.is_ascii_alphanumeric())
+        })
+        // The call's own parenthesis closes the condition, so
+        // `owner(a) && other` or `owner(a).not()` is not this shape.
+        && matching_close(condition, call_open) == Some(condition.len() - 1);
+    readable.then_some(segments)
+}
+
+/// The offset of the bracket closing the one at `open` in `text`.
+fn matching_close(text: &str, open: usize) -> Option<usize> {
+    let mut depth = 0usize;
+    for (offset, byte) in text.bytes().enumerate().skip(open) {
+        match byte {
+            b'(' | b'[' | b'{' => depth += 1,
+            b')' | b']' | b'}' => {
+                depth = depth.checked_sub(1)?;
+                if depth == 0 {
+                    return Some(offset);
+                }
+            }
+            _ => {}
+        }
+    }
+    None
+}
+
+/// The offset of the first comma outside every bracket in `text`.
+fn top_level_comma(text: &str) -> Option<usize> {
+    let mut depth = 0usize;
+    for (offset, byte) in text.bytes().enumerate() {
+        match byte {
+            b'(' | b'[' | b'{' => depth += 1,
+            b')' | b']' | b'}' => depth = depth.saturating_sub(1),
+            b',' if depth == 0 => return Some(offset),
+            _ => {}
+        }
+    }
+    None
 }
 
 fn weakly_exposed_guidance_for_family(family: &ProbeFamily) -> &'static str {
@@ -1934,5 +2099,263 @@ mod tests {
         ] {
             assert!(!is_compile_time_assertion(text), "{text}");
         }
+    }
+
+    fn bool_owner(signature: &str) -> FunctionSummary {
+        FunctionSummary {
+            id: SymbolId("src/lib.rs::is_small".to_string()),
+            name: "is_small".to_string(),
+            file: std::path::PathBuf::from("src/lib.rs"),
+            start_line: 1,
+            end_line: 3,
+            body: format!("{signature} {{\n    n == 1 || n == 2\n}}").into(),
+            calls: crate::analysis::facts::SharedFactSlice::empty(),
+            returns: Vec::new(),
+            literals: crate::analysis::facts::SharedFactSlice::empty(),
+            source_role: crate::analysis::facts::FunctionSourceRole::Production,
+            attrs: crate::analysis::facts::SharedFactSlice::empty(),
+            impl_attrs: Vec::new(),
+            nested_fn_names: crate::analysis::facts::SharedFactSlice::empty(),
+            let_bindings: crate::analysis::facts::SharedFactSlice::empty(),
+            item: Default::default(),
+            impl_context: Default::default(),
+        }
+    }
+
+    /// Every asserted call settles on the owner.
+    fn any_call(_: &RelatedTest, _: &[String]) -> bool {
+        true
+    }
+
+    fn bool_row(name: &str, oracle: &str) -> RelatedTest {
+        let mut row = related_test_full(
+            name,
+            OracleKind::RelationalCheck,
+            OracleStrength::Weak,
+            Some(RelatedTestMiss::WeakAssertion),
+            RelationReason::DirectOwnerCall,
+        );
+        row.oracle = Some(oracle.to_string());
+        row
+    }
+
+    // #15149: `assert!(is_small(1))` and `assert!(!is_small(3))` already
+    // check exact booleans, so "replace broad assertions with exact
+    // equality" names a rewrite that checks the same values; the step names
+    // the missing deciding input instead.
+    #[test]
+    fn bool_owner_exact_result_rows_name_the_deciding_input() {
+        let owner = bool_owner("pub fn is_small(n: u32) -> bool");
+        let rows = [
+            bool_row("one_is_small", "assert!(is_small(1));"),
+            bool_row("three_is_not_small", "assert!(!is_small(3), \"3, {}\", 3);"),
+            bool_row("pathed", "std::assert!(crate::is_small(4));"),
+            bool_row("core_rooted", "core::assert!(is_small(1));"),
+            bool_row("abs_std", "::std::assert!(!is_small(3));"),
+            bool_row("abs_core", "::core::assert!(super::is_small(1));"),
+        ];
+        let step = bool_owner_exact_result_next_step(
+            &probe(ProbeFamily::ReturnValue, "n == 1 || n == 2"),
+            &ExposureClass::WeaklyExposed,
+            Some(&owner),
+            &rows,
+            &any_call,
+        );
+        let step = step.as_deref().unwrap_or("");
+        assert!(
+            step.contains("already assert the exact boolean result of `is_small`"),
+            "{step}"
+        );
+        assert!(
+            step.contains("input whose boolean result differs between the old and new code"),
+            "{step}"
+        );
+        assert!(!step.contains("Replace broad assertions"), "{step}");
+    }
+
+    // The discriminating negatives: each keeps the family template.
+    #[test]
+    fn bool_owner_exact_result_step_needs_every_reaching_row_to_assert_the_owner_result() {
+        let owner = bool_owner("pub fn is_small(n: u32) -> bool");
+        let return_value = probe(ProbeFamily::ReturnValue, "n == 1 || n == 2");
+        let exact = bool_row("one_is_small", "assert!(is_small(1));");
+        for broad in [
+            "assert!(is_small(1) || is_small(2));",
+            "assert!(is_small(1).then_some(()).is_some());",
+            "assert!(other(is_small(1)));",
+            "assert!(not_is_small(1));",
+            "assert!(x.is_small(1));",
+            "debug_assert!(is_small(1));",
+            "assert_ne!(is_small(1), false);",
+            "assert!(is_small::<u32>(1));",
+            "assert!(r);",
+            "assert!(!!is_small(1));",
+            "assert!((|| is_small(1))());",
+            "assert!((|n| is_small(n))(1));",
+        ] {
+            let rows = [exact.clone(), bool_row("broad", broad)];
+            assert_eq!(
+                bool_owner_exact_result_next_step(
+                    &return_value,
+                    &ExposureClass::WeaklyExposed,
+                    Some(&owner),
+                    &rows,
+                    &any_call,
+                ),
+                None,
+                "{broad}"
+            );
+        }
+        let mut no_oracle = exact.clone();
+        no_oracle.oracle = None;
+        let mut shape_gap = exact.clone();
+        shape_gap.miss = Some(RelatedTestMiss::MissingExactAssertion);
+        assert_eq!(
+            bool_owner_exact_result_next_step(
+                &return_value,
+                &ExposureClass::WeaklyExposed,
+                Some(&owner),
+                &[exact.clone(), shape_gap],
+                &any_call,
+            ),
+            None,
+            "a missing_exact_assertion row keeps the family template"
+        );
+        let rows = [exact.clone()];
+        for (label, step) in [
+            (
+                "a non-bool owner",
+                bool_owner_exact_result_next_step(
+                    &return_value,
+                    &ExposureClass::WeaklyExposed,
+                    Some(&bool_owner("pub fn is_small(n: u32) -> u8")),
+                    &rows,
+                    &any_call,
+                ),
+            ),
+            (
+                "an exposed class",
+                bool_owner_exact_result_next_step(
+                    &return_value,
+                    &ExposureClass::Exposed,
+                    Some(&owner),
+                    &rows,
+                    &any_call,
+                ),
+            ),
+            (
+                "a predicate probe",
+                bool_owner_exact_result_next_step(
+                    &probe(ProbeFamily::Predicate, "n == 1 || n == 2"),
+                    &ExposureClass::WeaklyExposed,
+                    Some(&owner),
+                    &rows,
+                    &any_call,
+                ),
+            ),
+            (
+                "no owner",
+                bool_owner_exact_result_next_step(
+                    &return_value,
+                    &ExposureClass::WeaklyExposed,
+                    None,
+                    &rows,
+                    &any_call,
+                ),
+            ),
+            (
+                "no rows",
+                bool_owner_exact_result_next_step(
+                    &return_value,
+                    &ExposureClass::WeaklyExposed,
+                    Some(&owner),
+                    &[],
+                    &any_call,
+                ),
+            ),
+            (
+                "an unreadable oracle",
+                bool_owner_exact_result_next_step(
+                    &return_value,
+                    &ExposureClass::WeaklyExposed,
+                    Some(&owner),
+                    &[exact.clone(), no_oracle],
+                    &any_call,
+                ),
+            ),
+        ] {
+            assert_eq!(step, None, "{label}");
+        }
+        // A proximity-only row does not reach the owner, so it neither
+        // blocks nor supplies the step.
+        let mut proximity = bool_row("nearby", "assert!(helper(1));");
+        proximity.relation_reason = Some(RelationReason::SameTestFile);
+        assert!(
+            bool_owner_exact_result_next_step(
+                &return_value,
+                &ExposureClass::WeaklyExposed,
+                Some(&owner),
+                &[exact, proximity.clone()],
+                &any_call,
+            )
+            .is_some()
+        );
+        assert_eq!(
+            bool_owner_exact_result_next_step(
+                &return_value,
+                &ExposureClass::WeaklyExposed,
+                Some(&owner),
+                &[proximity],
+                &any_call,
+            ),
+            None
+        );
+    }
+
+    // #15537 review: `let _ = crate::a::is_small(1); assert!(crate::b::is_small(1));`
+    // reaches the owner in `a` but asserts the rival in `b`. The step reads
+    // the asserted call's own identity, so the rival's assertion keeps the
+    // family template; the owner's own assertion is the positive control.
+    #[test]
+    fn bool_owner_step_needs_the_asserted_call_to_be_the_owner() {
+        let owner = bool_owner("pub fn is_small(n: u32) -> bool");
+        let return_value = probe(ProbeFamily::ReturnValue, "n == 1 || n == 2");
+        let owner_module = |_: &RelatedTest, qualifier: &[String]| {
+            qualifier == ["crate".to_string(), "a".to_string()]
+        };
+        let rival = [bool_row("mixed", "assert!(crate::b::is_small(1));")];
+        assert_eq!(
+            bool_owner_exact_result_next_step(
+                &return_value,
+                &ExposureClass::WeaklyExposed,
+                Some(&owner),
+                &rival,
+                &owner_module,
+            ),
+            None
+        );
+        let own = [bool_row("mixed", "assert!(crate::a::is_small(1));")];
+        assert!(
+            bool_owner_exact_result_next_step(
+                &return_value,
+                &ExposureClass::WeaklyExposed,
+                Some(&owner),
+                &own,
+                &owner_module,
+            )
+            .is_some()
+        );
+        // One unsettled row among owner rows keeps the template.
+        let both = [own[0].clone(), rival[0].clone()];
+        assert_eq!(
+            bool_owner_exact_result_next_step(
+                &return_value,
+                &ExposureClass::WeaklyExposed,
+                Some(&owner),
+                &both,
+                &owner_module,
+            ),
+            None
+        );
     }
 }

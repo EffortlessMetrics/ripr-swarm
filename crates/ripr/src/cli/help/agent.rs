@@ -212,13 +212,22 @@ available: edit the test by hand, run the native test command, then refresh
 with `ripr check`. No stub is written for an unsupported language.
 
 The stub calls the changed function with its real receiver and parameters,
-fills a boundary input when the changed comparison names one, fills the input
+fills a boundary input when the changed comparison names one (for a `&str`
+length boundary such as `s.len() > 3`, a string of that length), copies a
+free function's other inputs from the first call with all-literal arguments
+in an existing test of its inline test module, when the copied values do not
+steer the function away from the changed comparison, fills the input
 a changed match arm's own pattern names (`Event::Fail`, `2`), builds a method's
 receiver from a constructor when the impl has one (the first literal-argument
 call an existing test in that module makes, else a no-argument `new`, `empty`
 or `default`, else a derived `Default`), and stops at a labelled `todo!()` for the value
 the behavior should produce. It compiles and
-fails until that value is written; ripr never invents the expected value.
+fails until that value is written. When the written inputs decide a plain
+`if`/`match` path to a constant, the `todo!()` label names what the changed
+code returns there and, for a changed `>`, `>=`, `<` or `<=`
+comparison, what it returns with the other bound (`>` and `>=` swap, as do
+`<` and `<=`), so you keep the intended one; ripr never writes the expected
+value itself.
 `--at --kind` still selects from that one file's seams without using
 classification to pick the seam; after selection it looks up the inventory
 grip so the stub can disclose it. A strongly_gripped seam is still a

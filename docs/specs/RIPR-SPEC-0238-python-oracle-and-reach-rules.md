@@ -453,6 +453,26 @@ one changed raise only (#12952); the general class-only table row stays weak.
    edit and fails before; naming the class raised before the edit (a test
    written before the diff) passes before and fails after. Both distinguish
    the edit, and the evidence names which class the context rejects.
+   Imported class on its sole construction site (#15356): the new class may
+   instead be bound in the owner module by one plain, unaliased
+   `from M import NewError` when the changed line is the only place the
+   production tree names it. Exactly one workspace source is module `M`, the
+   import resolves to it unshadowed, and it defines the name once as
+   `class NewError(Base): pass` over `Exception` or a listed builtin, naming
+   it nowhere else. The owner module names it only in that import and on the
+   changed line, and no other production source or `conftest.py` names it.
+   The old class is a listed builtin. The test imports the class by the same
+   plain import, names it once, in `with pytest.raises(NewError):`, and that
+   context runs the owner with constant arguments only (a callback or an
+   object with a hook could raise the class itself). A class module spelled
+   with a layout root the owner import omits (`src.verlib.errors` beside
+   `verlib.core`) is a second module object and is not read. A passing context then saw an instance only the
+   changed line can construct, and the old raise never produces one, so the
+   base class may be an ancestor of the old class (`ValueError` to an
+   imported `ValueError` subclass). A context naming the old or a base class
+   passes against both raises and stays weak, as does the same spelling
+   imported from another module, a second production use of the class, a
+   class body other than `pass`, or any name the scan cannot count.
    Module identity needs a separate positive per-file admission, defaulting
    to false and computed from the raw foreign-module view before legacy path
    refusal flags. Every supported dotted spelling is checked at all known
@@ -2009,6 +2029,16 @@ Confidence is 0.6 for `exposed`, 0.2 for `static_unknown` and 0.4
 otherwise. Python emits `reachable_unrevealed` only for row 2a, where every
 related test replaces the owner itself so none runs the changed code; the
 class never carries credit. Python never emits `infection_unknown`. The ladder is the existing behavior and is normative.
+
+A `weakly_exposed` finding on one entry of a multi-line `return {` dict
+(the statement opens with a bare `return {`, the entry sits at the
+literal's top level, is the only entry on its line with a plain quoted key,
+ends on that line, and no later entry can override it: every later
+top-level entry has a distinct plain quoted key and the literal closes on a
+bare `}`) carries the missing check `result["key"] == <literal>` (or
+`response.json()["key"]` for a route owner; a non-literal value names
+`<expected value>`). Any other shape keeps the generic missing check. This
+names a check only; it never changes the class (#15357).
 
 ### Decisions
 
