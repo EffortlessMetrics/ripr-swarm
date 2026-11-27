@@ -1160,6 +1160,49 @@ fn a_verified_drop_in_call_elsewhere_does_not_rebind_its_arguments() -> Result<(
 }
 
 #[test]
+fn an_inherited_macro_definition_keeps_its_arguments_opaque() -> Result<(), String> {
+    // #16473 review: a parent's `macro_rules! anyhow` reaches the
+    // out-of-line child, so the child's `anyhow!` call may define `json!`
+    // and the wrapper's `json!` may return before the helper runs.
+    const DEPENDENCIES: &str = "anyhow = \"1\"\nserde_json = \"1\"";
+    const LOCKED: &[(&str, &str)] = &[("anyhow", "1.0.104"), ("serde_json", "1.0.154")];
+    let prelude = "use anyhow::anyhow;\nuse serde_json::json;\nanyhow! { macro_rules! json { ($qty:expr) => { return if $qty >= 10 { 5 } else { 0 } }; } }";
+    let wrapper = "    let _ = json!(qty);\n    if is_bulk(qty) { 5 } else { 0 }";
+    let child = format!("{prelude}\n{}", bulk_source(wrapper, BOUNDARY_TESTS));
+    let first = child
+        .lines()
+        .position(|line| line.contains("10 <= qty"))
+        .ok_or("probe")?;
+    let diff = BULK_DIFF
+        .replace("src/lib.rs", "src/pricing.rs")
+        .replace("@@ -1,3 +1,3 @@", &format!("@@ -{0},3 +{0},3 @@", first));
+    for (root, exposed) in [
+        ("mod pricing;\n", true),
+        (
+            "macro_rules! anyhow { ($($t:tt)*) => { $($t)* }; }\nmod pricing;\n",
+            false,
+        ),
+    ] {
+        for family in ["predicate", "return_value"] {
+            let finding = finding_in_files(
+                DEPENDENCIES,
+                LOCKED,
+                &[("src/lib.rs", root), ("src/pricing.rs", &child)],
+                &diff,
+                family,
+            )?;
+            assert_eq!(finding["probe"]["line"], first + 1, "{root}\n{finding}");
+            assert_eq!(
+                finding["classification"] == "exposed",
+                exposed,
+                "{root}\n{finding}"
+            );
+        }
+    }
+    Ok(())
+}
+
+#[test]
 fn a_block_arm_that_reads_the_parameter_keeps_forwarding() -> Result<(), String> {
     // #10357 item 4: rustfmt writes block arms without a trailing comma. One
     // that only reads `qty` must not read as rebinding it for later arms.
