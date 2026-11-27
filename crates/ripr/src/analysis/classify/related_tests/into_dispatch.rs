@@ -487,11 +487,15 @@ fn one_plain_top_level_impl(source: &str, source_type: &str, target_type: &str) 
 
 /// Whether `item` carries a `cfg` or `cfg_attr` attribute, which may leave
 /// it out of the test build while another impl takes its place.
+///
+/// The parser reads `cfg` and `cfg_attr` as their own meta kinds with no
+/// path, so the kind decides, never a path spelling.
 fn has_cfg_attribute(item: &impl ast::HasAttrs) -> bool {
     item.attrs().any(|attribute| {
-        attribute.path().is_some_and(|path| {
-            matches!(path.syntax().text().to_string().trim(), "cfg" | "cfg_attr")
-        })
+        matches!(
+            attribute.meta(),
+            Some(ast::Meta::CfgMeta(_) | ast::Meta::CfgAttrMeta(_))
+        )
     })
 }
 
@@ -717,5 +721,10 @@ mod tests {
         assert!(!one_plain_top_level_impl(&gated_fn, "C", "F"));
         let generic = plain.replace("impl From<C>", "impl<X> From<C>");
         assert!(!one_plain_top_level_impl(&generic, "C", "F"));
+        let cfg_attr = plain.replace("impl From<C>", "#[cfg_attr(test, must_use)]\nimpl From<C>");
+        assert!(!one_plain_top_level_impl(&cfg_attr, "C", "F"));
+        // A non-cfg attribute leaves the impl plain.
+        let allowed = plain.replace("impl From<C>", "#[must_use]\nimpl From<C>");
+        assert!(one_plain_top_level_impl(&allowed, "C", "F"));
     }
 }

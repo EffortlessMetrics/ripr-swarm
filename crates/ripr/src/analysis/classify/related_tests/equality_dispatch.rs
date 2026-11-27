@@ -979,7 +979,7 @@ mod tests {
     #[test]
     fn a_later_shadowing_let_decides_the_binding_type() {
         let before = "let a = Key::new(1);\nlet a = make();\n";
-        assert!(!operand_has_type("a", "Key", before, &|_| true));
+        assert!(!operand_has_type("a", "Key", before, &|_| Some(true)));
     }
 
     #[test]
@@ -1107,7 +1107,7 @@ mod tests {
         ] {
             assert!(rebound_by_pattern(rebound, "a"), "{rebound}");
             assert!(
-                !operand_has_type("a", "Key", rebound, &|_| true),
+                !operand_has_type("a", "Key", rebound, &|_| Some(true)),
                 "{rebound}"
             );
         }
