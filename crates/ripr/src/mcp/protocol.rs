@@ -29,9 +29,9 @@ pub(super) const GET_RECEIPT_STATUS_TOOL_NAME: &str = "ripr_get_receipt_status";
 /// description leaves the agent to guess: `snapshot_id` is best omitted (each
 /// tool description already names `stale_snapshot`), and when sent it has the
 /// one form the server issues (any other form is `invalid_argument`); a
-/// `canonical_id` only ever comes from the listing.
-const SNAPSHOT_ID_ARGUMENT: &str =
-    "Omit for the current snapshot; else snapshot:sha256:<64 lowercase hex> from ripr_refresh.";
+/// `canonical_id` only ever comes from the listing. The `invalid_argument`
+/// refusal names that form, so the budgeted description does not repeat it.
+const SNAPSHOT_ID_ARGUMENT: &str = "Omit for the current snapshot.";
 const CANONICAL_ID_ARGUMENT: &str = "From ripr_list_gaps.";
 pub(super) const STATUS_RESOURCE_URI: &str = "ripr://workspace/status";
 pub(super) const SNAPSHOT_RESOURCE_TEMPLATE: &str = "ripr://snapshot/{snapshot_id}";
