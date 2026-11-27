@@ -3185,6 +3185,89 @@ pub(super) mod tests {
         Ok(())
     }
 
+    /// #15240: the `not_verifiable` refusal is gated on readiness. A NOT-ready
+    /// Rust item whose item file and existing-test fix-site file have no
+    /// captured digest (empty consumed-source carrier) still returns its
+    /// honest negative document; the same uncaptured files on a ready item
+    /// refuse (control).
+    #[test]
+    fn not_ready_item_with_uncaptured_files_keeps_its_negative_document() -> Result<(), String> {
+        let dir = unique_test_dir("not-ready-uncaptured")?;
+        let build = |ready_finding: bool| -> Result<WorkspaceSession, String> {
+            let mut finding = super::super::gaps::test_finding()?;
+            if !ready_finding {
+                finding.canonical_gap = None;
+            }
+            let mut session = session_with(&[finding], "root:sha256:a")?;
+            let snapshot = session
+                .last_good
+                .as_mut()
+                .and_then(Arc::get_mut)
+                .ok_or("fixture snapshot must be uniquely owned")?;
+            for item in &mut snapshot.items {
+                item.repair_readiness.fix_site = Some(super::super::gaps::RepairFixSite {
+                    test_name: "checkout_total".to_string(),
+                    file: "tests/checkout.rs".to_string(),
+                    line: 1,
+                    oracle: None,
+                    oracle_kind: "exact_value",
+                    oracle_strength: "strong",
+                    inline_test_module: None,
+                    new_test_kind: None,
+                });
+            }
+            snapshot.card_producers = Some(super::super::repair_card::SnapshotCardProducers {
+                repository_head: "head".to_string(),
+                bindings: Vec::new(),
+                candidate_seams: Vec::new(),
+                completeness: super::super::repair_admission::InventoryCompleteness::Complete,
+                config: crate::config::RiprConfig::default(),
+                consumed_sources: crate::analysis::consumed_source::ConsumedRustSources::default(),
+            });
+            Ok(session)
+        };
+        let mut not_ready = build(false)?;
+        let item = not_ready
+            .last_good
+            .as_ref()
+            .and_then(|snapshot| snapshot.items.first())
+            .ok_or("fixture lost its item")?;
+        // Fixture construction: a Rust item that is not ready, with an
+        // existing-test fix site, and no captured digest for either file.
+        if item.repair_readiness.ready || !item.file.ends_with(".rs") {
+            return Err(format!(
+                "fixture must be a not-ready Rust item: ready={} file={}",
+                item.repair_readiness.ready, item.file
+            ));
+        }
+        let document = not_ready
+            .prepare_repair("finding:test:1", None, Some("root:sha256:a"), Some(&dir))
+            .map_err(|failure| {
+                format!(
+                    "a not-ready item must not be refused as not_verifiable: {} {}",
+                    failure.code, failure.detail
+                )
+            })?;
+        if document["repair_packet_ready"] != Value::Bool(false)
+            || document["attempt"] != Value::Null
+        {
+            return Err(format!("not-ready item must stay negative: {document}"));
+        }
+        if !not_ready.repairs.is_empty() {
+            return Err("a negative document must not create a transaction".to_string());
+        }
+        // Control: the same uncaptured files on a ready item fail closed.
+        let mut ready = build(true)?;
+        match ready.prepare_repair("gap:test:1", None, Some("root:sha256:a"), Some(&dir)) {
+            Err(failure)
+                if failure.code == CODE_STALE_SNAPSHOT
+                    && failure.data["custody"] == "not_verifiable" => {}
+            other => return Err(format!("ready uncaptured item must refuse: {other:?}")),
+        }
+        std::fs::remove_dir_all(&dir).map_err(|e| e.to_string())?;
+        Ok(())
+    }
+
     /// #15240: a `./`-prefixed item file still matches its captured digest,
     /// and a ready Rust item whose file has no captured digest is refused.
     #[test]
