@@ -631,3 +631,27 @@ Command:
 
 Updated:
 - `expected/human-full.txt`
+
+## Pending — error_variant_wrapper_callee_only_pin (49)
+
+Reason:
+RIPR-SPEC-0005: a captured call to the seam's converted callee outranks name and file proximity, so the wrapper test's relation is seam_callee_call (#5335)
+
+Command:
+`cargo xtask goldens bless error_variant_wrapper_callee_only_pin --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
+
+## Pending — error_variant_wrapper_callee_only_pin (50)
+
+Reason:
+RIPR-SPEC-0122: the summary line names the unconfirmed test link for a partly-noticed behavior (#5335 restack)
+
+Command:
+`cargo xtask goldens bless error_variant_wrapper_callee_only_pin --reason "..."`
+
+Updated:
+- `expected/human.txt`

@@ -3,7 +3,7 @@
   "tool": "ripr",
   "mode": "fast",
   "root": "fixtures/error_variant_wrapper_foreign_pin/input",
-  "summary": {"changed_rust_files":1,"probes":2,"findings":2,"exposed":0,"weakly_exposed":0,"reachable_unrevealed":0,"no_static_path":2,"infection_unknown":0,"propagation_unknown":0,"static_unknown":0,"changed_files_by_language":[{"language":"rust","files":1}]},
+  "summary": {"changed_rust_files":1,"probes":2,"findings":2,"exposed":0,"weakly_exposed":1,"reachable_unrevealed":0,"no_static_path":1,"infection_unknown":0,"propagation_unknown":0,"static_unknown":0,"conflicting_expressions":1,"changed_files_by_language":[{"language":"rust","files":1}]},
   "analysis_outcome": {
     "analysis_complete": true,
     "outcome": {"schema_version":"0.1","kind":"complete_with_findings","identity":{"repository_identity":null,"root_identity":null,"config_identity":null,"base_revision":null,"input_identity":"sha256:406d794694451e91308f9d7ce0e9347e05a87aca5589b1c5df6c1ddcd6ba463d","snapshot_identity":null,"git_candidate_subject":null},"counts":{"changed_file_count":1,"changed_line_count":2,"candidate_line_count":1,"probe_count":2,"finding_count":2},"limitations":[],"claim_boundary":"Static analysis outcome only; no correctness, test-adequacy, runtime-execution, or merge-readiness claim."}
@@ -102,21 +102,9 @@
     },
     {
       "id": "probe:src_lib.rs:error_path:edac60ec",
-      "canonical_gap_id": "gap:rust:src/lib.rs:parse_summary:error_variant:error_path:try_parse_summary_raw_.map_err_into_into",
-      "canonical_gap_group_size": 1,
-      "canonical_gap": {
-        "id": "gap:rust:src/lib.rs:parse_summary:error_variant:error_path:try_parse_summary_raw_.map_err_into_into",
-        "language": "rust",
-        "file": "src/lib.rs",
-        "owner": "parse_summary",
-        "behavior_kind": "error_variant",
-        "probe_kind": "error_path",
-        "normalized_discriminator": "try_parse_summary_raw_.map_err_into_into"
-
-      },
-      "classification": "no_static_path",
+      "classification": "weakly_exposed",
       "severity": "warning",
-      "confidence": 0.43,
+      "confidence": 0.66,
       "probe": {
         "id": "probe:src_lib.rs:error_path:edac60ec",
         "family": "error_path",
@@ -126,25 +114,25 @@
         "expression": "try_parse_summary(raw).map_err(Into::into)"
        },
       "ripr": {
-        "reach": {"state":"no","confidence":"medium","summary":"No test is seen calling parse_summary; tests share only its file or a name token: try_parse_summary_with_foreign_pin (unreferenced in workspace)"},
-        "infect": {"state":"no","confidence":"medium","summary":"No test reaches the changed owner, so no test can activate this change"},
+        "reach": {"state":"weak","confidence":"low","summary":"Related tests exercise the wrapper seam's converted callee (the changed owner is not invoked by them): try_parse_summary_with_foreign_pin"},
+        "infect": {"state":"yes","confidence":"medium","summary":"Reachable tests can plausibly activate this changed behavior"},
         "propagate": {"state":"yes","confidence":"high","summary":"Complete propagation witness reaches error variant: try_parse_summary(raw).map_err(Into::into)"},
-        "observe": {"state":"no","confidence":"medium","summary":"No test reaches the changed owner, so no test can observe this change"},
-        "discriminate": {"state":"no","confidence":"medium","summary":"No test reaches the changed owner, so no test can discriminate this change"}
+        "observe": {"state":"yes","confidence":"medium","summary":"A related test observes a value or effect near the changed behavior"},
+        "discriminate": {"state":"weak","confidence":"medium","summary":"Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)"}
        },
       "evidence_stages": [
-        {"stage":"reach","state":"no","confidence":"medium"},
-        {"stage":"infect","state":"no","confidence":"medium"},
+        {"stage":"reach","state":"weak","confidence":"low"},
+        {"stage":"infect","state":"yes","confidence":"medium"},
         {"stage":"propagate","state":"yes","confidence":"high"},
-        {"stage":"observe","state":"no","confidence":"medium"},
-        {"stage":"discriminate","state":"no","confidence":"medium"}
+        {"stage":"observe","state":"yes","confidence":"medium"},
+        {"stage":"discriminate","state":"weak","confidence":"medium"}
       ],
-      "evidence_path": ["reach no: No test is seen calling parse_summary; tests share only its file or a name token: try_parse_summary_with_foreign_pin (unreferenced in workspace)", "infection no: No test reaches the changed owner, so no test can activate this change", "propagation yes: Complete propagation witness reaches error variant: try_parse_summary(raw).map_err(Into::into)", "observation no: No test reaches the changed owner, so no test can observe this change", "discriminator no: No test reaches the changed owner, so no test can discriminate this change", "local flow reaches error variant: try_parse_summary(raw).map_err(Into::into) (line 39)", "related test tests/errors.rs:4 try_parse_summary_with_foreign_pin uses weak broad error oracle: if !matches!(result, Err(_)) {\nreturn Err(\"callee should fail closed\".into());\n}", "related test tests/errors.rs:4 try_parse_summary_with_foreign_pin uses strong exact error variant oracle: if !matches!(other, Err(OtherError::MalformedSource)) {\nreturn Err(\"foreign pin should observe OtherError::MalformedSource\".into());\n}", "source enum variant value OtherError::MalformedSource at line 10"],
+      "evidence_path": ["reach weak: Related tests exercise the wrapper seam's converted callee (the changed owner is not invoked by them): try_parse_summary_with_foreign_pin", "infection yes: Reachable tests can plausibly activate this changed behavior", "propagation yes: Complete propagation witness reaches error variant: try_parse_summary(raw).map_err(Into::into)", "observation yes: A related test observes a value or effect near the changed behavior", "discriminator weak: Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)", "local flow reaches error variant: try_parse_summary(raw).map_err(Into::into) (line 39)", "related test tests/errors.rs:4 try_parse_summary_with_foreign_pin uses weak broad error oracle: if !matches!(result, Err(_)) {\nreturn Err(\"callee should fail closed\".into());\n}", "related test tests/errors.rs:4 try_parse_summary_with_foreign_pin uses strong exact error variant oracle: if !matches!(other, Err(OtherError::MalformedSource)) {\nreturn Err(\"foreign pin should observe OtherError::MalformedSource\".into());\n}", "source enum variant value OtherError::MalformedSource at line 10"],
       "flow_sinks": [
         {"kind":"error_variant","text":"try_parse_summary(raw).map_err(Into::into)","line":39}
       ],
-      "evidence": ["Complete propagation witness reaches error variant: try_parse_summary(raw).map_err(Into::into)", "No test is seen calling parse_summary; tests share only its file or a name token: try_parse_summary_with_foreign_pin (unreferenced in workspace)", "No test reaches the changed owner, so no test can activate this change", "No test reaches the changed owner, so no test can discriminate this change", "No test reaches the changed owner, so no test can observe this change"],
-      "missing": ["No relevant oracle was detected", "No static test path reaches the changed owner", "Typed static limitation (wrapper_error_binding_unresolved): the wrapper error conversion's variant binding is not statically established"],
+      "evidence": ["A related test observes a value or effect near the changed behavior", "Complete propagation witness reaches error variant: try_parse_summary(raw).map_err(Into::into)", "Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)", "Reachable tests can plausibly activate this changed behavior", "Related tests exercise the wrapper seam's converted callee (the changed owner is not invoked by them): try_parse_summary_with_foreign_pin", "limitation_last_established_edge: changed wrapper conversion maps the converted callee's error into the boxed error channel", "limitation_first_unresolved_edge: whether `Into`/`From` through `Box<dyn Error>` carries the callee's error variant to the wrapper's callers", "limitation_analyzer_route: analysis/wrapper-error-binding", "limitation_non_claim: named analyzer limitation only; ripr does not confirm coverage or prescribe a repair test"],
+      "missing": ["Typed static limitation (wrapper_error_binding_unresolved): the wrapper error conversion's variant binding is not statically established"],
       "assertion_texts": {
         "10": "if !matches!(other, Err(OtherError::MalformedSource)) {\nreturn Err(\"foreign pin should observe OtherError::MalformedSource\".into());\n}"
       },
@@ -177,10 +165,10 @@
           "oracle_strength": "weak",
           "oracle_kind": "broad_error",
           "oracle": "if !matches!(result, Err(_)) {\nreturn Err(\"callee should fail closed\".into());\n}",
-          "relation_reason": "owner_named_test",
+          "relation_reason": "seam_callee_call",
           "relation_confidence": "medium",
-          "miss": "no_call_path",
-          "why": "no established call path to the changed code; linked by name only"
+          "miss": "weak_assertion",
+          "why": "assertion too weak to tell the old behavior from the new"
         },
         {
           "name": "try_parse_summary_with_foreign_pin",
@@ -189,18 +177,26 @@
           "oracle_strength": "strong",
           "oracle_kind": "exact_error_variant",
           "oracle": "if !matches!(other, Err(OtherError::MalformedSource)) {\nreturn Err(\"foreign pin should observe OtherError::MalformedSource\".into());\n}",
-          "relation_reason": "owner_named_test",
+          "relation_reason": "seam_callee_call",
           "relation_confidence": "medium",
-          "miss": "no_call_path",
-          "why": "no established call path to the changed code; linked by name only"
+          "miss": "observation_unconfirmed",
+          "why": "ripr could not confirm that this assertion observes the changed behavior"
         }
       ],
       "stop_reasons": [],
       "oracle_kind": "exact_error_variant",
       "oracle_strength": "strong",
-      "recommended_next_step": "ripr found no static test path to this change — this is not a coverage assessment. A test may already exercise it through macros, helper-call chains, or integration tests that ripr's static model does not yet trace. If none does, add a co-located test that reaches and observes the changed behavior so an assertion can notice if it is wrong.",
-      "suggested_next_action": "ripr found no static test path to this change — this is not a coverage assessment. A test may already exercise it through macros, helper-call chains, or integration tests that ripr's static model does not yet trace. If none does, add a co-located test that reaches and observes the changed behavior so an assertion can notice if it is wrong.",
+      "recommended_next_step": "Typed static limitation (wrapper_error_binding_unresolved): ripr cannot statically establish that this boxed wrapper conversion carries the callee's error variant, so an existing exact downcast witness is not statically creditable. Verify via real mutation testing or deeper conversion modeling.",
+      "suggested_next_action": "Typed static limitation (wrapper_error_binding_unresolved): ripr cannot statically establish that this boxed wrapper conversion carries the callee's error variant, so an existing exact downcast witness is not statically creditable. Verify via real mutation testing or deeper conversion modeling.",
       "language": "rust",
+      "static_limit_kind": "wrapper_error_binding_unresolved",
+      "static_limitation": {
+        "analyzer_route": "analysis/wrapper-error-binding",
+        "first_unresolved_edge": "whether `Into`/`From` through `Box<dyn Error>` carries the callee's error variant to the wrapper's callers",
+        "kind": "wrapper_error_binding_unresolved",
+        "last_established_edge": "changed wrapper conversion maps the converted callee's error into the boxed error channel",
+        "non_claim": "named analyzer limitation only; ripr does not confirm coverage or prescribe a repair test"
+      },
       "source_currentness": "candidate_current"
     }
   ]

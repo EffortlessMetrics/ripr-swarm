@@ -13022,33 +13022,52 @@ fn relation_reason_as_str_priority_and_confidence_are_pinned_per_variant() {
             RelationConfidence::Medium,
         ),
         (
-            RelationReason::SameTestFile,
-            "same_test_file",
+            // #5335: a captured seam-callee call outranks name/file proximity.
+            RelationReason::SeamCalleeCall,
+            "seam_callee_call",
             3,
-            RelationConfidence::Medium,
-        ),
-        (
-            RelationReason::SameModule,
-            "same_module",
-            4,
             RelationConfidence::Medium,
         ),
         (
             RelationReason::OwnerNamedTest,
             "owner_named_test",
+            4,
+            RelationConfidence::Medium,
+        ),
+        (
+            RelationReason::SameModule,
+            "same_module",
             5,
+            RelationConfidence::Medium,
+        ),
+        (
+            RelationReason::SameTestFile,
+            "same_test_file",
+            6,
             RelationConfidence::Medium,
         ),
         (
             RelationReason::ImportPathAffinity,
             "import_path_affinity",
-            6,
+            7,
+            RelationConfidence::Medium,
+        ),
+        (
+            RelationReason::ReExportChainFollowed,
+            "re_export_chain_followed",
+            7,
             RelationConfidence::Medium,
         ),
         (
             RelationReason::FixtureOwnerAffinity,
             "fixture_owner_affinity",
-            7,
+            8,
+            RelationConfidence::Low,
+        ),
+        (
+            RelationReason::WeakTokenSubstring,
+            "weak_token_substring",
+            9,
             RelationConfidence::Low,
         ),
     ];

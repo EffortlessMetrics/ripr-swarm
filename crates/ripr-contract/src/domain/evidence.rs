@@ -383,17 +383,20 @@ impl RelationReason {
             Self::DirectOwnerCall => 0,
             Self::HelperOwnerCall => 1,
             Self::AssertionTargetAffinity => 2,
-            Self::SameTestFile => 3,
-            Self::SameModule => 4,
-            Self::OwnerNamedTest => 5,
-            Self::ImportPathAffinity => 6,
+            // #5335: a captured callee call is a call fact, so it outranks
+            // name and file proximity; it still establishes no owner reach.
+            Self::SeamCalleeCall => 3,
+            // The classification checks the owner-named reason before the
+            // same-file reason, so a test that is both must not sort after a
+            // same-file-only test (#5335).
+            Self::OwnerNamedTest => 4,
+            Self::SameModule => 5,
+            Self::SameTestFile => 6,
+            Self::ImportPathAffinity => 7,
             // Re-export chain follows: same priority as import-path affinity —
             // the inference is explicit in-source but involves one hop of indirection.
-            Self::ReExportChainFollowed => 6,
-            Self::FixtureOwnerAffinity => 7,
-            // #3714: a captured callee call outranks token-substring
-            // affinity but stays below every owner-anchored signal.
-            Self::SeamCalleeCall => 8,
+            Self::ReExportChainFollowed => 7,
+            Self::FixtureOwnerAffinity => 8,
             Self::WeakTokenSubstring => 9,
         }
     }
@@ -668,9 +671,9 @@ mod tests {
         }
     }
 
-    /// Sorting by priority puts owner-anchored signals first, a seam callee
-    /// call below every owner-anchored signal, and token substrings last;
-    /// import affinity and a followed re-export chain tie.
+    /// Sorting by priority puts owner-execution signals first, a captured
+    /// seam-callee call above name and file proximity, and token substrings
+    /// last; import affinity and a followed re-export chain tie.
     #[test]
     fn relation_reasons_sort_strongest_first() {
         let mut reasons = ALL_REASONS;
@@ -682,13 +685,13 @@ mod tests {
                 "direct_owner_call",
                 "helper_owner_call",
                 "assertion_target_affinity",
-                "same_test_file",
-                "same_module",
+                "seam_callee_call",
                 "owner_named_test",
+                "same_module",
+                "same_test_file",
                 "import_path_affinity",
                 "re_export_chain_followed",
                 "fixture_owner_affinity",
-                "seam_callee_call",
                 "weak_token_substring",
             ]
         );
