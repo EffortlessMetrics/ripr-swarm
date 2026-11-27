@@ -11,7 +11,10 @@
 //!
 //! - the owner is an inherent method of a plain-named type whose first
 //!   parameter is exactly `&self`: a `&mut self` call needs `DerefMut` and a
-//!   mutable place, a by-value one moves out of the deref;
+//!   mutable place, a by-value one moves out of the deref; it is declared
+//!   plainly `pub`, since method probing skips an inherent method the caller
+//!   cannot access and runs a visible trait method of that name instead (a
+//!   private `Inner::len` loses to `ExactSizeIterator::len`);
 //! - the method name is not one that `Guard`'s std, derived or blanket impls
 //!   may answer ([`DEREF_RECEIVER_METHODS`] and the by-value prelude names),
 //!   and the workspace spells `fn <method>` exactly once: any other
@@ -62,6 +65,7 @@
 //! `Guard` to `Inner`) is not followed, and `Deref::deref` itself is never
 //! credited this way (its owner is a trait-impl method, not an inherent one).
 
+use super::super::related_tests::declared_unrestricted_pub;
 use super::{
     OwnerPinSyntax, RustIndex, is_ident_byte, is_plain_identifier, matching_close,
     method_may_dispatch_through_prelude, whole_word_offsets, workspace_type_name_count,
@@ -223,6 +227,11 @@ fn owner_deref_wrapper(
         && !method_may_dispatch_through_prelude(method)
         && workspace.fn_definitions.get(method).copied() == Some(1)
         && first_param_is_shared_self(&owner.body, method)
+        // Method probing skips an inherent method the caller cannot access
+        // and runs a visible trait method of that name instead (a private
+        // `Inner::len` loses to `ExactSizeIterator::len`), so only a method
+        // every caller can see is credited.
+        && declared_unrestricted_pub(owner, index)
         && workspace_type_name_count(self_ty, index) == 1
         && index
             .functions()

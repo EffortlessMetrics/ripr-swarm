@@ -22878,6 +22878,54 @@
       ]
     },
     {
+      "id": "rust_deref_receiver_inline_owner",
+      "language": "rust",
+      "tier": "pure",
+      "source_fixture": "fixtures/rust_deref_receiver_inline_owner",
+      "vector": "an_inline_deref_wrapper_constructor_call_runs_the_targets_inherent_method",
+      "probe_family": "return_value",
+      "assertions": [
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "expected_finding_count",
+          "count": 1
+        },
+        {
+          "type": "must_promote"
+        },
+        {
+          "type": "expected_class",
+          "class": "exposed"
+        }
+      ]
+    },
+    {
+      "id": "rust_deref_receiver_private_method",
+      "language": "rust",
+      "tier": "pure",
+      "source_fixture": "fixtures/rust_deref_receiver_private_method",
+      "vector": "a_private_owner_method_loses_to_a_visible_trait_method_through_deref",
+      "probe_family": "return_value",
+      "assertions": [
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "expected_finding_count",
+          "count": 1
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "expected_class",
+          "class": "reachable_unrevealed"
+        }
+      ]
+    },
+    {
       "id": "rust_deref_receiver_reexported_std",
       "language": "rust",
       "tier": "pure",

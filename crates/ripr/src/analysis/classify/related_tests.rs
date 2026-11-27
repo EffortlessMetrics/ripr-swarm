@@ -33,6 +33,7 @@ use std::path::Path;
 
 mod dependent_test_hosts;
 mod dispatch_target;
+pub(in crate::analysis::classify) use dispatch_target::declared_unrestricted_pub;
 mod drop_dispatch;
 mod equality_dispatch;
 mod generic_sibling;
