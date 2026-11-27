@@ -372,7 +372,8 @@ digests of the files the card's evidence is bound to: an edit or commit after
 `ripr_prepare_repair` runs the same shared check before it creates or replays
 a transaction, ahead of the ineligible (negative) documents, and refuses with
 the same typed `stale_snapshot` (#15240) when a checked file changed or was
-deleted. The checked files are those with a captured digest among the bound
+deleted. The check is point-in-time: the server does not lock workspace
+files, so an edit that lands after the check is caught by a later call. The checked files are those with a captured digest among the bound
 seam's evidence files plus, for every item, its own file and fix-site file.
 Seam evidence paths are compared in their native spelling; rendered item and
 fix-site paths drop a leading `./` and decode stable path text, so on Unix a

@@ -183,8 +183,10 @@ read-only and without execution authority (ADR 0022):
   document and never creates a second transaction, except that a live
   durable attempt that appeared since (below) turns the replay into the
   durable-attempt refusal, and a replay re-runs the consumed-source custody
-  check, so an edit to a checked file since the snapshot turns it into
-  `stale_snapshot`. The transaction is
+  check, so an edit to a checked file made since the snapshot and before
+  that check turns it into `stale_snapshot`. The check is point-in-time:
+  the server does not lock workspace files, so an edit landing after the
+  check is caught only by a later call. The transaction is
   in-memory like the snapshot: a restart drops it.
 - Single attempt per seam (#15244): when the shared CLI rule
   (`reusable_awaiting_attempt`: an ordinary durable attempt for the item's
@@ -294,7 +296,9 @@ read-only and without execution authority (ADR 0022):
   compared in native spelling so a Unix backslash file name is its own file) edited or
   deleted after the snapshot refuses with `stale_snapshot` through the same
   consumed-source custody check the repair card uses, ahead of the ineligible
-  documents, and never creates or replays a ready transaction; a proposed new
+  documents, and never creates or replays a ready transaction over an edit
+  the check observed (an edit after that point-in-time check is caught only by
+  a later call, since files are not locked); a proposed new
   test file with no captured digest is not checked and is disclosed in the packet's `limitations`, as are non-Rust items; a ready Rust item whose own path, or an existing fix-site test, has no captured digest refuses with `data.custody: not_verifiable` and no refresh promise (#15240); attempt identity is root-bound; a refresh that changes
   the evidence supersedes the prior transaction; session receipt status
   stays `awaiting_edit`; unknown and canonically invalid durable attempts

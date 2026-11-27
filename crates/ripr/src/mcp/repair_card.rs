@@ -1583,6 +1583,85 @@ mod tests {
         Ok(())
     }
 
+    /// #15240: the rendered recommendation is stable path text, so a selected
+    /// test named `tests/pric%ing.rs` renders as `tests/pric%25ing.rs`. The
+    /// custody list must hold the native spelling only: an edit to an
+    /// unrelated captured file literally named `tests/pric%25ing.rs` is not a
+    /// drift (control), while an edit to the selected test is.
+    #[test]
+    fn custody_paths_decode_a_percent_named_recommendation() -> Result<(), String> {
+        use crate::output::agent_seam_packets::{
+            TASK_WRITE_TARGETED_TEST, recommended_test_for, task_for,
+        };
+        let selected = "tests/pric%ing.rs";
+        let unrelated = "tests/pric%25ing.rs";
+        let mut entry = weakly_gripped_entry();
+        let grip = entry
+            .evidence
+            .related_tests
+            .first_mut()
+            .and_then(Arc::get_mut)
+            .ok_or("fixture related test must be uniquely owned")?;
+        grip.file = PathBuf::from(selected);
+        grip.test_target = Some(TestTargetEvidence::fixture(
+            "discounted_total_boundary",
+            Path::new(selected),
+            12,
+        ));
+        // Preconditions: the recommendation branch runs and renders the
+        // encoded spelling, so the collision this test guards is real.
+        if task_for(&entry) != TASK_WRITE_TARGETED_TEST {
+            return Err(format!(
+                "fixture must route a targeted test, got {}",
+                task_for(&entry)
+            ));
+        }
+        let rendered = recommended_test_for(&entry).file;
+        if rendered != unrelated {
+            return Err(format!(
+                "fixture recommendation must render {unrelated}, got {rendered}"
+            ));
+        }
+        let paths = crate::app::repair_card_handoff::evidence_probe_paths(&entry);
+        let expected = vec![PathBuf::from("src/pricing.rs"), PathBuf::from(selected)];
+        if paths != expected {
+            return Err(format!(
+                "custody paths must keep native spellings, got {paths:?}"
+            ));
+        }
+        let mut consumed = crate::analysis::consumed_source::ConsumedRustSources::default();
+        consumed.record(Path::new("src/pricing.rs"), Some(b"fn a() {}\n"));
+        consumed.record(Path::new(selected), Some(b"fn t() {}\n"));
+        consumed.record(Path::new(unrelated), Some(b"fn u() {}\n"));
+        fn read(edited: &'static str) -> impl FnMut(&Path) -> Option<Vec<u8>> {
+            move |path: &Path| {
+                let text = path.to_str()?;
+                Some(match text {
+                    "src/pricing.rs" => b"fn a() {}\n".to_vec(),
+                    _ if text == edited => b"edited\n".to_vec(),
+                    "tests/pric%ing.rs" => b"fn t() {}\n".to_vec(),
+                    "tests/pric%25ing.rs" => b"fn u() {}\n".to_vec(),
+                    _ => return None,
+                })
+            }
+        }
+        if let Some(drift) =
+            consumed.first_drift(paths.iter().map(PathBuf::as_path), read(unrelated))
+        {
+            return Err(format!(
+                "an edit to the unrelated file must not block the card: {}",
+                drift.describe()
+            ));
+        }
+        if consumed
+            .first_drift(paths.iter().map(PathBuf::as_path), read(selected))
+            .is_none()
+        {
+            return Err("an edit to the selected test must be a custody drift".to_string());
+        }
+        Ok(())
+    }
+
     /// #15240: preparing a bound item also checks the item's own file and its
     /// fix-site file, which the seam's evidence files need not include. Here
     /// the fix site (`tests/checkout.rs`) is not one of the seam's evidence
