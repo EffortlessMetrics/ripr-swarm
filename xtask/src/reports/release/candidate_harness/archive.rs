@@ -16,6 +16,15 @@ mod inventory_tests;
 mod producer;
 use producer::{InstallProducer, InstallToolchain};
 
+/// Bounded process deadlines for qualified Cargo packaging and installation (#15216).
+const PACKAGE_TIMEOUT: Duration = Duration::from_mins(15);
+const INSTALL_TIMEOUT: Duration = Duration::from_mins(15);
+/// Job cap applied only on memory-constrained hosts (< 24 GiB) so a qualified
+/// release build stays inside the ~9.6 GiB peak observed on Linux cgroup runs
+/// while unconstrained hosts use Cargo's full parallelism to finish well inside
+/// [`INSTALL_TIMEOUT`] (#15216).
+const CONSTRAINED_CARGO_JOBS: usize = 2;
+
 /// Archive custody starts at an observed successful Cargo producer, never a
 /// caller's archive/version string. Ordinary entries retain raw Git attribution.
 pub(crate) struct AttributedArchive {
@@ -49,12 +58,13 @@ impl AttributedArchive {
             &target,
             stage.is_some(),
             &packaged_packages(&source)?,
+            qualified_cargo_jobs(),
         );
         qualified_command(
             Path::new("cargo"),
             &args,
             workspace,
-            Duration::from_mins(15),
+            PACKAGE_TIMEOUT,
             "qualified cargo package",
         )?;
         source.revalidate()?;
@@ -125,27 +135,18 @@ impl AttributedArchive {
         let target_root = owned_root.join("install-target");
         let toolchain = InstallToolchain::observe(&extracted)?;
         let config = owned_cargo_config(owned_root, "install", Some(&toolchain))?;
-        let args = vec![
-            "--config".to_string(),
-            config.to_string_lossy().into_owned(),
-            "install".to_string(),
-            "--message-format=json".to_string(),
-            "--jobs".to_string(),
-            "2".to_string(),
-            "--path".to_string(),
-            extracted.to_string_lossy().into_owned(),
-            "--locked".to_string(),
-            "--offline".to_string(),
-            "--root".to_string(),
-            install_root.to_string_lossy().into_owned(),
-            "--target-dir".to_string(),
-            target_root.to_string_lossy().into_owned(),
-        ];
+        let args = install_args(
+            &config,
+            &extracted,
+            &install_root,
+            &target_root,
+            qualified_cargo_jobs(),
+        );
         let output = qualified_command_with_environment(
             Path::new("cargo"),
             &args,
             &extracted,
-            Duration::from_mins(15),
+            INSTALL_TIMEOUT,
             "qualified cargo install",
             &toolchain.environment(),
         )?;
@@ -248,6 +249,81 @@ mod tests {
         }
         std::fs::remove_dir_all(&fixture.0)
             .map_err(|error| format!("extracted-input fixture cleanup: {error}"))
+    }
+
+    #[test]
+    fn qualified_cargo_jobs_caps_only_low_memory_parallel_hosts() {
+        let low = Some(crate::cargo_job_cap::LOW_MEMORY_BYTES - 1);
+        let high = Some(crate::cargo_job_cap::LOW_MEMORY_BYTES);
+        assert_eq!(
+            qualified_cargo_jobs_for(false, low, Some(32)),
+            Some(CONSTRAINED_CARGO_JOBS)
+        );
+        assert_eq!(
+            qualified_cargo_jobs_for(false, low, Some(4)),
+            Some(CONSTRAINED_CARGO_JOBS)
+        );
+        assert_eq!(qualified_cargo_jobs_for(false, low, Some(2)), None);
+        assert_eq!(qualified_cargo_jobs_for(false, low, Some(1)), None);
+        assert_eq!(qualified_cargo_jobs_for(true, low, Some(32)), None);
+        assert_eq!(qualified_cargo_jobs_for(false, high, Some(32)), None);
+        assert_eq!(qualified_cargo_jobs_for(false, None, Some(32)), None);
+        assert_eq!(qualified_cargo_jobs_for(false, low, None), None);
+    }
+
+    #[test]
+    fn install_args_omits_jobs_when_uncapped_and_preserves_custody_flags() {
+        let p = Path::new("x");
+        let uncapped = install_args(p, p, p, p, None);
+        assert!(!uncapped.iter().any(|arg| arg == "--jobs"));
+        assert!(uncapped.iter().any(|arg| arg == "--locked"));
+        assert!(uncapped.iter().any(|arg| arg == "--offline"));
+        assert!(uncapped.iter().any(|arg| arg == "--message-format=json"));
+
+        let capped = install_args(p, p, p, p, Some(2));
+        assert!(capped.windows(2).any(|pair| pair == ["--jobs", "2"]));
+        assert!(capped.iter().any(|arg| arg == "--locked"));
+        assert!(capped.iter().any(|arg| arg == "--offline"));
+        assert_eq!(PACKAGE_TIMEOUT, Duration::from_mins(15));
+        assert_eq!(INSTALL_TIMEOUT, Duration::from_mins(15));
+    }
+
+    #[test]
+    fn owned_cargo_config_sets_windows_msvc_rust_lld_linker() -> Result<(), String> {
+        let stamp = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_err(|error| error.to_string())?
+            .as_nanos();
+        let root =
+            std::env::temp_dir().join(format!("ripr-owned-config-{}-{stamp}", std::process::id()));
+        if let Some(parent) = root.parent() {
+            std::fs::create_dir_all(parent).map_err(|error| error.to_string())?;
+        }
+        std::fs::create_dir(&root).map_err(|error| error.to_string())?;
+        let fixture = OwnedExtraction(root);
+        let config_path = owned_cargo_config(&fixture.0, "install", None)?;
+        let raw = std::fs::read_to_string(&config_path).map_err(|error| error.to_string())?;
+        let parsed: toml::Value = toml::from_str(&raw).map_err(|error| error.to_string())?;
+        assert_eq!(
+            parsed
+                .get("target")
+                .and_then(|t| t.get("x86_64-pc-windows-msvc"))
+                .and_then(|t| t.get("linker"))
+                .and_then(toml::Value::as_str),
+            Some("rust-lld.exe")
+        );
+        for name in ["TEMP", "TMP", "TMPDIR"] {
+            let entry = parsed
+                .get("env")
+                .and_then(|e| e.get(name))
+                .and_then(toml::Value::as_table)
+                .ok_or_else(|| format!("missing env.{name} table"))?;
+            assert_eq!(
+                entry.get("force").and_then(toml::Value::as_bool),
+                Some(true)
+            );
+        }
+        Ok(())
     }
 }
 
@@ -513,6 +589,20 @@ fn owned_cargo_config(
     }
     let mut config = toml::map::Map::new();
     config.insert("env".to_string(), toml::Value::Table(environment));
+    // Match `.cargo/config.toml`: extracted standalone `.crate` installs do not
+    // inherit the workspace config, so pin the toolchain-bundled LLD on Windows
+    // MSVC to avoid slow `link.exe` tail times (#15216).
+    let mut win_target = toml::map::Map::new();
+    win_target.insert(
+        "linker".to_string(),
+        toml::Value::String("rust-lld.exe".to_string()),
+    );
+    let mut target = toml::map::Map::new();
+    target.insert(
+        "x86_64-pc-windows-msvc".to_string(),
+        toml::Value::Table(win_target),
+    );
+    config.insert("target".to_string(), toml::Value::Table(target));
     if let Some(toolchain) = toolchain {
         toolchain.configure(&mut config)?;
     }
@@ -605,6 +695,56 @@ fn publish_stage_for(
     Ok(Some(stage))
 }
 
+fn qualified_cargo_jobs_for(
+    explicit_jobs: bool,
+    memory_bytes: Option<u64>,
+    cpus: Option<usize>,
+) -> Option<usize> {
+    let constrained =
+        memory_bytes.is_some_and(|bytes| bytes < crate::cargo_job_cap::LOW_MEMORY_BYTES);
+    let above_cap = cpus.is_some_and(|count| count > CONSTRAINED_CARGO_JOBS);
+    (!explicit_jobs && constrained && above_cap).then_some(CONSTRAINED_CARGO_JOBS)
+}
+
+fn qualified_cargo_jobs() -> Option<usize> {
+    let explicit = std::env::var_os("CARGO_BUILD_JOBS").is_some();
+    let memory = crate::cargo_job_cap::host_memory_bytes();
+    let cpus = std::thread::available_parallelism()
+        .ok()
+        .map(std::num::NonZeroUsize::get);
+    qualified_cargo_jobs_for(explicit, memory, cpus)
+}
+
+fn install_args(
+    config: &Path,
+    extracted: &Path,
+    install_root: &Path,
+    target_root: &Path,
+    jobs: Option<usize>,
+) -> Vec<String> {
+    let mut args = vec![
+        "--config".to_string(),
+        config.to_string_lossy().into_owned(),
+        "install".to_string(),
+        "--message-format=json".to_string(),
+    ];
+    if let Some(jobs) = jobs {
+        args.push("--jobs".to_string());
+        args.push(jobs.to_string());
+    }
+    args.extend([
+        "--path".to_string(),
+        extracted.to_string_lossy().into_owned(),
+        "--locked".to_string(),
+        "--offline".to_string(),
+        "--root".to_string(),
+        install_root.to_string_lossy().into_owned(),
+        "--target-dir".to_string(),
+        target_root.to_string_lossy().into_owned(),
+    ]);
+    args
+}
+
 /// The qualified `cargo package` arguments. Path dependencies such as
 /// `ripr-contract` are not on a registry before the release, so they are
 /// packaged in the same invocation and Cargo verifies the candidate against
@@ -617,19 +757,24 @@ fn package_args(
     target: &Path,
     staged: bool,
     packages: &[String],
+    jobs: Option<usize>,
 ) -> Vec<String> {
     let mut args = vec![
         "--config".to_string(),
         config.to_string_lossy().into_owned(),
         "package".to_string(),
-        "--jobs".to_string(),
-        "2".to_string(),
+    ];
+    if let Some(jobs) = jobs {
+        args.push("--jobs".to_string());
+        args.push(jobs.to_string());
+    }
+    args.extend([
         "--locked".to_string(),
         "--manifest-path".to_string(),
         manifest.to_string_lossy().into_owned(),
         "--target-dir".to_string(),
         target.to_string_lossy().into_owned(),
-    ];
+    ]);
     if staged {
         args.push("--allow-dirty".to_string());
     }
