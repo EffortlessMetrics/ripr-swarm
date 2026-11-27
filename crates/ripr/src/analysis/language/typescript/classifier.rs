@@ -3598,6 +3598,19 @@ pub(crate) fn ts_predicate_boundary_row_activation(
     }
     let owner_receivers =
         unshadowed_owner_namespace_receivers(candidate.test, owner, alias_map, workspace_root);
+    // A renamed import of the owner is called bare (`d(100)`); a member
+    // call `x.d(...)` never names it, so aliases take no receivers. A test
+    // body that declares its own same-name local calls that local instead.
+    let alias_locals: Vec<&str> =
+        owner_import_alias_locals(candidate.test, owner, alias_map, workspace_root)
+            .filter(|alias| {
+                !local_identifier_declared_in_test_body(&candidate.test.body_text, alias)
+            })
+            .collect();
+    let call_spellings: Vec<(&str, &[String])> =
+        std::iter::once((owner.name.as_str(), owner_receivers.as_slice()))
+            .chain(alias_locals.iter().map(|alias| (*alias, &[][..])))
+            .collect();
     // #4104-E3: a constant-shaped boundary operand reads its value from
     // the owner's own module declaration. Resolution is per candidate so
     // the test's scope never substitutes a value the owner cannot see;
@@ -3636,19 +3649,25 @@ pub(crate) fn ts_predicate_boundary_row_activation(
         if assertion_is_self_comparing(assertion, observed) {
             continue;
         }
-        let mut argument_lists = owner_call_arguments(observed, &owner.name, &owner_receivers);
+        let mut argument_lists: Vec<Vec<String>> = call_spellings
+            .iter()
+            .flat_map(|(name, receivers)| owner_call_arguments(observed, name, receivers))
+            .collect();
         // #4104-E1: the canonical `const result = owner(...);
         // expect(result).toBe(...)` idiom observes the owner call through
         // a one-hop local binding. When the bare local carries no owner
         // reference, its single immutable initializer IS the observed
         // call, and its arguments flow through the same witness path.
         if argument_lists.is_empty()
-            && let Some(initializer_arguments) = ts_observed_local_owner_call_arguments(
-                candidate.test,
-                assertion,
-                &owner.name,
-                &owner_receivers,
-            )
+            && let Some(initializer_arguments) =
+                call_spellings.iter().find_map(|(name, receivers)| {
+                    ts_observed_local_owner_call_arguments(
+                        candidate.test,
+                        assertion,
+                        name,
+                        receivers,
+                    )
+                })
         {
             argument_lists.push(initializer_arguments);
         }
@@ -3720,7 +3739,9 @@ pub(crate) fn ts_predicate_boundary_row_activation(
             // expected literal (`toBe(999)` when the changed behavior
             // produces `90` at the boundary input) proves nothing — the
             // changed value never reaches a passing assertion.
-            if expected_side_calls_owner(&candidate.test.body_text, observed, &owner.name) {
+            if call_spellings.iter().any(|(name, _)| {
+                expected_side_calls_owner(&candidate.test.body_text, observed, name)
+            }) {
                 reached = true;
                 continue;
             }
@@ -4205,14 +4226,13 @@ fn row_boundary_input_activation(
     }
     // A visible owner call at the boundary settles presence before any of
     // the closure rules below: the input exists, whatever else the test does.
-    let alias_locals = test.imports_in_file.iter().filter(|import| {
-        !import.namespace
-            && import.imported.as_deref() == Some(owner.name.as_str())
-            && import.local != owner.name
-            && import_source_matches_owner(import, &test.file, owner, alias_map, workspace_root)
-    });
     let reach_names = std::iter::once(owner.name.as_str())
-        .chain(alias_locals.map(|import| import.local.as_str()))
+        .chain(owner_import_alias_locals(
+            test,
+            owner,
+            alias_map,
+            workspace_root,
+        ))
         .filter(|name| !local_identifier_declared_in_test_body(&test.body_text, name));
     for name in reach_names {
         // The callback block only: a boundary-shaped call in the test's
@@ -4329,6 +4349,29 @@ fn row_boundary_input_activation(
     } else {
         unresolved
     }
+}
+
+/// The test file's renamed import bindings of the owner
+/// (`import { discount as d } from '../src/price'`, `const { discount: d } =
+/// require('../src/price')`) whose source resolves to the owner's module. A
+/// bare call through one of these locals runs the owner itself, so it reads
+/// the same as a call spelled with the owner's name (#16452). A namespace
+/// import is excluded: its member calls go through the receiver path.
+fn owner_import_alias_locals<'t>(
+    test: &'t TypeScriptTest,
+    owner: &TypeScriptOwner,
+    alias_map: Option<&TsAliasMap>,
+    workspace_root: Option<&Path>,
+) -> impl Iterator<Item = &'t str> {
+    test.imports_in_file
+        .iter()
+        .filter(move |import| {
+            !import.namespace
+                && import.imported.as_deref() == Some(owner.name.as_str())
+                && import.local != owner.name
+                && import_source_matches_owner(import, &test.file, owner, alias_map, workspace_root)
+        })
+        .map(|import| import.local.as_str())
 }
 
 /// Test-runner modules whose imports cannot reach the owner.

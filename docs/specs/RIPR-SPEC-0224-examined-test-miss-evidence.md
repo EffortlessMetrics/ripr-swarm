@@ -734,7 +734,14 @@ position rules as the witness (#5527):
 1. `not_applicable`: the changed line is not a predicate.
 2. `witnessed`: a strong, pinned, family-matching assertion of this test
    observes an owner call carrying the boundary input, and its expected side
-   is live. The finding-wide witness is "some row is `witnessed`".
+   is live. The finding-wide witness is "some row is `witnessed`". An owner
+   call is spelled with the owner's name, through a namespace receiver bound
+   to the owner module, or as a bare call of a renamed import of the owner
+   (`import { applyDiscount as discount }`, `const { applyDiscount: discount }
+   = require(...)`) whose source resolves to the owner module, unless the test
+   body redeclares that local (#16452). A renamed import through a barrel the
+   resolver cannot place, and a re-export that renames the owner (`export {
+   applyDiscount as discount }`), are not owner calls here.
 3. `reached_without_discriminator`: an owner call in this test carries the
    boundary input, but no such assertion witnesses it. The input is present,
    so this is never a missing input.

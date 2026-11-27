@@ -494,9 +494,10 @@ fn same_line_body_local_shadow_is_not_owner_activation() -> Result<(), String> {
 }
 
 /// Control 7: genuine owner calls through a namespace import or an import
-/// alias keep their real answer. The aggregate witness reads only the owner
-/// name, so an alias call at the boundary is present but not witnessed, and
-/// an alias call can never hide a boundary input from the miss check.
+/// alias keep their real answer. A renamed import of the owner is a bare
+/// call of the owner itself, so an alias call at the boundary witnesses it
+/// exactly like the owner's own spelling (#16452), and an alias call can
+/// never hide a boundary input from the miss check.
 #[test]
 fn namespace_and_alias_owner_calls_keep_their_answer() -> Result<(), String> {
     let namespace = "import * as pricing from '../src/pricing';";
@@ -524,18 +525,75 @@ fn namespace_and_alias_owner_calls_keep_their_answer() -> Result<(), String> {
     }
     let alias = "import { applyDiscount as discount } from '../src/pricing';";
     for (name, call, activation) in [
-        (
-            "alias at boundary",
-            "discount(100)",
-            A::ReachedWithoutDiscriminator,
-        ),
+        ("alias at boundary", "discount(100)", A::Witnessed),
         ("alias off boundary", "discount(150)", A::MissedBoundary),
     ] {
         let source = one_test(name, alias, &format!("  expect({call}).toBe(90);"));
         let evaluated = evaluate(&DISCOUNT, &source, true)?;
         assert_eq!(evaluated.row(name)?.1, R::ImportAliasOwnerCall, "{call}");
         assert_eq!(evaluated.activation(name)?, activation, "{call}");
-        assert!(!evaluated.witnessed, "{call}");
+        assert_eq!(
+            evaluated.witnessed,
+            activation == A::Witnessed,
+            "{call}: the finding-wide witness follows the alias row"
+        );
+    }
+    Ok(())
+}
+
+/// #16452: every spelling of a renamed owner binding the test file resolves
+/// to the owner module witnesses the boundary like the owner's own name: an
+/// ESM `as` rename, a CommonJS destructuring rename, and the one-hop
+/// `const result = alias(...)` idiom. The same alias stays unwitnessed when
+/// the test body redeclares it, when the expected side calls it (a
+/// tautology), or when the call is a member of another receiver.
+#[test]
+fn renamed_owner_import_witnesses_like_the_owner_name() -> Result<(), String> {
+    let esm = "import { applyDiscount as discount } from '../src/pricing';";
+    let cjs = "const { applyDiscount: discount } = require('../src/pricing');";
+    for (name, imports, body) in [
+        ("esm alias", esm, "  expect(discount(100)).toBe(90);"),
+        ("cjs alias", cjs, "  expect(discount(100)).toBe(90);"),
+        (
+            "alias one hop",
+            esm,
+            "  const result = discount(100);\n  expect(result).toBe(90);",
+        ),
+    ] {
+        let source = one_test(name, imports, body);
+        let tests = extract_tests(Path::new(TEST_FILE), &source);
+        assert!(
+            tests.iter().any(|test| test
+                .imports_in_file
+                .iter()
+                .any(|import| import.local == "discount"
+                    && import.imported.as_deref() == Some("applyDiscount"))),
+            "{name}: the fixture must bind `discount` to `applyDiscount`"
+        );
+        let evaluated = evaluate(&DISCOUNT, &source, true)?;
+        assert_eq!(evaluated.activation(name)?, A::Witnessed, "{name}");
+        assert!(evaluated.witnessed, "{name}");
+    }
+    for (name, body) in [
+        (
+            "alias redeclared in the body",
+            "  const discount = (total: number) => total;\n  expect(discount(100)).toBe(90);",
+        ),
+        (
+            "alias on the expected side",
+            "  expect(discount(100)).toBe(discount(99));",
+        ),
+        (
+            "alias as another receiver's member",
+            "  const cart = makeCart();\n  expect(cart.discount(100)).toBe(90);",
+        ),
+    ] {
+        let source = one_test(name, esm, body);
+        let evaluated = evaluate(&DISCOUNT, &source, true)?;
+        if let Ok(row) = evaluated.row(name) {
+            assert_ne!(row.2, A::Witnessed, "{name}");
+        }
+        assert!(!evaluated.witnessed, "{name}");
     }
     Ok(())
 }
