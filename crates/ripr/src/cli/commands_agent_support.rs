@@ -13,7 +13,7 @@ pub(super) fn validate_agent_receipt_verify_path(
 ) -> Result<PathBuf, String> {
     let root = root.canonicalize().map_err(|err| {
         format!(
-            "canonicalize agent receipt root {} failed: {err}",
+            "canonicalize agent receipt root {} failed: {err}; pass an existing directory as --root",
             root.display()
         )
     })?;
@@ -120,7 +120,7 @@ fn agent_receipt_artifact_provenance(
         path: crate::agent::loop_commands::root_path_display(Path::new(display_path)),
         sha256: provenance::sha256_file(&resolved).map_err(|err| {
             format!(
-                "hash agent receipt {output_name} {} failed: {err}",
+                "hash agent receipt {output_name} {} failed: {err}; check that the file still exists and is readable, then rerun",
                 display_path
             )
         })?,
@@ -134,7 +134,7 @@ fn validate_agent_receipt_artifact_path(
 ) -> Result<PathBuf, String> {
     let root = root.canonicalize().map_err(|err| {
         format!(
-            "canonicalize agent receipt root {} failed: {err}",
+            "canonicalize agent receipt root {} failed: {err}; pass an existing directory as --root",
             root.display()
         )
     })?;
@@ -197,7 +197,7 @@ pub(super) fn validate_agent_verify_snapshot_path(
 ) -> Result<PathBuf, String> {
     let root = root.canonicalize().map_err(|err| {
         format!(
-            "canonicalize agent verify root {} failed: {err}",
+            "canonicalize agent verify root {} failed: {err}; pass an existing directory as --root",
             root.display()
         )
     })?;
@@ -320,7 +320,7 @@ pub(super) fn resolve_agent_brief_working_set(
 pub(super) fn validate_agent_brief_diff_path(root: &Path, path: &Path) -> Result<PathBuf, String> {
     let root = root.canonicalize().map_err(|err| {
         format!(
-            "canonicalize agent brief root {} failed: {err}",
+            "canonicalize agent brief root {} failed: {err}; pass an existing directory as --root",
             root.display()
         )
     })?;
