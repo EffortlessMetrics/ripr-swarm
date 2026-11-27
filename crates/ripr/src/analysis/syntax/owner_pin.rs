@@ -2004,6 +2004,26 @@ fn macro_binding_sites_in_tree(
                 };
                 if let Some(name) = name {
                     let name = name.trim_start_matches("r#");
+                    // #16388: a rootless group (`use {anyhow::anyhow, ..};`)
+                    // has no outer path, so each leaf is verified against its
+                    // own first segment, as if it were imported alone.
+                    let leaf_root;
+                    let (root, external) = if root.is_empty() {
+                        leaf_root = use_tree_segments(&item)
+                            .into_iter()
+                            .next()
+                            .unwrap_or_default();
+                        let leaf_external = item.path().is_some_and(|path| {
+                            path.syntax()
+                                .text()
+                                .to_string()
+                                .trim_start()
+                                .starts_with("::")
+                        });
+                        (leaf_root.as_str(), leaf_external)
+                    } else {
+                        (root, external)
+                    };
                     let kind = if !trusted.contains(&name) {
                         None
                     } else if item.rename().is_none()

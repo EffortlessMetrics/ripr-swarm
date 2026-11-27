@@ -3592,9 +3592,9 @@ const TRANSPARENT_STD_MACROS: &[&str] = &[
 ];
 
 /// The [`TRANSPARENT_STD_MACROS`] names the binding scan reads only for a
-/// caller whose body mentions them, so that a rebinding of `env` or
+/// caller that invokes them bare, so that a rebinding of `env` or
 /// `include_str` elsewhere does not withhold credit from a wrapper that
-/// never reads it (#10357).
+/// never reads it (#10357, #16388).
 const BODY_SCOPED_TRANSPARENT_MACROS: &[&str] = &[
     "env",
     "option_env",
@@ -3614,23 +3614,19 @@ const BODY_SCOPED_TRANSPARENT_MACROS: &[&str] = &[
 /// scan the trusted-assertion reading uses. An out-of-line module counts as
 /// unresolved, which only withholds forwarding credit. A caller with no
 /// `!` invokes no macro, so the index scan is skipped for it. The
-/// [`BODY_SCOPED_TRANSPARENT_MACROS`] join the scan only when the caller's
-/// body mentions them (`env` also covers `option_env`); any rebinding found
-/// still refuses every bare macro.
+/// [`BODY_SCOPED_TRANSPARENT_MACROS`] join the scan only when the caller
+/// invokes them bare; any rebinding found still refuses every bare macro.
 fn transparent_macro_name_rebound(caller_body: &str, index: &RustIndex) -> bool {
     let names: Vec<&str> = TRANSPARENT_STD_MACROS
         .iter()
         .copied()
         .filter(|name| {
-            // A logging name joins only for a caller that invokes it bare:
-            // these are common words (`error`), and a `use crate::error;`
-            // elsewhere must not withhold credit from a wrapper that never
-            // logs. The invocation reading is the one the hop check uses.
-            if audited_macro_roots::LEVELED_LOGGING_MACROS.contains(name) {
-                return invokes_bare_macro(caller_body, name);
-            }
-            !BODY_SCOPED_TRANSPARENT_MACROS.contains(name)
-                || caller_body.contains(name.trim_start_matches("option_"))
+            // A body-scoped name joins only for a caller that invokes it
+            // bare, by the invocation reading the hop check uses: only a bare
+            // invocation reads the scan, and the word in a string or comment
+            // (`println!("anyhow error")`) or a qualified path invokes
+            // nothing the scan could rebind (#16388, #16420).
+            !BODY_SCOPED_TRANSPARENT_MACROS.contains(name) || invokes_bare_macro(caller_body, name)
         })
         .collect();
     caller_body.contains('!')
@@ -5822,6 +5818,39 @@ mod tests {
             caller_invokes_opaque_macro("cfg!(); if is_bulk(qty) { 5 } else { 0 }", true),
             "rebound cfg must stay opaque"
         );
+        Ok(())
+    }
+
+    /// #16388 item 2: a body-scoped name joins the rebinding scan only when
+    /// the caller invokes it bare, in any spelling. The word in a string, a
+    /// comment or a longer name leaves a local `anyhow` definition unread.
+    #[test]
+    fn a_body_scoped_name_joins_the_scan_only_when_invoked_bare() -> Result<(), String> {
+        let path = PathBuf::from("src/lib.rs");
+        let source = "macro_rules! anyhow { ($($t:tt)*) => { 0 }; }\npub fn w(qty: u32) -> u32 { if qty > 1 { 5 } else { 0 } }\n";
+        let facts = crate::analysis::syntax::ra::summarize_file_with_parser(&path, source)?;
+        let index = RustIndex::from_owned(OwnedRustIndex {
+            functions: facts.functions.clone(),
+            tests: facts.tests.clone(),
+            files: [(path, facts)].into_iter().collect(),
+            ..Default::default()
+        });
+        for body in [
+            "let _ = anyhow!(\"qty {qty}\");",
+            "let _ = anyhow ! (qty);",
+            "let _ = r#anyhow!(qty);",
+            "println!(\"{}\", anyhow!(qty));",
+        ] {
+            assert!(transparent_macro_name_rebound(body, &index), "{body}");
+        }
+        for body in [
+            "println!(\"anyhow error {qty}\");",
+            "// anyhow!(qty)\nprintln!(\"{qty}\");",
+            "let anyhow_count = 1; println!(\"{anyhow_count}\");",
+            "let _ = my_anyhow!(qty);",
+        ] {
+            assert!(!transparent_macro_name_rebound(body, &index), "{body}");
+        }
         Ok(())
     }
 

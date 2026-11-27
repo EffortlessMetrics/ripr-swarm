@@ -1,0 +1,10 @@
+[[extend]]
+id = "RIPR-SPEC-0186"
+tests = [
+  "crates/ripr/tests/helper_wrapper_reach.rs::imported_anyhow_wrapper_forwards_unless_anyhow_is_rebound",
+  "crates/ripr/tests/helper_wrapper_reach.rs::a_body_scoped_name_in_a_string_leaves_its_rebinding_unread",
+]
+code = [
+  "crates/ripr/src/analysis/syntax/owner_pin.rs",
+  "crates/ripr/src/analysis/classify/helper_transfer.rs",
+]

@@ -830,7 +830,9 @@ pub(crate) struct CachedSeamLimitInfo {
 /// `use tracing::info;` or `use log::warn;` is transparent (#16420).
 /// `1.215`: an item macro naming `serde_json` refuses
 /// bare `json!` forwarding credit (#16388).
-pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.215";
+/// `1.216`: a rootless grouped drop-in import is verified by its own
+/// root, and body-scoped macro names join the scan only when invoked bare (#16388).
+pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.216";
 /// `0.2` → `0.3`: same semantic transition as the outer cache (#3273 /
 /// #3286) — sharded entries derive from the same facts and cannot bypass
 /// the outer generation bump.
@@ -1082,7 +1084,8 @@ pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.215";
 /// `0.215`: same type-parameter-shadowed helper reading as full `1.213` (#12891).
 /// `0.216`: same bare logging import route as full `1.214` (#16420).
 /// `0.217`: same json item-macro refusal as full `1.215` (#16388).
-const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.217";
+/// `0.218`: same rootless-group and body-scope reading as full `1.216` (#16388).
+const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.218";
 
 /// Compact-classified seam cache schema. This cache stores the same
 /// `ClassifiedSeam` envelope shape as the full repo exposure cache, but
@@ -1336,7 +1339,8 @@ const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.217";
 /// `0.215`: same type-parameter-shadowed helper reading as full `1.213` (#12891).
 /// `0.216`: same bare logging import route as full `1.214` (#16420).
 /// `0.217`: same json item-macro refusal as full `1.215` (#16388).
-pub(crate) const COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.217";
+/// `0.218`: same rootless-group and body-scope reading as full `1.216` (#16388).
+pub(crate) const COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.218";
 
 /// Compact class-count cache used by repo badge rendering. It keys off
 /// the same workspace state as the full fact cache, but stores only
@@ -5975,7 +5979,8 @@ mod tests {
         // 1.212 -> 1.213: a type parameter shadows a same-spelled module helper (#12891).
         // 1.213 -> 1.214: bare imported logging macros forward (#16420).
         // 1.214 -> 1.215: item macros naming serde_json refuse json! credit (#16388).
-        assert_eq!(CACHE_SCHEMA_VERSION, "1.215");
+        // 1.215 -> 1.216: rootless groups and bare-invocation body scoping (#16388).
+        assert_eq!(CACHE_SCHEMA_VERSION, "1.216");
         // 1.168 -> 1.169: plain `assert_eq!` literal withhold in the audit (#13005).
         // 0.12 -> 0.13 through 0.14 / 0.15 / 0.16 / 0.17 / 0.18: same
         // #3731 semantic transition as the outer classified-seam cache,
@@ -6167,8 +6172,9 @@ mod tests {
         // 0.214 -> 0.215: same type-parameter-shadowed helper reading as full 1.213 (#12891).
         // 0.215 -> 0.216: same bare logging import route as full 1.214 (#16420).
         // 0.216 -> 0.217: same json item-macro refusal as full 1.215 (#16388).
-        assert_eq!(SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.217");
-        assert_eq!(COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.217");
+        // 0.217 -> 0.218: same rootless-group and body-scope reading as full 1.216 (#16388).
+        assert_eq!(SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.218");
+        assert_eq!(COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.218");
         // 0.170 -> 0.171: same plain `assert_eq!` literal withhold as full 1.169 (#13005).
     }
 
