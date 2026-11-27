@@ -1,0 +1,4 @@
+[package]
+name = "rust_into_from_let_annotation_fixture"
+version = "0.0.0"
+edition = "2024"

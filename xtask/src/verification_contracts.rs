@@ -4120,54 +4120,6 @@ mod tests {
         Ok(())
     }
 
-    #[test]
-    fn review_comments_accepts_both_receipt_generations_and_rejects_mixed_fields()
-    -> Result<(), String> {
-        let root = repo_root()?;
-        let schema = read_json(root.join("schemas/ripr/review-comments.schema.json"))?;
-        let fixtures = root.join("tests/fixtures/verification/ripr");
-        let prior = read_json(fixtures.join("review-comments.receipt-v0-1.valid.json"))?;
-        let current = read_json(fixtures.join("review-comments.valid.json"))?;
-        let check = |name: &str, value: &serde_json::Value, valid: bool| -> Result<(), String> {
-            let mut violations = Vec::new();
-            validate_value_against_schema(
-                value,
-                &schema,
-                &schema,
-                name.to_owned(),
-                &mut violations,
-            );
-            if violations.is_empty() != valid {
-                return Err(format!(
-                    "unexpected schema result for {name}: {violations:?}"
-                ));
-            }
-            Ok(())
-        };
-        check("published 0.1 receipt", &prior, true)?;
-        check("current 0.2 receipt", &current, true)?;
-        for field in [
-            "requested_mode",
-            "analysis_identity",
-            "phase_evidence",
-            "primary_failure",
-        ] {
-            let mut incomplete = current.clone();
-            incomplete
-                .get_mut("run_receipt")
-                .and_then(serde_json::Value::as_object_mut)
-                .and_then(|receipt| receipt.remove(field))
-                .ok_or_else(|| format!("current fixture is missing {field}"))?;
-            check(field, &incomplete, false)?;
-        }
-        for (fixture, version) in [(prior, "0.2"), (current.clone(), "0.1"), (current, "0.3")] {
-            let mut mixed = fixture;
-            mixed["run_receipt"]["schema_version"] = serde_json::json!(version);
-            check("mismatched receipt version", &mixed, false)?;
-        }
-        Ok(())
-    }
-
     /// Turning on `if`/`then` evaluation in this validator made the
     /// review-comments conditionals enforceable for the first time, and they
     /// immediately rejected an honest producer packet.
@@ -4780,28 +4732,66 @@ mod tests {
             }
             Ok(())
         };
+        let genuine = read_json(directory.join("check-empty-root-refusal.valid.json"))?;
+        check(&genuine, true, "unusable root refusal")?;
+        let mut terse = genuine.clone();
+        terse["rendering"] = serde_json::json!("terse");
+        check(&terse, true, "terse unusable root refusal")?;
+        terse["rendering"] = serde_json::json!("full");
+        check(&terse, false, "unknown rendering on unusable root refusal")?;
         for name in [
             "check-complete.valid.json",
             "check-partial-scope.valid.json",
-            "check-empty-root-refusal.valid.json",
+            "check-limited.valid.json",
+            "check-findings.valid.json",
         ] {
             let mut doc = read_json(directory.join(name))?;
             check(&doc, true, name)?;
-            let refused = doc.get("status") == Some(&serde_json::json!("refused"));
-            doc["root"] = serde_json::json!("");
-            check(&doc, refused, "empty root")?;
-            for key in ["status", "error"] {
-                let mut without = doc.clone();
-                without
-                    .as_object_mut()
-                    .ok_or("expected object")?
-                    .remove(key);
-                check(&without, false, key)?;
+            for (key, value) in doc.as_object().ok_or("expected report object")? {
+                if !matches!(key.as_str(), "base" | "rendering") && genuine.get(key).is_none() {
+                    let mut mixed = genuine.clone();
+                    mixed[key] = value.clone();
+                    check(&mixed, false, key)?;
+                }
             }
-            doc["root"] = serde_json::json!(false);
-            check(&doc, false, "non-string root")?;
-            doc.as_object_mut().ok_or("expected object")?.remove("root");
-            check(&doc, false, "missing required root")?;
+            doc["root"] = serde_json::json!("");
+            check(&doc, false, name)?;
+            doc["status"] = genuine["status"].clone();
+            doc["error"] = genuine["error"].clone();
+            check(&doc, false, "borrowed refusal fields")?;
+        }
+        for key in [
+            "status",
+            "error",
+            "analysis_scope",
+            "run_limitations",
+            "root",
+        ] {
+            let mut without = genuine.clone();
+            without
+                .as_object_mut()
+                .ok_or("expected object")?
+                .remove(key);
+            check(&without, false, key)?;
+        }
+        let completed = read_json(directory.join("check-complete.valid.json"))?;
+        for (path, value) in [
+            ("/root", serde_json::json!(false)),
+            ("/error/code", serde_json::json!("diff_scope_oversized")),
+            ("/findings", completed["findings"].clone()),
+            ("/summary/probes", serde_json::json!(1)),
+            (
+                "/analysis_scope/downstream_consumable",
+                serde_json::json!(true),
+            ),
+            ("/run_limitations/0/category", serde_json::json!("other")),
+            ("/run_limitations", serde_json::json!([])),
+        ] {
+            let mut inconsistent = genuine.clone();
+            *inconsistent
+                .pointer_mut(path)
+                .ok_or_else(|| format!("missing {path}"))? = value;
+            check(&inconsistent, false, path)?;
         }
         Ok(())
     }

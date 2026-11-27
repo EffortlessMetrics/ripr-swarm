@@ -141,15 +141,19 @@ pub(crate) fn compile_harness(
             .map_err(|error| format!("write help harness source {relative}: {error}"))?;
     }
     let executable = owned_root.join(format!("help-contract{}", std::env::consts::EXE_SUFFIX));
-    let args = vec![
+    let mut args = vec![
         "--edition=2024".to_string(),
         "--test".to_string(),
         "-C".to_string(),
         "debuginfo=0".to_string(),
+    ];
+    #[cfg(all(target_os = "windows", target_arch = "x86_64", target_env = "msvc"))]
+    args.extend(["-C".to_string(), "linker=rust-lld.exe".to_string()]);
+    args.extend([
         HELP_HARNESS_ENTRY.to_string(),
         "-o".to_string(),
         executable.to_string_lossy().into_owned(),
-    ];
+    ]);
     let mut environment = toolchain_environment.to_vec();
     environment.push(("CARGO_BIN_EXE_ripr", binary));
     environment.push(("RUSTUP_AUTO_INSTALL", "0"));

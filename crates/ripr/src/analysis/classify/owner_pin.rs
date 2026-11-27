@@ -51,6 +51,7 @@ pub(in crate::analysis) fn integer_literal_fits_type(text: &str, ty: &str) -> bo
 mod boolean_projection;
 pub(super) mod closed_dispatch;
 pub(super) mod closure_adaptor;
+pub(in crate::analysis::classify) mod deref_receiver;
 pub(super) mod dyn_box;
 mod exit_record_types;
 mod expected_binding;
@@ -616,6 +617,12 @@ pub(in crate::analysis) struct OwnerPinSyntax {
     /// computed once per run over the once-built module-name set.
     /// The index is immutable, so the memo never goes stale.
     unit_struct_facts: OnceLock<UnitStructFacts>,
+    /// #15277: the Deref wrapper reading's workspace verdict, computed once
+    /// per run (see `deref_receiver`).
+    deref_workspace: OnceLock<Option<deref_receiver::DerefWorkspace>>,
+    /// #15277: each inherent owner's Deref wrapper, keyed by the owner's
+    /// (file, start line, name).
+    deref_wrappers: SyncMemo<BTreeMap<(PathBuf, usize, String), Option<String>>>,
     /// RIPR-SPEC-0225 decision 9: whether the workspace is closed for
     /// iteration, a whole-index scan computed once per run.
     iteration_closed: OnceLock<bool>,
@@ -6048,6 +6055,30 @@ impl OwnerReturnPin {
         .trim_end_matches(".unwrap()")
     }
 
+    /// #15277: the one wrapper type whose `Deref` reaches this inherent
+    /// owner, read from the indexed owner (see `deref_receiver`).
+    fn deref_wrapper(&self, index: &RustIndex) -> Option<String> {
+        // The memo is read first; the indexed owner is looked up only once
+        // per owner and run.
+        deref_receiver::deref_wrapper_for(
+            &self.owner_file,
+            self.owner_start_line,
+            &self.name,
+            index,
+            || {
+                let mut owners = index.functions().iter().filter(|function| {
+                    function.file == self.owner_file
+                        && function.start_line == self.owner_start_line
+                        && function.name == self.name
+                });
+                match (owners.next(), owners.next()) {
+                    (Some(owner), None) => Some(owner),
+                    _ => None,
+                }
+            },
+        )
+    }
+
     /// The owner's changed value is its unconditional whole boolean tail.
     /// A wrapper pin may reuse boundary pairing only for this shape; the
     /// short-circuit and adaptor paths require their own pinned-input gates.
@@ -8540,7 +8571,14 @@ impl OwnerReturnPin {
                 let Some(receiver_type) = receiver_type else {
                     return false;
                 };
-                if !receivers.contains(&receiver_type) {
+                // #15277: an inherent owner reached through the one `Deref`
+                // wrapper of its type (`Guard(Inner { .. }).limit()`).
+                let deref_wrapped = || {
+                    trait_scope.is_none()
+                        && matches!(&receiver_type, ReceiverType::Named(name)
+                            if self.deref_wrapper(index).as_deref() == Some(name.as_str()))
+                };
+                if !receivers.contains(&receiver_type) && !deref_wrapped() {
                     return false;
                 }
                 let shadowed_by_std = match &receiver_type {
@@ -20112,6 +20150,13 @@ fn binding_type(
 }
 
 impl OwnerPinSyntax {
+    /// #15277: the Deref wrapper workspace verdict, scanned once per run.
+    fn deref_workspace(&self, index: &RustIndex) -> Option<&deref_receiver::DerefWorkspace> {
+        self.deref_workspace
+            .get_or_init(|| deref_receiver::deref_workspace(index, self))
+            .as_ref()
+    }
+
     /// #7172: [`unit_struct_value`]'s name-independent inputs, computed
     /// once per run; the index is immutable, so the memo never goes stale.
     fn unit_struct_facts(&self, index: &RustIndex) -> &UnitStructFacts {

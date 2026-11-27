@@ -1,0 +1,11 @@
+diff --git a/src/lib.rs b/src/lib.rs
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -7,6 +7,6 @@
+ 
+ impl From<Celsius> for Fahrenheit {
+     fn from(c: Celsius) -> Self {
+-        Fahrenheit(c.d * 9 / 5 + 30)
++        Fahrenheit(c.d * 9 / 5 + 32)
+     }
+ }

@@ -834,8 +834,10 @@ pub(crate) struct CachedSeamLimitInfo {
 /// wrapper parameter no longer reads as rebinding it (#10357).
 /// `1.213`: a helper whose every call to a name is qualified by its own type
 /// parameter no longer credits the same-spelled module function (#12891).
-/// `1.214`: compose history-sync import (1.205) with protected swarm main (1.213) and public 352f9d796f (#16016).
-pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.214";
+/// `1.214`: a bare leveled logging macro behind a verified
+/// `use tracing::info;` or `use log::warn;` is transparent (#16420).
+/// `1.215`: compose history-sync import (1.205) with protected swarm main (1.214) and public 352f9d796f (#16016).
+pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.215";
 /// `0.2` → `0.3`: same semantic transition as the outer cache (#3273 /
 /// #3286) — sharded entries derive from the same facts and cannot bypass
 /// the outer generation bump.
@@ -1091,8 +1093,9 @@ pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.214";
 /// `0.213`: same imported anyhow! wrapper forwarding as full `1.211` (#10357).
 /// `0.214`: same block-arm parameter reading as full `1.212` (#10357).
 /// `0.215`: same type-parameter-shadowed helper reading as full `1.213` (#12891).
-/// `0.216`: match full `1.214` for composed history-sync import + protected swarm main (#16016).
-const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.216";
+/// `0.216`: same bare logging import route as full `1.214` (#16420).
+/// `0.217`: match full `1.215` for composed history-sync import + protected swarm main (#16016).
+const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.217";
 
 /// Compact-classified seam cache schema. This cache stores the same
 /// `ClassifiedSeam` envelope shape as the full repo exposure cache, but
@@ -1350,8 +1353,9 @@ const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.216";
 /// `0.213`: same imported anyhow! wrapper forwarding as full `1.211` (#10357).
 /// `0.214`: same block-arm parameter reading as full `1.212` (#10357).
 /// `0.215`: same type-parameter-shadowed helper reading as full `1.213` (#12891).
-/// `0.216`: match full `1.214` for composed history-sync import + protected swarm main (#16016).
-pub(crate) const COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.216";
+/// `0.216`: same bare logging import route as full `1.214` (#16420).
+/// `0.217`: match full `1.215` for composed history-sync import + protected swarm main (#16016).
+pub(crate) const COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.217";
 
 /// Compact class-count cache used by repo badge rendering. It keys off
 /// the same workspace state as the full fact cache, but stores only
@@ -6010,8 +6014,9 @@ mod tests {
         // 1.210 -> 1.211: an imported anyhow! is transparent (#10357).
         // 1.211 -> 1.212: block arms that read a parameter do not rebind it (#10357).
         // 1.212 -> 1.213: a type parameter shadows a same-spelled module helper (#12891).
-        // 1.213 -> 1.214: compose history-sync import (1.205) with protected swarm main (1.213) (#16016).
-        assert_eq!(CACHE_SCHEMA_VERSION, "1.214");
+        // 1.213 -> 1.214: bare imported logging macros forward (#16420).
+        // 1.214 -> 1.215: compose history-sync import (1.205) with protected swarm main (1.214) (#16016).
+        assert_eq!(CACHE_SCHEMA_VERSION, "1.215");
         // 1.168 -> 1.169: plain `assert_eq!` literal withhold in the audit (#13005).
         // 0.12 -> 0.13 through 0.14 / 0.15 / 0.16 / 0.17 / 0.18: same
         // #3731 semantic transition as the outer classified-seam cache,
@@ -6204,9 +6209,10 @@ mod tests {
         // 0.212 -> 0.213: same imported anyhow! wrapper forwarding as full 1.211 (#10357).
         // 0.213 -> 0.214: same block-arm parameter reading as full 1.212 (#10357).
         // 0.214 -> 0.215: same type-parameter-shadowed helper reading as full 1.213 (#12891).
-        // 0.215 -> 0.216: match full 1.214 for composed history-sync import + protected swarm main (#16016).
-        assert_eq!(SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.216");
-        assert_eq!(COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.216");
+        // 0.215 -> 0.216: same bare logging import route as full 1.214 (#16420).
+        // 0.216 -> 0.217: match full 1.215 for composed history-sync import + protected swarm main (#16016).
+        assert_eq!(SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.217");
+        assert_eq!(COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.217");
         // 0.170 -> 0.171: same plain `assert_eq!` literal withhold as full 1.169 (#13005).
     }
 
