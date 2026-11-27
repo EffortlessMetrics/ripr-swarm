@@ -128,6 +128,18 @@ pub fn event_declarations(source: &str) -> Result<BTreeMap<String, Vec<String>>,
 /// required H/G qualification route. Its ordinary main replay is retired; the
 /// remaining label and cut-observer edges retain their existing cutover owners.
 pub fn violations(path: &str, source: &str) -> Vec<String> {
+    violations_admitting(path, source, &BTreeMap::new())
+}
+
+/// `violations`, additionally admitting a ledgered source-only workflow's
+/// source events with their exact configuration
+/// (`crate::source_only_workflows::admitted_source_events`). The caller only
+/// passes events for a file whose ledger row records the swarm disable.
+pub fn violations_admitting(
+    path: &str,
+    source: &str,
+    admitted: &BTreeMap<String, Vec<String>>,
+) -> Vec<String> {
     let events = match event_declarations(source) {
         Ok(events) => events,
         Err(error) => return vec![format!("{path}: workflow lifecycle: {error}")],
@@ -135,6 +147,9 @@ pub fn violations(path: &str, source: &str) -> Vec<String> {
     events
         .into_iter()
         .filter_map(|(event, configuration)| {
+            if admitted.get(&event) == Some(&configuration) {
+                return None;
+            }
             let allowed = match event.as_str() {
                 "workflow_call" | "workflow_dispatch" => true,
                 // The retained sentinel timer reads native qualification without
@@ -237,6 +252,22 @@ mod tests {
             let source = workflow("pull_request", &format!("    types: [labeled, {action}]\n"));
             assert!(!violations(CALLER, &source).is_empty(), "{action}");
         }
+    }
+
+    #[test]
+    fn source_only_admission_is_exact_and_per_event() {
+        let path = ".github/workflows/source-ci.yml";
+        let source = workflow("pull_request", "    types: [opened]\n");
+        assert!(!violations(path, &source).is_empty());
+        let admitted = BTreeMap::from([(
+            "pull_request".to_string(),
+            vec!["types: [opened]".to_string()],
+        )]);
+        assert!(violations_admitting(path, &source, &admitted).is_empty());
+        let widened = workflow("pull_request", "    types: [opened, labeled]\n");
+        assert!(!violations_admitting(path, &widened, &admitted).is_empty());
+        let push = workflow("push", "    branches: [main]\n");
+        assert!(!violations_admitting(path, &push, &admitted).is_empty());
     }
 
     #[test]

@@ -291,6 +291,53 @@ inventory. Inspect current source, exact head, review findings and native state
 before any consequential request. Do not infer readiness from a missing or
 skipped check, a quiet PR, or an earlier green result.
 
+### Source-only workflows
+
+`policy/source-only-workflows.toml` lists workflows that belong to the public
+source repository `EffortlessMetrics/ripr` and must never run here. Under
+Option A (one tree with repository-specific workflow execution), a fast-forward
+promotion gives public `ripr` this tree byte for byte, so public's
+required-check producers live in swarm under `.github/workflows/source-only-*`.
+Today: `source-only-ci.yml` (`rust`, `msrv`, `vscode`),
+`source-only-security.yml` (`cargo-deny`, `dependency-review`), and
+`source-only-promotion-composition.yml` (`Source Promotion Composition`,
+`EffortlessMetrics/ripr#1893`).
+
+`cargo xtask check-workflows` enforces three layers. Every job's `if:` opens
+with the source repository guard, so a swarm run skips every job unless it is
+dispatched with `rehearse_in_swarm: true` (a pre-promotion rehearsal of the
+source jobs on swarm's tree). For a `pull_request_target` source-only workflow
+(`source-only-promotion-composition.yml`), the job's `if:` must be the exact
+repository guard with no extra skip condition, because GitHub treats a skipped
+required job as Success (`EffortlessMetrics/ripr#1893`). A file stays
+dispatch-only (phase `dispatch_only`) until the workflow is disabled in
+`ripr-swarm`, because a job-level `if:` cannot make a subscribed event
+Actions-free. Only then may its ledger row move to `source_triggers` with the
+read-back recorded in `swarm_disable_observation`, and the file declare exactly
+the ledgered source events. Every context public's settings contract requires
+must have a ledgered producer, and no swarm workflow or `policy/ci-*.toml`
+ledger may name a source-only file. Public's contract is held at
+`.github/source-settings.yml` until a separate change swaps it onto the
+Settings app path `.github/settings.yml` (`settings_app_holds` in the ledger);
+until then that path keeps swarm's contract and this machinery has no live
+settings effect.
+
+#### Trusted promotion-composition continuity and Dec 2 `pull_request_target` policy
+
+`source-only-promotion-composition.yml` carries the default-branch-defined,
+read-only `pull_request_target` gate landed in `EffortlessMetrics/ripr#1903`
+(`4bfb2ea14d`) and verified on November 21, 2026 in `EffortlessMetrics/ripr#1893`
+(runs `44912512043`, `44912789397`, `44896760529`, and `44896738643`). Starting
+December 2, 2026, GitHub blocks `pull_request_target` by default on public
+repositories unless an owner-configured Actions event policy explicitly allows
+the specific workflow file. Keeping `Source Promotion Composition` operable on
+`EffortlessMetrics/ripr` requires an explicit owner-authorized Actions event
+policy allowlisting `.github/workflows/source-only-promotion-composition.yml`
+(and `.github/workflows/source-promotion-composition.yml` during the pre-FF
+window) plus the owner-gated branch-protection update adding
+`{"context": "Source Promotion Composition", "app_id": 15368}` recorded in
+`EffortlessMetrics/ripr#1893`. See [Repository Settings](REPO_SETTINGS.md#source-only-workflow-and-event-policy-cutover).
+
 ## Verification Economics Policy
 
 CI is a product surface. A contributor should be able to tell what ran, why it
