@@ -3459,6 +3459,27 @@ pub(crate) fn check_repair_route(
     seam_index: &mut Option<crate::analysis::FileSeamIndex>,
 ) -> crate::app::CheckRepairRoute {
     use super::navigation::{CheckRepairRoute, RepairRouteRefusal};
+    let route = repair_route_lookup(root, check_config, output, seam_index);
+    // `ripr check` runs this lookup under what is left of its time budget. A
+    // lookup that deadline stopped is named as such, whatever it had read by
+    // then: neither a start nor a refusal built on partial evidence is shown.
+    // A finding that prints no route line at all stays silent.
+    if !matches!(route, CheckRepairRoute::Silent)
+        && crate::analysis::cancellation::current_abort_kind()
+            == Some(crate::analysis::cancellation::AnalysisAbortKind::DeadlineExceeded)
+    {
+        return CheckRepairRoute::Refused(RepairRouteRefusal::LookupBudgetSpent);
+    }
+    route
+}
+
+fn repair_route_lookup(
+    root: &Path,
+    check_config: &crate::config::RiprConfig,
+    output: &super::CheckOutput,
+    seam_index: &mut Option<crate::analysis::FileSeamIndex>,
+) -> crate::app::CheckRepairRoute {
+    use super::navigation::{CheckRepairRoute, RepairRouteRefusal};
     let Some(finding) = crate::output::human::selected_triage_finding(output, check_config) else {
         return CheckRepairRoute::Silent;
     };

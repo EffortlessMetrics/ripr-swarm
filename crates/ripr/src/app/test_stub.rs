@@ -1252,9 +1252,18 @@ pub(crate) fn check_stub_routes(
             })
         })
         .collect();
-    finish_stub_routes(root, &config, plans, |file, ids| {
+    let routes = finish_stub_routes(root, &config, plans, |file, ids| {
         classify_stub_choices(root, &config, file, ids)
-    })
+    });
+    // `ripr check` runs this lookup under what is left of its time budget. A
+    // stub's syntax can resolve while the existing-test lookup behind it
+    // (#10683) is stopped and reads as "no weak test", so routes finished
+    // under a stopped lookup are withheld: a command named here might be one
+    // `agent stub` refuses.
+    if crate::analysis::cancellation::current_abort_kind().is_some() {
+        return Vec::new();
+    }
+    routes
 }
 
 /// Whether the finding's expression is still on disk in the function the
@@ -1655,6 +1664,9 @@ fn next_repair_for(
 #[cfg(test)]
 std::thread_local! {
     static INVENTORY_ENTRY_FACTS_CALLS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    /// Test seam for #15996: the check budget running out exactly when the
+    /// existing-test lookup starts, after the stub's syntax has resolved.
+    static DEADLINE_AT_INVENTORY_ENTRY_FACTS: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
 }
 
 /// What `ripr check` reads on the changed lines of a stubbed seam the
@@ -1716,6 +1728,12 @@ fn inventory_entry_facts(
 ) -> Option<(SeamGripClass, Option<String>)> {
     #[cfg(test)]
     INVENTORY_ENTRY_FACTS_CALLS.with(|count| count.set(count.get() + 1));
+    #[cfg(test)]
+    if DEADLINE_AT_INVENTORY_ENTRY_FACTS.with(std::cell::Cell::get)
+        && let Some(token) = crate::analysis::cancellation::current_token()
+    {
+        token.cancel(crate::analysis::cancellation::AnalysisAbortKind::DeadlineExceeded);
+    }
     let relative = scoped_file(root, file)?;
     // Only the selected seam receives evidence (#13884): its entry equals the
     // whole-file inventory's, and the file's other seams are not classified
