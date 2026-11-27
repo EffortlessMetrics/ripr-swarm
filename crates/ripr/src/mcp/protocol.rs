@@ -1232,6 +1232,7 @@ fn get_top_limitation_tool_descriptor() -> Value {
 
 fn limitation_output_schema() -> Value {
     json!({
+        "type": "object",
         "oneOf": [
             {
                 "type": "object",
@@ -1376,6 +1377,7 @@ fn get_repair_card_tool_descriptor() -> Value {
 
 fn repair_card_output_schema() -> Value {
     json!({
+        "type": "object",
         "oneOf": [
             {
                 "type": "object",
@@ -1474,6 +1476,7 @@ fn status_output_schema() -> Value {
     // Like every other tool schema: the success document, or the typed
     // failure the bound path returns for an oversized status (#6291).
     json!({
+        "type": "object",
         "oneOf": [
             status_success_schema(),
             typed_failure_document_schema(SESSION_SCHEMA_VERSION)
@@ -1844,6 +1847,7 @@ pub(super) fn status_success_schema() -> Value {
 
 fn refresh_output_schema() -> Value {
     json!({
+        "type": "object",
         "oneOf": [
             {
                 "type": "object",
@@ -1908,6 +1912,7 @@ fn refresh_output_schema() -> Value {
 
 fn gap_list_output_schema() -> Value {
     json!({
+        "type": "object",
         "oneOf": [
             {
                 "type": "object",
@@ -2079,6 +2084,7 @@ fn gap_list_output_schema() -> Value {
 
 fn gap_output_schema() -> Value {
     json!({
+        "type": "object",
         "oneOf": [
             {
                 "type": "object",
@@ -2108,6 +2114,7 @@ fn gap_output_schema() -> Value {
 
 fn repair_packet_output_schema() -> Value {
     json!({
+        "type": "object",
         "oneOf": [
             {
                 "type": "object",
@@ -2163,6 +2170,7 @@ fn repair_packet_output_schema() -> Value {
 
 fn repair_attempt_output_schema() -> Value {
     json!({
+        "type": "object",
         "oneOf": [
             {
                 "type": "object",
@@ -2207,6 +2215,7 @@ fn repair_attempt_output_schema() -> Value {
 
 fn receipt_status_output_schema() -> Value {
     json!({
+        "type": "object",
         "oneOf": [
             {
                 "type": "object",
@@ -3991,7 +4000,13 @@ mod tests {
         // CLI reading emits, so a validating host can type the counts.
         // Measured full 43,051 (slim 12,140, unchanged by this change), so
         // only the opt-in full budget moves, from 42,600 to 43,200.
-        for (mode, budget) in [(ToolsListMode::Slim, 12_300), (ToolsListMode::Full, 43_200)] {
+        // #11475 budget decision: rmcp 3.12.0 (upstream #1340) strips tool
+        // `outputSchema` for legacy peers unless the root schema explicitly
+        // carries `"type": "object"`. Declaring `"type": "object"` alongside
+        // `"oneOf"` on all ten object-valued tool schemas adds 160 bytes to
+        // the opt-in full listing (measured 43,211; slim 12,140 unchanged),
+        // so only the opt-in full budget moves, from 43,200 to 43,400.
+        for (mode, budget) in [(ToolsListMode::Slim, 12_300), (ToolsListMode::Full, 43_400)] {
             let payload = tools_list_result_for(mode);
             let bytes = serde_json::to_vec(&payload)
                 .map_err(|error| format!("measure tools/list payload: {error}"))?
