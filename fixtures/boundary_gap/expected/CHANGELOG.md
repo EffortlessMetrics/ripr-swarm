@@ -1,5 +1,15 @@
 # Golden Output Changes
 
+## Pending — corpus cache generation 1.211 for type-parameter-shadowed helpers (#12891)
+
+A helper whose every call to a name is qualified by its own type parameter no
+longer credits the same-spelled module function, which bumps the analyzer cache
+schema to 1.211. Move the portable unchanged-attempt snapshots to 1.211,
+recompute the `raw_json_placeholder_v1` artifact content commitment, then the
+dependent verify commitments and receipt byte hashes. Weak grip, unchanged
+movement, historical currentness, incomplete receipt status and fail-closed
+first-action routing remain unchanged. No other fixture output is regenerated.
+
 ## Pending — corpus cache generation 1.209 for standard trait rivals (#16040)
 
 A `&self` or `&mut self` trait impl method on the text receiver path is now

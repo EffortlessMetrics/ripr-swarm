@@ -3703,6 +3703,11 @@ pub(in crate::analysis::test_grip_evidence) fn trailing_rust_identifier(text: &s
         .collect::<String>()
 }
 
+/// Whether the text after a name opens a call: `(`, or a turbofish `::<..>(`.
+fn is_call_head(rest: &str) -> bool {
+    rest.starts_with('(') || rest.starts_with("::<")
+}
+
 /// Whether `body` (a function starting at its `fn` declaration) calls `name`
 /// only through paths whose qualifier is one of the function's own generic
 /// parameters, such as `fn route<helpers: Foreign>() { helpers::read() }`. A
@@ -3728,13 +3733,13 @@ fn every_named_call_is_type_parameter_qualified(
     if !after_name.starts_with('<') {
         return false;
     }
-    let Some((params, _)) = generic_parameter_names(after_name) else {
+    let Some((params, _)) = generic_type_parameter_names(after_name) else {
         return false;
     };
     let mut seen = false;
     for (start, _) in masked.match_indices(name) {
         if masked[..start].chars().next_back().is_some_and(word)
-            || !masked[start + name.len()..].trim_start().starts_with('(')
+            || !is_call_head(masked[start + name.len()..].trim_start())
             || trailing_rust_identifier(masked[..start].trim_end()) == "fn"
         {
             continue;
@@ -4759,6 +4764,23 @@ mod type_parameter_qualified_call_tests {
         let both =
             "fn route_more<T>() {}\nfn route<helpers: Foreign>() {\n    helpers::read();\n}\n";
         assert!(shadowed(both, "route", "read"));
+    }
+
+    #[test]
+    fn a_const_parameter_does_not_shadow_a_module() {
+        let body = "fn route<const helpers: usize>() -> Option<u32> {\n    helpers::read()\n}\n";
+        assert!(!shadowed(body, "route", "read"));
+        let mixed = "fn route<const N: usize, helpers: Foreign>() {\n    helpers::read();\n}\n";
+        assert!(shadowed(mixed, "route", "read"));
+    }
+
+    #[test]
+    fn a_turbofish_call_is_counted_and_keeps_the_function() {
+        let mixed =
+            "fn route<helpers: Foreign>() {\n    helpers::read();\n    crate::helpers::read::<u8>();\n}\n";
+        assert!(!shadowed(mixed, "route", "read"));
+        let qualified = "fn route<helpers: Foreign>() {\n    helpers::read::<u8>();\n}\n";
+        assert!(shadowed(qualified, "route", "read"));
     }
 
     #[test]

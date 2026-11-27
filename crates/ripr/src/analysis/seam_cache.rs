@@ -818,7 +818,9 @@ pub(crate) struct CachedSeamLimitInfo {
 /// `1.209`: a `&self` or `&mut self` trait impl method is name-only when a
 /// standard trait's method of the name comes at an earlier probing step
 /// (#16040).
-pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.209";
+/// `1.211`: a helper whose every call to a name is qualified by its own type
+/// parameter no longer credits the same-spelled module function (#12891).
+pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.211";
 /// `0.2` → `0.3`: same semantic transition as the outer cache (#3273 /
 /// #3286) — sharded entries derive from the same facts and cannot bypass
 /// the outer generation bump.
@@ -1064,7 +1066,8 @@ pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.209";
 /// `0.209`: same constructed trait receiver reading as full `1.207` (#15956).
 /// `0.210`: same audited value-macro wrapper forwarding as full `1.208` (#10357).
 /// `0.211`: same standard trait rival reading as full `1.209` (#16040).
-const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.211";
+/// `0.213`: same type-parameter-shadowed helper reading as full `1.211` (#12891).
+const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.213";
 
 /// Compact-classified seam cache schema. This cache stores the same
 /// `ClassifiedSeam` envelope shape as the full repo exposure cache, but
@@ -1312,7 +1315,8 @@ const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.211";
 /// `0.209`: same constructed trait receiver reading as full `1.207` (#15956).
 /// `0.210`: same audited value-macro wrapper forwarding as full `1.208` (#10357).
 /// `0.211`: same standard trait rival reading as full `1.209` (#16040).
-pub(crate) const COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.211";
+/// `0.213`: same type-parameter-shadowed helper reading as full `1.211` (#12891).
+pub(crate) const COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.213";
 
 /// Compact class-count cache used by repo badge rendering. It keys off
 /// the same workspace state as the full fact cache, but stores only
@@ -5932,7 +5936,8 @@ mod tests {
         // 1.206 -> 1.207: constructed trait receivers and by-value twins (#15956, #15428).
         // 1.207 -> 1.208: an audited qualified value macro is transparent (#10357).
         // 1.208 -> 1.209: a standard trait method at an earlier probing step (#16040).
-        assert_eq!(CACHE_SCHEMA_VERSION, "1.209");
+        // 1.209 -> 1.211: a type parameter shadows a same-spelled module helper (#12891).
+        assert_eq!(CACHE_SCHEMA_VERSION, "1.211");
         // 1.168 -> 1.169: plain `assert_eq!` literal withhold in the audit (#13005).
         // 0.12 -> 0.13 through 0.14 / 0.15 / 0.16 / 0.17 / 0.18: same
         // #3731 semantic transition as the outer classified-seam cache,
@@ -6118,8 +6123,9 @@ mod tests {
         // 0.208 -> 0.209: same constructed trait receiver reading as full 1.207 (#15956).
         // 0.209 -> 0.210: same audited value-macro wrapper forwarding as full 1.208 (#10357).
         // 0.210 -> 0.211: same standard trait rival reading as full 1.209 (#16040).
-        assert_eq!(SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.211");
-        assert_eq!(COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.211");
+        // 0.211 -> 0.213: same type-parameter-shadowed helper reading as full 1.211 (#12891).
+        assert_eq!(SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.213");
+        assert_eq!(COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.213");
         // 0.170 -> 0.171: same plain `assert_eq!` literal withhold as full 1.169 (#13005).
     }
 

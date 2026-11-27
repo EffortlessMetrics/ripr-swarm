@@ -120,11 +120,6 @@
       "reason": "the claims field-construction pin (#12394, #12864) and the multiline Python receiver rebind rule (#9992) judge none of this Rust capture's seams; its judged seams are unchanged and it is held at its recorded generation until the next corpus recapture"
     },
     {
-      "report": "fixtures/evidence-promotion-honesty-corpus/reports/rust-inherent-receiver-helper-scope-shadow.json",
-      "cache_schema_version": "1.183",
-      "reason": "the claims field-construction pin (#12394, #12864) and the multiline Python receiver rebind rule (#9992) judge none of this Rust capture's seams; its judged seams are unchanged and it is held at its recorded generation until the next corpus recapture"
-    },
-    {
       "report": "fixtures/evidence-promotion-honesty-corpus/reports/rust-inherent-receiver-helper-type-parameter.json",
       "cache_schema_version": "1.176",
       "reason": "the claims field-construction pin (#12394, #12864) and the multiline Python receiver rebind rule (#9992) judge none of this Rust capture's seams; its judged seams are unchanged and it is held at its recorded generation until the next corpus recapture"

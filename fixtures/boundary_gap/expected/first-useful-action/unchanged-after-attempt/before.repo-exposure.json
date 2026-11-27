@@ -20,7 +20,7 @@
       "worktree": "dirty"
     },
     "canonicalization": "raw_json_placeholder_v1",
-    "content_sha256": "sha256:5e1665edfa4040b84f9ec83668ccf8f4c51718055b817d8134e6d2a9b8a65e31",
+    "content_sha256": "sha256:e071ad1817d6c07b3a200da0428eef84287239ed525a9abd259481ca012e4868",
     "kind": "repo_exposure",
     "producer": {
       "tool": "ripr",
@@ -960,7 +960,7 @@
       "analyzed_production_files": [
         "src/lib.rs"
       ],
-      "cache_schema_version": "1.209",
+      "cache_schema_version": "1.211",
       "files_content_hash": "16ab297ea99e68bf",
       "scope": "rust_workspace"
     },
