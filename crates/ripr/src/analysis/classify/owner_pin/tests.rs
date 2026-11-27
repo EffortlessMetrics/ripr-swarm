@@ -6396,6 +6396,38 @@ fn any_mention_in_another_macros_arguments_stays_ambiguous() {
     );
 }
 
+/// #16388: an item macro whose tokens name `serde_json` may alias the root
+/// a bare `json!` import names, so the scan reports a `json` site and the
+/// stored candidates record `json` (the slice-boundary count then reads the
+/// file). An expression-position call naming the root does neither.
+#[test]
+fn an_item_macro_naming_serde_json_is_a_json_binding_site() {
+    let sites = |source: &str| {
+        trusted_macro_binding_sites(source, &BTreeSet::new(), &["json"], &|_, _| false, &|_| {
+            true
+        })
+    };
+    let candidates = |source: &str| {
+        parse_clean_source_file(source)
+            .map(|parse| macro_binding_candidates(&parse.tree()).may_bind_any_trusted())
+    };
+    for source in [
+        "use serde_json::json;\nshim! { use compat as serde_json; }",
+        "cfg_if::cfg_if! { if #[cfg(unix)] { use compat as serde_json; } }",
+        "mod m { shim! { use compat as r#serde_json; } }",
+    ] {
+        assert!(!sites(source).is_empty(), "{source}");
+        assert_eq!(candidates(source), Some(true), "{source}");
+    }
+    for source in [
+        "use serde_json::json;",
+        "fn f() { let _ = serde_json::json!(null); shim!(serde_json); }",
+    ] {
+        assert!(sites(source).is_empty(), "{source}");
+        assert_eq!(candidates(source), Some(false), "{source}");
+    }
+}
+
 /// #16420: a file that declares, renames or imports a `tracing` or `log`
 /// namespace reports a site for each requested logging name, even when it
 /// never names the macro, so a verified `use tracing::info;` elsewhere stops
