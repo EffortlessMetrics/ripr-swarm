@@ -30,6 +30,7 @@ pub(super) fn tool_descriptor() -> Value {
             "additionalProperties": false
         },
         "outputSchema": {
+            "type": "object",
             "oneOf": [
                 {
                     "type": "object",
