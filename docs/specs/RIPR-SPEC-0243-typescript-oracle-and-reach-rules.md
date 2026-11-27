@@ -45,6 +45,7 @@ Linked issues:
 - #16314 (class method replaced by an assignment; rule 29)
 - #16349 (methods of an anonymous default-exported class; rule 19)
 - #16365 (TypeScript `export = Name;` and `import x = require()`; rule 19)
+- #16366 (a function beside a one-identifier CommonJS whole export; rule 19)
 - #9435 (exact oracle ignored on five changed-line shapes)
 - #9497 (skipped or unexercised tests credited as exposed; rules 17 and 18)
 - #11196 (start rate: a conditional assertion in an unconsulted test no longer
@@ -1965,6 +1966,21 @@ which refuses every edge from that barrel. Before, both sides read `no_static_pa
 inline `export = class { ... }` or `export = function ...`, and a class
 merged with a same-named `namespace` (two file-level declarations of the
 name), are not read.
+Amended 2026-11-26 (#16366): when the whole export is one identifier
+(`module.exports = name;` or `export = name;`) and the file gate holds, every
+other top-level function of the file is no property of it unless the file
+adds one, so a named binding (`const { f } = require(...)`, `require(...).f`)
+or a namespace member (`lib.f`) of such a sibling reads `undefined` and is not
+related, as for a member of the export itself. The sibling keeps the named
+reading when the file may add the property: any `exports.` or `exports[`
+spelling, any ES export statement, a member written onto the export name or
+an `Object.assign` / `defineProperty` onto it, a second file-level
+declaration of the name (a merged `namespace`), any use of the name other than
+its declaration, a call or construction and the whole-export write (an alias
+may add the property), or an export that is not a declared function or a
+declared class without heritage, static member or static block (`const api =
+{ total }; module.exports = api;` carries the sibling from the start). Before,
+such a binding related as `exposed`.
 
 **Rule 21. A method decorator that passes the original result through
 lends `exposed` to the decorated method's tests (design decision, #10189).**
@@ -3183,6 +3199,15 @@ keys); do not take the next number.
   of a `require()` local or of an inline `require()` forwards to the owner,
   while a barrel that also writes `module.exports` (a forward TypeScript's
   trailing `export =` overwrites) or forwards another module does not.
+- #16366 (rule 19, sibling of a whole export):
+  `crates/ripr/src/analysis/language/typescript/tests/commonjs_unexported_sibling_tests.rs`
+  runs `analyze_diff` on a function beside `module.exports = other;` (and a
+  class export, and TypeScript `export = other;`): a named, member or
+  namespace binding of it stays unrelated, while `module.exports.total =
+  total`, `other.total = total`, `Object.assign(other, { total })`, an
+  object whole export, an object bound to the export name, a static field, a
+  class with heritage and a write through an alias keep the relation. Owner extraction marks the sibling
+  only without a named export or ES export statement.
 
 - #11196 (rule 11, object rows): `tests/object_row_tests.rs` pins the per-row
   literal assertions for the `for...of` and `test.each` object-row forms and

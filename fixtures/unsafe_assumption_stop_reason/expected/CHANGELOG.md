@@ -108,10 +108,10 @@ Updated:
 ## Pending — unsafe_assumption_stop_reason (10)
 
 Reason:
-RIPR-SPEC-0122: #15313 Summary names shared candidate lines and says No test gap when State reads no test gap found
+RIPR-SPEC-0168: the return-value finding replacing the withdrawn unsafe fn boundary on line 4 carries unsafe_obligation (#16302)
 
 Command:
 `cargo xtask goldens bless unsafe_assumption_stop_reason --reason "..."`
 
 Updated:
-- `expected/human.txt`
+- `expected/check.json`
