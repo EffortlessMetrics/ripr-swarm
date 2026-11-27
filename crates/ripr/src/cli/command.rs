@@ -502,7 +502,10 @@ fn edit_distance(left: &str, right: &str) -> usize {
 
 #[cfg(test)]
 mod tests {
-    use super::{CliCommand, closest_command, known_commands, unknown_command_error};
+    use super::{
+        CliCommand, closest_command, known_commands, unknown_command_error,
+        unknown_help_topic_error,
+    };
 
     fn args(values: &[&str]) -> Vec<String> {
         values.iter().map(|value| value.to_string()).collect()
