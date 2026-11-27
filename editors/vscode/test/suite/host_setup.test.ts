@@ -90,10 +90,11 @@ suite('VS Code test host setup', () => {
         process.env[key] = value;
       }
     }
-    // Windows can hold a just-written retention file open for a moment after
-    // `main` returns (EPERM in Windows packaged run 45006905751); retry the
+    // Windows can hold a just-written retention file or directory handle open
+    // briefly after `main` returns (EPERM in Windows packaged run 45006905751
+    // and Windows Editor Hang Hunt run 45013537301 at 10x100ms); retry the
     // removal instead of failing the hook.
-    fs.rmSync(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
+    fs.rmSync(root, { recursive: true, force: true, maxRetries: 25, retryDelay: 200 });
   });
 
   function assertFailure(message: string) {
