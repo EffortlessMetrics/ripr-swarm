@@ -22790,6 +22790,7 @@ mod gap_reach_config_tests;
 mod getter_matcher_key_tests;
 mod guard_entry_tests;
 mod implementation_table_tests;
+mod import_equals_runner_tests;
 mod infection_tests;
 mod inherited_and_factory_receiver_tests;
 mod inline_new_getter_read_tests;
