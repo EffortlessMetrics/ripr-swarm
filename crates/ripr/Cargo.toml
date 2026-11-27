@@ -53,6 +53,7 @@ include = [
   "!src/lsp/saved_edit_measurement.rs",
   "!src/lsp/saved_edit_sequence.rs",
   "src/analysis/classify/related_tests.rs",
+  "src/analysis/executable_tests.rs",
   "src/analysis/facts/macro_generated_tests.rs",
   "src/analysis/facts/parameterized_tests.rs",
   "src/analysis/language/python/doctest_tests.rs",
