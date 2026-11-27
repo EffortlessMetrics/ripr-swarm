@@ -42,6 +42,8 @@ pub(in crate::analysis) use implicit_effect::{
 mod facade_reach;
 mod implicit_call;
 mod indirect_owner;
+mod unowned_literal;
+pub(in crate::analysis) use unowned_literal::withhold_unowned_literal_gap;
 mod infection;
 mod literal_assertion;
 pub(in crate::analysis) use literal_assertion::asserts_only_dropped_literals;

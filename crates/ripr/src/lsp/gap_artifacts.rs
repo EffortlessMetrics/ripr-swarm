@@ -2611,6 +2611,7 @@ fn known_static_limit_kind(kind: &str) -> bool {
         StaticLimitKind::RustFutureNeverPolled,
         StaticLimitKind::ActivationBoundaryInputUnresolved,
         StaticLimitKind::RustGatedDoctestUnread,
+        StaticLimitKind::RustUnownedLiteralReaderUnresolved,
     ]
     .iter()
     .any(|known| known.as_str() == kind)

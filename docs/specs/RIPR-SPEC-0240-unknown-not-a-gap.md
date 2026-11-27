@@ -1291,6 +1291,35 @@ and an owner outside a doctested library keep today's reading. A gate on an
 enclosing `mod` or `impl` of the example is not collected. Nothing is
 credited.
 
+### String-literal text outside every function (#13843)
+
+A row of a `static` help table (`summary: "Print a completion script.",`) has
+no owning function, so no test can be seen calling it. The only tests ripr
+relates share the file or a name token. Reach read `weak`, a neighbour's
+assertion was graded as if it observed the row, and a copy edit of ten help
+summaries read `weakly_exposed` ten times, each next to an unrelated test,
+although a golden-file test rendered through the binary pins every byte.
+#13896 removed the prose-word links; the class and the next step stayed.
+
+`unowned_literal::withhold_unowned_literal_gap` withholds a `weakly_exposed`
+or `reachable_unrevealed` finding with no `static_limit_kind` and reach `weak`
+through `withhold_gap`, as `static_unknown` under
+`rust_unowned_literal_reader_unresolved`, when every link holds:
+
+- the probe has no owner and no indexed function spans its line;
+- the base and head text are both present and differ only inside string
+  literals, read by the shared `string_literal_spans` scan;
+- every related test is a proximity relation
+  (`RelationReason::establishes_reach` is false).
+
+Reach, related tests and stages are unchanged. A test whose assertion quotes
+the changed literal whole is related by `assertion_target_affinity`, which
+establishes reach for a probe with no function owner, and keeps its reading.
+A changed identifier, number or call beside the literal, an added line, a
+literal inside a function body, and a line that begins or ends inside a
+multi-line string keep today's reading. Nothing is credited: the golden-file
+test is not read as an oracle.
+
 ## Scope boundary
 
 - Rust check findings, the TypeScript truncated-discovery and byte-read-limit
@@ -1300,7 +1329,10 @@ credited.
 - `weakly_exposed` findings are out of scope except for the framework
   oracles above and the profile-dependent `debug_assert_eq!` above (which the
   owner pin would credit as `assert_eq!`): a credited weak oracle is read
-  evidence even when a stronger assertion was refused.
+  evidence even when a stronger assertion was refused. String-literal text
+  outside every function (#13843) is the other exception: its weak oracle
+  belongs to a test related only by file or name token, which is not read
+  evidence about the text.
 - Two broader rules were built and dropped. Withholding every refused-context
   gap hid the runtime-controlled gaps above. Withholding `weakly_exposed` when
   a strong oracle's text does not name the changed arm hid the sibling-arm
@@ -1643,6 +1675,8 @@ and `crates/ripr-contract/src/domain/probe.rs::tests::stop_reason_glosses_are_cl
   indirect-owner decision.
 - `crates/ripr/src/analysis/classify/unpolled_future.rs` owns the
   never-polled future decision (#13702).
+- `crates/ripr/src/analysis/classify/unowned_literal.rs` owns the
+  string-literal-outside-every-function decision (#13843).
 - `crates/ripr/src/analysis/language/rust/mod.rs` calls it last in
   `apply_probe_and_oracle_limits`.
 - `crates/ripr/src/analysis/language/typescript/mod.rs` applies byte-read
