@@ -153,3 +153,14 @@ Command:
 
 Updated:
 - `expected/human.txt`
+
+## Pending — rust_param_rebind_unrelated_pattern_control (13)
+
+Reason:
+RIPR-SPEC-0122: #15336 unconfirmed-reach note severity, possible-gap State line, legend and Terms glosses
+
+Command:
+`cargo xtask goldens bless rust_param_rebind_unrelated_pattern_control --reason "..."`
+
+Updated:
+- `expected/human.txt`

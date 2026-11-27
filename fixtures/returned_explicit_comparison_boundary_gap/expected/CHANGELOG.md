@@ -250,3 +250,14 @@ Command:
 
 Updated:
 - `expected/human.txt`
+
+## Pending — returned_explicit_comparison_boundary_gap (21)
+
+Reason:
+RIPR-SPEC-0122: #15336 unconfirmed-reach note severity, possible-gap State line, legend and Terms glosses
+
+Command:
+`cargo xtask goldens bless returned_explicit_comparison_boundary_gap --reason "..."`
+
+Updated:
+- `expected/human.txt`

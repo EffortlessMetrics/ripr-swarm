@@ -181,3 +181,14 @@ Command:
 
 Updated:
 - `expected/human.txt`
+
+## Pending — rust_qualified_helper_effect_reach (15)
+
+Reason:
+RIPR-SPEC-0122: #15336 unconfirmed-reach note severity, possible-gap State line, legend and Terms glosses
+
+Command:
+`cargo xtask goldens bless rust_qualified_helper_effect_reach --reason "..."`
+
+Updated:
+- `expected/human.txt`

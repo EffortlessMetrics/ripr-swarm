@@ -408,3 +408,14 @@ Command:
 
 Updated:
 - `expected/human.txt`
+
+## Pending — collection_argument_ambiguous (32)
+
+Reason:
+RIPR-SPEC-0122: #15336 unconfirmed-reach note severity, possible-gap State line, legend and Terms glosses
+
+Command:
+`cargo xtask goldens bless collection_argument_ambiguous --reason "..."`
+
+Updated:
+- `expected/human.txt`

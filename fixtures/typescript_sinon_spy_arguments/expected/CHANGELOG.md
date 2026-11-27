@@ -72,3 +72,14 @@ Command:
 
 Updated:
 - `expected/human-full.txt`
+
+## Pending — typescript_sinon_spy_arguments (7)
+
+Reason:
+RIPR-SPEC-0122: #15336 unconfirmed-reach note severity, possible-gap State line, legend and Terms glosses
+
+Command:
+`cargo xtask goldens bless typescript_sinon_spy_arguments --reason "..."`
+
+Updated:
+- `expected/human.txt`

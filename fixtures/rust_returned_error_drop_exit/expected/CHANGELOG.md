@@ -393,3 +393,14 @@ Command:
 
 Updated:
 - `expected/human.txt`
+
+## Pending — rust_returned_error_drop_exit (31)
+
+Reason:
+RIPR-SPEC-0122: #15336 unconfirmed-reach note severity, possible-gap State line, legend and Terms glosses
+
+Command:
+`cargo xtask goldens bless rust_returned_error_drop_exit --reason "..."`
+
+Updated:
+- `expected/human.txt`

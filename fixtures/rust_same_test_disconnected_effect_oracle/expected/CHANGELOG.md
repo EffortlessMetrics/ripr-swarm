@@ -317,3 +317,14 @@ Command:
 
 Updated:
 - `expected/human.txt`
+
+## Pending — rust_same_test_disconnected_effect_oracle (25)
+
+Reason:
+RIPR-SPEC-0122: #15336 unconfirmed-reach note severity, possible-gap State line, legend and Terms glosses
+
+Command:
+`cargo xtask goldens bless rust_same_test_disconnected_effect_oracle --reason "..."`
+
+Updated:
+- `expected/human.txt`

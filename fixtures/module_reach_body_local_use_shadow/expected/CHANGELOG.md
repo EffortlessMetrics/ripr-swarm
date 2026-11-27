@@ -224,3 +224,14 @@ Command:
 
 Updated:
 - `expected/human.txt`
+
+## Pending — module_reach_body_local_use_shadow (18)
+
+Reason:
+RIPR-SPEC-0122: #15336 unconfirmed-reach note severity, possible-gap State line, legend and Terms glosses
+
+Command:
+`cargo xtask goldens bless module_reach_body_local_use_shadow --reason "..."`
+
+Updated:
+- `expected/human.txt`

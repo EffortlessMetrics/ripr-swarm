@@ -150,3 +150,14 @@ Command:
 
 Updated:
 - `expected/human.txt`
+
+## Pending — rust_twin_collection_read_literal_control (13)
+
+Reason:
+RIPR-SPEC-0122: #15336 unconfirmed-reach note severity, possible-gap State line, legend and Terms glosses
+
+Command:
+`cargo xtask goldens bless rust_twin_collection_read_literal_control --reason "..."`
+
+Updated:
+- `expected/human.txt`

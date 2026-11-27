@@ -630,3 +630,14 @@ Command:
 
 Updated:
 - `expected/human-full.txt`
+
+## Pending — typescript_same_method_owner_identity_positive (38)
+
+Reason:
+RIPR-SPEC-0122: #15336 unconfirmed-reach note severity, possible-gap State line, legend and Terms glosses
+
+Command:
+`cargo xtask goldens bless typescript_same_method_owner_identity_positive --reason "..."`
+
+Updated:
+- `expected/human.txt`

@@ -743,3 +743,15 @@ Command:
 
 Updated:
 - `expected/human.txt`
+
+## Pending — typescript_negated_t_oracle (44)
+
+Reason:
+RIPR-SPEC-0122: #15336 unconfirmed-reach note severity, possible-gap State line, legend and Terms glosses
+
+Command:
+`cargo xtask goldens bless typescript_negated_t_oracle --reason "..."`
+
+Updated:
+- `expected/human.txt`
+- `expected/human-full.txt`

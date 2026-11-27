@@ -22,3 +22,14 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human-full.txt`
+
+## Pending — typescript_vitest_unpinned_literal_arm_return (3)
+
+Reason:
+RIPR-SPEC-0122: #15336 unconfirmed-reach note severity, possible-gap State line, legend and Terms glosses
+
+Command:
+`cargo xtask goldens bless typescript_vitest_unpinned_literal_arm_return --reason "..."`
+
+Updated:
+- `expected/human.txt`

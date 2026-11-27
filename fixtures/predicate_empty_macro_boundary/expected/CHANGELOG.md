@@ -336,3 +336,14 @@ Command:
 
 Updated:
 - `expected/human.txt`
+
+## Pending — predicate_empty_macro_boundary (26)
+
+Reason:
+RIPR-SPEC-0122: #15336 unconfirmed-reach note severity, possible-gap State line, legend and Terms glosses
+
+Command:
+`cargo xtask goldens bless predicate_empty_macro_boundary --reason "..."`
+
+Updated:
+- `expected/human.txt`

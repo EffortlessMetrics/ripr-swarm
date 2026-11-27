@@ -724,3 +724,14 @@ Command:
 
 Updated:
 - `expected/human.txt`
+
+## Pending — error_path_sibling_oracle_fake_clean (56)
+
+Reason:
+RIPR-SPEC-0122: #15336 unconfirmed-reach note severity, possible-gap State line, legend and Terms glosses
+
+Command:
+`cargo xtask goldens bless error_path_sibling_oracle_fake_clean --reason "..."`
+
+Updated:
+- `expected/human.txt`

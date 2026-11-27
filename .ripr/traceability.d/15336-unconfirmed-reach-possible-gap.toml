@@ -1,0 +1,7 @@
+# Registers the #15336 unconfirmed-reach severity/State/glossary tests under RIPR-SPEC-0122.
+[[extend]]
+id = "RIPR-SPEC-0122"
+tests = [
+  "crates/ripr/src/output/human.rs::unconfirmed_reach_finding_renders_at_note_severity",
+  "crates/ripr/src/output/human.rs::unconfirmed_reach_state_and_glossaries_do_not_claim_reach",
+]

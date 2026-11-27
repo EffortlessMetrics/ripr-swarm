@@ -637,3 +637,14 @@ Command:
 
 Updated:
 - `expected/human.txt`
+
+## Pending — ts_repair_packet_wrong_family_oracle (53)
+
+Reason:
+RIPR-SPEC-0122: #15336 unconfirmed-reach note severity, possible-gap State line, legend and Terms glosses
+
+Command:
+`cargo xtask goldens bless ts_repair_packet_wrong_family_oracle --reason "..."`
+
+Updated:
+- `expected/human.txt`

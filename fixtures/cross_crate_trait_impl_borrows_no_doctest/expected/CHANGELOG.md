@@ -264,3 +264,14 @@ Command:
 
 Updated:
 - `expected/human.txt`
+
+## Pending — cross_crate_trait_impl_borrows_no_doctest (21)
+
+Reason:
+RIPR-SPEC-0122: #15336 unconfirmed-reach note severity, possible-gap State line, legend and Terms glosses
+
+Command:
+`cargo xtask goldens bless cross_crate_trait_impl_borrows_no_doctest --reason "..."`
+
+Updated:
+- `expected/human.txt`

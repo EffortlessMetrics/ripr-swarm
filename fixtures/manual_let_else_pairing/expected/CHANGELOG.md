@@ -113,3 +113,14 @@ Command:
 
 Updated:
 - `expected/human.txt`
+
+## Pending — manual_let_else_pairing (11)
+
+Reason:
+RIPR-SPEC-0122: #15336 unconfirmed-reach note severity, possible-gap State line, legend and Terms glosses
+
+Command:
+`cargo xtask goldens bless manual_let_else_pairing --reason "..."`
+
+Updated:
+- `expected/human.txt`

@@ -333,3 +333,14 @@ Command:
 
 Updated:
 - `expected/human-full.txt`
+
+## Pending — ts_field_update_overwrite_alias (27)
+
+Reason:
+RIPR-SPEC-0122: #15336 unconfirmed-reach note severity, possible-gap State line, legend and Terms glosses
+
+Command:
+`cargo xtask goldens bless ts_field_update_overwrite_alias --reason "..."`
+
+Updated:
+- `expected/human.txt`

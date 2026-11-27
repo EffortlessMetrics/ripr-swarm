@@ -448,3 +448,14 @@ Command:
 
 Updated:
 - `expected/human-full.txt`
+
+## Pending — typescript_rejects_reexport_shadow (35)
+
+Reason:
+RIPR-SPEC-0122: #15336 unconfirmed-reach note severity, possible-gap State line, legend and Terms glosses
+
+Command:
+`cargo xtask goldens bless typescript_rejects_reexport_shadow --reason "..."`
+
+Updated:
+- `expected/human.txt`

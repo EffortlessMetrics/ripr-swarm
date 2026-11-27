@@ -12,7 +12,7 @@ Terms: exposed = tests appear to notice the change; weakly_exposed = tests reach
 Analysis outcome: findings below (analysis complete; complete_with_findings)
   Counts: 1 changed file(s), 2 changed line(s), 1 candidate line(s), 1 changed behavior(s) checked, 1 finding(s)
 
-WARNING ./src/lib.rs:17
+NOTE ./src/lib.rs:17
   id: probe:src_lib.rs:call_deletion:c2c2f768
 
 Changed
@@ -27,7 +27,7 @@ Change type
   gap id (for scripts): gap:rust:src/lib.rs:impl Add<Meters> for Meters::add:call_deletion:call_deletion:meters_self.0+rhs.0+1
 
 Static exposure
-  reachable_unrevealed (warning, confidence 0.66)
+  reachable_unrevealed (note, confidence 0.66)
 
 Evidence
   - reach weak: No test is seen calling add; tests share only a name token

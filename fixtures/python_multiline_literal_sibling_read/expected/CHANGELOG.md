@@ -177,3 +177,14 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — python_multiline_literal_sibling_read (15)
+
+Reason:
+RIPR-SPEC-0122: #15336 unconfirmed-reach note severity, possible-gap State line, legend and Terms glosses
+
+Command:
+`cargo xtask goldens bless python_multiline_literal_sibling_read --reason "..."`
+
+Updated:
+- `expected/human.txt`

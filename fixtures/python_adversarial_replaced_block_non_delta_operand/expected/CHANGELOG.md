@@ -347,3 +347,14 @@ Command:
 
 Updated:
 - `expected/human-full.txt`
+
+## Pending — python_adversarial_replaced_block_non_delta_operand (28)
+
+Reason:
+RIPR-SPEC-0122: #15336 unconfirmed-reach note severity, possible-gap State line, legend and Terms glosses
+
+Command:
+`cargo xtask goldens bless python_adversarial_replaced_block_non_delta_operand --reason "..."`
+
+Updated:
+- `expected/human.txt`

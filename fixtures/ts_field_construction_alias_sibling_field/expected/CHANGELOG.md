@@ -22,3 +22,14 @@ Command:
 
 Updated:
 - `expected/human-full.txt`
+
+## Pending — ts_field_construction_alias_sibling_field (3)
+
+Reason:
+RIPR-SPEC-0122: #15336 unconfirmed-reach note severity, possible-gap State line, legend and Terms glosses
+
+Command:
+`cargo xtask goldens bless ts_field_construction_alias_sibling_field --reason "..."`
+
+Updated:
+- `expected/human.txt`

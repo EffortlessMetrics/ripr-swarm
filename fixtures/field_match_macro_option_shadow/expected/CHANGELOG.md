@@ -395,3 +395,14 @@ Command:
 
 Updated:
 - `expected/human.txt`
+
+## Pending — field_match_macro_option_shadow (31)
+
+Reason:
+RIPR-SPEC-0122: #15336 unconfirmed-reach note severity, possible-gap State line, legend and Terms glosses
+
+Command:
+`cargo xtask goldens bless field_match_macro_option_shadow --reason "..."`
+
+Updated:
+- `expected/human.txt`
