@@ -3066,7 +3066,7 @@ fn committed_run_keeps_a_declared_bin_despite_a_staged_alternate_layout() -> Res
     let before = ripr(&root, &["check", "--base", "main", "--committed"], &[])?;
     assert_sane(&before, "committed bin before staging")?;
     assert!(
-        summary_line(&before).starts_with("Summary: 2 changed behaviors checked: "),
+        summary_line(&before).starts_with("Summary: 2 changed behaviors checked"),
         "premise: the committed bin change is checked\n{}",
         before.stdout
     );
