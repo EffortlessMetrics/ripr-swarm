@@ -80,6 +80,7 @@ mod class_heritage;
 mod classifier;
 mod committed_snapshot;
 mod commonjs_default_class;
+mod commonjs_entries;
 mod commonjs_reexports;
 mod comparison_edit_guard;
 mod custom_matcher_guard;
