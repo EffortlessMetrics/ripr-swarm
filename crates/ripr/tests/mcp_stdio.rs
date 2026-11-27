@@ -6111,6 +6111,196 @@ fn refresh_base_argument_recovers_a_repository_without_a_main_default_branch() -
     Ok(())
 }
 
+/// The recovery a failed refresh reported, from the attempt or the typed
+/// tool failure, whichever this reply carries.
+fn refresh_failure_recovery(reply: &Value) -> Option<String> {
+    let content = reply.pointer("/result/structuredContent")?;
+    content
+        .pointer("/attempt/failure/recovery")
+        .or_else(|| content.pointer("/failure/recovery"))
+        .and_then(Value::as_str)
+        .map(str::to_string)
+}
+
+/// #15321: a root deleted after the server started fails every refresh the
+/// same way, so the real stdio session must say restart with a valid
+/// `--root`, never retry; the attempt inventory answers the same typed
+/// `workspace_unavailable` instead of blaming the durable store.
+#[test]
+fn deleted_root_after_start_recovers_by_restart_not_retry() -> Result<(), String> {
+    let root = install_b4_repair_ready_fixture()?;
+    let _cleanup = FixtureGuard { root: root.clone() };
+    let mut session = SequentialStdio::spawn(&root)?;
+    let timeout = Duration::from_mins(3);
+    session.call("discover", "server/discover", json!({}), timeout)?;
+    // Control: the same session refreshes while the root exists.
+    let healthy = session.call_tool("healthy", "ripr_refresh", json!({"base": "main"}), timeout)?;
+    let healthy = structured_tool_success(&healthy, "healthy ripr_refresh")?;
+    if healthy.pointer("/attempt/state").and_then(Value::as_str) != Some("completed") {
+        return Err(format!("control refresh must complete: {healthy}"));
+    }
+
+    std::fs::remove_dir_all(&root).map_err(|error| error.to_string())?;
+    if root.exists() {
+        return Err(format!(
+            "fixture root remained after removal: {}",
+            root.display()
+        ));
+    }
+    let gone = session.call_tool("gone", "ripr_refresh", json!({"base": "main"}), timeout)?;
+    let recovery = refresh_failure_recovery(&gone)
+        .ok_or_else(|| format!("refresh on a deleted root lost its recovery: {gone}"))?;
+    if !recovery.contains("restart the server")
+        || !recovery.contains("--root")
+        || recovery.starts_with("retry")
+    {
+        return Err(format!(
+            "a deleted root must recover by restart, not retry: {recovery}"
+        ));
+    }
+    // The structured remedy carries the same no-retry verdict as the prose.
+    let gone_remedy = gone
+        .pointer("/result/structuredContent/attempt/failure/remedy/retry_stated")
+        .or_else(|| gone.pointer("/result/structuredContent/failure/remedy/retry_stated"));
+    if gone_remedy != Some(&Value::Bool(false)) {
+        return Err(format!(
+            "a deleted root's remedy must state no retry: {gone}"
+        ));
+    }
+
+    let attempts =
+        session.call_tool("attempts", "ripr_list_repair_attempts", json!({}), timeout)?;
+    if attempts.pointer("/result/isError").and_then(Value::as_bool) != Some(true) {
+        return Err(format!(
+            "attempt list on a deleted root must refuse: {attempts}"
+        ));
+    }
+    let failure = attempts
+        .pointer("/result/structuredContent/failure")
+        .ok_or_else(|| format!("attempt list lost its typed failure: {attempts}"))?;
+    let failure_recovery = failure
+        .get("recovery")
+        .and_then(Value::as_str)
+        .unwrap_or_default();
+    if failure.get("code").and_then(Value::as_str) != Some("workspace_unavailable")
+        || !failure_recovery.contains("restart the server")
+        || !failure_recovery.contains("--root")
+        || failure.pointer("/remedy/retry_stated") != Some(&Value::Bool(false))
+    {
+        return Err(format!(
+            "attempt list on a deleted root must be workspace_unavailable with restart: {attempts}"
+        ));
+    }
+    Ok(())
+}
+
+/// #15321: on a shallow clone whose base tip was fetched alone, the real
+/// `git diff base...HEAD` finds no merge base; the refresh recovery must
+/// name the history fetch, not a bare retry that fails the same way.
+#[test]
+fn shallow_clone_without_merge_base_recovers_by_fetching_history() -> Result<(), String> {
+    let origin = install_b4_repair_ready_fixture()?;
+    let _origin_cleanup = FixtureGuard {
+        root: origin.clone(),
+    };
+    // Move `main` on so its tip is not on `journey`'s history either.
+    fixture_git_ok(&origin, &["checkout", "-q", "main"])?;
+    std::fs::write(origin.join("README"), "main moves on\n").map_err(|error| error.to_string())?;
+    commit_fixture(&origin, "main moves")?;
+    fixture_git_ok(&origin, &["checkout", "-q", "journey"])?;
+
+    // A spaced clone path: the fetch command must keep it one argument.
+    let clone = origin.with_file_name(format!(
+        "{} shallow",
+        origin
+            .file_name()
+            .and_then(|name| name.to_str())
+            .ok_or("fixture root has no name")?
+    ));
+    let _clone_cleanup = FixtureGuard {
+        root: clone.clone(),
+    };
+    let parent = origin.parent().ok_or("fixture root has no parent")?;
+    let origin_url = format!("file://{}", origin.display());
+    let clone_arg = clone.to_string_lossy().to_string();
+    fixture_git_ok(
+        parent,
+        &[
+            "clone",
+            "-q",
+            "--depth",
+            "1",
+            "--branch",
+            "journey",
+            &origin_url,
+            &clone_arg,
+        ],
+    )?;
+    fixture_git_ok(
+        &clone,
+        &[
+            "fetch",
+            "-q",
+            "--depth",
+            "1",
+            "origin",
+            "main:refs/remotes/origin/main",
+        ],
+    )?;
+    if !clone.join(".git").join("shallow").is_file() {
+        return Err("the fixture clone must be shallow".to_string());
+    }
+
+    let mut session = SequentialStdio::spawn(&clone)?;
+    let timeout = Duration::from_mins(3);
+    session.call("discover", "server/discover", json!({}), timeout)?;
+    let failed = session.call_tool(
+        "shallow",
+        "ripr_refresh",
+        json!({"base": "origin/main"}),
+        timeout,
+    )?;
+    let failed = structured_tool_success(&failed, "shallow ripr_refresh")?;
+    if failed.pointer("/attempt/state").and_then(Value::as_str) != Some("failed")
+        || failed
+            .pointer("/attempt/failure/detail")
+            .and_then(Value::as_str)
+            .is_none_or(|detail| !detail.contains("no merge base"))
+    {
+        return Err(format!(
+            "shallow refresh must fail on the merge base: {failed}"
+        ));
+    }
+    let recovery = failed
+        .pointer("/attempt/failure/recovery")
+        .and_then(Value::as_str)
+        .unwrap_or_default();
+    if !recovery.starts_with("fetch the missing history")
+        || !recovery.contains("fetch --unshallow")
+        || !recovery.contains("fetch-depth: 0")
+        || !recovery.contains(r#""base":"origin/main""#)
+    {
+        return Err(format!(
+            "shallow recovery must name the history fetch before the retry: {recovery}"
+        ));
+    }
+    // The whole spaced root arrives quoted as one `-C` argument.
+    let clone_text = clone.display().to_string();
+    let quoted_root = if cfg!(windows) {
+        format!("\"{clone_text}\"")
+    } else {
+        format!("'{clone_text}'")
+    };
+    if !clone_text.contains(' ')
+        || !recovery.contains(&format!("git -C {quoted_root} fetch --unshallow"))
+    {
+        return Err(format!(
+            "shallow recovery must quote the spaced root {clone_text:?} as one argument: {recovery}"
+        ));
+    }
+    Ok(())
+}
+
 /// A directory with a project marker but no Git work tree is a validated root,
 /// yet refresh can never succeed there; status must say so up front.
 #[test]

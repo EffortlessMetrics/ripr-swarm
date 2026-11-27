@@ -61,7 +61,10 @@ documents without a breaking change.
 
 `ripr_list_repair_attempts` discovers the default durable CLI store before or
 after refresh through the shared canonical inventory authority. A missing store
-is empty and remains absent. Session transactions are explicitly excluded.
+is empty and remains absent. A workspace root that no longer exists (deleted
+after the server started) refuses with `workspace_unavailable` and restart
+recovery, not `attempt_invalid` (#15321). Session transactions are explicitly
+excluded.
 Only manifest-bearing directories are inventoried; unpublished reservations are
 excluded. Unrepresentable UTF-8 directory identity refuses the canonical store
 inventory and projects typed `attempt_invalid`, without lossy or partial rows.
