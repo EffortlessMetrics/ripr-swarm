@@ -522,7 +522,9 @@ fn json_rpc_rejections_are_answered_with_spec_codes_and_the_session_survives() -
     }
     // Messages say what is wrong, not just which method was named.
     if messages[0] != "Parse error"
-        || !messages[6].contains("expected `protocolVersion`")
+        // A repeated `initialize` without params names the shape to send,
+        // through the same field hint a malformed first `initialize` gets.
+        || !messages[6].contains("params must be an object with `protocolVersion`")
         || messages[7] != "Method not found: nope/never"
         || !messages[8].starts_with("unknown tool")
     {
