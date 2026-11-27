@@ -3523,6 +3523,8 @@ fn hops_forward_owner_result_with(
 /// change the forwarded value. Each is a parser-checked
 /// [`TRUSTED_MACRO_NAMES`](crate::analysis::syntax::TRUSTED_MACRO_NAMES)
 /// entry, so [`transparent_macro_name_rebound`] can establish its identity.
+/// The one non-standard name, `json`, has the same parser-checked binding
+/// candidates and a verified drop-in import route.
 const TRANSPARENT_STD_MACROS: &[&str] = &[
     "assert",
     "assert_eq",
@@ -3562,6 +3564,14 @@ const TRANSPARENT_STD_MACROS: &[&str] = &[
     // trusted names (#14116), so the binding scan sees a rebinding (#10357).
     "include_str",
     "include_bytes",
+    // serde_json's `json!` builds a `Value` and has no `return`, `break`,
+    // `continue` or `?` of its own (the audit behind
+    // `AUDITED_VALUE_MACRO_VERSIONS`). It is not a standard macro: the
+    // binding scan exempts only a `use serde_json::json;` whose root the
+    // drop-in authority verifies at an audited locked version, and it
+    // reports any other import, glob, `#[macro_use]`, local definition or
+    // `serde_json` namespace alias as a rebinding (#10357).
+    "json",
 ];
 
 /// The [`TRANSPARENT_STD_MACROS`] names the binding scan reads only for a
@@ -3569,7 +3579,7 @@ const TRANSPARENT_STD_MACROS: &[&str] = &[
 /// `include_str` elsewhere does not withhold credit from a wrapper that
 /// never reads it (#10357).
 const BODY_SCOPED_TRANSPARENT_MACROS: &[&str] =
-    &["env", "option_env", "include_str", "include_bytes"];
+    &["env", "option_env", "include_str", "include_bytes", "json"];
 
 /// Whether any indexed file binds a [`TRANSPARENT_STD_MACROS`] name to
 /// something other than the standard macro, by the parser-backed binding
