@@ -7,7 +7,7 @@
 //! the directory index) stays uncredited.
 //!
 //! Every case builds the index through `ReExportIndex::build` over real
-//! sources and relates through `find_related_tests`, the production path.
+//! sources and filters tests through the production relation index.
 
 use super::*;
 use crate::domain::RelationReason;
@@ -52,7 +52,9 @@ fn related_through_barrel(
             tests.len()
         ));
     }
-    Ok(find_related_tests(&owner, &tests, None, &index, None))
+    let relation_index = RelationIndex::build(&tests, &index);
+    let candidates = related_test_candidates(&owner, &tests, None, &index, None, &relation_index);
+    Ok(related_tests_for_candidates(&candidates, None))
 }
 
 fn assert_credited(related: &[RelatedTest], label: &str) {
@@ -66,6 +68,135 @@ fn assert_credited(related: &[RelatedTest], label: &str) {
         Some(RelationReason::ReExportChainFollowed),
         "{label}: credited through the re-export chain"
     );
+}
+
+const DEFAULT_OWNER: &str = "export default function original(n: number) { return n > 4; }";
+const DEFAULT_BARREL: &str = "export { default, default as pick } from './owner.js';";
+const DEFAULT_CALL: &str = "import invoke from '../src/index.js';\ntest('calls', () => { expect(invoke(5)).toBe(true); });";
+
+#[test]
+fn explicit_default_barrel_reaches_only_the_original_owner() -> Result<(), String> {
+    let files = [
+        ("src/owner.ts", DEFAULT_OWNER),
+        ("src/other.ts", DEFAULT_OWNER),
+        ("src/index.ts", DEFAULT_BARREL),
+    ];
+    assert_credited(
+        &related_through_barrel(&files, "src/owner.ts", "original", DEFAULT_CALL)?,
+        "default import through the explicit barrel",
+    );
+    assert!(related_through_barrel(&files, "src/other.ts", "original", DEFAULT_CALL)?.is_empty());
+    Ok(())
+}
+
+#[test]
+fn explicit_default_barrel_follows_a_locally_renamed_default() -> Result<(), String> {
+    let files = [
+        (
+            "src/owner.ts",
+            "function original(n: number) { return n > 4; }\nexport { original as default };",
+        ),
+        ("src/index.ts", DEFAULT_BARREL),
+    ];
+    assert_credited(
+        &related_through_barrel(&files, "src/owner.ts", "original", DEFAULT_CALL)?,
+        "owner exported locally as default",
+    );
+    Ok(())
+}
+
+#[test]
+fn explicit_default_barrel_is_shadowed_by_a_local_class() -> Result<(), String> {
+    let files = [
+        ("src/owner.ts", DEFAULT_OWNER),
+        ("src/index.ts", DEFAULT_BARREL),
+    ];
+    let source = "import invoke from '../src/index.js';\ntest('constructs', () => { class invoke {}\nexpect(new invoke()).toBeInstanceOf(invoke); });";
+    let related = related_through_barrel(&files, "src/owner.ts", "original", source)?;
+    assert!(
+        related.is_empty(),
+        "the constructor belongs to the local class: {related:?}"
+    );
+    Ok(())
+}
+
+#[test]
+fn explicit_default_barrel_preserves_direct_and_named_calls() -> Result<(), String> {
+    let files = [
+        ("src/owner.ts", DEFAULT_OWNER),
+        ("src/index.ts", DEFAULT_BARREL),
+    ];
+    let direct = DEFAULT_CALL.replace("../src/index.js", "../src/owner.js");
+    let named = DEFAULT_CALL.replace("import invoke", "import { pick as invoke }");
+    let direct_rows = related_through_barrel(&files, "src/owner.ts", "original", &direct)?;
+    assert_eq!(direct_rows.len(), 1);
+    assert_eq!(
+        direct_rows[0].relation_reason,
+        Some(RelationReason::ImportPathAffinity)
+    );
+    assert_credited(
+        &related_through_barrel(&files, "src/owner.ts", "original", &named)?,
+        "named import through the same barrel",
+    );
+    Ok(())
+}
+
+#[test]
+fn explicit_default_barrel_requires_a_static_unambiguous_binding() -> Result<(), String> {
+    // Both star sources really export `pick` and own a default declaration.
+    // A star alone still never forwards default.
+    let provider = format!("{DEFAULT_OWNER}\nexport {{ original as pick }};");
+    for barrel in [
+        "export * from './owner.js';",
+        "export { default as pick } from './owner.js';",
+        // The default declaration's local name is not a named export.
+        "export { original as default } from './owner.js';",
+        "export { pick as default } from './stars.js';",
+    ] {
+        let files = [
+            ("src/owner.ts", provider.as_str()),
+            ("src/other.ts", provider.as_str()),
+            (
+                "src/stars.ts",
+                "export * from './owner.js';\nexport * from './other.js';",
+            ),
+            ("src/index.ts", barrel),
+        ];
+        for owner in ["src/owner.ts", "src/other.ts"] {
+            assert!(
+                related_through_barrel(&files, owner, "original", DEFAULT_CALL)?.is_empty(),
+                "{barrel} must not reach {owner}"
+            );
+        }
+    }
+    let collisions = [
+        ("src/owner.ts", DEFAULT_OWNER),
+        (
+            "src/owner.js",
+            "export default function original(n) { return n > 4; }",
+        ),
+        ("src/index.ts", DEFAULT_BARREL),
+    ];
+    for file in ["src/owner.ts", "src/owner.js"] {
+        assert!(related_through_barrel(&collisions, file, "original", DEFAULT_CALL)?.is_empty());
+    }
+    let computed = "test('calls', async () => { const { default: invoke } = await import(specifier); expect(invoke(5)).toBe(true); });";
+    let files = [
+        ("src/owner.ts", DEFAULT_OWNER),
+        ("src/index.ts", DEFAULT_BARREL),
+    ];
+    assert!(related_through_barrel(&files, "src/owner.ts", "original", computed)?.is_empty());
+    let shadow = DEFAULT_CALL.replace("expect(invoke", "const { invoke } = stubs;\nexpect(invoke");
+    assert!(related_through_barrel(&files, "src/owner.ts", "original", &shadow)?.is_empty());
+    let cjs = [
+        (
+            "src/owner.js",
+            "module.exports = function original(n) { return n > 4; };",
+        ),
+        ("src/index.ts", DEFAULT_BARREL),
+    ];
+    assert!(related_through_barrel(&cjs, "src/owner.js", "original", DEFAULT_CALL)?.is_empty());
+    Ok(())
 }
 
 const UTILS: &str = "export function withBase(input: string, base: string): string {\n  return base + input;\n}\n\nexport function withoutBase(input: string, base: string): string {\n  return input.slice(base.length);\n}\n";

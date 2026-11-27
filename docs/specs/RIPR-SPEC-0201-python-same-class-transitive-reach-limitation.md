@@ -142,11 +142,21 @@ read as written below.
    reach, so a helper called only from `__init__` keeps its earlier reading,
    and dunders never reach another class's helper (name mangling keys the
    helper to its own class).
+8. Whenever the implicit-dunder `dynamic_dispatch` limit attaches (a dunder
+   owner, or a helper reached from one as in example 7) and no test relates,
+   the reach stage reads `unknown`, not `no`, and its summary says the owner
+   may be reached through dunder syntax and that test reach is not
+   established; it never names "0 related" tests beside a limit that
+   withholds that claim (#15339). An untested owner with no such limit keeps
+   reach `no` with "0 related". The class stays `static_unknown`, and the
+   stage never reads `yes` from this rule.
 
 ## Test Mapping
 
 - `crates/ripr/src/analysis/language/python/transitive_reach.rs`
 - `crates/ripr/src/analysis/language/python/dunder_helper_reach_tests.rs`
+- `crates/ripr/src/analysis/language/python/tests.rs::unbound_dunder_reach_stage_is_unknown_while_ordinary_untested_owner_stays_no`
+- `fixtures/python_dunder_truthiness_foreign_import/`
 - `crates/ripr-contract/src/domain/language.rs::tests::static_limit_kind_wire_strings_are_stable`
 - `fixtures/python_transitive_reach_positive/`
 - `fixtures/python_transitive_reach_negative/`

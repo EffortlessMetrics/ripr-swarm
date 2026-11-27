@@ -196,6 +196,7 @@ pub(crate) struct PolicyWaiverAgingOptions {
 pub(crate) struct PolicySuppressionHealthOptions {
     pub(crate) root: PathBuf,
     pub(crate) manifest: PathBuf,
+    pub(crate) manifest_explicit: bool,
     pub(crate) out: PathBuf,
     pub(crate) out_md: PathBuf,
 }

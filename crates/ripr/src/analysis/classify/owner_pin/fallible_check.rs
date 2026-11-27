@@ -319,6 +319,7 @@ mod tests {
     #[test]
     fn literal_witness_rejects_receipt_and_owner_identity_mutations() -> Result<(), String> {
         let probe = Probe {
+            before_condition: None,
             id: ProbeId("probe:literal".into()),
             location: SourceLocation::new("src/lib.rs", 1, 1),
             owner: Some(SymbolId("owner:answer".into())),
@@ -403,6 +404,7 @@ mod tests {
 
     fn base_probe() -> Probe {
         Probe {
+            before_condition: None,
             id: ProbeId("probe:literal".into()),
             location: SourceLocation::new("src/lib.rs", 1, 1),
             owner: Some(SymbolId("owner:answer".into())),

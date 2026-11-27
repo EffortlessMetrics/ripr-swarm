@@ -1,0 +1,11 @@
+# Registers the unresolvable-base withdrawal (#15312) under RIPR-SPEC-0127.
+[[extend]]
+id = "RIPR-SPEC-0127"
+tests = [
+  "crates/ripr/src/lsp/backend/delivery_selection_parity_tests/analysis_pending_tests.rs::unresolvable_base_failure_withdraws_the_retained_snapshot_and_other_failures_do_not",
+  "crates/ripr/src/lsp/tests.rs::framed_lsp_push_client_gets_withdrawal_marker_for_unresolvable_base_and_findings_back",
+]
+code = [
+  "crates/ripr/src/lsp/backend.rs",
+  "crates/ripr/src/lsp/diagnostics.rs",
+]

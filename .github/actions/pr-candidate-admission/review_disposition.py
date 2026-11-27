@@ -88,6 +88,11 @@ STATE_TOKEN = re.compile(
     r"|NOT_READY|WITHDRAWN|SUPERSEDED|CHANGES_REQUESTED",
     re.IGNORECASE,
 )
+# #15980 review: a bare BLOCK or INCOMPLETE after a stripped phrase is a
+# disposition, but the same word is ordinary prose elsewhere ("the block
+# layout", a fenced block, a table row). Scope it to the same-line guard and
+# keep it case-sensitive, so only the uppercase token fires.
+BARE_STATE_TOKEN = re.compile(r"\b(?:BLOCK|INCOMPLETE)\b")
 STATE_MENTION = re.compile(r"disposition|" + STATE_TOKEN.pattern, re.IGNORECASE)
 # A line that states a disposition: after optional list (bulleted, numbered or task),
 # quote, heading, emphasis or code markers it opens with a ``disposition:`` field or a state token. Only such a line
@@ -120,8 +125,19 @@ LABELLED_STATE_FIELD = (
     + r")\b"
 )
 STATE_LINE = re.compile(
-    STATE_LINE_PREFIX + r"(?:disposition[ \t*_`]*:|(?:" + STATE_TOKEN.pattern + r")\b)"
-    r"|" + STATE_LINE_PREFIX + r"(?:" + STATE_TOKEN.pattern + r")[ \t*_`.:!]*$"
+    STATE_LINE_PREFIX
+    + r"(?:disposition[ \t*_`]*:|(?:"
+    + STATE_TOKEN.pattern
+    + r"|"
+    + BARE_STATE_TOKEN.pattern
+    + r")\b)"
+    r"|"
+    + STATE_LINE_PREFIX
+    + r"(?:"
+    + STATE_TOKEN.pattern
+    + r"|"
+    + BARE_STATE_TOKEN.pattern
+    + r")[ \t*_`.:!]*$"
     r"|^.*?\bdisposition[ \t*_`]*[:|]"
     r"|^[ \t]*\|(?:.*\|)?[ \t*_`]*(?:" + STATE_TOKEN.pattern + r")[ \t*_`.]*\|"
     r"|" + LABELLED_STATE_FIELD,
@@ -188,7 +204,19 @@ NEGATION = re.compile(
     r"|\b(?:is|are|remains?|still)[ \t]+blocked\b|\bblocked[ \t]+(?:on|by)\b"
     r"|\bblockers?[ \t]+(?:found|remains?|remaining|open|still|exists?)\b"
     r"|\btests?[ \t]+(?:fail|fails|failed|failing)\b|\bci[ \t]+(?:is[ \t]+)?red\b"
-    r"|\b(?:build|ci)[ \t]+(?:is[ \t]+)?(?:red|broken|failing|fails?)(?![-\w])"
+    r"|\b(?:build|ci)[ \t]+(?:is[ \t]+)?(?:still[ \t]+|remains?[ \t]+|continues?[ \t]+to[ \t]+be[ \t]+)?(?:red|broken|failing|fails?)(?![-\w])"
+    # #15980 review: the widened negated-blocker filler set makes the phrase
+    # strippable, so the remainder scan must cover the "still"/"remains"/
+    # "continues to" forms that report a live defect. Without these, "No new
+    # blocker found. The build still fails." would admit.
+    # #15980 review: "still fails" is subject-anchored to build/test-ish
+    # subjects, so narration such as "a wrongly gated control still fails" or
+    # "a redirect still fails" admits. The other still-forms stay
+    # subject-agnostic.
+    r"|\b(?:build|test|tests|suite|ci|check|checks|job|jobs|lane|lanes|run|runs|pipeline|workflow|gate|step|steps|shard|shards|matrix|probe|fixture|golden|mutant|assertion)\b[^.;\n]*\bstill[ \t]+fail(?:s|ed|ing)?(?![-\w])\b"
+    r"|\bstill[ \t]+(?:wrong|misattributed|disagree(?:s|d|ing)?|red|broken|incomplete|unreadable|reported)\b"
+    r"|\bremains?[ \t]+(?:fail(?:s|ed|ing)?|wrong|misattributed|disagree(?:s|d|ing)?|red|broken|incomplete|unreadable|reported)\b"
+    r"|\bcontinues?[ \t]+to(?:[ \t]+be)?[ \t]+(?:fail(?:s|ed|ing)?|wrong|misattributed|disagree(?:s|d|ing)?|red|broken|incomplete|unreadable|reported)\b"
     r"|\b(?:a[ \t]+)?fix(?:es)?[ \t]+(?:is|are)?[ \t]*(?:needed|required)\b"
     r"|\bon[ \t]+hold\b|\bhold[ \t]+(?:the[ \t]+)?merge\b|\bchanges[ \t]+requested\b"
     r"|\b(?:never|won't|will[ \t]+not|should[ \t]+not|must[ \t]+not|shouldn't|mustn't)[ \t]+(?:merge|approve|ship|land)\b"
@@ -206,6 +234,48 @@ NEGATION = re.compile(
     r"|^\W*(?:wait|hold|stop|stale|blocked|revoked|superseded|reject(?:ed)?|nack)\b",
     re.IGNORECASE | re.MULTILINE,
 )
+# #15980 review: the remainder of a stripped negated-blocker phrase must be
+# scanned subject-agnostically. NEGATION is a closed enumeration tied to a few
+# subjects ("build", "ci", "tests"), so "The suite is incomplete." or "The lane
+# fails." slipped through. This predicate matches any subject: a copula plus a
+# defect, a bare defect verb, or "is not <positive>". It is used only by
+# strip_negated_blocker, so the other NEGATION consumers are unchanged.
+REMAINDER_DEFECT = re.compile(
+    r"\b(?:is|are|was|were|remains?|becomes?|stays?|looks?|seems?|continues?[ \t]+to[ \t]+be)\b"
+    r"[ \t]+(?:still[ \t]+|now[ \t]+|also[ \t]+)?"
+    r"(?:red|broken|failing|failed|incomplete|unreadable|reported|missing|absent|empty"
+    r"|stuck|stalled|hung|dead|down|unavailable|unreachable|stale|outdated|revoked"
+    r"|rejected|nacked|flaky|unstable|blocked|wrong"
+    r"|corrupt|invalid|misconfigured|buggy|faulty|defective|unusable|unreliable|problematic)\b"
+    r"|\b(?:fails?|failing|failed|breaks?|broke|hangs?|stalls?|times?[ \t]+out"
+    r"|crashes?|crashing|crashed|errors?|panics?|aborts?|segfaults?|deadlocks?|regresses?"
+    r"|leaks?|throws?|rejects?|prevents?|stops?|halts?|freezes?|corrupts?)\b"
+    r"|\b(?:is|are|was|were|remains?|becomes?|stays?|looks?|seems?)\b[ \t]+(?:still[ \t]+)?not[ \t]+(?:yet[ \t]+|fully[ \t]+|quite[ \t]+|actually[ \t]+)?"
+    r"(?:ready|green|passing|complete|done|finished|merged|approved|mergeable"
+    r"|working|functional|operational|available|reachable|responsive)\b"
+    r"|\b(?:has|have|had|did|do|does|is|are|was|were)(?:n't| not)(?:[ \t]+(?:yet|still|fully|quite|actually))?[ \t]+"
+    r"(?:(?:been[ \t]+)?(?:passed|pass|run|finished|completed|succeeded|green|passing|complete|done|merged|approved|mergeable"
+    r"|tested|verified|reviewed|qualified|checked|validated|confirmed|deployed|released|shipped|landed"
+    r"|ready|working|functional|operational|available|reachable|responsive|stable|healthy|correct|valid"
+    r"|sound|solid|clean|covered|documented|recorded|noted|described|explained|linked|attached|included)"
+    r"|gone[ \t]+green)\b",
+    re.IGNORECASE,
+)
+# #15980 review: three homographs are benign in context. "down to" is a
+# remaining-count, "queue/backlog is empty" is a drained queue, and "reported in
+# the run log" is a location. They are removed before the defect scan, so a
+# second defect in the same sentence still refuses.
+BENIGN_REMAINDER = re.compile(
+    r"\bdown[ \t]+to\b"
+    r"|\bdown[ \t]+for[ \t]+maintenance\b"
+    r"|\b(?:queue|backlog|cache)\b[^.;\n]*\bis[ \t]+empty\b"
+    r"|\breported[ \t]+in[ \t]+the[ \t]+(?:run[ \t]+log|summary)\b"
+    # #15980: the #15525 witness says the hosted lane has not run on this head,
+    # which is a fact about coverage, not a defect. The bare "tests have not
+    # run" still refuses.
+    r"|\bhas[ \t]+not[ \t]+run[ \t]+on[ \t]+this[ \t]+head\b",
+    re.IGNORECASE,
+)
 # #14355: a negated change/repair phrase is not a blocker. "no code change needed"
 # and "no changes needed" describe resolved work, not a required repair. The
 # filler set is closed so an unrelated "no findings and code change needed" is
@@ -221,6 +291,20 @@ NEGATED_CHANGE = re.compile(
 )
 # Sentence position: the phrase is followed by '.', '!' or ';' (or the line ends).
 NEGATED_CHANGE_TAIL = re.compile(r"^[ \t]*(?:[.!;]|$)")
+# #8157/#14355: a negated blocker phrase reports a resolved finding, not a
+# blocker. "No source blocker found." and "no source blockers remain" say that
+# nothing blocks, so they must not veto the same reviewer's attestation. The
+# filler set is closed and the phrase is stripped only in sentence position with
+# no refuting cue, exactly like NEGATED_CHANGE; a later blocker sentence
+# ("The build is red.") or a same-line continuation ("but the fixture is still
+# wrong") still refuses.
+NEGATED_BLOCKER = re.compile(
+    r"\b(?:no|without)\b[ \t]+"
+    r"(?:(?:a|an|any|new|further|other|additional|source|code|production|open|remaining|unresolved|known|outstanding)[ \t]+){0,3}"
+    r"(?:blockers?|blocking[ \t]+findings?)\b[ \t]+"
+    r"(?:found|remain|remains|remaining|open|exists?)\b",
+    re.IGNORECASE,
+)
 # A recognized cue that refutes a negated change phrase, so it is not resolved
 # work. The cue may sit anywhere earlier in the same sentence; a cue in a prior
 # sentence does not reach across the '.' or ';'. The same cue set is checked
@@ -248,7 +332,11 @@ REFUTES_NEGATION = re.compile(
 # prose that merely contains a cue word ("Nothing is wrong", "The wrong file")
 # does not.
 REFUTATION_AFTER = re.compile(
-    r"^[ \t]*[.!;]?[ \t]*"
+    # #15980 review: a leading run of Markdown emphasis, quote or bullet markers
+    # is formatting, not content. `normalize_body` strips `**`/`__` but not
+    # single `*`/`_`, so "*That is false.*" must refute exactly like "That is
+    # false."; the same holds for a `>` quote, `~~` strike and `-` bullet.
+    r"^[ \t]*[.!;]?[ \t]*[*_>~-]*[ \t]*"
     r"(?:"
     r"(?:that|this|it|i)\b[ \t]*(?:is|'s|\u2019s|am|was|are)?[ \t]*"
     r"(?:not[ \t]+(?:true|correct|so|the[ \t]+case|accurate|right)|false|incorrect|wrong|a[ \t]+lie|untrue|denied|deny)"
@@ -399,9 +487,13 @@ def verdict_disposition(line: str) -> bool | None:
     if approve is None:
         return False
     remainder = _strip_negated_verdict_words(stripped[approve.end() :])
+    # #15980 review: strip the resolved negated phrases before the alternative
+    # scan, so "no source blocking findings found" is not read as "blocking".
+    # Both scans then read the same stripped text.
+    remainder = strip_negated_blocker(strip_negated_change(remainder))
     if VERDICT_ALTERNATIVE.search(remainder) is not None:
         return False
-    if NEGATION.search(strip_negated_change(remainder)) is not None:
+    if NEGATION.search(remainder) is not None:
         return False
     return None
 
@@ -533,8 +625,17 @@ def comment_body_verdict_ready(body: str, head: str) -> bool:
     if parts is None:
         return False
     visible, fenced = parts
+    # #14929: a ``| Verdict | Notes |`` header row above a delimiter row names a
+    # column, as the marker carrier already reads it; it states no disposition.
+    visible = without_verdict_table_headers(visible)
+    fenced = without_verdict_table_headers(fenced)
     substantive = [line for line in visible if line.strip()]
-    if any(STATE_TOKEN.search(line) or negation_hit(line) for line in fenced):
+    if any(
+            STATE_TOKEN.search(line)
+            or BARE_STATE_TOKEN.search(line)
+            or negation_hit(line)
+            for line in fenced
+        ):
         return False
     return all(
         positive_line(line)
@@ -549,6 +650,22 @@ def comment_body_verdict_negative(body: str) -> bool:
     return verdict is not None and verdict[0] == "block"
 
 
+# #15980 review: a quoted claim is a citation, not the reviewer's own resolved
+# finding. A phrase that sits inside a quotation (or on a blockquote line) is
+# never stripped, so a refutation of the quoted claim still refuses. The check
+# is deliberately conservative: it looks only at the character before the
+# phrase, so an unbalanced quote and an apostrophe form also refuse, matching
+# main's current reading.
+QUOTE_CHARS = "'\"`\u2018\u2019\u201c\u201d"
+
+
+def _quoted_or_blockquoted(before: str) -> bool:
+    stripped = before.rstrip()
+    if stripped and stripped[-1] in QUOTE_CHARS:
+        return True
+    return before.lstrip().startswith(">")
+
+
 def strip_negated_change(line: str) -> str:
     """Remove a negated change/repair phrase only when it is resolved work.
 
@@ -561,6 +678,15 @@ def strip_negated_change(line: str) -> str:
     def replace(match: re.Match[str]) -> str:
         before = line[: match.start()]
         after = line[match.end() :]
+        # #15980 review: a quoted or blockquoted phrase is a citation, not the
+        # reviewer's own resolved finding, so it is never stripped.
+        if _quoted_or_blockquoted(before):
+            return match.group(0)
+        # #15980 review: a state token later on the same line is a disposition,
+        # not a resolved finding. Stripping the phrase would hide it from the
+        # line-anchored state scan, so keep the phrase in place.
+        if STATE_TOKEN.search(after) or BARE_STATE_TOKEN.search(after):
+            return match.group(0)
         # #14355: a cue only refutes the phrase in its own clause. A comma
         # resets the clause, so "The Devin thread was a false positive, no code
         # change needed." is resolved work, not a refutation.
@@ -574,6 +700,49 @@ def strip_negated_change(line: str) -> str:
         return match.group(0)
 
     return NEGATED_CHANGE.sub(replace, line)
+
+
+def strip_negated_blocker(line: str) -> str:
+    """Remove a negated blocker phrase only when it reports a resolved finding.
+
+    #8157: "No source blocker found." says nothing blocks, so it must not veto
+    the same reviewer's attestation. The phrase is stripped only when it ends a
+    sentence, no preceding cue refutes it, and the remainder carries no
+    refutation cue. "No source blocker found. The build is red." keeps its
+    second sentence, and a same-line continuation after a comma is not a
+    sentence end, so both still refuse.
+    """
+
+    def replace(match: re.Match[str]) -> str:
+        before = line[: match.start()]
+        after = line[match.end() :]
+        # #15980 review: a quoted or blockquoted phrase is a citation, not the
+        # reviewer's own resolved finding, so it is never stripped.
+        if _quoted_or_blockquoted(before):
+            return match.group(0)
+        # #15980 review: a state token later on the same line is a disposition,
+        # not a resolved finding. Stripping the phrase would hide it from the
+        # line-anchored state scan, so keep the phrase in place.
+        if STATE_TOKEN.search(after) or BARE_STATE_TOKEN.search(after):
+            return match.group(0)
+        before_clause = before.rsplit(",", 1)[-1]
+        # #15980 review: the property form. Strip the negated phrase only when
+        # the rest of the sentence carries no defect predicate at all, so a
+        # live defect in any form keeps the phrase and refuses. REMAINDER_DEFECT
+        # is subject-agnostic, so "The suite is incomplete." and "The lane
+        # fails." are caught as well as the build/CI forms. The three benign
+        # homographs are removed first, so a second defect still refuses.
+        remaining = BENIGN_REMAINDER.sub(" ", after)
+        if (
+            NEGATED_CHANGE_TAIL.match(after)
+            and not REFUTES_NEGATION.search(before_clause)
+            and not REFUTATION_AFTER.search(after)
+            and not REMAINDER_DEFECT.search(remaining)
+        ):
+            return " "
+        return match.group(0)
+
+    return NEGATED_BLOCKER.sub(replace, line)
 
 
 # #14592: on a verdict line, "no blocking findings", "no `block` remains",
@@ -627,7 +796,13 @@ def negation_hit(line: str) -> bool:
         return not verdict
     # #14592 landed after this branch: keep its resolved-negating-verdict-word scan
     # for lines that are not recognized verdict fields.
-    return bool(NEGATION.search(strip_negated_verdict_word(strip_negated_change(line))))
+    return bool(
+        NEGATION.search(
+            strip_negated_verdict_word(
+                strip_negated_blocker(strip_negated_change(line))
+            )
+        )
+    )
 
 
 def comment_body_ready(body: str) -> bool:
@@ -646,7 +821,12 @@ def comment_body_ready(body: str) -> bool:
     substantive = [line for line in visible if line.strip()]
     if not substantive or not positive_line(substantive[0]):
         return False
-    if any(STATE_TOKEN.search(line) or negation_hit(line) for line in fenced):
+    if any(
+            STATE_TOKEN.search(line)
+            or BARE_STATE_TOKEN.search(line)
+            or negation_hit(line)
+            for line in fenced
+        ):
         return False
     first_seen = False
     for line in visible:
@@ -717,7 +897,12 @@ def comment_body_negative(body: str) -> bool:
     # neutral chatter.
     if neutral_first and any(negation_hit(line) for line in visible if line.strip()):
         return True
-    return any(STATE_TOKEN.search(line) or negation_hit(line) for line in fenced)
+    return any(
+            STATE_TOKEN.search(line)
+            or BARE_STATE_TOKEN.search(line)
+            or negation_hit(line)
+            for line in fenced
+        )
 
 
 # #14728: the objection space cannot be enumerated, so a later same-login body
@@ -831,6 +1016,140 @@ def _latest_decisive(reviews: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return _latest_by_login(decisive)
 
 
+def _state(review: dict[str, Any]) -> str:
+    return str(review.get("state") or "")
+
+
+def _at_head(review: dict[str, Any], head: str) -> bool:
+    return str(review.get("commit_id") or "") == head
+
+
+def _body(review: dict[str, Any]) -> str:
+    return str(review.get("body") or "")
+
+
+def _neutral_marker_body(body: str) -> bool:
+    """Whether a body is a mis-formatted marker that says nothing else (#14728).
+
+    A mis-formatted marker is inert only when the body says nothing else. Any other
+    prose after it keeps main's reading, so a retraction ("REVIEW_READY <sha>" then
+    "The evidence is weak.") still supersedes and vetoes instead of falling through
+    to the description carrier.
+    """
+    parts = split_body(body)
+    if parts is None:
+        return False
+    visible, fenced = parts
+    if any(line.strip() for line in fenced):
+        return False
+    substantive = [line.strip() for line in visible if line.strip()]
+    if not substantive or not marker_line_neutral(substantive[0]):
+        return False
+    remainder = substantive[1:]
+    if not remainder:
+        return True
+    return len(remainder) == 1 and (
+        remainder[0].lower() in CHATTER_BODIES
+        or EXACT_HEAD_REVIEW.fullmatch(remainder[0]) is not None
+    )
+
+
+def _effective_statements(
+    reviews: list[dict[str, Any]], head: str
+) -> list[dict[str, Any]]:
+    """Trusted current-head COMMENT bodies that speak for their login.
+
+    #14728: a body supersedes the login's earlier statement unless it is inert.
+    Recognised chatter, an empty body and a mis-formatted marker that
+    ``marker_line_neutral`` scores neutral add nothing, so they must not remove a
+    marker either. Any other body still supersedes, fail-closed.
+    """
+    return [
+        r for r in reviews
+        if _at_head(r, head)
+        and _trusted(r)
+        and _state(r) == "COMMENTED"
+        and not comment_body_chatter(_body(r))
+        and not _neutral_marker_body(_body(r))
+    ]
+
+
+def _withdrawn_by_later_native(
+    statement: dict[str, Any], reviews: list[dict[str, Any]]
+) -> bool:
+    """#14728 review: a later native withdrawal (CHANGES_REQUESTED or DISMISSED)
+    from the same login supersedes its earlier statement; a dismissed approval must
+    not silently restore the statement it replaced."""
+    login = _review_login(statement)
+    return any(
+        _review_login(review) == login
+        and _state(review) in SUPERSEDING_STATES
+        and _order(review) > _order(statement)
+        for review in reviews
+    )
+
+
+def _comment_attests(review: dict[str, Any], head: str) -> bool:
+    """Whether a COMMENT review's body is a positive carrier for ``head``."""
+    body = _body(review)
+    return comment_body_ready(body) or comment_body_verdict_ready(body, head)
+
+
+def _cleared_by_later_positive(
+    negative: dict[str, Any], reviews: list[dict[str, Any]], head: str
+) -> bool:
+    """A login vetoes if it has a negative statement at the head that no later
+    positive statement from that same login clears. A blocker never clears a
+    negative; a blocker alone, with no prior negative, does not veto."""
+    login = _review_login(negative)
+    return any(
+        _review_login(review) == login
+        and _order(review) > _order(negative)
+        and not _withdrawn_by_later_native(review, reviews)
+        and (
+            (
+                # #14728 finding: a clearing COMMENT must satisfy the same head
+                # and trust guard as a clearing APPROVED review. A body posted at
+                # an earlier head, or by an untrusted association, cannot
+                # withdraw a statement made at the admitted head.
+                _state(review) == "COMMENTED"
+                and _at_head(review, head)
+                and _trusted(review)
+                and _comment_attests(review, head)
+            )
+            or (
+                _state(review) == "APPROVED"
+                and _at_head(review, head)
+                and _trusted(review)
+            )
+        )
+        for review in reviews
+    )
+
+
+def _negative_statements(
+    reviews: list[dict[str, Any]], head: str
+) -> list[dict[str, Any]]:
+    """Trusted current-head COMMENT reviews that state a negative."""
+    return [
+        r for r in reviews
+        if _at_head(r, head)
+        and _trusted(r)
+        and _state(r) == "COMMENTED"
+        and (
+            comment_body_verdict_negative(_body(r))
+            or (
+                comment_body_negative(_body(r))
+                # A verdict-carrier body already screens its own later lines for
+                # disposition statements and blockers, so the marker screening
+                # must not veto it for also naming a positive marker later in the
+                # same body.
+                and not comment_body_verdict_ready(_body(r), head)
+            )
+        )
+    ]
+
+
 def reviews_allow_source_attestation(
     reviews: list[dict[str, Any]],
     *,
@@ -840,129 +1159,334 @@ def reviews_allow_source_attestation(
 ) -> bool:
     """Whether review evidence admits qualification for ``head``."""
     del author  # same-account COMMENT attestation is allowed; trust comes from author_association.
-    if any(
-        str(r.get("state") or "") != "PENDING" and not r.get("submitted_at")
-        for r in reviews
-    ):
+    if any(_state(r) != "PENDING" and not r.get("submitted_at") for r in reviews):
         return False  # cannot be ordered, so it cannot be proven superseded
     native = _latest_decisive(reviews)
-    if any(str(r.get("state") or "") == "CHANGES_REQUESTED" for r in native):
+    if any(_state(r) == "CHANGES_REQUESTED" for r in native):
         return False
     approvals = [
         r for r in native
-        if str(r.get("commit_id") or "") == head
-        and str(r.get("state") or "") == "APPROVED"
-        and _trusted(r)
+        if _at_head(r, head) and _state(r) == "APPROVED" and _trusted(r)
     ]
-    # #14728: a body supersedes the login's earlier statement unless it is
-    # inert. Recognised chatter, an empty body and a mis-formatted marker that
-    # ``marker_line_neutral`` scores neutral add nothing, so they must not
-    # remove a marker either. Any other body still supersedes, fail-closed.
-    def neutral_marker_body(body: str) -> bool:
-        # A mis-formatted marker is inert only when the body says nothing else.
-        # Any other prose after it keeps main's reading, so a retraction
-        # ("REVIEW_READY <sha>" then "The evidence is weak.") still supersedes
-        # and vetoes instead of falling through to the description carrier.
-        parts = split_body(body)
-        if parts is None:
-            return False
-        visible, fenced = parts
-        if any(line.strip() for line in fenced):
-            return False
-        substantive = [line.strip() for line in visible if line.strip()]
-        if not substantive or not marker_line_neutral(substantive[0]):
-            return False
-        remainder = substantive[1:]
-        if not remainder:
-            return True
-        return len(remainder) == 1 and (
-            remainder[0].lower() in CHATTER_BODIES
-            or EXACT_HEAD_REVIEW.fullmatch(remainder[0]) is not None
-        )
-
-    effective = [
-        r for r in reviews
-        if str(r.get("commit_id") or "") == head
-        and _trusted(r)
-        and str(r.get("state") or "") == "COMMENTED"
-        and not comment_body_chatter(str(r.get("body") or ""))
-        and not neutral_marker_body(str(r.get("body") or ""))
-    ]
-    # #14728 review: a later native withdrawal (CHANGES_REQUESTED or DISMISSED)
-    # from the same login supersedes its earlier statement; a dismissed approval
-    # must not silently restore the statement it replaced.
-    def withdrawn_by_later_native(statement: dict[str, Any]) -> bool:
-        login = _review_login(statement)
-        return any(
-            _review_login(review) == login
-            and str(review.get("state") or "") in SUPERSEDING_STATES
-            and _order(review) > _order(statement)
-            for review in reviews
-        )
-
-    # A login vetoes if it has a negative statement at the head that no later
-    # positive statement from that same login clears. A blocker never clears a
-    # negative; a blocker alone, with no prior negative, does not veto.
-    def cleared_by_later_positive(negative: dict[str, Any]) -> bool:
-        login = _review_login(negative)
-        return any(
-            _review_login(review) == login
-            and _order(review) > _order(negative)
-            and not withdrawn_by_later_native(review)
-            and (
-                (
-                    # #14728 finding: a clearing COMMENT must satisfy the same
-                    # head and trust guard as a clearing APPROVED review. A body
-                    # posted at an earlier head, or by an untrusted association,
-                    # cannot withdraw a statement made at the admitted head.
-                    str(review.get("state") or "") == "COMMENTED"
-                    and str(review.get("commit_id") or "") == head
-                    and _trusted(review)
-                    and (
-                        comment_body_ready(str(review.get("body") or ""))
-                        or comment_body_verdict_ready(
-                            str(review.get("body") or ""), head
-                        )
-                    )
-                )
-                or (
-                    str(review.get("state") or "") == "APPROVED"
-                    and str(review.get("commit_id") or "") == head
-                    and _trusted(review)
-                )
-            )
-            for review in reviews
-        )
-
-    negatives = [
-        r for r in reviews
-        if str(r.get("commit_id") or "") == head
-        and _trusted(r)
-        and str(r.get("state") or "") == "COMMENTED"
-        and (
-            comment_body_verdict_negative(str(r.get("body") or ""))
-            or (
-                comment_body_negative(str(r.get("body") or ""))
-                # A verdict-carrier body already screens its own later lines
-                # for disposition statements and blockers, so the marker
-                # screening must not veto it for also naming a positive
-                # marker later in the same body.
-                and not comment_body_verdict_ready(str(r.get("body") or ""), head)
-            )
-        )
-    ]
-    if any(not cleared_by_later_positive(r) for r in negatives):
+    negatives = _negative_statements(reviews, head)
+    if any(not _cleared_by_later_positive(r, reviews, head) for r in negatives):
         return False
     if approvals:
         return True
     if any(
-        comment_body_ready(str(r.get("body") or ""))
-        or comment_body_verdict_ready(str(r.get("body") or ""), head)
-        for r in _latest_by_login(effective)
-        if not withdrawn_by_later_native(r)
+        _comment_attests(r, head)
+        for r in _latest_by_login(_effective_statements(reviews, head))
+        if not _withdrawn_by_later_native(r, reviews)
     ):
         return True
     return pull_allows_source_attestation(pull, head=head)
+
+
+# #14929: a refusal used to print one generic line, so a carrier that a later
+# line of its own body refused (or a later same-login body that superseded an
+# attesting review at an unchanged head) read exactly like "no review at this
+# head". These helpers only explain a refusal that
+# ``reviews_allow_source_attestation`` already reached; they never decide one.
+DETAIL_SNIPPET_LIMIT = 160
+VERDICT_SHORT_SHA_LINE = re.compile(
+    r"^VERDICT:[ \t]+APPROVE[ \t]+(?P<sha>[0-9a-f]{7,39})(?![0-9a-f])", re.IGNORECASE
+)
+VERDICT_OPEN = re.compile(r"^VERDICT:", re.IGNORECASE)
+VERDICT_LONG_SHA_LINE = re.compile(
+    r"^VERDICT:[ \t]+APPROVE[ \t]+[0-9a-f]{40}[0-9a-z_]", re.IGNORECASE
+)
+
+
+def _log_safe(text: str) -> str:
+    """One log line: control characters folded, workflow-command colons split and
+    ``%`` escaped, so untrusted review data cannot start or alter a command."""
+    flat = re.sub(r"[\x00-\x1f\x7f\u0085\u2028\u2029]+", " ", str(text)).strip()
+    while "::" in flat:
+        flat = flat.replace("::", ": :")
+    return flat.replace("%", "%25")
+
+
+def _snippet(text: str) -> str:
+    """A short quotation of review text for a detail line."""
+    flat = re.sub(r"[\x00-\x1f\x7f\u0085\u2028\u2029]+", " ", text).strip()
+    if len(flat) > DETAIL_SNIPPET_LIMIT:
+        return flat[: DETAIL_SNIPPET_LIMIT - 3] + "..."
+    return flat
+
+
+def _refusing_later_line(lines: list[str], *, verdict_carrier: bool) -> str | None:
+    """The first later line that makes the carrier refuse, with the same tests
+    ``comment_body_ready`` (marker) or ``comment_body_verdict_ready`` (verdict) apply."""
+    for line in lines[1:]:
+        if verdict_carrier:
+            if not positive_line(line) and (STATE_LINE.match(line) or negation_hit(line)):
+                return line
+            continue
+        verdict = verdict_disposition(line)
+        if verdict is not None:
+            if not verdict:
+                return line
+        elif not positive_line(line) and (STATE_LINE.match(line) or negation_hit(line)):
+            return line
+    return None
+
+
+def body_refusal_reason(body: str, head: str) -> str | None:
+    """Why a COMMENT body attests nothing for ``head``; ``None`` when it attests."""
+    if comment_body_ready(body) or comment_body_verdict_ready(body, head):
+        return None
+    parts = split_body(body)
+    if parts is None:
+        return "the body has an unclosed code fence or HTML comment, so it is ambiguous"
+    visible, fenced = parts
+    substantive = [line for line in visible if line.strip()]
+    if not substantive:
+        return "the body is empty"
+    first = substantive[0]
+    if VERDICT_OPEN.match(first):
+        verdict = _verdict_first_line(body)
+        if verdict is None:
+            long_sha = VERDICT_LONG_SHA_LINE.match(first)
+            if long_sha is not None:
+                return (
+                    "its VERDICT SHA runs into more hex digits or prose; the carrier "
+                    f"needs the full 40-hex head {head} followed by a space or nothing"
+                )
+            short = VERDICT_SHORT_SHA_LINE.match(first)
+            if short is not None:
+                return (
+                    f"its VERDICT line names the short SHA {short.group('sha')}; "
+                    f"the carrier needs the full 40-hex head {head}"
+                )
+            if VERDICT_APPROVE_LINE.match(first) is not None:
+                return (
+                    "the text after the SHA on its VERDICT line conditions or "
+                    f"contradicts the approval: '{_snippet(first)}'"
+                )
+            return f"its first line is not `VERDICT: APPROVE {head}`: '{_snippet(first)}'"
+        if verdict[0] == "block":
+            return f"its first line is a VERDICT: BLOCK statement: '{_snippet(first)}'"
+        if verdict[1] != head:
+            if verdict[1].lower() == head:
+                return f"its VERDICT SHA is uppercase; write the head as {head}"
+            return f"its VERDICT line names {verdict[1]}, not the head {head}"
+        # Same line lists as comment_body_verdict_ready: header rows dropped.
+        lines = [
+            line for line in without_verdict_table_headers(visible) if line.strip()
+        ]
+        verdict_carrier = True
+    elif MARKER_OPEN.match(normalize_body(first)):
+        if not positive_line(first):
+            return (
+                "its marker line carries a tail outside the closed vocabulary "
+                f"(post the bare marker or `SOURCE_REVIEW_READY for head {head}`): "
+                f"'{_snippet(first)}'"
+            )
+        lines = [
+            line for line in without_verdict_table_headers(visible) if line.strip()
+        ]
+        verdict_carrier = False
+    else:
+        return (
+            "its first line is neither a readiness marker nor "
+            f"`VERDICT: APPROVE {head}`: '{_snippet(first)}'"
+        )
+    fenced_lines = without_verdict_table_headers(fenced)
+    for line in fenced_lines:
+        if (
+            STATE_TOKEN.search(line)
+            or BARE_STATE_TOKEN.search(line)
+            or negation_hit(line)
+        ):
+            return (
+                "a line inside a code fence states a disposition or a blocker or "
+                f"retraction phrase: '{_snippet(line)}'"
+            )
+    refusing = _refusing_later_line(lines, verdict_carrier=verdict_carrier)
+    if refusing is not None:
+        phrase = _phrase(refusing)
+        what = f"matches a blocker or retraction phrase{phrase}" if phrase else "states a disposition"
+        return (
+            f"a later line of its own body {what}, which refuses the carrier even "
+            f"as narration; reword or drop it: '{_snippet(refusing)}'"
+        )
+    return "it does not carry a positive disposition for this head"
+
+
+def _phrase(line: str) -> str:
+    """The blocker or retraction phrase ``line`` matches, quoted, or empty."""
+    match = NEGATION.search(
+        strip_negated_verdict_word(strip_negated_blocker(strip_negated_change(line)))
+    )
+    if match is None or not match.group(0).strip():
+        return ""
+    return f" (phrase '{_snippet(match.group(0))}')"
+
+
+def negative_reason(body: str, head: str) -> str:
+    """Why a body reads as a negative statement (the veto), not merely why it
+    does not attest. Mirrors ``comment_body_verdict_negative`` and
+    ``comment_body_negative``."""
+    if comment_body_verdict_negative(body):
+        parts = split_body(body)
+        first = next((line for line in parts[0] if line.strip()), "") if parts else ""
+        return f"its first line is a VERDICT: BLOCK statement: '{_snippet(first)}'"
+    parts = split_body(body)
+    if parts is None:
+        return "the body has an unclosed code fence or HTML comment, so it is ambiguous"
+    visible, fenced = parts
+    visible = without_verdict_table_headers(visible)
+    fenced = without_verdict_table_headers(fenced)
+    substantive = [line for line in visible if line.strip()]
+    if substantive and (
+        positive_line(substantive[0]) or _verdict_first_line(body) == ("approve", head)
+    ):
+        # A well-formed carrier line reads negative only because the rest of the
+        # body refused it, so that refusal is the reason.
+        return body_refusal_reason(body, head) or "it states a negative"
+    neutral_first = bool(substantive) and marker_line_neutral(substantive[0])
+    for index, line in enumerate(substantive):
+        if neutral_first and index == 0:
+            continue
+        if verdict_disposition(line) is False or STATE_LINE.match(line):
+            return f"a line states a disposition: '{_snippet(line)}'"
+        if STATE_MENTION.search(line) and negation_hit(line):
+            return (
+                f"a line names a review state and retracts or blocks it{_phrase(line)}: "
+                f"'{_snippet(line)}'"
+            )
+    if neutral_first and len(substantive) > 1:
+        return (
+            "a mis-formatted marker line is followed by other prose, so the body keeps "
+            f"its negative reading: '{_snippet(substantive[1])}'"
+        )
+    for line in substantive:
+        if negation_hit(line):
+            return (
+                f"a line matches a blocker or retraction phrase{_phrase(line)}: "
+                f"'{_snippet(line)}'"
+            )
+    for line in fenced:
+        if (
+            STATE_TOKEN.search(line)
+            or BARE_STATE_TOKEN.search(line)
+            or negation_hit(line)
+        ):
+            return (
+                "a line inside a code fence states a disposition or a blocker or "
+                f"retraction phrase: '{_snippet(line)}'"
+            )
+    return body_refusal_reason(body, head) or "it states a negative"
+
+
+def _superseded_note(
+    statement: dict[str, Any], reviews: list[dict[str, Any]], head: str
+) -> str:
+    """Name the same login's earlier attesting review at ``head`` that
+    ``statement`` replaced, the silent revocation #14929 reports."""
+    login = _review_login(statement)
+    earlier = [
+        r for r in _effective_statements(reviews, head)
+        if _review_login(r) == login
+        and _order(r) < _order(statement)
+        and _comment_attests(r, head)
+    ]
+    if not earlier:
+        return ""
+    return (
+        ". It supersedes the same login's attesting review at "
+        f"{max(earlier, key=_order).get('submitted_at')} although the head has not "
+        "changed; post a fresh plain marker review"
+    )
+
+
+def _describe(review: dict[str, Any]) -> str:
+    return f"{_review_login(review)}'s review at {review.get('submitted_at')}"
+
+
+def refusal_details(
+    reviews: list[dict[str, Any]],
+    *,
+    head: str,
+    pull: dict[str, Any] | None = None,
+) -> list[str]:
+    """Name what refused a head's attestation, for the log (#14929).
+
+    Diagnostic only: it reports the evidence ``reviews_allow_source_attestation``
+    reads and never changes its answer.
+    """
+    if reviews_allow_source_attestation(reviews, head=head, pull=pull):
+        return []
+    details: list[str] = []
+    unordered = [r for r in reviews if _state(r) != "PENDING" and not r.get("submitted_at")]
+    if unordered:
+        details.append(
+            f"{len(unordered)} submitted review(s) have no timestamp, so supersession "
+            "cannot be ordered"
+        )
+    for native in _latest_decisive(reviews):
+        if _state(native) == "CHANGES_REQUESTED":
+            details.append(
+                f"{_describe(native)} is a native CHANGES_REQUESTED; only a later "
+                "APPROVED or DISMISSED review from that login clears it"
+            )
+    reported: set[int] = set()
+    for negative in _negative_statements(reviews, head):
+        if _cleared_by_later_positive(negative, reviews, head):
+            continue
+        reported.add(id(negative))
+        reason = negative_reason(_body(negative), head)
+        detail = (
+            f"{_describe(negative)} on this head vetoes admission: {reason}. A later "
+            f"SOURCE_REVIEW_READY, `VERDICT: APPROVE {head}` or native APPROVED review "
+            "from the same login on this head clears it"
+        )
+        details.append(detail + _superseded_note(negative, reviews, head))
+    effective = _effective_statements(reviews, head)
+    for latest in _latest_by_login(effective):
+        if _withdrawn_by_later_native(latest, reviews):
+            details.append(
+                f"{_describe(latest)} was withdrawn by a later native review from "
+                "the same login"
+            )
+            continue
+        if _comment_attests(latest, head) or id(latest) in reported:
+            continue
+        reason = body_refusal_reason(_body(latest), head) or "it attests nothing"
+        detail = f"{_describe(latest)} is that login's latest on this head and attests nothing: {reason}"
+        details.append(detail + _superseded_note(latest, reviews, head))
+    if not effective and not any(
+        _at_head(r, head) and _state(r) == "APPROVED" and _trusted(r) for r in reviews
+    ):
+        others = sum(1 for r in reviews if _trusted(r) and not _at_head(r, head))
+        untrusted = sum(1 for r in reviews if _at_head(r, head) and not _trusted(r))
+        inert = sum(
+            1 for r in reviews
+            if _at_head(r, head) and _trusted(r) and _state(r) == "COMMENTED"
+        )
+        other_states = sorted({
+            _state(r) for r in reviews
+            if _at_head(r, head) and _trusted(r) and _state(r) not in ("COMMENTED", "APPROVED")
+        })
+        detail = f"no trusted review on head {head} carries an attestation"
+        if inert:
+            detail += (
+                f"; {inert} trusted COMMENT review(s) on this head are empty, recognised "
+                "chatter or a marker with only a commit after it, which attest nothing"
+            )
+        if other_states:
+            detail += f"; trusted reviews on this head in state {', '.join(other_states)} attest nothing"
+        if others:
+            detail += f"; {others} trusted review(s) target other commits"
+        if untrusted:
+            detail += f"; {untrusted} review(s) on this head come from untrusted associations"
+        details.append(detail)
+    if not details and not pull_allows_source_attestation(pull, head=head):
+        details.append(
+            f"the description carries no `Source review: REVIEW_READY {head}` line "
+            "for this head"
+        )
+    return details
 
 
 def parse_paginated(text: str) -> list[dict[str, Any]]:
@@ -1360,6 +1884,299 @@ def self_test() -> None:
         ("SOURCE_REVIEW_READY\n| Verdict | APPROVE 1cc13d3d | BLOCK", False),
         ("SOURCE_REVIEW_READY\n| Verdict | BLOCK | approve |", False),
         ("SOURCE_REVIEW_READY\nThe earlier verdict: BLOCK was cleared.", True),
+        # #15980: the five filler words the closed set omitted.
+        ("SOURCE_REVIEW_READY\nNo new source blocker found.", True),
+        (
+            "SOURCE_REVIEW_READY\nNo new source blocker found; all three previous threads were resolved at readback.",
+            True,
+        ),
+        ("SOURCE_REVIEW_READY\nNo other blocker found.", True),
+        ("SOURCE_REVIEW_READY\nNo additional blocker found.", True),
+        ("SOURCE_REVIEW_READY\nNo known blocker found.", True),
+        ("SOURCE_REVIEW_READY\nNo outstanding blocker found.", True),
+        # #15980: a quoted or blockquoted phrase is a citation, not a claim.
+        (
+            "SOURCE_REVIEW_READY\nThe earlier review said 'No blocker found.' That is false.",
+            False,
+        ),
+        (
+            "SOURCE_REVIEW_READY\nThe earlier review said 'No blocker found.'",
+            False,
+        ),
+        ("SOURCE_REVIEW_READY\n> No blocker found.\n> That is false.", False),
+        (
+            "SOURCE_REVIEW_READY\nThe earlier review said 'No new source blocker found.' That is false.",
+            False,
+        ),
+        # #15980: the widened filler must not hide a real blocker.
+        (
+            "SOURCE_REVIEW_READY\nNo new blocker found. The build is red.",
+            False,
+        ),
+        # #15980: a same-line state token after a stripped phrase still refuses.
+        ("SOURCE_REVIEW_READY\nNo blocker found. REPAIR_REQUIRED.", False),
+        ("SOURCE_REVIEW_READY\nNo change is needed. REPAIR_REQUIRED.", False),
+        # #15980: the widened filler must not strip a phrase whose remainder
+        # reports a live defect in a form NEGATION did not cover before.
+        (
+            "SOURCE_REVIEW_READY\nNo new blocker found. The build still fails.",
+            False,
+        ),
+        (
+            "SOURCE_REVIEW_READY\nNo new blocker found. The test is still failing.",
+            False,
+        ),
+        (
+            "SOURCE_REVIEW_READY\nNo new blocker found. The fixture is still wrong.",
+            False,
+        ),
+        (
+            "SOURCE_REVIEW_READY\nNo new blocker found. The owner is still misattributed.",
+            False,
+        ),
+        (
+            "SOURCE_REVIEW_READY\nNo new blocker found. The golden still disagrees.",
+            False,
+        ),
+        # #15980: the bare BLOCK and INCOMPLETE tokens are scoped to the
+        # same-line guard and stay case-sensitive, so ordinary prose admits.
+        ("SOURCE_REVIEW_READY\nThe block layout is unchanged.", True),
+        ("SOURCE_REVIEW_READY\n```\nblock\n```", True),
+        ("SOURCE_REVIEW_READY\nNo blocker found. BLOCK.", False),
+        ("SOURCE_REVIEW_READY\nNo blocker found. INCOMPLETE.", False),
+        # #15980: a bare BLOCK/INCOMPLETE line is a disposition, whatever the markup.
+        ("SOURCE_REVIEW_READY\nBLOCK", False),
+        ("SOURCE_REVIEW_READY\nBLOCK.", False),
+        ("SOURCE_REVIEW_READY\n**BLOCK**", False),
+        ("SOURCE_REVIEW_READY\n> BLOCK", False),
+        ("SOURCE_REVIEW_READY\n- BLOCK", False),
+        ("SOURCE_REVIEW_READY\nINCOMPLETE.", False),
+        ("SOURCE_REVIEW_READY\n**INCOMPLETE**", False),
+        ("SOURCE_REVIEW_READY\nBLOCK\nNo blocker found.", False),
+        ("SOURCE_REVIEW_READY\nINCOMPLETE\nNo blocker found.", False),
+        # #15980: a fenced uppercase token is a disposition; a fenced lowercase
+        # "block" is ordinary prose and still admits.
+        ("SOURCE_REVIEW_READY\n```\nBLOCK\n```", False),
+        ("SOURCE_REVIEW_READY\n```\nINCOMPLETE\n```", False),
+        ("SOURCE_REVIEW_READY\n```\nBLOCK: no\n```", False),
+        # #15980: the property form keeps the phrase when the remainder has a
+        # live defect in any form.
+        (
+            "SOURCE_REVIEW_READY\nNo new blocker found. The build is still red.",
+            False,
+        ),
+        (
+            "SOURCE_REVIEW_READY\nNo source blocker found. The build is still red.",
+            False,
+        ),
+        (
+            "SOURCE_REVIEW_READY\nNo blocker found. The CI is still broken.",
+            False,
+        ),
+        (
+            "SOURCE_REVIEW_READY\nNo blocker found. The build remains red.",
+            False,
+        ),
+        (
+            "SOURCE_REVIEW_READY\nNo blocker found. The build continues to be red.",
+            False,
+        ),
+        (
+            "SOURCE_REVIEW_READY\nNo blocker found. The suite is still incomplete.",
+            False,
+        ),
+        (
+            "SOURCE_REVIEW_READY\nNo blocker found. The gap is still reported.",
+            False,
+        ),
+        (
+            "SOURCE_REVIEW_READY\nNo blocker found. The owner is still unreadable.",
+            False,
+        ),
+        # #15980: deliberate trade, these ordinary prose forms admit on main.
+        (
+            "SOURCE_REVIEW_READY\nThe earlier bot claim is still wrong.",
+            False,
+        ),
+        (
+            "SOURCE_REVIEW_READY\nThe Devin thread is still wrong about the receiver.",
+            False,
+        ),
+        (
+            "SOURCE_REVIEW_READY\nNo code change needed. The BLOCK was cleared.",
+            False,
+        ),
+        # #15980: the Rust carrier's changed row, mirrored here.
+        (
+            "SOURCE_REVIEW_READY\nNo source blocker found. The fixture is still wrong.",
+            False,
+        ),
+        # #15980: subject-agnostic remainder predicate, any subject plus a defect.
+        ("SOURCE_REVIEW_READY\nNo blocker found. The suite is incomplete.", False),
+        ("SOURCE_REVIEW_READY\nNo blocker found. The suite is unreadable.", False),
+        ("SOURCE_REVIEW_READY\nNo blocker found. The gap is reported.", False),
+        ("SOURCE_REVIEW_READY\nNo blocker found. The suite is broken.", False),
+        ("SOURCE_REVIEW_READY\nNo blocker found. The lane is red.", False),
+        ("SOURCE_REVIEW_READY\nNo blocker found. The lane is failing.", False),
+        ("SOURCE_REVIEW_READY\nNo blocker found. The lane fails.", False),
+        ("SOURCE_REVIEW_READY\nNo blocker found. The run is broken.", False),
+        ("SOURCE_REVIEW_READY\nNo blocker found. The run is red.", False),
+        ("SOURCE_REVIEW_READY\nNo blocker found. The check is failing.", False),
+        ("SOURCE_REVIEW_READY\nNo blocker found. The check fails.", False),
+        ("SOURCE_REVIEW_READY\nNo blocker found. The job is broken.", False),
+        ("SOURCE_REVIEW_READY\nNo blocker found. The job is red.", False),
+        ("SOURCE_REVIEW_READY\nNo blocker found. The job fails.", False),
+        ("SOURCE_REVIEW_READY\nNo blocker found. The test is failing.", False),
+        ("SOURCE_REVIEW_READY\nNo blocker found. The tests are failing.", False),
+        ("SOURCE_REVIEW_READY\nNo blocker found. The tests are red.", False),
+        ("SOURCE_REVIEW_READY\nNo blocker found. The build is incomplete.", False),
+        ("SOURCE_REVIEW_READY\nNo blocker found. The build is unreadable.", False),
+        ("SOURCE_REVIEW_READY\nNo blocker found. The build is reported.", False),
+        ("SOURCE_REVIEW_READY\nNo blocker found. The CI is incomplete.", False),
+        ("SOURCE_REVIEW_READY\nNo blocker found. The CI is unreadable.", False),
+        ("SOURCE_REVIEW_READY\nNo blocker found. The CI is reported.", False),
+        ("SOURCE_REVIEW_READY\nNo blocker found. The evidence is incomplete.", False),
+        ("SOURCE_REVIEW_READY\nNo blocker found. The evidence is unreadable.", False),
+        ("SOURCE_REVIEW_READY\nNo blocker found. The evidence is missing.", False),
+        ("SOURCE_REVIEW_READY\nNo blocker found. The evidence is absent.", False),
+        ("SOURCE_REVIEW_READY\nNo blocker found. The lane is stuck.", False),
+        ("SOURCE_REVIEW_READY\nNo blocker found. The lane is stalled.", False),
+        ("SOURCE_REVIEW_READY\nNo blocker found. The lane is hung.", False),
+        ("SOURCE_REVIEW_READY\nNo blocker found. The lane is dead.", False),
+        ("SOURCE_REVIEW_READY\nNo blocker found. The lane is down.", False),
+        ("SOURCE_REVIEW_READY\nNo blocker found. The lane is unavailable.", False),
+        ("SOURCE_REVIEW_READY\nNo blocker found. The lane is unreachable.", False),
+        ("SOURCE_REVIEW_READY\nNo blocker found. The lane is missing.", False),
+        ("SOURCE_REVIEW_READY\nNo blocker found. The lane is absent.", False),
+        ("SOURCE_REVIEW_READY\nNo blocker found. The lane is empty.", False),
+        ("SOURCE_REVIEW_READY\nNo blocker found. The lane is stale.", False),
+        ("SOURCE_REVIEW_READY\nNo blocker found. The lane is outdated.", False),
+        ("SOURCE_REVIEW_READY\nNo blocker found. The lane is revoked.", False),
+        ("SOURCE_REVIEW_READY\nNo blocker found. The lane is rejected.", False),
+        ("SOURCE_REVIEW_READY\nNo blocker found. The lane is nacked.", False),
+        ("SOURCE_REVIEW_READY\nNo blocker found. The lane is not green.", False),
+        ("SOURCE_REVIEW_READY\nNo blocker found. The lane is not passing.", False),
+        ("SOURCE_REVIEW_READY\nNo blocker found. The lane is not complete.", False),
+        ("SOURCE_REVIEW_READY\nNo blocker found. The lane is not done.", False),
+        ("SOURCE_REVIEW_READY\nNo blocker found. The lane is not finished.", False),
+        ("SOURCE_REVIEW_READY\nNo blocker found. The lane is not merged.", False),
+        # #15980: must-admit controls for the subject-agnostic predicate.
+        (
+            "SOURCE_REVIEW_READY\nNo source blocker found. The old hosted result predates current main; the hosted lane has not run on this head.",
+            True,
+        ),
+        ("SOURCE_REVIEW_READY\nNo blocker found. The block layout is unchanged.", True),
+        ("SOURCE_REVIEW_READY\nNo blocker found. The build is green.", True),
+        ("SOURCE_REVIEW_READY\nNo blocker found. All checks pass.", True),
+        ("SOURCE_REVIEW_READY\nNo blocker found. The tests pass.", True),
+        ("SOURCE_REVIEW_READY\nNo blocker found. The suite is complete.", True),
+        ("SOURCE_REVIEW_READY\nNo blocker found. No changes needed.", True),
+        ("SOURCE_REVIEW_READY\nNo source blocker found.", True),
+        ("SOURCE_REVIEW_READY\nNo code change needed.", True),
+        # #15980: broader defect vocabulary, adjectives and verbs.
+        ("SOURCE_REVIEW_READY\nNo blocker found. The suite crashes.", False),
+        ("SOURCE_REVIEW_READY\nNo blocker found. The suite is crashing.", False),
+        ("SOURCE_REVIEW_READY\nNo blocker found. The suite is not working.", False),
+        ("SOURCE_REVIEW_READY\nNo blocker found. The suite is not yet green.", False),
+        ("SOURCE_REVIEW_READY\nNo blocker found. The suite is still not green.", False),
+        ("SOURCE_REVIEW_READY\nNo blocker found. The suite is corrupt.", False),
+        ("SOURCE_REVIEW_READY\nNo blocker found. The suite is invalid.", False),
+        ("SOURCE_REVIEW_READY\nNo blocker found. The suite is misconfigured.", False),
+        # #15980: homograph exceptions, benign in context.
+        ("SOURCE_REVIEW_READY\nNo blocker found. The lane is down to the last check.", True),
+        ("SOURCE_REVIEW_READY\nNo blocker found. The build is down to one job.", True),
+        ("SOURCE_REVIEW_READY\nNo blocker found. The queue is empty.", True),
+        ("SOURCE_REVIEW_READY\nNo blocker found. The backlog is empty.", True),
+        ("SOURCE_REVIEW_READY\nNo blocker found. The queue is empty and the lane is green.", True),
+        ("SOURCE_REVIEW_READY\nNo blocker found. The result is reported in the run log.", True),
+        # #15980: the same words stay defects for the other subjects.
+        ("SOURCE_REVIEW_READY\nNo blocker found. The evidence is empty.", False),
+        ("SOURCE_REVIEW_READY\nNo blocker found. The diff is empty.", False),
+        ("SOURCE_REVIEW_READY\nNo blocker found. The gap is still reported.", False),
+        # #15980: auxiliary negation, has/have/had/did/do/does/is/are/was/were + not.
+        ("SOURCE_REVIEW_READY\nNo blocker found. The build is not fully green.", False),
+        ("SOURCE_REVIEW_READY\nNo blocker found. The build has not been green.", False),
+        ("SOURCE_REVIEW_READY\nNo blocker found. The build has not passed.", False),
+        ("SOURCE_REVIEW_READY\nNo blocker found. The build did not pass.", False),
+        ("SOURCE_REVIEW_READY\nNo blocker found. The build didn't pass.", False),
+        ("SOURCE_REVIEW_READY\nNo blocker found. The tests have not run.", False),
+        ("SOURCE_REVIEW_READY\nNo blocker found. The lane has not finished.", False),
+        ("SOURCE_REVIEW_READY\nNo blocker found. The build is not yet green.", False),
+        ("SOURCE_REVIEW_READY\nNo blocker found. The build is not yet passing.", False),
+        ("SOURCE_REVIEW_READY\nNo blocker found. The build is not yet done.", False),
+        # #15980: "has not been <participle>" for the defect vocabulary.
+        ("SOURCE_REVIEW_READY\nNo blocker found. The build has not been tested.", False),
+        ("SOURCE_REVIEW_READY\nNo blocker found. The build has not been verified.", False),
+        ("SOURCE_REVIEW_READY\nNo blocker found. The build has not been reviewed.", False),
+        ("SOURCE_REVIEW_READY\nNo blocker found. The build has not been qualified.", False),
+        ("SOURCE_REVIEW_READY\nNo blocker found. The build has not been checked.", False),
+        ("SOURCE_REVIEW_READY\nNo blocker found. The build has not been validated.", False),
+        ("SOURCE_REVIEW_READY\nNo blocker found. The build has not been confirmed.", False),
+        ("SOURCE_REVIEW_READY\nNo blocker found. The build has not been deployed.", False),
+        ("SOURCE_REVIEW_READY\nNo blocker found. The build has not been released.", False),
+        ("SOURCE_REVIEW_READY\nNo blocker found. The build has not been shipped.", False),
+        ("SOURCE_REVIEW_READY\nNo blocker found. The build has not been landed.", False),
+        ("SOURCE_REVIEW_READY\nNo blocker found. The build has not been completed.", False),
+        ("SOURCE_REVIEW_READY\nNo blocker found. The build has not been finished.", False),
+        ("SOURCE_REVIEW_READY\nNo blocker found. The build has not been ready.", False),
+        ("SOURCE_REVIEW_READY\nNo blocker found. The build has not been working.", False),
+        ("SOURCE_REVIEW_READY\nNo blocker found. The build has not been functional.", False),
+        ("SOURCE_REVIEW_READY\nNo blocker found. The build has not been operational.", False),
+        ("SOURCE_REVIEW_READY\nNo blocker found. The build has not been available.", False),
+        ("SOURCE_REVIEW_READY\nNo blocker found. The build has not been reachable.", False),
+        ("SOURCE_REVIEW_READY\nNo blocker found. The build has not been responsive.", False),
+        ("SOURCE_REVIEW_READY\nNo blocker found. The build has not been stable.", False),
+        ("SOURCE_REVIEW_READY\nNo blocker found. The build has not been healthy.", False),
+        ("SOURCE_REVIEW_READY\nNo blocker found. The build has not been correct.", False),
+        ("SOURCE_REVIEW_READY\nNo blocker found. The build has not been valid.", False),
+        ("SOURCE_REVIEW_READY\nNo blocker found. The build has not been sound.", False),
+        ("SOURCE_REVIEW_READY\nNo blocker found. The build has not been solid.", False),
+        ("SOURCE_REVIEW_READY\nNo blocker found. The build has not been clean.", False),
+        ("SOURCE_REVIEW_READY\nNo blocker found. The build has not been covered.", False),
+        ("SOURCE_REVIEW_READY\nNo blocker found. The build has not been documented.", False),
+        ("SOURCE_REVIEW_READY\nNo blocker found. The build has not been recorded.", False),
+        ("SOURCE_REVIEW_READY\nNo blocker found. The build has not been noted.", False),
+        ("SOURCE_REVIEW_READY\nNo blocker found. The build has not been described.", False),
+        ("SOURCE_REVIEW_READY\nNo blocker found. The build has not been explained.", False),
+        ("SOURCE_REVIEW_READY\nNo blocker found. The build has not been linked.", False),
+        ("SOURCE_REVIEW_READY\nNo blocker found. The build has not been attached.", False),
+        ("SOURCE_REVIEW_READY\nNo blocker found. The build has not been included.", False),
+        # #15980: the #15525 benign negations still admit.
+        (
+            "SOURCE_REVIEW_READY\nNo source blocker found. The old hosted result is not native composed-tree proof.",
+            True,
+        ),
+        (
+            "SOURCE_REVIEW_READY\nNo source blocker found. I did not rerun the hosted lane.",
+            True,
+        ),
+        # #15980: "still fails" is subject-anchored, so narration admits.
+        ("SOURCE_REVIEW_READY\na wrongly gated control still fails", True),
+        ("SOURCE_REVIEW_READY\nA `>` redirect's CRLF therefore still fails", True),
+        ("SOURCE_REVIEW_READY\na UTF-16 redirect still fails it on CRLF", True),
+        ("SOURCE_REVIEW_READY\nscalar roles still fail (existing tests)", True),
+        ("SOURCE_REVIEW_READY\nwhich is still an error and still fail-closed", True),
+        (
+            "SOURCE_REVIEW_READY\nIt still fails when no string value carries the missing root",
+            True,
+        ),
+        # #15980: standalone defect lines, the subject-anchored form now covers
+        # probe/fixture/golden/mutant/assertion.
+        ("SOURCE_REVIEW_READY\nThe probe still fails.", False),
+        ("SOURCE_REVIEW_READY\nThe fixture still fails.", False),
+        ("SOURCE_REVIEW_READY\nThe golden still fails.", False),
+        ("SOURCE_REVIEW_READY\nThe mutant still fails.", False),
+        ("SOURCE_REVIEW_READY\nThe assertion still fails.", False),
+        # #15980: benign combined shapes, the homograph narrowings cover these.
+        (
+            "SOURCE_REVIEW_READY\nNo blocker found. The result is reported in the summary.",
+            True,
+        ),
+        ("SOURCE_REVIEW_READY\nNo blocker found. The cache is empty.", True),
+        (
+            "SOURCE_REVIEW_READY\nNo blocker found. The lane is down for maintenance.",
+            True,
+        ),
     ]
     for body, expected in cases:
         actual = comment_body_ready(body)
@@ -2053,6 +2870,99 @@ def self_test() -> None:
         head=head,
     )
 
+    # #14929: both carriers read residual lines the same way. A neutral residual
+    # admits under either carrier; a retraction phrase refuses under either.
+    verdict_open = f"VERDICT: APPROVE {head} — no blocking findings on this head."
+    for residual, admits in (
+        ("- Residual: the hosted lane on this head has not run.", True),
+        ("Not checked by me. No cargo build or test run.", True),
+        ("- The commit message still states the withdrawn attribution.", False),
+        ("REPAIR_REQUIRED", False),
+    ):
+        marker_body = f"SOURCE_REVIEW_READY\n\n{residual}"
+        verdict_body = f"{verdict_open}\n\n{residual}"
+        assert comment_body_ready(marker_body) is admits, residual
+        assert comment_body_verdict_ready(verdict_body, head) is admits, residual
+        assert (body_refusal_reason(marker_body, head) is None) is admits, residual
+        assert (body_refusal_reason(verdict_body, head) is None) is admits, residual
+    reason = body_refusal_reason(
+        f"{verdict_open}\n\n- The commit message still states the withdrawn attribution.",
+        head,
+    )
+    assert reason is not None and "phrase 'withdrawn'" in reason, reason
+    assert "later line of its own body" in reason, reason
+    short = body_refusal_reason(f"VERDICT: APPROVE {head[:10]} — no blocking findings.", head)
+    assert short is not None and "short SHA" in short and head in short, short
+    # A refused carrier superseding an attesting review at the same head is named.
+    superseded = [
+        review(state="COMMENTED", commit_id=head, id=1,
+               submitted_at="2026-10-15T01:00:01Z", body="SOURCE_REVIEW_READY"),
+        review(state="COMMENTED", commit_id=head, id=2,
+               submitted_at="2026-10-15T01:00:02Z",
+               body=f"VERDICT: APPROVE {head[:10]} — no blocking findings."),
+    ]
+    assert not reviews_allow_source_attestation(superseded, head=head)
+    details = refusal_details(superseded, head=head)
+    assert len(details) == 1, details
+    assert "short SHA" in details[0] and "supersedes" in details[0], details
+    assert "2026-10-15T01:00:01Z" in details[0], details
+    # A vetoing negative names its own refusing line.
+    vetoed = [
+        review(state="COMMENTED", commit_id=head, id=1,
+               submitted_at="2026-10-15T01:00:01Z",
+               body=f"{verdict_open}\n\n- The earlier timing claim is withdrawn."),
+    ]
+    assert not reviews_allow_source_attestation(vetoed, head=head)
+    retracted = [
+        review(state="COMMENTED", commit_id=head, id=1,
+               submitted_at="2026-10-15T01:00:00Z", body="SOURCE_REVIEW_READY"),
+        *vetoed,
+    ]
+    details = refusal_details(retracted, head=head)
+    assert len(details) == 1 and "vetoes admission" in details[0], details
+    assert "attesting review at 2026-10-15T01:00:00Z" in details[0], details
+    details = refusal_details(vetoed, head=head)
+    assert len(details) == 1 and "vetoes admission" in details[0], details
+    assert "phrase 'withdrawn'" in details[0] and "timing claim" in details[0], details
+    # No review at the head says so, counting reviews that target other commits.
+    details = refusal_details(
+        [review(state="COMMENTED", commit_id=other, body="SOURCE_REVIEW_READY")], head=head
+    )
+    assert details == [
+        f"no trusted review on head {head} carries an attestation; "
+        "1 trusted review(s) target other commits"
+    ], details
+    # An attesting set produces no details, and review text cannot inject a
+    # workflow command or a line break into the log.
+    assert refusal_details(
+        [review(state="COMMENTED", commit_id=head, body="SOURCE_REVIEW_READY")], head=head
+    ) == []
+    assert _log_safe("a\n::error::x\r%0A") == "a : :error: :x %250A"
+    assert _log_safe(":::") == ": : :" and "::" not in _log_safe("::::")
+    # #14929: a Verdict column header row is not a disposition for either carrier.
+    table = "\n\n| Verdict | Notes |\n|---|---|\n| x | y |"
+    assert comment_body_ready("SOURCE_REVIEW_READY" + table)
+    assert comment_body_verdict_ready(verdict_open + table, head)
+    assert not comment_body_verdict_ready(
+        verdict_open + "\n\n| Verdict | BLOCK |\n|---|---|\n| x | y |", head
+    )
+    # A veto from a later retraction line is explained by that line.
+    # A refused VERDICT body is explained by its real refuser, not by a header row.
+    reason = body_refusal_reason(
+        verdict_open + "\n| Verdict | Notes |\n|---|---|\nThe build is red; tests fail.", head
+    )
+    assert reason is not None and "tests fail" in reason and "Notes |" not in reason, reason
+    reason = negative_reason("Thanks\n\nThe earlier REVIEW_READY is withdrawn.", head)
+    assert "earlier REVIEW_READY is withdrawn" in reason, reason
+    # SHA shape messages.
+    assert "uppercase" in (body_refusal_reason(f"VERDICT: APPROVE {head.upper()}", head) or "")
+    assert "more hex digits" in (body_refusal_reason(f"VERDICT: APPROVE {head}a", head) or "")
+    # An inert review at the head is counted rather than reported as no review.
+    details = refusal_details(
+        [review(state="COMMENTED", commit_id=head, body="")], head=head
+    )
+    assert len(details) == 1 and "1 trusted COMMENT review(s) on this head are empty" in details[0], details
+
 
 def main() -> int:
     parser = argparse.ArgumentParser()
@@ -2125,6 +3035,20 @@ def main() -> int:
             f"`Source review: REVIEW_READY {args.head}` with the full current head SHA (#4984)",
             file=sys.stderr,
         )
+        # #14929: name the evidence that refused, so a carrier refused by its own
+        # later line, or a later body that superseded an attesting review at an
+        # unchanged head, does not read as "no review at this head".
+        # Diagnostic only: a malformed review field must not turn the clean
+        # refusal into a traceback, and review data is untrusted log text.
+        try:
+            details = refusal_details(reviews, head=args.head, pull=pull)
+        except Exception as exc:  # diagnostics never change the exit code
+            details = [f"the refusal could not be explained ({type(exc).__name__})"]
+        for detail in details:
+            print(
+                f"::error::source review refusal detail: {_log_safe(detail)}",
+                file=sys.stderr,
+            )
         return 1
     return 0
 

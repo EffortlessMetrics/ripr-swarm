@@ -703,10 +703,10 @@ fn expand_member_segments(root: &Path, current: &str, remaining: &[&str], out: &
 pub(crate) fn parse_crate_selector(name: &str) -> Result<String, String> {
     let trimmed = name.trim();
     if trimmed.is_empty() {
-        return Err("[[overrides]] crate must not be empty".to_string());
+        return Err("[[overrides]] crate must not be empty; give the Cargo package name the override applies to, or use `path` instead".to_string());
     }
     if trimmed.contains('\0') {
-        return Err("[[overrides]] crate must not contain NUL characters".to_string());
+        return Err("[[overrides]] crate must not contain NUL characters; give the Cargo package name using letters, digits, `_`, or `-`".to_string());
     }
     if !trimmed
         .chars()

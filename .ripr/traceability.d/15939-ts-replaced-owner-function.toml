@@ -1,0 +1,22 @@
+# Registers the replaced-owner-function proofs (#15939) under RIPR-SPEC-0243.
+[[extend]]
+id = "RIPR-SPEC-0243"
+tests = [
+  "crates/ripr/tests/typescript_replaced_owner_function.rs::plain_namespace_call_is_exposed",
+  "crates/ripr/tests/typescript_replaced_owner_function.rs::replacement_in_the_test_body_withholds_the_relation",
+  "crates/ripr/tests/typescript_replaced_owner_function.rs::replacement_outside_the_test_body_withholds_the_relation",
+  "crates/ripr/tests/typescript_replaced_owner_function.rs::spy_bound_in_a_hook_and_fabricated_in_the_test_withholds",
+  "crates/ripr/tests/typescript_replaced_owner_function.rs::stubbed_namespace_withholds_a_bare_named_import_call",
+  "crates/ripr/tests/typescript_replaced_owner_function.rs::replaced_require_binding_withholds_the_relation",
+  "crates/ripr/tests/typescript_replaced_owner_function.rs::default_export_owner_stubbed_as_default_is_withheld",
+  "crates/ripr/tests/typescript_replaced_owner_function.rs::call_through_spies_and_other_targets_stay_exposed",
+  "crates/ripr/src/analysis/language/typescript/tests/function_replacement_tests.rs::replacement_names_record_the_documented_entry_forms",
+]
+fixtures = [
+  "fixtures/typescript_adversarial_stubbed_namespace_owner",
+  "fixtures/typescript_namespace_owner_call_through_spy",
+]
+code = [
+  "crates/ripr/src/analysis/language/typescript/function_replacement.rs::replaced_function_member_names",
+  "crates/ripr/src/analysis/language/typescript/function_replacement.rs::owner_function_replaced_in_file",
+]

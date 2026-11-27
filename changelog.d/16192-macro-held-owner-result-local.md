@@ -1,0 +1,2 @@
+<!-- section: Fixed -->
+- A Rust test that stores a function's result in a local and then passes that local only to a macro the analyzer does not trust, such as `let r = pick(0); assert_eq!(check_ok!(r), Ok(Mode::A))` with a test-local `macro_rules! check_ok` that never expands its operand, no longer gives that function `strongly_gripped` exact-value credit in the repo view. The assertion reads as an `unknown` oracle for that function. A local that is also used anywhere else in the test, or passed to the standard `vec!`, keeps its credit (#16192).

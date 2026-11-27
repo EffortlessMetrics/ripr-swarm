@@ -1,0 +1,11 @@
+diff --git a/src/fx/core.py b/src/fx/core.py
+--- a/src/fx/core.py
++++ b/src/fx/core.py
+@@ -4,6 +4,6 @@
+     strict: bool = False,
+ ) -> int:
+     age = now - 100
+-    if age > max_age:
++    if age >= max_age:
+         return 1
+     return 0

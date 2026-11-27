@@ -1,0 +1,1 @@
+crates/ripr/tests/subdirectory_root_repair_route.rs|Command::new|1|cli-tests|Runs the built ripr binary (`check`, `agent repair --phase before`) against an isolated temp Git repository whose package sits below the top-level, to prove no refused repair start is printed and the refusal writes nothing. No shell, network, or user-repository mutation.

@@ -1,0 +1,1 @@
+crates/ripr/tests/json_artifact_encoding_commands.rs|Command::new|1|json-artifact-encoding|#15936: the remaining JSON readers run the worktree-built binary (CARGO_BIN_EXE_ripr) through one helper against a private temp fixture repository; git runs through the shared fixture_git helper. Direct argv spawns, no shell, no network, no writes outside the fixture.

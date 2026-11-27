@@ -209,3 +209,136 @@ fn the_default_features_are_read_from_the_gated_files_own_package() -> Result<()
     );
     Ok(())
 }
+
+/// The class of the changed predicate when the pinning test sits in a unit
+/// test module of `src/gated.rs`, mounted from `src/lib.rs` by
+/// `{declaration_gate}mod gated;` (#14116).
+fn class_with_gated_module(
+    features: &str,
+    declaration_gate: &str,
+) -> Result<ExposureClass, String> {
+    class_with_gated_module_asserting(features, declaration_gate, "assert_eq")
+}
+
+/// [`class_with_gated_module`] with the pinning test spelling its assertion
+/// macro as `assertion` (for example the root-qualified `std::assert_eq`).
+fn class_with_gated_module_asserting(
+    features: &str,
+    declaration_gate: &str,
+    assertion: &str,
+) -> Result<ExposureClass, String> {
+    let fixture = Fixture::with_files(&[
+        ("Cargo.toml", &manifest(features)),
+        (
+            "src/lib.rs",
+            &format!("{LIB}\n{declaration_gate}mod gated;\n"),
+        ),
+        (
+            "src/gated.rs",
+            &format!(
+                "#[cfg(test)]\nmod tests {{\n    #[test]\n    fn discount_boundary() {{\n        {assertion}!(crate::discount(101), 91);\n        {assertion}!(crate::discount(100), 90);\n    }}\n}}\n"
+            ),
+        ),
+        ("diff.patch", &diff("src/lib.rs")),
+    ])?;
+    Ok(fixture
+        .changed_predicate("src/lib.rs", "src/gated.rs")?
+        .class)
+}
+
+/// #14116: the same rule holds one level up, on the `mod` declaration that
+/// mounts the test's file. `#[cfg(feature = "lang-python")] mod python;`
+/// with `lang-python` on by default is compiled by a plain `cargo test`, so
+/// the tests under it are read like any other test's.
+#[test]
+fn a_module_mounted_behind_a_default_enabled_feature_gate_pins_like_an_ungated_one()
+-> Result<(), String> {
+    assert_eq!(
+        class_with_gated_module("slow = []\n", "")?,
+        ExposureClass::Exposed,
+        "the ungated module is the control"
+    );
+    for (features, gate) in [
+        (
+            "default = [\"slow\"]\nslow = []\n",
+            "#[cfg(feature = \"slow\")]\n",
+        ),
+        (
+            "default = [\"std\"]\nstd = [\"slow\"]\nslow = []\n",
+            "#[cfg(feature = \"slow\")]\n",
+        ),
+        (
+            "default = [\"slow\"]\nslow = []\n",
+            "#[cfg(any(test, feature = \"slow\"))]\n",
+        ),
+    ] {
+        assert_eq!(
+            class_with_gated_module(features, gate)?,
+            ExposureClass::Exposed,
+            "a plain `cargo test` compiles this module: {features:?} {gate:?}"
+        );
+    }
+    Ok(())
+}
+
+/// The root-qualified spelling takes the targeted source-provenance route,
+/// which must admit the default-enabled declaration gate too (#15402 review).
+#[test]
+fn a_qualified_assertion_under_a_default_enabled_module_gate_pins_like_an_ungated_one()
+-> Result<(), String> {
+    assert_eq!(
+        class_with_gated_module_asserting("slow = []\n", "", "std::assert_eq")?,
+        ExposureClass::Exposed,
+        "the ungated module is the control"
+    );
+    assert_eq!(
+        class_with_gated_module_asserting(
+            "default = [\"slow\"]\nslow = []\n",
+            "#[cfg(feature = \"slow\")]\n",
+            "std::assert_eq",
+        )?,
+        ExposureClass::Exposed,
+        "a plain `cargo test` compiles this module"
+    );
+    assert_ne!(
+        class_with_gated_module_asserting(
+            "slow = []\n",
+            "#[cfg(feature = \"slow\")]\n",
+            "std::assert_eq",
+        )?,
+        ExposureClass::Exposed,
+        "the default run is not known to compile this module"
+    );
+    Ok(())
+}
+
+#[test]
+fn a_module_gate_the_default_features_do_not_settle_keeps_the_assertion_uncredited()
+-> Result<(), String> {
+    for (features, gate) in [
+        ("slow = []\n", "#[cfg(feature = \"slow\")]\n"),
+        (
+            "default = [\"std\"]\nstd = []\nslow = []\n",
+            "#[cfg(feature = \"slow\")]\n",
+        ),
+        (
+            "default = [\"slow\"]\nslow = []\n",
+            "#[cfg(not(feature = \"absent\"))]\n",
+        ),
+        (
+            "default = [\"slow\"]\nslow = []\n",
+            "#[cfg(all(feature = \"slow\", target_os = \"none\"))]\n",
+        ),
+        (
+            "default = [\"slow\"]\nslow = []\n",
+            "#[cfg_attr(feature = \"slow\", path = \"gated.rs\")]\n",
+        ),
+    ] {
+        assert_ne!(
+            class_with_gated_module(features, gate)?,
+            ExposureClass::Exposed,
+            "the default run is not known to compile this module: {features:?} {gate:?}"
+        );
+    }
+    Ok(())
+}

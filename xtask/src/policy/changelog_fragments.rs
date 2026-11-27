@@ -400,7 +400,7 @@ fn opens_with_maintainer_path(text: &str) -> bool {
 /// The entries of a bullet list, each as one whitespace-normalized string:
 /// a `- ` line at column 0 opens an entry and indented lines continue it.
 /// Headings, blank lines and comments are not entries.
-fn bullet_entries<'a>(lines: impl Iterator<Item = &'a str>) -> Vec<String> {
+pub(super) fn bullet_entries<'a>(lines: impl Iterator<Item = &'a str>) -> Vec<String> {
     let mut entries: Vec<Vec<&str>> = Vec::new();
     for line in lines {
         if line.trim().is_empty() || line.trim_start().starts_with("<!--") {
@@ -431,7 +431,7 @@ fn bullet_entries<'a>(lines: impl Iterator<Item = &'a str>) -> Vec<String> {
 /// section line) and for the Unreleased block, in the order the fold applies
 /// them. Only normalized-equal entries fail; near duplicates and superseded
 /// claims remain a reviewer judgment, so a gate never fails on taste.
-fn duplicate_entry_violations(sources: &[(String, Vec<String>)]) -> Vec<String> {
+pub(super) fn duplicate_entry_violations(sources: &[(String, Vec<String>)]) -> Vec<String> {
     let mut first_seen: std::collections::HashMap<&str, &str> = std::collections::HashMap::new();
     let mut violations = Vec::new();
     for (location, entries) in sources {
@@ -1118,5 +1118,76 @@ mod tests {
             "{violations:?}"
         );
         Ok(())
+    }
+
+    /// Release tooling asks this owner which tree paths block a release:
+    /// every `changelog.d/` path except the directory's README, whatever its
+    /// extension or depth, sorted, and nothing outside the directory (#6341).
+    #[test]
+    fn unfolded_fragment_paths_keeps_only_fragments_in_sorted_order() {
+        assert_eq!(
+            unfolded_fragment_paths([
+                "changelog.d/b-fix.md",
+                "CHANGELOG.md",
+                "changelog.d/README.md",
+                "docs/changelog.d/x.md",
+                "changelog.d/a-fix.md",
+                "changelog.d/notes.txt",
+                "changelog.d/nested/c-fix.md",
+            ]),
+            vec![
+                "changelog.d/a-fix.md".to_string(),
+                "changelog.d/b-fix.md".to_string(),
+                "changelog.d/nested/c-fix.md".to_string(),
+                "changelog.d/notes.txt".to_string(),
+            ]
+        );
+        assert_eq!(
+            unfolded_fragment_paths(["changelog.d/README.md"]),
+            Vec::<String>::new()
+        );
+    }
+
+    /// A comment indented under a bullet is not entry text, so it cannot make
+    /// a fragment and an Unreleased entry look different to the duplicate
+    /// check (#11815).
+    #[test]
+    fn bullet_entries_leave_out_an_indented_comment() {
+        assert_eq!(
+            bullet_entries(["- Fixed a thing (#1).", "  <!-- folded from 1-a.md -->"].into_iter()),
+            vec!["- Fixed a thing (#1).".to_string()]
+        );
+        assert_eq!(
+            bullet_entries(
+                [
+                    "- Fixed a thing (#1).",
+                    "  <!-- folded from 1-a.md -->",
+                    "  continued line.",
+                ]
+                .into_iter()
+            ),
+            vec!["- Fixed a thing (#1). continued line.".to_string()]
+        );
+        assert_eq!(
+            bullet_entries(["- Fixed a thing (#1).", "   ", "  continued line."].into_iter()),
+            vec!["- Fixed a thing (#1). continued line.".to_string()]
+        );
+    }
+
+    /// Only no flag or `--release-cut` alone is accepted; anything else is
+    /// refused with the usage line before any file is read.
+    #[test]
+    fn check_refuses_unknown_or_extra_arguments_with_usage() {
+        for args in [
+            vec!["--release".to_string()],
+            vec!["--release-cut".to_string(), "--release-cut".to_string()],
+            vec!["release-cut".to_string()],
+        ] {
+            assert_eq!(
+                check_changelog_fragments_with_args(&args),
+                Err("usage: cargo xtask check-changelog-fragments [--release-cut]".to_string()),
+                "{args:?}"
+            );
+        }
     }
 }

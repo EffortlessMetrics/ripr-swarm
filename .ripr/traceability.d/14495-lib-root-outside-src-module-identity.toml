@@ -1,0 +1,13 @@
+# Registers the out-of-src and symlinked library-root controls for #14495 and #15909 under RIPR-SPEC-0172.
+[[extend]]
+id = "RIPR-SPEC-0172"
+tests = [
+  "crates/ripr/tests/lib_root_outside_src_module_identity.rs::a_module_below_a_root_outside_src_is_named_from_that_root",
+  "crates/ripr/tests/lib_root_outside_src_module_identity.rs::a_dependent_crate_names_a_member_whose_root_is_outside_src",
+  "crates/ripr/tests/lib_root_outside_src_module_identity.rs::a_directory_shaped_or_rival_path_never_names_an_outside_root_owner",
+  "crates/ripr/tests/lib_root_outside_src_module_identity.rs::a_binary_beside_a_root_outside_src_keeps_the_library_modules_placed",
+  "crates/ripr/tests/lib_root_outside_src_module_identity.rs::a_symlinked_src_directory_names_its_modules_from_the_link",
+  "crates/ripr/tests/lib_root_outside_src_module_identity.rs::a_symlinked_root_file_is_the_crate_root_but_lends_no_directory",
+  "crates/ripr/tests/lib_root_outside_src_module_identity.rs::a_dependent_crate_names_a_member_behind_a_symlinked_src",
+  "crates/ripr/tests/lib_root_outside_src_module_identity.rs::a_binary_in_a_symlinked_src_leaves_its_neighbours_unplaced",
+]

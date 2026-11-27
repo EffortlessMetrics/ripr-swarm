@@ -140,6 +140,19 @@ fn setter_with_no_read_of_the_field_names_the_field_check() -> Result<(), String
 }
 
 #[test]
+fn no_read_beside_an_asserting_neighbour_is_not_a_repair_start() -> Result<(), String> {
+    // #6485: the reads-nothing test classifies `reachable_unrevealed` even
+    // beside a file neighbour that asserts another field; it holds no weak
+    // read to strengthen, so neither command starts a repair.
+    assert_field_check_refusal(
+        "no-read-beside-neighbour",
+        COUNTER_OLD,
+        COUNTER_NEW,
+        "use fw::Counter;\n\n#[test]\nfn labels() {\n    let c = Counter::default();\n    assert_eq!(c.label, 0);\n}\n\n#[test]\nfn bumps() {\n    let mut c = Counter::default();\n    c.bump();\n}\n",
+    )
+}
+
+#[test]
 fn sibling_field_read_does_not_check_the_written_field() -> Result<(), String> {
     assert_field_check_refusal(
         "sibling",

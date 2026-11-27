@@ -68,6 +68,10 @@ this repository's license, one per test library or library feature:
   generator function; dunder methods (`__add__`, `__eq__`, `__lt__`,
   `__repr__`, `__str__`, `__bool__`); a context-manager class; `match`
   statements; and relative imports through a package `__init__` re-export.
+- `authored-py-pytest-membership`: RIPR-SPEC-0238 rule 34 (#15632), a
+  `to_bool` owner whose membership collections lose one member; parametrize
+  rows pass some spellings and not others, so one removal survives and one is
+  caught.
 - `authored-py-pytest-idioms`: test-library idioms beyond the first seven.
   `MagicMock` call expectations, `patch`, `monkeypatch.setenv`, doctests
   collected with `--doctest-modules`, `pytest.approx`, `pytest.raises(match=)`,
@@ -267,3 +271,36 @@ continues to demote all three cases.
 When a ripr change moves a verdict, `check` fails and names each moved row.
 Re-run the case's mutants against the stored subject before re-blessing with
 `cargo xtask verdict-corpus bless --language python`.
+
+## Stage-class coverage and partial runtime truth (#12922)
+
+The Python adapter routes changed lines through `classify_change_full` and
+`classify_change_for_owner_with_value_origins` in `language/python/classify.rs`.
+The latter's classification ladder returns `exposed`, `weakly_exposed`,
+`no_static_path` or `static_unknown`, and also `reachable_unrevealed` when every
+related test patches the changed owner (`owner_patched_by_every_test`) and
+`infection_unknown` for an unmodeled loop boundary behind a strong aligned
+oracle (`loop_boundary_unknown`). Four `py-stage-*` corpus cases now label
+those shapes with runtime mutant truth (two per class; each edit survives its
+patched or integer-pinned test and is not promoted to `exposed`), so both axes
+carry floor 2. There is no producer for
+`propagation_unknown`; its waiver is absence of a producer. The landed
+`python/unemitted_stage_unknown_tests.rs` supplies named rebind inputs that read
+`static_unknown`, together with an exposed live control.
+The corpus stage-axis test also rejects a pinned row that starts emitting a
+waived class; a future producer needs real runtime cases and a positive floor.
+
+The `partially_discriminated` axis locks fifteen cases. Eight existing labels
+are retained with their original runtime provenance. Seven `py-partial-*`
+subjects add distinct incomplete oracles: product positivity, constant
+positivity, off-boundary predicate, string prefix, list membership, dictionary
+key membership, and fallback positivity. Original and equivalent edited
+baselines pass; a non-equivalent mutant fails a collected unittest assertion
+and another survives. The receipt is `runtime-stage-12922.json`; these new
+subjects need only Python's standard library. The axis test checks both runtime
+outcome kinds, so a tag cannot turn a one-mutant label into partial truth.
+
+`axis-control-12922.json` retains the independent negative experiments: an
+exposed TypeScript row, a waived Python class, a false partial-truth tag, and
+a removed class tag below its floor all fail their corresponding guard;
+restoring the corpus makes the guard pass.

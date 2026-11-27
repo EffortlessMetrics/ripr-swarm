@@ -1,0 +1,20 @@
+{
+  "id": "python_round_coarse_count_control",
+  "language": "python",
+  "tier": "pure",
+  "source_fixture": "fixtures/python_round_coarse_count_control",
+  "vector": "round_count_past_the_leading_digit_rounds_to_zero_and_keeps_exposed",
+  "assertions": [
+    {
+      "type": "expected_finding_count",
+      "count": 1
+    },
+    {
+      "type": "expected_class",
+      "class": "exposed"
+    },
+    {
+      "type": "must_not_report_clean"
+    }
+  ]
+}

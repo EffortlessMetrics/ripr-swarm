@@ -30,7 +30,7 @@ use crate::analysis::facts::cfg_predicates::{attributes_require_test, split_lead
 use crate::analysis::language::changed_let_binding;
 use crate::analysis::syntax::{RaRustSyntaxAdapter, RustSyntaxAdapter};
 use crate::domain::{Probe, ProbeFamily, SourceLocation};
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 
 /// Test surface: the probe vec without the #3294 relations. Production
@@ -73,6 +73,9 @@ pub(crate) fn probes_for_file_with_relations(
     // added line at every step of the run, once per added line (#7524).
     let added_run_starts = changed.added_run_starts();
     let mut emitted_parser_shapes = std::collections::BTreeMap::<(usize, String), usize>::new();
+    let mut unsafe_boundaries = Vec::new();
+    let mut unsafe_context_lines = BTreeMap::new();
+    let counterparts = changed.replacement_counterparts();
     let propagation_subjects = super::propagation_boundary::closing_propagation_subjects(
         index,
         &changed.path,
@@ -122,12 +125,16 @@ pub(crate) fn probes_for_file_with_relations(
         .unwrap_or_default();
     // #14181: lines of a build-time `const { assert!(..) }` block, also when
     // rustfmt splits it, select no runtime family.
+    // #15933: lines of a `compile_error!` invocation are build-time too.
+    let build_time_lines = |source: &str| {
+        let mut lines = super::lexical::inline_const_assertion_lines(source);
+        lines.extend(super::lexical::compile_error_lines(source));
+        lines
+    };
     let added_const_assertions = find_file_facts(index, &changed.path)
-        .map(|facts| super::lexical::inline_const_assertion_lines(&facts.source))
+        .map(|facts| build_time_lines(&facts.source))
         .unwrap_or_default();
-    let removed_const_assertions = old_source
-        .map(super::lexical::inline_const_assertion_lines)
-        .unwrap_or_default();
+    let removed_const_assertions = old_source.map(build_time_lines).unwrap_or_default();
     // RIPR-SPEC-0368: contract attributes and ghost/logic items are read by a
     // verifier, never by a test; the run discloses them as a typed limitation
     // instead of probing them.
@@ -235,7 +242,32 @@ pub(crate) fn probes_for_file_with_relations(
                 ),
                 (None, _) => false,
             };
-        if respelling || whitespace_only || unchanged_code {
+        // The same code with a block comment inside the line added, removed
+        // or reworded (`if x > 1 /* old */ {`). Both lines must read alone
+        // as they do in their files, and position macros on either line
+        // (`column!`) keep their probes.
+        let inline_comment_only = super::unchanged_code_line::is_inline_block_comment_only_change(
+            added_text,
+            removed_text,
+        ) && !added_position.contains(&new_side_line)
+            && !removed_position.contains(&removed.line)
+            && !added_string_continuations.contains(&new_side_line)
+            && !removed_string_continuations.contains(&removed.line)
+            && lexical_lines
+                .get_or_init(read_lexical_lines)
+                .as_ref()
+                .is_some_and(|(new, old)| {
+                    super::unchanged_code_line::reads_alone_as_in_file(
+                        new,
+                        new_side_line,
+                        added_text,
+                    ) && super::unchanged_code_line::reads_alone_as_in_file(
+                        old,
+                        removed.line,
+                        removed_text,
+                    )
+                });
+        if respelling || whitespace_only || unchanged_code || inline_comment_only {
             skip_added[added_index] = true;
             skip_removed[removed_index] = true;
         }
@@ -253,6 +285,31 @@ pub(crate) fn probes_for_file_with_relations(
         }
         for old_line in &rename_only.removed {
             if let Some(&removed_index) = removed_at.get(old_line) {
+                skip_removed[removed_index] = true;
+            }
+        }
+    }
+    // RIPR-SPEC-0348 Rule 5: `Self` written for the implementing type's own
+    // name, or the reverse, names the same item. A position macro on the
+    // line still sees its column move.
+    if let (Some(facts), Some(old_source)) = (find_file_facts(index, &changed.path), old_source) {
+        let respelled = super::self_type_respelling::self_type_respelled_lines(
+            changed,
+            &facts.source,
+            old_source,
+        );
+        for (&new_side_line, removed) in &changed.replacement_counterparts() {
+            if !respelled.added.contains(&new_side_line)
+                || !respelled.removed.contains(&removed.line)
+                || added_position.contains(&new_side_line)
+                || removed_position.contains(&removed.line)
+            {
+                continue;
+            }
+            if let (Some(&added_index), Some(&removed_index)) =
+                (added_at.get(&new_side_line), removed_at.get(&removed.line))
+            {
+                skip_added[added_index] = true;
                 skip_removed[removed_index] = true;
             }
         }
@@ -456,6 +513,7 @@ pub(crate) fn probes_for_file_with_relations(
             || added_attribute_lines.contains(&added.new_side_line)
             || added_use_lines.contains(&added.new_side_line)
             || is_item_level_closing_brace(index, &changed.path, added.new_side_line, text)
+            || is_slid_function_closer(index, changed, added_index)
         {
             continue;
         }
@@ -525,13 +583,15 @@ pub(crate) fn probes_for_file_with_relations(
                 }
             }
         }
-        let removed_counterpart = replaced_line_counterpart(added.new_side_line, changed);
+        let removed_counterpart = counterparts
+            .get(&added.new_side_line)
+            .map(|line| line.text.trim());
         let parser_shapes = parser_probe_shapes_for_changed_line_against(
             index,
             &changed.path,
             added.new_side_line,
             text,
-            removed_counterpart.as_deref(),
+            removed_counterpart,
         );
         let in_const_assertion = added_const_assertions.contains(&added.new_side_line);
         let parser_shapes = parser_shapes
@@ -557,7 +617,7 @@ pub(crate) fn probes_for_file_with_relations(
             // the whole edit, so the line keeps a probe for what did change.
             let unchanged_return = |shape: &super::classify::ParserProbeShape| {
                 shape.family == ProbeFamily::ReturnValue
-                    && removed_counterpart.as_deref().is_some_and(|removed| {
+                    && removed_counterpart.is_some_and(|removed| {
                         let removed = removed.trim();
                         shape_outside_edit(text, &canonical_probe_text(text, shape.text), removed)
                             && canonical_shapes.iter().any(|other| {
@@ -579,7 +639,7 @@ pub(crate) fn probes_for_file_with_relations(
             // test notices it.
             let respelled_return = |shape: &super::classify::ParserProbeShape| {
                 shape.family == ProbeFamily::ReturnValue
-                    && removed_counterpart.as_deref().is_some_and(|removed| {
+                    && removed_counterpart.is_some_and(|removed| {
                         let shape_text = canonical_probe_text(text, shape.text);
                         removed_span_of_shape(text, &shape_text, removed.trim())
                             .is_some_and(|before| is_integer_respelling(&shape_text, &before))
@@ -597,7 +657,7 @@ pub(crate) fn probes_for_file_with_relations(
             // on the line cannot hide an edit.
             let equal_constant_return = |shape: &super::classify::ParserProbeShape| {
                 shape.family == ProbeFamily::ReturnValue
-                    && removed_counterpart.as_deref().is_some_and(|removed| {
+                    && removed_counterpart.is_some_and(|removed| {
                         let shape_text = canonical_probe_text(text, shape.text);
                         let bare = |line: &str| {
                             let line = line.trim();
@@ -644,7 +704,7 @@ pub(crate) fn probes_for_file_with_relations(
             // predicate inside its guard holds the whole edit.
             let guard_only_arm = |shape: &super::classify::ParserProbeShape| {
                 shape.family == ProbeFamily::MatchArm
-                    && removed_counterpart.as_deref().is_some_and(|removed| {
+                    && removed_counterpart.is_some_and(|removed| {
                         let removed = removed.trim();
                         let arm = canonical_probe_text(text, shape.text);
                         let Some(guard) = arm.find(" if ").map(|at| &arm[at + 4..]) else {
@@ -679,7 +739,7 @@ pub(crate) fn probes_for_file_with_relations(
             // expression edit does on a plain line.
             let scrutinee_only_header = |shape: &super::classify::ParserProbeShape| {
                 shape.family == ProbeFamily::MatchArm
-                    && removed_counterpart.as_deref().is_some_and(|removed| {
+                    && removed_counterpart.is_some_and(|removed| {
                         let header = canonical_probe_text(text, shape.text);
                         // A `=>` in a string literal (`match t.find("=>")`)
                         // is not an arm on the header line.
@@ -694,7 +754,7 @@ pub(crate) fn probes_for_file_with_relations(
             // and must survive the filters below as a probe of its own.
             let scrutinee_carried = |shape: &super::classify::ParserProbeShape| {
                 let header = canonical_probe_text(text, shape.text);
-                removed_counterpart.as_deref().is_some_and(|removed| {
+                removed_counterpart.is_some_and(|removed| {
                     canonical_shapes.iter().any(|other| {
                         let other_text = canonical_probe_text(text, other.text);
                         other.family != ProbeFamily::MatchArm
@@ -718,7 +778,7 @@ pub(crate) fn probes_for_file_with_relations(
                 let shape_text = canonical_probe_text(text, shape.text);
                 shape.family != ProbeFamily::MatchArm
                     && shape.family != ProbeFamily::StaticUnknown
-                    && removed_counterpart.as_deref().is_some_and(|removed| {
+                    && removed_counterpart.is_some_and(|removed| {
                         match removed_span_of_shape(text, &shape_text, removed.trim()) {
                             Some(old) => old == shape_text,
                             // No locatable cut: unchanged only when the old
@@ -767,11 +827,13 @@ pub(crate) fn probes_for_file_with_relations(
                 })
                 .collect::<Vec<_>>();
             for shape in canonical_shapes {
-                let key = (shape.start_byte, shape.family.as_str().to_string());
-                if emitted_parser_shapes.contains_key(&key) {
-                    continue;
+                if shape.unsafe_boundary.is_none() {
+                    let key = (shape.start_byte, shape.family.as_str().to_string());
+                    if emitted_parser_shapes.contains_key(&key) {
+                        continue;
+                    }
+                    emitted_parser_shapes.insert(key, probes.len());
                 }
-                emitted_parser_shapes.insert(key, probes.len());
                 let canonical_text = canonical_probe_text(text, shape.text);
                 if shape.family == ProbeFamily::StaticUnknown
                     && skip_added_string_continuation(shape.start_line, text)
@@ -839,13 +901,46 @@ pub(crate) fn probes_for_file_with_relations(
                         None => line,
                     }
                 });
-                let probe = build_probe(
+                // #14333: a line inside an unsafe boundary opened earlier
+                // (`let repr = unsafe { .. };` in an `unsafe fn`) shows the
+                // edited line as its changed text. The boundary label stays
+                // the expression, so the probe id, gap id and unsafe
+                // obligation are unchanged, and `before` (the old line) and
+                // `after` now name the same edit.
+                // A line of only closers, separators or a comment (`}`,
+                // `})`, `);`) names no edit, so it keeps the label.
+                let after = if shape.unsafe_interior && names_an_edit(text) {
+                    text.to_string()
+                } else {
+                    canonical_text.clone()
+                };
+                // #15420: a predicate whose `before` stayed the whole old
+                // line carries the old head's condition beside it, when
+                // this line's one head holds `after` as its condition.
+                let before_condition = (shape.family == ProbeFamily::Predicate)
+                    .then(|| {
+                        super::old_condition::old_condition_for_edit(
+                            text,
+                            &after,
+                            before.as_deref()?,
+                        )
+                    })
+                    .flatten();
+                let mut probe = build_probe(
                     &build_context,
                     &canonical_line,
                     shape.family,
                     before,
-                    Some(canonical_text.clone()),
+                    Some(after),
                 );
+                if let Some(boundary) = shape.unsafe_boundary {
+                    unsafe_boundaries.push((probes.len(), shape.start_byte, boundary));
+                    if boundary == super::classify::UnsafeBoundary::Enclosing {
+                        unsafe_context_lines
+                            .insert(added.new_side_line, (text, removed_counterpart));
+                    }
+                }
+                probe.before_condition = before_condition;
                 probes.push(SeededProbe::maybe_with_span(probe, parser_span));
             }
             continue;
@@ -885,7 +980,7 @@ pub(crate) fn probes_for_file_with_relations(
         {
             vec![ProbeFamily::StaticUnknown]
         } else {
-            classify_changed_line_against(text, removed_counterpart.as_deref())
+            classify_changed_line_against(text, removed_counterpart)
                 .into_iter()
                 .filter(|family| propagation_subject.is_none() || *family != ProbeFamily::ErrorPath)
                 .collect::<Vec<_>>()
@@ -977,6 +1072,56 @@ pub(crate) fn probes_for_file_with_relations(
             seeded.binding_return = return_flow.clone();
             probes.push(seeded);
         }
+    }
+
+    // Only candidate-side probes actually emitted for this file can carry the
+    // edit. A parser shape that was filtered or downgraded cannot hide a note.
+    // Select the first surviving projection per boundary, so a classified edit
+    // cannot consume the fallback needed for a different line in the same body.
+    if !unsafe_boundaries.is_empty() {
+        let replacement_runs = changed
+            .removed_lines
+            .iter()
+            .map(|old| added_run_start(old.new_side_line, &added_run_starts))
+            .collect::<BTreeSet<_>>();
+        let classified = probes
+            .iter()
+            .map(|seed| &seed.probe)
+            .filter(|probe| probe.family != ProbeFamily::StaticUnknown)
+            .filter_map(|probe| {
+                let line = probe.location.line;
+                let &(added, removed) = unsafe_context_lines.get(&line)?;
+                // A predicate can be present on an edited line even when only
+                // the statement beside it changed. Require the classified
+                // expression to carry the edit; an unpaired replacement is
+                // ambiguous, while every expression on a pure addition is new.
+                let carries_edit = match removed {
+                    Some(old) => {
+                        (added == probe.expression && added != old)
+                            || removed_span_of_shape(added, &probe.expression, old)
+                                .is_some_and(|before| before != probe.expression)
+                    }
+                    None => !replacement_runs.contains(&added_run_start(line, &added_run_starts)),
+                };
+                carries_edit.then_some((line, probe.owner.as_ref()?))
+            })
+            .collect::<BTreeSet<_>>();
+        let mut retained = BTreeSet::new();
+        let mut keep = vec![true; probes.len()];
+        for (index, boundary, context_only) in unsafe_boundaries {
+            let probe = &probes[index].probe;
+            let shadowed = context_only == super::classify::UnsafeBoundary::Enclosing
+                && probe
+                    .owner
+                    .as_ref()
+                    .is_some_and(|owner| classified.contains(&(probe.location.line, owner)));
+            keep[index] = !shadowed && retained.insert(boundary);
+        }
+        probes = probes
+            .into_iter()
+            .zip(keep)
+            .filter_map(|(probe, keep)| keep.then_some(probe))
+            .collect();
     }
 
     let represented_short_lines = represented_short_replacements(changed, &probes);
@@ -1185,6 +1330,16 @@ fn replaced_literal_is_paired(
                         .is_some_and(|before| before == text || before == literal)
             })
     })
+}
+
+/// #14333: whether a trimmed changed line inside an unsafe boundary names an
+/// edit of its own. A `//` comment or a line of only closers and separators
+/// (`}`, `})`, `);`) does not, so its probe keeps the boundary label.
+pub(super) fn names_an_edit(text: &str) -> bool {
+    !text.starts_with("//")
+        && text
+            .chars()
+            .any(|character| !character.is_whitespace() && !"{}()[];,".contains(character))
 }
 
 /// Old-side lines of removed lines whose positional replacement (one map of
@@ -1768,14 +1923,82 @@ fn join_tokens(lines: &[&str]) -> String {
 /// (#4216); so does a file with no indexed functions or no file facts, where
 /// "outside every function" is not established.
 fn is_item_level_closing_brace(index: &RustIndex, path: &Path, line: usize, text: &str) -> bool {
+    is_closers_only(text)
+        && find_file_facts(index, path).is_some_and(|facts| !facts.functions.is_empty())
+        && find_owner_function(index, path, line).is_none()
+}
+
+/// A function's own closing `}` that git's diff slider reported as added
+/// (#15270). Appending an item after a function (`agent stub --write` adds
+/// `#[cfg(test)] mod ripr_tests { .. }`) lets git align the function's old
+/// closer with the new item's closer, so the function's `}` reads as the
+/// first line of the added run and the item's closer as unchanged context.
+/// Both alignments describe the same two files; this one is chosen only when
+/// the alternative leaves nothing to probe:
+///
+/// - the line is closers only and is its owner function's `end_line`;
+/// - the added lines run contiguously from it to some line `b`;
+/// - line `b + 1` is unchanged context with the same text; and
+/// - that context line is an item-level closer, which seeds no probe either
+///   way (#10090).
+///
+/// Then sliding the added run down one line makes the function's closer
+/// context and the item's closer the added line, so no behavior changed on
+/// this line. A closer that ends a new branch inside a function is not its
+/// function's `end_line`, so it keeps its probe (#4216).
+fn is_slid_function_closer(index: &RustIndex, changed: &ChangedFile, added_index: usize) -> bool {
+    let Some(added) = changed.added_lines.get(added_index) else {
+        return false;
+    };
+    let line = added.new_side_line;
+    if !is_closers_only(&added.text)
+        || find_owner_function(index, &changed.path, line).is_none_or(|f| f.end_line != line)
+    {
+        return false;
+    }
+    let mut run_end = line;
+    for next in changed.added_lines.iter().skip(added_index + 1) {
+        if next.new_side_line != run_end + 1 {
+            break;
+        }
+        run_end = next.new_side_line;
+    }
+    if run_end == line {
+        return false;
+    }
+    let context_line = run_end + 1;
+    if changed
+        .added_lines
+        .iter()
+        .any(|other| other.new_side_line == context_line)
+    {
+        return false;
+    }
+    let Some(context_text) = find_file_facts(index, &changed.path).and_then(|facts| {
+        facts
+            .source
+            .lines()
+            .nth(context_line - 1)
+            .map(str::to_string)
+    }) else {
+        return false;
+    };
+    // A slide needs byte-identical lines: indentation must match, so a nested
+    // closer never pairs with an outer one. Only a CRLF carriage return is
+    // ignored (`lines()` already strips it from the context side).
+    context_text.trim_end_matches('\r') == added.text.trim_end_matches('\r')
+        && is_item_level_closing_brace(index, &changed.path, context_line, &context_text)
+}
+
+/// Text that is only closing delimiters (`}`, `};`, `},`, `)`, `]`) once
+/// comments and strings are masked.
+fn is_closers_only(text: &str) -> bool {
     let masked = mask_comments_and_strings(text);
     let body = masked.trim().trim_end_matches([';', ',']).trim_end();
     !body.is_empty()
         && body
             .chars()
             .all(|ch| matches!(ch, '}' | ')' | ']') || ch.is_whitespace())
-        && find_file_facts(index, path).is_some_and(|facts| !facts.functions.is_empty())
-        && find_owner_function(index, path, line).is_none()
 }
 
 /// 1-based lines of `source` that continue a multi-line outer or inner
@@ -2796,6 +3019,7 @@ fn build_probe(
         delta,
         before,
         after,
+        before_condition: None,
         expression: text.to_string(),
         expected_sinks,
         required_oracles,
@@ -3882,6 +4106,115 @@ mod tests {
     }
 
     #[test]
+    fn a_function_closer_slid_ahead_of_an_appended_item_seeds_no_probe() {
+        // #15270: `agent stub --write` appends `mod ripr_tests { .. }` after
+        // `is_adult`. git reports the function's own `}` (line 3) as the first
+        // added line and the module's `}` (line 11) as unchanged context.
+        let path = PathBuf::from("src/lib.rs");
+        let source = "pub fn is_adult(age: u32) -> bool {\n    age >= 18\n}\n\n#[cfg(test)]\nmod ripr_tests {\n    #[test]\n    fn t() {\n        assert!(super::is_adult(18));\n    }\n}\n";
+        let function = |name: &str, start_line: usize, end_line: usize| FunctionFact {
+            id: SymbolId(name.to_string()),
+            name: name.to_string(),
+            file: path.clone(),
+            start_line,
+            end_line,
+            body: String::new().into(),
+            calls: crate::analysis::facts::SharedFactSlice::empty(),
+            returns: vec![],
+            literals: crate::analysis::facts::SharedFactSlice::empty(),
+            source_role: FunctionSourceRole::Production,
+            attrs: crate::analysis::facts::SharedFactSlice::empty(),
+            impl_attrs: Vec::new(),
+            nested_fn_names: crate::analysis::facts::SharedFactSlice::empty(),
+            let_bindings: crate::analysis::facts::SharedFactSlice::empty(),
+            item: Default::default(),
+            impl_context: Default::default(),
+        };
+        let index = |functions: Vec<FunctionFact>| {
+            RustIndex::from_owned(crate::analysis::facts::OwnedRustIndex {
+                files: BTreeMap::from([(
+                    path.clone(),
+                    FileFacts {
+                        path: path.clone(),
+                        source: source.into(),
+                        functions,
+                        ..FileFacts::default()
+                    },
+                )]),
+                ..Default::default()
+            })
+        };
+        // `closer` overrides the added text of line 3 (the function closer).
+        let probe_lines_with = |index: &RustIndex, added: &[usize], closer: &str| {
+            let lines = source.lines().collect::<Vec<_>>();
+            let changed = ChangedFile {
+                path: path.clone(),
+                added_lines: added
+                    .iter()
+                    .map(|&line| ChangedLine {
+                        line,
+                        new_side_line: line,
+                        text: if line == 3 {
+                            closer.to_string()
+                        } else {
+                            lines.get(line - 1).copied().unwrap_or_default().to_string()
+                        },
+                    })
+                    .collect(),
+                removed_lines: vec![],
+            };
+            probes_for_file(Path::new("workspace"), &changed, index)
+                .iter()
+                .map(|probe| probe.location.line)
+                .collect::<Vec<_>>()
+        };
+        let probe_lines = |index: &RustIndex, added: std::ops::RangeInclusive<usize>| {
+            probe_lines_with(index, &added.collect::<Vec<_>>(), "}")
+        };
+
+        let appended = index(vec![function("is_adult", 1, 3), function("t", 8, 10)]);
+        let lines = probe_lines(&appended, 2..=10);
+        assert!(
+            lines.contains(&2),
+            "control: the changed predicate stays: {lines:?}"
+        );
+        assert!(!lines.contains(&3), "the slid function closer: {lines:?}");
+
+        // Without a following context closer the function's closer stays
+        // probed (the run ends at the file's last added line).
+        let lines = probe_lines(&appended, 2..=11);
+        assert!(
+            lines.contains(&3),
+            "no context closer to slide onto: {lines:?}"
+        );
+        // A context closer inside a function span is not item-level: sliding
+        // onto it would move a probe-worthy closer, so line 3 keeps its probe.
+        let enclosing = index(vec![function("is_adult", 1, 3), function("t", 8, 11)]);
+        let lines = probe_lines(&enclosing, 2..=10);
+        assert!(
+            lines.contains(&3),
+            "context closer inside a function: {lines:?}"
+        );
+        // A closer that is not its function's `end_line` (a branch closer)
+        // keeps its probe even when the same context follows.
+        let longer = index(vec![function("is_adult", 1, 4), function("t", 8, 10)]);
+        let lines = probe_lines(&longer, 2..=10);
+        assert!(
+            lines.contains(&3),
+            "a closer before the function's end: {lines:?}"
+        );
+        // A slide needs identical lines: an indented closer never pairs with
+        // the item-level `}` that follows, so it keeps its probe.
+        let lines = probe_lines_with(&appended, &(2..=10).collect::<Vec<_>>(), "    }");
+        assert!(lines.contains(&3), "indentation differs: {lines:?}");
+        // A gap ends the added run early (at line 5), so the context closer
+        // after the last added line is not the one the run slides onto.
+        let gapped = [2, 3, 4, 5, 7, 8, 9, 10];
+        let lines = probe_lines_with(&appended, &gapped, "}");
+        assert!(lines.contains(&3), "gap in the added run: {lines:?}");
+    }
+
+    #[test]
     fn an_accumulator_rewrite_of_a_call_leaves_no_removed_call_deletion() {
         // #8027: the removed `total = compute(x);` is paired away by its
         // accumulator rewrite instead of minting a base-side call_deletion.
@@ -4236,6 +4569,23 @@ mod tests {
                 .any(|probe| probe.expression.contains("return Ordering::Less")),
             "a changed diverging statement keeps its probe: {probes:?}"
         );
+    }
+
+    #[test]
+    fn manual_let_else_pairing_requires_an_unqualified_adjacent_some_pattern() {
+        for (pattern, expected) in [
+            ("Some(x)", vec![(21, 22)]),
+            ("None", vec![]),
+            ("Option::Some(x)", vec![]),
+            ("Some (x)", vec![]),
+        ] {
+            let opener = format!("let {pattern} = option else {{");
+            let changed = replacement(
+                &[(20, "let x = match option {"), (22, "None => return 0,")],
+                &[(20, &opener), (21, "return 0;")],
+            );
+            assert_eq!(changed.let_else_diverging_pairs(), expected, "{pattern}");
+        }
     }
 
     /// #14428 fail-closed: a repeated diverging statement, a multi-line arm,
@@ -5289,6 +5639,28 @@ mod tests {
         assert_eq!(probe.before.as_deref(), Some("string.len() > MAX_LEN"));
     }
 
+    #[test]
+    fn predicate_before_keeps_the_whole_old_line_when_the_body_changes_too() {
+        // #15420: classifiers rebuild the old owner from `before`
+        // (`guard_side_flip` reads a changed `Err` payload from it), so a
+        // condition-plus-body edit must not cut the old line.
+        let probes = single_shape_probes(
+            "if total > 200 { total - 25 } else { total }",
+            "if total >= 100 { total - 10 } else { total }",
+            ProbeShapeKind::Predicate,
+            "total > 200",
+            "",
+        );
+
+        assert_eq!(probes.len(), 1);
+        let probe = &probes[0];
+        assert_eq!(probe.after.as_deref(), Some("total > 200"));
+        assert_eq!(
+            probe.before.as_deref(),
+            Some("if total >= 100 { total - 10 } else { total }")
+        );
+    }
+
     /// `with_old_arm_body` over the old source rebuilt from `index`, as the
     /// probe builder shares it per file.
     fn joined_old_arm(line: &str, changed: &ChangedFile, index: &RustIndex) -> String {
@@ -6291,7 +6663,8 @@ mod tests {
             start_byte,
             text,
             standalone_call: false,
-            unsafe_boundary: false,
+            unsafe_boundary: None,
+            unsafe_interior: false,
         }
     }
 
@@ -8418,6 +8791,7 @@ mod source_currentness_tests {
         let path = PathBuf::from("src/lib.rs");
         let owner = SymbolId("src/lib.rs::collision".to_string());
         SeededProbe::from_probe(Probe {
+            before_condition: None,
             id: diff_probe_id(&path, &ProbeFamily::Predicate, Some(&owner), expression, 1),
             location: SourceLocation::new(path, 1, 1),
             owner: Some(owner),
@@ -8501,6 +8875,7 @@ mod source_currentness_tests {
             removed_lines: vec![],
         };
         let bare = Probe {
+            before_condition: None,
             id: diff_probe_id(
                 &changed.path,
                 &ProbeFamily::SideEffect,

@@ -51,8 +51,8 @@ use std::sync::Arc;
 /// Largest configuration file this pass reads; a bigger one is unevaluated.
 const MAX_CONFIG_BYTES: u64 = 1 << 20;
 
-const COLLECT_IGNORE: &str = "pytest.collection(collect_ignore)";
-const UNEVALUATED_CONFTEST: &str = "pytest.collection(unevaluated conftest)";
+pub(super) const COLLECT_IGNORE: &str = "pytest.collection(collect_ignore)";
+pub(super) const UNEVALUATED_CONFTEST: &str = "pytest.collection(unevaluated conftest)";
 const UNEVALUATED_CONFIG: &str = "pytest.collection(unevaluated config)";
 const PYTHON_FILES: &str = "pytest.collection(python_files)";
 const PYTHON_CLASSES: &str = "pytest.collection(python_classes)";
@@ -230,23 +230,38 @@ impl ConftestRules {
             return Self::unevaluated();
         };
         for stmt in &module.body {
-            if rules.evaluate(stmt) {
-                continue;
-            }
-            let range = stmt.range();
-            let text = source
-                .get(usize::from(range.start())..usize::from(range.end()))
-                .unwrap_or(source);
-            if COLLECTION_NAMES.iter().any(|name| text.contains(name)) {
-                rules.unevaluated = true;
-            }
+            rules.visit(stmt, source, false);
         }
         rules
     }
 
+    /// Evaluate one statement. A version- or environment-guarded `if` is
+    /// evaluated as the union of both branches (every branch is treated as
+    /// taken, and an assignment inside a branch only adds), so the files it
+    /// could ignore are withheld and nothing else is. A statement that names
+    /// a collection switch in a form not understood marks the conftest
+    /// unevaluated.
+    fn visit(&mut self, stmt: &Stmt, source: &str, branch: bool) {
+        if let Stmt::If(node) = stmt {
+            if mentions_collection_name(source, node.test.range()) {
+                self.unevaluated = true;
+            }
+            for inner in node.body.iter().chain(&node.orelse) {
+                self.visit(inner, source, true);
+            }
+            return;
+        }
+        if self.evaluate(stmt, branch) {
+            return;
+        }
+        if mentions_collection_name(source, range_with_decorators(stmt)) {
+            self.unevaluated = true;
+        }
+    }
+
     /// Evaluate a plain top-level `collect_ignore` statement. False when the
     /// statement is not one of the understood forms.
-    fn evaluate(&mut self, stmt: &Stmt) -> bool {
+    fn evaluate(&mut self, stmt: &Stmt, branch: bool) -> bool {
         match stmt {
             Stmt::Assign(assign) if assign.targets.len() == 1 => {
                 let (Some(list), Some(name)) =
@@ -254,7 +269,11 @@ impl ConftestRules {
                 else {
                     return false;
                 };
-                *self.slot(name) = list;
+                if branch {
+                    self.slot(name).extend(list);
+                } else {
+                    *self.slot(name) = list;
+                }
                 true
             }
             Stmt::AugAssign(assign) if matches!(assign.op, ast::Operator::Add) => {
@@ -324,6 +343,33 @@ impl ConftestRules {
         }
         excluded.then_some(COLLECT_IGNORE)
     }
+}
+
+/// A statement's range, widened to its decorators: a `def` or `class` range
+/// starts at the keyword, so `@pytest.hookimpl(specname="pytest_ignore_collect")`
+/// would otherwise fall outside the collection-name scan.
+fn range_with_decorators(stmt: &Stmt) -> rustpython_parser::text_size::TextRange {
+    let range = stmt.range();
+    let decorators = match stmt {
+        Stmt::FunctionDef(node) => &node.decorator_list,
+        Stmt::AsyncFunctionDef(node) => &node.decorator_list,
+        Stmt::ClassDef(node) => &node.decorator_list,
+        _ => return range,
+    };
+    let start = decorators
+        .iter()
+        .map(|decorator| decorator.range().start())
+        .chain(std::iter::once(range.start()))
+        .min()
+        .unwrap_or_else(|| range.start());
+    rustpython_parser::text_size::TextRange::new(start, range.end())
+}
+
+fn mentions_collection_name(source: &str, range: rustpython_parser::text_size::TextRange) -> bool {
+    let text = source
+        .get(usize::from(range.start())..usize::from(range.end()))
+        .unwrap_or(source);
+    COLLECTION_NAMES.iter().any(|name| text.contains(name))
 }
 
 fn switch_name(expr: &Expr) -> Option<&str> {
@@ -693,13 +739,16 @@ impl IniRules {
             // is not evaluated.
             // Conservative reading, not pytest semantics: read a single
             // trailing slash (`env/`) as the basename pattern `env`, which may
-            // withhold more than pytest does but never grants credit. Any other `/`
-            // (`a/b/`, `/`, `env//`) stays unevaluated.
+            // withhold more than pytest does but never grants credit. A plain
+            // interior-slash path (`tests/mypy_test_cases`) is evaluated by
+            // `norecursedir_path_matches`; any other `/` (`a/b/`, `/`, `env//`,
+            // or a slash entry holding a glob) stays unevaluated.
             let words = if key == "norecursedirs" {
                 words.map(|words| {
                     words
                         .into_iter()
                         .map(|word| match word.strip_suffix('/') {
+                            Some(name) if name.contains('/') => format!("{name}//"),
                             Some(name) => name.to_string(),
                             None => word,
                         })
@@ -713,7 +762,9 @@ impl IniRules {
                     && words.iter().all(|word| {
                         !word.is_empty()
                             && !word.contains('[')
-                            && (key == "testpaths" || !word.contains('/'))
+                            && (key == "testpaths"
+                                || !word.contains('/')
+                                || (key == "norecursedirs" && plain_relative_path(word)))
                     })
             });
             match usable {
@@ -813,9 +864,13 @@ impl IniRules {
             let directories = &all[..all.len() - 1];
             if directories.iter().any(|directory| {
                 let name = directory.rsplit('/').next().unwrap_or(directory);
-                patterns
-                    .iter()
-                    .any(|pattern| segment_glob_matches(pattern, name))
+                patterns.iter().any(|pattern| {
+                    if pattern.contains('/') {
+                        norecursedir_path_matches(pattern, directory)
+                    } else {
+                        segment_glob_matches(pattern, name)
+                    }
+                })
             }) {
                 return Some(NORECURSEDIRS);
             }
@@ -866,6 +921,27 @@ impl IniRules {
         }
         None
     }
+}
+
+/// A `norecursedirs` entry with an interior `/` that holds no glob
+/// metacharacter, no empty or dot segment and is not absolute.
+fn plain_relative_path(word: &str) -> bool {
+    !word.contains(['*', '?', '[', '\\'])
+        && word
+            .split('/')
+            .all(|segment| !segment.is_empty() && segment != "." && segment != "..")
+}
+
+/// pytest's `fnmatch_ex` turns a separator-bearing pattern `p` into `*/p`
+/// and matches it against the absolute directory path, so a plain path
+/// matches any directory whose path ends in `/p`. `directory` is relative to
+/// the config directory, so the ancestors that may supply the front of `p`
+/// are unseen: also treat a directory that is a tail of `p` as excluded.
+/// That only withholds credit, never grants it.
+fn norecursedir_path_matches(pattern: &str, directory: &str) -> bool {
+    directory == pattern
+        || directory.ends_with(&format!("/{pattern}"))
+        || pattern.ends_with(&format!("/{directory}"))
 }
 
 /// pytest's `python_classes` / `python_functions` rule: a prefix, or a glob

@@ -1,0 +1,2 @@
+crates/ripr/src/analysis/syntax/ra.rs|rust_embed_resource_parent_parse_unavailable
+crates/ripr/src/analysis/syntax/ra.rs|rust_include_parent_parse_unavailable

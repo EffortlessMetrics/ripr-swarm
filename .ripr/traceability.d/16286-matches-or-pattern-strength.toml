@@ -1,0 +1,8 @@
+[[extend]]
+id = "RIPR-SPEC-0231"
+tests = [
+  "crates/ripr/tests/matches_or_pattern_strength.rs::an_or_pattern_of_values_reads_like_a_disjunction_not_an_exact_pin",
+]
+code = [
+  "crates/ripr/src/analysis/extract/oracles/pattern_admission.rs",
+]

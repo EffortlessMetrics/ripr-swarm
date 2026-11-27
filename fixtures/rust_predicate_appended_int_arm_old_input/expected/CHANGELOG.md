@@ -40,7 +40,7 @@ Updated:
 ## Pending — rust_predicate_appended_int_arm_old_input (4)
 
 Reason:
-RIPR-SPEC-0259: a -> bool owner whose reaching related tests already assert its exact result with assert!(owner(..)) / assert!(!owner(..)) gets a next step naming the missing deciding input instead of the broad-assertion template (#15149); classification, stages and evidence unchanged
+RIPR-SPEC-0197: #15272 the fixture already reads weakly_exposed; the infection stage now says why (every asserted input folds to the same value on both versions) instead of yes
 
 Command:
 `cargo xtask goldens bless rust_predicate_appended_int_arm_old_input --reason "..."`

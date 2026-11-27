@@ -1,0 +1,89 @@
+ripr static RIPR exposure analysis
+mode: fast
+root: fixtures/python_boundary_float_coercion/input
+config: <cwd>/fixtures/python_boundary_float_coercion/input/ripr.toml
+
+Summary: 1 changed behavior(s) checked: 0 exposed, 1 weakly_exposed, 0 reachable_unrevealed, 0 no_static_path, 0 infection_unknown, 0 propagation_unknown, 0 static_unknown; 1 of 1 finding(s) unsuppressed
+Terms: exposed = tests appear to notice the change; weakly_exposed = tests reach it but check it
+  only loosely; reachable_unrevealed = tests reach it but nothing appears to notice a change;
+  no_static_path = no test path found; infection_unknown, propagation_unknown, static_unknown = ripr
+  could not tell from the code (analysis limited, not a verdict); finding = one reported gap;
+  unsuppressed = not hidden by your suppression policy
+
+Changed file(s) by language: python = 1
+
+Analysis outcome: findings below (analysis complete; complete_with_findings)
+  Counts: 1 changed file(s), 2 changed line(s), 1 candidate line(s), 1 changed behavior(s) checked, 1 finding(s)
+
+WARNING fmt/stamp.py:3
+  id: probe:fmt_stamp.py:python_preview:9892cdaf
+
+Changed
+  after:      if value <= 0:
+
+Change type
+  a condition or comparison changed
+  family: predicate
+  delta:  control (changes which code path runs)
+  owner:  python:fmt/stamp.py::seconds
+  gap id (for scripts): gap:python:fmt/stamp.py:seconds:predicate_boundary:predicate:value<=0
+
+Language
+  language: python
+  status: preview
+  owner kind: function
+
+Static exposure
+  weakly_exposed (warning, confidence 0.40)
+  Why capped: preview adapter: infection/propagation not modeled (Python); syntax-first, no type or import resolution; no observed call supplies the changed boundary input. Preview score, not on the same scale as Rust confidence.
+
+Evidence
+  - reach yes: 2 related Python test(s) found for owner `seconds`
+  - infection weak: Related tests reach the changed predicate, but no strong related test call places an input at the changed boundary
+  - propagation weak: Changed Python control flow can propagate by selecting a different branch; preview evidence does not prove the concrete downstream sink
+  - observation yes: Strongest extracted Python oracle kind: `exact_error_variant` (rank 5)
+  - discriminator weak: Related Python test uses an `exact_error_variant` oracle, but static evidence does not establish discrimination of the changed behavior
+  - local flow reaches unknown sink: if value <= 0: (line 3) — ripr could not classify where the changed value ends up; propagation confidence is limited
+  - related test tests/test_stamp.py:10 test_negative_seconds uses strong exact error variant oracle: pytest.raises(ValueError, match="not a positive timestamp")
+  - related test tests/test_stamp.py:6 test_seconds uses strong exact value oracle: assert seconds(1000) == 1000.0
+  - source function argument value value = 1000 at line 7
+  - source function argument value value = -10 at line 12
+
+Weakness
+  - A strong Python oracle reaches `seconds`, but static evidence does not place a related test input at the changed predicate boundary `value == 0`. No strong related test call places value equal to 0; observed value values: -10, 1000
+
+Next step
+  Python preview: strengthen the existing related test with a focused boundary assertion for the missing check `value == 0`
+
+Python repair card (preview/advisory)
+  card version: python_repair_card.v1
+  canonical gap: gap:python:fmt/stamp.py:seconds:predicate_boundary:predicate:value<=0
+  authority: preview_advisory_only (python/preview)
+  repair action: strengthen_existing_test
+  changed owner: seconds
+  changed behavior: predicate_boundary changed at fmt/stamp.py:3: `if value <= 0:`
+  current test evidence: tests/test_stamp.py:10 test_negative_seconds currently has oracle_strength=strong, oracle_kind=exact_error_variant: pytest.raises(ValueError, match="not a positive timestamp")
+  missing discriminator: value == 0
+  recommended test shape: Strengthen the existing pytest boundary assertion for `value == 0`. Keep the equality case as the minimum repair; optional pytest parameterization can add `-1`, `0`, and `1` rows when expected values are clear.
+  suggested assertion: Assert the owner result or effect at `value == 0` first. Optional pytest shape: @pytest.mark.parametrize("value, expected", [(-1, ...), (0, ...), (1, ...)]); fill expected values from domain behavior only.
+  suggested file: tests/test_stamp.py
+  suggested test: test_negative_seconds
+  pytest node: tests/test_stamp.py::test_negative_seconds
+  verify (Bash): (cd -P -- <cwd>/fixtures/python_boundary_float_coercion/input && python -m pytest tests/test_stamp.py::test_negative_seconds) (high)
+  receipt: unavailable_until_python_gap_ledger
+  receipt guidance: Save this `ripr check --format json` report, then run `ripr first-pr --check-output <check.json>` or `ripr reports gap-ledger --check-output <check.json>` to materialize a gap ledger with a concrete receipt command.
+  stop conditions:
+    - Stop if imports, fixtures, or test setup cannot call the changed owner.
+    - Stop if the expected value for the missing discriminator is ambiguous.
+    - Stop if adding the test appears to require a production-code edit.
+    - Stop before adding parametrized below/above rows if their expected values are not clear; keep only the equality-boundary assertion.
+  limits:
+    - Syntax-first Python preview evidence only.
+    - No source edits, generated tests, mutation execution, provider calls, or gate authority.
+    - Verify success alone is not a gap-closure receipt.
+Drill in:
+  (finding id, for explain/context)
+  ripr explain --root <cwd>/fixtures/python_boundary_float_coercion/input --diff <cwd>/fixtures/python_boundary_float_coercion/diff.patch --mode fast probe:fmt_stamp.py:python_preview:9892cdaf
+  ripr context --root <cwd>/fixtures/python_boundary_float_coercion/input --diff <cwd>/fixtures/python_boundary_float_coercion/diff.patch --mode fast --at probe:fmt_stamp.py:python_preview:9892cdaf
+
+Note: 1 Python file analyzed under preview support — preview evidence is advisory and may be incomplete. Treat its findings as advisory, not Rust-grade.

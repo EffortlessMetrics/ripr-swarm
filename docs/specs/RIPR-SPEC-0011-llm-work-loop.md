@@ -809,6 +809,63 @@ naming `ripr check` for detail, instead of the repository-wide `ripr pilot`
 route. When every candidate was dropped as already noticed, the outcome is the nothing-to-do one instead. Without a diff scope the repository route is kept. Eligibility and the
 `no_eligible_seam` code are unchanged.
 
+## Amendment (#15615): changed spots lead the capped refusal list
+
+The no-eligible reason list stays capped at three rows. Rows about the change
+are listed before rows counting spots outside it. When the rows overflow the
+cap and both kinds are present, the outside counts fold into one row
+("outside your changed lines, N repairable spots are not offered, ...") that
+follows at most two leading rows (framing notes, then changed rows), so a changed spot is never hidden behind
+outside counts. For an open change the lead reads "none is ready for an
+automatic repair on your changed lines", and changed rows past the cap are
+disclosed as "(and N more on your changed lines; `ripr check ...` shows the
+change's findings)" with the same base. Rows that fit keep their own wording.
+
+A change with an already-gripped spot and no open spot takes the
+nothing-to-do outcome directly only when no repair candidate sits on the
+changed lines. A candidate is
+open until `ripr check`'s closure decides it: one that check cannot judge
+leaves the change open (and keeps the outside counts), and one that check reads
+as noticed ends on the nothing-to-do outcome with the gripped spots named
+directly and, as in the shortcut, no spot outside the change listed.
+
+## Amendment (#15926): check's open gaps lead, and no-path reads as no-path
+
+Among the rows about the change, the spots `ripr check` itself leaves open
+(it offers no start for them) come first. When check's top gap (the finding
+its human triage selects) is one of them, it leads, so the cap does not hide
+it; the others follow check's report order. A spot check reads as `no_static_path` says that no test
+reaches the changed code and points to `ripr check` for the detail and a stub
+command when it can draft one, instead of the unknown wording ("cannot tell
+from reading the code").
+
+## Amendment (#15926, decision): an unreferenced new function is a repair start
+
+A `no_static_path` finding whose owner nothing in the workspace calls
+(`Finding::is_unreferenced_no_static_path`, RIPR-SPEC-0219: reach `no`, the
+`(unreferenced in workspace)` marker, and no named static limit) is a
+test-side gap, not a static limit: ripr knows no test reaches it, and the work
+is writing that test. Check's human triage already reads it so (#14919). The
+repair route now agrees: `gap_bound_repair::finding_is_static_limited` exempts
+it, so when its seam passes the shared repair-packet flip with an admitted test
+target (an existing file or a producer-owned proposal), `ripr check` prints its
+`ripr repair <id>` line, bare `ripr repair` starts it, `ripr pilot` prints the
+same start, and the repair card's next action runs the route. The card reads
+the seam flip for this finding instead of the check witness, which names no fix
+site for a function no test calls. A no-path finding whose owner other
+workspace code calls, any unknown class, and any named static limitation stay
+no-start, with the refusal reasons above. When the current change binds such a
+no-path finding to an exact seam and the inventory independently finds no test
+path, both `ripr repair <id>` and `ripr agent repair --seam-id <id> --phase before`
+refuse before writing a workflow or attempt. The inspection card still names
+an admitted proposed test target. The facade uses the same comparison base
+for selection and Start admission. Start eligibility is separate from
+what check knows about reach: wording and ranking that speak to reach
+(`finding_reads_unreached_or_limited`) still read the unreferenced finding as
+unreached. On a seam the inventory reads as gripped, a reached gap leads it, and
+its own reason says no test reaches the code and that check prints the repair
+start when it can offer one, never that check offers none.
+
 ## Amendment (#12867): no start whose handoff card cannot be produced
 
 A start publishes an attempt and then renders the handoff card, which names the
@@ -839,10 +896,10 @@ generated or vendored, wrong package, private owner, colliding file, stale
 source, cross-language, path escape) still has no proposal and refuses as
 before; a proposal without an identity or one the evidence does not hold keeps
 the no-target text. `ripr check` and `ripr repair` read the same gate; a
-`no path` (static-limited) finding keeps the F3 rule (#12888) and prints no
-runnable repair line even where bare `ripr repair <id>` starts the
-proposal-only seam, so the F3 silence is unchanged. Starting does not create the
-proposed file, generate a test body or grant production-source permission.
+`no path` (static-limited) finding bound to an unreached seam keeps the F3 rule
+(#12888) and offers no Start even with an admitted proposal. The #15926 decision
+above allows the unreferenced case, where check prints the start. Starting does
+not create the proposed file, generate a test body or grant production-source permission.
 
 ## Amendment (#13203 A): an attempt binds the proposal it follows
 
@@ -881,7 +938,75 @@ exactly those bytes and the record is for this attempt. The two axes stay
 separate: the receipt's `verification.status` remains `verification_not_run`
 (ripr ran nothing), and static movement is whatever the static comparison
 found, so a reported failure can sit beside `improved`. The receipt-owned
-`next:` line is unchanged. MCP documents do not project the record yet.
+`next:` line is unchanged. MCP receipt status projects it since #16251.
+
+## Amendment (#16311): a reported run says whether it covered the edited test
+
+The focused-run gate credits any executed test defined in the selected file,
+so a passing run of an untouched sibling satisfied it. The retained record now
+carries `edited_test`. It compares the selected file's executable test
+functions at attempt start with those at finish, by name and body, and asks
+whether a ran test is among the added or changed ones:
+
+- `covered`: a ran test is one the edit added or changed.
+- `not_covered`: those tests are known and none of them ran.
+- `unknown`: ripr could not tell. The start text is the baseline index blob,
+  used only when it hashes to the baseline worktree digest. Otherwise, or when
+  either text does not parse, or when the edit changed no test function, the
+  reading is `unknown`.
+
+CLI status and MCP receipt status project it in `test_run`. A record retained
+before this amendment omits it. The finish's next step credits the edited test
+only on `covered`, names the missing run on `not_covered` (after a failing run
+too, so a failing sibling never hides it), and asks the caller to confirm
+otherwise. ripr runs nothing, and the reading never changes `status`.
+
+The reading attributes each counted test the way the focused-run gate counted
+it, so a test target declared outside `tests/` reads like a conventional one.
+A file whose start or finish text defines an ambiguous duplicate test identity,
+such as `cfg` twins of one test, reads `unknown`: removing one twin must not
+make the survivor look added. An interrupted finish retained before this
+amendment carries no reading; its retry matches a supplied record that differs
+only by `edited_test`, and every other field must still be equal.
+
+## Amendment (#16263): the finish's next step reads the reported run back
+
+When `ripr agent repair --phase after --test-result FILE` records a caller's
+focused run and the receipt is `advisory` with movement `improved`, the
+after-phase summary's `Next:` line no longer forwards the receipt's "Run the
+focused test" step. After a reported pass it asks the caller to confirm that
+the run included the added or edited test before including the receipt in
+review: the finish validates the test file, not the test names. After a
+reported failure it says to make the test pass before keeping it, and that a
+fix which edits the patch leaves the receipt stale, so the gap is re-checked
+instead of submitting that receipt. Both say ripr ran nothing. The shared
+`app::agent_status::test_run` owner derives the line. The digest-bound receipt,
+its `recommended_action` and every other receipt status keep their own step
+unchanged.
+
+## Amendment (#16251): MCP receipt status carries the same test-run reading
+
+`ripr_get_receipt_status` and `ripr://receipt/{receipt_id}` add an optional
+`test_run` object for a finished durable attempt whose issued receipt records
+`verification_not_run`. It is the object `ripr agent status --attempt <id>
+--json` emits for the same attempt, built by the same owner from the same
+retained record: `not_recorded` when the caller reported no run,
+`caller_reported` with the counts and next step when the finish retained one.
+It is absent for session transactions and for attempts without an issued
+receipt. It never changes the document's `status`; ripr ran nothing either way.
+
+## Amendment (#14146): the aggregate test-run reading names its attempt
+
+Aggregate `ripr status` and `ripr agent status` (and the after-phase `--json`
+envelope that embeds them) read the test-run axis of every finished attempt
+whose issued receipt records `verification_not_run`, not only the first in
+attempt order. With one such attempt the line is unchanged. With several, the
+Markdown form prints one `Test run (attempt `<id>`): ...` line per attempt,
+most telling first: a caller-reported failure, then `none recorded`, then a
+caller-reported pass, attempt order within each. The JSON `test_run` object is
+the most telling reading and adds `attempt_id`. A reported failure on any
+finished attempt is therefore never hidden behind another attempt's reading.
+`ripr agent status --attempt <id>` keeps reporting only that attempt.
 
 ## Amendment (#13203 B): a caller-supplied focused test result is validated and recorded
 
@@ -1022,7 +1147,9 @@ refuses, before issuing anything and leaving the attempt awaiting its edit,
 when no `--test-result` is passed, when the result counted no test, or when it
 reports any failed test (`failed == 0` is required; a failed test counts as
 having ran but not as a pass). Each refusal names the command to run and the
-flag to pass, and counts against the after-phase retry budget. A proposal
+flag to pass. A refused supplied result (zero-count, failing, or not new)
+counts against the after-phase retry budget; a missing result does not (see
+the #16164 amendment below). A proposal
 whose file was never created is left to the cage verdict
 (`selected_target_not_changed`) rather than this gate. The finish authority
 re-checks this from its own evaluated cage state: a proposal attempt whose cage
@@ -1031,11 +1158,9 @@ proposed file created after the gate looked cannot finish compliant unrecorded.
 It also re-applies the passing-run check to the result it would retain, so a
 failing or zero-count run that the gate did not check is refused there (#15033).
 Attempts that follow an
-existing test target keep `--test-result` optional. `ripr continue` and the printed `--phase after` next commands do not
-pass `--test-result`; for a proposal attempt they reach this refusal, whose text
-names the explicit `ripr agent repair --phase after --attempt <id> --test-result
-FILE` command. Teaching `continue` and the printed command to carry the flag is
-left to a follow-up. Attribution of the events to
+existing test target keep `--test-result` optional. How a proposal attempt's
+printed next commands state the requirement is the #16164 amendment below.
+Attribution of the events to
 the file stays the caller's claim (see the B amendment).
 
 For an inline new-test proposal the new test goes into a file that already
@@ -1058,6 +1183,61 @@ normalized-record equality; older normalized records alone lost suite framing.
 This does not prove that the supplied raw bytes are the original events. A failed historical result is not
 promoted; status inspection and a new attempt are required. Existing-target
 attempts retain B's optional-result and visible-failure behavior.
+
+## Amendment (#16164): a proposal attempt states its focused-result requirement up front, and a missing result charges no retry
+
+A new-test proposal attempt must not have to fail once to learn that it needs
+a focused result. When the attempt begins, its committed after command (the
+manifest `next_command`, the `--json` `repair_attempt.next_command`, and the
+human `Next, after the test edit:` line) ends with `--test-result FILE`, and
+the start states, in the finish gate's own words, that the attempt follows a
+new-test proposal and how to produce FILE (run the new test on a nightly
+toolchain for its own package and target, for example
+`cargo +nightly test -p PACKAGE --test TARGET -- -Z unstable-options --format json` or `--lib` for an inline test, and pass its events in a
+`focused_test_result` document saved outside the checkout). The `--json`
+continuation carries that text as the additive `focused_result_requirement`
+member, present only for a proposal attempt. `ripr agent status` (default and
+`--attempt`) offers the same flag-bearing command, because `ripr continue`
+cannot pass a result, and adds the same requirement to its reason. An attempt
+that follows an existing test target is unchanged: its command stays the plain
+`--phase after` form (rendered as `ripr continue` for people) with no new text.
+
+Running the after phase of a proposal attempt with no `--test-result` at all
+(for example through `ripr continue`, or the retained packet's
+`repair_after_command`, which is rendered before the cage policy exists and
+does not carry the flag) is a usage refusal, not a failed attempt. It stays a
+typed refusal (exit 3) with the same narration (the explicit
+`ripr agent repair --phase after --attempt <id> --test-result FILE` command and
+how to produce FILE) and leaves the attempt awaiting its edit, but it records
+no refusal: `after_refusal_count`, `last_after_refusal` and the refusal history
+do not move, so it never spends the retry budget. The finish authority's own
+missing-result refusal is the same class and is treated the same way. Status
+explains the requirement from the committed command rather than from a
+recorded refusal. A supplied result that the gate refuses still counts as a
+retry exactly as before.
+
+Limits: an attempt begun before this amendment keeps its old committed command
+without the flag, so status does not name the requirement for it (its
+missing-result refusals are still uncharged). The retained packet's
+`repair_after_command` and the repair card's next action do not carry the flag;
+following either reaches the uncharged refusal, which names it.
+
+Amendment (#16186): where the proposed file is a Rust integration test whose
+package manifest and cargo target resolve (`app::test_stub::focused_result_run_command`),
+the start names the exact command that produces FILE:
+`cargo +nightly test --manifest-path M -p P --test T -- -Z unstable-options --format json`.
+It runs through the package's own manifest and names the package with `-p`, so
+a package outside the workspace default members still runs, including a root
+package whose own manifest declares other default members. It carries no test-name
+filter, because the name the agent writes may differ from the suggested one.
+The resolved requirement also names the exact `test_file` value the result
+must carry (the proposal's file as committed), and resolution applies only to
+an integration proposal. A proposed flat file whose `tests/NAME/main.rs`
+directory target already exists gets the generic form, because creating the
+file makes that target name ambiguous to Cargo.
+An inline test or an unresolved target keeps the generic form, and so do
+`ripr agent status` and the gate's missing-result refusal, which do not
+resolve the target.
 
 ## Amendment (#13205): a proposed new-test target is preflighted read-only
 
@@ -1156,6 +1336,27 @@ a stray positional argument) under `--json` keeps exit 2 and its stderr prose
 and writes the standalone `cli_refusal` document to stdout (#6834 decision);
 other argv usage errors keep empty stdout.
 
+## Amendment (#14931, #15265): typed start refusals print `cli_refusal` under `--json`
+
+The empty-stdout rule above holds for untyped refusals and operational errors.
+A `ripr repair` or `ripr continue` refusal that carries a typed
+`ripr: refusal code=` line at exit `3` (see `docs/EXIT_CODES.md`) also writes
+the `cli_refusal` document with that `code` and its `disposition` on stdout
+under `--json`. That includes the not-started start holds: an uncommitted
+focused test target (`start_refused_uncommitted_target`) and uncommitted
+changes outside the allowed edit surface (`start_refused_dirty_premise`).
+Their stderr prose is unchanged.
+
+## Amendment (#15282): continue on a complete attempt prints a short summary
+
+Without `--json`, `ripr continue` on a confirmed-complete attempt prints a
+short summary on stdout instead of the full attempt status page: the attempt
+and its status class, the gap, the receipt, the test-run line, `ripr repair`
+for the next gap, and the `ripr status --attempt` command that prints the full
+page. A command whose PowerShell spelling differs gets a `(PowerShell)` line.
+Exit 0, the stderr already-complete line and the `--json` status document are
+unchanged.
+
 ## Amendment (#13833): line-ending-only files are named, not silently dropped
 
 A path whose before and after states differ only in line endings, on a path
@@ -1224,10 +1425,12 @@ is not decided here.
 - `crates/ripr/tests/repair_check_recommended_start.rs::open_spots_on_the_change_close_on_the_per_spot_reasons` (#12861)
 - `crates/ripr/tests/repair_check_recommended_start.rs::a_start_whose_card_cannot_be_produced_creates_no_attempt` (#12867)
 - `crates/ripr/tests/repair_check_recommended_start.rs::a_refused_field_seam_names_the_stub_or_why_there_is_none` (#12959)
-- `crates/ripr/tests/mcp_cli_repair_parity.rs::six_step_agent_contract_holds_through_cli_and_mcp` (#14079: gap, one unit, one test edit, re-recorded static evidence, the caller's run as a separate axis, durable read-back from a new MCP process)
+- `crates/ripr/tests/mcp_cli_repair_parity.rs::six_step_agent_contract_holds_through_cli_and_mcp` (#14079: gap, one unit, one test edit, re-recorded static evidence, the caller's run as a separate axis, durable read-back from a new MCP process; #16251: the MCP receipt `test_run` equals CLI status; #16263: the finish's `Next:` line reads the reported run back; #16311: a sibling-only run reads `edited_test: not_covered`)
+- `crates/ripr/tests/focused_test_result.rs::a_legacy_pending_claim_without_edited_test_resumes` (#16320: a simulated legacy pending record without `edited_test` resumes before receipt publication; a changed claim refuses)
 - `crates/ripr/src/app/focused_run.rs::tests::a_retained_record_reads_back_only_for_its_own_attempt_and_kind` (#14079)
 - `crates/ripr/src/cli/commands/agent.rs::repair_summary_tests::repair_summary_reports_a_recorded_caller_run_instead_of_none_recorded` (#14079)
 - `crates/ripr/src/app/agent_status/test_run.rs::tests::a_reported_run_is_read_back_with_its_counts_and_a_failure_is_named` (#14079)
+- `crates/ripr/src/app/agent_status.rs::tests::aggregate_test_run_names_each_attempt_and_never_hides_a_reported_failure` (#14146)
 - `crates/ripr/tests/proposal_only_repair_start.rs::integration_proposal_only_seam_starts_with_the_proposed_file_as_its_cage` (#13203)
 - `crates/ripr/tests/proposal_only_repair_start.rs::inline_proposal_only_seam_starts_confined_to_its_governed_module` (#13203)
 - `crates/ripr/tests/proposal_only_repair_start.rs::seam_without_any_proposal_still_refuses` (#13203)
@@ -1236,6 +1439,7 @@ is not decided here.
 - `crates/ripr/src/app/repair_card_handoff.rs::tests::a_proposal_names_the_workspace_only_when_the_evidence_admitted_it` (#13203)
 - `crates/ripr/tests/new_test_proposal_attempt.rs::created_proposed_file_binds_the_attempt_to_its_proposal` (#13203)
 - `crates/ripr/tests/new_test_proposal_attempt.rs::edit_outside_the_proposals_cage_is_refused` (#13203)
+- `crates/ripr/tests/new_test_proposal_attempt.rs::a_proposal_made_stale_before_the_baseline_is_captured_binds_nothing` (#13203)
 - `crates/ripr/tests/proposal_only_repair_start.rs::inline_proposal_with_an_invalid_package_identity_leaves_no_attempt` (#13205)
 - `crates/ripr/tests/proposal_only_repair_start.rs::package_name_preflight_agrees_with_cargo_metadata` (#13205)
 - `crates/ripr/src/output/agent_seam_packets.rs::tests::selected_proposal_reads_the_same_in_card_packet_and_mcp` (#13204)
@@ -1355,7 +1559,7 @@ is not decided here.
 - `crates/ripr/src/mcp/repair_root_tests.rs::durable_inventory_failed_restart_retains_literal_unix_root`
 - `crates/ripr/src/mcp/repair_root_tests.rs::durable_inventory_open_gap_restart_retains_literal_unix_root`
 - `crates/ripr/src/app/agent_status.rs::tests::pilot_select_command_binds_raw_and_bound_roots_once`
-- `crates/ripr/tests/generated_review_workflow.rs::generated_status_command_runs_from_a_foreign_working_directory`
+- `crates/ripr/tests/generated_review_workflow/main.rs::generated_status_command_runs_from_a_foreign_working_directory`
 - `crates/ripr/src/lsp/tests.rs::agent_loop_command_payloads_stay_root_anchored_for_platform_roots`
 - `editors/vscode/test/suite/extension.test.ts::agent loop commands must equal the body the server renders from the payload (#4225)`
 - `editors/vscode/test/suite/extension.test.ts::real server surfaces seam diagnostic, hover provider, and agent actions`

@@ -388,11 +388,17 @@ fn unreadable_spread_positions_never_witness_equal_arguments() {
     // known to be equal (#10476 review); a real duplicate before the spread is.
     let params = vec!["count".to_string(), "limit".to_string()];
     let spread = positional_prefix(vec!["...xs".to_string()]);
-    assert!(!call_has_identical_arguments(&spread, &params));
+    assert!(!call_has_identical_arguments(
+        &spread, &params, "count", "limit"
+    ));
     let after = positional_prefix(vec!["5".to_string(), "...xs".to_string()]);
-    assert!(!call_has_identical_arguments(&after, &params));
+    assert!(!call_has_identical_arguments(
+        &after, &params, "count", "limit"
+    ));
     let before = positional_prefix(vec!["5".to_string(), "5".to_string(), "...xs".to_string()]);
-    assert!(call_has_identical_arguments(&before, &params));
+    assert!(call_has_identical_arguments(
+        &before, &params, "count", "limit"
+    ));
 }
 
 #[test]

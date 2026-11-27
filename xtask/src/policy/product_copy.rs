@@ -268,16 +268,20 @@ fn repo_root() -> Result<PathBuf, String> {
 mod tests {
     use super::*;
 
-    /// First `ripr ...` command inside the first fenced block after `heading`.
-    fn first_run_command(markdown: &str, heading: &str) -> Result<String, String> {
+    /// The first fenced block after `heading`.
+    fn first_fenced_block<'a>(markdown: &'a str, heading: &str) -> Result<&'a str, String> {
         let Some((_, after)) = markdown.split_once(heading) else {
             return Err(format!("missing heading `{heading}`"));
         };
         let Some((_, fenced)) = after.split_once("```") else {
             return Err(format!("no fenced block after `{heading}`"));
         };
-        let block = fenced.split("```").next().unwrap_or_default();
-        block
+        Ok(fenced.split("```").next().unwrap_or_default())
+    }
+
+    /// First `ripr ...` command inside the first fenced block after `heading`.
+    fn first_run_command(markdown: &str, heading: &str) -> Result<String, String> {
+        first_fenced_block(markdown, heading)?
             .lines()
             .map(str::trim)
             .find(|line| line.starts_with("ripr "))
@@ -285,24 +289,106 @@ mod tests {
             .ok_or_else(|| format!("no `ripr` command in the first block after `{heading}`"))
     }
 
+    /// The README's first-run command. Its archive snippet (#5311) ends the
+    /// install chain with the extracted executable, `&& ./ripr-bin/ripr check`,
+    /// so that a failed install runs nothing. Only that guarded last line is
+    /// read as the command: the same executable on a line of its own, through
+    /// another directory, or with other arguments is reported as written, and
+    /// so is an earlier line that already runs `ripr`. Whether the chain
+    /// reaches its last line is not read here; the archive rehearsal and the
+    /// replay tests execute the snippet.
+    fn readme_first_run_command(markdown: &str) -> Result<String, String> {
+        const HEADING: &str = "## The first useful run";
+        const GUARDED: &str = "&& ./ripr-bin/";
+        let lines: Vec<&str> = first_fenced_block(markdown, HEADING)?
+            .lines()
+            .map(str::trim)
+            .filter(|line| !line.is_empty())
+            .collect();
+        let Some((last, earlier)) = lines.split_last() else {
+            return first_run_command(markdown, HEADING);
+        };
+        let guarded = last
+            .strip_prefix(GUARDED)
+            .filter(|rest| rest.starts_with("ripr "))
+            .filter(|_| !earlier.iter().any(|line| line.starts_with("ripr ")));
+        match guarded {
+            Some(rest) => Ok(rest.to_string()),
+            None => first_run_command(markdown, HEADING),
+        }
+    }
+
     /// #8164: README and Quickstart lead with the same single first-run
-    /// command as `ripr --help`, with no hardcoded base. The help side is
-    /// pinned by `help_overview_has_one_canonical_first_run`.
+    /// command as `ripr --help`, with no hardcoded base. In the README the
+    /// command is the guarded end of the archive snippet's install chain
+    /// (#5311). The help side is pinned by
+    /// `help_overview_has_one_canonical_first_run`.
     #[test]
     fn readme_and_quickstart_lead_with_the_canonical_first_run() -> Result<(), String> {
         let root = repo_root()?;
-        for (file, heading) in [
-            ("README.md", "## The first useful run"),
-            ("docs/QUICKSTART.md", "## CLI First Hour"),
+        let readme = fs::read_to_string(root.join("README.md"))
+            .map_err(|err| format!("read README.md: {err}"))?;
+        let command = readme_first_run_command(&readme)?;
+        if command != "ripr check" {
+            return Err(format!(
+                "README.md must lead with `ripr check` and no fixed base, got `{command}`"
+            ));
+        }
+        let quickstart = fs::read_to_string(root.join("docs/QUICKSTART.md"))
+            .map_err(|err| format!("read docs/QUICKSTART.md: {err}"))?;
+        let command = first_run_command(&quickstart, "## CLI First Hour")?;
+        if command != "ripr check" {
+            return Err(format!(
+                "docs/QUICKSTART.md must lead with `ripr check` and no fixed base, got `{command}`"
+            ));
+        }
+        Ok(())
+    }
+
+    /// #5311: only the guarded end of the README's install chain is the
+    /// canonical command. The executable on a line of its own, through
+    /// another directory, with other arguments, behind an earlier `ripr`
+    /// command, and the spelling in the Quickstart are not.
+    #[test]
+    fn readme_first_run_admits_only_the_guarded_extracted_command() -> Result<(), String> {
+        let head = "## The first useful run\n\n```bash\n";
+        // A stand-in for the snippet's download line; only the markdown is read.
+        let install =
+            "fetch -fsSLO \"$b/$f\" && \\\n  && export PATH=\"$PWD/ripr-bin:$PATH\" && \\\n";
+        let block = |body: &str| readme_first_run_command(&format!("{head}{body}```\n"));
+        if block(&format!("{install}  && ./ripr-bin/ripr check\n"))? != "ripr check" {
+            return Err("the guarded extracted command must read as `ripr check`".to_string());
+        }
+        // A blank line before the closing fence changes nothing.
+        if block(&format!("{install}  && ./ripr-bin/ripr check\n\n"))? != "ripr check" {
+            return Err("a blank last line must not hide the guarded command".to_string());
+        }
+        let no_command = "no `ripr` command in the first block after `## The first useful run`";
+        // An unguarded line or another directory leaves no `ripr` command to
+        // read; another command or a hardcoded base is reported as written.
+        for (last, expected) in [
+            ("  ./ripr-bin/ripr check", Err(no_command.to_string())),
+            ("  && ./bin/ripr check", Err(no_command.to_string())),
+            ("  && ./ripr-bin/ripr doctor", Ok("ripr doctor".to_string())),
+            (
+                "  && ./ripr-bin/ripr check --base origin/main",
+                Ok("ripr check --base origin/main".to_string()),
+            ),
         ] {
-            let text =
-                fs::read_to_string(root.join(file)).map_err(|err| format!("read {file}: {err}"))?;
-            let command = first_run_command(&text, heading)?;
-            if command != "ripr check" {
-                return Err(format!(
-                    "{file} must lead with `ripr check` and no fixed base, got `{command}`"
-                ));
-            }
+            assert_eq!(block(&format!("{install}{last}\n")), expected, "{last}");
+        }
+        // An earlier line that already runs `ripr` is the reader's first run.
+        assert_eq!(
+            block(&format!(
+                "ripr doctor\n{install}  && ./ripr-bin/ripr check\n"
+            )),
+            Ok("ripr doctor".to_string()),
+        );
+        let quickstart = "## CLI First Hour\n\n```bash\n  && ./ripr-bin/ripr check\n```\n";
+        if first_run_command(quickstart, "## CLI First Hour")
+            .is_ok_and(|command| command == "ripr check")
+        {
+            return Err("the Quickstart keeps its plain `ripr check`".to_string());
         }
         Ok(())
     }

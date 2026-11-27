@@ -1,0 +1,3 @@
+crates/ripr/src/analysis/seam_inventory.rs|invalid review evidence window size
+crates/ripr/src/analysis/seam_inventory.rs|read {} failed: {err}
+crates/ripr/src/analysis/seam_inventory.rs|review evidence window is incomplete; no complete guidance is available

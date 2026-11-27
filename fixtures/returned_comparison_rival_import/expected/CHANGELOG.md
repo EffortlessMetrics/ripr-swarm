@@ -176,3 +176,16 @@ Command:
 
 Updated:
 - `expected/human.txt`
+
+## Pending — returned_comparison_rival_import (15)
+
+Reason:
+RIPR-SPEC-0108: a test whose every mention of the owner's name is a local closure or let binding of its body no longer relates by direct_owner_call (#14552)
+
+Command:
+`cargo xtask goldens bless returned_comparison_rival_import --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`

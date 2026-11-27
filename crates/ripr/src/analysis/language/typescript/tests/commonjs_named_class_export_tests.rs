@@ -1,0 +1,363 @@
+//! A class expression assigned to a CommonJS named export (#16275,
+//! RIPR-SPEC-0243 rule 27).
+//!
+//! `exports.Cart = class { ... }` and `module.exports.Cart = class ...` are
+//! the inline twins of `class Cart {}` followed by `exports.Cart = Cart;`.
+//! Before #16275 the class's methods were no owners at all, so a changed
+//! method produced no finding and the run reported no behavioral candidate.
+//! The members are now owners named by the export property (`Cart`), whatever
+//! the expression's own id says: that id binds only inside the class body.
+//!
+//! * A named `require` of the property relates a changed method; a test that
+//!   destructures the inner id (`{ Basket }`) or another export stays
+//!   unrelated.
+//! * The members of one class share the one export slot `Cart`. When a later
+//!   top-level statement assigns `Cart` again (another class, a class with no
+//!   method, or any value) the earlier class is dead and yields no owner, the
+//!   same fail-closed rule as a reassigned function export (#4638), which
+//!   now also counts later value assignments that are not functions. An
+//!   earlier one (the `exports.Cart = void 0;` that compiled TypeScript and
+//!   Babel hoist) is overwritten by the definition and keeps it. Two entries
+//!   of one `module.exports = { ... }` object with the same key still count
+//!   as two assignments.
+//! * Instance fields of the class and a declared class of the same name read
+//!   under the property name, so field shadowing and repeated-name guards
+//!   see them.
+//!
+//! The end-to-end cases run `TypeScriptAdapter::analyze_diff` on a generated
+//! jest repository and read the finding on the changed line.
+
+use super::*;
+
+const JEST_PACKAGE: &str =
+    "{\"name\":\"demo\",\"version\":\"1.0.0\",\"devDependencies\":{\"jest\":\"^29.0.0\"}}\n";
+
+/// A class body whose `if` line is the changed line.
+const BODY: &str =
+    "{\n  total(n) {\n    if (n > 50) {\n      return n - 5;\n    }\n    return n;\n  }\n}";
+const CHANGED: &str = "    if (n > 50) {";
+const OTHER_BODY: &str = "{\n  total(n) {\n    return n - 5;\n  }\n}";
+
+const NAMED_REQUIRE: &str = "const { Cart } = require('../src/cart');";
+const CALL: &str = "    expect(new Cart().total(100)).toBe(95);\n";
+
+/// The findings `analyze_diff` reports on the line of `src/cart.js` that
+/// reads `CHANGED`, with `test` as `tests/cart.test.js`.
+fn diff_findings(label: &str, owner_text: &str, test: &str) -> Result<Vec<Finding>, String> {
+    let line = owner_text
+        .lines()
+        .position(|text| text == CHANGED)
+        .map(|index| index + 1)
+        .ok_or_else(|| format!("{label}: the changed line is missing from the owner"))?;
+    let root = ts_unique_tempdir(label)?;
+    ts_write_file(&root.join("package.json"), JEST_PACKAGE)?;
+    ts_write_file(&root.join("src/cart.js"), owner_text)?;
+    ts_write_file(&root.join("tests/cart.test.js"), test)?;
+    let result = TypeScriptAdapter.analyze_diff(
+        &ts_analysis_options(root.clone()),
+        &OraclePolicy::default(),
+        &[changed_with_lines("src/cart.js", &[(line, CHANGED)])],
+    );
+    let _ = std::fs::remove_dir_all(&root);
+    Ok(result?
+        .findings
+        .into_iter()
+        .filter(|finding| finding.probe.location.line == line)
+        .collect())
+}
+
+fn diff_finding(label: &str, owner_text: &str, test: &str) -> Result<Finding, String> {
+    diff_findings(label, owner_text, test)?
+        .into_iter()
+        .next()
+        .ok_or_else(|| format!("{label}: the changed line yields no finding"))
+}
+
+fn jest_test(preamble: &str, body: &str) -> String {
+    format!("{preamble}\n\ndescribe('Cart', () => {{\n  test('it', () => {{\n{body}  }});\n}});\n")
+}
+
+fn expect_related(label: &str, finding: &Finding, related: bool) -> Result<(), String> {
+    if finding.related_tests.is_empty() == related {
+        return Err(format!(
+            "{label}: expected {} related test, got {:?}",
+            if related { "a" } else { "no" },
+            finding.related_tests
+        ));
+    }
+    Ok(())
+}
+
+#[test]
+fn a_named_export_class_expression_yields_owners_named_by_the_property() -> Result<(), String> {
+    for (label, source) in [
+        ("exports", format!("exports.Cart = class Basket {BODY};\n")),
+        (
+            "module.exports",
+            format!("module.exports.Cart = class {BODY};\n"),
+        ),
+    ] {
+        let owners = extract_owners(Path::new("src/cart.js"), &source);
+        let [owner] = owners.as_slice() else {
+            return Err(format!("{label}: expected one owner, got {owners:?}"));
+        };
+        if owner.name != "total"
+            || owner.class_name.as_deref() != Some("Cart")
+            || owner.owner_kind != OwnerKind::Method
+            || owner.class_default_export
+            || owner.commonjs_default_export
+        {
+            return Err(format!("{label}: unexpected owner {owner:?}"));
+        }
+    }
+    Ok(())
+}
+
+#[test]
+fn a_changed_method_of_a_named_export_class_relates_to_a_named_require() -> Result<(), String> {
+    for (label, source) in [
+        (
+            "named-class-exports",
+            format!("exports.Cart = class {BODY};\n"),
+        ),
+        (
+            "named-class-module-exports",
+            format!("module.exports.Cart = class {BODY};\n"),
+        ),
+        (
+            "named-class-inner-id",
+            format!("exports.Cart = class Basket {BODY};\n"),
+        ),
+    ] {
+        let finding = diff_finding(label, &source, &jest_test(NAMED_REQUIRE, CALL))?;
+        expect_related(label, &finding, true)?;
+    }
+    Ok(())
+}
+
+#[test]
+fn the_inner_class_id_and_a_sibling_export_stay_unrelated() -> Result<(), String> {
+    let inner = diff_finding(
+        "named-class-inner-import",
+        &format!("exports.Cart = class Basket {BODY};\n"),
+        &jest_test(
+            "const { Basket } = require('../src/cart');",
+            "    expect(new Basket().total(100)).toBe(95);\n",
+        ),
+    )?;
+    expect_related("inner id import", &inner, false)?;
+    let sibling = diff_finding(
+        "named-class-sibling",
+        &format!("exports.Cart = class {BODY};\nexports.Other = class {OTHER_BODY};\n"),
+        &jest_test(
+            "const { Other } = require('../src/cart');",
+            "    expect(new Other().total(100)).toBe(95);\n",
+        ),
+    )?;
+    expect_related("sibling export", &sibling, false)
+}
+
+#[test]
+fn two_named_export_classes_with_one_method_name_keep_their_owners() -> Result<(), String> {
+    let finding = diff_finding(
+        "named-class-two-classes",
+        &format!("exports.Cart = class {BODY};\nexports.Other = class {OTHER_BODY};\n"),
+        &jest_test(NAMED_REQUIRE, CALL),
+    )?;
+    expect_related("two classes", &finding, true)
+}
+
+#[test]
+fn a_reassigned_named_export_class_yields_no_owner() -> Result<(), String> {
+    for (label, later) in [
+        (
+            "named-class-then-class",
+            format!("exports.Cart = class {OTHER_BODY};\n"),
+        ),
+        (
+            "named-class-then-empty",
+            "exports.Cart = class {};\n".to_string(),
+        ),
+        (
+            "named-class-then-null",
+            "module.exports.Cart = null;\n".to_string(),
+        ),
+    ] {
+        let source = format!("exports.Cart = class {BODY};\n{later}");
+        let owners = extract_owners(Path::new("src/cart.js"), &source);
+        if owners
+            .iter()
+            .any(|owner| owner.start_line == 2 && owner.name == "total")
+        {
+            return Err(format!("{label}: the dead class kept an owner {owners:?}"));
+        }
+        let findings = diff_findings(label, &source, &jest_test(NAMED_REQUIRE, CALL))?;
+        if findings
+            .iter()
+            .any(|finding| !finding.related_tests.is_empty())
+        {
+            return Err(format!(
+                "{label}: a dead class body was related {findings:?}"
+            ));
+        }
+    }
+    Ok(())
+}
+
+#[test]
+fn a_function_export_reassigned_to_a_value_yields_no_owner() -> Result<(), String> {
+    let live = "exports.total = function (n) {\n  return n;\n};\n";
+    let owners = extract_owners(Path::new("src/cart.js"), live);
+    if !owners.iter().any(|owner| owner.name == "total") {
+        return Err(format!(
+            "control: the live function export has no owner {owners:?}"
+        ));
+    }
+    let default_live =
+        "module.exports = function total(n) {\n  return n;\n};\nmodule.exports.total = 1;\n";
+    let owners = extract_owners(Path::new("src/cart.js"), default_live);
+    if !owners.iter().any(|owner| owner.name == "total") {
+        return Err(format!(
+            "a property write on the default function dropped it {owners:?}"
+        ));
+    }
+    let dead = format!("{live}exports.total = null;\n");
+    let owners = extract_owners(Path::new("src/cart.js"), &dead);
+    if owners.iter().any(|owner| owner.name == "total") {
+        return Err(format!(
+            "the reassigned function export kept an owner {owners:?}"
+        ));
+    }
+    Ok(())
+}
+
+#[test]
+fn an_earlier_hoisted_export_initializer_does_not_drop_the_definition() -> Result<(), String> {
+    // Compiled TypeScript and Babel CommonJS output hoist
+    // `exports.NAME = void 0;` above the real definition, which overwrites it.
+    for (label, source) in [
+        (
+            "hoisted-class",
+            format!("exports.Cart = void 0;\nexports.Cart = class {BODY};\n"),
+        ),
+        (
+            "hoisted-class-module-exports",
+            format!("module.exports.Cart = undefined;\nmodule.exports.Cart = class {BODY};\n"),
+        ),
+    ] {
+        let finding = diff_finding(label, &source, &jest_test(NAMED_REQUIRE, CALL))?;
+        expect_related(label, &finding, true)?;
+    }
+    let function = "exports.total = void 0;\nexports.total = function (n) {\n  return n;\n};\n";
+    let owners = extract_owners(Path::new("src/cart.js"), function);
+    if !owners.iter().any(|owner| owner.name == "total") {
+        return Err(format!(
+            "a hoisted initializer dropped the function {owners:?}"
+        ));
+    }
+    Ok(())
+}
+
+#[test]
+fn a_changed_private_method_of_a_commonjs_class_is_reported_and_related() -> Result<(), String> {
+    // `#sum` is reached only through the public `total`; a changed line in
+    // it must still reach owner lookup for both CommonJS class shapes.
+    let private = "{\n  total(n) {\n    return this.#sum(n);\n  }\n  #sum(n) {\n    if (n > 50) {\n      return n - 5;\n    }\n    return n;\n  }\n}";
+    for (label, source, preamble) in [
+        (
+            "private-named-export",
+            format!("exports.Cart = class {private};\n"),
+            NAMED_REQUIRE,
+        ),
+        (
+            "private-whole-export",
+            format!("module.exports = class Cart {private};\n"),
+            "const Cart = require('../src/cart');",
+        ),
+    ] {
+        let findings = diff_findings(label, &source, &jest_test(preamble, CALL))?;
+        if findings.is_empty() {
+            return Err(format!(
+                "{label}: the changed private body yields no finding"
+            ));
+        }
+    }
+    Ok(())
+}
+
+#[test]
+fn a_whole_module_function_and_a_same_named_class_property_keep_their_owners() -> Result<(), String>
+{
+    let source = format!(
+        "module.exports = function Cart() {{\n  return 10;\n}};\nmodule.exports.Cart = class {BODY};\n"
+    );
+    let owners = extract_owners(Path::new("src/cart.js"), &source);
+    let function = owners
+        .iter()
+        .any(|owner| owner.name == "Cart" && owner.class_name.is_none());
+    let method = owners
+        .iter()
+        .any(|owner| owner.name == "total" && owner.class_name.as_deref() == Some("Cart"));
+    if !function || !method {
+        return Err(format!(
+            "expected the function and the class method {owners:?}"
+        ));
+    }
+    // A same-named function property is a property of the live function too.
+    let functions = "module.exports = function total(n) {\n  return n;\n};\nmodule.exports.total = function (n) {\n  return n * 2;\n};\n";
+    let owners = extract_owners(Path::new("src/cart.js"), functions);
+    let lines: Vec<usize> = owners
+        .iter()
+        .filter(|owner| owner.name == "total")
+        .map(|owner| owner.start_line)
+        .collect();
+    if lines != [1, 4] {
+        return Err(format!("expected both `total` owners, got {owners:?}"));
+    }
+    Ok(())
+}
+
+#[test]
+fn a_duplicated_key_in_one_export_object_still_reads_as_reassigned() -> Result<(), String> {
+    let source = "module.exports = {\n  total(n) {\n    return n;\n  },\n  total(n) {\n    return n - 5;\n  },\n};\n";
+    let owners = extract_owners(Path::new("src/cart.js"), source);
+    if owners.iter().any(|owner| owner.name == "total") {
+        return Err(format!("a duplicated object key kept an owner {owners:?}"));
+    }
+    let single = "module.exports = {\n  total(n) {\n    return n;\n  },\n  other(n) {\n    return n;\n  },\n};\n";
+    let owners = extract_owners(Path::new("src/cart.js"), single);
+    if !owners.iter().any(|owner| owner.name == "total") {
+        return Err(format!(
+            "control: a single object key lost its owner {owners:?}"
+        ));
+    }
+    Ok(())
+}
+
+#[test]
+fn a_named_export_class_reads_under_its_property_for_fields_and_repeats() -> Result<(), String> {
+    let source = "class Cart {\n  total() {}\n}\nexports.Cart = class Basket {\n  total = () => 0;\n  total() {}\n};\nexports.Order = class Order {};\nexports.A = class Inner {};\nexports.B = class Inner {};\n";
+    let allocator = Allocator::default();
+    let parsed = Parser::new(&allocator, source, SourceType::mjs()).parse();
+    let repeated = repeated_class_names(&parsed.program);
+    if !repeated.contains("Cart")
+        || ["Basket", "Order", "Inner", "A", "B"]
+            .iter()
+            .any(|name| repeated.contains(*name))
+    {
+        return Err(format!("unexpected repeated class names {repeated:?}"));
+    }
+    let fields = class_instance_field_names(&parsed.program);
+    if !fields
+        .get("Cart")
+        .is_some_and(|names| names.contains("total"))
+    {
+        return Err(format!(
+            "the export's field is not keyed by Cart: {fields:?}"
+        ));
+    }
+    if fields.contains_key("Basket") {
+        return Err(format!("the inner id keyed fields: {fields:?}"));
+    }
+    Ok(())
+}

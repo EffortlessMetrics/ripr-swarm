@@ -16,8 +16,10 @@ use std::rc::Rc;
 
 /// The owner's branch structure, or `None` when the owner cannot be read
 /// (no clean parse, no function or body, a parameter that is not a plain
-/// name, an `if` without a then block) or rebinds or mutates a parameter.
-/// Each of those made the per-pair answer `None` whatever the call.
+/// name, an `if` without a then block). Each of those made the per-pair
+/// answer `None` whatever the call. A rebound or mutated parameter is
+/// recorded per `if` instead, because a `let` in a block that closes before
+/// that `if`'s path shadows nothing its fold reads (#14569).
 pub(super) fn owner_branch_index(body: &str) -> Rc<Option<BranchIndex>> {
     run_memo::memoize(Product::OwnerBranchIndex, 0, body, || {
         Rc::new(BranchIndex::read(body))
@@ -36,6 +38,9 @@ pub(super) struct BranchIndex {
 
 struct IndexedIf {
     condition: Option<String>,
+    /// Whether the owner rebinds or mutates a parameter in scope for this
+    /// `if`'s condition or any condition on its path.
+    rebound: bool,
     /// Every `if` above this one, innermost first.
     enclosing: Vec<Enclosing>,
 }
@@ -64,9 +69,9 @@ impl BranchIndex {
             };
             names.push(ident.name()?.text().to_string());
         }
-        if parameter_is_rebound_or_mutated(&block, &names) {
-            return None;
-        }
+        // The scoped check only relaxes the unscoped one, so an owner that
+        // rebinds nothing anywhere skips the per-`if` walk.
+        let any_rebound = parameter_is_rebound_or_mutated(&block, &names, None);
         let newlines: Vec<usize> = body
             .bytes()
             .enumerate()
@@ -114,6 +119,8 @@ impl BranchIndex {
                 condition: if_expr
                     .condition()
                     .map(|condition| condition.syntax().text().to_string()),
+                rebound: any_rebound
+                    && parameter_is_rebound_or_mutated(&block, &names, Some(&if_expr)),
                 enclosing: enclosing_ifs(&if_expr),
             });
         }
@@ -137,21 +144,9 @@ impl BranchIndex {
             return None;
         }
         let environment: BTreeMap<String, i128> = self.names.iter().cloned().zip(values).collect();
-        let target = normalized_expression(seam_expression);
-        if self.both_arms.contains(&target) {
-            return None;
-        }
-        let matches = self
-            .at_line
-            .get(&(target, line))
-            .map(Vec::as_slice)
-            .unwrap_or_default();
-        let [(position, in_then)] = matches else {
-            return None;
-        };
-        let indexed = self.ifs.get(*position)?;
+        let (indexed, in_then) = self.arm_at(seam_expression, line)?;
         let condition = fold_condition(indexed.condition.as_ref()?, &environment)?;
-        let reached = if *in_then { condition } else { !condition };
+        let reached = if in_then { condition } else { !condition };
         if !reached {
             return Some(false);
         }
@@ -170,6 +165,33 @@ impl BranchIndex {
             }
         }
         Some(true)
+    }
+
+    /// The edited side of a single outer guard with this exact condition.
+    pub(super) fn outer_arm(&self, expression: &str, line: usize, condition: &str) -> Option<bool> {
+        let (guard, in_then) = self.arm_at(expression, line)?;
+        (guard.enclosing.is_empty() && guard.condition.as_deref() == Some(condition))
+            .then_some(in_then)
+    }
+
+    fn arm_at(&self, seam_expression: &str, line: usize) -> Option<(&IndexedIf, bool)> {
+        let target = normalized_expression(seam_expression);
+        if self.both_arms.contains(&target) {
+            return None;
+        }
+        let matches = self
+            .at_line
+            .get(&(target, line))
+            .map(Vec::as_slice)
+            .unwrap_or_default();
+        let [(position, in_then)] = matches else {
+            return None;
+        };
+        let indexed = self.ifs.get(*position)?;
+        if indexed.rebound {
+            return None;
+        }
+        Some((indexed, *in_then))
     }
 }
 

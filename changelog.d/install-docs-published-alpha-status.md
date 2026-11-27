@@ -1,0 +1,2 @@
+<!-- section: Changed -->
+- Docs: the npm launcher and Python package READMEs, which ship inside the published packages, no longer claim that nothing is published. They now tell users to check that their platform's package exists for the version they install, and name the GitHub release archive as the prebuilt route otherwise. The PyPI and npm distribution plan names the real `packaging/npm/launcher/` and `package-family-qualification.yml` paths (#12909).
