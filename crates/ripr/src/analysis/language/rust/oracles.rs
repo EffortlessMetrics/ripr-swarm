@@ -330,9 +330,6 @@ pub(super) fn apply_unresolved_property_macro_limit(
     owner_file: &std::path::Path,
     mentions: &PropertyMacroMentionIndex<'_>,
 ) -> bool {
-    let Some(locations) = mentions.by_identifier.get(owner_name) else {
-        return false;
-    };
     let Some(PropertyMacroLocation {
         file,
         witness,

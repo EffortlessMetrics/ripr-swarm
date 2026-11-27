@@ -1,5 +1,15 @@
 # Golden Output Changes
 
+## Pending — corpus cache generation 1.212 for source-bound provider failures (#10864)
+
+A property test whose provider verification failed is now an opaque repository
+limit with typed failure outcomes in the provider identity, which bumps the
+analyzer cache schema to 1.212. Move the portable unchanged-attempt snapshots to
+1.212, recompute the `raw_json_placeholder_v1` artifact content commitment, then
+the dependent verify commitments and receipt byte hashes. Weak grip, unchanged
+movement, historical currentness, incomplete receipt status and fail-closed
+first-action routing remain unchanged. No other fixture output is regenerated.
+
 ## Pending — corpus cache generation 1.209 for standard trait rivals (#16040)
 
 A `&self` or `&mut self` trait impl method on the text receiver path is now
