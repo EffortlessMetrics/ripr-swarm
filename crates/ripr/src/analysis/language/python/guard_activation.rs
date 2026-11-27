@@ -461,7 +461,10 @@ fn entered_if_conditions(
         return None;
     }
     let changed = lines.get(changed_index)?;
-    if changed.trim().is_empty() {
+    // An unindented line has no enclosing `if`: every condition below must be
+    // indented less than it. Answer before lexing the whole prefix, which per
+    // changed top-level statement cost O(changed lines x file) (#16426).
+    if changed.trim().is_empty() || leading_whitespace(changed) == 0 {
         return None;
     }
     let ends = super::guard_credit::safe_prefix_line_ends(owner, owner_source, changed_index)?;

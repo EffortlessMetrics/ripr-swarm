@@ -272,7 +272,7 @@ impl McpServer {
                 "repair_ready",
             ],
         )?;
-        let requested = optional_string_argument(&arguments, "snapshot_id")?;
+        let requested = optional_snapshot_id_argument(&arguments)?;
         let offset = optional_nonnegative_argument(&arguments, "offset")?;
         let omitted_offset = optional_nonnegative_argument(&arguments, "omitted_offset")?;
         let independent_pages = optional_bool_argument(&arguments, "independent_pages")?;
@@ -296,17 +296,17 @@ impl McpServer {
                 .iter()
                 .map(crate::domain::ExposureClass::as_str)
                 .collect::<Vec<_>>();
-            // The echoed token is caller-controlled and unbounded; cap it so
+            // The echoed token is caller-controlled and unbounded; the shared
+            // helper escapes control and bidi characters and caps the echo so
             // the error stays well under the writer's response bound.
             const ECHO_CHARS: usize = 32;
-            let echoed: String = token.chars().take(ECHO_CHARS).collect();
-            let marker = if token.chars().nth(ECHO_CHARS).is_some() {
-                "..."
-            } else {
-                ""
-            };
+            let mut echoed =
+                super::escape_echoed_argument(&token.chars().take(ECHO_CHARS).collect::<String>());
+            if token.chars().nth(ECHO_CHARS).is_some() {
+                echoed.push_str("...");
+            }
             return Err(ErrorData::invalid_params(
-                format!("unknown class \"{echoed}{marker}\"; allowed: {allowed:?}"),
+                format!("unknown class \"{echoed}\"; allowed: {allowed:?}"),
                 Some(serde_json::json!({ "argument": "class", "allowed": allowed })),
             ));
         }
@@ -321,9 +321,10 @@ impl McpServer {
                 .collect();
             // Echo only a short value: a huge one would push the error past
             // the response cap and replace -32602 with a generic -32603.
-            let shown: String = language.chars().take(32).collect();
+            let shown =
+                super::escape_echoed_argument(&language.chars().take(32).collect::<String>());
             return Err(ErrorData::invalid_params(
-                format!("unknown language {shown:?}; allowed: {allowed:?}"),
+                format!("unknown language \"{shown}\"; allowed: {allowed:?}"),
                 Some(serde_json::json!({ "allowed": allowed })),
             ));
         }
@@ -363,7 +364,7 @@ impl McpServer {
     ) -> Result<CallToolResponse, ErrorData> {
         reject_unknown_arguments(&arguments, &["canonical_id", "snapshot_id"])?;
         let canonical_id = required_string_argument(&arguments, "canonical_id")?;
-        let requested = optional_string_argument(&arguments, "snapshot_id")?;
+        let requested = optional_snapshot_id_argument(&arguments)?;
         let session = self.session.lock().await;
         match session.get_gap_with_recovery(&canonical_id, requested.as_deref()) {
             Ok((document, recovery)) => self.bounded_tool_result(
@@ -403,7 +404,7 @@ impl McpServer {
     ) -> Result<CallToolResponse, ErrorData> {
         reject_unknown_arguments(&arguments, &["canonical_id", "snapshot_id"])?;
         let canonical_id = required_string_argument(&arguments, "canonical_id")?;
-        let requested = optional_string_argument(&arguments, "snapshot_id")?;
+        let requested = optional_snapshot_id_argument(&arguments)?;
         let session = self.session.lock().await;
         match session.get_limitation(&canonical_id, requested.as_deref()) {
             Ok(document) => self.bounded_tool_result(
@@ -444,7 +445,7 @@ impl McpServer {
     ) -> Result<CallToolResponse, ErrorData> {
         reject_unknown_arguments(&arguments, &["canonical_id", "snapshot_id"])?;
         let canonical_id = required_string_argument(&arguments, "canonical_id")?;
-        let requested = optional_string_argument(&arguments, "snapshot_id")?;
+        let requested = optional_snapshot_id_argument(&arguments)?;
         let result = match self.analysis_root.clone() {
             Some(root) => {
                 self.prepare_repair_document_with(
@@ -654,7 +655,7 @@ impl McpServer {
     ) -> Result<CallToolResponse, ErrorData> {
         reject_unknown_arguments(&arguments, &["canonical_id", "snapshot_id"])?;
         let canonical_id = required_string_argument(&arguments, "canonical_id")?;
-        let requested = optional_string_argument(&arguments, "snapshot_id")?;
+        let requested = optional_snapshot_id_argument(&arguments)?;
         let session = self.session.lock().await;
         match session.repair_card_document(
             &canonical_id,
@@ -938,6 +939,34 @@ fn optional_string_argument(
             Some(serde_json::json!({ "argument": name, "expected": "string" })),
         )),
     }
+}
+
+/// A tool's optional `snapshot_id`: a string of the portable
+/// `snapshot:sha256:<64 lowercase hex>` shape the server issues. A value of
+/// any other shape can never name a snapshot, so it is a malformed argument
+/// (`invalid_argument`) rather than a well-formed identity that merely is not
+/// current (`stale_snapshot`). Resources keep their own stale handling.
+fn optional_snapshot_id_argument(
+    arguments: &Option<serde_json::Map<String, Value>>,
+) -> Result<Option<String>, ErrorData> {
+    let Some(value) = optional_string_argument(arguments, "snapshot_id")? else {
+        return Ok(None);
+    };
+    if workspace::is_snapshot_identity_wire(&value) {
+        return Ok(Some(value));
+    }
+    // The form and the omit option come before the echoed preview: the
+    // detail is bounded, and an escaped preview can fill that bound.
+    Err(ErrorData::invalid_params(
+        format!(
+            "snapshot_id must be `snapshot:sha256:<64 lowercase hex characters>` as returned by ripr_refresh or ripr_workspace_status, or omit snapshot_id for the current snapshot; received \"{}\"",
+            super::escape_echoed_argument(&value)
+        ),
+        Some(serde_json::json!({
+            "argument": "snapshot_id",
+            "expected": "snapshot:sha256:<64 lowercase hex characters>, or omit for the current snapshot",
+        })),
+    ))
 }
 
 /// The refusal sentence for a wrongly typed optional argument. Optional
@@ -1584,10 +1613,19 @@ impl ServerHandler for McpServer {
         ];
         if SERVED_METHODS.contains(&request.method.as_str()) {
             let message = if request.method == "initialize" {
-                "invalid params for `initialize`: expected `protocolVersion`, `capabilities` and `clientInfo`"
-                    .to_owned()
+                // The same description the pre-handshake path gives, so a
+                // repeated malformed `initialize` names its bad field too.
+                super::transport::describe_malformed_initialize(request.params.as_ref())
+                    .unwrap_or_else(|| {
+                        "invalid params for `initialize`: expected `protocolVersion`, `capabilities` and `clientInfo`"
+                            .to_owned()
+                    })
             } else {
-                format!("invalid params for `{}`", request.method)
+                match request.method.as_str() {
+                    "tools/call" => "invalid params for `tools/call`: `name` (string) is required and `arguments`, when present, must be an object".to_owned(),
+                    "resources/read" => "invalid params for `resources/read`: `uri` (string) is required".to_owned(),
+                    other => format!("invalid params for `{other}`"),
+                }
             };
             return Err(ErrorData::invalid_params(
                 message,

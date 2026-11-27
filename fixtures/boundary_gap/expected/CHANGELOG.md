@@ -1,5 +1,16 @@
 # Golden Output Changes
 
+## Pending — corpus cache generation 1.214 for bare imported logging macros (#16420)
+
+A helper wrapper that logs through a bare leveled macro imported from an
+audited tracing or log release now forwards its helper result, which bumps
+the analyzer cache schema to 1.214. Move the portable unchanged-attempt
+snapshots to 1.214, recompute the `raw_json_placeholder_v1` artifact
+content commitment, then the dependent verify commitments and receipt byte
+hashes. Weak grip, unchanged movement, historical currentness, incomplete
+receipt status and fail-closed first-action routing remain the same. No
+other fixture output is regenerated.
+
 ## Pending — corpus cache generation 1.213 for type-parameter-shadowed helpers (#12891)
 
 A helper whose every call to a name is qualified by its own type parameter no

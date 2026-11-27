@@ -3579,6 +3579,16 @@ const TRANSPARENT_STD_MACROS: &[&str] = &[
     // `use anyhow::anyhow;` keeps it, and any other binding of `anyhow`, as a
     // macro or as the crate's namespace, refuses it (#10357).
     "anyhow",
+    // #16420: the leveled logging macros of an audited tracing or log
+    // release (see `audited_macro_roots`). The binding scan keeps a bare one
+    // only behind a verified `use tracing::info;` or `use log::warn;`, and
+    // the hop check also requires that its arguments do not mention the
+    // callee, since they run only when the level is enabled.
+    "trace",
+    "debug",
+    "info",
+    "warn",
+    "error",
 ];
 
 /// The [`TRANSPARENT_STD_MACROS`] names the binding scan reads only for a
@@ -3592,6 +3602,11 @@ const BODY_SCOPED_TRANSPARENT_MACROS: &[&str] = &[
     "include_bytes",
     "json",
     "anyhow",
+    "trace",
+    "debug",
+    "info",
+    "warn",
+    "error",
 ];
 
 /// Whether any indexed file binds a [`TRANSPARENT_STD_MACROS`] name to
@@ -3607,6 +3622,13 @@ fn transparent_macro_name_rebound(caller_body: &str, index: &RustIndex) -> bool 
         .iter()
         .copied()
         .filter(|name| {
+            // A logging name joins only for a caller that invokes it bare:
+            // these are common words (`error`), and a `use crate::error;`
+            // elsewhere must not withhold credit from a wrapper that never
+            // logs. The invocation reading is the one the hop check uses.
+            if audited_macro_roots::LEVELED_LOGGING_MACROS.contains(name) {
+                return invokes_bare_macro(caller_body, name);
+            }
             !BODY_SCOPED_TRANSPARENT_MACROS.contains(name)
                 || caller_body.contains(name.trim_start_matches("option_"))
         })
@@ -3718,7 +3740,39 @@ fn macro_invocation_is_unestablished(
         if PREFIX_KEYWORDS.contains(name) {
             return false;
         }
-        macros_rebound || !permitted.contains(&name.trim_start_matches("r#"))
+        let bare = name.trim_start_matches("r#");
+        if audited_macro_roots::LEVELED_LOGGING_MACROS.contains(&bare) {
+            // #16420: a bare logging macro is the audited one only behind a
+            // verified import (the rebinding scan), and only when the helper
+            // call is not in arguments that run when the level is enabled.
+            let Some((_, callee)) = audited else {
+                return true;
+            };
+            let open = masked.get(at + 1..).map_or(0, |rest| {
+                at + 1 + (rest.len() - rest.trim_start_matches(is_rust_whitespace).len())
+            });
+            return macros_rebound
+                || !permitted.contains(&bare)
+                || audited_macro_roots::arguments_mention(&masked, open, callee);
+        }
+        macros_rebound || !permitted.contains(&bare)
+    })
+}
+
+/// Whether `body` invokes `name` as a bare macro (`info!(..)`, `r#info!`),
+/// by the invocation reading [`macro_invocation_is_unestablished`] uses.
+fn invokes_bare_macro(body: &str, name: &str) -> bool {
+    let masked = crate::analysis::language::mask_rust_comments_and_strings(body);
+    masked.match_indices('!').any(|(at, _)| {
+        let is_invocation = masked.get(at + 1..).is_some_and(|rest| {
+            rest.trim_start_matches(is_rust_whitespace)
+                .starts_with(['(', '[', '{'])
+        });
+        if !is_invocation {
+            return false;
+        }
+        let (segments, global) = macro_path_before(masked.get(..at).unwrap_or_default());
+        !global && matches!(segments.as_slice(), [only] if only.trim_start_matches("r#") == name)
     })
 }
 
@@ -5886,6 +5940,33 @@ mod tests {
                 "{body}"
             );
         }
+    }
+
+    // #16420: a bare logging macro is transparent only on the hop path,
+    // with no rebinding, and with the callee outside its arguments.
+    #[test]
+    fn a_bare_logging_macro_needs_the_hop_check_and_clean_arguments() {
+        let opaque = |body: &str, rebound: bool| {
+            macro_invocation_is_unestablished(
+                body,
+                rebound,
+                TRANSPARENT_STD_MACROS,
+                Some((&[], "is_bulk")),
+            )
+        };
+        assert!(!opaque("info!(\"order {qty}\"); is_bulk(qty)", false));
+        assert!(!opaque("r#warn!(qty, \"order\"); is_bulk(qty)", false));
+        assert!(opaque("info!(\"bulk {}\", is_bulk(qty));", false));
+        assert!(opaque("error!(\"order\"); is_bulk(qty)", true));
+        assert!(caller_invokes_opaque_macro("info!(\"order\");", false));
+        assert!(invokes_bare_macro("info ! (\"order\")", "info"));
+        assert!(invokes_bare_macro("r#info!(\"order\")", "info"));
+        assert!(!invokes_bare_macro("tracing::info!(\"order\")", "info"));
+        assert!(!invokes_bare_macro("let e = \"info!(x)\";", "info"));
+        assert!(!invokes_bare_macro(
+            "information!(x); let info = 1;",
+            "info"
+        ));
     }
 
     #[test]

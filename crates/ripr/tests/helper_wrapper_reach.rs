@@ -851,6 +851,140 @@ fn imported_json_wrapper_forwards_unless_json_is_rebound() -> Result<(), String>
     Ok(())
 }
 
+/// #16420: a bare leveled logging macro imported by a verified
+/// `use tracing::info;` or `use log::warn;` is the audited macro, so a
+/// wrapper that logs through it forwards its helper result. Any other
+/// binding of the name or of the root, an unaudited release, or a helper
+/// call in the arguments keeps it opaque.
+#[test]
+fn imported_logging_wrapper_forwards_unless_the_name_or_root_is_rebound() -> Result<(), String> {
+    const TRACING: &str = "tracing = \"0.1\"";
+    const LOG: &str = "log = \"0.4\"";
+    const TRACING_LOCK: &[(&str, &str)] = &[("tracing", "0.1.44")];
+    const LOG_LOCK: &[(&str, &str)] = &[("log", "0.4.34")];
+    let with = |prelude: &str, call: &str| -> Result<(String, String, usize), String> {
+        let wrapper = format!("    {call}\n    if is_bulk(qty) {{ 5 }} else {{ 0 }}");
+        let source = format!("{prelude}\n{}", bulk_source(&wrapper, BOUNDARY_TESTS));
+        let first = source
+            .lines()
+            .position(|line| line.contains("10 <= qty"))
+            .ok_or("probe")?;
+        let diff = BULK_DIFF.replace("@@ -1,3 +1,3 @@", &format!("@@ -{0},3 +{0},3 @@", first));
+        Ok((source, diff, first + 1))
+    };
+    let info = "info!(\"order of {qty}\");";
+    for (dependency, locked, prelude, call) in [
+        (TRACING, TRACING_LOCK, "use tracing::info;", info),
+        (TRACING, TRACING_LOCK, "use tracing::{debug, info};", info),
+        (TRACING, TRACING_LOCK, "use ::tracing::info;", info),
+        (TRACING, TRACING_LOCK, "use tracing::{self, info};", info),
+        (
+            LOG,
+            LOG_LOCK,
+            "use log::warn;",
+            "warn!(\"order of {}\", qty);",
+        ),
+        (
+            LOG,
+            LOG_LOCK,
+            "use log::{error, warn};",
+            "error!(\"order of {}\", qty);",
+        ),
+    ] {
+        let (source, diff, line) = with(prelude, call)?;
+        for family in ["predicate", "return_value"] {
+            let finding = finding_with_dependencies(dependency, locked, &source, &diff, family)?;
+            assert_eq!(finding["probe"]["line"], line, "{prelude}\n{finding}");
+            assert_eq!(finding["classification"], "exposed", "{prelude}\n{finding}");
+        }
+    }
+    for (label, locked, prelude, call) in [
+        (
+            "unaudited",
+            &[("tracing", "0.1.43")][..],
+            "use tracing::info;",
+            info,
+        ),
+        (
+            "local definition",
+            TRACING_LOCK,
+            "macro_rules! info { ($($t:tt)*) => { return 5 }; }",
+            info,
+        ),
+        ("foreign import", TRACING_LOCK, "use other::info;", info),
+        (
+            "renamed import",
+            TRACING_LOCK,
+            "use tracing::warn as info;",
+            info,
+        ),
+        ("glob import", TRACING_LOCK, "use tracing::*;", info),
+        (
+            "macro_use",
+            TRACING_LOCK,
+            "#[macro_use]\nextern crate tracing;",
+            info,
+        ),
+        (
+            "namespace module",
+            TRACING_LOCK,
+            "use tracing::info;\nmod tracing { macro_rules! info { ($($t:tt)*) => { return 5 }; } }",
+            info,
+        ),
+        (
+            "crate alias",
+            TRACING_LOCK,
+            "use tracing::info;\nextern crate other as tracing;",
+            info,
+        ),
+        // #16424 review: an item macro whose expansion is not read may
+        // alias the root. No same-file use-tree scan sees this one.
+        (
+            "item macro alias",
+            TRACING_LOCK,
+            "use tracing::info;\nshim! { use compat as tracing; }",
+            info,
+        ),
+        // The helper call runs only when the level is enabled.
+        (
+            "callee in arguments",
+            TRACING_LOCK,
+            "use tracing::info;",
+            "info!(\"bulk {}\", is_bulk(qty));",
+        ),
+        // Only the leveled leaves were audited.
+        (
+            "other leaf",
+            TRACING_LOCK,
+            "use tracing::event;",
+            "event!(tracing::Level::INFO, qty);",
+        ),
+    ] {
+        let (source, diff, line) = with(prelude, call)?;
+        for family in ["predicate", "return_value"] {
+            let finding = finding_with_dependencies(TRACING, locked, &source, &diff, family)?;
+            assert_eq!(finding["probe"]["line"], line, "{label}\n{finding}");
+            assert_ne!(finding["classification"], "exposed", "{label}\n{finding}");
+        }
+    }
+    // A wrapper that never invokes a logging macro keeps its credit when
+    // another module defines a macro named like one (`error`), even when
+    // its body spells that word.
+    let source = format!(
+        "{}\nmod other {{\n    macro_rules! error {{ () => {{ 0 }}; }}\n}}\n",
+        bulk_source(
+            "    println!(\"error: {qty}\");\n    if is_bulk(qty) { 5 } else { 0 }",
+            BOUNDARY_TESTS,
+        )
+    );
+    for family in ["predicate", "return_value"] {
+        let finding = family_finding(&source, BULK_DIFF, family)?;
+        assert_eq!(finding["probe"]["line"], 2, "{finding}");
+        assert_eq!(finding["classification"], "exposed", "{family}\n{finding}");
+    }
+    Ok(())
+}
+
 #[test]
 fn imported_anyhow_wrapper_forwards_unless_anyhow_is_rebound() -> Result<(), String> {
     const ANYHOW: &str = "anyhow = \"1\"";
