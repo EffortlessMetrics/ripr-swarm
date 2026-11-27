@@ -23,3 +23,14 @@ Command:
 
 Updated:
 - `expected/check.json`
+
+## Pending — rust_deref_receiver_owner (3)
+
+Reason:
+RIPR-SPEC-0001: summary wording from main for an exposed-only report (#15277)
+
+Command:
+`cargo xtask goldens bless rust_deref_receiver_owner --reason "..."`
+
+Updated:
+- `expected/human.txt`
