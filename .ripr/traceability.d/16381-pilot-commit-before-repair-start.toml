@@ -1,0 +1,12 @@
+# Registers the #16381 commit-first pilot next steps under RIPR-SPEC-0318 (Rule
+# 3): when the before phase's dirty-premise preflight names tracked production
+# files, pilot's terminal and Markdown summary print the commit before the
+# repair start; a committed change and a dirty test file print none.
+[[extend]]
+id = "RIPR-SPEC-0318"
+tests = [
+  "crates/ripr/tests/check_repair_agree.rs::pilot_names_the_commit_step_before_a_repair_start_that_would_refuse",
+]
+code = [
+  "crates/ripr/src/app/repair_attempt/mod.rs",
+]

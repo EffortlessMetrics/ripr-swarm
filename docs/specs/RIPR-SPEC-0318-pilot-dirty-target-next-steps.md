@@ -23,6 +23,7 @@ Linked issues:
 - #3896 (the documented repair step needs a command the user can run)
 - #9553 (an index-only difference needs the same precondition)
 - #10037 (share the target observation across human summaries)
+- #16381 (a dirty production premise makes the printed start refuse)
 
 Linked PRs:
 
@@ -76,6 +77,31 @@ The pilot command observes the inline target once and shares the answer between
 the terminal and saved Markdown summary. Rendering both surfaces must not repeat
 the Git probes; their wording remains unchanged.
 
+### Rule 3: dirty production premise names the commit first
+
+When the top seam offers a repair start and the before phase's own
+dirty-premise preflight (`app::repair_attempt::seam_start_dirty_premise`, the
+check the start applies before it refuses with "commit first ... Nothing was
+started") names tracked production files that differ from HEAD, in the index or
+the worktree, pilot names their commit before any runnable repair command:
+
+- the terminal prints a `commit first:` line ahead of `repair this gap:`, and a
+  `Before step 1` line with the commit command between `Next, in order:` and
+  step 1;
+- the Markdown summary's next-command block lists the commit command before
+  the repair start.
+
+The commit command is the shared `commit_prerequisite_command` spelling
+(`git -C <root> --literal-pathspecs commit -m "<message>" -- <files>`) that
+`ripr check` prints for the same state (#13636), covering every reported file
+plus a held inline target, and it replaces the Rule 1 line when both apply.
+Pilot reads the working tree it ranks, so the files it names are files it
+analyzed. The pilot command runs the preflight once and shares the answer
+between both surfaces. A committed change, and a dirty test-surface file (the
+refusal's own allowance), add no commit step. An unreadable premise adds none
+either: the start's own refusal stays authoritative, as for Rule 1. The
+refusal itself is unchanged.
+
 ### Rule 2: continue command
 
 The terminal's final step and the Markdown summary's repair introduction name
@@ -99,6 +125,12 @@ the `continue --attempt ...` command that step 1 prints, not an `--attempt ...
 - `generated_workflow_replay_prints_only_runnable_next_steps` keeps the
   Markdown summary free of a placeholder command that cannot run as printed.
 
+- `pilot_names_the_commit_step_before_a_repair_start_that_would_refuse`
+  (`crates/ripr/tests/check_repair_agree.rs`) runs the built binary on a
+  committed control, an unstaged and a staged production edit, and a dirty
+  test file only: the commit step precedes the repair start in the terminal and
+  the Markdown summary exactly when the printed start refuses for the same file.
+
 ## Non-Goals
 
 - Changing pilot's current-change detection or the pilot summary JSON, which
@@ -110,13 +142,17 @@ the `continue --attempt ...` command that step 1 prints, not an `--attempt ...
 1. An inline-module repair target whose file is edited in the worktree or only
    staged: the terminal prints the commit-or-stash line before step 1.
 2. A target at HEAD or a `tests/` target: the line is absent.
-3. Step 3 reads "run the `continue --attempt ...` command that step 1
+3. A tracked production file edited (staged or not) while the repair start is
+   offered: the commit command precedes the repair start on both surfaces.
+4. Step 3 reads "run the `continue --attempt ...` command that step 1
    prints".
 
 ## Test Mapping
 
 - `crates/ripr/src/output/pilot/tests.rs`:
   `pilot_next_steps_name_the_dirty_target_precondition_only_when_it_applies`.
+- `crates/ripr/tests/check_repair_agree.rs`:
+  `pilot_names_the_commit_step_before_a_repair_start_that_would_refuse`.
 
 ## Implementation Mapping
 
@@ -127,6 +163,7 @@ the `continue --attempt ...` command that step 1 prints, not an `--attempt ...
 - `crates/ripr/src/cli/commands/pilot.rs`: the complete pilot summary writes.
 - `crates/ripr/src/output/pilot/commands.rs`: `repair_inline_target_file`.
 - `crates/ripr/src/edit_cage/mod.rs`: `inline_target_is_uncommitted`.
+- `crates/ripr/src/app/repair_attempt/mod.rs`: `seam_start_dirty_premise`.
 
 ## Metrics
 

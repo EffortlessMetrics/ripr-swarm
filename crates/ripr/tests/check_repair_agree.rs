@@ -1981,3 +1981,104 @@ fn pilot_names_the_method_a_test_must_call() -> Result<(), String> {
     );
     Ok(())
 }
+
+/// #16381: pilot sees the same dirty production premise the before phase
+/// refuses ("commit first ... Nothing was started"), so its ordered list names
+/// the commit before the repair start, in the terminal and the saved Markdown
+/// summary alike. Staged and unstaged tracked production edits both hold the
+/// premise; a committed change and a dirty test file (the refusal's own
+/// allowance) do not.
+#[test]
+fn pilot_names_the_commit_step_before_a_repair_start_that_would_refuse() -> Result<(), String> {
+    const COMMIT: &str = "--literal-pathspecs commit -m \"<message>\" -- src/lib.rs";
+    fn pilot_md(repo: &Repo) -> Result<String, String> {
+        std::fs::read_to_string(repo.0.join("target/ripr/pilot/pilot-summary.md"))
+            .map_err(|e| e.to_string())
+    }
+
+    // Committed control: the repair start is step 1, with no commit step.
+    let committed = Repo::create(CONST_OLD, CONST_NEW, CONST_TEST)?;
+    let pilot = committed.ripr(&["pilot", "--root", "."])?;
+    assert!(
+        pilot.contains("Next, in order:\n  1. ripr agent repair --root "),
+        "precondition, a committed change starts the repair first:\n{pilot}"
+    );
+    assert!(
+        !pilot.contains(COMMIT),
+        "no commit step when committed:\n{pilot}"
+    );
+    let markdown = pilot_md(&committed)?;
+    assert!(
+        markdown.contains("ripr agent repair --root ") && !markdown.contains(COMMIT),
+        "the committed Markdown summary names no commit step:\n{markdown}"
+    );
+
+    let unstaged = Repo::create_uncommitted(CONST_OLD, CONST_NEW, CONST_TEST)?;
+    let staged = Repo::create_uncommitted(CONST_OLD, CONST_NEW, CONST_TEST)?;
+    staged.git(&["add", "src/lib.rs"])?;
+    for (state, repo) in [("unstaged", &unstaged), ("staged", &staged)] {
+        let pilot = repo.ripr(&["pilot", "--root", "."])?;
+        let heading_at = pilot
+            .find("Next, in order:\n")
+            .ok_or_else(|| format!("{state}: pilot must keep its ordered list:\n{pilot}"))?;
+        let next = &pilot[heading_at..];
+        let commit_at = next
+            .find(&format!("{COMMIT}\n"))
+            .ok_or_else(|| format!("{state}: the ordered list must name the commit:\n{pilot}"))?;
+        let start_at = next
+            .find("  1. ripr agent repair --root ")
+            .ok_or_else(|| format!("{state}: pilot must still name the repair start:\n{pilot}"))?;
+        assert!(
+            commit_at < start_at,
+            "{state}: the commit step must come before the repair start:\n{pilot}"
+        );
+        // No runnable repair command anywhere on the screen precedes a commit
+        // step, including the top recommendation's own `repair this gap` line.
+        let first_commit = pilot.find(COMMIT).unwrap_or(usize::MAX);
+        let first_start = pilot.find("ripr agent repair --root").unwrap_or(0);
+        assert!(
+            first_commit < first_start,
+            "{state}: a repair command must not precede the commit step:\n{pilot}"
+        );
+        let markdown = pilot_md(repo)?;
+        let md_commit = markdown.find(&format!("{COMMIT}\n")).ok_or_else(|| {
+            format!("{state}: the Markdown must name the commit step:\n{markdown}")
+        })?;
+        let md_start = markdown.find("ripr agent repair --root ").ok_or_else(|| {
+            format!("{state}: the Markdown must name the repair start:\n{markdown}")
+        })?;
+        assert!(
+            md_commit < md_start,
+            "{state}: the Markdown commit step must come first:\n{markdown}"
+        );
+        // The commit step is the reason the printed start refuses today.
+        let start = next[start_at + "  1. ".len()..]
+            .lines()
+            .next()
+            .unwrap_or_default()
+            .to_string();
+        let args: Vec<&str> = start.split_whitespace().skip(1).collect();
+        let (code, repair) = repo.ripr_status(&args)?;
+        assert_eq!(code, Some(2), "{state}: the start must refuse:\n{repair}");
+        assert!(
+            repair.contains("ripr repair needs your source changes committed first")
+                && repair.contains("Uncommitted: src/lib.rs"),
+            "{state}: the start must refuse for the file pilot names:\n{repair}"
+        );
+    }
+
+    // A dirty test file is the refusal's allowance: no commit step.
+    let test_dirty = Repo::create(CONST_OLD, CONST_NEW, CONST_TEST)?;
+    test_dirty.write("tests/t.rs", &format!("{CONST_TEST}\n// still editing\n"))?;
+    let pilot = test_dirty.ripr(&["pilot", "--root", "."])?;
+    assert!(
+        pilot.contains("Next, in order:\n  1. ripr agent repair --root ")
+            && !pilot.contains("--literal-pathspecs commit"),
+        "a dirty test file adds no commit step:\n{pilot}"
+    );
+    assert!(
+        !pilot_md(&test_dirty)?.contains("--literal-pathspecs commit"),
+        "a dirty test file adds no Markdown commit step"
+    );
+    Ok(())
+}

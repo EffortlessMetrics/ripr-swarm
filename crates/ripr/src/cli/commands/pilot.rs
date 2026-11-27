@@ -597,7 +597,16 @@ pub(in crate::cli) fn pilot(args: &[String]) -> Result<(), String> {
     )?;
 
     let summary_json = output::pilot::render_pilot_summary_json(&classified, context);
-    let (summary_md, terminal) = output::pilot::render_pilot_human_summaries(&classified, context);
+    // #16381: the before phase's own dirty-premise preflight, observed once
+    // for both human surfaces, so the printed repair start is preceded by the
+    // commit it needs. An unreadable premise adds no step; the start's own
+    // refusal stays authoritative.
+    let dirty_premise = app::repair_attempt::seam_start_dirty_premise(context.root).ok();
+    let (summary_md, terminal) = output::pilot::render_pilot_human_summaries_with_premise(
+        &classified,
+        context,
+        dirty_premise.as_deref(),
+    );
     write_pilot_file(&artifacts.pilot_summary_json, &summary_json)?;
     write_pilot_file(&artifacts.pilot_summary_md, summary_md)?;
     timings.record("write_artifacts", write_started, Some(classified.len()));
