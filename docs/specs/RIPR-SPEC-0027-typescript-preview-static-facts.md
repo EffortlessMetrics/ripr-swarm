@@ -138,7 +138,14 @@ Test discovery:
   default import is that function: a CommonJS `{ default: check } =
   require('tape')`, with or without a fallback, reads a property that may be
   absent and stays unregistered, as do other runners' defaults (mocha,
-  node-tap's namespace) and a local module's default
+  node-tap's namespace) and a local module's default. Such a default bound
+  under a suite spelling (`const suite = require('tape')`,
+  `import describe from 'tape'`) still runs its calls as tests, so a bare or
+  active-modifier call through it (`suite(...)`, `suite.only(...)`, an awaited
+  `await suite(...)`) registers a test, is not opened as a suite body and is
+  not disclosed as a runner kind mismatch (#16436). A genuine named `suite` /
+  `describe` import still opens its body, and a renamed named member under a
+  suite spelling (`import { test as describe }`) stays unindexed and disclosed
 - AVA's macro form, a named macro between the title and the callback
   (`test(name, macro, async (t) => {})`, `test(name, ns.macro, fn)`): the
   function third argument is the callback (#10964) for a root bound to AVA's `test`, and only an inline function; a macro without a
@@ -926,6 +933,13 @@ an ES default import, and renamed ava and `node:test` default imports read
 `exposed` like the `test` reference, while a written binding, mocha's and
 node-tap's defaults, a local module's default and a `.skip` call stay
 `no_static_path`.
+`a_default_runner_named_like_a_suite_registers_its_tests` pins #16436: a
+tape default bound as `suite` or `describe` and a `node:test` default bound as
+`suite` read `exposed`, as do `suite.only`, a call inside a `describe`, and a
+genuine Vitest `suite` import. Mocha's default, `suite.skip`, a suite-level
+local `suite` and `import { test as describe }` stay `no_static_path`.
+`awaited_default_runner_named_like_a_suite_is_indexed_without_a_gap`
+pins the awaited form: indexed, with no partial-extraction disclosure.
 
 ## Implementation Mapping
 
