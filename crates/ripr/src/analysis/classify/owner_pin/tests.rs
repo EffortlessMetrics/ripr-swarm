@@ -1,6 +1,30 @@
 mod json_construction;
 mod module_local_glob;
 mod retention_parity;
+/// #16400: only a plain module path before `name(` is stripped for the
+/// closed "neither version returns this" reading.
+#[test]
+fn strip_module_path_reads_only_a_plain_module_path() {
+    for (call, read) in [
+        ("mycrate::fee(4)", "fee(4)"),
+        ("::mycrate::fee(4)", "fee(4)"),
+        ("crate::fees::fee(4)", "fee(4)"),
+        ("fee(4)", "fee(4)"),
+        ("mycrate::fee(4).await", "fee(4).await"),
+    ] {
+        assert_eq!(strip_module_path(call, "fee"), read, "{call}");
+    }
+    for refused in [
+        "::fee(4)",
+        "Fees::<u8>::fee(4)",
+        "make()::fee(4)",
+        "a::b.c::fee(4)",
+        "mycrate::other(4)",
+    ] {
+        assert_eq!(strip_module_path(refused, "fee"), refused, "{refused}");
+    }
+}
+
 /// A `lib.rs`/`main.rs` that a `mod lib;` declaration reaches nests its
 /// children under `lib/`, so only an actual crate root (or `mod.rs`) may
 /// resolve a `cfg_if!` module beside itself.

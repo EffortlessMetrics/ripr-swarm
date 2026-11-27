@@ -473,8 +473,14 @@ pub(in crate::analysis) fn change_is_invisible_to_every_assertion(
     // payload (`Ok(x * 2)` to `Ok(x * 3)`) returns equal values exactly when
     // the payloads are equal, so the equality reading folds the payloads
     // (#15414). Relational assertions keep the unpeeled bodies.
-    let (current_value, baseline_value) = shared_constructor_payloads(current, &baseline)
-        .unwrap_or_else(|| (current.to_string(), baseline.clone()));
+    let peeled = shared_constructor_payloads(current, &baseline);
+    // #16400: a peeled boolean payload (`Some(x >= 0)` to `Some(x > 0)`) is
+    // read like any other payload: equal payloads under the one shared
+    // constructor are equal values. Only an unwrapped bare boolean result
+    // stays unread below.
+    let payload_peeled = peeled.is_some();
+    let (current_value, baseline_value) =
+        peeled.unwrap_or_else(|| (current.to_string(), baseline.clone()));
     // An equivalent rewrite (`x * 3` to `3 * x`) is invisible to every test
     // too, but "no input reaches a difference" would send the reader after a
     // test that cannot exist. The change must differ somewhere: a small input
@@ -595,8 +601,9 @@ pub(in crate::analysis) fn change_is_invisible_to_every_assertion(
                 current_fold.at(receiver.as_ref(), &values),
                 baseline_fold.at(receiver.as_ref(), &values),
             ) {
-                // A bare boolean result stays unread here, as before.
-                (Some(Folded::Scalar(Value::Bool(_))), _) => false,
+                // A bare boolean result stays unread here, as before; a
+                // peeled boolean payload is read (#16400).
+                (Some(Folded::Scalar(Value::Bool(_))), _) if !payload_peeled => false,
                 (Some(changed), Some(unchanged)) => changed == unchanged,
                 _ => false,
             }

@@ -783,3 +783,105 @@ fn a_rebound_matches_macro_is_not_read_as_the_same_value() -> Result<(), String>
     assert!(!same_value(finding), "{finding:?}");
     Ok(())
 }
+
+const FEE: &str = "pub fn fee(x: u32) -> u32 {\n    x * 3\n}\n";
+const FEE_OLD: &str = "    x * 2";
+
+#[test]
+fn a_path_qualified_pin_neither_version_returns_does_not_expose_the_change() -> Result<(), String>
+{
+    // #16400: `fee(4)` is 8 before and 12 after, so a pin on 99 fails on both
+    // versions; the path-qualified spelling must not earn the credit the bare
+    // call is already refused.
+    let findings = findings(
+        FEE,
+        FEE_OLD,
+        "#[test]\nfn four() {\n    assert_eq!(invisible::fee(4), 99);\n}\n",
+    )?;
+    let finding = return_value(&findings)?;
+    assert_ne!(finding.class, ExposureClass::Exposed, "{finding:?}");
+    Ok(())
+}
+
+#[test]
+fn a_crate_rooted_pin_neither_version_returns_does_not_expose_the_change() -> Result<(), String> {
+    let findings = findings(
+        FEE,
+        FEE_OLD,
+        "#[test]\nfn four() {\n    assert_eq!(::invisible::fee(4), 99);\n}\n",
+    )?;
+    let finding = return_value(&findings)?;
+    assert_ne!(finding.class, ExposureClass::Exposed, "{finding:?}");
+    Ok(())
+}
+
+#[test]
+fn a_bare_pin_neither_version_returns_does_not_expose_the_change() -> Result<(), String> {
+    // Baseline for the qualified twins above (#12716).
+    let findings = findings(
+        FEE,
+        FEE_OLD,
+        "use invisible::fee;\n\n#[test]\nfn four() {\n    assert_eq!(fee(4), 99);\n}\n",
+    )?;
+    let finding = return_value(&findings)?;
+    assert_ne!(finding.class, ExposureClass::Exposed, "{finding:?}");
+    Ok(())
+}
+
+#[test]
+fn a_path_qualified_pin_on_the_current_value_keeps_the_credit() -> Result<(), String> {
+    // Control: `invisible::fee(4)` is 12 now and 8 before.
+    let findings = findings(
+        FEE,
+        FEE_OLD,
+        "#[test]\nfn four() {\n    assert_eq!(invisible::fee(4), 12);\n}\n",
+    )?;
+    let finding = return_value(&findings)?;
+    assert_eq!(finding.class, ExposureClass::Exposed, "{finding:?}");
+    Ok(())
+}
+
+const SOME_CHECK: &str = "pub fn check(x: i32) -> Option<bool> {\n    Some(x > 0)\n}\n";
+const SOME_CHECK_OLD: &str = "    Some(x >= 0)";
+
+#[test]
+fn a_wrapped_bool_pin_at_an_agreeing_input_does_not_expose_the_change() -> Result<(), String> {
+    // #16400: `Some(5 >= 0)` and `Some(5 > 0)` are both `Some(true)`.
+    let findings = findings(
+        SOME_CHECK,
+        SOME_CHECK_OLD,
+        "#[test]\nfn five() {\n    assert!(matches!(invisible::check(5), Some(true)));\n}\n",
+    )?;
+    let finding = return_value(&findings)?;
+    assert_ne!(finding.class, ExposureClass::Exposed, "{finding:?}");
+    assert!(same_value(finding), "{finding:?}");
+    Ok(())
+}
+
+#[test]
+fn a_wrapped_bool_equality_at_an_agreeing_input_does_not_expose_the_change() -> Result<(), String>
+{
+    let findings = findings(
+        SOME_CHECK,
+        SOME_CHECK_OLD,
+        "use invisible::check;\n\n#[test]\nfn five() {\n    assert_eq!(check(5), Some(true));\n}\n",
+    )?;
+    let finding = return_value(&findings)?;
+    assert_ne!(finding.class, ExposureClass::Exposed, "{finding:?}");
+    assert!(same_value(finding), "{finding:?}");
+    Ok(())
+}
+
+#[test]
+fn a_wrapped_bool_pin_at_the_separating_input_keeps_the_credit() -> Result<(), String> {
+    // Control: `Some(0 >= 0)` is `Some(true)`, `Some(0 > 0)` is `Some(false)`.
+    let findings = findings(
+        SOME_CHECK,
+        SOME_CHECK_OLD,
+        "#[test]\nfn zero() {\n    assert!(matches!(invisible::check(0), Some(false)));\n}\n",
+    )?;
+    let finding = return_value(&findings)?;
+    assert_eq!(finding.class, ExposureClass::Exposed, "{finding:?}");
+    assert!(!same_value(finding), "{finding:?}");
+    Ok(())
+}

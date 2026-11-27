@@ -5686,7 +5686,10 @@ impl OwnerReturnPin {
     /// associated `T::name(..)` call is read as the bare `name(..)` it
     /// resolves to, so a value neither version computes is refused for an
     /// associated owner as it is for a free function; a trailing `.unwrap()`
-    /// is dropped as before.
+    /// is dropped as before. #16400: an admitted module-path call
+    /// (`mycrate::fee(4)`) is read as the bare `fee(4)` too. Every caller asks
+    /// only whether neither version returns the pinned value, so this reading
+    /// can withhold credit but never grant it.
     fn closed_call_text<'a>(&self, call: &'a str) -> &'a str {
         let call = call.trim();
         match &self.call {
@@ -5694,7 +5697,8 @@ impl OwnerReturnPin {
                 .strip_prefix(type_name.as_str())
                 .and_then(|rest| rest.trim_start().strip_prefix("::"))
                 .map_or(call, str::trim_start),
-            _ => call,
+            PinCall::Bare => strip_module_path(call, &self.name),
+            PinCall::Method { .. } => call,
         }
         .trim_end_matches(".unwrap()")
     }
@@ -8993,6 +8997,30 @@ enum CallShape<'a> {
     /// associated-function call; holds `T`. A module path never has a
     /// CamelCase segment ([`path_call_prefix`]), so the two never overlap.
     Associated(&'a str),
+}
+
+/// #16400: `call` without a leading module path of plain identifier
+/// segments (`mycrate::`, `::mycrate::`, `crate::fees::`) before `name(`.
+/// Any other text before the owner's name is returned unchanged, so the
+/// closed subset keeps refusing it.
+fn strip_module_path<'a>(call: &'a str, name: &str) -> &'a str {
+    let Some(at) = call.find(&format!("::{name}(")) else {
+        return call;
+    };
+    let path = &call[..at];
+    let path = path.strip_prefix("::").unwrap_or(path);
+    let plain_segment = |segment: &str| {
+        segment
+            .chars()
+            .next()
+            .is_some_and(|first| first.is_ascii_alphabetic() || first == '_')
+            && segment.chars().all(|ch| ch.is_ascii_alphanumeric() || ch == '_')
+    };
+    if !path.is_empty() && path.split("::").all(plain_segment) {
+        &call[at + 2..]
+    } else {
+        call
+    }
 }
 
 /// #12716: the one bare owner call in an assertion's text, for a pin whose
