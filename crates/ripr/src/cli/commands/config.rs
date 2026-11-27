@@ -108,7 +108,9 @@ fn validate_config(root: &Path) -> Result<String, String> {
 /// #15495: exact-path keys name one repository file each. A path that is
 /// not a file under the root is a typo or a moved file, and every consumer
 /// would otherwise treat the setting as off without a word. Every missing
-/// entry is listed so one run reports all of them.
+/// entry is listed so one run reports all of them. Existence uses the same
+/// no-follow check as workspace discovery, so a linked leaf or parent, which
+/// analysis would skip, counts as missing too.
 fn validate_declared_paths(root: &Path, config: &RiprConfig) -> Result<(), String> {
     let analysis = config.analysis();
     let languages = config.languages();
@@ -145,14 +147,14 @@ fn validate_declared_paths(root: &Path, config: &RiprConfig) -> Result<(), Strin
     }
     let missing: Vec<String> = declared
         .into_iter()
-        .filter(|(_, path)| !root.join(path).is_file())
+        .filter(|(_, path)| !crate::analysis::is_regular_source_below_root(root, Path::new(path)))
         .map(|(key, path)| format!("- {key}: `{path}`"))
         .collect();
     if missing.is_empty() {
         return Ok(());
     }
     Err(format!(
-        "ripr.toml names {} path{} that {} not a file under {}:\n{}\nCreate the file, fix the path, or remove the entry.",
+        "ripr.toml names {} path{} that {} not a file under {}:\n{}\nLinks are not followed. Create the file, fix the path, or remove the entry.",
         missing.len(),
         if missing.len() == 1 { "" } else { "s" },
         if missing.len() == 1 { "is" } else { "are" },

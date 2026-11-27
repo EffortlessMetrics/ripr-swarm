@@ -237,6 +237,7 @@ pub(crate) use workspace::changed_source_files_absent_from_worktree;
 pub(crate) use workspace::classify_with;
 pub(crate) use workspace::context_for_files;
 pub(crate) use workspace::is_declared_cargo_test_surface;
+pub(crate) use workspace::is_regular_source_below_root;
 pub(crate) use workspace::is_test_surface;
 pub(crate) use workspace::is_test_surface_path;
 pub(crate) use workspace::path_enters_ignored_dir;

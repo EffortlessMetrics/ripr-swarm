@@ -142,3 +142,45 @@ fn preview_language_keys_and_later_harnesses_are_named() -> Result<(), String> {
     }
     Ok(())
 }
+
+/// Review of #15535: analysis does not follow links below the root, so a
+/// declared path reached through a link would be skipped. A linked leaf and
+/// a linked parent both count as missing; the regular files beside them pass.
+#[cfg(unix)]
+#[test]
+fn linked_leaf_and_linked_parent_count_as_missing() -> Result<(), String> {
+    let root = workspace("linked")?;
+    write(&root, CONFIG_FILE_NAME, ALL_KEYS)?;
+    write(&root, "tests/harness.rs", "")?;
+    write(&root, "shared/support.rs", "")?;
+    write(&root, "real_gen/handwritten.rs", "")?;
+    let linked = (|| {
+        std::os::unix::fs::symlink(
+            root.join("shared/support.rs"),
+            root.join("tests/support.rs"),
+        )?;
+        fs::create_dir_all(root.join("src"))?;
+        std::os::unix::fs::symlink(root.join("real_gen"), root.join("src/gen"))
+    })();
+    if let Err(error) = linked {
+        let _ = fs::remove_dir_all(&root);
+        return Err(error.to_string());
+    }
+    let result = validate_config(&root);
+    let _ = fs::remove_dir_all(&root);
+    let error = result.err().ok_or("linked declared paths must fail")?;
+    for expected in [
+        "ripr.toml names 2 paths",
+        "- analysis.production_like_targets: `tests/support.rs`",
+        "- languages.rust.handwritten_files: `src/gen/handwritten.rs`",
+        "Links are not followed.",
+    ] {
+        if !error.contains(expected) {
+            return Err(format!("missing `{expected}` in: {error}"));
+        }
+    }
+    if error.contains("`tests/harness.rs`") {
+        return Err(format!("the regular harness file must pass: {error}"));
+    }
+    Ok(())
+}
