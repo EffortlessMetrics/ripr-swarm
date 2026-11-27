@@ -127,8 +127,9 @@ jobs:
         run: cargo package -p ripr --list
       # ADR 0027 lockstep: `ripr` needs `ripr-contract =x.y.z` on crates.io,
       # so a bare `cargo publish -p ripr --dry-run` cannot pass pre-publish.
-      # The xtask rehearsal dry-runs ripr-contract, packages ripr against a
-      # vendored tree, and leaves both .crate files in target/package. The
+      # The xtask rehearsal dry-runs ripr-contract, packages both crates in one
+      # multi-package `cargo package` from the publish stage, and leaves both
+      # .crate files in target/package. The
       # tail of this step is the unlocked-install resolution (#3787): build
       # the packaged crate the way `cargo install ripr` without `--locked`
       # does — drop its lockfile and re-resolve — with ripr-contract taken

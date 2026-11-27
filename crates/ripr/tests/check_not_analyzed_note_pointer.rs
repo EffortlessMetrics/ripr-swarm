@@ -152,7 +152,7 @@ fn a_preview_language_keeps_the_pointer_and_its_note() -> Result<(), String> {
     let screen = repo.check_change()?;
     require(
         &screen,
-        "  Not analyzed: 1 changed file(s) in a language ripr is not set up to analyze (see the note below).\n",
+        "  Not analyzed: 1 changed Python file, a language ripr is not set up to analyze (see the note below).\n",
         true,
     )?;
     require(&screen, PYTHON_NOTE, true)?;
@@ -175,4 +175,156 @@ fn a_mixed_diff_points_only_the_preview_language_at_the_note() -> Result<(), Str
         ));
     }
     require_no_dangling_pointer(&screen)
+}
+
+const OLD_TS: &str = "export function over(qty: number) { return qty > 10; }\n";
+const NEW_TS: &str = "export function over(qty: number) { return qty >= 10; }\n";
+
+/// #15288: two preview languages off print one line naming both and one
+/// snippet that enables both, not one anonymous line and one conflicting
+/// snippet per language.
+#[test]
+fn two_preview_languages_off_get_named_lines_and_one_combined_snippet() -> Result<(), String> {
+    let repo = Repo::create()?;
+    // A root-level Python file now auto-enables Python (#13342); an explicit
+    // Rust-only opt-in keeps Python a preview language that is not enabled.
+    repo.write("ripr.toml", "[languages]\nenabled = [\"rust\"]\n")?;
+    repo.write("web.ts", OLD_TS)?;
+    repo.git(&["add", "-A"])?;
+    repo.git(&["commit", "-q", "--no-gpg-sign", "-m", "ts"])?;
+    repo.write("over.py", NEW_PYTHON)?;
+    repo.write("web.ts", NEW_TS)?;
+    repo.write("src/lib.rs", NEW_RUST)?;
+    let screen = repo.check_change()?;
+    require(
+        &screen,
+        "  Not analyzed: 1 changed TypeScript file and 1 changed Python file, languages ripr is not set up to analyze (see the notes below).\n",
+        true,
+    )?;
+    if screen.matches("Not analyzed:").count() != 1 {
+        return Err(format!("one Not analyzed line expected:\n{screen}"));
+    }
+    require(
+        &screen,
+        "[languages]\nenabled = [\"rust\", \"typescript\", \"python\"]\n",
+        true,
+    )?;
+    if screen.matches("To enable, add to ripr.toml").count() != 1 {
+        return Err(format!("one combined snippet expected:\n{screen}"));
+    }
+    require(&screen, "enabled = [\"rust\", \"typescript\"]", false)?;
+    require(&screen, "enabled = [\"rust\", \"python\"]", false)
+}
+
+/// A mixed repository keeps its crate under `backend/`, so the root has no
+/// Rust marker. Its Rust change is analyzed, and the snippet that turns
+/// Python on must keep `rust`: pasted without it, the next run would report
+/// the Rust file as not analyzed.
+#[test]
+fn the_snippet_keeps_rust_for_a_crate_nested_below_the_root() -> Result<(), String> {
+    let repo = Repo::create()?;
+    repo.git(&["rm", "-q", "-r", "Cargo.toml", "src", "over.py"])?;
+    for dir in ["backend/src", "scripts/tools"] {
+        std::fs::create_dir_all(repo.0.join(dir)).map_err(|e| e.to_string())?;
+    }
+    repo.write("backend/Cargo.toml", CARGO_TOML)?;
+    repo.write("backend/src/lib.rs", OLD_RUST)?;
+    repo.write("scripts/pyproject.toml", "[project]\nname = \"tools\"\n")?;
+    repo.write("scripts/tools/over.py", OLD_PYTHON)?;
+    repo.git(&["add", "-A"])?;
+    repo.git(&["commit", "-q", "--no-gpg-sign", "-m", "nested"])?;
+    repo.write("backend/src/lib.rs", NEW_RUST)?;
+    repo.write("scripts/tools/over.py", NEW_PYTHON)?;
+    let screen = repo.check_change()?;
+    // The premise: Rust was analyzed, Python was not.
+    require(&screen, "backend/src/lib.rs:2", true)?;
+    require(&screen, PYTHON_NOTE, true)?;
+    require(
+        &screen,
+        "[languages]\nenabled = [\"rust\", \"python\"]\n",
+        true,
+    )?;
+    // `ripr doctor` prints the same list for the same root.
+    let doctor = Command::new(env!("CARGO_BIN_EXE_ripr"))
+        .current_dir(&repo.0)
+        .arg("doctor")
+        .output()
+        .map_err(|e| e.to_string())?;
+    require(
+        &String::from_utf8_lossy(&doctor.stdout),
+        "Set `enabled = [\"rust\", \"python\"]` under `[languages]`",
+        true,
+    )
+}
+
+/// #15989: a `ripr.toml` that enables only Python is the list being
+/// replaced. The snippet for the TypeScript file keeps `python`, which this
+/// diff does not touch, and does not put back the `rust` the list leaves
+/// out, although the root has a `Cargo.toml`. `ripr doctor` agrees.
+#[test]
+fn the_snippet_starts_from_an_explicit_language_list() -> Result<(), String> {
+    let repo = Repo::create()?;
+    repo.write("ripr.toml", "[languages]\nenabled = [\"python\"]\n")?;
+    repo.write("web.ts", OLD_TS)?;
+    repo.git(&["add", "-A"])?;
+    repo.git(&["commit", "-q", "--no-gpg-sign", "-m", "ts"])?;
+    repo.write("web.ts", NEW_TS)?;
+    let screen = repo.check_change()?;
+    require(
+        &screen,
+        "[languages]\nenabled = [\"python\", \"typescript\"]\n",
+        true,
+    )?;
+    require(&screen, "\"rust\"", false)?;
+    let doctor = Command::new(env!("CARGO_BIN_EXE_ripr"))
+        .current_dir(&repo.0)
+        .arg("doctor")
+        .output()
+        .map_err(|e| e.to_string())?;
+    require(
+        &String::from_utf8_lossy(&doctor.stdout),
+        "Set `enabled = [\"python\", \"typescript\"]` under `[languages]`",
+        true,
+    )
+}
+
+/// A candidate-tree check runs under the candidate's configuration, so its
+/// snippet starts from the candidate's list. The checkout's uncommitted
+/// `ripr.toml` says `rust` only and must not leak into it.
+#[test]
+fn a_candidate_tree_snippet_starts_from_the_candidate_list() -> Result<(), String> {
+    let repo = Repo::create()?;
+    repo.write("ripr.toml", "[languages]\nenabled = [\"python\"]\n")?;
+    repo.write("web.ts", OLD_TS)?;
+    repo.git(&["add", "-A"])?;
+    repo.git(&["commit", "-q", "--no-gpg-sign", "-m", "ts"])?;
+    repo.write("web.ts", NEW_TS)?;
+    repo.git(&["add", "-A"])?;
+    repo.git(&["commit", "-q", "--no-gpg-sign", "-m", "change"])?;
+    repo.write("ripr.toml", "[languages]\nenabled = [\"rust\"]\n")?;
+    let tree = Command::new("git")
+        .current_dir(&repo.0)
+        .args(["rev-parse", "HEAD^{tree}"])
+        .output()
+        .map_err(|e| e.to_string())?;
+    let tree = String::from_utf8_lossy(&tree.stdout).trim().to_string();
+    let output = Command::new(env!("CARGO_BIN_EXE_ripr"))
+        .current_dir(&repo.0)
+        .env("RIPR_QUIET", "1")
+        .args([
+            "check",
+            "--candidate-tree",
+            &tree,
+            "--candidate-base",
+            "HEAD~1",
+        ])
+        .output()
+        .map_err(|e| e.to_string())?;
+    let screen = String::from_utf8_lossy(&output.stdout).into_owned();
+    require(
+        &screen,
+        "[languages]\nenabled = [\"python\", \"typescript\"]\n",
+        true,
+    )
+    .map_err(|e| format!("{e}\n{}", String::from_utf8_lossy(&output.stderr)))
 }

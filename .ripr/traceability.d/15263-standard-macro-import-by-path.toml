@@ -7,3 +7,6 @@ code = [
 tests = [
   "crates/ripr/src/analysis/classify/owner_pin/tests.rs::a_standard_macro_import_by_path_does_not_rebind_it",
 ]
+fixtures = [
+  "fixtures/rust_alloc_vec_import_assertion",
+]

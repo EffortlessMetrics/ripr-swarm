@@ -40,6 +40,7 @@ fn decide(
         .ok_or("no changed line")?
         + 1;
     let probe = Probe {
+        before_condition: None,
         id: ProbeId("probe:src_lib_rs:let".to_string()),
         location: SourceLocation::new("src/lib.rs", line, 1),
         owner: Some(SymbolId("src/lib.rs::score".to_string())),
@@ -181,6 +182,7 @@ fn a_duplicate_owner_name_is_unreadable() -> Result<(), String> {
         .ok_or("no changed line")?
         + 1;
     let probe = Probe {
+        before_condition: None,
         id: ProbeId("probe:src_lib_rs:let".to_string()),
         location: SourceLocation::new("src/lib.rs", line, 1),
         owner: Some(SymbolId("src/lib.rs::score".to_string())),

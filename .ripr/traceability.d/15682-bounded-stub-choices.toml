@@ -1,0 +1,5 @@
+[[extend]]
+id = "RIPR-SPEC-0122"
+tests = [
+  "crates/ripr/src/app/test_stub.rs::tests::ambiguous_rows_share_one_bounded_evaluation_and_match_whole_file_guidance",
+]

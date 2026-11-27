@@ -1412,7 +1412,12 @@ cache_dir = "target/\u0000perl-facts"
         ),
     ] {
         let error = parse_config(source).expect_err("NUL cannot name a filesystem path");
-        assert_eq!(error, format!("{field} must not contain NUL characters"));
+        assert_eq!(
+            error,
+            format!(
+                "{field} must not contain NUL characters; remove the escaped NUL from the path"
+            )
+        );
         assert!(!error.contains('\0'), "diagnostics must not echo the NUL");
     }
 }

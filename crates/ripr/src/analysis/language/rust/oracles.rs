@@ -260,6 +260,22 @@ impl<'a> PropertyMacroMentionIndex<'a> {
             .or_else(|| probe_file.strip_prefix(self.captured_root?).ok())?;
         self.known_package(relative)
     }
+
+    /// A test from a different known manifest cannot supply a local
+    /// inspection pointer. Preserve the unresolved hint when either
+    /// identity is missing or comes from the manifestless directory fallback.
+    pub(super) fn subprocess_package_filter(
+        &self,
+        owner: &std::path::Path,
+    ) -> impl Fn(&std::path::Path) -> bool + '_ {
+        let owner = self.owner_package(owner);
+        move |test| match (owner, self.known_package(test)) {
+            (Some(a), Some(b)) if !a.starts_with("directory:") && !b.starts_with("directory:") => {
+                a == b
+            }
+            _ => true,
+        }
+    }
 }
 
 /// A suffix/name match is a possible lexical mention, never resolved reach.
@@ -1488,6 +1504,7 @@ mod tests {
 
     fn probe_for_owner(file: &str, name: &str, family: ProbeFamily) -> Probe {
         Probe {
+            before_condition: None,
             id: ProbeId(format!("probe:{file}::{name}")),
             location: SourceLocation::new(file, 2, 1),
             owner: Some(SymbolId(format!("{file}::{name}"))),
@@ -1516,6 +1533,7 @@ mod tests {
             id: "probe:src_lib.rs:predicate:test".to_string(),
             canonical_gap: None,
             probe: Probe {
+                before_condition: None,
                 id: ProbeId("probe:src_lib.rs:predicate:test".to_string()),
                 location: SourceLocation::new("src/lib.rs", 2, 1),
                 owner: Some(SymbolId("src/lib.rs::inner".to_string())),

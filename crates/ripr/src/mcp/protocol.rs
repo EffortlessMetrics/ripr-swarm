@@ -72,11 +72,11 @@ pub(super) fn failure_vocabulary() -> Vec<&'static str> {
 /// this server does not, and the CLI route that runs analysis outside this
 /// session. Naming a route is not invoking it: the server still edits
 /// nothing and executes nothing (ADR 0022).
-pub(super) const INSTRUCTIONS: &str = "Flow: call `ripr_workspace_status`, then `ripr_refresh` (analyzes the default-branch diff into a session snapshot), then `ripr_list_gaps`; read one item with `ripr_get_gap` (ripr://gap/{canonical_id}), or `ripr_get_repair_card` (ripr://repair-card/{canonical_id}) to repair. Repair transactions: `ripr_prepare_repair`, `ripr_get_repair_attempt` (ripr://repair-attempt/{attempt_id}), `ripr_get_receipt_status` (ripr://receipt/{receipt_id}), `ripr_list_repair_attempts`. RIPR is a static analyzer: would current tests notice wrong behavior in this diff? This read-only session never edits source, executes nothing, runs no tests or mutation, and launches no processes; it only names CLI routes. No document this server returns is a repair authorization: the client's approval and sandbox policy remain authoritative. By default, like `ripr check`, input is saved staged and unstaged tracked edits when any exist, else committed (`requested_source` and `captured_source` say which ran); `source: \"committed\"` or `source: \"worktree\"` forces one; unsaved buffers and untracked files remain outside. Refresh after edits. Worktree cards require established producer custody; otherwise withheld with the cause. Readiness depends on per-item gates. CLI: `ripr check --committed`, or `ripr check --worktree --format json` for staged and unstaged tracked edits only. Untracked files need staging/intent-to-add (`git add -N <paths>`) before `--worktree`, or explicit `--diff`.";
+pub(super) const INSTRUCTIONS: &str = "Flow: call `ripr_workspace_status`, then `ripr_refresh` (analyzes the default-branch diff into a session snapshot), then `ripr_list_gaps`; read one item with `ripr_get_gap` (ripr://gap/{canonical_id}), or `ripr_get_repair_card` (ripr://repair-card/{canonical_id}) to repair. Repair transactions: `ripr_prepare_repair`, `ripr_get_repair_attempt` (ripr://repair-attempt/{attempt_id}), `ripr_get_receipt_status` (ripr://receipt/{receipt_id}), `ripr_list_repair_attempts`. RIPR is a static analyzer: would current tests notice wrong behavior in this diff? Gap evidence reads the changed code: a new test asserts what it does now. This read-only session never edits source, executes nothing, runs no tests or mutation, and launches no processes; it only names CLI routes. No document this server returns is a repair authorization: the client's approval and sandbox policy remain authoritative. By default, like `ripr check`, input is saved staged and unstaged tracked edits when any exist, else committed (`requested_source` and `captured_source` say which ran); `source: \"committed\"` or `source: \"worktree\"` forces one; unsaved buffers and untracked files remain outside. Refresh after edits. Worktree cards require established producer custody; otherwise withheld with the cause. Readiness depends on per-item gates. CLI: `ripr check --committed`, or `ripr check --worktree --format json` for staged and unstaged tracked edits only. Untracked files need staging/intent-to-add (`git add -N <paths>`) before `--worktree`, or explicit `--diff`.";
 
 const STATUS_TOOL_DESCRIPTION: &str = "Call this first. Reports repository-root discovery (ready or unavailable, with why), authority facts (source edit, verification, mutation and model provider are all none) and session state: attempt (no_snapshot, in_flight, completed, failed), last completed snapshot, last-known-good, freshness and config profile. `workspace_state: ready` means only that a root was found, not that analysis ran or found nothing. No gap evidence: call ripr_refresh to analyze. It never edits source, runs tests or mutation, or executes verification commands.";
 
-const REFRESH_TOOL_DESCRIPTION: &str = "Analyze the diff against the default branch (or `base`) through shared check authority and store the completed snapshot. By default, like `ripr check`: saved tracked edits if any, else committed; `source: \"committed\"`/`source: \"worktree\"` forces one (see INSTRUCTIONS). Cards require established producer custody; otherwise withheld with the cause. Readiness depends on per-item gates. Call before reading evidence and again after edits. Blocks until completed (snapshot identity), failed (isError with code and recovery; last-known-good kept), in_flight (retry later), workspace_unavailable (restart with `--root <repository>`) or unsupported_profile. An unresolvable default branch fails with analysis_failed naming candidate branches: retry with `base`. A `base` starting with `-` or naming no commit fails closed; omitting `base` returns to the default branch. A cancelled attempt still commits as a completed snapshot when it finishes; a superseded attempt is never committed. It never edits source, executes verification or mutation commands, or prepares a repair.";
+const REFRESH_TOOL_DESCRIPTION: &str = "Analyze the diff against the default branch (or `base`) through shared check authority and store the completed snapshot. By default, like `ripr check`: saved tracked edits if any, else committed; `source: \"committed\"`/`source: \"worktree\"` forces one (see INSTRUCTIONS). Cards require established producer custody; otherwise withheld with the cause. Readiness depends on per-item gates. Call before reading evidence and again after edits. Blocks until completed (snapshot identity), failed (isError with code and recovery; last-known-good kept), in_flight (poll status), workspace_unavailable (restart with `--root <repository>`) or unsupported_profile. Can take minutes; ripr_workspace_status still answers. After a timeout do not re-send: poll status. An unresolvable default branch fails with analysis_failed naming candidate branches: retry with `base`. A `base` starting with `-` or naming no commit fails closed; omitting `base` returns to the default branch. A cancelled attempt still commits as a completed snapshot when it finishes; a superseded attempt is never committed. It never edits source, executes verification or mutation commands, or prepares a repair.";
 
 const LIST_GAPS_TOOL_DESCRIPTION: &str = "After ripr_refresh, return the deterministic bounded working set: counts, omitted identities with reasons, one summary per item. Same selection as the CLI and editor; never truncates silently, infers no business risk. Without class, already-gripped exposed items are omitted and counted in exposed_omitted. Filters narrow before paging; follow page.next_offset. Failures: no_snapshot, stale_snapshot, workspace_unavailable, invalid_argument, result_too_large. Detail: ripr_get_gap, or ripr_get_repair_card to repair.";
 
@@ -645,7 +645,12 @@ fn gap_brief_text(document: &Value, item: &Value) -> String {
         identity(document.get("snapshot_id")),
     ));
     let changed = item.get("changed_behavior");
-    let before = changed.and_then(|changed| changed.get("before"));
+    // #15420: the brief pairs the old condition with the new one when the
+    // producer read it; `before` (the whole old line) stays in the full JSON.
+    let before = changed
+        .and_then(|changed| changed.get("before_condition"))
+        .filter(|condition| condition.is_string())
+        .or_else(|| changed.and_then(|changed| changed.get("before")));
     let after = changed.and_then(|changed| changed.get("after"));
     let mut changed_line = match (
         before.and_then(Value::as_str),
@@ -1871,6 +1876,15 @@ fn refresh_output_schema() -> Value {
                         "required": ["why", "pass_base", "pass_source"],
                         "additionalProperties": false
                     },
+                    "worktree_base_hint": {
+                        "type": "object",
+                        "properties": {
+                            "why": { "type": "string" },
+                            "pass_base": { "type": "string" }
+                        },
+                        "required": ["why", "pass_base"],
+                        "additionalProperties": false
+                    },
                     "requested_source": { "type": "string", "enum": ["committed", "worktree", "default"] },
                     "captured_source": { "type": ["string", "null"], "enum": ["committed", "worktree", null] },
                     "snapshot": {
@@ -2218,6 +2232,21 @@ fn receipt_status_output_schema() -> Value {
                     "attempt": { "type": "object" },
                     "receipt": { "type": ["object", "null"] },
                     "currentness": { "type": "object" },
+                    "test_run": {
+                        "type": "object",
+                        "description": "Finished attempt whose receipt records no ripr-run test: the `test_run` of `ripr agent status --attempt <id> --json`. ripr ran nothing; never changes `status`.",
+                        "properties": {
+                            "status": { "type": "string", "enum": ["not_recorded", "caller_reported"] },
+                            "test_changed": { "type": ["string", "null"] },
+                            "next_step": { "type": "string" },
+                            "file": { "type": "string" },
+                            "ran": { "type": "integer", "minimum": 0 },
+                            "passed": { "type": "integer", "minimum": 0 },
+                            "failed": { "type": "integer", "minimum": 0 },
+                            "edited_test": { "type": "string", "enum": ["covered", "not_covered", "unknown"] }
+                        },
+                        "required": ["status", "test_changed", "next_step"]
+                    },
                     "limitations": { "type": "array", "items": { "type": "string" } },
                     "non_claims": { "type": "array", "items": { "type": "string" } },
                     "links": { "type": "object" },
@@ -2747,7 +2776,7 @@ mod tests {
             "item": {
                 "canonical_id": "gap:rust:src/lib.rs:shipping_cents:predicate_boundary",
                 "class": "weakly_exposed",
-                "location": {"file": "./src/lib.rs", "line": 5, "column": 1},
+                "location": {"file": "src/lib.rs", "line": 5, "column": 1},
                 "causal_attribution": {"owner": "shipping_cents"},
                 "changed_behavior": {
                     "before": "order_cents > FREE_SHIPPING_CENTS",
@@ -2804,7 +2833,7 @@ mod tests {
         let document = brief_gap_document();
         let text = brief_text_of(document.clone())?;
         let expected = [
-            "ripr gap: weakly_exposed ./src/lib.rs:5 owner=shipping_cents. This text is a brief, not a copy: the complete result is `structuredContent`; start the server with RIPR_MCP_TEXT_CONTENT=full for the full JSON here.",
+            "ripr gap: weakly_exposed src/lib.rs:5 owner=shipping_cents. This text is a brief, not a copy: the complete result is `structuredContent`; start the server with RIPR_MCP_TEXT_CONTENT=full for the full JSON here.",
             "canonical_id: gap:rust:src/lib.rs:shipping_cents:predicate_boundary; snapshot_id: snapshot-123",
             "changed: order_cents > FREE_SHIPPING_CENTS -> order_cents >= FREE_SHIPPING_CENTS; probe: predicate",
             "missing: order_cents == FREE_SHIPPING_CENTS (No related test call uses order_cents equal to FREE_SHIPPING_CENTS; target FREE_SHIPPING_CENTS value: 5_000)",
@@ -2848,6 +2877,23 @@ mod tests {
         arm["item"]["changed_behavior"]["arm_result"] = Value::Null;
         if brief_text_of(arm)?.contains("arm result") {
             return Err("a null arm result must not be rendered".into());
+        }
+        // #15420: an old condition, when the producer reads one, replaces
+        // the whole old line on the brief's changed line; a non-string one
+        // is ignored.
+        let mut whole = brief_gap_document();
+        whole["item"]["changed_behavior"]["before"] =
+            json!("if total >= 100 { total - 10 } else { total }");
+        whole["item"]["changed_behavior"]["after"] = json!("total > 200");
+        whole["item"]["changed_behavior"]["before_condition"] = json!("total >= 100");
+        if !brief_text_of(whole.clone())?.contains("changed: total >= 100 -> total > 200") {
+            return Err("an old condition in the document must reach the brief".into());
+        }
+        whole["item"]["changed_behavior"]["before_condition"] = Value::Null;
+        if !brief_text_of(whole)?
+            .contains("changed: if total >= 100 { total - 10 } else { total } -> total > 200")
+        {
+            return Err("without an old condition the brief keeps the old line".into());
         }
         Ok(())
     }
@@ -3171,7 +3217,7 @@ mod tests {
         // inventory's 580 bytes.
         let mut budgets = std::collections::BTreeMap::from([
             ("tool ripr_workspace_status", 555),
-            ("tool ripr_refresh", 1085),
+            ("tool ripr_refresh", 1185),
             ("tool ripr_list_gaps", 530),
             ("tool ripr_get_gap", 490),
             ("tool ripr_get_top_limitation", 440),
@@ -3259,8 +3305,12 @@ mod tests {
         // Intentional metadata changes need to reconcile this byte count as
         // well as the ceilings. #14461: the instructions state each
         // route once and safety boundaries the annotations and instructions
-        // already carry are not repeated per read tool.
-        assert_eq!(total, 10673);
+        // already carry are not repeated per read tool. #15983: the refresh
+        // tool's description grew by 100 bytes. #15361: the instructions say
+        // gap evidence reads the changed code (+74; the sentence first said
+        // "not the pre-change value", which ruled out a value the change had
+        // left alone). The two deltas add.
+        assert_eq!(total, 10847);
         Ok(())
     }
 
@@ -3530,6 +3580,9 @@ mod tests {
                     "omitting `base` returns to the default branch",
                     "A `base` starting with `-` or naming no commit fails closed",
                     "never edits source, executes verification or mutation commands",
+                    // #15983: what an agent must know before a client-side
+                    // timeout: status answers, and a repeat is not the fix.
+                    "Can take minutes; ripr_workspace_status still answers. After a timeout do not re-send: poll status.",
                     "cancelled attempt still commits as a completed snapshot when it finishes",
                     "a superseded attempt is never committed",
                     "workspace_unavailable",
@@ -3927,7 +3980,18 @@ mod tests {
         // on the tree composed with the two decisions above: slim 12,007,
         // inside its unchanged ceiling; full 42,198, so only the opt-in
         // full budget moves, from 41,700 to 42,300.
-        for (mode, budget) in [(ToolsListMode::Slim, 12_300), (ToolsListMode::Full, 42_300)] {
+        // #13096 worktree-leg budget decision: the full listing declares
+        // the closed `worktree_base_hint` object on the refresh document.
+        // Measured on the tree composed with #16071's `ripr_refresh`
+        // status answer (+100 bytes on that tool): full 42,466, so only
+        // the opt-in full budget moves, from 42,300 to 42,600. The slim
+        // default every session pays is unchanged.
+        // #16251 budget decision: the full listing declares the optional
+        // `test_run` object on receipt status with every field the shared
+        // CLI reading emits, so a validating host can type the counts.
+        // Measured full 43,051 (slim 12,140, unchanged by this change), so
+        // only the opt-in full budget moves, from 42,600 to 43,200.
+        for (mode, budget) in [(ToolsListMode::Slim, 12_300), (ToolsListMode::Full, 43_200)] {
             let payload = tools_list_result_for(mode);
             let bytes = serde_json::to_vec(&payload)
                 .map_err(|error| format!("measure tools/list payload: {error}"))?

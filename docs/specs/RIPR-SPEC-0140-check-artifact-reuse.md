@@ -112,10 +112,10 @@ resolution), and reuse re-resolves the base-to-live-working-tree diff
 through git and re-hashes it. Worktree drift between write and reuse
 changes the diff bytes and fails closed on `diff_bytes_hash`.
 
-### `CheckArtifactV1` envelope, full-fidelity findings
+### `CheckArtifactV2` envelope, full-fidelity findings
 
 The artifact is a schema-versioned JSON envelope
-(`schema_version = "ripr-check-artifact-v1"`) with `tool`, `analyzer_version`,
+(`schema_version = "ripr-check-artifact-v2"`) with `tool`, `analyzer_version`,
 an `identity` block, and the complete `Finding` set — serde derives on the
 domain probe types, including the uncapped related-tests list and the
 probe owner. The existing `check --json` render is unchanged.
@@ -127,7 +127,11 @@ same path replaces it via rename (last writer wins); concurrent writers
 use distinct temp names (pid + clock + process-local sequence) so one
 writer's failure cannot tear another's artifact.
 
-The envelope stays at `ripr-check-artifact-v1` for the `worktree` diff
+Version 2 records the post-policy `owner_opt_outs` entries alongside the findings.
+Replay reads the saved decision for the selected finding. Regenerate v1
+artifacts because they cannot distinguish a withheld finding from a live one.
+
+The original envelope stayed at `ripr-check-artifact-v1` for the `worktree` diff
 source: adding an enum variant is additive — artifacts written before the
 variant existed still parse under v1, and an older binary reading a new
 `worktree` artifact fails closed on serde's unknown-variant error instead
@@ -173,6 +177,8 @@ The artifact embeds an input identity computed at check time:
   unclassified new field fails compilation; a unit test pins the role of
   every field. Any PR that adds a finding-affecting config field must
   classify it and bump `config_identity_version` in the same PR.
+  The `perl.executable` field preserves the case of the configured spelling.
+  It treats backslashes as separators on Windows and as filename characters on Unix.
   Render-only knobs (severity display, `reports.max_related_tests`),
   LSP-only fields, fields not consumed by the diff-check pipeline
   (`profiles.bun_ub`, `suppressions.path`), and loader container metadata
@@ -215,14 +221,18 @@ derivative under user control, and the gate exists to prevent reusing an
 artifact across *invocation* changes (different diff, mode, languages, or
 analysis-relevant config), not to fingerprint the repository.
 
-### Selection and rendering are unchanged
+### Finding selection and replay output
 
-`--from` replaces only the pipeline re-run. Finding selection
-(`select_finding`) and rendering (`render_finding_with_config`,
-`render_context_packet`) operate on the loaded findings exactly as on
-freshly computed ones, so a reused explanation is byte-identical to a
-recomputed one given the same render options. The one exception is
-navigation: the sibling commands `explain` prints and the context packet's
+`--from` selects a recorded finding with the same selector as fresh analysis.
+For an ordinary finding, the same render options produce the same finding
+body. When the producer withheld a finding because its owner carries
+`#[mutants::skip]`, human replay prints only the withholding statement with
+the owner and `owner_mutants_skip`. Fresh human explain also prints the
+finding body. Fresh and replayed agent explain both emit the owner stop
+with empty repair fields (#14133).
+
+Navigation records the source of the finding. The sibling commands
+`explain` prints and the context packet's
 `witness.explain_command` replay the source that produced the finding,
 `--diff`/`--base` on a fresh run and `--from <artifact>` on a reused one
 (#3952). An explicit mode remains in the sibling command even when it is
@@ -236,7 +246,7 @@ artifact stores the uncapped related-tests list.
 
 ## Required Evidence
 
-- `CheckArtifactV1` envelope and atomic write in
+- `CheckArtifactV2` envelope and atomic write in
   `crates/ripr/src/app/check_artifact.rs`.
 - Serde round-trip derives on the domain probe types in
   `crates/ripr-contract/src/domain/probe.rs`, `classification.rs`, `language.rs`.
@@ -301,8 +311,9 @@ then it refuses the stdin assertion rather than resolving a literal '-' file.
 Given `ripr check --diff X --write-artifact a.json` succeeded,
 when `ripr explain --from a.json probe:<id>` runs with no scope flags,
 then it re-reads and re-hashes the recorded diff file,
-and renders the finding byte-identically to a fresh
-`ripr explain --diff X probe:<id>` without re-running the pipeline.
+and renders the ordinary finding body as fresh `ripr explain --diff X probe:<id>`
+would, with navigation back to a.json. For a recorded owner opt-out, human
+replay prints only the withholding statement. Neither path re-runs analysis.
 ```
 
 ### Identity mismatch fails closed naming the field
@@ -346,6 +357,9 @@ even though the `check --json` render caps related tests at 8.
 ```
 
 ## Test Mapping
+
+- `crates/ripr/src/config/perl_executable_tests.rs::perl_executable_identity_uses_native_separators`
+  checks Unix literal backslashes, Windows separator equivalence, and case preservation in the config hash.
 
 - `crates/ripr/tests/cli_smoke/unsupported_artifact.rs::unsupported_artifact_preserves_destinations_and_incomplete_report`
   — unsupported-input report parity, new and sentinel destinations, absent

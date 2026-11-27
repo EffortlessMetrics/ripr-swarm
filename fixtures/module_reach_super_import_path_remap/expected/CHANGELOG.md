@@ -177,3 +177,15 @@ Command:
 
 Updated:
 - `expected/human.txt`
+
+## Pending — module_reach_super_import_path_remap (14)
+
+Reason:
+RIPR-SPEC-0115: plain-words next step drops the internal analyzer route name (#15309)
+
+Command:
+`cargo xtask goldens bless module_reach_super_import_path_remap --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

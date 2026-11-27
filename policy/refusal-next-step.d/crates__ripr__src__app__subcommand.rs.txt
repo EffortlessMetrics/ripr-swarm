@@ -1,0 +1,1 @@
+crates/ripr/src/app/subcommand.rs|failed to determine working directory: {err}

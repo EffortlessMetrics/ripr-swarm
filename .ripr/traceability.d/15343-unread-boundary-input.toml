@@ -1,0 +1,12 @@
+# Registers the unread-owner-input infection reading (#15343, #15344): an rstest
+# fixture or a test-local macro that calls the owner reads unknown, not a false
+# "no boundary input" gap, under RIPR-SPEC-0001.
+[[extend]]
+id = "RIPR-SPEC-0001"
+tests = [
+  "crates/ripr/src/analysis/classify/infection.rs::tests::an_unread_owner_input_holding_the_boundary_is_opaque",
+  "crates/ripr/src/analysis/classify/infection.rs::tests::an_rstest_fixture_input_reads_unknown_through_the_owner_reading",
+  "crates/ripr/tests/unread_boundary_input.rs::an_rstest_fixture_feeding_the_owner_reads_infection_unknown",
+  "crates/ripr/tests/unread_boundary_input.rs::a_test_local_macro_calling_the_owner_reads_infection_unknown",
+  "crates/ripr/tests/unread_boundary_input.rs::readable_inputs_keep_the_weak_boundary_gap",
+]

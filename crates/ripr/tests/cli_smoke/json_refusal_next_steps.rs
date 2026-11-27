@@ -160,7 +160,10 @@ fn agent_status_json_refuses_a_malformed_attempt_id_with_the_listing_command() -
 fn invalid_config_json_refusals_carry_the_human_next_step() -> TestResult {
     let root = broken_config_repo("config-refusal-15260")?;
     let root_arg = root.display().to_string();
-    let validate = format!("ripr config validate --root {root_arg}");
+    // The printed command spells the root with `/` on every platform (the
+    // human-path rule), so on Windows it differs from the native argument.
+    let printed_root = root_arg.replace('\\', "/");
+    let validate = format!("ripr config validate --root {printed_root}");
 
     let check = document(&run_ripr(&["check", "--json", "--root", &root_arg]), 2)?;
     assert_eq!(check["error"]["code"], "config_invalid", "{check}");
@@ -219,7 +222,7 @@ fn invalid_config_json_refusals_carry_the_human_next_step() -> TestResult {
     assert_eq!(cont["error"]["code"], "no_current_attempt", "{cont}");
     assert_eq!(
         cont["error"]["next"]["command"],
-        format!("ripr status --root {root_arg}"),
+        format!("ripr status --root {printed_root}"),
         "{cont}"
     );
     let _ = std::fs::remove_dir_all(&root);
@@ -247,5 +250,109 @@ fn invalid_config_under_a_backticked_root_leaves_next_null() -> TestResult {
         "{message}"
     );
     let _ = std::fs::remove_dir_all(&base);
+    Ok(())
+}
+
+/// #15985: an empty command name used to publish `"token": ""`, which the
+/// refusal schema rejects (`minLength: 1`). The document now carries no token
+/// and the message says the name is empty.
+#[test]
+fn an_empty_command_name_json_refusal_carries_no_token() -> TestResult {
+    let value = document(&run_ripr(&["", "--json"]), 2)?;
+    assert_eq!(value["status"], "refused", "{value}");
+    assert_eq!(value["error"]["code"], "unknown_command", "{value}");
+    assert!(value["error"].get("token").is_none(), "{value}");
+    assert_eq!(
+        value["error"]["message"],
+        "the command name is empty, which usually means an unset shell variable. Run `ripr --help` to list commands.",
+        "{value}"
+    );
+    assert_eq!(value["error"]["next"]["command"], "ripr --help", "{value}");
+    Ok(())
+}
+
+/// #15985: a word after `--version` is a stray positional, so a JSON request
+/// gets the `unknown_argument` document naming it, and an empty word carries
+/// no token. Without the request stdout stays empty and no version prints.
+#[test]
+fn a_word_after_version_json_refusal_names_the_word() -> TestResult {
+    let value = document(&run_ripr(&["--version", "extra", "--json"]), 2)?;
+    assert_eq!(value["status"], "refused", "{value}");
+    assert_eq!(value["error"]["code"], "unknown_argument", "{value}");
+    assert_eq!(value["error"]["token"], "extra", "{value}");
+    assert_eq!(value["error"]["next"]["command"], "ripr --help", "{value}");
+
+    let value = document(&run_ripr(&["--json", "--version", ""]), 2)?;
+    assert_eq!(value["error"]["code"], "unknown_argument", "{value}");
+    assert!(value["error"].get("token").is_none(), "{value}");
+
+    let plain = run_ripr(&["--version", "extra"]);
+    assert_eq!(plain.status.code(), Some(2));
+    assert!(plain.stdout.is_empty(), "{plain:?}");
+    Ok(())
+}
+
+/// #16072: the strict help routes refuse extra arguments, and a JSON request
+/// gets the stray-argument document naming the first extra. Stderr keeps the
+/// usage line. Without a JSON request stdout stays empty, and the accepted
+/// `help --json` form still prints the discovery document, not a refusal.
+#[test]
+fn strict_help_routes_publish_the_stray_argument_document() -> TestResult {
+    for (args, route, token) in [
+        (
+            &["--help", "--all", "extra", "--json"][..],
+            "--help --all",
+            "extra",
+        ),
+        (
+            &["help", "--all", "extra", "--json"][..],
+            "help --all",
+            "extra",
+        ),
+        (&["help", "--json", "extra"][..], "help --json", "extra"),
+        (&["help", "--json", "--quiet"][..], "help --json", "--quiet"),
+        (&["-v", "help", "--json"][..], "help --json", "-v"),
+        (
+            &["help", "--json", "--verbose"][..],
+            "help --json",
+            "--verbose",
+        ),
+        // Devin on #16090: an extra ahead of the verbosity flag is the first
+        // extra, so it is the one named.
+        (
+            &["help", "--json", "--quiet", "--verbose"][..],
+            "help --json",
+            "--quiet",
+        ),
+        (&["help", "-v", "--json", "extra"][..], "help --json", "-v"),
+    ] {
+        let output = run_ripr(args);
+        let usage = format!(
+            "ripr: usage: ripr {route} (this route accepts no other arguments); drop the extra arguments, or run `ripr --help` to list commands\n"
+        );
+        assert_eq!(String::from_utf8_lossy(&output.stderr), usage, "{args:?}");
+        let value = document(&output, 2)?;
+        assert_eq!(value["status"], "refused", "{args:?}: {value}");
+        assert_eq!(
+            value["error"]["code"], "unknown_argument",
+            "{args:?}: {value}"
+        );
+        assert_eq!(value["error"]["token"], token, "{args:?}: {value}");
+        assert_eq!(
+            value["error"]["next"]["command"], "ripr --help",
+            "{args:?}: {value}"
+        );
+    }
+
+    let plain = run_ripr(&["--help", "--all", "extra"]);
+    assert_eq!(plain.status.code(), Some(2));
+    assert!(plain.stdout.is_empty(), "{plain:?}");
+
+    let accepted = run_ripr(&["help", "--json"]);
+    assert_eq!(accepted.status.code(), Some(0));
+    let discovery: serde_json::Value =
+        serde_json::from_slice(&accepted.stdout).map_err(|error| error.to_string())?;
+    assert!(discovery["commands"].is_array(), "{discovery}");
+    assert!(discovery.get("error").is_none(), "{discovery}");
     Ok(())
 }

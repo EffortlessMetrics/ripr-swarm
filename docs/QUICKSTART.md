@@ -32,8 +32,8 @@ v=0.10.0; case "$(uname -s)-$(uname -m)" in
   *) echo "no prebuilt archive for this platform; install with cargo install ripr or build from source" >&2; exit 1;; esac
 f=ripr-server-v$v-$t.tar.gz
 b=https://github.com/EffortlessMetrics/ripr/releases/download/v$v
-curl -fsSLO $b/$f && curl -fsSLO $b/$f.sha256
-echo "$(cat $f.sha256)  $f" | { sha256sum -c - || shasum -a 256 -c -; } \
+curl -fsSLO "$b/$f" && curl -fsSLO "$b/$f.sha256" && \
+  echo "$(cat $f.sha256)  $f" | { sha256sum -c - || shasum -a 256 -c -; } \
   && mkdir ripr-bin && tar xzf $f -C ripr-bin \
   && export PATH="$PWD/ripr-bin:$PATH"   # ripr-bin/ripr is now first on PATH for this shell
 ```
@@ -430,7 +430,9 @@ To enable, add to ripr.toml:
 enabled = ["python"]
 ```
 
-Enable it exactly as printed. Repair routes and evidence limits are in
+Enable it exactly as printed: the block keeps the languages your `ripr.toml`
+already lists, so `enabled = ["rust"]` prints `enabled = ["rust", "python"]`.
+Repair routes and evidence limits are in
 [Known Limits](#known-limits) and [Language adapters](LANGUAGE_ADAPTER_PREVIEW.md).
 The repair route is the [shared preview repair route](#python-and-typescript-repair-route)
 below.
@@ -439,10 +441,11 @@ below.
 
 TypeScript analysis is `preview`: its evidence is advisory, not Rust-grade. No
 `ripr.toml` is needed. The CLI auto-enables the preview when the repository root
-has a `tsconfig.json` or `jsconfig.json` (or TypeScript source under `src/` or
+has a `tsconfig.json`, `jsconfig.json`, `deno.json` or `deno.jsonc` (or TypeScript source under `src/` or
 `tests/`), or a package one level down or under `packages/*`, `apps/*`, `libs/*`
 or `libraries/*` has one. JavaScript-led repositories can also qualify through a
-root `package.json` with eligible JavaScript or TypeScript source; see
+`package.json` with eligible JavaScript or TypeScript source, at the root or in
+one of those workspace packages; see
 [language configuration](CONFIGURATION.md#languages) for the full detection
 rules, including mixed Rust repositories and compiled-adapter requirements.
 Work from a TypeScript repository on a branch with a change to inspect.

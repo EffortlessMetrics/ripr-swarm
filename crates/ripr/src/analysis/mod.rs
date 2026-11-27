@@ -9,6 +9,7 @@ pub(crate) mod consumed_source;
 pub(crate) mod diagnostic_origin;
 mod diff;
 mod diff_scope_filter;
+mod executable_tests;
 mod extract;
 mod facts;
 #[cfg(all(test, feature = "lang-rust"))]
@@ -42,9 +43,10 @@ pub(crate) use facts::cfg_predicates::{attribute_is_plain_test_gate, outer_attri
 // A long-lived server keeps unchanged files' parse facts in memory across
 // refreshes; one-shot commands leave this off.
 pub(crate) use facts::enable_process_fact_memo;
-pub(crate) use pipeline::NON_TEXT_ONLY_DETAIL;
 pub(crate) use pipeline::capture_disclosures;
+pub(crate) use pipeline::is_excluded_from_diff_and_workspace_index;
 pub(crate) use pipeline::is_rust_excluded_by_config_detail;
+pub(crate) use pipeline::names_parsed_file_limitation;
 pub(crate) use pipeline::{
     DIFF_CHANGED_PYTHON_LINE_LIMIT_ENV, DIFF_CHANGED_TYPESCRIPT_LINE_LIMIT_ENV,
     diff_changed_python_line_limit, diff_changed_typescript_line_limit,
@@ -102,6 +104,8 @@ pub(crate) use diff::bare_repository_message;
 /// owner for packet diff presentation, consumed by the product route and the
 /// xtask route alike. Neither route may rebuild its argv inline.
 pub use diff::load_pr_evidence_diff_range;
+// The `ci-packet` capture through the same assembly (#9365).
+pub(crate) use diff::load_ci_packet_diff_bytes;
 #[cfg(test)]
 pub(crate) use diff::not_a_work_tree_message;
 /// Shared NUL-delimited Git path-record authority (#4006), consumed by the
@@ -112,14 +116,14 @@ pub use diff::records::{
 pub(crate) use diff::{
     AnalyzedRevisions, ChangedFile, HeadRefState, another_base_candidate,
     artifact_root_gitignore_entry, artifact_root_pathspec, base_is_checked_out_head,
-    base_is_checked_out_head_with_parent, default_base_unresolved_message, is_shallow_repository,
-    load_diff, load_diff_core, load_diff_range_with_deadline_and_git_stdout_limit_core,
-    load_diff_with_effective_base_core, load_worktree_diff,
-    load_worktree_diff_with_effective_base_core, no_merge_base_diagnosis, parse_unified_diff,
-    probe_head_ref_state, probe_working_tree_tracked_changes_within, resolve_base_commit,
-    resolve_effective_base, resolve_effective_base_core, ripr_artifact_roots,
-    untrack_artifacts_command, working_tree_has_tracked_changes,
-    working_tree_has_uncommitted_changes,
+    base_is_checked_out_head_with_parent, default_base_unresolved_message, doctor_base_history,
+    git_operation_advisory, is_shallow_repository, load_diff, load_diff_core,
+    load_diff_range_with_deadline_and_git_stdout_limit_core, load_diff_with_effective_base_core,
+    load_worktree_diff, load_worktree_diff_with_effective_base_core, no_merge_base_diagnosis,
+    origin_lacks_head_pointer, parse_unified_diff, probe_head_ref_state,
+    probe_working_tree_tracked_changes_within, resolve_base_commit, resolve_effective_base,
+    resolve_effective_base_core, ripr_artifact_roots, untrack_artifacts_command,
+    working_tree_has_tracked_changes, working_tree_has_uncommitted_changes,
 };
 /// Shared RIPR-SPEC-0084 default-base authority and pinned analysis-range
 /// diff assembly (#4003): the one named owner for badge input base/diff,
@@ -152,6 +156,7 @@ pub(crate) use language::{
 };
 #[cfg(feature = "lang-typescript")]
 pub(crate) use probes::normalize_expression;
+pub(crate) use probes::{before_is_whole_line_over_condition, old_condition_of_whole_line};
 pub(crate) use probes::{
     fingerprint_probe_id, legacy_whole_line_diff_probe_id, normalize_rust_expression, sanitize_path,
 };
@@ -202,14 +207,17 @@ pub(crate) use seam_inventory::{
     inventory_diff_scoped_seam_at_with_config, inventory_diff_scoped_streamed_seams_at_with_config,
     inventory_diff_scoped_streamed_seams_with_optional_prepared,
     inventory_file_guidance_at_with_config, inventory_pilot_seams_report_at_with_config,
-    inventory_seams_at_with_config, locate_seam_file_at_with_config,
-    prepare_diff_scoped_classified_workspace, probe_family_for_seam_kind, repo_exposure_seam_limit,
-    scoped_file_seams, seam_kind_for_probe_family,
-    workspace_cache_key_and_production_files_at_with_config, workspace_cache_key_at_with_config,
+    inventory_repair_seams_report, inventory_seams_at_with_config, inventory_stub_choices,
+    locate_seam_file_at_with_config, prepare_diff_scoped_classified_workspace,
+    probe_family_for_seam_kind, repo_exposure_seam_limit, scoped_file_seams,
+    seam_kind_for_probe_family, workspace_cache_key_and_production_files_at_with_config,
+    workspace_cache_key_at_with_config,
 };
 pub(crate) use seam_inventory::{PILOT_PACKET_BUDGET_ENV, pilot_packet_budget};
 #[cfg(test)]
-pub(crate) use seam_inventory::{SEAM_FILE_LOCATIONS, WORKSPACE_CLASSIFIED_INVENTORIES};
+pub(crate) use seam_inventory::{
+    SEAM_FILE_LOCATIONS, WORKSPACE_CLASSIFIED_INVENTORIES, WORKSPACE_SEAMS_CLASSIFIED,
+};
 pub(crate) use seam_inventory::{file_fact_cache_receipt, file_fact_store_failure_summary};
 pub(crate) use seams::{RepoSeam, RequiredDiscriminator, match_arm_seam_result};
 pub(crate) use syntax::fn_signature::{
@@ -218,31 +226,9 @@ pub(crate) use syntax::fn_signature::{
 pub(crate) use syntax::governed_cfg_test_modules;
 pub(crate) use syntax::parse_clean_source_file;
 
-/// Module-qualified executable test functions defined in one Rust file, from
-/// parser-backed facts. Ambiguous duplicate symbol identities fail closed.
-pub(crate) fn executable_test_function_names(
-    path: &Path,
-    source: &str,
-) -> Result<std::collections::BTreeSet<String>, String> {
-    use syntax::{RaRustSyntaxAdapter, RustSyntaxAdapter};
-    let facts = RaRustSyntaxAdapter.summarize_file(path, source)?;
-    let prefix = format!("{}::", stable_path_text(path));
-    Ok(facts
-        .functions
-        .iter()
-        .filter(|function| {
-            function.source_role.registers_executable_test()
-                && matches!(function.item.container, facts::FunctionContainer::Free)
-                && function.item.has_body
-                && !function
-                    .id
-                    .0
-                    .ends_with(&format!("{}#L{}", function.name, function.start_line))
-        })
-        .filter_map(|function| function.id.0.strip_prefix(&prefix))
-        .map(str::to_string)
-        .collect())
-}
+pub(crate) use executable_tests::{
+    executable_test_function_bodies, executable_test_function_names,
+};
 pub(crate) use workspace::DiffOnlySource;
 pub(crate) use workspace::PathDependencyAdjacency;
 pub(crate) use workspace::SourceRoleContext;
@@ -250,6 +236,8 @@ pub(crate) use workspace::apply_module_graph_evidence;
 pub(crate) use workspace::changed_source_files_absent_from_worktree;
 pub(crate) use workspace::classify_with;
 pub(crate) use workspace::context_for_files;
+pub(crate) use workspace::is_declared_cargo_test_surface;
+pub(crate) use workspace::is_test_surface;
 pub(crate) use workspace::is_test_surface_path;
 pub(crate) use workspace::path_enters_ignored_dir;
 pub(crate) use workspace::seeds_diff_probes;
@@ -677,9 +665,34 @@ pub(crate) fn field_write_read(seam: &seams::RepoSeam) -> Option<FieldWriteRead>
 
 /// Render a path for textual identity without collapsing distinct Unix byte
 /// paths through U+FFFD. Valid paths retain their usual spelling except that
-/// `%` is escaped, reserving `%XX` for bytes that are not valid UTF-8.
+/// `%` is escaped, reserving `%XX` for bytes that are not valid UTF-8, and
+/// that a literal Unix backslash is spelled `%5C` (#15908): it is a file-name
+/// byte there, so folding it to `/` gave `src/a\b.rs` the path and gap id of
+/// `src/a/b.rs`. On Windows a backslash is a separator and renders as `/`.
 pub(crate) fn stable_path_text(path: &Path) -> String {
+    stable_source_path_text(path)
+}
+
+/// Reader-facing slash spelling of a path: [`stable_path_text`] with every
+/// backslash shown as `/` on every host, so prose and reports about a path
+/// that was recorded with Windows separators read the same everywhere. It is
+/// for prose only and never an identity or a path in a machine artifact: on
+/// Unix it shows `src/a\b.rs` and `src/a/b.rs` alike.
+pub(crate) fn stable_display_path_text(path: &Path) -> String {
     stable_native_path_text(path).replace('\\', "/")
+}
+
+/// [`stable_path_text`] with the separator rule taken from `windows` instead
+/// of the host, for renderers whose platform flag makes Windows behavior
+/// testable on every host. With `windows` set a backslash is a separator and
+/// renders as `/`; otherwise this is the host encoder (on Unix a literal
+/// backslash stays `%5C`, #15908).
+pub(crate) fn stable_path_text_on(path: &Path, windows: bool) -> String {
+    if windows {
+        stable_display_path_text(path)
+    } else {
+        stable_path_text(path)
+    }
 }
 
 /// Retain native source identity before display normalization. On Unix a
@@ -793,26 +806,37 @@ fn uppercase_hex_value(byte: u8) -> Option<u8> {
     }
 }
 
-/// The one renderer for a finding's file location across every surface
-/// (#5996): workspace-relative with the CLI `./` prefix when the location
+/// The shared renderer for a finding's file location (#5996):
+/// workspace-relative with the CLI `./` prefix when the location
 /// lives inside the analyzed root, its plain spelling otherwise — never the
 /// Windows verbatim `//?/` drive form, which external consumers cannot join
 /// against a workspace. A remainder containing `..` resolves outside the
 /// root, so it keeps the plain spelling too. A relative location passes
 /// through with stable separators, so a producer that already names the
-/// workspace (the CLI's `./src/main.rs`) keeps its exact rendering on every
-/// surface.
+/// workspace (the CLI's `./src/main.rs`) keeps its exact rendering.
 pub(crate) fn finding_location_text(root: &Path, file: &Path) -> String {
     finding_location_text_with_platform(root, file, cfg!(windows))
 }
 
-/// The pure core of [`finding_location_text`]: the platform flag stands in
-/// for `cfg!(windows)` so the verbatim-prefix behavior is testable on every
-/// host, the same pure-over-platform pattern the human path renderer uses.
+/// The MCP gap spelling for matched locations, with the shared fallback.
+pub(crate) fn finding_location_text_bare(root: &Path, file: &Path) -> String {
+    render_finding_location_text(root, file, cfg!(windows), "")
+}
+
+/// The platform flag makes verbatim-prefix behavior testable on every host.
 pub(crate) fn finding_location_text_with_platform(
     root: &Path,
     file: &Path,
     windows: bool,
+) -> String {
+    render_finding_location_text(root, file, windows, "./")
+}
+
+fn render_finding_location_text(
+    root: &Path,
+    file: &Path,
+    windows: bool,
+    relative_prefix: &str,
 ) -> String {
     let file = plain_drive_verbatim_path(file, windows);
     let root = plain_drive_verbatim_path(root, windows);
@@ -829,8 +853,11 @@ pub(crate) fn finding_location_text_with_platform(
                 .any(|component| matches!(component, Component::ParentDir))
         });
     match relative {
-        Some(relative) => format!("./{}", stable_path_text(relative)),
-        None => stable_path_text(&file),
+        Some(relative) => format!(
+            "{relative_prefix}{}",
+            stable_path_text_on(relative, windows)
+        ),
+        None => stable_path_text_on(&file, windows),
     }
 }
 
@@ -1665,10 +1692,16 @@ mod tests {
             stable_source_path_text(Path::new(r"src/odd\receipt.rs")),
             stable_source_path_text(Path::new("src/odd/receipt.rs"))
         );
+        // #15908: the identity encoder is the same lossless encoder, so a
+        // finding in `src/odd\receipt.rs` never borrows the path and gap id
+        // of `src/odd/receipt.rs`.
         assert_eq!(
             stable_path_text(Path::new(r"src/odd\receipt.rs")),
-            stable_path_text(Path::new("src/odd/receipt.rs")),
-            "display normalization still collapses backslashes for stable_path_text"
+            "src/odd%5Creceipt.rs"
+        );
+        assert_ne!(
+            stable_path_text(Path::new(r"src/odd\receipt.rs")),
+            stable_path_text(Path::new("src/odd/receipt.rs"))
         );
     }
 
@@ -1893,7 +1926,13 @@ mod tests {
                 Path::new(r"\\?\F:\repo\src\main.rs"),
                 false
             ),
-            r"//?/F:/repo/src/main.rs"
+            // On Unix the backslashes are file-name bytes, spelled `%5C`
+            // (#15908); a Windows host still reads them as separators.
+            if cfg!(unix) {
+                r"%5C%5C?%5CF:%5Crepo%5Csrc%5Cmain.rs"
+            } else {
+                r"//?/F:/repo/src/main.rs"
+            }
         );
     }
 

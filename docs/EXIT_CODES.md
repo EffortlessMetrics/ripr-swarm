@@ -192,6 +192,21 @@ reached the caller.
   `config_error` readiness report is still written first, so it replaces an
   earlier report at `--out` instead of leaving a stale one for a later step
   to read (#14311).
+  The same holds for any input file named explicitly on `reports
+  ts-limitations|ts-false-actionable`, `coverage-grip frontier`, `policy
+  operations|promote|preview-promote|waiver-aging|suppression-health`,
+  `annotations --comments`, `pr-summary --baseline`, `baseline diff`,
+  `zero status --baseline|--delta`, `first-action --pr-guidance` and
+  `assistant-loop proof --pr-guidance|--agent-packet|--before` that is
+  missing, unreadable or (for the baseline and zero-status JSON inputs and an
+  explicit `--manifest` with suppression-health `config_error` findings) not
+  usable: stderr names the flag, the path and what to pass, and the command
+  exits `2`. Where a usable report can still be produced it is written
+  first; a missing or unreadable `reports ts-*` input refuses before any
+  write. Other optional inputs of `zero status` and `first-action` stay
+  tolerant. An absent default path stays a quiet skip, and `gate
+  evaluate|check` echoes unavailable optional inputs on stderr without
+  changing its exit code (#15254).
 - **Internal error**: a panic occurred (with a `ripr: internal error` message).
 - **Closed output pipe**: the reader of stdout went away early (for example
   `ripr doctor | head`). ripr stops quietly with `2`, not `0`, because its
@@ -343,6 +358,7 @@ reached the caller.
   | `several_eligible_seams` | 3 | `needs_selection` | bare `repair`: choose from the printed list |
   | `repair_needs_item` | 3 | `needs_selection` | bare `repair` binds no seam by itself |
   | `start_refused_uncommitted_target` | 3 | `not_started` | the focused test file has uncommitted changes |
+  | `start_refused_dirty_premise` | 3 | `not_started` | tracked files outside the repair's allowed edit surface (usually production source, or a test file other than the focused one) have uncommitted changes; commit or restore them, then rerun the printed start. `agent repair --phase before` keeps exit `2` with the same lines (#15265) |
   | `build_output_not_ignored` | 3 | `not_started` | Cargo's build directory is not Git-ignored, so a Rust repair cannot start; `agent repair --phase before` keeps exit `2` with the same lines. Only the admission and pre-write checks are this typed hold: an ignore flip found later, at attempt publication, is an operational failure (exit `2`, no code line) that warns shared workflow files may already have been rewritten |
   | `no_test_route` | 2 | `not_started` | no test file or module ripr can safely edit |
   | `awaiting_edit` | 3 | `retryable` | `continue`: edit the focused test, then rerun |
@@ -350,6 +366,7 @@ reached the caller.
   | `no_current_attempt` | 3 | `not_started` | `continue`: no attempt to continue |
   | `attempt_baseline_blocked` | 3 | `not_started` | `continue`: the retained before baseline is ambiguous or unavailable; no after phase ran; inspect the shared status and its admitted recovery |
   | `unanchored_root` | 3 | `not_started` | no workspace, package or Git repository anchors the current directory, so the repair spellings answer nothing there; an explicit `--root` skips the discovery gate (#12417) |
+  | `subdirectory_root` | 3 | `not_started` | the root is below the Git top-level, where a repair attempt cannot start; rerun from the Git top-level (#15488) |
   | `ambiguous_attempts` | 3 | `needs_selection` | `continue`: pass `--attempt` |
   | `attempt_ended_without_receipt` | 3 | `terminal` | the attempt failed, went stale, or is incomparable |
   | `attempt_completion_unconfirmed` | 3 | `terminal` | finished, but no compliant receipt confirms it |
@@ -357,8 +374,10 @@ reached the caller.
   | `attempt_stale` | 2 | `terminal` | the cage rejected the edit and HEAD had moved after the repair started |
   | `attempt_incomparable` | 2 | `terminal` | the cage could not compare the files |
 
-  A repeated `ripr continue` after a confirmed-complete attempt reports
-  that attempt's already-complete status and exits `0`: with `--attempt`,
+  A repeated `ripr continue` after a confirmed-complete attempt prints a
+  short already-complete summary (the receipt, the next `ripr repair`, and
+  the `ripr status --attempt` command for the full page; `--json` prints
+  the attempt's status document) and exits `0`: with `--attempt`,
   or without it when the newest attempt (the only one with the latest
   creation time) is the confirmed-complete one and no prepared or
   trust-bound attempt remains. A cage violation is exit `2` and terminal;

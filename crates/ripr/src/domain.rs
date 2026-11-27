@@ -158,10 +158,13 @@ pub(crate) use ripr_contract::domain::classify_reference;
 pub(crate) use ripr_contract::domain::command_tokens;
 pub use ripr_contract::domain::compare_fixture_delta;
 pub(crate) use ripr_contract::domain::declared_const_name;
+pub(crate) use ripr_contract::domain::enablement_tip_keeps_rust;
 pub(crate) use ripr_contract::domain::enablement_tip_languages;
 pub(crate) use ripr_contract::domain::exact_assertion_fact;
 #[cfg(test)]
 pub(crate) use ripr_contract::domain::example_preregistered_study;
+#[cfg(feature = "lang-python")]
+pub(crate) use ripr_contract::domain::first_observing_related_test;
 pub(crate) use ripr_contract::domain::format_languages_enabled_toml;
 pub(crate) use ripr_contract::domain::guard_refusal_digest_classification_hint;
 pub(crate) use ripr_contract::domain::guard_refusal_kind;
@@ -259,3 +262,7 @@ pub use verification_result::{
     VerificationExecutionResultV1, VerificationExecutionResultValidationError,
     VerificationProcessDispositionV1, command_spec_sha256,
 };
+
+/// Advice shared by the TypeScript classifier and its preview card.
+pub(crate) const TERNARY_COMPARISON_NEXT_STEP: &str = "Check whether the two comparisons take different branches for a reachable input. Follow both paths for that input. If the result or side effects differ, assert that difference. If both paths have the same observable behavior, the edit may be behavior-preserving.";
+pub(crate) const TYPESCRIPT_DEFAULT_CONTEXT_PREFIX: &str = "typescript_default_context: ";

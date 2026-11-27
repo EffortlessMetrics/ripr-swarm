@@ -9,9 +9,11 @@ mod ids;
 mod lexical;
 mod macro_definition;
 mod moved_item;
+mod old_condition;
 mod path_only_argument;
 mod propagation_boundary;
 mod repo;
+mod self_type_respelling;
 mod unchanged_code_line;
 mod verification_erased;
 
@@ -41,8 +43,12 @@ pub(crate) use ids::{collision_ordinals, collision_rank_key};
 pub(crate) use ids::{
     fingerprint_probe_id, legacy_whole_line_diff_probe_id, normalize_rust_expression, sanitize_path,
 };
-pub(crate) use lexical::{inline_const_assertion_lines, is_inline_const_assertion_line};
+pub(crate) use lexical::{
+    compile_error_lines, inline_const_assertion_lines, is_compile_error_line,
+    is_inline_const_assertion_line,
+};
 pub(crate) use macro_definition::{verus_region_line_spans, verus_region_lines};
+pub(crate) use old_condition::{before_is_whole_line_over_condition, old_condition_of_whole_line};
 #[cfg(test)]
 pub(crate) use repo::probes_for_repo_file;
 pub(crate) use repo::probes_for_repo_file_seeded;

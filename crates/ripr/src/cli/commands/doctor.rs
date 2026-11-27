@@ -281,7 +281,7 @@ impl DoctorEnvironment {
         language_detection_elapsed: std::time::Duration,
     ) -> Self {
         let loaded = config.as_ref().ok();
-        let preview_enablement = preview_languages_to_enable(detected, config);
+        let preview_enablement = preview_languages_to_enable(root, detected, config);
         // #8540 follow-up: each expensive computation is timed where it runs
         // and named after itself, so the segment list can explain the run
         // total alongside the timed checks and probes.
@@ -716,7 +716,18 @@ fn render_doctor_human_screen(screen: DoctorHumanScreen<'_>) -> Vec<String> {
             lines.push(compact_tilde_line(evidence));
         }
     }
-    if let Some(check) = check_named(report, "git_default_base") {
+    for check in ["git_default_base", "git_base", "git_origin_head"]
+        .into_iter()
+        .filter_map(|name| check_named(report, name))
+    {
+        let evidence = check.evidence.as_deref().unwrap_or(check.name.as_str());
+        if check.status == output::doctor::DoctorCheckStatus::Pass {
+            lines.push(format!("✓ {}", display_text(evidence)));
+        } else {
+            lines.push(compact_tilde_line(evidence));
+        }
+    }
+    if let Some(check) = check_named(report, "git_operation") {
         let evidence = check.evidence.as_deref().unwrap_or(check.name.as_str());
         lines.push(compact_tilde_line(evidence));
     }
@@ -993,7 +1004,7 @@ Point RIPR_CACHE_DIR at a writable directory.",
                 );
             }
             if let Some(line) =
-                enable_before_first_command_line(environment.preview_enablement.as_ref())
+                enable_before_first_command_line(environment.preview_enablement.as_ref(), first)
             {
                 lines.push(line);
             }
@@ -1296,6 +1307,7 @@ fn doctor_start_here_lines(
         output::doctor::DoctorFirstCommand::SavedDiff => {}
         output::doctor::DoctorFirstCommand::MissingRoot
         | output::doctor::DoctorFirstCommand::OutsideGit
+        | output::doctor::DoctorFirstCommand::BareRepository
         | output::doctor::DoctorFirstCommand::InvalidConfig
         | output::doctor::DoctorFirstCommand::DamagedRefs
         | output::doctor::DoctorFirstCommand::FailedPrerequisites => {}
@@ -1314,13 +1326,27 @@ fn doctor_start_here_lines(
     // A detected preview language that is not enabled is skipped by `ripr
     // check`, so in a TypeScript-only repository the recommended command is a
     // guaranteed no-op. Name the enable step next to the command.
-    if let Some(line) = enable_before_first_command_line(preview_enablement) {
+    if let Some(line) = enable_before_first_command_line(preview_enablement, first) {
         lines.push(line);
     }
     lines
 }
 
-fn enable_before_first_command_line(enablement: Option<&PreviewEnablement>) -> Option<String> {
+fn enable_before_first_command_line(
+    enablement: Option<&PreviewEnablement>,
+    first: output::doctor::DoctorFirstCommand,
+) -> Option<String> {
+    // The enable step gates a `ripr check`. A first command that is not a
+    // check (whole-repository pilot outside Git, or a missing root) does not
+    // read the language setting, so it is no prerequisite there (#15297).
+    if matches!(
+        first,
+        output::doctor::DoctorFirstCommand::OutsideGit
+            | output::doctor::DoctorFirstCommand::BareRepository
+            | output::doctor::DoctorFirstCommand::MissingRoot
+    ) {
+        return None;
+    }
     // Name the config entries here: this line says what to write in
     // ripr.toml, while the Tip names the detected source.
     let names = enablement?
@@ -1677,7 +1703,15 @@ fn detected_languages_lines(
         let entries: Vec<String> = detected
             .iter()
             .map(|language| {
-                if language.adapter_available {
+                if language.adapter_available && language.enabled == Some(false) {
+                    // The Tip below says "detected but not enabled"; the line
+                    // naming the language says the same (#15297).
+                    format!(
+                        "{} ({}) [not enabled]",
+                        language.language,
+                        language.status.as_str()
+                    )
+                } else if language.adapter_available {
                     format!("{} ({})", language.language, language.status.as_str())
                 } else {
                     format!(
@@ -1763,6 +1797,7 @@ fn preview_language_enable_suggestions(enablement: Option<&PreviewEnablement>) -
 /// are not enabled. `None` when there is nothing to suggest or the config
 /// cannot be loaded (fail closed: no tip).
 fn preview_languages_to_enable(
+    root: &Path,
     detected: &[LanguageId],
     config: &Result<RiprConfig, String>,
 ) -> Option<PreviewEnablement> {
@@ -1825,30 +1860,17 @@ fn preview_languages_to_enable(
     // #15304 review: only the built-in default `rust` is dropped when no Rust
     // marker is found (#7648). A `rust` the user wrote into
     // `[languages].enabled` is their selection, and the replacement list must
-    // keep it.
-    let keep_rust = detected.contains(&LanguageId::Rust) || languages_enabled_is_explicit(config);
+    // keep it. So must a root whose crate is nested (`backend/Cargo.toml`):
+    // `ripr check` analyzes that Rust, and a list without `rust` stops it.
+    let keep_rust = detected.contains(&LanguageId::Rust)
+        || crate::domain::enablement_tip_keeps_rust(root)
+        || crate::config::languages_enabled_is_explicit(config);
     let suggestion = crate::domain::enablement_tip_languages(
         &enabled,
         keep_rust,
         gaps.iter().map(|gap| gap.entry),
     );
     Some(PreviewEnablement { gaps, suggestion })
-}
-
-/// Whether the loaded `ripr.toml` sets `[languages].enabled` itself, rather
-/// than leaving the built-in default in place. Reads the exact text the
-/// config was parsed from, so a config-free run and a `[languages]` table
-/// without `enabled` both read as the default.
-fn languages_enabled_is_explicit(config: &RiprConfig) -> bool {
-    config
-        .source_text()
-        .and_then(|text| toml::from_str::<toml::Value>(text).ok())
-        .is_some_and(|document| {
-            document
-                .get("languages")
-                .and_then(|languages| languages.get("enabled"))
-                .is_some()
-        })
 }
 
 /// The `[languages].enabled` entries a doctor tip may add, each paired with the
@@ -8889,7 +8911,11 @@ mod tests {
     /// computes them, so a test exercises the shared probe rather than a
     /// second derivation.
     fn test_preview_enablement(root: &Path) -> Option<PreviewEnablement> {
-        preview_languages_to_enable(&detect_languages(root), &crate::config::load_for_root(root))
+        preview_languages_to_enable(
+            root,
+            &detect_languages(root),
+            &crate::config::load_for_root(root),
+        )
     }
 
     fn test_enablement_suggestions(root: &Path) -> Vec<String> {
@@ -8897,7 +8923,10 @@ mod tests {
     }
 
     fn test_enable_before_first_command(root: &Path) -> Option<String> {
-        enable_before_first_command_line(test_preview_enablement(root).as_ref())
+        enable_before_first_command_line(
+            test_preview_enablement(root).as_ref(),
+            output::doctor::DoctorFirstCommand::DefaultCheck,
+        )
     }
 
     /// #13788: after `ripr init` writes its config for a root package.json
@@ -8932,6 +8961,42 @@ mod tests {
         assert!(
             !after.iter().any(|line| line.contains("typescript")),
             "{after:?}"
+        );
+        Ok(())
+    }
+
+    /// A mixed repository keeps its crate under `backend/`: the root has no
+    /// Rust marker, `ripr check` analyzes the Rust all the same, and the list
+    /// the tip prints must keep `rust`. The control drops the crate.
+    #[cfg(feature = "lang-python")]
+    #[test]
+    fn doctor_tip_keeps_rust_for_a_crate_nested_below_the_root() -> Result<(), String> {
+        let dir = unique_command_test_dir("suggest-keeps-nested-rust");
+        std::fs::create_dir_all(dir.join("backend/src"))
+            .map_err(|err| format!("create dir: {err}"))?;
+        std::fs::create_dir_all(dir.join("scripts")).map_err(|err| format!("create dir: {err}"))?;
+        for (path, text) in [
+            ("backend/Cargo.toml", "[package]\nname = \"backend\"\n"),
+            ("backend/src/lib.rs", "pub fn f() {}\n"),
+            ("scripts/pyproject.toml", "[project]\nname = \"tools\"\n"),
+        ] {
+            std::fs::write(dir.join(path), text).map_err(|err| format!("write {path}: {err}"))?;
+        }
+        let nested = test_enablement_suggestions(&dir);
+        std::fs::remove_dir_all(dir.join("backend")).map_err(|err| format!("remove: {err}"))?;
+        let control = test_enablement_suggestions(&dir);
+        let _ = std::fs::remove_dir_all(&dir);
+        assert!(
+            nested
+                .iter()
+                .any(|line| line.contains("`enabled = [\"rust\", \"python\"]`")),
+            "{nested:?}"
+        );
+        assert!(
+            control
+                .iter()
+                .any(|line| line.contains("`enabled = [\"python\"]`")),
+            "{control:?}"
         );
         Ok(())
     }

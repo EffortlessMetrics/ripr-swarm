@@ -110,7 +110,8 @@ pub use intervention_study::{
 pub use language::perl_fact_packet_guidance;
 pub use language::{LanguageId, LanguageStatus, OwnerKind, StaticLimitKind};
 pub use language::{
-    PERL_FACT_EXPORTER, enablement_tip_languages, format_languages_enabled_toml, rust_markers_at,
+    PERL_FACT_EXPORTER, enablement_tip_keeps_rust, enablement_tip_languages,
+    format_languages_enabled_toml, rust_markers_at,
 };
 pub use language::{
     PYTEST_VERIFY_INTERPRETERS, PYTEST_VERIFY_PROGRAM, is_pytest_verify_command,
