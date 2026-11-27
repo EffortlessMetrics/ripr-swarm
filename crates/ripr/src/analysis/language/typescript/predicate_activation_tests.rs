@@ -306,6 +306,52 @@ fn exact_boundary_argument_is_witnessed() -> Result<(), String> {
     Ok(())
 }
 
+/// #16458: a boundary input that reaches the owner only inside a wrapper
+/// call (`Math.max(...)`) or a nested owner call does not witness the
+/// boundary. The wrapper may map both sides to one value, and a nested call
+/// asserts the outer result, which the inner input need not move. The whole
+/// owner call keeps its witness beside a wrapped sibling assertion.
+#[test]
+fn wrapped_or_nested_owner_call_does_not_witness() -> Result<(), String> {
+    let source = one_test(
+        "wrapped owner",
+        IMPORT_DISCOUNT,
+        "  expect(Math.max(applyDiscount(100), 100)).toBe(100);",
+    );
+    let evaluated = evaluate(&DISCOUNT, &source, true)?;
+    assert_eq!(evaluated.row("wrapped owner")?.1, R::DirectOwnerCall);
+    assert_eq!(
+        evaluated.activation("wrapped owner")?,
+        A::ReachedWithoutDiscriminator,
+        "the boundary input reaches the owner, but the wrapper hides it"
+    );
+    assert!(!evaluated.witnessed);
+
+    let source = one_test(
+        "nested owner",
+        IMPORT_DISCOUNT,
+        "  expect(applyDiscount(90, applyDiscount(100))).toBe(90);",
+    );
+    let evaluated = evaluate(&DISCOUNT, &source, true)?;
+    assert_eq!(evaluated.row("nested owner")?.1, R::DirectOwnerCall);
+    assert_ne!(evaluated.activation("nested owner")?, A::Witnessed);
+    assert!(!evaluated.witnessed);
+
+    let source = one_test(
+        "whole owner call",
+        IMPORT_DISCOUNT,
+        "  expect(applyDiscount(100)).toBe(90);\n  expect(Math.max(applyDiscount(50), 0)).toBe(50);",
+    );
+    let evaluated = evaluate(&DISCOUNT, &source, true)?;
+    assert_eq!(
+        evaluated.activation("whole owner call")?,
+        A::Witnessed,
+        "a wrapped sibling assertion does not veto the whole call"
+    );
+    assert!(evaluated.witnessed);
+    Ok(())
+}
+
 /// A body-local `ns` at the boundary is not an owner call. The real owner
 /// pin is off the boundary, but `const ns = fakePricing()` keeps the body
 /// from a definite miss, so the row stays unresolved rather than witnessed.

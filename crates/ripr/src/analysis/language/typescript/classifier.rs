@@ -3397,6 +3397,12 @@ fn nested_method_head(line: &str) -> bool {
 /// Whether `observed` calls anything other than `owner_name` (an identifier
 /// directly followed by `(`).
 fn observed_has_other_call(observed: &str, owner_name: &str) -> bool {
+    observed_has_call_outside(observed, &[owner_name])
+}
+
+/// Whether `observed` calls any identifier other than `names`, skipping
+/// string literals. A member call (`x.max(1)`) counts by its member name.
+fn observed_has_call_outside(observed: &str, names: &[&str]) -> bool {
     let bytes = observed.as_bytes();
     let mut i = 0;
     while i < bytes.len() {
@@ -3409,7 +3415,7 @@ fn observed_has_other_call(observed: &str, owner_name: &str) -> bool {
                 i += 1;
             }
             let rest = observed[i..].trim_start();
-            if rest.starts_with('(') && &observed[start..i] != owner_name {
+            if rest.starts_with('(') && !names.contains(&&observed[start..i]) {
                 return true;
             }
         } else if b == b'"' || b == b'\'' || b == b'`' {
@@ -3648,6 +3654,12 @@ pub(crate) fn ts_predicate_boundary_row_activation(
             continue;
         }
         let mut argument_lists = owner_call_arguments(observed, &owner.name, &owner_receivers);
+        // #16458: when the asserted value is one whole owner call, only its
+        // own arguments count. A nested `owner(90, owner(100))` asserts the
+        // outer result, which the inner call's boundary input need not move.
+        if observed_is_one_whole_call(observed, &owner.name) {
+            argument_lists.truncate(1);
+        }
         // A renamed import witnesses only when the asserted value is the
         // whole alias call (`expect(d(100))`): a wrapper such as
         // `Math.max(d(100), 100)` may map both sides of the boundary to one
@@ -3749,8 +3761,10 @@ pub(crate) fn ts_predicate_boundary_row_activation(
             // #16458: a wrapper call around the owner (`Math.max(owner(100),
             // 100)`) may map both sides of the boundary to one value, and
             // nothing here models its effect: the boundary input reached the
-            // owner, but this assertion does not discriminate it.
-            if observed_has_other_call(observed, &owner.name) {
+            // owner, but this assertion does not discriminate it. Every owner
+            // spelling (the name and its renamed imports) is a direct call.
+            let spellings: Vec<&str> = call_spellings.iter().map(|(name, _)| *name).collect();
+            if observed_has_call_outside(observed, &spellings) {
                 reached = true;
                 continue;
             }
