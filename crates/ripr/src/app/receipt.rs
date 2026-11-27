@@ -133,7 +133,10 @@ pub(crate) fn write_receipt(opts: &ReceiptWriteOptions) -> Result<String, String
         .map_err(|err| format!("resolve receipt repository root failed: {err}; run ripr from an existing directory inside the repository"))?;
     let actual_head =
         crate::agent::artifact::current_git_head(&repository_root).map_err(|err| {
-            format!("receipt requires a Git repository with a resolvable HEAD: {err}")
+            format!(
+                "receipt requires a Git repository with a resolvable HEAD: {err}; \
+                 run ripr from inside a Git checkout that has at least one commit"
+            )
         })?;
     if let Some(declared_head) = opts.current_head.as_deref()
         && !declared_head.eq_ignore_ascii_case(&actual_head)
@@ -210,7 +213,7 @@ pub(crate) fn check_receipt(
 
     let value: serde_json::Value = serde_json::from_str(&content).map_err(|err| {
         format!(
-            "receipt at {} is malformed: invalid JSON: {err}",
+            "receipt at {} is malformed: invalid JSON: {err}; rewrite it with `ripr receipt write`",
             path.display()
         )
     })?;
@@ -276,7 +279,7 @@ fn cross_reference_receipt(
 
     let records = parse_gap_records_json(&contents).map_err(|err| {
         format!(
-            "receipt check --ledger {} is not a gap decision ledger: {err}",
+            "receipt check --ledger {} is not a gap decision ledger: {err}; pass the ledger written by `ripr reports gap-ledger`",
             path.display()
         )
     })?;
@@ -538,7 +541,7 @@ fn validate_receipt_structure(value: &serde_json::Value, path: &Path) -> Result<
     // Validate verify_status is a known value.
     let status = value["verify_status"].as_str().ok_or_else(|| {
         format!(
-            "receipt at {} is malformed: `verify_status` must be a string",
+            "receipt at {} is malformed: `verify_status` must be a string; rewrite it with `ripr receipt write`",
             path.display()
         )
     })?;
@@ -554,13 +557,13 @@ fn validate_receipt_structure(value: &serde_json::Value, path: &Path) -> Result<
 
     let current_head = value["current_head"].as_str().ok_or_else(|| {
         format!(
-            "receipt at {} is malformed: `current_head` must be a string",
+            "receipt at {} is malformed: `current_head` must be a string; rewrite it with `ripr receipt write`",
             path.display()
         )
     })?;
     validate_current_head(current_head).map_err(|err| {
         format!(
-            "receipt at {} is malformed: invalid `current_head`: {err}",
+            "receipt at {} is malformed: invalid `current_head`: {err}; rewrite it with `ripr receipt write`",
             path.display()
         )
     })?;

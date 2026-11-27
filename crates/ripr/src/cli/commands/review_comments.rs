@@ -338,7 +338,7 @@ fn load_review_comments_analysis_outcome(
         .filter(|version| !version.trim().is_empty())
         .ok_or_else(|| {
             format!(
-                "review-comments --check-output {} is invalid: missing producer schema_version",
+                "review-comments --check-output {} is invalid: missing producer schema_version; rerun `ripr check --json` for the same root, base and diff, then pass its output to `--check-output`",
                 path.display()
             )
         })?;
@@ -425,20 +425,20 @@ fn load_review_comments_analysis_outcome(
         .and_then(serde_json::Value::as_bool)
         .ok_or_else(|| {
             format!(
-                "review-comments --check-output {} is invalid: analysis_complete is missing or not boolean",
+                "review-comments --check-output {} is invalid: analysis_complete is missing or not boolean; rerun `ripr check --json` for the same root, base and diff, then pass its output to `--check-output`",
                 path.display()
             )
         })?;
     let outcome = envelope.get("outcome").cloned().ok_or_else(|| {
         format!(
-            "review-comments --check-output {} is invalid: analysis_outcome.outcome is missing",
+            "review-comments --check-output {} is invalid: analysis_outcome.outcome is missing; rerun `ripr check --json` for the same root, base and diff, then pass its output to `--check-output`",
             path.display()
         )
     })?;
     let outcome: crate::analysis_outcome::AnalysisOutcome =
         serde_json::from_value(outcome).map_err(|error| {
             format!(
-                "review-comments --check-output {} is invalid: typed outcome failed validation: {error}",
+                "review-comments --check-output {} is invalid: typed outcome failed validation: {error}; rerun `ripr check --json` for the same root, base and diff, then pass its output to `--check-output`",
                 path.display()
             )
         })?;

@@ -463,3 +463,72 @@ fn agent_repair_attempt_refusals_name_the_fix() -> Result<(), String> {
     }
     Ok(())
 }
+
+/// Input files that parse but do not hold what the command reads name the
+/// command that writes a usable one (#16019).
+#[test]
+fn invalid_input_file_refusals_name_the_producer() -> Result<(), String> {
+    let dir = committed_repo()?;
+    let write = |name: &str, contents: &str| {
+        std::fs::write(dir.0.join(name), contents).map_err(|error| format!("write {name}: {error}"))
+    };
+    write("check.json", r#"{"tool":"ripr"}"#)?;
+    stderr_has_all(
+        &refusal(
+            &dir.0,
+            &[
+                "review-comments",
+                "--root",
+                ".",
+                "--base",
+                "HEAD",
+                "--head",
+                "HEAD",
+                "--check-output",
+                "check.json",
+            ],
+        )?,
+        &[
+            "is invalid: missing producer schema_version",
+            "; rerun `ripr check --json` for the same root, base and diff, then pass its output to `--check-output`",
+        ],
+    )?;
+    write("ledger.json", r#"{"schema_version":"0.1"}"#)?;
+    let regenerate =
+        "; regenerate it with `ripr reports gap-ledger` or pass the ledger that command wrote";
+    stderr_has_all(
+        &refusal(&dir.0, &["swarm", "queue", "--gap-ledger", "ledger.json"])?,
+        &[
+            "swarm queue --gap-ledger ledger.json is invalid: ",
+            regenerate,
+        ],
+    )?;
+    stderr_has_all(
+        &refusal(
+            &dir.0,
+            &[
+                "agent",
+                "packet",
+                "--root",
+                ".",
+                "--gap-ledger",
+                "ledger.json",
+                "--gap-id",
+                "gap:demo",
+                "--json",
+            ],
+        )?,
+        &[
+            "agent packet --gap-ledger ledger.json is invalid: ",
+            regenerate,
+        ],
+    )?;
+    write("receipt.json", "{ not json")?;
+    stderr_has_all(
+        &refusal(&dir.0, &["receipt", "check", "--path", "receipt.json"])?,
+        &[
+            "receipt at receipt.json is malformed: invalid JSON: ",
+            "; rewrite it with `ripr receipt write`",
+        ],
+    )
+}
