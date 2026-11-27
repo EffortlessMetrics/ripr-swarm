@@ -22695,6 +22695,174 @@
           "class": "reachable_unrevealed"
         }
       ]
+    },
+    {
+      "id": "rust_deref_receiver_owner",
+      "language": "rust",
+      "tier": "pure",
+      "source_fixture": "fixtures/rust_deref_receiver_owner",
+      "vector": "a_deref_wrapper_call_runs_the_targets_inherent_method",
+      "probe_family": "return_value",
+      "assertions": [
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "expected_finding_count",
+          "count": 1
+        },
+        {
+          "type": "must_promote"
+        },
+        {
+          "type": "expected_class",
+          "class": "exposed"
+        }
+      ]
+    },
+    {
+      "id": "rust_deref_receiver_wrapper_method",
+      "language": "rust",
+      "tier": "pure",
+      "source_fixture": "fixtures/rust_deref_receiver_wrapper_method",
+      "vector": "a_deref_wrapper_with_its_own_method_does_not_reach_the_target",
+      "probe_family": "return_value",
+      "assertions": [
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "expected_finding_count",
+          "count": 1
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "expected_class",
+          "class": "reachable_unrevealed"
+        }
+      ]
+    },
+    {
+      "id": "rust_deref_receiver_alias_std_trait",
+      "language": "rust",
+      "tier": "pure",
+      "source_fixture": "fixtures/rust_deref_receiver_alias_std_trait",
+      "vector": "a_std_trait_on_an_aliased_deref_wrapper_takes_the_call",
+      "probe_family": "return_value",
+      "assertions": [
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "expected_finding_count",
+          "count": 1
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "expected_class",
+          "class": "reachable_unrevealed"
+        }
+      ]
+    },
+    {
+      "id": "rust_deref_receiver_macro_method",
+      "language": "rust",
+      "tier": "pure",
+      "source_fixture": "fixtures/rust_deref_receiver_macro_method",
+      "vector": "a_macro_generated_wrapper_method_takes_the_call",
+      "probe_family": "return_value",
+      "assertions": [
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "expected_finding_count",
+          "count": 1
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "expected_class",
+          "class": "reachable_unrevealed"
+        }
+      ]
+    },
+    {
+      "id": "rust_deref_receiver_proc_macro",
+      "language": "rust",
+      "tier": "pure",
+      "source_fixture": "fixtures/rust_deref_receiver_proc_macro",
+      "vector": "a_proc_macro_derive_on_another_item_implements_a_trait_on_the_deref_wrapper",
+      "probe_family": "return_value",
+      "assertions": [
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "expected_finding_count",
+          "count": 1
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "expected_class",
+          "class": "reachable_unrevealed"
+        }
+      ]
+    },
+    {
+      "id": "rust_deref_receiver_path_module",
+      "language": "rust",
+      "tier": "pure",
+      "source_fixture": "fixtures/rust_deref_receiver_path_module",
+      "vector": "a_path_attribute_module_implements_a_trait_on_the_deref_wrapper",
+      "probe_family": "return_value",
+      "assertions": [
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "expected_finding_count",
+          "count": 1
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "expected_class",
+          "class": "reachable_unrevealed"
+        }
+      ]
+    },
+    {
+      "id": "rust_deref_receiver_partial_member",
+      "language": "rust",
+      "tier": "pure",
+      "source_fixture": "fixtures/rust_deref_receiver_partial_member",
+      "vector": "an_unindexed_member_crate_blanket_trait_takes_the_deref_wrapper_call",
+      "probe_family": "return_value",
+      "assertions": [
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "expected_finding_count",
+          "count": 1
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "expected_class",
+          "class": "reachable_unrevealed"
+        }
+      ]
     }
   ]
 }

@@ -1,0 +1,11 @@
+# Registers the Deref wrapper receiver reading (#15277) under
+# RIPR-SPEC-0001.
+[[extend]]
+id = "RIPR-SPEC-0001"
+tests = [
+  "crates/ripr/src/analysis/classify/owner_pin/deref_receiver.rs::tests::only_a_field_projection_body_names_a_target",
+  "crates/ripr/src/analysis/classify/owner_pin/deref_receiver.rs::tests::deref_spellings_must_be_std_imports_or_headers",
+  "crates/ripr/src/analysis/classify/owner_pin/deref_receiver.rs::tests::a_wrapper_spelling_outside_inert_positions_refuses",
+  "crates/ripr/src/analysis/classify/owner_pin/deref_receiver.rs::tests::only_a_shared_self_receiver_and_std_derives_pass",
+  "crates/ripr/src/analysis/classify/owner_pin/deref_receiver.rs::tests::a_non_ascii_identifier_before_a_bang_is_scanned_by_character",
+]
