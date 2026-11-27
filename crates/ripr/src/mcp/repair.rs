@@ -1198,14 +1198,32 @@ impl WorkspaceSession {
                 .iter()
                 .find(|binding| binding.item_canonical_id == item.canonical_id)
             {
-                Some(binding) => super::repair_card::verify_consumed_source_custody(
-                    root,
-                    snapshot,
-                    item,
-                    producers,
-                    &binding.seam,
-                    "repair preparation",
-                )?,
+                Some(binding) => {
+                    super::repair_card::verify_consumed_source_custody(
+                        root,
+                        snapshot,
+                        item,
+                        producers,
+                        &binding.seam,
+                        "repair preparation",
+                    )?;
+                    // The packet hands out the item's file and its fix site as
+                    // the edit surface, which the seam's evidence files need
+                    // not include (for example a fix-site test file that is
+                    // not a related test), so check them too.
+                    let mut paths = vec![std::path::PathBuf::from(&item.file)];
+                    if !fix_file.is_empty() {
+                        paths.push(std::path::PathBuf::from(&fix_file));
+                    }
+                    super::repair_card::verify_consumed_paths(
+                        root,
+                        snapshot,
+                        item,
+                        producers,
+                        &paths,
+                        "repair preparation",
+                    )?;
+                }
                 None => {
                     // An item with no bound seam is checked over its own file
                     // and its fix-site file (normalized like the digests).

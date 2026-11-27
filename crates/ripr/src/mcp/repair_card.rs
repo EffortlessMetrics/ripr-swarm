@@ -1571,6 +1571,78 @@ mod tests {
         Ok(())
     }
 
+    /// #15240: preparing a bound item also checks the item's own file and its
+    /// fix-site file, which the seam's evidence files need not include. Here
+    /// the fix site (`tests/checkout.rs`) is not one of the seam's evidence
+    /// files (`src/pricing.rs`, `tests/pricing.rs`); unchanged bytes are not
+    /// refused as stale (control), changed bytes are.
+    #[test]
+    fn prepare_checks_a_bound_item_fix_site_outside_the_seam_evidence() -> Result<(), String> {
+        let dir = temp_root()?;
+        std::fs::create_dir_all(dir.join("tests")).map_err(|error| error.to_string())?;
+        let fix = dir.join("tests/checkout.rs");
+        std::fs::write(&fix, b"fn t() {}\n").map_err(|error| error.to_string())?;
+        let entry = weakly_gripped_entry();
+        if crate::app::repair_card_handoff::evidence_probe_paths(&entry)
+            .iter()
+            .any(|path| path == Path::new("tests/checkout.rs"))
+        {
+            return Err("fixture fix site must lie outside the seam evidence".to_string());
+        }
+        let mut session = crate::mcp::repair::tests::session_with(
+            &[super::super::gaps::test_finding()?],
+            "root:sha256:a",
+        )?;
+        let snapshot = session
+            .last_good
+            .as_mut()
+            .and_then(Arc::get_mut)
+            .ok_or("fixture snapshot must be uniquely owned")?;
+        let fix_site = snapshot
+            .require_item("gap:test:1")
+            .map_err(|failure| failure.detail)?
+            .repair_readiness
+            .fix_site
+            .as_ref()
+            .map(|site| site.file.clone());
+        if fix_site.as_deref() != Some("tests/checkout.rs") {
+            return Err(format!("fixture fix site moved: {fix_site:?}"));
+        }
+        let mut consumed = crate::analysis::consumed_source::ConsumedRustSources::default();
+        consumed.record(Path::new("tests/checkout.rs"), Some(b"fn t() {}\n"));
+        snapshot.card_producers = Some(SnapshotCardProducers {
+            config: RiprConfig::default(),
+            consumed_sources: consumed,
+            repository_head: "abc123".to_string(),
+            bindings: vec![binding_for(&entry, "gap:test:1")],
+            candidate_seams: vec![entry.clone()],
+            completeness: crate::mcp::repair_admission::InventoryCompleteness::Complete,
+        });
+        let prepare = |session: &mut WorkspaceSession| {
+            session.prepare_repair("gap:test:1", None, Some("root:sha256:a"), Some(&dir))
+        };
+        if let Err(failure) = prepare(&mut session)
+            && failure.code == CODE_STALE_SNAPSHOT
+        {
+            return Err(format!(
+                "unchanged fix site must not be stale: {}",
+                failure.detail
+            ));
+        }
+        std::fs::write(&fix, b"fn changed() {}\n").map_err(|error| error.to_string())?;
+        let result = prepare(&mut session);
+        std::fs::remove_dir_all(&dir).map_err(|error| error.to_string())?;
+        match result {
+            Err(failure)
+                if failure.code == CODE_STALE_SNAPSHOT
+                    && failure.detail.contains("tests/checkout.rs") =>
+            {
+                Ok(())
+            }
+            other => Err(format!("changed bound fix site must be stale: {other:?}")),
+        }
+    }
+
     #[test]
     fn seam_binding_requires_the_gap_owner_match() -> Result<(), String> {
         let entry = weakly_gripped_entry();
