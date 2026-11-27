@@ -2823,6 +2823,10 @@ fn check_failure(
     // request, so committed and worktree recoveries share one builder.
     let retry = |base: Option<&str>| refresh_retry_arguments(base, source);
     let recovery = match (error.check_refusal().identity, base) {
+        // A vanished root fails every kind the same way: no retry or other
+        // `base` can succeed until the server restarts against a valid root,
+        // so this filesystem fact outranks each typed route.
+        _ if !root.is_dir() => RESTART_ROOT_GONE_RECOVERY.to_string(),
         ("base_unresolvable", None) => format!(
             "retry ripr_refresh with the `base` argument set to a branch, tag or commit this repository has (the detail names candidates), for example {}",
             retry(Some("<ref>"))
@@ -2837,33 +2841,30 @@ fn check_failure(
             retry(base)
         ),
         // A kind with no typed route of its own: the retry is only honest when
-        // nothing in the environment makes it fail the same way. The probes
-        // below are filesystem and Git facts, not prose matching, and run only
-        // for the untyped `analysis_failed` family so a typed refusal keeps its
-        // own recovery.
-        (crate::core_error::ANALYSIS_FAILED_IDENTITY, _) if !root.is_dir() => {
-            RESTART_ROOT_GONE_RECOVERY.to_string()
-        }
+        // the failure is not one that the same call reproduces. These arms
+        // run only for the untyped `analysis_failed` family, so a typed
+        // refusal keeps its own recovery. Both read the producing owner's
+        // verdict from the innermost error text through that owner's own
+        // predicate: a text contract, not a typed kind, and no second probe.
+        //
         // The named diff-scope guard is deterministic for this base: the same
-        // call hits the same limit. The shared predicate owns the match.
+        // call hits the same limit. Every `diff_scope_oversized` limit is
+        // parsed as a positive integer, so the only lever besides a nearer
+        // base is a higher limit.
         (crate::core_error::ANALYSIS_FAILED_IDENTITY, _)
             if crate::analysis::is_diff_scope_oversized(&root_cause_text(error)) =>
         {
             format!(
-                "retrying the same ripr_refresh fails the same way; call ripr_refresh with a nearer `base` (a recent commit or the merge base of your branch), for example {}, or restart the server with a higher limit in the environment variable the detail names (`0` disables the guard)",
+                "retrying the same ripr_refresh fails the same way; call ripr_refresh with a nearer `base` (a recent commit or the merge base of your branch), for example {}, or restart the server with a higher value in the environment variable the detail names",
                 retry(Some("<nearer-ref>"))
             )
         }
-        // Shallow history only explains a failure that names the missing merge
-        // base (git's own `no merge base`); a cancellation or an unrelated
-        // error on a shallow clone is not that failure and keeps the retry.
+        // The diff loader's no-merge-base diagnosis already decided whether a
+        // shallow clone is the cause; only that verdict routes to the fetch.
+        // Unrelated histories, a cancellation or another error on a shallow
+        // clone keep the retry.
         (crate::core_error::ANALYSIS_FAILED_IDENTITY, _)
-            if !error.is_analysis_cancelled()
-                && root_cause_text(error).contains("no merge base")
-                && crate::analysis::is_shallow_repository(
-                    root,
-                    Some(std::time::Duration::from_secs(5)),
-                ) =>
+            if crate::analysis::names_shallow_no_merge_base(&root_cause_text(error)) =>
         {
             format!(
                 "fetch the missing history with `git -C {} fetch --unshallow` (in GitHub Actions, set `fetch-depth: 0` on actions/checkout), then retry ripr_refresh with {}; retrying before the fetch fails the same way",
@@ -4532,7 +4533,16 @@ mod tests {
         // Shallow clone: the fetch comes first and the retry is conditional.
         std::fs::write(dir.join(".git").join("shallow"), "0".repeat(40) + "\n")
             .map_err(|error| error.to_string())?;
-        let no_base = CoreError::message("git diff failed: fatal: main...HEAD: no merge base");
+        // The loader's own verdict, as its producers end their errors.
+        let (diagnosis, is_shallow) =
+            crate::analysis::no_merge_base_diagnosis(&dir, "main", "HEAD", None);
+        assert!(
+            is_shallow,
+            "the fixture must be a shallow clone: {diagnosis}"
+        );
+        let shallow_text =
+            format!("git diff failed: fatal: main...HEAD: no merge base. {diagnosis}");
+        let no_base = CoreError::message(shallow_text.as_str());
         let shallow = check_failure(&no_base, &dir, Some("main"), RefreshSource::Committed);
         assert!(
             shallow.recovery.starts_with("fetch the missing history"),
@@ -4572,7 +4582,18 @@ mod tests {
             kind: crate::analysis::cancellation::AnalysisAbortKind::Cancelled,
         }
         .into();
-        for error in [&cancelled, &CoreError::message("unrelated io failure")] {
+        // Git's bare wording with no shallow verdict, and the unclassified
+        // hint whose root path embeds the phrase, are not the verdict.
+        let bare = CoreError::message("git diff failed: fatal: main...HEAD: no merge base");
+        let root_phrase = CoreError::message(
+            "git diff failed: fatal: bad object. Re-run `git -C /no merge base/This is a shallow clone, so diff main...HEAD` to see Git's full error.",
+        );
+        for error in [
+            &cancelled,
+            &CoreError::message("unrelated io failure"),
+            &bare,
+            &root_phrase,
+        ] {
             let failure = check_failure(error, &dir, Some("main"), RefreshSource::Committed);
             assert!(
                 failure.recovery.starts_with("retry ripr_refresh"),
@@ -4581,8 +4602,7 @@ mod tests {
             );
         }
         // The real wording, through the real Context wrapper, still matches.
-        let wrapped = CoreError::message("git diff failed: fatal: main...HEAD: no merge base")
-            .with_context("loading diff");
+        let wrapped = CoreError::message(shallow_text.as_str()).with_context("loading diff");
         let failure = check_failure(&wrapped, &dir, Some("main"), RefreshSource::Committed);
         assert!(
             failure.recovery.starts_with("fetch the missing history"),
@@ -4613,12 +4633,39 @@ mod tests {
             failure.recovery
         );
 
-        // Deleted root: restart, never retry.
+        // Unrelated histories on a full clone: the loader says no shallow
+        // clone, so the verdict tail is absent and the retry stays.
+        let _ = std::fs::remove_file(dir.join(".git").join("shallow"));
+        let (unrelated, is_shallow) =
+            crate::analysis::no_merge_base_diagnosis(&dir, "main", "HEAD", None);
+        assert!(!is_shallow, "{unrelated}");
+        let failure = check_failure(
+            &CoreError::message(format!("git diff failed: no merge base. {unrelated}")),
+            &dir,
+            Some("main"),
+            RefreshSource::Committed,
+        );
+        assert!(
+            failure.recovery.starts_with("retry ripr_refresh"),
+            "{}",
+            failure.recovery
+        );
+
+        // Deleted root: restart, never retry, for the untyped family and for
+        // every typed kind that would otherwise retry or change `base`.
         std::fs::remove_dir_all(&dir).map_err(|error| error.to_string())?;
-        let gone = check_failure(&untyped, &dir, Some("main"), RefreshSource::Committed);
-        assert_eq!(gone.recovery, RESTART_ROOT_GONE_RECOVERY);
-        assert!(gone.recovery.contains("--root"), "{}", gone.recovery);
-        assert!(!gone.recovery.starts_with("retry"), "{}", gone.recovery);
+        for error in [
+            untyped,
+            CoreError::base_unresolvable("no such base"),
+            CoreError::analysis_timeout("deadline passed"),
+            CoreError::git_invocation_timeout("git diff", 1000, true),
+            CoreError::message(shallow_text.as_str()),
+        ] {
+            let gone = check_failure(&error, &dir, Some("main"), RefreshSource::Committed);
+            assert_eq!(gone.recovery, RESTART_ROOT_GONE_RECOVERY, "{error}");
+        }
+        assert!(RESTART_ROOT_GONE_RECOVERY.contains("--root"));
+        assert!(!RESTART_ROOT_GONE_RECOVERY.starts_with("retry"));
         Ok(())
     }
 
@@ -4672,6 +4719,7 @@ mod tests {
     #[test]
     fn base_refusal_retries_keep_the_requested_source() -> Result<(), String> {
         let root = std::env::temp_dir().join("base refusal root");
+        std::fs::create_dir_all(&root).map_err(|error| error.to_string())?;
         for source in [RefreshSource::Committed, RefreshSource::Worktree] {
             for base in [None, Some("missing-base")] {
                 let failure = check_failure(
@@ -7161,7 +7209,8 @@ mod tests {
         base: Option<&str>,
         source: RefreshSource,
     ) -> AttemptFailure {
-        let failure = check_failure(&error, Path::new("typed-root"), base, source);
+        // An existing root: a vanished one takes the restart recovery instead.
+        let failure = check_failure(&error, &std::env::temp_dir(), base, source);
         assert_eq!(failure.code, CODE_ANALYSIS_FAILED);
         assert!(
             failure
