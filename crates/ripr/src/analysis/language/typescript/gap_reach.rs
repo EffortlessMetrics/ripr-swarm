@@ -408,9 +408,12 @@ fn resolution_config_hides_imports(root: &Path, alias_map: Option<&TsAliasMap>) 
                 }
                 resolves |= extends_may_remap(&config, &dir)
                     || references_leave_the_scan(&config, &dir, root);
-                // Only the root config feeds the alias map, and only when it
-                // loaded. Anything else that remaps resolution is invisible.
-                let loaded_root = depth == 0 && alias_map.is_some_and(TsAliasMap::has_tsconfig);
+                // Only the config the alias map was compiled from, and the
+                // bases it followed, are visible. A sibling such as
+                // `tsconfig.spec.json`, or the unselected `jsconfig.json`,
+                // can remap resolution without the map knowing (#12760).
+                let loaded_root =
+                    depth == 0 && alias_map.is_some_and(|map| map.models_config(&path));
                 if resolves && !loaded_root {
                     if depth == 0 {
                         return ConfigHiding::everywhere();
@@ -1085,6 +1088,84 @@ mod tests {
         );
         assert!(!reach.may_reach(Path::new("test/a.test.ts")));
         assert!(reach.may_reach(Path::new("runtime-tests/node/b.test.ts")));
+        let _ = std::fs::remove_dir_all(&root);
+        Ok(())
+    }
+
+    #[test]
+    fn a_loaded_root_map_exempts_only_the_configs_it_was_compiled_from() -> Result<(), String> {
+        // #12760: `paths` without `baseUrl` loads a root map while scoping
+        // stays on, so the exemption must be bound to the selected config.
+        let root = temp_root("selected-config-identity")?;
+        let write = |name: &str, text: &str| {
+            std::fs::write(root.join(name), text).map_err(|err| format!("write {name}: {err}"))
+        };
+        let load =
+            || super::super::tsconfig::load_alias_map(&root).ok_or("the root alias map must load");
+        let entries = [
+            ("test/a.test.ts", "import { helper } from 'lib/changed';\n"),
+            ("src/changed.ts", "export function changedFn() {}\n"),
+        ];
+        let (owned, ()) = files(&entries);
+        let sources: HashMap<String, &String> = owned
+            .iter()
+            .map(|(path, source)| (path.clone(), source))
+            .collect();
+        let reaches = |map: &TsAliasMap| {
+            GapReach::new(
+                &sources,
+                &["src/changed.ts".to_string()],
+                std::iter::empty(),
+                Some(map),
+                &root,
+                false,
+            )
+            .may_reach(Path::new("test/a.test.ts"))
+        };
+
+        write(
+            "tsconfig.json",
+            r#"{"extends":"./tsconfig.base.json","include":["src"]}"#,
+        )?;
+        write(
+            "tsconfig.base.json",
+            r#"{"compilerOptions":{"paths":{"@app/*":["./src/*"]}}}"#,
+        )?;
+        let map = load()?;
+        let hiding = resolution_config_hides_imports(&root, Some(&map));
+        assert!(!hiding.everywhere && hiding.dirs.is_empty());
+        assert!(
+            !reaches(&map),
+            "no key of the loaded map owns `lib/changed`, so the gap is unrelated"
+        );
+
+        // A sibling project config can map the same specifier onto the change.
+        for sibling in ["tsconfig.spec.json", "jsconfig.json"] {
+            write(
+                sibling,
+                r#"{"compilerOptions":{"paths":{"lib/*":["./src/*"]}}}"#,
+            )?;
+            let map = load()?;
+            assert!(
+                resolution_config_hides_imports(&root, Some(&map)).everywhere,
+                "{sibling} was not loaded and must keep the disclosure"
+            );
+            assert!(reaches(&map), "{sibling}");
+            std::fs::remove_file(root.join(sibling)).map_err(|err| format!("rm: {err}"))?;
+        }
+
+        // A followed base whose `paths` the selected config replaced is not
+        // stated by the map either.
+        write(
+            "tsconfig.json",
+            r#"{"extends":"./tsconfig.base.json","compilerOptions":{"paths":{"@app/*":["./src/*"]}}}"#,
+        )?;
+        write(
+            "tsconfig.base.json",
+            r#"{"compilerOptions":{"paths":{"lib/*":["./src/*"]}}}"#,
+        )?;
+        let map = load()?;
+        assert!(resolution_config_hides_imports(&root, Some(&map)).everywhere);
         let _ = std::fs::remove_dir_all(&root);
         Ok(())
     }

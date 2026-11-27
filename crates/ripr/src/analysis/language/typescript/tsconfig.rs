@@ -12,10 +12,15 @@
 //!   through a relative `extends` chain, or cannot be read/parsed)
 //!   resolves through THAT config's own map ([`TsAliasMap::nested_for`],
 //!   `baseUrl` anchored at the config's directory), never the root map
-//!   (#12754). It fails closed (unresolved) when that config has no
-//!   `baseUrl` (#12760), uses an unsupported `extends`/`references` form,
-//!   or when `tsconfig.json` and `jsconfig.json` in one directory both own
-//!   paths. Root fallback is unchanged when no nearer config owns `paths`.
+//!   (#12754). It fails closed (unresolved) when that config uses an
+//!   unsupported `extends`/`references` form, or when `tsconfig.json` and
+//!   `jsconfig.json` in one directory both own paths. Root fallback is
+//!   unchanged when no nearer config owns `paths`.
+//! - Without an effective `baseUrl`, `paths` templates resolve against the
+//!   directory of the config that DECLARES `paths`, as `tsc` does since 4.1
+//!   (#12760). `tsc` rejects a non-relative template there (TS5090), so a
+//!   template that does not start with `./` or `../` keeps its key as an
+//!   unresolved blocker instead of being guessed against some other anchor.
 //! - `extends` chains are followed up to 8 hops when every target is a
 //!   relative (`./`, `../`) regular file inside the workspace root; an
 //!   inherited `baseUrl` stays anchored at the config that declares it, as
@@ -23,7 +28,9 @@
 //!   `references`, package-name `extends`, bases outside the root or behind
 //!   a symlinked file or directory, cycles, and missing targets fail closed,
 //!   except that an unfollowable base is ignored when the extending config
-//!   declares a non-null `baseUrl` and `paths` itself (a cycle never is).
+//!   declares a non-null `baseUrl` and `paths` itself (a cycle never is). A
+//!   config that declares `paths` without `baseUrl` is not self-sufficient:
+//!   the base it cannot read could supply the `baseUrl` that anchors them.
 //! - Resolution succeeds ONLY when a specifier matches a SINGLE existing
 //!   workspace file (.ts/.tsx/.js/.jsx/.mts/.cts/.mjs/.cjs).
 //!   Zero or >1 matches → `None`.
@@ -31,7 +38,7 @@
 //! - Tied longest prefixes and unsupported winning templates → `None`.
 //! - Multi-entry value arrays (more than one candidate template) → `None`.
 //! - Multi-`*` glob patterns → `None`.
-//! - Any parse error or missing field → `None`.
+//! - Any parse error, or a chain with neither `baseUrl` nor `paths` → `None`.
 //! - Candidates or `baseUrl` containing `..` segments, rooted components,
 //!   or drive/UNC prefixes → `None` BEFORE any filesystem probe; an
 //!   absolute `baseUrl` additionally surfaces the named limitation
@@ -140,6 +147,12 @@ pub(crate) struct TsAliasMap {
     /// workspace, so a per-package config edit invalidates cached facts that a
     /// root-only digest could not see (#12754).
     nested_configs: u64,
+    /// The config files whose alias settings this map states exactly: the
+    /// selected config and the bases its `extends` chain followed, minus any
+    /// base whose own `paths` a later config replaced. Lexically normalized.
+    /// A sibling such as `tsconfig.spec.json` or the unselected
+    /// `jsconfig.json` is never here (#12760).
+    modeled_configs: Vec<PathBuf>,
 }
 
 #[derive(Debug, Clone)]
@@ -199,8 +212,8 @@ impl TsAliasUnresolveCause {
                 "add a compilerOptions.paths key matching this specifier for credit",
             ),
             Self::CandidateUnresolved => (
-                "the matched pattern's candidate did not resolve to exactly one in-root workspace file (zero or multiple files, an unsupported template, or an out-of-root candidate rejected before probing)",
-                "point the matched template at exactly one existing workspace file for credit",
+                "the matched pattern's candidate did not resolve to exactly one in-root workspace file (zero or multiple files, an unsupported template, a target without a leading `./` in a config that sets no baseUrl, or an out-of-root candidate rejected before probing)",
+                "point the matched template at exactly one existing workspace file for credit (start it with `./` when the config sets no compilerOptions.baseUrl)",
             ),
         }
     }
@@ -231,8 +244,9 @@ pub(crate) enum TsAliasMapLoadGap {
     /// The config uses `extends`/`references`, which single-hop resolution
     /// deliberately does not follow. `config` names the loaded file.
     ExtendsUnsupported { config: &'static str },
-    /// The config parsed but has no `compilerOptions.baseUrl` to anchor
-    /// candidates. `config` names the loaded file.
+    /// The config parsed but its chain sets neither `compilerOptions.paths`
+    /// nor `compilerOptions.baseUrl`, so there is no alias to resolve.
+    /// `config` names the loaded file.
     IncompleteConfig { config: &'static str },
     /// The config exists but could not be read (size cap or IO error); the
     /// size-limit case is separately disclosed by the capped-read lane.
@@ -252,7 +266,7 @@ impl TsAliasMapLoadGap {
         match self {
             Self::ConfigMissing => (
                 "no tsconfig.json or jsconfig.json exists at the workspace root, and the importing file's nearest package config does not supply a usable `paths` map; the root map reads only those two workspace-root configs".to_string(),
-                "add compilerOptions.baseUrl and compilerOptions.paths to the importing package's tsconfig.json (or jsconfig.json), or to the workspace root, for credit; a package config is followed only with a `baseUrl` (its own or inherited) and relative `extends` bases inside the workspace"
+                "add compilerOptions.paths to the importing package's tsconfig.json (or jsconfig.json), or to the workspace root, for credit; without compilerOptions.baseUrl each target must start with `./`, and a package config is followed only through relative `extends` bases inside the workspace"
                     .to_string(),
             ),
             Self::ConfigUnparseable { config, detail } => (
@@ -271,10 +285,10 @@ impl TsAliasMapLoadGap {
             ),
             Self::IncompleteConfig { config } => (
                 format!(
-                    "the {config} at the workspace root parsed but has no compilerOptions.baseUrl to anchor alias candidates"
+                    "the {config} at the workspace root parsed but sets no compilerOptions.paths (its own or inherited) to resolve this specifier"
                 ),
                 format!(
-                    "add compilerOptions.baseUrl (and compilerOptions.paths) to {config} for credit"
+                    "add a compilerOptions.paths entry for this specifier to {config} for credit; without compilerOptions.baseUrl its target must start with `./`"
                 ),
             ),
             Self::ReadFailed { config } => (
@@ -394,8 +408,7 @@ impl TsAliasMap {
     /// when the directory does not hold exactly one `paths`-declaring
     /// conventional config (both `tsconfig.json` and `jsconfig.json` declaring
     /// is an unmodeled selection), or the config is unreadable, unparseable,
-    /// uses an unsupported `extends`/`references` form, lacks `baseUrl`
-    /// (`paths` without `baseUrl` is owned by #12760), or has an unsafe
+    /// uses an unsupported `extends`/`references` form, or has an unsafe
     /// `baseUrl`. Workspace package names remain shared with the root map.
     pub(crate) fn nested_for(&self, config_dir: &Path) -> Result<Self, ()> {
         let declaring: Vec<PathBuf> = ["tsconfig.json", "jsconfig.json"]
@@ -443,6 +456,16 @@ impl TsAliasMap {
     /// `true` when the map's `paths` entries came from a loaded config.
     pub(crate) fn has_tsconfig(&self) -> bool {
         self.tsconfig_loaded
+    }
+
+    /// Whether this map states the alias settings of the config file at
+    /// `path` exactly: the selected config, or a base its `extends` chain
+    /// followed whose `paths` are the effective ones. Loading
+    /// `tsconfig.json` says nothing about a sibling `tsconfig.spec.json` or
+    /// the unselected `jsconfig.json` (#12760).
+    pub(crate) fn models_config(&self, path: &Path) -> bool {
+        self.tsconfig_loaded
+            && normalize_lexically(path).is_some_and(|path| self.modeled_configs.contains(&path))
     }
 
     /// `true` when this map has no entries (opt-out / parse-failure path).
@@ -635,8 +658,7 @@ impl TsAliasMap {
 /// Returns `None` (fail-closed) on any of:
 /// - Neither file exists.
 /// - JSON parse error.
-/// - `compilerOptions` absent.
-/// - `baseUrl` absent.
+/// - The chain sets neither `baseUrl` nor `paths`.
 /// - `references` present, or an `extends` form outside the supported
 ///   relative in-root chain (package name, symlinked or out-of-root base,
 ///   cycle, missing target unless the config is self-sufficient, or deeper
@@ -728,14 +750,24 @@ enum TsAliasMapBlocker {
 ///
 /// `baseUrl` keeps its provenance: `tsc` resolves it against the directory
 /// of the config that DECLARES it, not the extending one, so an inherited
-/// cross-directory `baseUrl` is rebased exactly (#11204).
+/// cross-directory `baseUrl` is rebased exactly (#11204). `paths` keeps the
+/// same provenance, because without a `baseUrl` its templates resolve against
+/// the config that declares them (#12760).
 struct MergedCompilerOptions {
     /// `(declaring config directory, raw baseUrl)`.
     base_url: Option<(PathBuf, String)>,
-    paths: Option<HashMap<String, Vec<String>>>,
+    paths: Option<DeclaredPaths>,
+    /// See [`TsAliasMap::modeled_configs`].
+    modeled_configs: Vec<PathBuf>,
     /// Whether the effective module resolution loads a directory's `index`
     /// file. See [`directory_index_lookup`].
     directory_index: bool,
+}
+
+/// A `paths` object and the config file that declares it.
+struct DeclaredPaths {
+    config: PathBuf,
+    entries: HashMap<String, Vec<String>>,
 }
 
 /// Whether the effective module resolution performs directory lookup, so a
@@ -769,7 +801,10 @@ fn option_name(value: serde_json::Value) -> String {
 /// `Some(None)` = cleared by an explicit `null`, `Some(Some(_))` = set.
 struct ChainOptions {
     base_url: Option<Option<(PathBuf, String)>>,
-    paths: Option<Option<HashMap<String, Vec<String>>>>,
+    paths: Option<Option<DeclaredPaths>>,
+    /// Every config merged so far, with the config that declares the
+    /// `paths` in effect for it (`None` when it has none).
+    followed: Vec<(PathBuf, Option<PathBuf>)>,
     /// Lowercased `module` / `moduleResolution`, nearest declaration.
     module: Option<String>,
     module_resolution: Option<String>,
@@ -816,10 +851,29 @@ fn merge_compiler_options(
     depth: usize,
 ) -> Result<MergedCompilerOptions, TsAliasMapBlocker> {
     let chain = merge_chain(root, config_path, text, visited, depth)?;
+    let directory_index = directory_index_lookup(&chain);
+    let paths = chain.paths.flatten();
+    // A followed config is modeled only when the `paths` in effect for it
+    // are the ones this map states. A base whose own `paths` a later config
+    // replaced is not, and neither is a config between them that inherits
+    // the replaced `paths` without declaring any.
+    let modeled_configs = chain
+        .followed
+        .into_iter()
+        .filter(|(_, effective)| {
+            effective.as_ref().is_none_or(|effective| {
+                paths
+                    .as_ref()
+                    .is_some_and(|declared| declared.config == *effective)
+            })
+        })
+        .filter_map(|(config, _)| normalize_lexically(&config))
+        .collect();
     Ok(MergedCompilerOptions {
-        directory_index: directory_index_lookup(&chain),
+        directory_index,
         base_url: chain.base_url.flatten(),
-        paths: chain.paths.flatten(),
+        paths,
+        modeled_configs,
     })
 }
 
@@ -861,6 +915,7 @@ fn merge_chain_level(
     let mut merged = ChainOptions {
         base_url: None,
         paths: None,
+        followed: Vec::new(),
         module: None,
         module_resolution: None,
         module_resolution_unknown: false,
@@ -905,6 +960,7 @@ fn merge_chain_level(
             if base.paths.is_some() {
                 merged.paths = base.paths;
             }
+            merged.followed.extend(base.followed);
             if base.module.is_some() {
                 merged.module = base.module;
             }
@@ -918,8 +974,24 @@ fn merge_chain_level(
         if let Some(base_url) = options.base_url {
             merged.base_url = Some(base_url.map(|raw| (config_dir.to_path_buf(), raw)));
         }
-        if options.paths.is_some() {
-            merged.paths = options.paths;
+        if let Some(paths) = options.paths {
+            merged.paths = Some(paths.map(|entries| {
+                DeclaredPaths {
+                    config: config_path.to_path_buf(),
+                    // `tsc` normalizes `\` to `/` in a substitution before it
+                    // joins or tests it, so `.\src\*` is `./src/*`.
+                    entries: entries
+                        .into_iter()
+                        .map(|(key, templates)| {
+                            let templates = templates
+                                .into_iter()
+                                .map(|template| template.replace('\\', "/"))
+                                .collect();
+                            (key, templates)
+                        })
+                        .collect(),
+                }
+            }));
         }
         if let Some(module) = options.module {
             merged.module = Some(option_name(module));
@@ -929,6 +1001,14 @@ fn merge_chain_level(
             merged.module_resolution_unknown = false;
         }
     }
+    let effective_paths_config = merged
+        .paths
+        .as_ref()
+        .and_then(Option::as_ref)
+        .map(|declared| declared.config.clone());
+    merged
+        .followed
+        .push((config_path.to_path_buf(), effective_paths_config));
     Ok(merged)
 }
 
@@ -1013,10 +1093,24 @@ fn parse_alias_map(
     text: &str,
 ) -> Result<TsAliasMap, TsAliasMapBlocker> {
     let merged = merge_compiler_options(root, config_path, text, &mut Vec::new(), 0)?;
-    let (declaring_dir, raw_base_url) =
-        merged.base_url.ok_or(TsAliasMapBlocker::IncompleteConfig)?;
+    // With no effective `baseUrl`, `tsc` resolves each template against the
+    // directory of the config that declares `paths`, and rejects a template
+    // that is not relative (TS5090). Such a template keeps its key below as a
+    // blocker rather than being resolved against an anchor `tsc` never uses.
+    let templates_must_be_relative = merged.base_url.is_none();
+    let paths_dir = merged
+        .paths
+        .as_ref()
+        .and_then(|declared| declared.config.parent().map(Path::to_path_buf));
+    let (declaring_dir, raw_base_url) = merged
+        .base_url
+        .or_else(|| paths_dir.map(|dir| (dir, ".".to_string())))
+        .ok_or(TsAliasMapBlocker::IncompleteConfig)?;
+    let paths = merged
+        .paths
+        .map(|declared| declared.entries)
+        .unwrap_or_default();
     let directory_index = merged.directory_index;
-    let paths = merged.paths.unwrap_or_default();
 
     // `baseUrl` resolves against its DECLARING config (#11204). An absolute
     // baseUrl (POSIX `/…`, drive-letter, or UNC), or one whose anchor
@@ -1060,7 +1154,8 @@ fn parse_alias_map(
                 Some(template.clone())
             }
             _ => None,
-        };
+        }
+        .filter(|template| !templates_must_be_relative || is_dot_relative(template));
 
         // Determine if key is literal or single-`*` glob.
         let star_count = key.chars().filter(|&c| c == '*').count();
@@ -1093,7 +1188,13 @@ fn parse_alias_map(
         config_dir,
         parent_digest: None,
         nested_configs: 0,
+        modeled_configs: merged.modeled_configs,
     })
+}
+
+/// `tsc`'s `pathIsRelative`: `.`, `..`, or a `./` / `../` prefix.
+fn is_dot_relative(template: &str) -> bool {
+    matches!(template, "." | "..") || template.starts_with("./") || template.starts_with("../")
 }
 
 /// Workspace-relative, `/`-separated directory of `config_path`; empty for a
@@ -1385,7 +1486,14 @@ pub(crate) fn nested_configs_fingerprint(root: &Path, files: &[PathBuf]) -> Opti
                 Ok(merged) => {
                     merged.base_url.hash(&mut hasher);
                     merged.directory_index.hash(&mut hasher);
-                    let mut paths: Vec<_> = merged.paths.unwrap_or_default().into_iter().collect();
+                    // The declaring config anchors the templates when no
+                    // `baseUrl` is in effect (#12760).
+                    let (declared_in, entries) = match merged.paths {
+                        Some(declared) => (Some(declared.config), declared.entries),
+                        None => (None, HashMap::new()),
+                    };
+                    declared_in.hash(&mut hasher);
+                    let mut paths: Vec<_> = entries.into_iter().collect();
                     paths.sort();
                     paths.hash(&mut hasher);
                 }
@@ -1952,13 +2060,17 @@ mod tests {
             map.as_ref().and_then(|map| map.resolve("@/x")).is_none(),
             "a null paths must not keep the inherited aliases"
         );
-        // `baseUrl: null` clears the inherited anchor: incomplete config.
+        // `baseUrl: null` clears the inherited anchor. The inherited `src/*`
+        // is then a non-relative template with no `baseUrl`, which `tsc`
+        // rejects (#12760): the key is kept and nothing resolves through it.
         write(
             &root,
             "tsconfig.json",
             r#"{"extends":"./tsconfig.base.json","compilerOptions":{"baseUrl":null}}"#,
         );
-        assert!(load_alias_map(&root).is_none());
+        let map = load_alias_map(&root);
+        assert!(map.as_ref().is_some_and(|map| map.paths_key_matches("@/x")));
+        assert!(map.as_ref().and_then(|map| map.resolve("@/x")).is_none());
         let _ = std::fs::remove_dir_all(&root);
     }
 
@@ -2039,14 +2151,281 @@ mod tests {
     }
 
     #[test]
-    fn returns_none_when_base_url_absent() {
-        let root = temp_dir("no-base-url");
+    fn returns_none_when_neither_base_url_nor_paths_is_set() {
+        let root = temp_dir("no-base-url-no-paths");
         write(
             &root,
             "tsconfig.json",
-            r#"{"compilerOptions":{"paths":{"@/*":["src/*"]}}}"#,
+            r#"{"compilerOptions":{"strict":true}}"#,
         );
         assert!(load_alias_map(&root).is_none());
+        // `"paths": null` clears, so nothing is declared either.
+        write(
+            &root,
+            "tsconfig.json",
+            r#"{"compilerOptions":{"paths":null}}"#,
+        );
+        assert!(load_alias_map(&root).is_none());
+    }
+
+    fn resolved(map: &TsAliasMap, specifier: &str) -> Option<String> {
+        map.resolve(specifier)
+            .map(|path| path.to_string_lossy().replace('\\', "/"))
+    }
+
+    #[test]
+    fn relative_paths_resolve_without_base_url() -> Result<(), String> {
+        // #12760: the create-next-app default. `tsc` anchors the template at
+        // the directory of the config that declares `paths`.
+        for config in ["tsconfig.json", "jsconfig.json"] {
+            let root = temp_dir(&format!("no-base-url-{config}"));
+            write(
+                &root,
+                config,
+                r#"{"compilerOptions":{"paths":{"@/*":["./src/*"],"@owner":["./src/owner.ts"],"@win/*":[".\\src\\*"]}}}"#,
+            );
+            write(&root, "src/owner.ts", "export const owner = 1;\n");
+            // A same-named file at a different anchor must not be chosen.
+            write(&root, "owner.ts", "export const decoy = 1;\n");
+            let map = load_alias_map(&root).ok_or("a no-baseUrl config must load")?;
+            assert_eq!(
+                resolved(&map, "@/owner").as_deref(),
+                Some("src/owner.ts"),
+                "{config}"
+            );
+            assert_eq!(
+                resolved(&map, "@owner").as_deref(),
+                Some("src/owner.ts"),
+                "{config}"
+            );
+            // `tsc` reads a backslash-separated target as the same path.
+            assert_eq!(
+                resolved(&map, "@win/owner").as_deref(),
+                Some("src/owner.ts"),
+                "{config}"
+            );
+            assert_eq!(resolved(&map, "@/missing"), None, "{config}");
+            assert!(map.models_config(&root.join(config)));
+            let _ = std::fs::remove_dir_all(&root);
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn non_relative_template_without_base_url_blocks_its_key() -> Result<(), String> {
+        // `tsc` rejects `src/*` here (TS5090). The key still wins selection,
+        // so neither the broader alias nor a workspace package may take it.
+        let root = temp_dir("no-base-url-non-relative");
+        write(
+            &root,
+            "tsconfig.json",
+            r#"{"compilerOptions":{"paths":{"@/lib/*":["src/*"],"@/*":["./fallback/*"],"plain":["src/owner.ts"]}}}"#,
+        );
+        write(&root, "src/owner.ts", "export const owner = 1;\n");
+        write(&root, "fallback/lib/owner.ts", "export const decoy = 1;\n");
+        write(&root, "fallback/other.ts", "export const other = 1;\n");
+        let map = load_alias_map(&root).ok_or("the config must still load")?;
+        assert_eq!(resolved(&map, "@/lib/owner"), None);
+        assert_eq!(resolved(&map, "plain"), None);
+        assert!(map.paths_key_matches("@/lib/owner"));
+        assert_eq!(
+            map.unresolve_cause_for("@/lib/owner"),
+            TsAliasUnresolveCause::CandidateUnresolved
+        );
+        // The relative sibling key is unaffected.
+        assert_eq!(
+            resolved(&map, "@/other").as_deref(),
+            Some("fallback/other.ts")
+        );
+        // The same template is valid once a `baseUrl` anchors it.
+        write(
+            &root,
+            "tsconfig.json",
+            r#"{"compilerOptions":{"baseUrl":".","paths":{"@/lib/*":["src/*"]}}}"#,
+        );
+        let map = load_alias_map(&root).ok_or("the baseUrl config must load")?;
+        assert_eq!(
+            resolved(&map, "@/lib/owner").as_deref(),
+            Some("src/owner.ts")
+        );
+        let _ = std::fs::remove_dir_all(&root);
+        Ok(())
+    }
+
+    #[test]
+    fn inherited_paths_without_base_url_anchor_at_the_declaring_config() -> Result<(), String> {
+        // Same-directory base, then a base in `config/`: the template is
+        // relative to the file that declares `paths`, not the extending one.
+        let root = temp_dir("no-base-url-inherited");
+        write(
+            &root,
+            "tsconfig.json",
+            r#"{"extends":"./tsconfig.base.json"}"#,
+        );
+        write(
+            &root,
+            "tsconfig.base.json",
+            r#"{"compilerOptions":{"paths":{"@/*":["./src/*"]}}}"#,
+        );
+        write(&root, "src/owner.ts", "export const owner = 1;\n");
+        write(&root, "config/src/owner.ts", "export const decoy = 1;\n");
+        let map = load_alias_map(&root).ok_or("same-directory inherited paths must load")?;
+        assert_eq!(resolved(&map, "@/owner").as_deref(), Some("src/owner.ts"));
+        assert!(map.models_config(&root.join("tsconfig.json")));
+        assert!(map.models_config(&root.join("tsconfig.base.json")));
+
+        write(
+            &root,
+            "tsconfig.json",
+            r#"{"extends":"./config/tsconfig.base.json"}"#,
+        );
+        write(
+            &root,
+            "config/tsconfig.base.json",
+            r#"{"compilerOptions":{"paths":{"@/*":["./src/*"]}}}"#,
+        );
+        let map = load_alias_map(&root).ok_or("cross-directory inherited paths must load")?;
+        assert_eq!(
+            resolved(&map, "@/owner").as_deref(),
+            Some("config/src/owner.ts")
+        );
+        // The same-directory base is no longer part of the chain.
+        assert!(!map.models_config(&root.join("tsconfig.base.json")));
+        let _ = std::fs::remove_dir_all(&root);
+        Ok(())
+    }
+
+    #[test]
+    fn base_url_from_either_side_of_the_chain_still_anchors_paths() -> Result<(), String> {
+        let root = temp_dir("no-base-url-mixed-chain");
+        write(&root, "src/owner.ts", "export const owner = 1;\n");
+        write(&root, "config/src/owner.ts", "export const decoy = 1;\n");
+        // Inherited `baseUrl` (declared in `config/`), own non-relative paths.
+        write(
+            &root,
+            "tsconfig.json",
+            r#"{"extends":"./config/base.json","compilerOptions":{"paths":{"@/*":["src/*"]}}}"#,
+        );
+        write(
+            &root,
+            "config/base.json",
+            r#"{"compilerOptions":{"baseUrl":"."}}"#,
+        );
+        let map = load_alias_map(&root).ok_or("inherited baseUrl must load")?;
+        assert_eq!(
+            resolved(&map, "@/owner").as_deref(),
+            Some("config/src/owner.ts")
+        );
+        // Own `baseUrl`, inherited paths: the extending config's anchor wins.
+        write(
+            &root,
+            "tsconfig.json",
+            r#"{"extends":"./config/base.json","compilerOptions":{"baseUrl":"."}}"#,
+        );
+        write(
+            &root,
+            "config/base.json",
+            r#"{"compilerOptions":{"paths":{"@/*":["src/*"]}}}"#,
+        );
+        let map = load_alias_map(&root).ok_or("own baseUrl must load")?;
+        assert_eq!(resolved(&map, "@/owner").as_deref(), Some("src/owner.ts"));
+        // An explicit `null` clears the inherited `baseUrl`; the inherited
+        // non-relative template then has no anchor `tsc` accepts.
+        write(
+            &root,
+            "tsconfig.json",
+            r#"{"extends":"./config/base.json","compilerOptions":{"baseUrl":null}}"#,
+        );
+        write(
+            &root,
+            "config/base.json",
+            r#"{"compilerOptions":{"baseUrl":"..","paths":{"@/*":["src/*"]}}}"#,
+        );
+        let map = load_alias_map(&root).ok_or("cleared baseUrl must still load")?;
+        assert_eq!(resolved(&map, "@/owner"), None);
+        let _ = std::fs::remove_dir_all(&root);
+        Ok(())
+    }
+
+    #[test]
+    fn unfollowable_base_is_not_ignored_for_paths_without_base_url() {
+        // The package base could supply the `baseUrl` that anchors these
+        // templates, so own `paths` alone is not self-sufficient.
+        let root = temp_dir("no-base-url-package-base");
+        write(
+            &root,
+            "tsconfig.json",
+            r#"{"extends":"@scope/tsconfig","compilerOptions":{"paths":{"@/*":["./src/*"]}}}"#,
+        );
+        write(&root, "src/owner.ts", "export const owner = 1;\n");
+        assert!(load_alias_map(&root).is_none());
+    }
+
+    #[test]
+    fn a_map_models_only_the_configs_it_was_compiled_from() -> Result<(), String> {
+        let root = temp_dir("modeled-configs");
+        write(
+            &root,
+            "tsconfig.json",
+            r#"{"extends":"./tsconfig.base.json","compilerOptions":{"paths":{"@/*":["./src/*"]}}}"#,
+        );
+        write(
+            &root,
+            "tsconfig.base.json",
+            r#"{"extends":"./tsconfig.options.json","compilerOptions":{"paths":{"old/*":["./old/*"]}}}"#,
+        );
+        write(
+            &root,
+            "tsconfig.options.json",
+            r#"{"compilerOptions":{"strict":true}}"#,
+        );
+        for sibling in ["tsconfig.spec.json", "jsconfig.json"] {
+            write(
+                &root,
+                sibling,
+                r#"{"compilerOptions":{"paths":{"spec/*":["./spec/*"]}}}"#,
+            );
+        }
+        let map = load_alias_map(&root).ok_or("the chain must load")?;
+        assert!(map.models_config(&root.join("tsconfig.json")));
+        assert!(map.models_config(&root.join("./tsconfig.options.json")));
+        assert!(
+            !map.models_config(&root.join("tsconfig.base.json")),
+            "a base whose paths were replaced is not stated by the map"
+        );
+        assert!(!map.models_config(&root.join("tsconfig.spec.json")));
+        assert!(!map.models_config(&root.join("jsconfig.json")));
+        let packages_only = TsAliasMap::workspace_packages_only(&root, Default::default());
+        assert!(!packages_only.models_config(&root.join("tsconfig.json")));
+        // A config between the selected one and the replaced base inherits
+        // the replaced `paths` without declaring any: not modeled either.
+        write(
+            &root,
+            "tsconfig.json",
+            r#"{"extends":"./tsconfig.mid.json","compilerOptions":{"paths":{"@/*":["./src/*"]}}}"#,
+        );
+        write(
+            &root,
+            "tsconfig.mid.json",
+            r#"{"extends":"./tsconfig.base.json","include":["test"]}"#,
+        );
+        let map = load_alias_map(&root).ok_or("the longer chain must load")?;
+        assert!(map.models_config(&root.join("tsconfig.json")));
+        assert!(map.models_config(&root.join("tsconfig.options.json")));
+        assert!(!map.models_config(&root.join("tsconfig.mid.json")));
+        assert!(!map.models_config(&root.join("tsconfig.base.json")));
+        // Once the selected config inherits those `paths` instead, the
+        // whole chain states the same aliases.
+        write(
+            &root,
+            "tsconfig.json",
+            r#"{"extends":"./tsconfig.mid.json"}"#,
+        );
+        let map = load_alias_map(&root).ok_or("the inheriting chain must load")?;
+        assert!(map.models_config(&root.join("tsconfig.mid.json")));
+        assert!(map.models_config(&root.join("tsconfig.base.json")));
+        let _ = std::fs::remove_dir_all(&root);
+        Ok(())
     }
 
     #[test]
