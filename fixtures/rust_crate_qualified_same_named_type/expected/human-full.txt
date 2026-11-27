@@ -49,10 +49,6 @@ Weakness
   - No relevant oracle was detected
   - No strong discriminator was detected
 
-Stop reasons:
-  - a related test mentions a fixture, builder, or generator, so its inputs may come from values ripr does not evaluate (fixture_opaque)
-    Next: Pass a literal input in the test, or assert on a value derived from the fixture with an exact `assert_eq!`.
-
 Next step
   The indexed related tests do not establish a call to the changed owner. Inspect existing tests, doctests and examples before changing assertions; they may already constrain the changed behavior. Add or strengthen a test only if that inspection finds a gap
 Drill in:

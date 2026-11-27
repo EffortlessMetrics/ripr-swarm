@@ -11,7 +11,7 @@ Issue: #14083
 The library has two modules with a type named `Rng`: `src/lib.rs` is
 `mod a; mod b; pub use b::Rng;`. The changed predicate is in `a::Rng::digit`,
 and `a` has no constructor. The one integration test calls
-`rust_crate_qualified_same_named_type_fixture::Rng::new().digit(..)`, which
+`rg::Rng::new().digit(..)`, which
 builds the re-exported `b::Rng` and never runs the changed method.
 
 ## When

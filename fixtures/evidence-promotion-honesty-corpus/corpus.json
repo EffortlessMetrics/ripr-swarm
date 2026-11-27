@@ -9472,6 +9472,15 @@
         {
           "type": "expected_class",
           "class": "weakly_exposed"
+        },
+        {
+          "type": "expected_related_test",
+          "name": "parses the scheme",
+          "file": "tests/url.test.ts",
+          "line": 3,
+          "kind": "exact_value",
+          "strength": "strong",
+          "relation_reason": "direct_owner_call"
         }
       ]
     },
@@ -22221,6 +22230,15 @@
         {
           "type": "maximum_class",
           "class": "weakly_exposed"
+        },
+        {
+          "type": "expected_related_test",
+          "name": "rng_digit",
+          "file": "tests/t.rs",
+          "line": 2,
+          "kind": "exact_value",
+          "strength": "strong",
+          "relation_reason": "weak_token_substring"
         }
       ]
     },

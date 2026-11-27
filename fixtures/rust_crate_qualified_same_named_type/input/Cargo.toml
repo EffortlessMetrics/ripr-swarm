@@ -1,4 +1,4 @@
 [package]
-name = "rust_crate_qualified_same_named_type_fixture"
+name = "rg"
 version = "0.0.0"
 edition = "2024"
