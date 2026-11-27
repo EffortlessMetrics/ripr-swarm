@@ -242,12 +242,13 @@ mod tests {
     #[test]
     fn timed_out_add_surfaces_the_original_timeout() -> Result<(), String> {
         let root = unique_root("add-timeout")?;
-        let error = fixture_git_ok_with_deadline(
+        let Err(error) = fixture_git_ok_with_deadline(
             &root,
             &["-c", "user.name=Fixture", "add", "-A"],
             Duration::ZERO,
-        )
-        .expect_err("zero-deadline add must fail");
+        ) else {
+            return Err("zero-deadline add unexpectedly succeeded".to_string());
+        };
         assert!(error.starts_with("fixture_git_timeout:"), "{error}");
         assert!(error.contains("(not spawned)"), "{error}");
         Ok(())
