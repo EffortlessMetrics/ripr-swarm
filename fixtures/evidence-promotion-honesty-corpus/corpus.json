@@ -425,6 +425,33 @@
       ]
     },
     {
+      "id": "python_parent_collected_test_shadow",
+      "language": "python",
+      "tier": "pure",
+      "source_fixture": "fixtures/python_parent_collected_test_shadow",
+      "vector": "parent_collected_test_module_puts_a_helper_ahead_of_the_project_module",
+      "assertions": [
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "expected_finding_count",
+          "count": 1
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "expected_class",
+          "class": "weakly_exposed"
+        },
+        {
+          "type": "expected_finding_owner",
+          "owner": "python:svc/a/core.py::price"
+        }
+      ]
+    },
+    {
       "id": "python_route_response_json_patch",
       "language": "python",
       "tier": "pure",

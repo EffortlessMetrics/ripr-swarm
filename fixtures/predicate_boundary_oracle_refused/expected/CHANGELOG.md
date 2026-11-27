@@ -454,3 +454,16 @@ Command:
 
 Updated:
 - `expected/human.txt`
+
+## Pending — predicate_boundary_oracle_refused (36)
+
+Reason:
+RIPR-SPEC-0224: inert row names the construct its refusals agree on (#15337)
+
+Command:
+`cargo xtask goldens bless predicate_boundary_oracle_refused --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
