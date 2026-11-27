@@ -8067,7 +8067,10 @@ fn refresh_source_worktree_discloses_untracked_input_and_the_intent_to_add_remed
 /// that changed (edited source, edited test, deleted file) after the snapshot
 /// captured it. Each case first prepares a ready transaction over the same
 /// unchanged tree (negative control), then mutates and must see the card and
-/// the prepare agree on the typed `stale_snapshot` refusal.
+/// the prepare agree on the typed `stale_snapshot` refusal. The first case
+/// also covers a never-prepared item: a stale first prepare mints no attempt
+/// (the gap's `repair_attempt` link stays null before and after), and the
+/// restored bytes then prepare and bind the matching live attempt link.
 #[cfg(feature = "lang-rust")]
 #[test]
 fn prepare_repair_refuses_source_changed_after_the_snapshot() -> Result<(), String> {
@@ -8116,6 +8119,48 @@ fn prepare_repair_refuses_source_changed_after_the_snapshot() -> Result<(), Stri
         let id = ready_id
             .clone()
             .ok_or("control must yield a repair-ready item")?;
+        if label == "source-edit" {
+            // The other cases exercise stale replay. This fresh item has not
+            // been prepared at all, so check the live link before and after.
+            let require_no_attempt = |session: &mut SequentialStdio, call_id: &str| {
+                let reply = session.call_tool(
+                    call_id,
+                    "ripr_get_gap",
+                    json!({ "canonical_id": id }),
+                    TIMEOUT,
+                )?;
+                let gap = structured_tool_success(&reply, "ripr_get_gap")?;
+                if gap.pointer("/item/links/repair_attempt") != Some(&Value::Null) {
+                    return Err(format!("expected an explicit null attempt link: {gap}"));
+                }
+                Ok::<(), String>(())
+            };
+            require_no_attempt(&mut session, "first-mint-before")?;
+            let mut changed = original.clone();
+            changed.extend_from_slice(b"\n// changed before first prepare\n");
+            std::fs::write(&path, changed).map_err(|error| error.to_string())?;
+            let stale = session.call_tool(
+                "first-mint-stale",
+                "ripr_prepare_repair",
+                json!({ "canonical_id": id }),
+                TIMEOUT,
+            )?;
+            if stale.pointer("/result/isError") != Some(&json!(true))
+                || stale.pointer("/result/structuredContent/failure/code")
+                    != Some(&json!("stale_snapshot"))
+                || stale
+                    .pointer("/result/structuredContent/repair_packet_ready")
+                    .is_some()
+                || stale
+                    .pointer("/result/structuredContent/failure/detail")
+                    .and_then(Value::as_str)
+                    .is_none_or(|detail| !detail.contains("changed on disk"))
+            {
+                return Err(format!("stale first prepare must refuse: {stale}"));
+            }
+            require_no_attempt(&mut session, "first-mint-after")?;
+            std::fs::write(&path, &original).map_err(|error| error.to_string())?;
+        }
         // Negative control: the unchanged tree still prepares.
         let control = session.call_tool(
             &format!("{label}-control"),
@@ -8126,6 +8171,29 @@ fn prepare_repair_refuses_source_changed_after_the_snapshot() -> Result<(), Stri
         let control = structured_prepare_document(&control, "unchanged prepare")?;
         if control.get("repair_packet_ready") != Some(&json!(true)) {
             return Err(format!("{label}: unchanged tree must prepare: {control}"));
+        }
+        if label == "source-edit" {
+            let attempt_id = control
+                .pointer("/attempt/attempt_id")
+                .and_then(Value::as_str)
+                .ok_or("restored bytes did not establish a live attempt ID")?;
+            let reply = session.call_tool(
+                "first-mint-restored",
+                "ripr_get_gap",
+                json!({ "canonical_id": id }),
+                TIMEOUT,
+            )?;
+            let gap = structured_tool_success(&reply, "ripr_get_gap")?;
+            let expected_uri = format!("ripr://repair-attempt/{attempt_id}");
+            if gap
+                .pointer("/item/links/repair_attempt")
+                .and_then(Value::as_str)
+                != Some(expected_uri.as_str())
+            {
+                return Err(format!(
+                    "restored bytes did not bind the attempt link: {gap}"
+                ));
+            }
         }
         match appended {
             Some(extra) => {
