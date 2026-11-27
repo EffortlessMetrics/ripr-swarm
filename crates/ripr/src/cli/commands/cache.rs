@@ -216,7 +216,7 @@ fn cache_dir_for_current_dir(
     } else {
         let current_dir = std::fs::canonicalize(current_dir).map_err(|error| {
             format!(
-                "resolve cache workspace root from {} failed: {error}; run from a directory that still exists, or pass --root PATH",
+                "resolve cache workspace root from {} failed: {error}; check that the current directory exists and you can read it, or pass `--root <dir>`",
                 current_dir.display()
             )
         })?;
@@ -904,8 +904,29 @@ mod tests {
 
     static NEXT_TEMP_ID: AtomicU64 = AtomicU64::new(0);
 
+    /// A working directory that cannot be canonicalized names the fix
+    /// instead of stopping at the OS error (#16019).
+    #[test]
+    fn unresolvable_current_dir_names_the_fix() -> Result<(), String> {
+        let missing = std::env::temp_dir()
+            .join(format!("ripr-cache-absent-{}", std::process::id()))
+            .join("cwd");
+        let error = match cache_dir_for_current_dir(&missing, Err(std::env::VarError::NotPresent)) {
+            Ok(dir) => return Err(format!("missing directory resolved to {dir:?}")),
+            Err(error) => error,
+        };
+        let wanted =
+            "; check that the current directory exists and you can read it, or pass `--root <dir>`";
+        if error.starts_with("resolve cache workspace root from ") && error.ends_with(wanted) {
+            Ok(())
+        } else {
+            Err(format!("unexpected refusal: {error}"))
+        }
+    }
+
     // #7487: the clear refusal for a symlink alias names the real directory
     // through the shared human renderer, not the verbatim `\\?\` spelling.
+
     #[test]
     fn symlink_refusal_detail_strips_windows_verbatim_prefix() {
         let verbatim = PathBuf::from(format!(r"\\?\{}\work\target\ripr\cache", "F:"));

@@ -606,6 +606,26 @@ fn kani_report_input_refusals_name_the_flag_to_fix() -> Result<(), String> {
             "reports kani read --input missing-result.json failed: not found; pass an existing, readable --input file",
         ],
     )?;
+    std::fs::write(dir.0.join("result.json"), "{}")
+        .map_err(|error| format!("write result.json: {error}"))?;
+    stderr_has_all(
+        &refusal(
+            &dir.0,
+            &[
+                "reports",
+                "kani",
+                "--input",
+                "result.json",
+                "--binding",
+                "missing-binding.json",
+                "--root",
+                ".",
+            ],
+        )?,
+        &[
+            "reports kani read --binding missing-binding.json failed: not found; pass an existing, readable --binding file",
+        ],
+    )?;
     // A directory already says what to pass; the flag hint is not stacked on.
     let stderr = kani("result-dir")?;
     stderr_has_all(
