@@ -633,3 +633,79 @@ fn a_switch_clause_some_test_input_can_select_keeps_exposed() -> Result<(), Stri
     }
     Ok(())
 }
+
+/// #16435: a test registered through a renamed root reads like its `test`
+/// spelling. The outer registration callee is the runner; any other call
+/// through the alias inside the test is still unread.
+fn renamed_registration(prelude: &str, root: &str, body: &str) -> String {
+    format!(
+        "{prelude}\nimport {{ price }} from \"../src/price\";\n{root}(\"price\", () => {{\n{body}}});\n"
+    )
+}
+
+#[test]
+fn a_renamed_registration_root_withdraws_exposed_like_its_test_spelling() -> Result<(), String> {
+    let unentered = "  expect(price(2)).toBe(20);\n";
+    for (label, prelude, root) in [
+        (
+            "alias-test-reference",
+            "import { test, expect } from 'vitest';",
+            "test",
+        ),
+        (
+            "alias-test-as-t",
+            "import { test as t, expect } from 'vitest';",
+            "t",
+        ),
+        (
+            "alias-it-as-spec",
+            "import { it as spec, expect } from 'vitest';",
+            "spec",
+        ),
+        (
+            "alias-only-member",
+            "import { test as t, expect } from 'vitest';",
+            "t.only",
+        ),
+    ] {
+        let finding = then_arm(label, &renamed_registration(prelude, root, unentered))?;
+        assert_eq!(
+            finding.class,
+            ExposureClass::ReachableUnrevealed,
+            "{label}: {:?}",
+            finding.missing
+        );
+        assert!(
+            finding
+                .missing
+                .iter()
+                .any(|line| line.contains("no related test call enters")),
+            "{label}: {:?}",
+            finding.missing
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn a_renamed_registration_root_keeps_exposed_when_entered_or_unread() -> Result<(), String> {
+    let prelude = "import { test as t, expect } from 'vitest';";
+    for (label, body) in [
+        // Positive control: the entering call keeps the credit.
+        ("alias-entered", "  expect(price(3, 'HALF')).toBe(15);\n"),
+        // A nested call through the alias is not the registration callee.
+        (
+            "alias-nested-call",
+            "  t(\"inner\", () => {});\n  expect(price(2)).toBe(20);\n",
+        ),
+    ] {
+        let finding = then_arm(label, &renamed_registration(prelude, "t", body))?;
+        assert_eq!(
+            finding.class,
+            ExposureClass::Exposed,
+            "{label}: {:?}",
+            finding.missing
+        );
+    }
+    Ok(())
+}

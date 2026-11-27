@@ -11196,7 +11196,8 @@ fn ts_unentered_guard(context: &TsPostLadderContext<'_>) -> Option<TsUnenteredGu
             .copied()
             .chain(["expect", "assert", "test", "it", "describe"])
             .collect();
-        if !super::guard_entry_guard::calls_only_allowed(callback, &allowed, &receivers) {
+        let registration = super::guard_entry_guard::registration_root_as_test(callback);
+        if !super::guard_entry_guard::calls_only_allowed(&registration, &allowed, &receivers) {
             return None;
         }
         let mut calls = 0usize;
