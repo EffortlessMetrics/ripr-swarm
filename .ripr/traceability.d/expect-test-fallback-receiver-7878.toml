@@ -1,0 +1,14 @@
+[[extend]]
+id = "RIPR-SPEC-0197"
+tests = [
+  "crates/ripr/tests/expect_test_owner_pins.rs::incomplete_source_recognizes_only_the_expect_receiver",
+  "crates/ripr/tests/expect_test_owner_pins.rs::incomplete_source_ignores_expect_comparisons_inside_block_comments",
+  "crates/ripr/tests/expect_test_owner_pins.rs::incomplete_source_reads_string_arguments_of_an_expect_comparison",
+  "crates/ripr/tests/expect_test_owner_pins.rs::incomplete_source_joins_a_wrapped_expect_comparison_method",
+  "crates/ripr/src/analysis/syntax/ra.rs::tests::expect_test_comparison_line_recognizes_supported_spellings",
+  "crates/ripr/src/analysis/extract/oracles/scan.rs::spec_0106_scan_tests::expect_comparisons_are_read_in_their_lexical_context",
+]
+code = [
+  "crates/ripr/src/analysis/syntax/ra.rs",
+  "crates/ripr/src/analysis/extract/oracles/scan.rs",
+]

@@ -111,6 +111,66 @@ fn incomplete_source_recognizes_only_the_expect_receiver() -> Result<(), String>
 }
 
 #[test]
+fn incomplete_source_ignores_expect_comparisons_inside_block_comments() -> Result<(), String> {
+    let imports = "use expect_test::expect;\nfn broken() { let = ; }";
+    let live = "let actual = render(4);\n    expect![\"w12\"].assert_eq(&actual);";
+    let finding = render_finding(OLD, NEW, EXPECT_TEST, imports, "", live)?;
+    assert_eq!(finding["classification"], "weakly_exposed", "{finding}");
+    for test in [
+        "let actual = render(4);\n    /*\n    expect![\"w12\"].assert_eq(&actual);\n    */",
+        "let actual = render(4);\n    /* the old snapshot:\n    expect![[\"w12\"]].assert_eq(&actual);\n    expect![\"w12\"]\n        .assert_eq(&actual);\n    */",
+        "let actual = render(4);\n    let note = \"\n    expect![\\\"w12\\\"].assert_eq(&actual);\n    \";",
+    ] {
+        let finding = render_finding(OLD, NEW, EXPECT_TEST, imports, "", test)?;
+        assert_eq!(
+            finding["classification"], "reachable_unrevealed",
+            "{test}: {finding}"
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn incomplete_source_reads_string_arguments_of_an_expect_comparison() -> Result<(), String> {
+    let imports = "use expect_test::expect;\nfn broken() { let = ; }";
+    for test in [
+        "expect![\"w12\"].assert_eq(&render(4).replace(\"w\", \"v\"));",
+        "expect![[\"w12\"]].assert_eq(&render(4).replace(\"w\", \"v\"));",
+    ] {
+        let finding = render_finding(OLD, NEW, EXPECT_TEST, imports, "", test)?;
+        assert_eq!(
+            finding["classification"], "weakly_exposed",
+            "{test}: {finding}"
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn incomplete_source_joins_a_wrapped_expect_comparison_method() -> Result<(), String> {
+    // Without the receiver, the bare `.assert_eq(..)` row reads as a custom
+    // assertion helper; joining it grades the comparison as the snapshot it is.
+    let imports = "use expect_test::expect;\nfn broken() { let = ; }";
+    for test in [
+        "expect![\"w12\"]\n        .assert_eq(&render(4));",
+        "expect![[\"w12\"]]\n        .assert_eq(&render(4));",
+        "expect![[r#\"\n        w12\n    \"#]]\n    .assert_eq(&render(4));",
+    ] {
+        let finding = render_finding(OLD, NEW, EXPECT_TEST, imports, "", test)?;
+        assert_eq!(finding["oracle_kind"], "snapshot", "{test}: {finding}");
+        assert_eq!(finding["oracle_strength"], "medium", "{test}: {finding}");
+    }
+    for test in [
+        "expect![\"w12\"];\n    .assert_eq(&render(4));",
+        "let check = || expect![\"w12\"]\n        .assert_eq(&render(4));\n    check();",
+    ] {
+        let finding = render_finding(OLD, NEW, EXPECT_TEST, imports, "", test)?;
+        assert_ne!(finding["oracle_kind"], "snapshot", "{test}: {finding}");
+    }
+    Ok(())
+}
+
+#[test]
 fn every_parsed_inline_expect_spelling_pins_the_owner() -> Result<(), String> {
     for test in [
         "expect![[\"w12\"]].assert_eq(&render(4));",

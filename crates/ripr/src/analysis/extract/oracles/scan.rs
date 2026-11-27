@@ -54,6 +54,11 @@ pub(crate) fn extract_assertions_in(
         if guarded.match_start_lines.contains(&(start_line + offset)) {
             continue;
         }
+        // #7878: a row wholly inside a block comment or string literal opened
+        // on an earlier row is not live code, though alone it reads as Rust.
+        if !row_tables.is_live(offset) {
+            continue;
+        }
         // Give the existing terminal-failure authority first refusal before
         // generic name admission can join or misclassify a matcher guard.
         // #3284: peek without consuming the block, preserving assertions
@@ -102,13 +107,18 @@ pub(crate) fn extract_assertions_in(
                 _ => continue,
             }
         }
+        join_wrapped_expect_comparison(&mut trimmed, &mut lines);
         if may_start_assertion(&trimmed) || starts_discarded_matcher_computation(&trimmed) {
             let admitted = may_start_assertion(&trimmed);
             if !collect_owned_observer_statement(&mut trimmed, &mut lines, admitted) {
                 continue;
             }
             trimmed = without_discarded_matcher_computations(&trimmed);
-            if !is_assertion_line(&mask_comments_and_strings(&trimmed)) {
+            // The expect-test parse reads comments and strings structurally;
+            // masking would blank string arguments into unparsable text (#7878).
+            if !is_assertion_line(&mask_comments_and_strings(&trimmed))
+                && !crate::analysis::syntax::ra::is_expect_test_comparison_line(&trimmed)
+            {
                 continue;
             }
             if has_unasserted_matcher(&trimmed) {
@@ -2380,6 +2390,41 @@ where
     }
 }
 
+/// #7878: rustfmt wraps `.assert_eq(..)` below an `expect![..]` receiver
+/// that already balances, where ordinary collection stops. Commit the cloned
+/// lookahead only when the joined statement parses as an expect-test
+/// comparison, so an unrelated next statement keeps its own row.
+fn join_wrapped_expect_comparison<'a, I>(statement: &mut String, lines: &mut std::iter::Peekable<I>)
+where
+    I: Iterator<Item = (usize, &'a str)> + Clone,
+{
+    let compact = without_whitespace(statement);
+    if !has_expect_receiver_macro(&compact) || has_expect_comparison_method(&compact) {
+        return;
+    }
+    let mut candidate = statement.clone();
+    let mut lookahead = lines.clone();
+    collect_multiline_assertion(&mut candidate, &mut lookahead);
+    let Some((_, next)) = lookahead.peek() else {
+        return;
+    };
+    let next = next.trim();
+    if !EXPECT_COMPARISON_METHODS
+        .iter()
+        .any(|method| without_whitespace(next).starts_with(method))
+    {
+        return;
+    }
+    candidate.push('\n');
+    candidate.push_str(next);
+    let _ = lookahead.next();
+    collect_multiline_assertion(&mut candidate, &mut lookahead);
+    if crate::analysis::syntax::ra::is_expect_test_comparison_line(&candidate) {
+        *statement = candidate;
+        *lines = lookahead;
+    }
+}
+
 /// An opening block is only a collection hint. Commit cloned lookahead after
 /// establishing that the first complete statement owns a discarded matcher;
 /// unrelated block observers must retain the original row traversal.
@@ -3186,6 +3231,10 @@ struct RowTables {
     /// `err_rows_before[i]` counts rows before `i` mentioning `unwrap_err`
     /// or `expect_err`.
     err_rows_before: Vec<usize>,
+    /// Whether each row holds code outside comments and string literals, or
+    /// is blank. A row wholly inside a block comment or string opened on an
+    /// earlier row is not live (#7878).
+    live: Vec<bool>,
 }
 
 impl RowTables {
@@ -3203,10 +3252,22 @@ impl RowTables {
             err_rows_before
                 .push(err_rows_before.last().copied().unwrap_or(0) + usize::from(mentions));
         }
+        let masked = mask_comments_and_strings(body);
+        let live = body
+            .lines()
+            .zip(masked.lines())
+            .map(|(row, masked_row)| row.trim().is_empty() || !masked_row.trim().is_empty())
+            .collect();
         Self {
             starts_statement,
             err_rows_before,
+            live,
         }
+    }
+
+    /// Whether body line `offset` holds live code (true past the table).
+    fn is_live(&self, offset: usize) -> bool {
+        self.live.get(offset).copied().unwrap_or(true)
     }
 
     /// Whether body line `offset` starts a statement.
@@ -3590,15 +3651,29 @@ fn append_matcher_free_statement(statement: &str, output: &mut String, depth: us
     output.extend(std::iter::repeat_n('\n', remaining_lines));
 }
 
+const EXPECT_COMPARISON_METHODS: [&str; 3] =
+    [".assert_eq(", ".assert_debug_eq(", ".assert_json_eq("];
+
+fn without_whitespace(text: &str) -> String {
+    text.chars().filter(|ch| !ch.is_whitespace()).collect()
+}
+
+fn has_expect_receiver_macro(compact: &str) -> bool {
+    compact.contains("expect![") || compact.contains("expect_file![")
+}
+
+fn has_expect_comparison_method(compact: &str) -> bool {
+    EXPECT_COMPARISON_METHODS
+        .iter()
+        .any(|method| compact.contains(method))
+}
+
 fn may_start_assertion(line: &str) -> bool {
     // Admission may see only the first line of a comparison. The snapshot
     // classifier checks the complete joined statement and its receiver.
-    let compact: String = line.chars().filter(|ch| !ch.is_whitespace()).collect();
-    let expect_comparison_start = (compact.contains("expect![")
-        || compact.contains("expect_file!["))
-        && (compact.contains(".assert_eq(")
-            || compact.contains(".assert_debug_eq(")
-            || compact.contains(".assert_json_eq("));
+    let compact = without_whitespace(line);
+    let expect_comparison_start =
+        has_expect_receiver_macro(&compact) && has_expect_comparison_method(&compact);
     expect_comparison_start || is_assertion_line(line)
 }
 
@@ -3813,6 +3888,29 @@ mod spec_0106_scan_tests {
         assert_eq!(facts.len(), 1);
         assert_eq!(facts[0].kind, OracleKind::Snapshot);
         assert_eq!(facts[0].strength, OracleStrength::Medium);
+    }
+
+    #[test]
+    fn expect_comparisons_are_read_in_their_lexical_context() {
+        for body in [
+            "/*\nexpect![\"x\"].assert_eq(&render(4));\n*/",
+            "let note = \"\nexpect![\\\"x\\\"].assert_eq(&render(4));\n\";",
+        ] {
+            let facts = extract_assertions(body, 1);
+            assert!(
+                facts.iter().all(|fact| fact.kind != OracleKind::Snapshot),
+                "{body}: {facts:?}"
+            );
+        }
+        for body in [
+            "expect![\"x\"]\n    .assert_eq(&render(4));",
+            "expect![[\"x\"]].assert_eq(&render(4).replace(\"w\", \"v\"));",
+        ] {
+            let facts = extract_assertions(body, 1);
+            assert_eq!(facts.len(), 1, "{body}: {facts:?}");
+            assert_eq!(facts[0].kind, OracleKind::Snapshot, "{body}");
+            assert_eq!(facts[0].strength, OracleStrength::Medium, "{body}");
+        }
     }
 
     #[test]
