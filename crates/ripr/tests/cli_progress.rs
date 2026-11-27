@@ -1623,7 +1623,7 @@ fn explain_agent_format_on_a_pipe_is_silent_by_default() -> Result<(), String> {
         "agent",
     ];
     let default = ripr_default()
-        .args(&agent)
+        .args(agent)
         .output()
         .map_err(|error| format!("run ripr explain --format agent: {error}"))?;
     assert!(default.status.success(), "{}", stderr_text(&default));
@@ -1638,7 +1638,7 @@ fn explain_agent_format_on_a_pipe_is_silent_by_default() -> Result<(), String> {
         stderr_text(&default)
     );
     let forced = ripr()
-        .args(&agent)
+        .args(agent)
         .output()
         .map_err(|error| format!("run ripr explain --format agent: {error}"))?;
     assert!(
