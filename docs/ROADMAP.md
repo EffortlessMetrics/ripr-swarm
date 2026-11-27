@@ -744,10 +744,11 @@ promotion.
 > Historical context; see [current direction](#current-product-position).
 
 The current source package is `ripr` 0.11.0 (`crates/ripr/Cargo.toml`). Its
-release notes are in [0.11.0 release notes](releases/0.11.0-release-notes.md),
-not `CHANGELOG.md`; the repository version now carries the 0.11.0 frame ahead
-of the publication transaction. The 0.9.0 language-adapter frame below is historical. The active
-0.11.0 selection rule is the exact transaction-boundary live swarm head in
+draft release notes are in [0.11.0 release notes](releases/0.11.0-release-notes.md),
+while [CHANGELOG.md](../CHANGELOG.md) tracks `Unreleased` changes; the
+repository version now carries the 0.11.0 frame ahead of the publication
+transaction. The 0.9.0 language-adapter frame below is historical. The active
+0.11.0 selection template (which does not yet pin a candidate) is
 `release-candidates/0.11.0-live-head-selection.json`.
 
 ### `0.11.0` - Replacement freeze (historical, superseded)
