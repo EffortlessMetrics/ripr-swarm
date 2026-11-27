@@ -1,0 +1,9 @@
+# Recorded private container reader gate (#16010).
+[[extend]]
+id = "RIPR-SPEC-0238"
+tests = [
+  "crates/ripr/src/analysis/language/python/self_container_reader_tests.rs::record_no_test_reads_is_weakly_exposed",
+  "crates/ripr/src/analysis/language/python/self_container_reader_tests.rs::record_a_test_reads_keeps_the_oracle_verdict",
+  "crates/ripr/src/analysis/language/python/self_container_reader_tests.rs::unreadable_shapes_keep_the_oracle_verdict",
+  "crates/ripr/src/analysis/language/python/self_container_reader_tests.rs::object_base_is_still_read",
+]
