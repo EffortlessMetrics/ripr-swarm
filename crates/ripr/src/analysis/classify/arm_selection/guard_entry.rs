@@ -775,6 +775,7 @@ mod tests {
 
     fn probe_at(line: usize) -> Probe {
         Probe {
+            before_condition: None,
             id: ProbeId("guard".into()),
             location: SourceLocation {
                 file: "src/lib.rs".into(),

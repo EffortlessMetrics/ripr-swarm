@@ -810,7 +810,13 @@ fn b6_dirty_production_premise_refuses_the_before_phase_and_a_dirty_test_still_r
         "dirty external test before-phase",
     )?;
     let refusal_text = combined_output(&dirty_external_before);
-    if !refusal_text.contains("external Rust test file with uncommitted changes") {
+    // #15265: the hold refuses before the edit cage, names the file and
+    // reruns the advanced spelling the caller typed.
+    if !(refusal_text.contains("ripr: refusal code=start_refused_uncommitted_target")
+        && refusal_text.contains("has uncommitted changes")
+        && refusal_text.contains("ripr agent repair --root")
+        && refusal_text.contains("--phase before"))
+    {
         return Err(format!(
             "the dirty external test refusal must name the uncommitted external file:\n{refusal_text}"
         ));

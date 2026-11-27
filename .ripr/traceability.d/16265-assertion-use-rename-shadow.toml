@@ -1,0 +1,9 @@
+[[extend]]
+id = "RIPR-SPEC-0197"
+tests = [
+  "crates/ripr/tests/macro_held_owner_call.rs::an_outer_assertion_renamed_to_a_non_assertion_gives_no_grip",
+]
+code = [
+  "crates/ripr/src/analysis/classify/owner_pin.rs",
+  "crates/ripr/src/analysis/test_grip_evidence.rs",
+]

@@ -15,7 +15,7 @@ pub(in crate::analysis) use calls::path_value_map::{
 pub(crate) use calls::{
     MAX_CALL_FACTS_PER_LINE, attribute_ranges, call_name_bounds_before_paren, extract_call_facts,
     has_saturated_line, line_at_call_budget, local_fn_pointer_call,
-    offsets_inside_macro_invocation_delimiters, runs_its_arguments,
+    offsets_inside_macro_invocation_delimiters, runs_its_arguments, turbofish_len,
 };
 pub(crate) use groups::{delimiters_balance, group_end};
 pub(crate) use literals::{extract_literal_facts, extract_literals};
@@ -26,7 +26,8 @@ pub(crate) use mask::{
     mask_with_string_delimiter_quotes, rust_identity_spans, string_literal_spans,
 };
 pub(crate) use oracles::{
-    LazyDecls, OracleTextShape, assertion_compares_only_literals, assertion_oracle_text,
+    BoolLocals, LazyDecls, OracleClassification, OracleTextShape, PlaceholderScope,
+    assertion_compared_operands, assertion_compares_only_literals, assertion_oracle_text,
     assertion_reads_placeholder, classify_assertion, classify_assertion_with,
     equality_assertion_arguments, err_return_guard_oracles, err_return_guard_twin,
     extract_assertions, extract_assertions_in, extract_line_scanned_oracles,
@@ -35,7 +36,8 @@ pub(crate) use oracles::{
     is_inline_unwrap_err_error_assertion, is_unwrap_err_bound_error_assertion,
     lines_touching_unreached, outer_assertion_condition, placeholder_bound_variables,
     retain_reached_oracles, terminal_err_return_guard_oracle, uncompared_unwrap_err,
-    unwrap_err_bound_variables, without_unfilled_expected, without_unfilled_expected_parts,
+    unwrap_err_bound_variables, with_bool_local_inlined, without_unfilled_expected,
+    without_unfilled_expected_parts,
 };
 #[cfg(test)]
 pub(crate) use oracles::{contains_macro_invocation, table_builds};

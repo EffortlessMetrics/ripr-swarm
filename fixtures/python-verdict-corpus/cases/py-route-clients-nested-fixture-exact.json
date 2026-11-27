@@ -1,0 +1,45 @@
+{
+  "case_id": "py-route-clients-nested-fixture-exact",
+  "subject_id": "authored-py-pytest-route-clients-nested-exact",
+  "diff": "cases/py-route-clients-nested-fixture-exact.diff",
+  "anchor": {
+    "file": "routeclients/invoices.py",
+    "line": 8
+  },
+  "edit_kind": "behavior_change",
+  "behavior_family": "value_return",
+  "test_shape": "pytest_client_fixture_built_on_another_fixture_exact_assertion",
+  "hard_case": "the client fixture takes the application from a second fixture, and the test asserts the exact response",
+  "truth": {
+    "state": "discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "python -m pytest -q -p no:cacheprovider",
+    "toolchain": "Python 3.13.16, pytest 9.1.1, x86_64-linux",
+    "mutants": [
+      {
+        "replacement": "return {\"total\": 31}",
+        "mutated_line": null,
+        "outcome": "tests_failed",
+        "failing_test": "tests/invoices/test_invoices.py::test_invoices_total",
+        "equivalence_review": "not equivalent: the invoice total changes and the exact assertion compares it"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "credited",
+    "acceptable_verdicts": [
+      "credited",
+      "limited",
+      "silent"
+    ]
+  },
+  "reasoning": "`tests/invoices/conftest.py` builds `client(invoice_app)` over a second fixture, `invoice_app`, which returns the `invoices` route's `app`. The test asserts the exact total, so a changed total fails it. After #14141 the client is identified through the nested fixture (the relation is an oracle-eligible route call), but the verdict still reads `gap` / `weakly_exposed`, not `credited`: route-response sink alignment for this assertion shape is a sibling child, so the exact assertion earns reach and oracle relation without `exposed` credit yet.",
+  "labeling_observation": {
+    "ripr_commit": "1818f481",
+    "full_checkout_verdict": "limited",
+    "full_checkout_classifications": [
+      "static_unknown"
+    ],
+    "excerpt_parity": "matched"
+  }
+}

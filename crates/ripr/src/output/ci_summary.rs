@@ -92,7 +92,7 @@ const COMMENTS_JSON: &str = "target/ripr/review/comments.json";
 /// the producer refused to run, this envelope is the only place that names
 /// the cause; every downstream packet degrades to a missing/blocked state.
 const CHECK_JSON: &str = "target/ripr/pr/check.json";
-const GATE_JSON: &str = "target/ripr/reports/gate-decision.json";
+const GATE_JSON: &str = gate_verdict::GATE_DECISION_JSON;
 const GATE_MD: &str = "target/ripr/reports/gate-decision.md";
 const DELTA_JSON: &str = "target/ripr/reports/baseline-debt-delta.json";
 const DELTA_MD: &str = "target/ripr/reports/baseline-debt-delta.md";
@@ -134,17 +134,62 @@ pub(crate) struct CiSummaryInput {
     pub(crate) configured_languages: Vec<String>,
 }
 
-/// Render the step summary Markdown. Bytes, because full reports are
-/// included verbatim.
-pub(crate) fn render_ci_summary(input: &CiSummaryInput) -> Vec<u8> {
+/// Render the job front page or the detailed local preview.
+pub(crate) fn render_ci_summary(input: &CiSummaryInput, full: bool) -> Vec<u8> {
     let mut summary = Summary {
         root: input.root.clone(),
         relative: repo_relative_for(&input.root),
         out: Vec::new(),
         attention: false,
         policy_reports_read: 0,
+        headline_names_repair: false,
     };
-    summary.headline(&input.gate_mode);
+    let compact = !full && (input.pull_request || input.event_name.is_empty());
+    if summary.headline(&input.gate_mode, compact) && compact {
+        summary.analysis_refusal_status();
+        summary.pilot_deadline();
+        if let Some(doc) = summary.doc(START_HERE_JSON) {
+            if doc.optional(&["status"]) == "blocked" {
+                let reason = doc.optional(&["selected.message"]);
+                summary.line("- Start-here packet: blocked.");
+                if !reason.is_empty() {
+                    summary.line(&format!("- Reason: {}", code_span(&reason)));
+                }
+            }
+            let limit = doc.optional(&["selected.static_limit_kind"]);
+            if !limit.is_empty() && limit != "none" {
+                let detail = doc.optional(&["selected.static_limit_detail"]);
+                summary.line(&format!(
+                    "- Static limit: {} {}",
+                    code_span(&limit),
+                    code_span(&detail)
+                ));
+            }
+            // The full page shows this start in its First-run status; a first
+            // spot with no repair route leaves it to the packet to carry.
+            summary.carried_repair_start(&doc);
+        }
+        summary.blank();
+        summary.line("### Reports in the `ripr-reports` artifact");
+        for path in [
+            START_HERE_MD,
+            INDEX_MD,
+            FRONT_PANEL_MD,
+            FIRST_ACTION_MD,
+            LEDGER_MD,
+            PILOT_SUMMARY_MD,
+            COMMENTS_JSON,
+            CHECK_JSON,
+            GATE_JSON,
+            GATE_MD,
+            "target/ripr/review/comment-publish-plan.md",
+        ] {
+            if summary.is_file(path) {
+                summary.full_report(path);
+            }
+        }
+        return summary.out;
+    }
     summary.start_here();
     summary.first_run_status(&input.base_ref, &input.event_name);
     summary.language_preview(&input.configured_languages);
@@ -163,16 +208,35 @@ pub(crate) fn render_ci_summary(input: &CiSummaryInput) -> Vec<u8> {
     summary.ripr_zero();
     summary.sarif_and_badges(input.upload_sarif, input.pull_request);
     summary.guidance_annotations();
-    summary.inline_comments(&input.comment_mode);
+    summary.inline_comments(&input.comment_mode, full);
     summary.known_limits();
     summary.out
 }
 
 /// The checkout path as `pwd -P` and `$PWD` spelled it for the step.
 fn repo_relative_for(root: &Path) -> RepoRelative {
-    let physical = fs::canonicalize(root)
+    let canonical = fs::canonicalize(root).ok();
+    let physical = canonical
+        .as_ref()
         .map(|path| path.to_string_lossy().into_owned())
         .unwrap_or_default();
+    // Producers print command roots in their human display spelling
+    // (`command_root_display`): on Windows that is forward-slashed without the
+    // verbatim prefix, not the native canonical spelling. Match it too (#15858).
+    let shown = canonical
+        .as_deref()
+        .map(crate::output::path::human_path)
+        .unwrap_or_default();
+    // Command fields quote that spelling with `shell_arg` when it holds a
+    // shell metacharacter, so `/tmp/O'Brien/project` is printed as
+    // `'/tmp/O'\''Brien/project'`. Match the quoted form as well; a plain
+    // path needs no quoting and adds no spelling.
+    let quoted = quoted_root_opening(&shown);
+    let display = if shown == physical {
+        String::new()
+    } else {
+        shown
+    };
     // Like the shell, trust `$PWD` only while it still names the working
     // directory; otherwise the logical path is the physical one.
     let cwd = std::env::current_dir().ok();
@@ -196,7 +260,29 @@ fn repo_relative_for(root: &Path) -> RepoRelative {
         .unwrap_or_default();
     RepoRelative {
         physical: physical.into_bytes(),
+        display: display.into_bytes(),
+        quoted,
         logical: logical.into_bytes(),
+    }
+}
+
+/// The opening of `shell_arg(root)` without its closing quote, when the
+/// producer quotes the root in one plain quote pair (`'…'` or Windows
+/// `"…"`); empty otherwise. `RepoRelative` replaces it with the quote and
+/// `.`, so `'<root>'` becomes `'.'` and `'<root>/x'` becomes `'./x'`.
+fn quoted_root_opening(root: &str) -> Vec<u8> {
+    if root.is_empty() {
+        return Vec::new();
+    }
+    let quoted = crate::agent::loop_commands::shell_arg(root);
+    let bytes = quoted.as_bytes();
+    match (bytes.first(), bytes.split_last()) {
+        (Some(open @ (b'\'' | b'"')), Some((close, opening)))
+            if opening.len() > 1 && open == close =>
+        {
+            opening.to_vec()
+        }
+        _ => Vec::new(),
     }
 }
 
@@ -233,6 +319,9 @@ struct Summary {
     /// per category, OR-ed in by `note_attention`); compared against
     /// `REQUIRED_POLICY_REPORTS` to tell a complete read from a partial one.
     policy_reports_read: u8,
+    /// The headline named the first spot's repair command, so the compact
+    /// page does not repeat the packet's carried start beside it.
+    headline_names_repair: bool,
 }
 
 impl Summary {
@@ -345,7 +434,7 @@ impl Summary {
     }
 
     /// The pull request's own verdict, before ripr's orientation (#11217).
-    fn headline(&mut self, gate_mode: &str) {
+    fn headline(&mut self, gate_mode: &str, compact: bool) -> bool {
         self.line("## RIPR advisory summary");
         self.blank();
         self.line("RIPR is advisory static evidence. It does not edit source, generate tests, or run mutation testing.");
@@ -358,11 +447,57 @@ impl Summary {
             .as_ref()
             .map(headline::headline_lines)
             .unwrap_or_default();
+        self.headline_names_repair = lines.iter().any(|line| line.starts_with("- Next step: "));
+        if compact && !lines.is_empty() {
+            self.compact_gate_status(gate_mode);
+            self.blank();
+        }
         for line in &lines {
             self.line(line);
         }
         if !lines.is_empty() {
+            if report
+                .as_ref()
+                .and_then(|value| value["analysis_outcome"]["analysis_complete"].as_bool())
+                == Some(false)
+            {
+                self.line("- Analysis was incomplete. Findings cover only the analyzed scope.");
+            }
             self.blank();
+        }
+        !lines.is_empty()
+    }
+
+    /// The start the start-here packet carries (#3906), when the headline
+    /// named none for its first spot: a card with no repair route still
+    /// leaves the packet's selected gap to start from, and the full page
+    /// leads with that start. Shown as the full page shows it, from the
+    /// repository root, and never beside a command the headline already names.
+    fn carried_repair_start(&mut self, doc: &Doc) {
+        if self.headline_names_repair {
+            return;
+        }
+        let command = doc.optional(&["selected.repair_command"]);
+        if !command.is_empty() {
+            let relative = self.relative.clone();
+            self.repair_start("Start repair", &inline(&relative.value(&command)));
+        }
+    }
+
+    fn compact_gate_status(&mut self, gate_mode: &str) {
+        if !gate_mode.is_empty() {
+            self.line("### Gate decision");
+            match self.doc(GATE_JSON) {
+                Some(doc) if doc.optional(&["mode"]) == gate_mode => {
+                    let status = doc.field(&["status"], "unknown", "unknown");
+                    self.line(&format!("- Mode: {}", code_span(gate_mode)));
+                    self.line(&format!("- Status: {}", code_span(&status)));
+                }
+                Some(_) => self.line("- No matching gate decision was recorded for this run."),
+                None => self.line(&gate_verdict::missing_decision_line(gate_mode)),
+            }
+        } else {
+            self.line("- Gate: advisory (no gate mode configured).");
         }
     }
 
@@ -373,13 +508,7 @@ impl Summary {
     /// report left by an earlier run under another mode is never worded as
     /// this run's verdict. Every other state prints nothing here.
     fn gate_verdict(&mut self, gate_mode: &str) {
-        let verdict = gate_verdict::GateVerdict::from_mode(gate_mode).or_else(|| {
-            fs::read(self.root.join(GATE_JSON))
-                .ok()
-                .and_then(|bytes| serde_json::from_slice::<Value>(&bytes).ok())
-                .filter(|decision| decision["mode"].as_str() == Some(gate_mode))
-                .and_then(|decision| gate_verdict::GateVerdict::from_decision(&decision))
-        });
+        let verdict = gate_verdict::GateVerdict::for_run(&self.root, gate_mode);
         let Some(verdict) = verdict else {
             return;
         };
@@ -515,6 +644,13 @@ impl Summary {
 
     fn start_here_status(&mut self, doc: &Doc) {
         let field = |paths: &[&str], default: &str| inline(&doc.field(paths, default, "unknown"));
+        // Commands and paths the packet wrote with the runner's checkout
+        // path: shown from the repository root, as the front panel and first
+        // action are, so they paste into the reader's checkout (#15858).
+        let relative = self.relative.clone();
+        let local = |paths: &[&str], default: &str| {
+            inline(&relative.value(&doc.field(paths, default, "unknown")))
+        };
         let status = field(&["status"], "unknown");
         let state = field(&["selected.state"], "unknown");
         let gap = field(
@@ -565,8 +701,8 @@ impl Summary {
             &["selected.static_evidence_boundary"],
             "static advisory evidence only; not runtime proof, coverage adequacy, mutation confirmation, gate approval, or merge approval.",
         );
-        let target = field(&["selected.repair.target_file"], "not_available");
-        let related = field(&["selected.repair.related_test"], "not_available");
+        let target = local(&["selected.repair.target_file"], "not_available");
+        let related = local(&["selected.repair.related_test"], "not_available");
         let limit = inline(&doc.text(
             |value| {
                 let kind = jq::at(value, "selected.static_limit_kind")?;
@@ -583,12 +719,12 @@ impl Summary {
             },
             "unknown",
         ));
-        let verify = field(&["selected.verify_command"], "not_available");
-        let receipt = field(&["selected.receipt_command"], "not_available");
-        let receipt_path = field(&["selected.receipt_path"], "not_available");
+        let verify = local(&["selected.verify_command"], "not_available");
+        let receipt = local(&["selected.receipt_command"], "not_available");
+        let receipt_path = local(&["selected.receipt_path"], "not_available");
         let receipt_state = field(&["selected.receipt_state"], "receipt_missing");
         let repair_command = doc.optional(&["selected.repair_command"]);
-        let next = field(
+        let next = local(
             &[
                 "selected.repair_command",
                 "selected.next_command",
@@ -599,7 +735,7 @@ impl Summary {
         let warnings = inline(&doc.length("warnings"));
         let labels = ProofLabels::new(!repair_command.is_empty());
         if !repair_command.is_empty() {
-            self.repair_start("Start repair", &inline(&repair_command));
+            self.repair_start("Start repair", &inline(&relative.value(&repair_command)));
         }
         self.status_row(&status, &format!("- Status: `{status}`"));
         self.status_row(&state, &format!("- Selected state: `{state}`"));
@@ -644,6 +780,11 @@ impl Summary {
 
     fn first_action_status(&mut self, doc: &Doc) {
         let field = |paths: &[&str], default: &str| inline(&doc.field(paths, default, "unknown"));
+        // Its commands are shown from the repository root too (#15858).
+        let relative = self.relative.clone();
+        let local = |paths: &[&str], default: &str| {
+            inline(&relative.value(&doc.field(paths, default, "unknown")))
+        };
         let status = field(&["status"], "unknown");
         let action_kind = field(&["action_kind"], "unknown");
         let title = field(&["title"], "not_available");
@@ -709,10 +850,10 @@ impl Summary {
             },
             "unknown",
         ));
-        let repair = field(&["commands.repair"], "not_available");
-        let packet = field(&["commands.context_packet"], "not_available");
-        let verify = field(&["commands.verify"], "not_available");
-        let receipt = field(&["commands.receipt"], "not_available");
+        let repair = local(&["commands.repair"], "not_available");
+        let packet = local(&["commands.context_packet"], "not_available");
+        let verify = local(&["commands.verify"], "not_available");
+        let receipt = local(&["commands.receipt"], "not_available");
         let fallback = field(&["fallback.summary", "fallback.kind"], "none");
         let warnings = inline(&doc.length("warnings"));
         let led = repair != "not_available" && repair != "unknown";
@@ -1822,7 +1963,7 @@ impl Summary {
         self.blank();
     }
 
-    fn inline_comments(&mut self, comment_mode: &str) {
+    fn inline_comments(&mut self, comment_mode: &str, full: bool) {
         self.line("### PR inline comments");
         let mode = effective_comment_mode(comment_mode);
         self.line(&format!("- Mode: `{}`", inline(mode)));
@@ -1847,7 +1988,11 @@ impl Summary {
             // inline-comment cap; each stale-comment delete is one line, and
             // stale comments are the previous run's capped set.
             if self.is_file("target/ripr/review/comment-publish-plan.md") {
-                self.collapsed_report("target/ripr/review/comment-publish-plan.md");
+                if full {
+                    self.collapsed_report("target/ripr/review/comment-publish-plan.md");
+                } else {
+                    self.full_report("target/ripr/review/comment-publish-plan.md");
+                }
             }
         } else {
             self.line("- Inline comments are disabled by default. Set `RIPR_COMMENT_MODE` to `plan` to inspect a publish plan or `inline` to publish same-repo changed-line comments when permissions are safe.");

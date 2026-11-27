@@ -1379,6 +1379,9 @@ impl PerlFactPacket {
         if static_limit::for_change(self, change, &related).blocks {
             return Err(PerlActionabilityBlocker::DynamicBoundary);
         }
+        if concrete_change_discriminator(change).is_none() {
+            return Err(PerlActionabilityBlocker::MissingConcreteDiscriminator);
+        }
         let gap = self
             .canonical_gap_identity_for_change_with_assertion_shape(
                 change_id,
@@ -1767,16 +1770,8 @@ impl PerlFactPacket {
 
         let owner = self.canonical_owner_identity(&change.owner_id)?;
         let behavior_kind = change.behavior_hint.as_str().to_string();
-        // Campaign 31 PR 12 (#1405): use a concrete missing discriminator,
-        // NOT the generic `default_missing_discriminator()` enum label.
-        // #6829: the concrete discriminator comes from the documented
-        // `missing_discriminator` change field, with the compatibility
-        // `discriminator:` prefix on `changed_text_digest` as the fallback
-        // channel (both via `concrete_change_discriminator`, the single
-        // authority shared with the H1 gate). If the change fact carries
-        // neither, fall back to the generic label + emit a note that the gap
-        // record is not strongly actionable (the relation gate + the generic
-        // discriminator together ensure conservative behavior).
+        // Advisory identities may use the generic behavior label. Strict actionability
+        // requires a producer-supplied discriminator before constructing this identity.
         let missing_discriminator = concrete_change_discriminator(change).unwrap_or_else(|| {
             change
                 .behavior_hint
@@ -2098,6 +2093,7 @@ enum PerlActionabilityBlocker {
     PacketNotComplete,
     MissingChange,
     MissingCanonicalGapId,
+    MissingConcreteDiscriminator,
     DynamicBoundary,
     UnsupportedBehavior,
     MissingStrongRelatedEvidence,

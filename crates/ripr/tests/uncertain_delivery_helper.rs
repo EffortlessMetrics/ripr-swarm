@@ -5,7 +5,7 @@ use ripr::{CheckInput, Finding, Mode, OutputFormat, ProbeFamily, check_workspace
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
 
-const SOURCE: &str = include_str!("data/uncertain-delivery/github_delivery.rs");
+const SOURCE: &str = include_str!("data/uncertain-delivery/github_delivery.rs.txt");
 const RECEIPT: &str = include_str!("data/uncertain-delivery/receipt.json");
 const OWNER: &str = "pub fn gate(input: u32) -> bool {\n    input >= 10\n}\n";
 const OWNER_DIFF: &str = "diff --git a/src/lib.rs b/src/lib.rs\n--- a/src/lib.rs\n+++ b/src/lib.rs\n@@ -1,3 +1,3 @@\n pub fn gate(input: u32) -> bool {\n-    input > 10\n+    input >= 10\n }\n";

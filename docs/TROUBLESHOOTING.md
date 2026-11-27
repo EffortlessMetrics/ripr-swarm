@@ -146,6 +146,14 @@ Exit code `2`. The message names the ref. Check its spelling with
 `git branch --list`, fetch it, or pass `--base <ref>` for a ref the
 repository has.
 
+With a resolved default base, doctor reports `git_base` and names the ref.
+A shared ancestor with HEAD passes. If none is available, a shallow clone gets
+the `git fetch --unshallow` and Actions `fetch-depth: 0` repairs. For unrelated
+histories in a full clone, choose a `--base` on HEAD's history. These advisories
+keep exit 0 when other checks pass. For an origin without a default-branch
+pointer, doctor suggests `git remote set-head origin --auto`. Doctor leaves
+fetching and ref changes to the user.
+
 In CI the usual cause is a shallow clone. A `--depth` clone also tracks only
 the branch it cloned, so ripr asks you to widen `origin` before fetching:
 
@@ -278,10 +286,14 @@ exists, but this run has no finding anywhere in it
   the path from that root (`src/lib.rs:12`, not `lib.rs:12`), check the
   spelling, or pass `--root`.
 - The third means the file exists and this run reported nothing in it. The
-  next sentence says which reason applies to the line you named: the diff
-  changes no text line of the file, the line is not one the diff changed (the
-  changed lines are listed), or the line changed and has no finding, as a
-  comment, test code or a file your configuration leaves out does. When the analysis was incomplete, the message
+  next sentence says which reason applies to the line you named: a pattern in
+  `ripr.toml` (`generated_file_patterns` or `excluded_file_patterns`) left
+  the file out, so it was not analyzed (removing or narrowing the pattern
+  lifts that exclusion, though a built-in generated-file rule can still
+  apply); the
+  diff changes no text line of the file; the line is not one the diff changed
+  (the changed lines are listed); or the line changed and has no finding, as
+  a comment or test code does. When the analysis was incomplete, the message
   says so instead, because the file may not have been analyzed at all.
 
 ## The editor shows nothing

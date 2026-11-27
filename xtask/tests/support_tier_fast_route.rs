@@ -59,8 +59,8 @@ fn fixture() -> Result<Fixture, String> {
         .map_err(|error| error.to_string())?
         .as_nanos();
     // Keep the private repository path short on Windows (#9272). The actual
-    // formatter needs only this dependency-free package, not every workspace
-    // test target and its source in a second checkout (#12916).
+    // formatter and root guard need only two dependency-free workspace members
+    // here, not every test target in a second checkout (#12916, #16234).
     let scratch =
         std::env::temp_dir().join(format!("rsr{}-{:x}", std::process::id(), nonce & 0xff_ffff));
     fs::create_dir_all(std::env::temp_dir()).map_err(|error| error.to_string())?;
@@ -91,13 +91,12 @@ fn fixture() -> Result<Fixture, String> {
         (".gitignore", "target/\nCargo.lock\n"),
         (
             "Cargo.toml",
-            "[workspace]\nresolver = \"2\"\n\n[package]\nname = \"support-route-control\"\nversion = \"0.1.0\"\nedition = \"2024\"\n\n[workspace.lints.rust]\nunsafe_code = \"forbid\"\n\n[lints]\nworkspace = true\n",
+            "[workspace]\nmembers = [\"crates/ripr\", \"xtask\"]\nresolver = \"2\"\n\n[workspace.lints.rust]\nunsafe_code = \"forbid\"\n",
         ),
         (
             "rust-toolchain.toml",
             include_str!("../../rust-toolchain.toml"),
         ),
-        ("src/lib.rs", "pub fn support_route_control() {}\n"),
         (
             "README.md",
             "# Support route fixture\n\n[Support tiers](docs/status/SUPPORT_TIERS.md).\n",
@@ -124,6 +123,20 @@ fn fixture() -> Result<Fixture, String> {
         ),
     ] {
         write(&fixture.root, path, body)?;
+    }
+    for (path, name) in [("crates/ripr", "ripr"), ("xtask", "xtask")] {
+        write(
+            &fixture.root,
+            &format!("{path}/Cargo.toml"),
+            &format!(
+                "[package]\nname = \"{name}\"\nversion = \"0.1.0\"\nedition = \"2024\"\n\n[lints]\nworkspace = true\n"
+            ),
+        )?;
+        write(
+            &fixture.root,
+            &format!("{path}/src/lib.rs"),
+            "pub fn support_route_control() {}\n",
+        )?;
     }
     fs::create_dir_all(fixture.root.join("docs/specs")).map_err(|error| error.to_string())?;
     // The unchanged command catalog compares its built-in entries with real

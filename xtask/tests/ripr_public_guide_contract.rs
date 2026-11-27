@@ -1,5 +1,5 @@
 //! Current repository guides must agree with the candidate's rendered help.
-//! These seven source-checkout audits are deliberately outside the published crate.
+//! The source-checkout audits also cover the lockstep crate publication guide.
 
 #[path = "../../crates/ripr/tests/common/help_contract.rs"]
 mod help_contract;
@@ -151,6 +151,12 @@ fn doc_section(doc: &str, heading: &str) -> Result<String, String> {
         .ok_or_else(|| format!("document has no content for `{heading}`"))
 }
 
+const README_ARCHIVE_CHECK: &str = " && ./ripr-bin/ripr check";
+
+fn readme_first_run_checks_installed_archive(block: &str) -> bool {
+    block.contains("sha256sum -c") && block.ends_with(README_ARCHIVE_CHECK)
+}
+
 /// Keep task ownership and executable entry points aligned without pinning
 /// editorial prose.
 #[test]
@@ -161,9 +167,10 @@ fn docs_keep_the_canonical_role_vocabulary() -> Result<(), String> {
     // alternative below it. The block must verify the download and end by
     // inspecting a change.
     let first_run = first_bash_block(ROOT_README)?;
-    if !first_run.contains("sha256sum -c") || !first_run.ends_with(" ripr check") {
+    if !readme_first_run_checks_installed_archive(&first_run) {
         return Err(
-            "README first run must install a checksummed ripr and inspect a change".to_string(),
+            "README first run must verify the archive and inspect a change with the extracted ripr"
+                .to_string(),
         );
     }
     for target in [
@@ -427,34 +434,36 @@ fn first_run_guard_does_not_credit_a_later_correct_example() -> Result<(), Strin
     if first_bash_block(changed)? == "ripr check" {
         return Err("a later command must not hide a wrong first-run route".to_string());
     }
-    for (surface, section, expected) in [
-        (
-            "README",
-            doc_section(ROOT_README, "## The first useful run")?,
-            "cargo install ripr ripr check",
-        ),
-        (
-            "Quickstart CLI",
-            doc_section(QUICKSTART_DOC, "## CLI First Hour")?,
-            "ripr check",
-        ),
+    let readme = first_bash_block(&doc_section(ROOT_README, "## The first useful run")?)?;
+    let install = readme
+        .strip_suffix(README_ARCHIVE_CHECK)
+        .ok_or("README negative controls need the guarded extracted command")?;
+    for wrong in [
+        " && ripr check",
+        " ./ripr-bin/ripr check",
+        " && ./ripr-bin/ripr doctor",
+        " && ./ripr-bin/ripr pilot --root .",
+        " && ./ripr-bin/ripr check --base origin/main",
     ] {
-        for command in [
-            "ripr doctor",
-            "ripr pilot --root .",
-            "ripr check --base origin/main",
-        ] {
-            let wrong = section.replacen("\nripr check\n", &format!("\n{command}\n"), 1);
-            if wrong == section {
-                return Err(format!(
-                    "{surface} negative control did not change a command"
-                ));
-            }
-            if first_bash_block(&wrong)? == expected {
-                return Err(format!(
-                    "{surface} first-run guard accepted `{command}` before a later correct example"
-                ));
-            }
+        if readme_first_run_checks_installed_archive(&format!("{install}{wrong}")) {
+            return Err(format!("README first-run guard accepted `{wrong}`"));
+        }
+    }
+
+    let quickstart = doc_section(QUICKSTART_DOC, "## CLI First Hour")?;
+    for command in [
+        "ripr doctor",
+        "ripr pilot --root .",
+        "ripr check --base origin/main",
+    ] {
+        let wrong = quickstart.replacen("\nripr check\n", &format!("\n{command}\n"), 1);
+        if wrong == quickstart {
+            return Err("Quickstart CLI negative control did not change a command".to_string());
+        }
+        if first_bash_block(&wrong)? == "ripr check" {
+            return Err(format!(
+                "Quickstart CLI first-run guard accepted `{command}` before a later correct example"
+            ));
         }
     }
     Ok(())
@@ -1034,4 +1043,69 @@ fn public_leads_ask_the_question_and_qualify_the_test_to_add() -> Result<(), Str
         return Err("an unqualified repair promise passed the lead check".to_string());
     }
     Ok(())
+}
+
+// Keep the fully qualified test selector stable when moving this guide check
+// onto the required docs-only test target (#15796).
+mod publish_rehearsal {
+    mod tests {
+        use std::fs;
+
+        #[test]
+        fn release_guide_binds_to_lockstep_contract_dependency() -> Result<(), String> {
+            let ripr_manifest = fs::read_to_string(concat!(
+                env!("CARGO_MANIFEST_DIR"),
+                "/../crates/ripr/Cargo.toml"
+            ))
+            .map_err(|e| format!("read ripr Cargo.toml: {e}"))?;
+            let release_doc =
+                fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/../docs/RELEASE.md"))
+                    .map_err(|e| format!("read docs/RELEASE.md: {e}"))?;
+
+            if ripr_manifest.contains("ripr-contract") {
+                // Standalone product dry-run must not appear as an instruction line.
+                for line in release_doc.lines() {
+                    assert_ne!(
+                        line.trim(),
+                        "cargo publish -p ripr --dry-run",
+                        "docs/RELEASE.md must not instruct standalone `cargo publish -p ripr --dry-run`"
+                    );
+                }
+                // Commands must appear as instruction lines, not merely as a
+                // substring of prose: a required command inside a "do not run"
+                // sentence would otherwise satisfy the check.
+                for required in [
+                    "cargo xtask publish-dry-run",
+                    "cargo xtask publish-precheck",
+                    "cargo search ripr-contract",
+                ] {
+                    assert!(
+                        release_doc
+                            .lines()
+                            .any(|line| line.trim_start().starts_with(required)),
+                        "docs/RELEASE.md must give `{required}` as an instruction line, not only mention it"
+                    );
+                }
+                // The real publish runs from the kept stage (#14198), so the guide
+                // must name those exact commands. A prefix match would let the
+                // `ripr-contract` line satisfy the `ripr` requirement.
+                for required in [
+                    "cargo publish --allow-dirty -p ripr-contract",
+                    "cargo publish --allow-dirty -p ripr",
+                ] {
+                    assert!(
+                        release_doc.lines().any(|line| line.trim() == required),
+                        "docs/RELEASE.md must give `{required}` as its own instruction line"
+                    );
+                }
+                for required in ["crates/ripr-contract", "Partial-publication recovery"] {
+                    assert!(
+                        release_doc.contains(required),
+                        "docs/RELEASE.md missing lockstep publication requirement `{required}`"
+                    );
+                }
+            }
+            Ok(())
+        }
+    }
 }

@@ -108,3 +108,59 @@ fn given_src_short_name_shadowed_by_plain_module_when_repo_mode_then_not_exposed
     );
     Ok(())
 }
+
+/// Production has cap priority, so a real run with a capped production rival
+/// also caps every test. Exercise that selection first, then supply the same
+/// test to both evidence producers to isolate the ambiguity decision.
+#[test]
+fn capped_source_identity_withholds_short_import_credit() -> Result<(), String> {
+    let root = super::reexport_tests::unique_tempdir("capped-src-identity")?;
+    std::fs::create_dir_all(root.join("src")).map_err(|err| err.to_string())?;
+    let owner = PathBuf::from("src/value.py");
+    let test = PathBuf::from("test_value.py");
+    std::fs::write(root.join(&owner), PRICE).map_err(|err| err.to_string())?;
+    std::fs::write(root.join(&test), PRICE_TEST.replace("core", "value"))
+        .map_err(|err| err.to_string())?;
+    for (omitted, shadowed) in [("zother.py", false), ("value.py", true)] {
+        std::fs::write(root.join(omitted), PRICE).map_err(|err| err.to_string())?;
+        for limit in [1, 3] {
+            let mut input = super::repo::select_repo_input_with_limit(
+                &root,
+                super::repo::RepoWorkingSetLimit {
+                    limit,
+                    source: super::repo::RepoWorkingSetCapSource::Default,
+                },
+            );
+            if limit == 1 {
+                assert_eq!(
+                    input.production_files.as_slice(),
+                    std::slice::from_ref(&owner)
+                );
+                assert!(input.test_files.is_empty());
+                let actual = super::repo::build_repo_evidence(&input, &root);
+                assert_eq!(actual.status.as_str(), "capped");
+                assert_eq!(actual.counts.capped, 2);
+                let finding = actual
+                    .findings
+                    .iter()
+                    .find(|f| f.probe.location.file == owner && f.probe.location.line == 2)
+                    .ok_or("missing capped owner")?;
+                assert_ne!(finding.class, ExposureClass::Exposed);
+                input.test_files.push(test.clone());
+            }
+            let evidence = super::repo::build_repo_evidence(&input, &root);
+            let finding = evidence
+                .findings
+                .iter()
+                .find(|f| f.probe.location.file == owner && f.probe.location.line == 2)
+                .ok_or("missing owner")?;
+            assert_eq!(
+                finding.class == ExposureClass::Exposed,
+                !shadowed,
+                "limit={limit} omitted={omitted}: {finding:?}"
+            );
+        }
+        std::fs::remove_file(root.join(omitted)).map_err(|err| err.to_string())?;
+    }
+    std::fs::remove_dir_all(root).map_err(|err| err.to_string())
+}

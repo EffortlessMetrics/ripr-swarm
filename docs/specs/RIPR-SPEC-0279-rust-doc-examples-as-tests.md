@@ -150,6 +150,10 @@ package (`[lib] name`, else the package name with `-` read as `_`):
 - A method or associated call, and an owner with same-named rivals (whose
   identity is settled in the holding file's scopes), refuse.
 
+The same binding is required to credit a direct call in the related-test set
+(#14935). A matching function name in an unresolved path supplies no reach
+evidence, even when the example documents that function directly.
+
 ### Decisions
 
 1. **The example is its own crate.** Adopted: scopes, macro bindings and

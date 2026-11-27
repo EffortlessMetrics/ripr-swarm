@@ -612,3 +612,64 @@ fn powershell_launch_passes_a_quoted_unicode_root_to_ripr() -> Result<(), String
     }
     Ok(())
 }
+
+/// #15753: a relative `--root .` must admit the same closed-workspace
+/// readings as an absolute root. The dependency-closure premise used to read
+/// the root package directory as the empty path and refuse, so the one-hop
+/// field projection below read `propagation_unknown` under `--root .` and
+/// `exposed` under the absolute root. Both spellings must now read `exposed`.
+#[test]
+fn relative_dot_root_keeps_closed_workspace_readings() -> Result<(), String> {
+    let base = FixtureBase::new("dot-closure")?;
+    let root = base.path.join("repo");
+    fs::create_dir_all(root.join("src")).map_err(|err| err.to_string())?;
+    let write = |path: &Path, text: &str| {
+        fs::write(path, text).map_err(|err| format!("write {}: {err}", path.display()))
+    };
+    write(
+        &root.join("Cargo.toml"),
+        "[package]\nname = \"dot_closure\"\nversion = \"0.1.0\"\nedition = \"2024\"\n",
+    )?;
+    write(
+        &root.join("src/lib.rs"),
+        "#[derive(Debug, PartialEq)]\npub struct Stat { pub missing_duration_count: usize, pub sibling: usize }\npub fn stats(total: usize, known: usize) -> Stat {\n    Stat {\n        missing_duration_count: total - known,\n        sibling: 19,\n    }\n}\npub fn projected(total: usize, known: usize) -> usize {\n    stats(total, known).missing_duration_count\n}\n#[test] fn pin() { assert_eq!(projected(20, 1), 19); }\n",
+    )?;
+    let patch = base.path.join("change.patch");
+    write(
+        &patch,
+        "diff --git a/src/lib.rs b/src/lib.rs\n--- a/src/lib.rs\n+++ b/src/lib.rs\n@@ -5 +5 @@\n-        missing_duration_count: 0,\n+        missing_duration_count: total - known,\n",
+    )?;
+    let classes = |cwd: &Path, spelling: &Path| -> Result<Vec<String>, String> {
+        let output = run_ripr_from(
+            Some(cwd),
+            &[
+                "check".as_ref(),
+                "--root".as_ref(),
+                spelling.as_os_str(),
+                "--diff".as_ref(),
+                patch.as_os_str(),
+                "--json".as_ref(),
+            ],
+        )?;
+        assert!(output.status.success(), "{}", describe(&output));
+        let report = parse_json(&output.stdout, "dot-root check stdout")?;
+        let findings = report["findings"]
+            .as_array()
+            .filter(|findings| !findings.is_empty())
+            .ok_or_else(|| format!("no findings for {}: {report}", spelling.display()))?;
+        Ok(findings
+            .iter()
+            .map(|finding| finding["classification"].as_str().unwrap_or("").to_string())
+            .collect())
+    };
+    let absolute = classes(&base.path, &root)?;
+    assert_eq!(absolute, ["exposed"], "absolute root must read exposed");
+    for spelling in [".", "./"] {
+        assert_eq!(
+            classes(&root, Path::new(spelling))?,
+            absolute,
+            "`--root {spelling}` must read like the absolute root"
+        );
+    }
+    Ok(())
+}

@@ -1,0 +1,6 @@
+diff --git a/src/lib.rs b/src/lib.rs
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -10 +10 @@
+-pub fn score(value: i32) -> i32 {
++pub unsafe fn score(value: i32) -> i32 {
