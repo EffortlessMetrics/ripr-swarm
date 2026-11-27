@@ -9433,6 +9433,58 @@
       ]
     },
     {
+      "id": "typescript_body_local_class_shadow",
+      "language": "typescript",
+      "tier": "pure",
+      "source_fixture": "fixtures/typescript_body_local_class_shadow",
+      "vector": "body_local_class_shadows_the_imported_owner_class",
+      "assertions": [
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "expected_finding_count",
+          "count": 1
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "expected_class",
+          "class": "no_static_path"
+        }
+      ]
+    },
+    {
+      "id": "typescript_body_local_class_shadow_control",
+      "language": "typescript",
+      "tier": "pure",
+      "source_fixture": "fixtures/typescript_body_local_class_shadow_control",
+      "vector": "imported_owner_class_without_a_body_local_shadow_keeps_its_relation",
+      "assertions": [
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "expected_finding_count",
+          "count": 1
+        },
+        {
+          "type": "expected_class",
+          "class": "weakly_exposed"
+        },
+        {
+          "type": "expected_related_test",
+          "name": "parses the scheme",
+          "file": "tests/url.test.ts",
+          "line": 3,
+          "kind": "exact_value",
+          "strength": "strong",
+          "relation_reason": "direct_owner_call"
+        }
+      ]
+    },
+    {
       "id": "ts_same_method_other_class",
       "language": "typescript",
       "tier": "pure",
@@ -22150,6 +22202,43 @@
           "strength": "weak",
           "relation_reason": "direct_owner_call",
           "miss": "observation_unconfirmed"
+        }
+      ]
+    },
+    {
+      "id": "rust_crate_qualified_same_named_type",
+      "language": "rust",
+      "tier": "pure",
+      "source_fixture": "fixtures/rust_crate_qualified_same_named_type",
+      "vector": "crate_qualified_receiver_names_a_same_named_type_in_another_module",
+      "probe_family": "predicate",
+      "assertions": [
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "expected_finding_count",
+          "count": 1
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "expected_class",
+          "class": "reachable_unrevealed"
+        },
+        {
+          "type": "maximum_class",
+          "class": "weakly_exposed"
+        },
+        {
+          "type": "expected_related_test",
+          "name": "rng_digit",
+          "file": "tests/t.rs",
+          "line": 2,
+          "kind": "exact_value",
+          "strength": "strong",
+          "relation_reason": "weak_token_substring"
         }
       ]
     },
