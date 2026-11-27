@@ -343,7 +343,7 @@ fn provider_failure_keeps_unlinked_module_wiring_guidance() -> Result<(), String
             ("src/orphan.rs", OWNER),
             (FILE, PROPERTY),
         ])?;
-        // Set the proven #7426 fact directly; its producer needs a manifest.
+        // Set the established #7426 fact directly; its producer needs a manifest.
         index
             .files
             .get_mut(Path::new("src/orphan.rs"))

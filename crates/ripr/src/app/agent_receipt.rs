@@ -202,7 +202,7 @@ pub(crate) fn canonical_agent_receipt_verify_render(
 fn validate_snapshot_path(root: &Path, path: &Path, flag: &str) -> Result<PathBuf, String> {
     let root = root.canonicalize().map_err(|err| {
         format!(
-            "canonicalize agent receipt root {} failed: {err}",
+            "canonicalize agent receipt root {} failed: {err}; pass an existing directory as --root",
             root.display()
         )
     })?;

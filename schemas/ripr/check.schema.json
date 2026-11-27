@@ -13,6 +13,52 @@
     "summary",
     "findings"
   ],
+  "anyOf": [
+    { "properties": { "root": { "type": "string", "minLength": 1 } } },
+    {
+      "description": "An explicit empty root fails before scope selection or analysis.",
+      "additionalProperties": false,
+      "required": ["status", "error", "analysis_scope", "run_limitations"],
+      "properties": {
+        "schema_version": {},
+        "tool": {},
+        "mode": {},
+        "root": {},
+        "base": { "type": "string" },
+        "rendering": { "const": "terse" },
+        "status": {},
+        "error": { "properties": { "code": { "const": "repository_root_unusable" } } },
+        "findings": { "maxItems": 0 },
+        "summary": {
+          "const": {
+            "changed_rust_files": 0, "probes": 0, "findings": 0, "exposed": 0,
+            "weakly_exposed": 0, "reachable_unrevealed": 0, "no_static_path": 0,
+            "infection_unknown": 0, "propagation_unknown": 0, "static_unknown": 0,
+            "changed_files_by_language": []
+          }
+        },
+        "analysis_scope": {
+          "const": {
+            "scope": "diff", "run_status": "repository_root_unusable",
+            "basis": "repository_root_unusable", "downstream_consumable": false,
+            "limitation": "repository_root_unusable", "repair_route": "analysis/repository-root"
+          }
+        },
+        "run_limitations": {
+          "minItems": 1, "maxItems": 1,
+          "items": {
+            "properties": {
+              "category": { "const": "repository_root_unusable" },
+              "run_status": { "const": "repository_root_unusable" },
+              "basis": { "const": "repository_root_unusable" },
+              "downstream_consumable": { "const": false },
+              "repair_route": { "const": "analysis/repository-root" }
+            }
+          }
+        }
+      }
+    }
+  ],
   "properties": {
     "schema_version": { "const": "0.2" },
     "artifact": { "$ref": "#/$defs/check_findings_artifact" },
@@ -23,7 +69,10 @@
     },
     "error": { "$ref": "#/$defs/refusal_error" },
     "mode": { "enum": ["instant", "draft", "fast", "deep", "ready"] },
-    "root": { "type": "string", "minLength": 1 },
+    "root": {
+      "type": "string",
+      "description": "A completed or partial report names a nonempty root. A typed refusal can echo an explicitly empty --root argument."
+    },
     "config_path": { "type": "string", "minLength": 1 },
     "base": { "$ref": "#/$defs/nullable_string" },
     "base_commit": { "type": "string", "minLength": 1 },

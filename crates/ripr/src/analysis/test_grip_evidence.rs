@@ -3218,7 +3218,7 @@ fn withhold_unverified_property_provider(
     let Some(owner) = owner else {
         return;
     };
-    // A file no `mod` reaches is a proven wiring limit (#7426); a recovered
+    // A file no `mod` reaches is an established wiring limit (#7426); a recovered
     // provider cannot make Cargo compile it, so keep its specific repair.
     if context
         .index
