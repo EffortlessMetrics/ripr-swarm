@@ -17,7 +17,7 @@ use std::sync::OnceLock;
 
 /// Below this much memory the cap applies. The uncapped whole-workspace
 /// Clippy run needs more than 15 GB; 24 GiB leaves headroom above that.
-const LOW_MEMORY_BYTES: u64 = 24 * 1024 * 1024 * 1024;
+pub(crate) const LOW_MEMORY_BYTES: u64 = 24 * 1024 * 1024 * 1024;
 const CAPPED_JOBS: &str = "1";
 const JOBS_VARIABLE: &str = "CARGO_BUILD_JOBS";
 
@@ -102,7 +102,7 @@ fn smallest_memory_bound(read: &dyn Fn(&str) -> Option<String>) -> Option<u64> {
 
 /// The smallest memory bound this process can see, or `None` off Linux or
 /// when nothing is readable.
-fn host_memory_bytes() -> Option<u64> {
+pub(crate) fn host_memory_bytes() -> Option<u64> {
     smallest_memory_bound(&|path| std::fs::read_to_string(path).ok())
 }
 

@@ -145,3 +145,82 @@ fn a_renamed_default_binding_that_is_not_a_known_runner_registers_nothing() -> R
     }
     Ok(())
 }
+
+/// #16436: a default runner bound under a suite spelling (`suite`,
+/// `describe`) still runs its calls as tests, so they register as tests and
+/// are not opened as suite bodies.
+#[test]
+fn a_default_runner_named_like_a_suite_registers_its_tests() -> Result<(), String> {
+    for (label, prelude, body) in [
+        (
+            "tape-require-suite",
+            "const suite = require('tape');\n",
+            TAPE.replace("check(", "suite("),
+        ),
+        (
+            "tape-default-describe",
+            "import describe from 'tape';\n",
+            TAPE.replace("check(", "describe("),
+        ),
+        (
+            "node-test-default-suite",
+            "import suite from 'node:test';\n",
+            NODE.replace("check(", "suite("),
+        ),
+        (
+            "tape-suite-only",
+            "const suite = require('tape');\n",
+            TAPE.replace("check(", "suite.only("),
+        ),
+        (
+            "tape-suite-in-describe",
+            "const suite = require('tape');\n",
+            format!(
+                "describe('cart', () => {{\n{}}});\n",
+                TAPE.replace("check(", "suite(")
+            ),
+        ),
+        // A real suite import still opens its body.
+        (
+            "vitest-named-suite",
+            "import { suite, test, expect } from 'vitest';\n",
+            "suite('cart', () => {\n  test('checks total', () => {\n    expect(total(50)).toBe(50);\n  });\n});\n".to_string(),
+        ),
+    ] {
+        let class = class_for(label, &format!("{prelude}{IMPORT}{body}"))?;
+        assert_eq!(class, ExposureClass::Exposed, "{label}");
+    }
+    for (label, prelude, body) in [
+        (
+            "mocha-default-suite",
+            "const suite = require('mocha');\n",
+            TAPE.replace("check(", "suite("),
+        ),
+        (
+            "skipped-suite-spelling",
+            "const suite = require('tape');\n",
+            TAPE.replace("check(", "suite.skip("),
+        ),
+        // A suite-level binding shadows the runner. `tape-suite-in-describe`
+        // is the same file without the shadowing local.
+        (
+            "shadowed-suite-spelling",
+            "const suite = require('tape');\n",
+            format!(
+                "describe('cart', () => {{\n  const suite = (name: string, run: (t: any) => void) => {{}};\n{}}});\n",
+                TAPE.replace("check(", "suite(")
+            ),
+        ),
+        // A renamed named member under a suite spelling stays unindexed
+        // and disclosed as a kind mismatch.
+        (
+            "named-test-as-describe",
+            "import { test as describe } from 'node:test';\n",
+            NODE.replace("check(", "describe("),
+        ),
+    ] {
+        let class = class_for(label, &format!("{prelude}{IMPORT}{body}"))?;
+        assert_eq!(class, ExposureClass::NoStaticPath, "{label}");
+    }
+    Ok(())
+}
