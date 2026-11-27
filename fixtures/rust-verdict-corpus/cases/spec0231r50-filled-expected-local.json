@@ -44,5 +44,10 @@
   },
   "spec_examples": [
     "RIPR-SPEC-0231#50"
-  ]
+  ],
+  "expected_oracle": {
+    "kind": "exact_value",
+    "strength": "strong",
+    "spec": "RIPR-SPEC-0231#50"
+  }
 }
