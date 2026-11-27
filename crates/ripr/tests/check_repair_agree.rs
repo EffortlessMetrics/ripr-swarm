@@ -2212,7 +2212,8 @@ fn assert_no_copyable_commit_or_start(case: &str, pilot: &str, markdown: &str) {
 /// refuses it, so a commit of the in-root file alone would not be enough).
 /// The same standalone project with only the in-root file dirty, where no
 /// `../` path exists, is withheld too: the attempt refuses that root whatever
-/// is committed, so the in-root commit step would not clear it.
+/// is committed, so the in-root commit step would not clear it. A clean plain
+/// subdirectory root is withheld as `ripr check` withholds it.
 #[test]
 fn pilot_at_a_subdirectory_root_prints_no_commit_step_and_no_runnable_start() -> Result<(), String>
 {
@@ -2220,6 +2221,7 @@ fn pilot_at_a_subdirectory_root_prints_no_commit_step_and_no_runnable_start() ->
         ("sibling only", true, false, true),
         ("mixed", false, false, true),
         ("mixed, standalone nested project", false, true, true),
+        ("clean, plain subdirectory", true, false, false),
         (
             "in-root only, standalone nested project",
             false,

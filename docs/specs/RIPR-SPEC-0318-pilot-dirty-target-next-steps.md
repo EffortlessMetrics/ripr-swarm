@@ -91,7 +91,7 @@ before phase's own policy-free dirty-premise preflight once, through
 `app::seam_start_premise` (which calls
 `app::repair_attempt::seam_start_dirty_premise`, the check the start applies
 before it refuses with "ripr repair needs your source changes committed first
-... Nothing was started"), in `ripr check`'s order, and shares the answer
+... Nothing was started"), and shares the answer
 between both human surfaces. The preflight compares tracked files with HEAD as
 `git diff HEAD` does: a staged or unstaged edit is dirty, while an index-only
 difference whose worktree copy matches HEAD is not. It reports production
@@ -141,13 +141,17 @@ files only, relative to the analyzed root (`../...` outside it).
    start with check's subdirectory advisory, naming the exact Git top-level,
    as in case 2.
 
-A clean premise prints no commit step and keeps the start as `ripr check`
-prints it. At a standalone nested Cargo project that start still refuses;
-that check-side policy is tracked separately (#16428).
+A clean premise prints no commit step and takes check's own subdirectory
+gate (`enclosing_git_top_level_above`). A plain subdirectory root withholds
+the start with check's subdirectory advisory, as check does. A standalone
+nested Cargo project keeps the start, as check does, although the attempt
+still refuses it there; that check-side policy is tracked separately
+(#16428).
 
 A committed change, and a dirty test-surface file (the refusal's own
-allowance), add no step. Pilot reads the working tree it ranks, so every file
-it names was analyzed. The refusal itself and the pilot summary JSON are
+allowance), add no step. Pilot names every production file the preflight
+reports, including one it did not rank (a dirty `Cargo.toml` inside the
+root), because the start refuses over each of them. The refusal itself and the pilot summary JSON are
 unchanged.
 
 The commit clears only the files the preflight names. The preflight skips
@@ -185,10 +189,11 @@ belongs to the shared preflight, not to pilot.
   target merged, once, into the commit for another dirty production file.
   Running that commit lets the start begin.
 - `pilot_at_a_subdirectory_root_prints_no_commit_step_and_no_runnable_start`
-  covers four cases. A subdirectory root with a dirty sibling outside it only;
+  covers five cases. A subdirectory root with a dirty sibling outside it only;
   the same root with dirty files on both sides; both sides dirty at a nested
   Cargo project the enclosing package does not claim; and that nested project
-  with only its in-root file dirty (no `../` path). In each, neither
+  with only its in-root file dirty (no `../` path); and a clean plain
+  subdirectory root. In each, neither
   surface prints a commit step or a runnable start, both print check's
   subdirectory advisory, and the start itself refuses there.
 - `pilot_premise_probe_runs_only_when_a_repair_start_is_printed`

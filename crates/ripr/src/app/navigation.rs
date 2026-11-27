@@ -120,19 +120,18 @@ pub(crate) enum SeamStartPremise {
     /// before-phase check may still refuse).
     Dirty(Vec<String>),
     /// No start may be printed: `ripr check`'s one-line advisory for the same
-    /// state (an unreadable premise, or a dirty premise at a root that is not
-    /// the exact Git top-level, where the start refuses whatever is
-    /// committed, #15488).
+    /// state (an unreadable premise, or a root whose start refuses whatever
+    /// is committed, #15488).
     Withheld(String),
 }
 
-/// The [`SeamStartPremise`] at `root`, asking the same authorities as
-/// `ripr check`'s seam route and in its order: an unreadable premise offers
-/// no start ("could not validate the prerequisites"); a dirty premise at any
-/// root that is not the exact Git top-level names that top-level with check's
-/// subdirectory advisory instead of a commit step and start, because the
-/// attempt refuses such a root whatever is committed. A clean premise, or a
-/// dirty one at the top-level, is returned as is.
+/// The [`SeamStartPremise`] at `root`: an unreadable premise offers no start
+/// ("could not validate the prerequisites"), as `ripr check` does. A clean
+/// premise below a subdirectory root that check's gate withholds, or a dirty
+/// premise at any root that is not the exact Git top-level (where the
+/// attempt refuses whatever is committed), names that top-level with check's
+/// subdirectory advisory instead of a commit step and start. Otherwise the
+/// premise is returned as is.
 pub(crate) fn seam_start_premise(root: &Path) -> SeamStartPremise {
     let Ok(files) = super::repair_attempt::seam_start_dirty_premise(root) else {
         return SeamStartPremise::Withheld(
@@ -142,16 +141,17 @@ pub(crate) fn seam_start_premise(root: &Path) -> SeamStartPremise {
             .advisory(""),
         );
     };
-    // A commit step promises that the start runs after it. The attempt
-    // refuses every root that is not the exact Git top-level ("not the exact
-    // Git top-level"), with no exception for a standalone nested Cargo
-    // project check's gate keeps (#15488), so no commit spelled from such a
-    // root clears it, whether the dirty files sit inside the root or outside
-    // it (`../...`, #13962). A clean premise prints no commit step and keeps
-    // the start exactly as `ripr check` prints it; check's standalone-project
-    // policy for that start is its own (#16428).
+    // A clean premise prints no commit step, so it takes check's own gate
+    // (`enclosing_git_top_level_above`): a plain subdirectory root withholds
+    // the start as check does, and a standalone nested Cargo project keeps it
+    // as check does (#15488; that start's disagreement with the attempt is
+    // #16428). A commit step instead promises that the start runs after it,
+    // and the attempt refuses every root that is not the exact Git top-level
+    // with no standalone exception, so a dirty premise asks the attempt's
+    // own check: no commit spelled from such a root clears it, whether the
+    // dirty files sit inside the root or outside it (`../...`, #13962).
     let top = if files.is_empty() {
-        None
+        crate::edit_cage::enclosing_git_top_level_above(root)
     } else {
         crate::edit_cage::exact_git_top_level_above(root)
     };
