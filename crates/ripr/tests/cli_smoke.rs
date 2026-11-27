@@ -10869,6 +10869,8 @@ fn agent_repair_accepts_empty_effectively_ignored_build_tree_and_actual_cargo_te
         &[
             ("CARGO_TARGET_DIR", &target),
             ("CARGO_BUILD_BUILD_DIR", &target),
+            // Exercise the optional-cache case even under default Cargo settings.
+            ("CARGO_CACHE_RUSTC_INFO", "0"),
         ],
     )?;
     if !test.status.success() {
