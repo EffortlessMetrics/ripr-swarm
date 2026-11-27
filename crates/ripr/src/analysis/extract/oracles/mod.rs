@@ -1,4 +1,7 @@
 mod arguments;
+mod bool_local;
+pub(crate) use bool_local::{BoolLocals, with_bool_local_inlined};
+pub(crate) use classify::OracleClassification;
 mod bool_operands;
 mod classify;
 mod pattern_admission;

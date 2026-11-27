@@ -38,6 +38,59 @@ pub(crate) enum Compat {
     Violations(Vec<String>),
 }
 
+/// Published schemas whose documents carry their pinned version under a key
+/// other than `schema_version`. The `ripr context` packet keeps its
+/// documented top-level `version` key (#5081); renaming it on the wire would
+/// be its own migration. Every other schema pins `schema_version`.
+pub(crate) const VERSION_KEY_OVERRIDES: &[(&str, &str)] =
+    &[("schemas/ripr/context.schema.json", "version")];
+
+/// The top-level property that pins the version of the schema at `rel`.
+pub(crate) fn version_key(rel: &str) -> &'static str {
+    VERSION_KEY_OVERRIDES
+        .iter()
+        .find(|(path, _)| *path == rel)
+        .map_or("schema_version", |(_, key)| key)
+}
+
+/// `assess` for a schema that pins its version under `key`: the pin and any
+/// `schema_version` property swap names in both copies first, so a changed
+/// pin is the same sanctioned bump signal under either key, and a separate
+/// `schema_version` property is still compared (under `key`'s name) rather
+/// than overwritten.
+pub(crate) fn assess_with_version_key(old: &Value, new: &Value, key: &str) -> Compat {
+    if key == "schema_version" {
+        return assess(old, new);
+    }
+    let swap = |name: &str| match name {
+        "schema_version" => Some(key),
+        other if other == key => Some("schema_version"),
+        _ => None,
+    };
+    let rename = |schema: &Value| {
+        let mut schema = schema.clone();
+        if let Some(properties) = schema.get_mut("properties").and_then(Value::as_object_mut) {
+            let pin = properties.remove(key);
+            let declared = properties.remove("schema_version");
+            if let Some(pin) = pin {
+                properties.insert("schema_version".to_string(), pin);
+            }
+            if let Some(declared) = declared {
+                properties.insert(key.to_string(), declared);
+            }
+        }
+        if let Some(required) = schema.get_mut("required").and_then(Value::as_array_mut) {
+            for name in required.iter_mut() {
+                if let Some(swapped) = name.as_str().and_then(swap) {
+                    *name = Value::String(swapped.to_string());
+                }
+            }
+        }
+        schema
+    };
+    assess(&rename(old), &rename(new))
+}
+
 /// Compare `old` to `new` and decide whether the edit is acceptable.
 pub(crate) fn assess(old: &Value, new: &Value) -> Compat {
     let mut breaking = Vec::new();
@@ -563,7 +616,7 @@ pub(crate) fn check(root: &Path, published: &[String]) -> (Vec<String>, String) 
             continue;
         };
         compared += 1;
-        match assess(&old, &new) {
+        match assess_with_version_key(&old, &new, version_key(rel)) {
             Compat::Compatible {
                 bumped: true,
                 breaking,
@@ -909,6 +962,52 @@ mod tests {
                 breaking: 1
             }
         );
+    }
+
+    /// The context packet pins `version`, not `schema_version` (#5081): a
+    /// changed `version` const is its sanctioned bump, and a tightening
+    /// without one is still caught under that key.
+    #[test]
+    fn an_overridden_version_key_is_the_bump_signal() {
+        assert_eq!(version_key("schemas/ripr/context.schema.json"), "version");
+        assert_eq!(
+            version_key("schemas/ripr/diff.schema.json"),
+            "schema_version"
+        );
+        let keyed = |version: &str, values: Value| {
+            json!({
+                "type": "object",
+                "required": ["version", "a"],
+                "properties": {"version": {"const": version}, "a": {"enum": values}}
+            })
+        };
+        let old = keyed("1.1", json!(["x", "y"]));
+        let tightened = keyed("1.1", json!(["x"]));
+        let bumped = keyed("1.2", json!(["x"]));
+        assert!(matches!(
+            assess_with_version_key(&old, &tightened, "version"),
+            Compat::Violations(_)
+        ));
+        assert_eq!(
+            assess_with_version_key(&old, &bumped, "version"),
+            Compat::Compatible {
+                bumped: true,
+                breaking: 1
+            }
+        );
+        // Read under the default key, the same bump is an unsanctioned const
+        // change, so the override is what admits it.
+        assert!(matches!(assess(&old, &bumped), Compat::Violations(_)));
+        // A separate `schema_version` property beside the overridden pin is
+        // still compared: tightening it without a bump is caught.
+        let mut declared = old.clone();
+        declared["properties"]["schema_version"] = json!({"type": "string"});
+        let mut tightened_declared = declared.clone();
+        tightened_declared["properties"]["schema_version"] = json!({"enum": ["only"]});
+        assert!(matches!(
+            assess_with_version_key(&declared, &tightened_declared, "version"),
+            Compat::Violations(_)
+        ));
     }
 
     #[test]

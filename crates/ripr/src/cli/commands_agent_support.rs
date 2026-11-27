@@ -32,8 +32,12 @@ pub(super) fn validate_agent_receipt_verify_path(
         // unknowable at the receipt, and naming the workflow pair for it
         // would steer the caller at a comparison they never asked for.
         let failure = format!(
-            "canonicalize agent receipt --verify-json {} failed: {err}",
-            path.display()
+            "agent receipt --verify-json {} {}",
+            path.display(),
+            crate::bounded_input::unreadable_input_phrase(
+                &err,
+                "pass the verify JSON that `ripr agent verify` wrote"
+            )
         );
         let is_workflow_artifact =
             candidate == root.join(crate::agent::loop_commands::WORKFLOW_AGENT_VERIFY_ARTIFACT);
@@ -141,8 +145,12 @@ fn validate_agent_receipt_artifact_path(
     };
     let candidate = candidate.canonicalize().map_err(|err| {
         format!(
-            "canonicalize agent receipt {role} {} failed: {err}",
-            path.display()
+            "agent receipt {role} {} {}",
+            path.display(),
+            crate::bounded_input::unreadable_input_phrase(
+                &err,
+                "pass the snapshot JSON that `ripr check --format repo-exposure-json` wrote"
+            )
         )
     })?;
 
@@ -244,7 +252,7 @@ pub(super) fn validate_agent_verify_snapshot_path(
 /// pre-check saw length 0 for a character device such as `/dev/zero` and let
 /// the unbounded read run forever.
 pub(super) fn read_agent_verify_snapshot(path: &Path, label: &str) -> Result<String, String> {
-    crate::bounded_input::read_to_string(path).map_err(|err| {
+    crate::bounded_input::read_artifact_text(path).map_err(|err| {
         format!(
             "read agent verify {label} snapshot {} failed: {err}",
             output::outcome::display_path(path)
@@ -729,7 +737,7 @@ mod tests {
         };
         assert!(
             err.contains(&format!(
-                "canonicalize agent receipt --verify-json {verify_input} failed"
+                "agent receipt --verify-json {verify_input} does not exist"
             )),
             "error must name the missing receipt input: {err}"
         );
@@ -768,7 +776,7 @@ mod tests {
             return Err("a missing custom verify artifact must fail the receipt".to_string());
         };
         assert!(
-            err.contains("canonicalize agent receipt --verify-json comparisons/verify.json failed"),
+            err.contains("agent receipt --verify-json comparisons/verify.json does not exist"),
             "error must name the missing receipt input: {err}"
         );
         assert!(

@@ -1,0 +1,2 @@
+<!-- section: Fixed -->
+- A Rust helper wrapper that reads `include_str!` or `include_bytes!` before calling its helper now forwards the helper's result to tests of the wrapper, as it already did for `env!` and `line!`. A local `macro_rules! include_str` or `include_bytes`, a foreign import of either name, and a path-qualified call such as `std::include_str!` still keep the wrapper opaque (#10357).

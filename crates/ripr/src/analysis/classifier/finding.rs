@@ -90,7 +90,8 @@ pub(in crate::analysis) fn build_finding_with_origins(
     }
     // #12040: a build-time check constrains this line; a violating edit fails
     // to build. The classifier withholds a ruled-out reach separately.
-    if context.compile_time_guarded
+    // #15933: a line inside a `compile_error!` is build-time code itself.
+    if (context.compile_time_guarded || context.in_compile_error)
         && let Some(at) = stop_reasons
             .iter()
             .position(|reason| *reason == StopReason::NoChangedRustLine)
@@ -1894,6 +1895,7 @@ mod tests {
 
     fn probe(family: ProbeFamily, expression: &str) -> Probe {
         Probe {
+            before_condition: None,
             id: ProbeId("probe:test".to_string()),
             location: SourceLocation::new("src/lib.rs", 12, 2),
             owner: Some(SymbolId("owner:calculate".to_string())),

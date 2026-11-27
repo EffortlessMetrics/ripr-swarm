@@ -91,6 +91,90 @@ pub fn is_typescript_docs_site_path(path: &Path) -> bool {
         .any(|component| component.as_os_str().to_str() == Some("docs"))
 }
 
+/// Tools whose `<tool>.config.<ext>` file (and suffixed variants such as
+/// `vitest.config.e2e.ts`) configures a build, lint, format or test-runner
+/// process rather than shipping product behavior.
+const TYPESCRIPT_TOOL_CONFIG_STEMS: &[&str] = &[
+    "astro",
+    "ava",
+    "babel",
+    "commitlint",
+    "cypress",
+    "eslint",
+    "jest",
+    "lint-staged",
+    "next",
+    "nuxt",
+    "playwright",
+    "postcss",
+    "prettier",
+    "rolldown",
+    "rollup",
+    "rsbuild",
+    "rspack",
+    "stylelint",
+    "svelte",
+    "tailwind",
+    "tsdown",
+    "tsup",
+    "vite",
+    "vitest",
+    "webpack",
+];
+
+/// Tool config names that do not follow `<tool>.config.<ext>`: the
+/// `<tool>.conf.<ext>` runners, Vitest workspace files and script-form rc
+/// files. Each is matched as a whole-name prefix ending at a `.`.
+const TYPESCRIPT_TOOL_CONFIG_NAME_PREFIXES: &[&str] = &[
+    ".babelrc.",
+    ".eslintrc.",
+    ".mocharc.",
+    ".prettierrc.",
+    "karma.conf.",
+    "vitest.workspace.",
+    "wdio.conf.",
+];
+
+/// Whether a UTF-8 file name is a known tool configuration script.
+///
+/// `jest.config.ts`, `vitest.config.e2e.mts`, `.eslintrc.cjs` and
+/// `karma.conf.js` match. `config.ts`, `app.config.ts`, `jest.configuration.ts`,
+/// `jest.setup.ts` and `myjest.config.ts` are near-misses and stay ordinary
+/// source: only a listed tool name, as the whole stem before `.config.`, is a
+/// tool config.
+pub fn is_typescript_tool_config_name(name: &str) -> bool {
+    TYPESCRIPT_TOOL_CONFIG_STEMS.iter().any(|stem| {
+        name.strip_prefix(stem)
+            .is_some_and(|rest| rest.starts_with(".config."))
+    }) || TYPESCRIPT_TOOL_CONFIG_NAME_PREFIXES
+        .iter()
+        .any(|prefix| name.starts_with(prefix))
+}
+
+/// Whether a changed TypeScript/JavaScript file is a tool configuration
+/// script (#15947).
+///
+/// A runner or bundler loads such a file; no test imports it, so a changed
+/// field of `jest.config.ts` would otherwise read as product code with no
+/// test path. Like the docs-site rule this refuses the file as a finding
+/// subject only: the workspace walk keeps reading it, because alias and
+/// runner detection consume its text. A config that carries real, tested
+/// logic opts back in with `[languages.typescript] handwritten_files`.
+pub fn is_typescript_tool_config_path(path: &Path) -> bool {
+    path.file_name()
+        .and_then(|name| name.to_str())
+        .is_some_and(is_typescript_tool_config_name)
+}
+
+/// Whether a TypeScript/JavaScript file is refused as a finding subject while
+/// staying in the workspace walk: a docs-site file or a tool configuration
+/// script. The diff loop, the pipeline's admitted-diff measure and repo-mode
+/// selection share this one answer; each applies the `handwritten_files`
+/// opt-in itself.
+pub fn is_typescript_non_product_path(path: &Path) -> bool {
+    is_typescript_docs_site_path(path) || is_typescript_tool_config_path(path)
+}
+
 /// Path-shaped TypeScript compiler reference-output trees.
 fn is_typescript_reference_output_path(path: &Path) -> bool {
     TYPESCRIPT_REFERENCE_OUTPUT_DIR_PAIRS
@@ -671,6 +755,54 @@ mod tests {
                 "{name} is a near-miss"
             );
         }
+    }
+
+    #[test]
+    fn tool_config_scripts_are_non_product_but_near_misses_are_source() {
+        for path in [
+            "jest.config.ts",
+            "packages/core/vitest.config.mts",
+            "vitest.config.e2e.ts",
+            "vitest.workspace.ts",
+            "apps/web/next.config.js",
+            "lint-staged.config.mjs",
+            ".eslintrc.cjs",
+            ".mocharc.js",
+            "karma.conf.js",
+            "wdio.conf.ts",
+        ] {
+            assert!(
+                is_typescript_tool_config_path(Path::new(path)),
+                "{path} is a tool config"
+            );
+            assert!(
+                is_typescript_non_product_path(Path::new(path)),
+                "{path} is refused as a finding subject"
+            );
+        }
+        for path in [
+            "src/config.ts",
+            "src/app.config.ts",
+            "src/jest.configuration.ts",
+            "jest.setup.ts",
+            "src/myjest.config.ts",
+            "src/jest.ts",
+            "src/jest.config/loader.ts",
+            "src/eslintrc.ts",
+            "src/karma.conference.ts",
+        ] {
+            assert!(
+                !is_typescript_tool_config_path(Path::new(path)),
+                "{path} is ordinary source"
+            );
+            assert!(
+                !is_typescript_non_product_path(Path::new(path)),
+                "{path} stays a finding subject"
+            );
+        }
+        assert!(is_typescript_non_product_path(Path::new(
+            "packages/docs/theme/index.ts"
+        )));
     }
 
     #[test]

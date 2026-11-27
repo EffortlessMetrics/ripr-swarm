@@ -627,8 +627,13 @@ fn render_pilot_summary_md_with_target(
         (None, Some(routes)) => {
             let commands = PilotLanguageRoutes::commands(routes);
             if commands.is_empty() {
-                out.push_str(NO_LANGUAGE_ROUTE_COMMAND);
-                out.push('\n');
+                match PilotLanguageRoutes::blocked_route_text(routes) {
+                    Some(route) => out.push_str(&format!("{route}\n")),
+                    None => {
+                        out.push_str(NO_LANGUAGE_ROUTE_COMMAND);
+                        out.push('\n');
+                    }
+                }
                 return out;
             }
             out.push_str(
@@ -800,6 +805,9 @@ fn render_pilot_terminal_unescaped(
             crate::output::repo_exposure::PILOT_REPO_EXPOSURE_BYTES_ENV
         ));
     }
+    // #15278: the total is the whole repo's, so it says so beside a
+    // `ripr check` count of the change, and the hint says where
+    // `--max-seams` adds entries: the terminal always shows one.
     // #9368: the terminal shows the top 1 seam; without the total and a
     // pointer to the ranked list, one unexplained pick out of an undisclosed
     // count reads as arbitrariness on large repos. The lower-bound predicate
@@ -816,7 +824,7 @@ fn render_pilot_terminal_unescaped(
         let noun = if actionable == 1 { "gap" } else { "gaps" };
         if actionable > 1 {
             out.push_str(&format!(
-                "  {totals} {noun} to fix; showing the top 1 (more are in {brief}; --max-seams N shows more)\n",
+                "  {totals} {noun} to fix in the whole repo (`ripr check` counts only your change); showing the top 1 (the ranked list is in {brief}; --max-seams N lists more there)\n",
                 brief = display_path(&context.artifacts.pilot_summary_md)
             ));
         } else {
@@ -866,9 +874,17 @@ fn render_pilot_terminal_unescaped(
         ));
         out.push_str(&format!("  why it matters: {}\n", terminal_why_line(entry)));
         if outline.is_not_applicable() {
-            out.push_str(&format!(
-                "  test to add: {TERMINAL_NO_REPAIR_TARGET_TEST}\n"
-            ));
+            match unreached_owner_name(entry) {
+                // #15278: no test calls the function, so the first step is a
+                // test that does; "no test file to use" would misdirect.
+                Some(name) => out.push_str(&format!(
+                    "  test to add: one that calls `{name}` and {}; ripr will not write it, because no test reaches this code to build on\n",
+                    unreached_check_phrase(entry.seam.expected_sink())
+                )),
+                None => out.push_str(&format!(
+                    "  test to add: {TERMINAL_NO_REPAIR_TARGET_TEST}\n"
+                )),
+            }
         } else {
             out.push_str(&format!(
                 "  test to add: a test such as {} in {}\n",
@@ -1069,7 +1085,12 @@ fn render_pilot_terminal_unescaped(
     }
     if let Some(routes) = routes {
         let commands = PilotLanguageRoutes::commands(routes);
-        if commands.is_empty() {
+        if let (true, Some(route)) = (
+            commands.is_empty(),
+            PilotLanguageRoutes::blocked_route_text(routes),
+        ) {
+            out.push_str(&format!("Next: {route}\n"));
+        } else if commands.is_empty() {
             out.push_str(NO_LANGUAGE_ROUTE_COMMAND);
             out.push('\n');
         } else {
@@ -1118,9 +1139,19 @@ fn render_pilot_terminal_unescaped(
             None if !declined_rust_files(context).is_empty() => out.push_str(
                 "No gap was found in the files ripr could read, but the Rust files listed above were not checked and may hold gaps: split them as described, then rerun `ripr pilot`.\n",
             ),
-            None => out.push_str(
-                "No gap was found, so there is no test to add; rerun `ripr pilot` after the code or its tests change.\n",
-            ),
+            // #15278: no ranked gap is not "no test to add" while check
+            // reports a gap on the change.
+            None => match change_check_follow_up(context) {
+                Some((CheckFollowUp::ReadsOpen, check)) => out.push_str(&format!(
+                    "Pilot ranked no gap, but `ripr check` reads your changed code as a gap or cannot tell: run `{check}` and follow its next step.\n"
+                )),
+                Some((CheckFollowUp::Unconfirmed, check)) => out.push_str(&format!(
+                    "Pilot ranked no gap, but ripr could not confirm what `ripr check` reads for your changed code: run `{check}` and follow its next step.\n"
+                )),
+                None => out.push_str(
+                    "No gap was found, so there is no test to add; rerun `ripr pilot` after the code or its tests change.\n",
+                ),
+            },
         }
         return out;
     }
@@ -1249,7 +1280,6 @@ impl DiffOnlyNote {
         let kind = match self.source {
             DiffOnlySource::BuildScript => "a Cargo build script",
             DiffOnlySource::RepoAutomation => "repository automation",
-            DiffOnlySource::DeclaredOutsideSrc => "a crate source declared outside src",
         };
         let file = if code {
             format!("`{}`", self.file)
@@ -1293,11 +1323,7 @@ fn current_change_label(
             base,
             seams: change.seams().unwrap_or_default(),
             diff_only: DiffOnlyNote::of(change),
-            check: format!(
-                "ripr check --root {}{}",
-                shell_path(&crate::agent::loop_commands::bound_root_path(context.root)),
-                change.check_selector()
-            ),
+            check: bound_check_command(context, change),
         }
     })
 }
@@ -1306,6 +1332,38 @@ fn current_change_label(
 /// either, when it has any or a seam limit may hide them (#5309). The
 /// pilot budget can drop those seams before the empty-ranking text counts
 /// what was withheld, so this reads the counts taken before the cut.
+/// What `ripr check` adds on a changed spot the inventory reads as gripped
+/// (#15278).
+enum CheckFollowUp {
+    /// Check reads a gap or a limit on the changed code.
+    ReadsOpen,
+    /// Check could not confirm its reading in pilot's deadline.
+    Unconfirmed,
+}
+
+/// The #15278 follow-up and the `ripr check` command bound to pilot's root
+/// and the change's diff selector, so it reads the same checkout.
+fn change_check_follow_up(context: PilotSummaryContext<'_>) -> Option<(CheckFollowUp, String)> {
+    let change = context.current_change?;
+    let seams = change.seams()?;
+    let follow_up = if seams.check_reads_open > 0 {
+        CheckFollowUp::ReadsOpen
+    } else if seams.check_unconfirmed {
+        CheckFollowUp::Unconfirmed
+    } else {
+        return None;
+    };
+    Some((follow_up, bound_check_command(context, change)))
+}
+
+fn bound_check_command(context: PilotSummaryContext<'_>, change: &PilotCurrentChange) -> String {
+    format!(
+        "ripr check --root {}{}",
+        shell_path(&crate::agent::loop_commands::bound_root_path(context.root)),
+        change.check_selector()
+    )
+}
+
 fn unranked_change_reason(context: PilotSummaryContext<'_>, code: bool) -> Option<String> {
     let change = context.current_change?;
     let seams = change.seams()?;
@@ -1322,6 +1380,7 @@ fn unranked_change_reason(context: PilotSummaryContext<'_>, code: bool) -> Optio
         seams,
         diff_only.as_ref(),
         base.as_ref(),
+        &bound_check_command(context, change),
         code,
     ))
 }
@@ -1350,17 +1409,21 @@ impl CurrentChangeLabel {
 
     /// Why no seam on the change ranks (#5309). A change whose seams pilot
     /// withholds, or whose seams a seam limit left unanalyzed, must not read
-    /// as a change with no seams.
+    /// as a change with no seams. `check` is the `ripr check` command bound
+    /// to pilot's root and diff selector, the one the closing line names.
     fn why_elsewhere(
         seams: ChangeSeams,
         diff_only: Option<&DiffOnlyNote>,
         base: Option<&String>,
+        check: &str,
         code: bool,
     ) -> String {
         let ChangeSeams {
             touched,
             withheld,
             unanalyzed,
+            check_reads_open,
+            check_unconfirmed,
         } = seams;
         let lines = |count| Self::changed_lines(base, code, count);
         // Seams past the inventory limit were never classified, so a reason
@@ -1413,6 +1476,22 @@ impl CurrentChangeLabel {
         } else {
             return format!("Pilot checked no spot on {}.", lines(1));
         };
+        // #15278: pilot reads the whole spot, `ripr check` the changed
+        // lines. A spot pilot calls gripped may still hold a gap check
+        // reports for the change, so "already gripped" must not stand alone.
+        if check_reads_open > 0 {
+            let which = match (check_reads_open, touched) {
+                (1, 1) => "your changed code there".to_string(),
+                (open, _) => format!("your changed code at {open} of them"),
+            };
+            reason.push_str(&format!(
+                "; but `ripr check` reads {which} as a gap or cannot tell (pilot judges the whole spot, check your changed lines), so follow `ripr check` for your change"
+            ));
+        } else if check_unconfirmed {
+            reason.push_str(&format!(
+                "; but ripr could not confirm what `ripr check` reads for your changed code (pilot judges the whole spot, check your changed lines), so run `{check}` for your change"
+            ));
+        }
         if touched > 0
             && let Some(note) = diff_only
         {
@@ -1441,7 +1520,7 @@ impl CurrentChangeLabel {
                 diff_only,
             } => format!(
                 "this gap is not on a line you changed. {} For the change itself, run: {check}",
-                Self::why_elsewhere(*seams, diff_only.as_ref(), base.as_ref(), false)
+                Self::why_elsewhere(*seams, diff_only.as_ref(), base.as_ref(), check, false)
             ),
         }
     }
@@ -1459,7 +1538,7 @@ impl CurrentChangeLabel {
                 diff_only,
             } => format!(
                 "this gap is not on a line you changed. {} For the change itself, run `{check}`.",
-                Self::why_elsewhere(*seams, diff_only.as_ref(), base.as_ref(), true)
+                Self::why_elsewhere(*seams, diff_only.as_ref(), base.as_ref(), check, true)
             ),
         }
     }
@@ -1836,6 +1915,17 @@ fn push_declined_rust_files_terminal(
 }
 
 fn route_status_label(route: &PilotLanguageRoute) -> &'static str {
+    // #15297: in a root where `ripr check` refuses, neither "diff-first" nor
+    // the enable step is the next action; the route guidance names it.
+    if route.blocked_by_work_tree {
+        // A saved patch still reads only enabled languages, so a disabled
+        // one keeps its disclosure next to the blocker.
+        return if route.enabled {
+            "preview; ripr check cannot run at this root"
+        } else {
+            "preview; ripr check cannot run at this root, and it is not enabled in ripr.toml [languages]"
+        };
+    }
     match (route.available, route.enabled) {
         (false, _) => "not available in this build",
         (true, true) => "preview, diff-first",
@@ -1854,6 +1944,17 @@ fn terminal_rank_label(label: &str) -> &'static str {
 }
 
 fn terminal_route_status_label(route: &PilotLanguageRoute) -> &'static str {
+    // #15297: checked before `enabled`, so a disabled language in a root
+    // where `ripr check` refuses is not told to turn it on to check it.
+    if route.blocked_by_work_tree {
+        // A saved patch still reads only enabled languages, so a disabled
+        // one keeps its disclosure next to the blocker.
+        return if route.enabled {
+            "preview; ripr check cannot run at this root"
+        } else {
+            "preview; ripr check cannot run at this root, and it is not enabled in ripr.toml [languages]"
+        };
+    }
     match (route.available, route.enabled) {
         (false, _) => "not available in this build",
         (true, true) => "preview; run the command below to check the diff",
@@ -1921,7 +2022,44 @@ fn terminal_pick_note(class: crate::analysis::seams::SeamGripClass, in_change: b
     )
 }
 
+/// The function no test is seen calling, for a gap whose reach stage is
+/// `no` (#15278). `None` for every other class, or when no name is known.
+fn unreached_owner_name(entry: &ClassifiedSeam) -> Option<&str> {
+    if entry.class != crate::analysis::seams::SeamGripClass::Ungripped {
+        return None;
+    }
+    entry
+        .seam
+        .owner()
+        .rsplit("::")
+        .next()
+        .map(str::trim)
+        .filter(|name| !name.is_empty())
+}
+
+/// What a test that calls an unreached owner must check, by the seam's
+/// expected sink: an effect-only change (a call that may or may not run)
+/// leaves no value to assert.
+fn unreached_check_phrase(sink: crate::analysis::seams::ExpectedSink) -> &'static str {
+    use crate::analysis::seams::ExpectedSink;
+    match sink {
+        ExpectedSink::ReturnValue => "asserts the exact value this line changes",
+        ExpectedSink::OutputField => "asserts the exact field value this line changes",
+        ExpectedSink::ErrorChannel => "asserts the exact error this line changes",
+        ExpectedSink::SideEffect => {
+            "observes the effect this line changes (for example, that the call it makes happens)"
+        }
+    }
+}
+
 fn terminal_why_line(entry: &ClassifiedSeam) -> String {
+    // #15278: with no test reaching the code, the strongest-oracle summary
+    // describes tests that never run it; say what is missing instead.
+    if let Some(name) = unreached_owner_name(entry) {
+        return format!(
+            "no test is seen calling `{name}`, so no assertion can notice a change here"
+        );
+    }
     if let Some(missing) = entry.evidence.missing_discriminators.first() {
         return format!(
             "the tests we looked at do not check {} ({})",

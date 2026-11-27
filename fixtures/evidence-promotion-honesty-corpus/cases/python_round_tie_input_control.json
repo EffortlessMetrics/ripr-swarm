@@ -1,0 +1,20 @@
+{
+  "id": "python_round_tie_input_control",
+  "language": "python",
+  "tier": "pure",
+  "source_fixture": "fixtures/python_round_tie_input_control",
+  "vector": "round_float_spelling_on_a_decimal_tie_is_not_read_and_keeps_exposed",
+  "assertions": [
+    {
+      "type": "expected_finding_count",
+      "count": 1
+    },
+    {
+      "type": "expected_class",
+      "class": "exposed"
+    },
+    {
+      "type": "must_not_report_clean"
+    }
+  ]
+}

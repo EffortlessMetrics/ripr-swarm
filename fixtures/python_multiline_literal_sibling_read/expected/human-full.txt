@@ -48,12 +48,36 @@ Evidence
 
 Weakness
   - A strong Python oracle reaches `labels`, but its assertion does not observe the changed owner's output; static evidence cannot confirm the changed behavior is discriminated. Add an assertion on the changed owner's output
+  - missing discriminator result["label"] == "y": changed Python returned-dict entry at line 4 needs an exact read of its key
 
-Repair placement
+Next step
+  Python preview: strengthen the existing related test with a focused boundary assertion for the missing check `result["label"] == "y"`
+
+Python repair card (preview/advisory)
+  card version: python_repair_card.v1
+  canonical gap: gap:python:labels.py:labels:predicate_boundary:predicate:label_y
+  authority: preview_advisory_only (python/preview)
+  repair action: strengthen_existing_test
+  changed owner: labels
+  changed behavior: predicate_boundary changed at labels.py:4: `"label": "y",`
+  current test evidence: tests/test_labels.py:3 test_name_is_x currently has oracle_strength=strong, oracle_kind=exact_value: assert labels()["name"] == "x"
+  missing discriminator: result["label"] == "y"
+  recommended test shape: Strengthen the existing pytest boundary assertion for `result["label"] == "y"`.
+  suggested assertion: Assert the owner result or effect at the boundary `result["label"] == "y"`.
   suggested file: tests/test_labels.py
   suggested test: test_name_is_x
   pytest node: tests/test_labels.py::test_name_is_x
   verify (Bash): (cd -P -- <cwd>/fixtures/python_multiline_literal_sibling_read/input && python -m pytest tests/test_labels.py::test_name_is_x) (high)
+  receipt: unavailable_until_python_gap_ledger
+  receipt guidance: Save this `ripr check --format json` report, then run `ripr first-pr --check-output <check.json>` or `ripr reports gap-ledger --check-output <check.json>` to materialize a gap ledger with a concrete receipt command.
+  stop conditions:
+    - Stop if imports, fixtures, or test setup cannot call the changed owner.
+    - Stop if the expected value for the missing discriminator is ambiguous.
+    - Stop if adding the test appears to require a production-code edit.
+  limits:
+    - Syntax-first Python preview evidence only.
+    - No source edits, generated tests, mutation execution, provider calls, or gate authority.
+    - Verify success alone is not a gap-closure receipt.
 Drill in:
   (finding id, for explain/context)
   ripr explain --root <cwd>/fixtures/python_multiline_literal_sibling_read/input --diff <cwd>/fixtures/python_multiline_literal_sibling_read/diff.patch --mode fast probe:labels.py:python_preview:c4a51c9b

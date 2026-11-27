@@ -152,6 +152,17 @@ reason that then loses authority to the store limit refreshes its marker to
 the new reason without repeating the once-per-episode disclosure. This is a
 static delivery limitation, not a finding, repair, or runtime outcome.
 
+A never-saved document whose path lies outside the session's effective
+analyzed root (#15462) is disclosed with the reason `outside_analyzed_root`
+instead of `no_analyzed_saved_content`, because saving it can never give it
+analyzed saved content in this session. The text names the analyzed root and
+the recovery of opening that file's repository in its own editor window or
+session (`data.recovery` `open_repository_in_own_session`). The mapping happens
+at serve time over the stored reason, so push and pull markers, hover, the log
+line and the workspace-status `staleness_reason` agree; without an effective
+root it fails closed to the stored reason. It changes disclosure only and
+never relaxes withdrawal.
+
 Each catalog entry carries the code identity used today: the stable `code` and
 the deprecated `aliases` that still resolve to it. Compatibility aliases are
 added only where current output already requires them; none are required today.
@@ -249,6 +260,18 @@ the failure, so a different failure re-renders. Blocked states keep their own
 recovery routes. A pull client is
 asked to re-pull only when the served recovery route changes.
 
+When a snapshot is committed and an attempt then fails because the requested
+base does not resolve (`failure_kind` `base_unresolvable`), the retained
+findings answer an earlier base, so they are withdrawn from service (#15312).
+Push and both pull paths serve the same marker code with `data.state`
+`withdrawn_analysis_failure`, recovery `fix_failure_then_refresh` and
+`data.failure_kind`, saying "previously reported findings are withdrawn" and
+quoting the recorded failure. The withdrawal holds while a retry is queued or
+running and ends when an attempt publishes a snapshot or fails for another
+reason; any other failure kind leaves the retained snapshot in service. A push
+client receives the marker for its tracked documents, and a pull client is
+asked to re-pull.
+
 The marker's code, data kind and state are unchanged; #14447 adds only the
 `analysis_running` recovery and its result id. These are advisory hover
 words using static vocabulary; they make no runtime-outcome or
@@ -339,6 +362,14 @@ test-sufficiency claim.
   (idle session, snapshot without `no_changed_lines`).
 - The existing LSP diagnostic unit tests continue to pass unchanged, pinning
   the byte-identical emitted code strings for known kinds.
+- `lsp/tests.rs::out_of_root_document_names_the_root_instead_of_save_then_refresh`
+  pins the `outside_analyzed_root` pull marker, result id and workspace-status
+  reason for a file outside the root, against an in-root never-saved file
+  that keeps `save_then_refresh` (#15462).
+- `lsp/tests.rs::non_file_document_keeps_save_then_refresh_outside_a_root`
+  pins that a buffer with no admitted file path (an `untitled:` document)
+  keeps `no_analyzed_saved_content` while a root is set, and that no root
+  keeps the stored reason (#15462).
 
 ## Implementation Mapping
 

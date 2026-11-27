@@ -78,6 +78,16 @@ fn a_rebinding_of_any_form_withdraws_the_alias() {
         "if (api := Store()):",
         "def api(): pass",
         "import api",
+        "[api] = [other]",
+        "[api, other] = other(), 1",
+        "for [api] in items:",
+        "del [api]",
+        "del\t[api]",
+        "del(api)",
+        "del[api]",
+        "other, [api] = pair",
+        "for other, [api] in pairs:",
+        "other, (x, [api]) = values",
     ] {
         let body = format!("api = client\n{rebinding}\n");
         assert!(
@@ -96,6 +106,9 @@ fn unrelated_statements_do_not_count_as_rebinding() {
         "if api == other:",
         "result = f(api=client)",
         "assert api.get(\"/items\")",
+        "items = [api]",
+        "d[api] = 1",
+        "d[0][api] = 1",
     ] {
         let body = format!("api = client\n{statement}\n");
         assert!(receivers(&body).contains(&"api".to_string()), "{statement}");
@@ -151,12 +164,60 @@ fn a_one_line_compound_rebinding_withdraws_the_alias() {
         "async def api(): pass",
         "def helper(api): pass",
         "api = client; api = other()",
+        "if lambda: 0: api = other()",
+        "while lambda: 0: api = other()",
+        "case other if lambda: 0: api = other()",
+        "if lambda x: x: api = other()",
+        "while lambda x=1: 0: api = other()",
+        "if lambda x={1: 2}: x: api = other()",
+        "if lambda x: lambda y: x: api = other()",
     ] {
         let body = format!("api = client\n{rebinding}\n");
         assert!(
             !receivers(&body).contains(&"api".to_string()),
             "{rebinding}"
         );
+    }
+    // A `lambda` in the header whose body rebinds nothing, and one inside
+    // brackets: the header still ends where it does.
+    for statement in [
+        "if lambda x: x: pass",
+        "if (lambda x: x)(1) and flag: pass",
+        "if f(key=lambda x: x) and flag: pass",
+    ] {
+        let body = format!("api = client\n{statement}\n");
+        assert!(receivers(&body).contains(&"api".to_string()), "{statement}");
+    }
+}
+
+#[test]
+fn a_case_capture_of_any_spelling_withdraws_the_alias() {
+    // `case` is a soft keyword: no whitespace is needed before the pattern.
+    for rebinding in [
+        "case api:",
+        "case [api]:",
+        "case Point(api):",
+        "case(api):",
+        "case[api]:",
+        "case _: api = other()",
+    ] {
+        let body = format!("api = client\n{rebinding}\n");
+        assert!(
+            !receivers(&body).contains(&"api".to_string()),
+            "{rebinding}"
+        );
+    }
+    // Another capture, a body that does not rebind, and names that only begin
+    // with `case`.
+    for statement in [
+        "case other:",
+        "case _: pass",
+        "case api.client:",
+        "cases = [api]",
+        "case_file = api",
+    ] {
+        let body = format!("api = client\n{statement}\n");
+        assert!(receivers(&body).contains(&"api".to_string()), "{statement}");
     }
 }
 

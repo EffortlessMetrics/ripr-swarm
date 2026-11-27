@@ -1254,9 +1254,16 @@ mod parser_state {
             if !raw.starts_with("@@") {
                 return false;
             }
+            // A conflict region is a property of the file, not of one hunk:
+            // a zero-context diff (`-U0`, which the live loader uses) splits
+            // `<<<<<<<` from `=======`/`>>>>>>>` across hunks whenever the
+            // lines between them equal the base. Keep the quarantine open
+            // across `@@` headers so the later lines of the region are not
+            // read as ordinary changes; file boundaries still close it.
+            let open_region = self.conflict_region;
             self.close_hunk();
             self.saw_old_path_marker = false;
-            self.conflict_region = None;
+            self.conflict_region = open_region;
             // #4375: an `@@` header alone is not body evidence. The section's
             // body debt is only answered by a validated body line, so a
             // stream that ends here — or after an unprefixed malformed line —

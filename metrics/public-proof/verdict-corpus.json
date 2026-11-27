@@ -8,13 +8,13 @@
     "partially_discriminated": 131
   },
   "by_outcome": {
-    "abstained": 315,
-    "ideal": 556
+    "abstained": 314,
+    "ideal": 557
   },
   "by_observed_verdict": {
     "credited": 280,
-    "gap": 276,
-    "limited": 301,
+    "gap": 277,
+    "limited": 300,
     "silent": 14
   },
   "false_verdict_rate": {
@@ -38,19 +38,19 @@
     "rate": "0.0000"
   },
   "ideal_rate": {
-    "numerator": 556,
+    "numerator": 557,
     "denominator": 871,
-    "rate": "0.6383"
+    "rate": "0.6395"
   },
   "abstention_rate": {
-    "numerator": 315,
+    "numerator": 314,
     "denominator": 871,
-    "rate": "0.3617"
+    "rate": "0.3605"
   },
   "avoidable_abstention_rate": {
-    "numerator": 276,
+    "numerator": 273,
     "denominator": 871,
-    "rate": "0.3169"
+    "rate": "0.3134"
   },
   "contradiction_rate": {
     "numerator": 0,
@@ -78,7 +78,7 @@
     "gap_missed:propagation_unknown": 22,
     "gap_missed:propagation_unknown+static_unknown": 1,
     "gap_missed:reachable_unrevealed": 3,
-    "gap_missed:static_unknown": 64,
+    "gap_missed:static_unknown": 63,
     "gap_missed:weakly_exposed": 5
   },
   "by_origin": {
@@ -86,8 +86,8 @@
       "cases_total": 830,
       "by_observed_verdict": {
         "credited": 277,
-        "gap": 268,
-        "limited": 271,
+        "gap": 269,
+        "limited": 270,
         "silent": 14
       },
       "false_verdict_rate": {
@@ -111,19 +111,19 @@
         "rate": "0.0000"
       },
       "ideal_rate": {
-        "numerator": 545,
+        "numerator": 546,
         "denominator": 830,
-        "rate": "0.6566"
+        "rate": "0.6578"
       },
       "abstention_rate": {
-        "numerator": 285,
+        "numerator": 284,
         "denominator": 830,
-        "rate": "0.3434"
+        "rate": "0.3422"
       },
       "avoidable_abstention_rate": {
-        "numerator": 248,
+        "numerator": 245,
         "denominator": 830,
-        "rate": "0.2988"
+        "rate": "0.2952"
       },
       "abstention_by_cause": {
         "credit_missed:infection_unknown": 19,
@@ -144,7 +144,7 @@
         "gap_missed:propagation_unknown": 22,
         "gap_missed:propagation_unknown+static_unknown": 1,
         "gap_missed:reachable_unrevealed": 3,
-        "gap_missed:static_unknown": 63,
+        "gap_missed:static_unknown": 62,
         "gap_missed:weakly_exposed": 5
       }
     },
@@ -1600,8 +1600,7 @@
       "followed_retarget": false,
       "changed_since_labeling": true,
       "observed_classifications": [
-        "exposed",
-        "propagation_unknown"
+        "exposed"
       ],
       "outcome": "ideal",
       "contradictions": [],
@@ -1755,8 +1754,7 @@
       "followed_retarget": false,
       "changed_since_labeling": true,
       "observed_classifications": [
-        "exposed",
-        "propagation_unknown"
+        "exposed"
       ],
       "outcome": "ideal",
       "contradictions": [],
@@ -3455,13 +3453,13 @@
       "hard_case": true,
       "truth": "partially_discriminated",
       "ideal_verdict": "gap",
-      "observed_verdict": "limited",
+      "observed_verdict": "gap",
       "followed_retarget": false,
-      "changed_since_labeling": false,
+      "changed_since_labeling": true,
       "observed_classifications": [
-        "static_unknown"
+        "reachable_unrevealed"
       ],
-      "outcome": "abstained",
+      "outcome": "ideal",
       "contradictions": [],
       "findings_scored": 1,
       "findings_contradicted": 0,
@@ -13517,6 +13515,7 @@
         "no_static_path"
       ],
       "outcome": "abstained",
+      "abstention_expected": true,
       "contradictions": [],
       "findings_scored": 2,
       "findings_contradicted": 0,
@@ -18920,6 +18919,7 @@
         "weakly_exposed"
       ],
       "outcome": "abstained",
+      "abstention_expected": true,
       "contradictions": [],
       "findings_scored": 1,
       "findings_contradicted": 0,
@@ -19951,9 +19951,9 @@
       "ideal_verdict": "gap",
       "observed_verdict": "gap",
       "followed_retarget": false,
-      "changed_since_labeling": false,
+      "changed_since_labeling": true,
       "observed_classifications": [
-        "weakly_exposed"
+        "reachable_unrevealed"
       ],
       "outcome": "ideal",
       "contradictions": [],

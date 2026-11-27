@@ -311,7 +311,11 @@ pub(super) fn bare_string_statement_text(
     // part of it either.
     let bare = without_trailing_comment(line_text)?.trim_end();
     let bare = bare.strip_suffix(',').unwrap_or(bare);
-    if !is_python_no_behavior_line_at(bare, false) || bare.trim().is_empty() {
+    if bare.trim().is_empty() {
+        return None;
+    }
+    let keyword = !is_python_no_behavior_line_at(bare, false);
+    if keyword && !is_literal_keyword_argument(bare) {
         return None;
     }
     let source = source?;
@@ -319,10 +323,20 @@ pub(super) fn bare_string_statement_text(
         Some((start, end)) => (source.get(start..end)?, 0),
         None => (source, open.checked_sub(1)?),
     };
-    let lines: Vec<&str> = statement
+    let raw: Vec<&str> = statement
         .lines()
         .skip(skip)
         .take(close.checked_sub(open)? + 1)
+        .collect();
+    // A keyword line's statement drops each line's own `# comment`, so a
+    // comment after the closing `)` does not hide the call.
+    let raw = if keyword {
+        statement_lines_without_comments(&raw)?
+    } else {
+        raw
+    };
+    let lines: Vec<&str> = raw
+        .iter()
         .enumerate()
         .map(|(offset, text)| {
             if continuation
@@ -336,7 +350,107 @@ pub(super) fn bare_string_statement_text(
             }
         })
         .collect();
-    (!lines.is_empty()).then(|| lines.join(" "))
+    let joined = lines.join(" ");
+    // A keyword line inside a `def` or `class` header is a parameter default
+    // or class keyword, not a call argument: it keeps its own reading, so a
+    // different default's imported call does not limit it.
+    if keyword
+        && ["def ", "async def ", "class "]
+            .iter()
+            .any(|header| joined.starts_with(header))
+    {
+        return None;
+    }
+    (!lines.is_empty()).then_some(joined)
+}
+
+/// [`is_literal_keyword_argument`] for a whole physical line, with its
+/// trailing comma and `# comment` removed as [`bare_string_statement_text`]
+/// removes them.
+pub(super) fn is_literal_keyword_argument_line(line_text: &str) -> bool {
+    without_trailing_comment(line_text).is_some_and(|code| {
+        let code = code.trim_end();
+        is_literal_keyword_argument(code.strip_suffix(',').unwrap_or(code))
+    })
+}
+
+/// `name=literal` alone (#16018): one keyword argument (or parameter default)
+/// whose value is a number, string, `True`, `False` or `None`, as a
+/// continuation line of a bracketed call spells it (`stacklevel=3`). On its own
+/// it is no statement, so it takes the enclosing statement's probe shape, the
+/// same shape the call has when written on one line.
+fn is_literal_keyword_argument(text: &str) -> bool {
+    use rustpython_parser::{Mode, Tok, lexer::lex};
+    let Some(tokens) = lex(text.trim(), Mode::Module)
+        .map(|result| result.ok().map(|(token, _)| token))
+        .collect::<Option<Vec<_>>>()
+    else {
+        return false;
+    };
+    let tokens: Vec<_> = tokens
+        .into_iter()
+        .filter(|token| !matches!(token, Tok::Newline))
+        .collect();
+    let value = match tokens.as_slice() {
+        [Tok::Name { .. }, Tok::Equal, value] => value,
+        [Tok::Name { .. }, Tok::Equal, Tok::Minus | Tok::Plus, value]
+            if matches!(value, Tok::Int { .. } | Tok::Float { .. }) =>
+        {
+            value
+        }
+        _ => return false,
+    };
+    matches!(
+        value,
+        Tok::Int { .. } | Tok::Float { .. } | Tok::True | Tok::False | Tok::None
+    ) || matches!(value, Tok::String { kind, .. } if !kind.is_any_fstring())
+}
+
+/// The physical lines of one bracketed statement, each cut at the end of its
+/// last code token, so `# comment`s drop out while a `#` inside a string
+/// stays. The statement is lexed whole, because a single line may open a
+/// bracket another line closes. `None` when the statement does not lex.
+fn statement_lines_without_comments<'a>(lines: &[&'a str]) -> Option<Vec<&'a str>> {
+    use rustpython_parser::{Mode, Tok, lexer::lex};
+    let text = lines.join("\n");
+    let mut starts = Vec::with_capacity(lines.len());
+    let mut offset = 0;
+    for line in lines {
+        starts.push(offset);
+        offset += line.len() + 1;
+    }
+    let mut code_ends = vec![0_usize; lines.len()];
+    for result in lex(&text, Mode::Module) {
+        let (token, range) = result.ok()?;
+        if matches!(
+            token,
+            Tok::Newline | Tok::Indent | Tok::Dedent | Tok::EndOfFile
+        ) {
+            continue;
+        }
+        let line_of = |at: usize| starts.partition_point(|start| *start <= at).checked_sub(1);
+        let end = usize::from(range.end());
+        let (first, last) = (
+            line_of(usize::from(range.start()))?,
+            line_of(end.checked_sub(1)?)?,
+        );
+        // A token spanning lines (a triple-quoted string) keeps every line it
+        // starts or continues on whole.
+        for index in first..last {
+            if let (Some(code_end), Some(line)) = (code_ends.get_mut(index), lines.get(index)) {
+                *code_end = line.len();
+            }
+        }
+        let line_start = *starts.get(last)?;
+        if let Some(code_end) = code_ends.get_mut(last) {
+            *code_end = (*code_end).max(end - line_start);
+        }
+    }
+    lines
+        .iter()
+        .zip(&code_ends)
+        .map(|(line, end)| line.get(..*end))
+        .collect()
 }
 
 /// `line_text` without its trailing `#` comment, cut at the end of the last
@@ -455,9 +569,13 @@ pub(super) struct ImportLines<'a> {
 /// its comment or blank lines was deleted, so it keeps its own base-side
 /// record instead of lending its probe shape to the comment text; so does a
 /// removed line an added `import` stands on, unless it was an import itself
-/// (an import that replaces an import re-points a name). A line inside a
-/// multi-line string is content, not a comment; with no `string_lines` (an
-/// unreadable or unlexable file) every pair is kept.
+/// (an import that replaces an import re-points a name). A comment or blank
+/// added line in a run with code replaced nothing either when every code
+/// line of the run has its own counterpart and the removed line was not
+/// folded into them (#16011): its pair is dropped too, so the removed line is
+/// not hidden behind a line that carries no probe. A line inside a multi-line string is content, not a
+/// comment; with no `string_lines` (an unreadable or unlexable file) every
+/// pair is kept.
 pub(super) fn unpair_runs_without_code(
     changed: &super::ChangedFile,
     string_lines: Option<&[std::ops::RangeInclusive<usize>]>,
@@ -480,21 +598,107 @@ pub(super) fn unpair_runs_without_code(
                 || is_python_import_line(&added.text)
                 || super::line_is_in_ranges(added.line, imports.added))
     });
-    if codeless.is_empty() {
-        return;
-    }
     let comment_or_blank: std::collections::BTreeSet<usize> = changed
         .added_lines
         .iter()
-        .filter(|added| codeless.contains(&added.line) && is_comment_or_blank(&added.text))
+        .filter(|added| {
+            !super::line_is_in_ranges(added.line, string_lines) && is_comment_or_blank(&added.text)
+        })
         .map(|added| added.line)
         .collect();
+    // A comment pair in a run with code is dropped only when every code line
+    // of the run already has its own counterpart and the removed line was not
+    // folded into that code; otherwise the run's code carries the rewrite.
+    let quiet = |added: &ChangedLine| {
+        comment_or_blank.contains(&added.line)
+            || (!super::line_is_in_ranges(added.line, string_lines)
+                && is_python_structural_line(&added.text))
+            || is_python_import_line(&added.text)
+            || super::line_is_in_ranges(added.line, imports.added)
+    };
+    let added_at: std::collections::BTreeMap<usize, &ChangedLine> = changed
+        .added_lines
+        .iter()
+        .map(|added| (added.line, added))
+        .collect();
+    // The code lines of the added run around `line`.
+    let run_code = |line: usize| -> Vec<&ChangedLine> {
+        let mut start = line;
+        while start > 0 && added_at.contains_key(&(start - 1)) {
+            start -= 1;
+        }
+        (start..)
+            .map_while(|index| added_at.get(&index).copied())
+            .filter(|added| !quiet(added))
+            .collect()
+    };
+    let replaced_nothing: std::collections::BTreeSet<usize> = comment_or_blank
+        .iter()
+        .copied()
+        .filter(|line| {
+            let Some(removed) = counterparts.get(line) else {
+                return false;
+            };
+            let code = run_code(*line);
+            !code.is_empty()
+                && code
+                    .iter()
+                    .all(|added| counterparts.contains_key(&added.line))
+                && !folded_into(&removed.text, &code)
+        })
+        .collect();
     counterparts.retain(|added_line, removed| {
+        if replaced_nothing.contains(added_line)
+            || (codeless.contains(added_line) && comment_or_blank.contains(added_line))
+        {
+            return false;
+        }
         !codeless.contains(added_line)
-            || (!comment_or_blank.contains(added_line)
-                && (is_python_import_line(&removed.text)
-                    || super::line_is_in_ranges(removed.line, imports.removed)))
+            || is_python_import_line(&removed.text)
+            || super::line_is_in_ranges(removed.line, imports.removed)
     });
+}
+
+/// Whether every name and number of `removed` appears among the code lines
+/// of an added run: the removed statement was folded into them
+/// (`x = min(x * 2, CAP)` into `return max(min(x * 2, CAP), 0)`), not deleted.
+/// Names and numbers are read with the Python lexer, so string and comment
+/// text is neither a name nor a cut point. A removed line with no name or
+/// number is never read as folded; a line the lexer refuses on its own keeps
+/// the pairing.
+fn folded_into(removed: &str, code: &[&ChangedLine]) -> bool {
+    let Some(removed_words) = names_and_numbers(removed) else {
+        return true;
+    };
+    let mut added_words = std::collections::BTreeSet::new();
+    for added in code {
+        let Some(words) = names_and_numbers(&added.text) else {
+            return true;
+        };
+        added_words.extend(words);
+    }
+    !removed_words.is_empty() && removed_words.is_subset(&added_words)
+}
+
+/// The name and number tokens of one line, as spelled; None when the trimmed
+/// line does not lex on its own.
+fn names_and_numbers(line: &str) -> Option<std::collections::BTreeSet<String>> {
+    use rustpython_parser::{Mode, Tok, lexer::lex};
+    let text = line.trim();
+    let mut words = std::collections::BTreeSet::new();
+    for result in lex(text, Mode::Module) {
+        let (tok, range) = result.ok()?;
+        if matches!(
+            tok,
+            Tok::Name { .. } | Tok::Int { .. } | Tok::Float { .. } | Tok::Complex { .. }
+        ) {
+            words.insert(
+                text.get(range.start().into()..range.end().into())?
+                    .to_string(),
+            );
+        }
+    }
+    Some(words)
 }
 
 /// For each added line, whether it is `quiet` (no behavior, structural, or an
@@ -590,7 +794,7 @@ fn is_bare_string_literal_statement(trimmed: &str) -> bool {
 /// source text, the positional-only / keyword-only group sizes, and the
 /// `*args`/`**kwargs` names. Two headers with equal skeletons differ only in
 /// annotations.
-type DefSignatureSkeleton = (
+pub(super) type DefSignatureSkeleton = (
     bool,                          // is_async
     String,                        // function name
     usize,                         // positional-only count
@@ -600,7 +804,7 @@ type DefSignatureSkeleton = (
     Option<String>,                // **kwargs name
 );
 
-fn def_signature_skeleton(line: &str) -> Option<DefSignatureSkeleton> {
+pub(super) fn def_signature_skeleton(line: &str) -> Option<DefSignatureSkeleton> {
     let trimmed = line.trim_start();
     if !(trimmed.starts_with("def ") || trimmed.starts_with("async def ")) {
         return None;

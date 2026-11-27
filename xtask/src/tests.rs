@@ -19927,8 +19927,8 @@ fn dogfood_generated_ci_cockpit_receipts_are_checked() {
         "receipt must name the workflow producer: {GENERATED_CI_COCKPIT_COMMAND}"
     );
     assert!(
-        GENERATED_CI_COCKPIT_COMMAND.contains("reports ci-summary"),
-        "receipt must name the summary producer: {GENERATED_CI_COCKPIT_COMMAND}"
+        GENERATED_CI_COCKPIT_COMMAND.contains("reports ci-summary --full"),
+        "receipt must name the detailed summary preview: {GENERATED_CI_COCKPIT_COMMAND}"
     );
     assert!(
         GENERATED_CI_COCKPIT_COMMAND.contains("--base-ref main"),
@@ -20721,8 +20721,7 @@ fn dogfood_blocking_gate_report_is_self_contained() -> Result<(), String> {
         // alternative beside a carried repair start (which its after phase
         // follows), or as steps after the test edit without one.
         let (verify, receipt) = if markdown.contains("  - Start repair: `ripr agent repair ") {
-            if !markdown.contains("  - After the test edit: run the `--attempt ... --phase after`")
-            {
+            if !markdown.contains("  - After the test edit: run the after-phase command") {
                 return Err("blocking gate Markdown lacks the repair after phase".to_string());
             }
             (

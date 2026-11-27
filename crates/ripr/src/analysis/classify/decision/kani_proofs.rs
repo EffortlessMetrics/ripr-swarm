@@ -37,6 +37,7 @@ fn stage_with(state: StageState) -> StageEvidence {
 
 fn probe(static_unknown: bool) -> Probe {
     Probe {
+        before_condition: None,
         id: ProbeId(String::new()),
         location: SourceLocation {
             file: PathBuf::new(),

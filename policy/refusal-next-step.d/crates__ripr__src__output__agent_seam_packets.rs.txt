@@ -13,7 +13,7 @@ crates/ripr/src/output/agent_seam_packets.rs|render before-phase attempt stdout 
 crates/ripr/src/output/agent_seam_packets.rs|render blocked agent gap queue JSON failed: {err}
 crates/ripr/src/output/agent_seam_packets.rs|render gap-bound packet JSON failed: {error}
 crates/ripr/src/output/agent_seam_packets.rs|render repair start stdout failed: {error}
-crates/ripr/src/output/agent_seam_packets.rs|rendered agent packet envelope does not carry the current agent-packet schema version {AGENT_SEAM_PACKET_SCHEM
+crates/ripr/src/output/agent_seam_packets.rs|rendered agent packet envelope does not carry the current agent-packet schema version {AGENT_SEAM_PACKET_SCHEMA_VERSION}
 crates/ripr/src/output/agent_seam_packets.rs|rendered agent packet envelope is not a JSON object
 crates/ripr/src/output/agent_seam_packets.rs|repair start stdout is not a JSON object
 crates/ripr/src/output/agent_seam_packets.rs|requires a canonical gap id

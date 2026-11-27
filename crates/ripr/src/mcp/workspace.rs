@@ -2102,6 +2102,31 @@ fn empty_scope_hint(session: &WorkspaceSession) -> Option<Value> {
     Some(hint)
 }
 
+/// #13096 worktree leg: a worktree snapshot whose saved diff changed files
+/// but held no behavior candidate (most often only tests were edited after
+/// the production change was committed onto the base) says `not_analyzed`
+/// with no route out. The CLI names the base retry for the same state
+/// (#13036); this is the MCP counterpart. Additive, worktree-only, and it
+/// never changes the outcome kind: the committed `empty_scope_hint` and its
+/// source wording stay committed-only.
+fn worktree_base_hint(session: &WorkspaceSession) -> Option<Value> {
+    let snapshot = session.last_good.as_ref()?;
+    if snapshot.source != RefreshSource::Worktree
+        || !snapshot.items.is_empty()
+        || !snapshot.outcome.kind.is_no_behavioral_candidates()
+    {
+        return None;
+    }
+    let why = snapshot.outcome.kind.empty_scope_cause_sentence(
+        snapshot.base.as_deref(),
+        crate::analysis_outcome::EmptyScopeDiffAuthority::SavedWorktree,
+    );
+    Some(json!({
+        "why": why,
+        "pass_base": AnalysisOutcomeKind::EMPTY_SCOPE_MCP_WORKTREE_BASE_RETRY_ROUTE,
+    }))
+}
+
 /// The refresh-time attempt document returned by `ripr_refresh`.
 pub(crate) fn refresh_document(session: &WorkspaceSession) -> Value {
     let snapshot = session.last_good.as_ref().map(|snapshot| {
@@ -2179,6 +2204,9 @@ pub(crate) fn refresh_document(session: &WorkspaceSession) -> Value {
     }
     if let Some(hint) = empty_scope_hint(session) {
         document["empty_scope_hint"] = hint;
+    }
+    if let Some(hint) = worktree_base_hint(session) {
+        document["worktree_base_hint"] = hint;
     }
     // #7357: requested and captured source are distinct facts. Both appear
     // only once a worktree source is involved, so source-less callers keep
@@ -6592,6 +6620,96 @@ mod tests {
                 "worktree snapshot must not carry the committed hint: {document}"
             ));
         }
+        Ok(())
+    }
+
+    /// #13096 worktree leg: a worktree snapshot whose saved diff changed
+    /// files but held no behavior candidate names the base retry. Controls:
+    /// the same snapshot from a committed source, the other empty-scope
+    /// kinds, and a snapshot with findings carry no such hint.
+    #[test]
+    fn worktree_tests_only_snapshot_names_the_base_retry() -> Result<(), String> {
+        let snapshot_for = |kind: AnalysisOutcomeKind,
+                            changed_files: u64,
+                            source: RefreshSource,
+                            base: Option<&str>|
+         -> Result<WorkspaceSession, String> {
+            let mut empty = output(AnalysisOutcomeKind::CompleteNoFindings, 0, Vec::new())?;
+            empty.analysis_outcome = Some(AnalysisOutcome::new(
+                kind,
+                Default::default(),
+                AnalysisOutcomeCounts {
+                    changed_file_count: changed_files,
+                    changed_line_count: changed_files * 2,
+                    ..Default::default()
+                },
+                Vec::new(),
+            )?);
+            let mut snapshot = Snapshot::from_output(&empty, Some("root:sha256:test"))
+                .map_err(|failure| failure.detail)?;
+            snapshot.source = source;
+            snapshot.base = base.map(str::to_string);
+            let mut session = session_with(AnalysisOutcomeKind::CompleteNoFindings, 0)?;
+            session.last_good = Some(Arc::new(snapshot));
+            Ok(session)
+        };
+        let tests_only = refresh_document(&snapshot_for(
+            AnalysisOutcomeKind::NoBehavioralCandidates,
+            1,
+            RefreshSource::Worktree,
+            None,
+        )?);
+        assert_eq!(
+            tests_only["worktree_base_hint"]["pass_base"],
+            json!(AnalysisOutcomeKind::EMPTY_SCOPE_MCP_WORKTREE_BASE_RETRY_ROUTE),
+            "{tests_only}"
+        );
+        let why = tests_only["worktree_base_hint"]["why"].to_string();
+        assert!(
+            why.contains("changed lines but none holds a behavior candidate"),
+            "{why}"
+        );
+        assert!(tests_only.get("empty_scope_hint").is_none(), "{tests_only}");
+        let named = refresh_document(&snapshot_for(
+            AnalysisOutcomeKind::NoBehavioralCandidates,
+            1,
+            RefreshSource::Worktree,
+            Some("main"),
+        )?);
+        assert!(
+            named["worktree_base_hint"]["why"]
+                .to_string()
+                .contains("the saved diff against requested base `main`"),
+            "{named}"
+        );
+        for (kind, changed_files, source) in [
+            (
+                AnalysisOutcomeKind::NoBehavioralCandidates,
+                1,
+                RefreshSource::Committed,
+            ),
+            (AnalysisOutcomeKind::NoScope, 0, RefreshSource::Worktree),
+            (
+                AnalysisOutcomeKind::NoChangedLines,
+                0,
+                RefreshSource::Worktree,
+            ),
+        ] {
+            let document = refresh_document(&snapshot_for(kind, changed_files, source, None)?);
+            assert!(
+                document.get("worktree_base_hint").is_none(),
+                "{kind:?} {changed_files} {source:?}: {document}"
+            );
+        }
+        let mut with_findings = session_with(AnalysisOutcomeKind::CompleteWithFindings, 1)?;
+        if let Some(snapshot) = with_findings.last_good.as_mut().and_then(Arc::get_mut) {
+            snapshot.source = RefreshSource::Worktree;
+        }
+        assert!(
+            refresh_document(&with_findings)
+                .get("worktree_base_hint")
+                .is_none()
+        );
         Ok(())
     }
 

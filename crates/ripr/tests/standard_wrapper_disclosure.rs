@@ -24,6 +24,10 @@ const NESTED: &str = "#[test]\nfn nested() {\n    assert!(crate::check(|| {\n   
 const UNNESTED: &str = "#[test]\nfn nested() {\n    let ok = crate::check(|| {\n        assert_eq!(1, 1);\n        true\n    });\n    assert!(ok);\n}\n";
 const GLOB: &str = "use rayon::prelude::*;\n";
 const WEIGHS: &str = "#[test]\nfn weighs() {\n    assert_eq!(crate::weight(4), 12);\n}\n";
+/// `WEIGHS` calling `vec!`, a name a glob can bind. A glob cannot rebind the
+/// bare `assert_eq!` (#16060).
+const WEIGHS_VEC: &str =
+    "#[test]\nfn weighs() {\n    let _ = vec![0u8];\n    assert_eq!(crate::weight(4), 12);\n}\n";
 
 /// The finding for `weight`'s changed `x * 4` (was `x * 3`) with the given
 /// `src/a_nested.rs` and `src/suite.rs`.
@@ -100,7 +104,7 @@ fn a_nested_standard_assertion_alone_blocks_nothing() -> Result<(), String> {
 
 #[test]
 fn the_refusal_names_the_glob_in_the_tests_own_file() -> Result<(), String> {
-    let suite = format!("{GLOB}\n{WEIGHS}");
+    let suite = format!("{GLOB}\n{WEIGHS_VEC}");
     // Control: with no nested call anywhere, the glob is the named site.
     let control = finding(UNNESTED, &suite)?;
     let expected = refusals(&control)

@@ -315,6 +315,10 @@ that generated CI can create tests, edit source, or run provider-backed repair.
 - A configured blocked gate makes `ripr reports ci-packet` exit `3` (the gate's
   decision exit) when no other required step failed; any other required
   failure exits `2`, even when the gate also blocked (docs/EXIT_CODES.md).
+- A pull request file named `a<newline>::error::forged` appears in a
+  `ripr reports ci-packet` child report inside a `::stop-commands::` window, so
+  the runner reads no workflow command from it; child stderr is replayed in
+  the same window on the packet's stdout (#15918).
 - A TypeScript preview packet groups advisory evidence under a preview label,
   includes separately labeled JavaScript preview evidence when present, reports
   actionability and repair-packet-ready counts, and keeps gate impact at none.

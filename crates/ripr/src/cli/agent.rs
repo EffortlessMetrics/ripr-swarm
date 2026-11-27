@@ -170,6 +170,8 @@ pub(super) struct AgentRepairOptions {
     pub(super) gap_id: Option<String>,
     /// Diff base a gap-bound attempt analyzes. `ripr check` findings are
     /// diff-scoped, so the base is recorded for the later after phase.
+    /// The task-first facade also carries its selection base here so the
+    /// seam admission check reads the same comparison.
     pub(super) base: Option<String>,
     pub(super) attempt_id: Option<String>,
     pub(super) phase: AgentRepairPhase,
@@ -707,11 +709,11 @@ fn parse_agent_repair_command(args: &[String]) -> Result<AgentCommand, String> {
         );
     }
     if phase == AgentRepairPhase::Verify && verify_rollback && !verify_authorized {
-        // Unreachable through the pair rules above (an authority without the
-        // flag is already refused); kept as an explicit guard so a rollback
-        // demand can never ride on an absent verification authorization.
+        // Reached by `--verify-rollback` alone: the pair rules above only
+        // refuse a half-supplied pair, not an absent one. A rollback demand
+        // can never ride on an absent verification authorization.
         return Err(
-            "agent repair --verify-rollback requires --verify-authorized and --verify-authority <identity>; pass both, and if you did, report this as a ripr bug with the command you ran"
+            "agent repair --verify-rollback requires --verify-authorized and --verify-authority <identity>; pass `--verify-authorized --verify-authority <identity>` together with `--verify-rollback`"
                 .to_string(),
         );
     }
