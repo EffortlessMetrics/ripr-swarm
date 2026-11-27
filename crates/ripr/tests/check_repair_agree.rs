@@ -1453,12 +1453,17 @@ fn json_repair_route(text: &str) -> Result<serde_json::Value, String> {
 /// change is committed when `commit_change` is set and left dirty otherwise;
 /// the outside file is dirty in both cases.
 fn outer_repo_with_subdir_root(commit_change: bool) -> Result<Repo, String> {
-    outer_repo(commit_change, false)
+    outer_repo(commit_change, false, true)
 }
 
 /// The outer repository, with a repository-level Cargo package when
-/// `top_manifest` is set (one that does not claim `crate`).
-fn outer_repo(commit_change: bool, top_manifest: bool) -> Result<Repo, String> {
+/// `top_manifest` is set (one that does not claim `crate`), and the
+/// repository-level `src/lib.rs` left dirty when `dirty_sibling` is set.
+fn outer_repo(
+    commit_change: bool,
+    top_manifest: bool,
+    dirty_sibling: bool,
+) -> Result<Repo, String> {
     static SEQUENCE: AtomicU64 = AtomicU64::new(0);
     let outer = std::env::temp_dir().join(format!(
         "ripr-check-repair-agree-outer-{}-{}",
@@ -1490,7 +1495,9 @@ fn outer_repo(commit_change: bool, top_manifest: bool) -> Result<Repo, String> {
     if commit_change {
         repo.git(&["commit", "-q", "--no-gpg-sign", "-am", "change"])?;
     }
-    repo.write("src/lib.rs", "pub fn outer() -> u8 {\n    2\n}\n")?;
+    if dirty_sibling {
+        repo.write("src/lib.rs", "pub fn outer() -> u8 {\n    2\n}\n")?;
+    }
     Ok(repo)
 }
 
@@ -2203,15 +2210,24 @@ fn assert_no_copyable_commit_or_start(case: &str, pilot: &str, markdown: &str) {
 /// with both sides dirty at a nested Cargo project the enclosing package does
 /// not claim (check's top-level gate keeps that root, but the attempt still
 /// refuses it, so a commit of the in-root file alone would not be enough).
+/// The same standalone project with only the in-root file dirty, where no
+/// `../` path exists, is withheld too: the attempt refuses that root whatever
+/// is committed, so the in-root commit step would not clear it.
 #[test]
 fn pilot_at_a_subdirectory_root_prints_no_commit_step_and_no_runnable_start() -> Result<(), String>
 {
-    for (case, commit_change, top_manifest) in [
-        ("sibling only", true, false),
-        ("mixed", false, false),
-        ("mixed, standalone nested project", false, true),
+    for (case, commit_change, top_manifest, dirty_sibling) in [
+        ("sibling only", true, false, true),
+        ("mixed", false, false, true),
+        ("mixed, standalone nested project", false, true, true),
+        (
+            "in-root only, standalone nested project",
+            false,
+            true,
+            false,
+        ),
     ] {
-        let repo = outer_repo(commit_change, top_manifest)?;
+        let repo = outer_repo(commit_change, top_manifest, dirty_sibling)?;
         let pilot = repo.ripr(&["pilot", "--root", "crate"])?;
         let markdown =
             std::fs::read_to_string(repo.0.join("crate/target/ripr/pilot/pilot-summary.md"))
@@ -2236,9 +2252,16 @@ fn pilot_at_a_subdirectory_root_prints_no_commit_step_and_no_runnable_start() ->
             code != Some(0)
                 && (repair.contains("is not the exact Git top-level")
                     || repair.contains("ripr repair needs your source changes committed first")),
-            "{case}: the start refuses while dirty:\n{repair}"
+            "{case}: the start refuses as pilot found it:\n{repair}"
         );
-        repo.git(&["commit", "-q", "--no-gpg-sign", "-am", "commit every file"])?;
+        repo.git(&[
+            "commit",
+            "-q",
+            "--no-gpg-sign",
+            "--allow-empty",
+            "-am",
+            "commit every file",
+        ])?;
         let (code, repair) = repo.ripr_status(&["repair", "--root", "crate"])?;
         assert!(
             code != Some(0) && repair.contains("is not the exact Git top-level"),
