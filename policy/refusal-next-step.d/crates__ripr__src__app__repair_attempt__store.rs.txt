@@ -1,0 +1,6 @@
+crates/ripr/src/app/repair_attempt/store.rs|canonicalize repair attempt repository root {} failed: {error}
+crates/ripr/src/app/repair_attempt/store.rs|canonicalize repair attempt store {} failed: {error}
+crates/ripr/src/app/repair_attempt/store.rs|create repair attempt store {} failed: {error}
+crates/ripr/src/app/repair_attempt/store.rs|read repair attempt store parent {} failed: {error}
+crates/ripr/src/app/repair_attempt/store.rs|repair attempt store {} has no existing ancestor under {}
+crates/ripr/src/app/repair_attempt/store.rs|repair attempt store {} is missing a parent directory

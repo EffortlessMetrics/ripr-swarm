@@ -1,0 +1,2 @@
+crates/ripr/src/agent/artifact.rs|canonicalize artifact repository root {} failed: {err}
+crates/ripr/src/agent/artifact.rs|revision `{rev}` does not name a commit in the selected root: {error}

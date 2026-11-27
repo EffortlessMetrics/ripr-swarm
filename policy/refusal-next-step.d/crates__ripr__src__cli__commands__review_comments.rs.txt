@@ -1,0 +1,5 @@
+crates/ripr/src/cli/commands/review_comments.rs|review-comments --check-output {} is invalid: analysis_complete is missing or not boolean
+crates/ripr/src/cli/commands/review_comments.rs|review-comments --check-output {} is invalid: analysis_outcome.outcome is missing
+crates/ripr/src/cli/commands/review_comments.rs|review-comments --check-output {} is invalid: missing producer schema_version
+crates/ripr/src/cli/commands/review_comments.rs|review-comments --check-output {} is invalid: typed outcome failed validation: {error}
+crates/ripr/src/cli/commands/review_comments.rs|{env_name} must be a positive integer within the platform range: {err}

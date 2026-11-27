@@ -1,1 +1,6 @@
+crates/ripr/src/cli/commands.rs|append jsonl {} failed: {err}
 crates/ripr/src/cli/commands.rs|failed to combine cargo-mutants directory JSON: {err}
+crates/ripr/src/cli/commands.rs|failed to parse JSON from {}: {err}
+crates/ripr/src/cli/commands.rs|read evidence-health calibration context {} failed: {err}
+crates/ripr/src/cli/commands.rs|read {label} {} failed: {err}
+crates/ripr/src/cli/commands.rs|read {label} {} failed: {}
