@@ -105,6 +105,7 @@ impl serde::Serialize for RemedyKind {
 /// empty, never omitted.
 #[derive(Clone, Debug, Eq, PartialEq, serde::Serialize)]
 pub struct RefusalRemedy {
+    /// What kind of remedy the message grounds.
     pub kind: RemedyKind,
     /// The first runnable `ripr ...` command the message names, verbatim.
     pub command: Option<String>,
