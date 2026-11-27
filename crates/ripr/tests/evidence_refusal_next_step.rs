@@ -648,7 +648,7 @@ fn kani_report_input_refusals_name_the_flag_to_fix() -> Result<(), String> {
 fn agent_root_refusal_names_the_fix() -> Result<(), String> {
     let dir = committed_repo()?;
     let root_fix = "; pass an existing directory as --root";
-    let output = ripr(
+    let stderr = refusal(
         &dir.0,
         &[
             "agent",
@@ -661,22 +661,9 @@ fn agent_root_refusal_names_the_fix() -> Result<(), String> {
             "after.json",
             "--json",
         ],
-    )
-    .output()
-    .map_err(|error| format!("spawn ripr agent verify: {error}"))?;
-    // The unusable-root disposition goes to stdout; the message may be on either stream.
-    let text = format!(
-        "{}{}",
-        String::from_utf8_lossy(&output.stdout),
-        String::from_utf8_lossy(&output.stderr)
-    );
-    if output.status.success() {
-        return Err(format!(
-            "agent verify with a missing root succeeded:\n{text}"
-        ));
-    }
+    )?;
     stderr_has_all(
-        &text,
+        &stderr,
         &[
             "canonicalize agent verify root absent-root failed: ",
             root_fix,
