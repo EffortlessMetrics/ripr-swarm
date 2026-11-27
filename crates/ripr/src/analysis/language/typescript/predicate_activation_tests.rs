@@ -614,12 +614,14 @@ fn renamed_owner_import_witnesses_like_the_owner_name() -> Result<(), String> {
          }});\n"
     );
     let evaluated = evaluate(&DISCOUNT, &source, true)?;
+    // The row carries the enclosing describe title.
+    let row_name = format!("pricing {name}");
     assert_eq!(
-        evaluated.row(name)?.1,
+        evaluated.row(&row_name)?.1,
         R::DirectOwnerCall,
         "the real off-boundary call relates the test"
     );
-    assert_ne!(evaluated.activation(name)?, A::Witnessed, "{name}");
+    assert_ne!(evaluated.activation(&row_name)?, A::Witnessed, "{name}");
     assert!(!evaluated.witnessed, "{name}");
     Ok(())
 }
