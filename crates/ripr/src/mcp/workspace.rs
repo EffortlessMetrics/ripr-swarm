@@ -4508,13 +4508,15 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).map_err(|error| error.to_string())?;
         let git = |args: &[&str]| -> Result<(), String> {
-            let status = std::process::Command::new("git")
-                .arg("-C")
-                .arg(&dir)
-                .args(args)
-                .status()
-                .map_err(|error| error.to_string())?;
-            status
+            // The production Git runner: no second process owner in tests.
+            let output = crate::git::run_git_output_with_deadline(
+                &dir,
+                args,
+                Some(std::time::Duration::from_secs(30)),
+            )
+            .map_err(|error| error.to_string())?;
+            output
+                .status
                 .success()
                 .then_some(())
                 .ok_or_else(|| format!("git {args:?} failed"))

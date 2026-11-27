@@ -6142,7 +6142,10 @@ fn deleted_root_after_start_recovers_by_restart_not_retry() -> Result<(), String
 
     std::fs::remove_dir_all(&root).map_err(|error| error.to_string())?;
     if root.exists() {
-        return Err(format!("fixture root survived removal: {}", root.display()));
+        return Err(format!(
+            "fixture root remained after removal: {}",
+            root.display()
+        ));
     }
     let gone = session.call_tool("gone", "ripr_refresh", json!({"base": "main"}), timeout)?;
     let recovery = refresh_failure_recovery(&gone)
