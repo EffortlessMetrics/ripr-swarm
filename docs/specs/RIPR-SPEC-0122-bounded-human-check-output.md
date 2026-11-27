@@ -381,10 +381,10 @@ not a confirmed one: the digest, the full render and the `ripr explain`
 render show a configured `warning` for it as `note` (a configured `off`,
 `info` or `note` is kept), and when it is the selected top gap the
 digest's `State:` line reads `a possible test gap (test reach not confirmed)`. The `top_gap` state id and the next action are
-unchanged. The first-run Evidence legend (also printed by `--legend`)
-describes both reached buckets as linked to a test, and says both can rest
-on a test link ripr could not confirm, with the reach stage saying which.
-Class, counts, JSON, SARIF, GitHub annotations,
+unchanged. The first-run Evidence legend, explicit `--legend` and the
+`--format human-full` `Terms:` line describe both reached buckets as linked
+to a test, and say both can rest on a test link ripr could not confirm, with
+the reach stage saying which. Class, counts, JSON, SARIF, GitHub annotations,
 LSP diagnostics, `missed.txt` and gate decisions are unchanged.
 
 The digest states each fact once (#14308). A stage detail whose prose equals
@@ -1522,7 +1522,7 @@ report with zero records still carries its route.
 - `crates/ripr/tests/weak_reach_hint.rs::unrevealed_weak_reach_why_line_does_not_contradict_summary` — real proximity-only unrevealed finding names the file/name link; reach `yes` keeps the reaching-test hint (#15336).
 - `crates/ripr/src/output/human/sections.rs::unrevealed_weak_reach_names_the_link_only_for_proximity_summaries` — marker gate: non-marker weak, `No` and callee-only reach keep their hints (#15336).
 - `crates/ripr/src/output/human.rs::unconfirmed_reach_finding_renders_at_note_severity` — unsupported reach renders `note` on the digest, full and explain renders; reach `yes` keeps `warning`; configured `off` passes through (#15336).
-- `crates/ripr/src/output/human.rs::unconfirmed_reach_state_and_glossaries_do_not_claim_reach` — possible-gap `State:` words through first-run and repeat legend renders; the legend never says these buckets prove reach; machine classes and counts are identical to the confirmed control (#15336).
+- `crates/ripr/src/output/human.rs::unconfirmed_reach_state_and_glossaries_do_not_claim_reach` — possible-gap `State:` words through first-run and repeat legend renders; legend and `human-full` `Terms:` never say these buckets prove reach; machine classes and counts are identical to the confirmed control (#15336).
 
 - `crates/ripr/src/output/human/agent_tests.rs::explain_agent_gap_is_one_record_one_test_open_terminal_and_context_next`
 - `crates/ripr/src/output/human/agent_tests.rs::explain_agent_undiscriminated_gap_carries_owner_and_before_and_skips_context`

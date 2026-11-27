@@ -1,3 +1,7 @@
+//! Probes for changed behavior and the static facts recorded about them:
+//! probe family, delta kind, flow sinks, value facts and missing
+//! discriminators.
+
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 

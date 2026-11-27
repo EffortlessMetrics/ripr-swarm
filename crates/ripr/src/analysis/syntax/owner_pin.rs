@@ -645,7 +645,7 @@ pub(crate) fn macro_binding_candidates(source: &ast::SourceFile) -> MacroBinding
     };
     let mut names = BTreeSet::new();
     for node in source.syntax().descendants() {
-        if json_namespace_rebound(&node) {
+        if json_root_may_be_rebound(&node) {
             names.insert("json".to_string());
         }
         if crate_namespace_rebound(&node, "anyhow") {
@@ -1387,7 +1387,7 @@ fn macro_binding_sites_in_tree(
         }
         // An extern-crate alias or module in another file can defeat this
         // import's root even when that file never mentions `json` itself.
-        if trusted.contains(&"json") && json_namespace_rebound(node) {
+        if trusted.contains(&"json") && json_root_may_be_rebound(node) {
             ambiguous.push((
                 "json".to_string(),
                 MacroBindingSite {
@@ -1408,7 +1408,7 @@ fn macro_binding_sites_in_tree(
         if LOGGING_CRATES
             .iter()
             .any(|krate| crate_namespace_rebound(node, krate))
-            || item_macro_names_logging_root(node)
+            || item_macro_names_root(node, LOGGING_CRATES)
         {
             for name in trusted
                 .iter()
@@ -2384,10 +2384,10 @@ pub(crate) const LEVELED_LOGGING_MACROS: &[&str] = &["trace", "debug", "info", "
 /// The crates whose leveled logging macros were audited (#10357, #16420).
 const LOGGING_CRATES: &[&str] = &["tracing", "log"];
 
-/// Whether `node` is an item-position macro call whose tokens name a
-/// [`LOGGING_CRATES`] root. Its expansion may bind that root (`use compat as
-/// tracing;` inside `cfg_if!`), which no use-tree scan of the file sees.
-fn item_macro_names_logging_root(node: &SyntaxNode) -> bool {
+/// Whether `node` is an item-position macro call whose tokens name one of
+/// `roots`. Its expansion may bind that root (`cfg_if! { .. use compat as
+/// tracing; }`), which no use-tree scan of the file sees (#16420, #16388).
+fn item_macro_names_root(node: &SyntaxNode, roots: &[&str]) -> bool {
     ast::MacroCall::cast(node.clone())
         .filter(|_| {
             node.parent().is_some_and(|parent| {
@@ -2402,8 +2402,14 @@ fn item_macro_names_logging_root(node: &SyntaxNode) -> bool {
             tree.syntax()
                 .descendants_with_tokens()
                 .filter_map(|element| element.into_token())
-                .any(|token| LOGGING_CRATES.contains(&token.text().trim_start_matches("r#")))
+                .any(|token| roots.contains(&token.text().trim_start_matches("r#")))
         })
+}
+
+/// [`json_namespace_rebound`], or an item macro whose tokens name
+/// `serde_json` and whose expansion is not read (#16388).
+fn json_root_may_be_rebound(node: &SyntaxNode) -> bool {
+    json_namespace_rebound(node) || item_macro_names_root(node, &["serde_json"])
 }
 
 /// The crates whose export under `name` is a drop-in for the trusted macro.

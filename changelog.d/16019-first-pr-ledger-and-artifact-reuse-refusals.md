@@ -1,0 +1,2 @@
+<!-- section: Changed -->
+- `ripr first-pr --gap-ledger` now says to pass a path whose parent is a writable directory when a file is in the way, instead of a bare `File exists` or `Not a directory` OS error. `ripr context --from` and `ripr explain --from` say to pass the diff file the artifact was written from (or drop `--diff`) when the asserted `--diff` is missing, and to restore the recorded diff file or Perl facts packet, or regenerate the artifact with `ripr check --write-artifact`, when it has gone (#16019).

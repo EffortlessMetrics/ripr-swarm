@@ -62,5 +62,7 @@ pub fn identity_registry_canonical_json() -> String {
     render_canonical_json(production_records(), adjacent_fields())
 }
 
+/// Repository-relative path of the generated human-readable identity registry.
 pub const IDENTITY_REGISTRY_MARKDOWN_PATH: &str = render::REGISTRY_MARKDOWN_PATH;
+/// Repository-relative path of the generated machine-readable identity registry.
 pub const IDENTITY_REGISTRY_JSON_PATH: &str = render::REGISTRY_JSON_PATH;

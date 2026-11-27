@@ -329,3 +329,14 @@ Command:
 
 Updated:
 - `expected/human.txt`
+
+## Pending — cross_crate_trait_impl_direct_owner_positive (26)
+
+Reason:
+RIPR-SPEC-0122: #15336 human-full Terms line stops claiming test reach for weakly_exposed and reachable_unrevealed
+
+Command:
+`cargo xtask goldens bless cross_crate_trait_impl_direct_owner_positive --reason "..."`
+
+Updated:
+- `expected/human-full.txt`

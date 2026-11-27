@@ -110,3 +110,14 @@ Command:
 
 Updated:
 - `expected/human.txt`
+
+## Pending — rust_catalog_description_structural_oracle (10)
+
+Reason:
+RIPR-SPEC-0108: merge swarm main 4badffabd0 (#16460 Terms wording and 1.217 composed tree) on Linux 1.95.0
+
+Command:
+`cargo xtask goldens bless rust_catalog_description_structural_oracle --reason "..."`
+
+Updated:
+- `expected/human-full.txt`

@@ -250,3 +250,14 @@ Command:
 Updated:
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — module_reach_super_import_in_file_wrong_module (21)
+
+Reason:
+RIPR-SPEC-0108: merge swarm main 4badffabd0 (#16460 Terms wording and 1.217 composed tree) on Linux 1.95.0
+
+Command:
+`cargo xtask goldens bless module_reach_super_import_in_file_wrong_module --reason "..."`
+
+Updated:
+- `expected/human-full.txt`

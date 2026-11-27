@@ -1451,6 +1451,7 @@ fn evidence_for_seam_with_context<'a>(
             .filter(|(_, reason)| *reason == RelationReason::DirectOwnerCall)
             .map(|(indexed, _)| indexed.test),
     );
+    withhold_unverified_property_provider(&mut evidence, owner_fn, context);
     evidence
 }
 
@@ -3330,7 +3331,57 @@ pub(crate) fn compact_evidence_for_seam(
             .filter(|(_, reason)| *reason == RelationReason::DirectOwnerCall)
             .map(|(indexed, _)| indexed.test),
     );
+    withhold_unverified_property_provider(&mut evidence, owner_fn, context);
     evidence
+}
+
+/// Failed property registration is unknown owner reach, not a missing test.
+/// Ordinary established owner paths remain authoritative independently of the
+/// unsupported property invocation. Both full and compact paths call this.
+fn withhold_unverified_property_provider(
+    evidence: &mut TestGripEvidence,
+    owner: Option<&FunctionSummary>,
+    context: &CompactGripContext<'_>,
+) {
+    if evidence.reach.state == StageState::Yes {
+        return;
+    }
+    let Some(owner) = owner else {
+        return;
+    };
+    // A file no `mod` reaches is an established wiring limit (#7426); a recovered
+    // provider cannot make Cargo compile it, so keep its specific repair.
+    if context
+        .index
+        .files()
+        .get(&owner.file)
+        .is_some_and(|facts| facts.role_provenance.outside_module_tree)
+    {
+        return;
+    }
+    let Some(summary) = context
+        .property_macros
+        .provider_failure_summary(&owner.name, &owner.file)
+    else {
+        return;
+    };
+    evidence.reach = StageEvidence::new(StageState::Opaque, Confidence::Low, summary.clone());
+    for stage in [
+        &mut evidence.activate,
+        &mut evidence.propagate,
+        &mut evidence.observe,
+        &mut evidence.discriminate,
+    ] {
+        *stage = StageEvidence::new(
+            StageState::Unknown,
+            Confidence::Low,
+            "Owner execution remains unverified after offline provider verification; inspect the reach limitation for its retained diagnosis and recovery.",
+        );
+    }
+    evidence.related_tests.clear();
+    evidence.observed_values.clear();
+    evidence.missing_discriminators.clear();
+    evidence.new_test_target = None;
 }
 
 /// Reach evidence: does a related test call the seam's owner?

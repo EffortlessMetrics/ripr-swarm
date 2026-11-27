@@ -527,3 +527,14 @@ Command:
 Updated:
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — rust_adversarial_same_method_other_type (42)
+
+Reason:
+RIPR-SPEC-0122: #15336 human-full Terms line stops claiming test reach for weakly_exposed and reachable_unrevealed
+
+Command:
+`cargo xtask goldens bless rust_adversarial_same_method_other_type --reason "..."`
+
+Updated:
+- `expected/human-full.txt`

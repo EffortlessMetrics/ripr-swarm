@@ -150,3 +150,14 @@ Command:
 
 Updated:
 - `expected/human.txt`
+
+## Pending — boundary_operand_unresolved (13)
+
+Reason:
+RIPR-SPEC-0108: merge swarm main 4badffabd0 (#16460 Terms wording and 1.217 composed tree) on Linux 1.95.0
+
+Command:
+`cargo xtask goldens bless boundary_operand_unresolved --reason "..."`
+
+Updated:
+- `expected/human-full.txt`

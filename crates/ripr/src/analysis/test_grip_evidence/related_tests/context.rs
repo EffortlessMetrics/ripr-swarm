@@ -16,6 +16,8 @@ type InlineErrorHelperOwners = BTreeSet<String>;
 pub(crate) struct CompactGripContext<'a> {
     pub(in crate::analysis::test_grip_evidence) index: &'a RustIndex,
     boundary_chains: Mutex<BTreeMap<String, Option<crate::analysis::classify::HelperChain>>>,
+    pub(in crate::analysis::test_grip_evidence) property_macros:
+        crate::analysis::language::PropertyMacroMentionIndex<'a>,
     pub(in crate::analysis::test_grip_evidence) tests: Vec<CompactTest<'a>>,
     // Assertion-local helper custody through authenticated free-owner calls.
     // A discarded helper elsewhere in the same test supplies no custody here.
@@ -835,6 +837,7 @@ impl<'a> CompactGripContext<'a> {
             inline_error_helper_owners,
             index,
             boundary_chains: Mutex::new(BTreeMap::new()),
+            property_macros: crate::analysis::language::PropertyMacroMentionIndex::for_index(index),
             tests,
             tests_by_call_name,
             tests_by_helper_owner_call_name,

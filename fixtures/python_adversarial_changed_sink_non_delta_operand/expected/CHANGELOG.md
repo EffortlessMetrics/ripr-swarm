@@ -781,3 +781,14 @@ Command:
 
 Updated:
 - `expected/human.txt`
+
+## Pending — python_adversarial_changed_sink_non_delta_operand (43)
+
+Reason:
+RIPR-SPEC-0122: #15336 human-full Terms line stops claiming test reach for weakly_exposed and reachable_unrevealed
+
+Command:
+`cargo xtask goldens bless python_adversarial_changed_sink_non_delta_operand --reason "..."`
+
+Updated:
+- `expected/human-full.txt`

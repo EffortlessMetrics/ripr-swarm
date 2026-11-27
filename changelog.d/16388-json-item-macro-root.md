@@ -1,0 +1,2 @@
+<!-- section: Fixed -->
+- A Rust helper wrapper that builds a value with a bare `json!` no longer forwards its helper result when an item-position macro in the workspace names `serde_json` (`cfg_if! { if #[cfg(unix)] { use compat as serde_json; } }`). ripr does not read that macro's expansion, which may alias the crate root, so the boundary test of the wrapper no longer reads `exposed` on that path (#16388).
