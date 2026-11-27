@@ -129,6 +129,11 @@ pub(crate) struct TypeScriptAdmissionContext {
     setup_assertion_like: bool,
     /// Modules and strict scripts keep block functions inside their block.
     pub(super) block_functions_are_lexical: bool,
+    /// Locals of ES default imports (`import check from 'tape'`), the only
+    /// non-namespace `default` records that are the module's own default
+    /// export. A CommonJS `{ default: check } = require(...)` reads a
+    /// property that may be absent (#16431 review).
+    esm_default_locals: BTreeSet<String>,
 }
 
 impl TypeScriptAdmissionContext {
@@ -231,6 +236,11 @@ impl TypeScriptAdmissionContext {
                 })
                 .collect(),
             reexport_names: reexport_spellings(statements),
+            esm_default_locals: esm_imports
+                .iter()
+                .filter(|import| !import.namespace && import.imported.as_deref() == Some("default"))
+                .map(|import| import.local.clone())
+                .collect(),
             // Callers pass a workspace-relative path (the analysis loop's
             // `relative`). An absolute path whose ancestors contain `test` /
             // `spec` over-withholds every relative import as test support;
@@ -359,7 +369,10 @@ impl TypeScriptAdmissionContext {
                     // A runner whose default export is its `test` function
                     // registers under any local name (`const check =
                     // require('tape')`, `import check from 'ava'`, #16431).
+                    // Only the whole module (`require()`, import-equals) or
+                    // an ES default import is that function.
                     || (import.imported.as_deref() == Some("default")
+                        && (import.namespace || self.esm_default_locals.contains(local))
                         && DEFAULT_TEST_RUNNERS.contains(&import.source.as_str())
                         && family("test")))
         })
@@ -391,6 +404,7 @@ impl TypeScriptAdmissionContext {
                 .collect(),
             imports,
             test_dir: self.test_dir.clone(),
+            esm_default_locals: self.esm_default_locals.clone(),
             ..Self::default()
         }
     }

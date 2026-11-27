@@ -134,8 +134,11 @@ Test discovery:
   export is its `test` function (`tape`, `ava`, `node:test`, `test`) is that
   function under any local name: `const check = require('tape')`,
   `import check = require('tape')` and `import check from 'ava'` register like
-  `test` (#16431). Other runners' defaults (mocha, node-tap's namespace) and a
-  local module's default stay unregistered
+  `test` (#16431). Only the whole module (`require()`, import-equals) or an ES
+  default import is that function: a CommonJS `{ default: check } =
+  require('tape')`, with or without a fallback, reads a property that may be
+  absent and stays unregistered, as do other runners' defaults (mocha,
+  node-tap's namespace) and a local module's default
 - AVA's macro form, a named macro between the title and the callback
   (`test(name, macro, async (t) => {})`, `test(name, ns.macro, fn)`): the
   function third argument is the callback (#10964) for a root bound to AVA's `test`, and only an inline function; a macro without a

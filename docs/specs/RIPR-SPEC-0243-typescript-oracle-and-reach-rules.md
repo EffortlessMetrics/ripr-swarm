@@ -3264,8 +3264,10 @@ keys); do not take the next number.
   runs `analyze_diff` on a test registered through `check`, a tape default
   bound by `require()`, import-equals or an ES default import, and through
   renamed ava and `node:test` default imports: each reads `exposed` like the
-  `test` reference. A written binding, mocha's and node-tap's defaults, a
-  local module's default and `check.skip(...)` stay `no_static_path`.
+  `test` reference, as do `import { default as check }` and a call inside a
+  suite. A written binding, a destructured CommonJS `default` (with or
+  without a fallback), a suite-level shadow, mocha's and node-tap's defaults,
+  a local module's default and `check.skip(...)` stay `no_static_path`.
 
 - #11196 (rule 11, object rows): `tests/object_row_tests.rs` pins the per-row
   literal assertions for the `for...of` and `test.each` object-row forms and

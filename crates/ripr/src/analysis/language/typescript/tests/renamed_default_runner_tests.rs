@@ -65,6 +65,17 @@ fn a_renamed_default_runner_registers_like_the_test_spelling() -> Result<(), Str
             AVA.to_string(),
         ),
         (
+            "tape-named-default-import",
+            "import { default as check } from 'tape';\n",
+            TAPE.to_string(),
+        ),
+        // The control for the shadowed suite below.
+        (
+            "tape-in-suite",
+            "const check = require('tape');\n",
+            format!("describe('cart', () => {{\n{TAPE}}});\n"),
+        ),
+        (
             "node-test-default-import",
             "import check from 'node:test';\n",
             NODE.to_string(),
@@ -101,6 +112,26 @@ fn a_renamed_default_binding_that_is_not_a_known_runner_registers_nothing() -> R
             "local-default",
             "import check from '../src/helper';\n",
             TAPE.to_string(),
+        ),
+        // A CommonJS property named `default` may be absent, so its fallback
+        // may run instead (#16433 review).
+        (
+            "destructured-default-fallback",
+            "const { default: check = (name: string, run: any) => {} } = require('tape');\n",
+            TAPE.to_string(),
+        ),
+        (
+            "destructured-default",
+            "const { default: check } = require('tape');\n",
+            TAPE.to_string(),
+        ),
+        // A suite-level binding shadows the runner.
+        (
+            "shadowed-in-suite",
+            "const check = require('tape');\n",
+            format!(
+                "describe('cart', () => {{\n  const check = (name: string, run: (t: any) => void) => {{}};\n{TAPE}}});\n"
+            ),
         ),
         // An inactive modifier registers no running test.
         (
