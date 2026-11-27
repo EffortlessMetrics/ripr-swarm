@@ -131,10 +131,22 @@ fn parse_windows_memory(text: &str, unit: WindowsMemoryUnit) -> Option<u64> {
     }
 }
 
+/// .NET GC heap-limit variables that constrain only the `pwsh` probe's CLR heap
+/// rather than native 64-bit Cargo; stripped from the probe child environment.
+#[cfg(any(target_os = "windows", test))]
+const WINDOWS_PROBE_REMOVED_ENVS: [&str; 4] = [
+    "DOTNET_GCHeapHardLimit",
+    "DOTNET_GCHeapHardLimitPercent",
+    "COMPlus_GCHeapHardLimit",
+    "COMPlus_GCHeapHardLimitPercent",
+];
+
 /// Query Windows host memory without `unsafe` FFI by trying bounded PowerShell
 /// probes in order:
-/// 1. `pwsh` `.NET` `GC.GetGCMemoryInfo().TotalAvailableMemoryBytes` (bytes;
-///    respects Windows Job Object memory limits as well as physical RAM),
+/// 1. 64-bit `pwsh` `.NET` `GC.GetGCMemoryInfo().TotalAvailableMemoryBytes` (bytes;
+///    respects Windows Job Object memory limits as well as physical RAM; skipped
+///    when `pwsh` is a 32-bit process so 4 GiB WOW64 virtual-address clamping
+///    cannot produce a false low-memory cap),
 /// 2. Windows PowerShell 5.1 `Microsoft.VisualBasic.Devices.ComputerInfo.TotalPhysicalMemory`
 ///    (bytes; uses `GlobalMemoryStatusEx` without WMI/CIM),
 /// 3. Windows PowerShell 5.1 `Win32_OperatingSystem.TotalVisibleMemorySize` (KiB).
@@ -150,7 +162,7 @@ fn windows_memory_bytes_with(
                 "-NoProfile",
                 "-NonInteractive",
                 "-Command",
-                "[GC]::GetGCMemoryInfo().TotalAvailableMemoryBytes",
+                "if ([Environment]::Is64BitProcess) { [GC]::GetGCMemoryInfo().TotalAvailableMemoryBytes }",
             ],
             WindowsMemoryUnit::Bytes,
         ),
@@ -211,13 +223,16 @@ fn run_windows_memory_probe(program: &str, args: &[&str]) -> Option<String> {
     use std::process::{Command, Stdio};
     use std::time::{Duration, Instant};
 
-    let mut child = Command::new(program)
+    let mut command = Command::new(program);
+    command
         .args(args)
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
-        .stderr(Stdio::null())
-        .spawn()
-        .ok()?;
+        .stderr(Stdio::null());
+    for var in WINDOWS_PROBE_REMOVED_ENVS {
+        command.env_remove(var);
+    }
+    let mut child = command.spawn().ok()?;
     let mut stdout = child.stdout.take()?;
     let reader = std::thread::spawn(move || {
         let mut buf = Vec::new();
@@ -293,8 +308,9 @@ pub(crate) fn local_precommit_envs() -> &'static [(&'static str, &'static str)] 
 #[cfg(test)]
 mod tests {
     use super::{
-        LOW_MEMORY_BYTES, WindowsMemoryUnit, capped_jobs, cgroup_limit_bytes, meminfo_total_bytes,
-        parse_windows_memory, smallest_memory_bound, windows_memory_bytes_with,
+        LOW_MEMORY_BYTES, WINDOWS_PROBE_REMOVED_ENVS, WindowsMemoryUnit, capped_jobs,
+        cgroup_limit_bytes, meminfo_total_bytes, parse_windows_memory, smallest_memory_bound,
+        windows_memory_bytes_with,
     };
     use std::cell::RefCell;
     use std::collections::BTreeMap;
@@ -499,8 +515,43 @@ mod tests {
         );
         assert_eq!(low, Some(16 * GIB));
         assert_eq!(calls.borrow().len(), 1, "primary pwsh stops fallback chain");
+        assert!(
+            calls.borrow()[0]
+                .1
+                .contains("[Environment]::Is64BitProcess"),
+            "pwsh probe must guard against 32-bit WOW64 virtual-address clamping"
+        );
+        for var in [
+            "DOTNET_GCHeapHardLimit",
+            "DOTNET_GCHeapHardLimitPercent",
+            "COMPlus_GCHeapHardLimit",
+            "COMPlus_GCHeapHardLimitPercent",
+        ] {
+            assert!(
+                WINDOWS_PROBE_REMOVED_ENVS.contains(&var),
+                "probe environment must strip {var}"
+            );
+        }
         assert_eq!(capped_jobs(false, low, Some(4)), Some("1"));
         assert_eq!(capped_jobs(true, low, Some(4)), None);
+
+        // 32-bit pwsh emits empty stdout and must fall through to ComputerInfo.
+        let wow64_fallback = windows_memory_bytes_with(
+            &|program, args| {
+                if program == "pwsh" {
+                    Some(String::new())
+                } else if program == PS51
+                    && args.last().is_some_and(|cmd| cmd.contains("ComputerInfo"))
+                {
+                    Some(format!("{}\r\n", 64 * GIB))
+                } else {
+                    None
+                }
+            },
+            PS51,
+        );
+        assert_eq!(wow64_fallback, Some(64 * GIB));
+        assert_eq!(capped_jobs(false, wow64_fallback, Some(16)), None);
 
         let high = windows_memory_bytes_with(
             &|program, _| (program == "pwsh").then(|| format!("{}\r\n", 256 * GIB)),
