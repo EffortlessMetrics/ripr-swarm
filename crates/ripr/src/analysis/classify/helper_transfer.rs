@@ -5829,7 +5829,7 @@ mod tests {
         let path = PathBuf::from("src/lib.rs");
         let source = "macro_rules! anyhow { ($($t:tt)*) => { 0 }; }\npub fn w(qty: u32) -> u32 { if qty > 1 { 5 } else { 0 } }\n";
         let facts = crate::analysis::syntax::ra::summarize_file_with_parser(&path, source)?;
-        let index = RustIndex::from_owned(OwnedRustIndex {
+        let index = RustIndex::from_owned(crate::analysis::facts::OwnedRustIndex {
             functions: facts.functions.clone(),
             tests: facts.tests.clone(),
             files: [(path, facts)].into_iter().collect(),
