@@ -1,0 +1,5 @@
+[[extend]]
+id = "RIPR-SPEC-0084"
+tests = [
+  "crates/ripr/tests/hostile_repos.rs::shared_diff_uses_one_platform_orderfile_pin",
+]
