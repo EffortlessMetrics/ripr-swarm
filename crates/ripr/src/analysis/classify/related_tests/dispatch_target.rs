@@ -516,27 +516,111 @@ fn every_mention_is_a_call(text: &str, name: &str) -> bool {
 }
 
 /// The kind of a method's `self` receiver read from its `fn` text: by value
-/// (`self`, `mut self`), shared (`&self`, `&'a self`) or exclusive
-/// (`&mut self`). `None` for a typed receiver (`self: Box<Self>`) or a
-/// signature this cannot read.
+/// (`self`, `mut self`, `self: Self`), shared (`&self`, `&'a self`,
+/// `self: &Self`) or exclusive (`&mut self`, `self: &mut Self`). The
+/// parameter list is the first `(` after the name and any generic
+/// parameters, so a bound's `FnMut(&u32)` is never read as it (#16352).
+/// `None` for a smart-pointer receiver (`self: Box<Self>`) or a signature
+/// this cannot read.
 pub(super) fn receiver_kind(body: &str) -> Option<ReceiverKind> {
-    let open = body.find('(')?;
-    let rest = &body[open + 1..];
+    let rest = parameter_list(body)?;
     let end = rest.find([',', ')'])?;
     let receiver = rest[..end].split_whitespace().collect::<Vec<_>>().join(" ");
+    if let Some((binding, ty)) = receiver.split_once(':') {
+        return match binding.trim() {
+            "self" | "mut self" => typed_receiver_kind(ty.trim()),
+            _ => None,
+        };
+    }
     if receiver == "self" || receiver == "mut self" {
         return Some(ReceiverKind::Value);
     }
-    let after_ref = receiver.strip_prefix('&')?.trim_start();
-    let after_lifetime = match after_ref.strip_prefix('\'') {
-        Some(lifetime) => lifetime.split_once(' ').map_or("", |(_, tail)| tail),
-        None => after_ref,
-    };
-    match after_lifetime.trim_start() {
+    match after_reference(&receiver)? {
         "self" => Some(ReceiverKind::Shared),
         "mut self" => Some(ReceiverKind::Exclusive),
         _ => None,
     }
+}
+
+/// The kind a typed receiver's type spells: `Self`, `&Self`, `&'a Self`,
+/// `&mut Self`. Any other type (`Box<Self>`, `Rc<Self>`, `Pin<&mut Self>`)
+/// is not one of the three probing steps.
+fn typed_receiver_kind(ty: &str) -> Option<ReceiverKind> {
+    if ty == "Self" {
+        return Some(ReceiverKind::Value);
+    }
+    match after_reference(ty)? {
+        "Self" => Some(ReceiverKind::Shared),
+        "mut Self" => Some(ReceiverKind::Exclusive),
+        _ => None,
+    }
+}
+
+/// The text after a leading `&` and an optional lifetime, with single
+/// spaces between words; `None` when `text` does not start with `&`.
+fn after_reference(text: &str) -> Option<&str> {
+    let after_ref = text.strip_prefix('&')?.trim_start();
+    let after_lifetime = match after_ref.strip_prefix('\'') {
+        Some(lifetime) => lifetime.split_once(' ').map_or("", |(_, tail)| tail),
+        None => after_ref,
+    };
+    Some(after_lifetime.trim_start())
+}
+
+/// The text just inside a function's parameter list: past the first `fn`
+/// keyword (a lexical body may start at `pub(crate)`), the name,
+/// and a balanced generic parameter list, whose `->` arrows (`F: Fn(u8) ->
+/// u8`) close no angle. `None` when the text does not read that way.
+fn parameter_list(body: &str) -> Option<&str> {
+    let keyword = body.match_indices("fn").map(|(at, _)| at).find(|&at| {
+        ident_boundary(body, at, at + 2) && body[at + 2..].starts_with(char::is_whitespace)
+    })?;
+    let after_fn = body[keyword + 2..].trim_start();
+    let name_len = after_fn
+        .find(|ch: char| !(ch.is_alphanumeric() || ch == '_' || ch == '#'))
+        .unwrap_or(after_fn.len());
+    if name_len == 0 {
+        return None;
+    }
+    let mut rest = after_fn[name_len..].trim_start();
+    if rest.starts_with('<') {
+        rest = past_generic_parameters(rest)?.trim_start();
+    }
+    rest.strip_prefix('(')
+}
+
+/// The text after the balanced `<...>` that `text` starts with. Brackets
+/// of every kind nest, a `<` or `>` inside a `{ ... }` const block is a
+/// comparison, and a `>` right after `-` is an arrow. `None` when the
+/// brackets do not balance.
+fn past_generic_parameters(text: &str) -> Option<&str> {
+    let mut stack: Vec<char> = Vec::new();
+    let mut previous = ' ';
+    for (at, ch) in text.char_indices() {
+        let in_braces = stack.last() == Some(&'{');
+        match ch {
+            '<' | '>' if in_braces => {}
+            '<' | '(' | '[' | '{' => stack.push(ch),
+            '>' if previous == '-' => {}
+            '>' | ')' | ']' | '}' => {
+                let open = match ch {
+                    '>' => '<',
+                    ')' => '(',
+                    ']' => '[',
+                    _ => '{',
+                };
+                if stack.pop()? != open {
+                    return None;
+                }
+                if stack.is_empty() {
+                    return Some(&text[at + 1..]);
+                }
+            }
+            _ => {}
+        }
+        previous = ch;
+    }
+    None
 }
 
 /// Ordered as method probing tries the steps for an owned receiver.
