@@ -1,0 +1,6 @@
+[[extend]]
+id = "RIPR-SPEC-0122"
+tests = [
+  "crates/ripr/tests/cli_smoke/check_output_paths.rs::relative_root_human_file_opens_from_subdirectory",
+  "crates/ripr/tests/cli_smoke/check_output_paths.rs::agent_gap_and_test_paths_from_subdirectory",
+]
