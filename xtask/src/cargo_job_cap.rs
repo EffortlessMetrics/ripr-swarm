@@ -116,8 +116,11 @@ enum WindowsMemoryUnit {
 }
 
 /// Parse a single positive integer memory reading from a Windows memory query.
+/// Strips a leading UTF-8 BOM (`\u{FEFF}`) that older Windows PowerShell
+/// configurations may prepend to stdout.
 #[cfg(any(target_os = "windows", test))]
 fn parse_windows_memory(text: &str, unit: WindowsMemoryUnit) -> Option<u64> {
+    let text = text.strip_prefix('\u{FEFF}').unwrap_or(text);
     let value = text.trim().parse::<u64>().ok()?;
     if value == 0 {
         return None;
@@ -197,24 +200,53 @@ fn windows_powershell_executable() -> String {
     "powershell.exe".to_string()
 }
 
+/// Run a leaf Windows memory-query command without wrapping it in a fresh
+/// nested Windows Job Object. Creating an inner job (as `OwnedProcess::spawn`
+/// does for process-tree cleanup) masks an outer runner Job Object memory limit
+/// from CoreCLR's `QueryInformationJobObject(NULL, ...)` inside
+/// `GC.GetGCMemoryInfo().TotalAvailableMemoryBytes`.
 #[cfg(target_os = "windows")]
 fn run_windows_memory_probe(program: &str, args: &[&str]) -> Option<String> {
-    let args: Vec<String> = args.iter().map(|arg| (*arg).to_string()).collect();
-    let cwd = std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
-    let output = crate::run::capture_bytes_in_dir_with_timeout(
-        std::path::Path::new(program),
-        &args,
-        &cwd,
-        &[],
-        &[],
-        WINDOWS_MEMORY_PROBE_TIMEOUT,
-        "windows host memory probe",
-    )
-    .ok()?;
-    if output.timed_out || !output.status.is_some_and(|status| status.success()) {
+    use std::io::Read;
+    use std::process::{Command, Stdio};
+    use std::time::{Duration, Instant};
+
+    let mut child = Command::new(program)
+        .args(args)
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()
+        .ok()?;
+    let mut stdout = child.stdout.take()?;
+    let reader = std::thread::spawn(move || {
+        let mut buf = Vec::new();
+        stdout.read_to_end(&mut buf).ok().map(|_| buf)
+    });
+    let deadline = Instant::now() + WINDOWS_MEMORY_PROBE_TIMEOUT;
+    let status = loop {
+        match child.try_wait() {
+            Ok(Some(status)) => break Some(status),
+            Ok(None) => {
+                if Instant::now() >= deadline {
+                    let _ = child.kill();
+                    let _ = child.wait();
+                    break None;
+                }
+                std::thread::sleep(Duration::from_millis(10));
+            }
+            Err(_) => {
+                let _ = child.kill();
+                let _ = child.wait();
+                break None;
+            }
+        }
+    };
+    if !status.is_some_and(|s| s.success()) {
         return None;
     }
-    String::from_utf8(output.stdout).ok()
+    let bytes = reader.join().ok().flatten()?;
+    String::from_utf8(bytes).ok()
 }
 
 #[cfg(target_os = "windows")]
@@ -411,7 +443,15 @@ mod tests {
             Some(16 * GIB)
         );
         assert_eq!(
+            parse_windows_memory("\u{FEFF}17179869184\r\n", WindowsMemoryUnit::Bytes),
+            Some(16 * GIB)
+        );
+        assert_eq!(
             parse_windows_memory("16777216\r\n", WindowsMemoryUnit::Kibibytes),
+            Some(16 * GIB)
+        );
+        assert_eq!(
+            parse_windows_memory("\u{FEFF}16777216\r\n", WindowsMemoryUnit::Kibibytes),
             Some(16 * GIB)
         );
 
@@ -518,6 +558,28 @@ mod tests {
             bytes >= 512 * 1024 * 1024,
             "detected Windows memory {bytes} bytes is implausibly small"
         );
+        // Cross-check against Windows PowerShell 5.1 physical RAM: an effective
+        // memory bound (physical RAM or Job Object limit) cannot exceed host RAM.
+        let powershell = super::windows_powershell_executable();
+        if let Some(physical) = super::run_windows_memory_probe(
+            &powershell,
+            &[
+                "-NoProfile",
+                "-NonInteractive",
+                "-Command",
+                "Add-Type -AssemblyName Microsoft.VisualBasic; ([Microsoft.VisualBasic.Devices.ComputerInfo]::new()).TotalPhysicalMemory",
+            ],
+        )
+        .and_then(|out| parse_windows_memory(&out, WindowsMemoryUnit::Bytes))
+        {
+            assert!(
+                bytes <= physical,
+                "detected Windows memory bound {bytes} exceeds physical RAM {physical}"
+            );
+        }
+        let expected_cap = (bytes < LOW_MEMORY_BYTES).then_some("1");
+        assert_eq!(capped_jobs(false, first, Some(4)), expected_cap);
+        assert_eq!(capped_jobs(true, first, Some(4)), None);
         Ok(())
     }
 }
