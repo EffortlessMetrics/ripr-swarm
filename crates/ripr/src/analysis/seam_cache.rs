@@ -818,6 +818,8 @@ pub(crate) struct CachedSeamLimitInfo {
 /// `1.209`: a `&self` or `&mut self` trait impl method is name-only when a
 /// standard trait's method of the name comes at an earlier probing step
 /// (#16040).
+/// `1.210`: a helper wrapper that calls `json!` imported by a
+/// verified `use serde_json::json;` forwards (#10357).
 /// `1.212`: source-bound failed property verification is an opaque repo limit,
 /// with distinct typed failure outcomes in the provider identity (#10864).
 pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.212";
@@ -1066,6 +1068,7 @@ pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.212";
 /// `0.209`: same constructed trait receiver reading as full `1.207` (#15956).
 /// `0.210`: same audited value-macro wrapper forwarding as full `1.208` (#10357).
 /// `0.211`: same standard trait rival reading as full `1.209` (#16040).
+/// `0.212`: same imported json! wrapper forwarding as full `1.210` (#10357).
 /// `0.214`: same provider-failure limitation as full `1.212` (#10864).
 const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.214";
 
@@ -1315,6 +1318,7 @@ const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.214";
 /// `0.209`: same constructed trait receiver reading as full `1.207` (#15956).
 /// `0.210`: same audited value-macro wrapper forwarding as full `1.208` (#10357).
 /// `0.211`: same standard trait rival reading as full `1.209` (#16040).
+/// `0.212`: same imported json! wrapper forwarding as full `1.210` (#10357).
 /// `0.214`: same provider-failure limitation as full `1.212` (#10864).
 pub(crate) const COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.214";
 
@@ -1548,7 +1552,11 @@ pub(crate) const COUNT_CACHE_SCHEMA_VERSION: &str = "0.2";
 /// `macro_rules! include_str` from the binding scan.
 /// `1.66`: an item-position `include!` makes a file's binding candidates
 /// `Any` (#16060); earlier candidates let the binding scan skip such a file.
-pub(crate) const FILE_FACT_CACHE_SCHEMA_VERSION: &str = "1.66";
+/// `1.67`: a grouped `self` import that binds `serde_json` from another
+/// path (`use other::serde_json::{self};`) is a `json` binding candidate
+/// (#10357); earlier candidates let the binding scan skip such a file. The
+/// bare crate name (`use serde_json::{self, json};`) is not (#16350).
+pub(crate) const FILE_FACT_CACHE_SCHEMA_VERSION: &str = "1.67";
 
 /// Keep the best-effort classified-seam cache from turning a successful live
 /// analysis into an unbounded post-analysis stall on large repos. Larger live
@@ -5307,6 +5315,7 @@ fn ignore_remove_dir_all(path: &std::path::Path) {
     if let Ok(()) = std::fs::remove_dir_all(path) {}
 }
 
+
 /// Operationally different provider refusals require different classified
 /// evidence: a capture failure must not retain missing-input recovery advice.
 fn proptest_cache_identity(
@@ -5318,6 +5327,7 @@ fn proptest_cache_identity(
         Err(failure) => format!("unverified:{failure:?}"),
     }
 }
+
 
 #[cfg(test)]
 mod tests {
@@ -5733,7 +5743,8 @@ mod tests {
         // 1.63 -> 1.64: `env`/`option_env` binding candidates (#14116).
         // 1.64 -> 1.65: `include_bytes`/`include_str` binding candidates (#14116).
         // 1.65 -> 1.66: item-position `include!` binds any name (#16060).
-        assert_eq!(FILE_FACT_CACHE_SCHEMA_VERSION, "1.66");
+        // 1.66 -> 1.67: grouped `self` import binding `serde_json` (#10357).
+        assert_eq!(FILE_FACT_CACHE_SCHEMA_VERSION, "1.67");
         // 1.4 -> 1.5: metadata-sourced harness validation (#3634) flips
         // verdicts for workspaces the manifest emulation approximated.
         // 1.5 -> 1.6: the #3636 reachability authority excludes
@@ -5967,7 +5978,8 @@ mod tests {
         // 1.206 -> 1.207: constructed trait receivers and by-value twins (#15956, #15428).
         // 1.207 -> 1.208: an audited qualified value macro is transparent (#10357).
         // 1.208 -> 1.209: a standard trait method at an earlier probing step (#16040).
-        // 1.209 -> 1.212: source-bound failed property verification is an opaque repo limit (#10864).
+        // 1.209 -> 1.210: an imported serde_json json! is transparent (#10357).
+        // 1.210 -> 1.212: source-bound failed property verification is an opaque repo limit (#10864).
         assert_eq!(CACHE_SCHEMA_VERSION, "1.212");
         // 1.168 -> 1.169: plain `assert_eq!` literal withhold in the audit (#13005).
         // 0.12 -> 0.13 through 0.14 / 0.15 / 0.16 / 0.17 / 0.18: same
@@ -6154,7 +6166,8 @@ mod tests {
         // 0.208 -> 0.209: same constructed trait receiver reading as full 1.207 (#15956).
         // 0.209 -> 0.210: same audited value-macro wrapper forwarding as full 1.208 (#10357).
         // 0.210 -> 0.211: same standard trait rival reading as full 1.209 (#16040).
-        // 0.211 -> 0.214: same provider-failure limitation as full 1.212 (#10864).
+        // 0.211 -> 0.212: same imported json! wrapper forwarding as full 1.210 (#10357).
+        // 0.212 -> 0.214: same provider-failure limitation as full 1.212 (#10864).
         assert_eq!(SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.214");
         assert_eq!(COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.214");
         // 0.170 -> 0.171: same plain `assert_eq!` literal withhold as full 1.169 (#13005).
