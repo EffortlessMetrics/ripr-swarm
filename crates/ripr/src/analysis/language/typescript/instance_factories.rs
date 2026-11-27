@@ -156,6 +156,7 @@ pub(crate) fn assign_instance_factories(
                     hops: 0,
                     cross_module: None,
                     closure: false,
+                    commonjs_whole: false,
                 });
             }
         }
@@ -176,6 +177,7 @@ pub(crate) fn assign_instance_factories(
                 hops: 0,
                 cross_module: None,
                 closure: false,
+                commonjs_whole: false,
             });
         }
         statics.sort();
