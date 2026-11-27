@@ -1,0 +1,133 @@
+{
+  "schema_version": "0.2",
+  "tool": "ripr",
+  "mode": "fast",
+  "root": "fixtures/rust_computed_return_tail_crate_qualified/input",
+  "summary": {"changed_rust_files":1,"probes":1,"findings":1,"exposed":1,"weakly_exposed":0,"reachable_unrevealed":0,"no_static_path":0,"infection_unknown":0,"propagation_unknown":0,"static_unknown":0,"changed_files_by_language":[{"language":"rust","files":1}]},
+  "analysis_outcome": {
+    "analysis_complete": true,
+    "outcome": {"schema_version":"0.1","kind":"complete_with_findings","identity":{"repository_identity":null,"root_identity":null,"config_identity":null,"base_revision":null,"input_identity":"sha256:8926a12142c79665fc025f835e1cc42837da2b07627eaaed2712c231c7d4cd2e","snapshot_identity":null,"git_candidate_subject":null},"counts":{"changed_file_count":1,"changed_line_count":2,"candidate_line_count":1,"probe_count":1,"finding_count":1},"limitations":[],"claim_boundary":"Static analysis outcome only; no correctness, test-adequacy, runtime-execution, or merge-readiness claim."}
+  },
+  "findings": [
+    {
+      "id": "probe:src_lib.rs:return_value:f222f9b2",
+      "canonical_gap_id": "gap:rust:src/lib.rs:shipping_cost:return_value:return_value:base*2",
+      "canonical_gap_group_size": 1,
+      "canonical_gap": {
+        "id": "gap:rust:src/lib.rs:shipping_cost:return_value:return_value:base*2",
+        "language": "rust",
+        "file": "src/lib.rs",
+        "owner": "shipping_cost",
+        "behavior_kind": "return_value",
+        "probe_kind": "return_value",
+        "normalized_discriminator": "base*2"
+
+      },
+      "classification": "exposed",
+      "severity": "info",
+      "confidence": 1.00,
+      "probe": {
+        "id": "probe:src_lib.rs:return_value:f222f9b2",
+        "family": "return_value",
+        "delta": "value",
+        "file": "./src/lib.rs",
+        "line": 9,
+        "expression": "base * 2"
+       },
+      "ripr": {
+        "reach": {"state":"yes","confidence":"medium","summary":"Related tests appear to reach shipping_cost: express_doubles_the_base"},
+        "infect": {"state":"yes","confidence":"medium","summary":"Reachable tests can plausibly activate this changed behavior"},
+        "propagate": {"state":"yes","confidence":"high","summary":"Complete propagation witness reaches returned value: base * 2"},
+        "observe": {"state":"yes","confidence":"medium","summary":"A related test observes a value or effect near the changed behavior"},
+        "discriminate": {"state":"yes","confidence":"medium","summary":"Strong oracle found: exact value or pattern assertion"}
+       },
+      "evidence_stages": [
+        {"stage":"reach","state":"yes","confidence":"medium"},
+        {"stage":"infect","state":"yes","confidence":"medium"},
+        {"stage":"propagate","state":"yes","confidence":"high"},
+        {"stage":"observe","state":"yes","confidence":"medium"},
+        {"stage":"discriminate","state":"yes","confidence":"medium"}
+      ],
+      "evidence_path": ["reach yes: Related tests appear to reach shipping_cost: express_doubles_the_base", "infection yes: Reachable tests can plausibly activate this changed behavior", "propagation yes: Complete propagation witness reaches returned value: base * 2", "observation yes: A related test observes a value or effect near the changed behavior", "discriminator yes: Strong oracle found: exact value or pattern assertion", "local flow reaches returned value: base * 2 (line 9)", "related test tests/shipping.rs:2 express_doubles_the_base uses strong exact value oracle: assert_eq!(\n        computed_return_tail_crate_qualified_fixture::shipping_cost(100, 10, true),\n        800\n    );", "source assertion argument value 800 at line 3", "source function argument value express = true at line 4", "source function argument value order_cents = 10 at line 4", "source function argument value weight_g = 100 at line 4"],
+      "flow_sinks": [
+        {"kind":"return_value","text":"base * 2","line":9}
+      ],
+      "evidence": ["A related test observes a value or effect near the changed behavior", "Complete propagation witness reaches returned value: base * 2", "Reachable tests can plausibly activate this changed behavior", "Related tests appear to reach shipping_cost: express_doubles_the_base", "Strong oracle found: exact value or pattern assertion"],
+      "missing": [],
+      "assertion_texts": {
+        "3": "assert_eq!(\n        computed_return_tail_crate_qualified_fixture::shipping_cost(100, 10, true),\n        800\n    );",
+        "4": "computed_return_tail_crate_qualified_fixture::shipping_cost(100, 10, true),"
+      },
+      "activation": {
+        "observed_values": [
+          {
+            "line": 3,
+            "value": "800",
+            "context": "assertion_argument"
+          },
+          {
+            "line": 4,
+            "value": "express = true",
+            "context": "function_argument"
+          },
+          {
+            "line": 4,
+            "value": "order_cents = 10",
+            "context": "function_argument"
+          },
+          {
+            "line": 4,
+            "value": "weight_g = 100",
+            "context": "function_argument"
+          }
+        ],
+        "missing_discriminators": [
+        ]
+      },
+      "observed_values": [
+        {
+          "line": 3,
+          "value": "800",
+          "context": "assertion_argument"
+        },
+        {
+          "line": 4,
+          "value": "express = true",
+          "context": "function_argument"
+        },
+        {
+          "line": 4,
+          "value": "order_cents = 10",
+          "context": "function_argument"
+        },
+        {
+          "line": 4,
+          "value": "weight_g = 100",
+          "context": "function_argument"
+        }
+      ],
+      "missing_discriminators": [
+      ],
+      "related_tests_total": 1,
+      "related_tests": [
+        {
+          "name": "express_doubles_the_base",
+          "file": "tests/shipping.rs",
+          "line": 2,
+          "oracle_strength": "strong",
+          "oracle_kind": "exact_value",
+          "oracle": "assert_eq!(\n        computed_return_tail_crate_qualified_fixture::shipping_cost(100, 10, true),\n        800\n    );",
+          "relation_reason": "direct_owner_call",
+          "relation_confidence": "high"
+        }
+      ],
+      "stop_reasons": ["fixture_opaque"],
+      "oracle_kind": "exact_value",
+      "oracle_strength": "strong",
+      "recommended_next_step": "",
+      "suggested_next_action": "",
+      "language": "rust",
+      "source_currentness": "candidate_current"
+    }
+  ]
+}

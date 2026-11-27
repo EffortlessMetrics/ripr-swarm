@@ -96,3 +96,27 @@ Command:
 
 Updated:
 - `expected/human-full.txt`
+
+## Pending — typescript_private_method_unknown (8)
+
+Reason:
+RIPR-SPEC-0008: preview-language GitHub file= and SARIF uris anchored at the checkout top level (#15367)
+
+Command:
+`cargo xtask goldens bless typescript_private_method_unknown --reason "..."`
+
+Updated:
+- `expected/human.txt`
+- `expected/sarif.json`
+- `expected/github.txt`
+
+## Pending — typescript_private_method_unknown (9)
+
+Reason:
+RIPR-SPEC-0008: SARIF alert messages are one plain line (#15374)
+
+Command:
+`cargo xtask goldens bless typescript_private_method_unknown --reason "..."`
+
+Updated:
+- `expected/sarif.json`

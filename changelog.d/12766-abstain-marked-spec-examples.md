@@ -1,2 +1,0 @@
-<!-- section: Internal / CI -->
-- Verdict corpus: a spec acceptance example opening with `[abstain]` requires an abstention for every row it describes, alongside unresolved-outcome `Reject` examples. Mixed examples were split first, a case citing only such examples now fails the check if it reads `credited`, and 28 abstaining rows count as spec-required (avoidable 271/862; total abstention target 0.24 = 0.2 + the 0.0452 spec-required share) (#12766).

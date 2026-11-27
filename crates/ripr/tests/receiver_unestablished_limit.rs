@@ -472,6 +472,22 @@ fn draft_mode_withholds_the_unplaced_generated_mount_control() -> Result<(), Str
     Ok(())
 }
 
+/// Draft mode leaves `b` unindexed. Its literal `#[path]` mount of
+/// `shared.rs` withholds placement from that one file (#14116), so the
+/// mounted test's receiver still reads the named limitation, not a gap.
+#[test]
+fn draft_mode_names_the_limit_for_a_test_an_unindexed_member_mounts() -> Result<(), String> {
+    let workspace = Workspace::create(Placement::Resolved, CONTROL)?;
+    let finding = workspace.finding_from(&workspace.run_with_mode(true, "draft")?)?;
+    assert_eq!(
+        text(&finding, "/classification")?,
+        "static_unknown",
+        "{finding}"
+    );
+    assert_eq!(limit(&finding), Some(LIMIT), "{finding}");
+    Ok(())
+}
+
 /// Draft indexes the owner package and its dependent test crate. A namesake
 /// sibling with no `include!` / `#[path]` stays unindexed and must not
 /// withhold placement of the indexed members (#10149 narrowing).
@@ -637,11 +653,17 @@ fn an_unauthoritative_inherent_factory_declaration_keeps_the_gap() -> Result<(),
 }
 
 /// With placement available a rebound root keeps its gap; a plain macro is credited.
+/// The resolved placement mounts the owner's file into `b` by `#[path]`,
+/// so the shared base-owner gate decision also withholds the integer tail's
+/// propagation (#15104): the rebound finding may read `propagation_unknown`
+/// for that reason, and never stronger than a gap.
 #[test]
 fn available_placement_keeps_the_rebound_root_gap_and_the_plain_credit() -> Result<(), String> {
     let rebound = Workspace::create(Placement::Resolved, CONTROL)?.finding()?;
     assert_ne!(limit(&rebound), Some(LIMIT), "{rebound}");
-    assert!(is_gap(&rebound)?, "{rebound}");
+    let mount_gated = text(&rebound, "/classification")? == "propagation_unknown"
+        && text(&rebound, "/ripr/propagate/summary")?.contains("(cfg_gated_owner)");
+    assert!(is_gap(&rebound)? || mount_gated, "{rebound}");
     let plain = Workspace::create(Placement::PlainStd, CONTROL)?.finding()?;
     assert_ne!(limit(&plain), Some(LIMIT), "{plain}");
     assert_eq!(

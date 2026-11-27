@@ -1,0 +1,1 @@
+crates/ripr/tests/check_gate_same_line_calls.rs|Command::new|1|cli-tests|#14487: one spawn site of CARGO_BIN_EXE_ripr runs `check --format json` and `gate check --mode visible-only` against an isolated temp git repo to prove check and the gate agree on a same-line boundary call; fixture git uses the shared bounded helper; no shell, network, or user-repository mutation.

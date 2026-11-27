@@ -5,9 +5,12 @@
 //! exporter, a Perl runtime, or an LSP protocol session. Production routing
 //! lands only after the fact packet and strict actionability slices are
 //! fixture-backed.
-#![allow(
-    dead_code,
-    reason = "Perl strict-actionability scaffold is feature-gated and currently exercised by tests before public projection is enabled"
+#![cfg_attr(
+    not(test),
+    expect(
+        dead_code,
+        reason = "the Perl strict-actionability, repair-card and exporter-command scaffold has only test consumers until public projection is enabled; the test build lints it"
+    )
 )]
 
 use crate::analysis::AnalysisOptions;
@@ -1376,6 +1379,9 @@ impl PerlFactPacket {
         if static_limit::for_change(self, change, &related).blocks {
             return Err(PerlActionabilityBlocker::DynamicBoundary);
         }
+        if concrete_change_discriminator(change).is_none() {
+            return Err(PerlActionabilityBlocker::MissingConcreteDiscriminator);
+        }
         let gap = self
             .canonical_gap_identity_for_change_with_assertion_shape(
                 change_id,
@@ -1637,69 +1643,6 @@ impl PerlFactPacket {
         Ok(refs)
     }
 
-    fn has_blocking_dynamic_boundary(
-        &self,
-        change: &ChangeFact,
-        evidence: Option<&PerlRelatedTestEvidence>,
-    ) -> bool {
-        let test_file_id = evidence.and_then(|evidence| {
-            self.test(&evidence.test_id)
-                .map(|test| test.file_id.as_str())
-        });
-        self.dynamic_boundaries.iter().any(|boundary| {
-            if let Some(owner_id) = boundary.owner_id.as_deref() {
-                owner_id == change.owner_id
-            } else {
-                boundary.file_id == change.file_id
-                    || test_file_id == Some(boundary.file_id.as_str())
-            }
-        })
-    }
-
-    fn has_blocking_limitation(
-        &self,
-        change: &ChangeFact,
-        evidence: &PerlRelatedTestEvidence,
-    ) -> bool {
-        let relevant_refs = self.actionability_evidence_ids(change, evidence);
-        self.limitations.iter().any(|limitation| {
-            limitation_kind_blocks_strict_actionability(&limitation.kind)
-                && (limitation.evidence_refs.is_empty()
-                    || limitation
-                        .evidence_refs
-                        .iter()
-                        .any(|evidence_ref| relevant_refs.contains(evidence_ref)))
-        })
-    }
-
-    fn has_blocking_dynamic_dispatch_limitation(
-        &self,
-        change: &ChangeFact,
-        evidence: &PerlRelatedTestEvidence,
-    ) -> bool {
-        let relevant_refs = self.actionability_evidence_ids(change, evidence);
-        self.limitations.iter().any(|limitation| {
-            limitation.kind == "dynamic_dispatch"
-                && (limitation.evidence_refs.is_empty()
-                    || limitation
-                        .evidence_refs
-                        .iter()
-                        .any(|evidence_ref| relevant_refs.contains(evidence_ref)))
-        })
-    }
-
-    fn has_blocking_dynamic_dispatch_limitation_for_change(&self, change: &ChangeFact) -> bool {
-        let relevant_refs = self.change_evidence_ids(change);
-        self.limitations.iter().any(|limitation| {
-            limitation.kind == "dynamic_dispatch"
-                && (limitation.evidence_refs.is_empty()
-                    || limitation
-                        .evidence_refs
-                        .iter()
-                        .any(|evidence_ref| relevant_refs.contains(evidence_ref)))
-        })
-    }
-
     fn change_evidence_ids(&self, change: &ChangeFact) -> BTreeSet<String> {
         let mut ids = BTreeSet::from([
             change.change_id.clone(),
@@ -1827,16 +1770,8 @@ impl PerlFactPacket {
 
         let owner = self.canonical_owner_identity(&change.owner_id)?;
         let behavior_kind = change.behavior_hint.as_str().to_string();
-        // Campaign 31 PR 12 (#1405): use a concrete missing discriminator,
-        // NOT the generic `default_missing_discriminator()` enum label.
-        // #6829: the concrete discriminator comes from the documented
-        // `missing_discriminator` change field, with the compatibility
-        // `discriminator:` prefix on `changed_text_digest` as the fallback
-        // channel (both via `concrete_change_discriminator`, the single
-        // authority shared with the H1 gate). If the change fact carries
-        // neither, fall back to the generic label + emit a note that the gap
-        // record is not strongly actionable (the relation gate + the generic
-        // discriminator together ensure conservative behavior).
+        // Advisory identities may use the generic behavior label. Strict actionability
+        // requires a producer-supplied discriminator before constructing this identity.
         let missing_discriminator = concrete_change_discriminator(change).unwrap_or_else(|| {
             change
                 .behavior_hint
@@ -2158,6 +2093,7 @@ enum PerlActionabilityBlocker {
     PacketNotComplete,
     MissingChange,
     MissingCanonicalGapId,
+    MissingConcreteDiscriminator,
     DynamicBoundary,
     UnsupportedBehavior,
     MissingStrongRelatedEvidence,

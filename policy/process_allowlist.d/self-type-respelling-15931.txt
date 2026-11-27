@@ -1,0 +1,2 @@
+crates/ripr/tests/self_type_respelling.rs|Command::new|1|self-type-respelling-15931|#15931: integration test spawns git to build an isolated temp repository (init, add, two commits with a fixed fixture identity) so check_workspace reads a real base and head; temp fixtures only, no shell, network, or user-repository mutation.
+crates/ripr/tests/self_type_respelling.rs|use std::process::Command|1|self-type-respelling-15931|#15931: the import for the git fixture commands above.

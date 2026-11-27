@@ -21,6 +21,11 @@ from pathlib import Path
 from typing import Any, Callable
 from urllib.parse import quote
 
+# The relocation transform and verifier live beside this script in the trusted
+# bundle (#15217); resolve it from here, never from the working directory.
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import mechanical_relocation  # noqa: E402
+
 PLACEHOLDERS = {
     "",
     "n/a",
@@ -717,6 +722,110 @@ def history_sync_check(
     return history_sync_record("validated", "", declared)
 
 
+RELOCATION_NOT_REQUESTED = {"status": "not_requested", "detail": "", "transform": "", "moves": []}
+RELOCATION_MAX_BLOB_BYTES = 8_000_000
+RELOCATION_READ_WORKERS = 8
+
+
+def relocation_record(status: str, detail: str = "", moves: list[dict[str, Any]] | None = None) -> dict[str, Any]:
+    return {
+        "status": status,
+        "detail": detail,
+        "transform": mechanical_relocation.TRANSFORM_ID if status != "not_requested" else "",
+        "moves": list(moves or []),
+    }
+
+
+def relocation_check(
+    current: dict[str, Any],
+    pr_files: list[dict[str, Any]] | None,
+    read: Callable[[str, str], str | None] | None,
+) -> dict[str, Any]:
+    """Whether the PR is a validated mechanical relocation (#15217).
+
+    Requested only by exactly one `Mechanical relocation: inline-cfg-test-v1`
+    body line. `read(path, side)` returns the file at the merge base ("base")
+    or PR head ("head"), None when absent there, and raises on a failed read.
+    Anything unread, malformed or not reproduced rejects; a rejection only
+    means the ordinary route applies.
+    """
+    value = mechanical_relocation.declared(current.get("body") or "")
+    if value is None:
+        return RELOCATION_NOT_REQUESTED
+    if value != mechanical_relocation.TRANSFORM_ID:
+        return relocation_record(
+            "rejected",
+            f"the PR body must carry exactly one `Mechanical relocation: {mechanical_relocation.TRANSFORM_ID}` line",
+        )
+    if pr_files is None or read is None:
+        return relocation_record("rejected", "the PR file listing or file contents could not be read")
+    if len(pr_files) != int(current.get("changed_files") or -1):
+        return relocation_record("rejected", "the PR file listing is incomplete")
+    try:
+        verdict = mechanical_relocation.verify(pr_files, read, require_blob_sha=True)
+    except Exception as error:  # a failed read is never a pass
+        return relocation_record("rejected", f"relocation facts could not be read: {error}")
+    return relocation_record(verdict.status, verdict.detail, verdict.moves)
+
+
+def gh_relocation_reader(repository: str, current: dict[str, Any]) -> Callable[[str, str], str | None] | None:
+    """`read(path, side)` over the GitHub contents API at the PR's merge base
+    and exact head, cached; None when the merge base cannot be resolved."""
+    head = str((current.get("head") or {}).get("sha") or "")
+    tip = str((current.get("base") or {}).get("sha") or "")
+    if not repository or not SHA_RE.fullmatch(head) or not SHA_RE.fullmatch(tip):
+        return None
+    compared = gh_api_json(f"repos/{repository}/compare/{tip}...{head}?per_page=1")
+    merge_base = str(((compared or {}).get("merge_base_commit") or {}).get("sha") or "") if isinstance(compared, dict) else ""
+    if not SHA_RE.fullmatch(merge_base):
+        return None
+    refs = {"base": merge_base, "head": head}
+    cache: dict[tuple[str, str], str | None] = {}
+
+    def fetch(path: str, ref: str) -> str | None:
+        url = f"repos/{repository}/contents/{quote(path)}?ref={ref}"
+        try:
+            done = subprocess.run(
+                [GH, "api", "-H", "Accept: application/vnd.github.raw", url],
+                capture_output=True, check=False, timeout=BLOB_READ_TIMEOUT_SECONDS,
+            )
+        except (subprocess.TimeoutExpired, OSError) as error:
+            raise mechanical_relocation.Refusal(f"{path}@{ref}: {error}") from error
+        if done.returncode != 0:
+            if b"HTTP 404" in done.stderr:
+                return None
+            raise mechanical_relocation.Refusal(f"{path}@{ref} could not be read")
+        if len(done.stdout) > RELOCATION_MAX_BLOB_BYTES:
+            raise mechanical_relocation.Refusal(f"{path}@{ref} exceeds {RELOCATION_MAX_BLOB_BYTES} bytes")
+        try:
+            return done.stdout.decode("utf-8")
+        except UnicodeDecodeError as error:
+            raise mechanical_relocation.Refusal(f"{path}@{ref} is not UTF-8") from error
+
+    def read(path: str, side: str) -> str | None:
+        key = (path, side)
+        if key not in cache:
+            cache[key] = fetch(path, refs[side])
+        return cache[key]
+
+    return read
+
+
+def prefetch(read: Callable[[str, str], str | None], paths: list[str]) -> None:
+    """Warm `read`'s cache for both sides of `paths` concurrently; errors are
+    left for the verifier's own read to raise."""
+    from concurrent.futures import ThreadPoolExecutor
+
+    def warm(job: tuple[str, str]) -> None:
+        try:
+            read(*job)
+        except Exception:
+            pass
+
+    with ThreadPoolExecutor(max_workers=RELOCATION_READ_WORKERS) as pool:
+        list(pool.map(warm, [(path, side) for path in paths for side in ("base", "head")]))
+
+
 def decide(
     current: dict[str, Any],
     open_candidates: list[dict[str, Any]],
@@ -729,10 +838,12 @@ def decide(
     max_generated_lines: int = DEFAULT_MAX_GENERATED_LINES,
     concurrent_claims: list[dict[str, Any]] | None = None,
     history_sync: dict[str, str] | None = None,
+    relocation: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     fields = effective_fields(current)
     actual_head = ((current.get("head") or {}).get("sha") or "")
     sync = history_sync or HISTORY_SYNC_NOT_REQUESTED
+    moved = relocation or RELOCATION_NOT_REQUESTED
     claims = list(concurrent_claims or [])
 
     def refuse(reason: str, peers: list[int] | None = None, detail: str = "") -> dict[str, Any]:
@@ -741,6 +852,7 @@ def decide(
             generated_files, generated_lines, claims,
         )
         result["history_sync"] = sync
+        result["relocation"] = moved
         return result
 
     if not expected_head or not SHA_RE.fullmatch(expected_head):
@@ -806,7 +918,26 @@ def decide(
             "generated_scope_oversized",
             detail=f"candidate changes {generated_lines} generated lines, exceeding the limit of {max_generated_lines}; split the regeneration from the hand-written change{unhonored}",
         )
-    if not validated_sync and not docs_only and (changed_files > max_files or changed_lines > max_lines):
+    # #15217: a validated mechanical relocation trades the ordinary caps for
+    # the relocation ceilings, and nothing else.
+    # A relocation inside the ordinary caps stays on the ordinary route, so the
+    # reason (and its singleton queue group) marks only PRs that need it.
+    validated_relocation = (
+        moved.get("status") == "validated"
+        and not validated_sync
+        and (changed_files > max_files or changed_lines > max_lines)
+    )
+    if moved.get("status") == "rejected":
+        unhonored += f"; the mechanical relocation was not honored: {moved.get('detail')}"
+    if validated_relocation and (
+        changed_files > mechanical_relocation.MAX_RELOCATION_FILES
+        or changed_lines > mechanical_relocation.MAX_RELOCATION_LINES
+    ):
+        return refuse(
+            "qualification_scope_oversized",
+            detail=f"verified relocation changes {changed_files} files / {changed_lines} changed lines, exceeding the relocation ceiling of {mechanical_relocation.MAX_RELOCATION_FILES} files / {mechanical_relocation.MAX_RELOCATION_LINES} changed lines; relocate fewer owners per PR",
+        )
+    if not validated_sync and not validated_relocation and not docs_only and (changed_files > max_files or changed_lines > max_lines):
         return refuse(
             "qualification_scope_oversized",
             detail=f"candidate changes {changed_files} files / {changed_lines} changed lines outside declared generated paths, exceeding the ordinary limit of {max_files} files / {max_lines} changed lines; split or recompose the candidate before ordinary qualification{unhonored}",
@@ -814,8 +945,15 @@ def decide(
 
     return {
         "status": "admitted",
-        "reason": HISTORY_SYNC_REASON if validated_sync else "candidate_current_unique_bounded",
+        "reason": (
+            HISTORY_SYNC_REASON
+            if validated_sync
+            else mechanical_relocation.RELOCATION_REASON
+            if validated_relocation
+            else "candidate_current_unique_bounded"
+        ),
         "history_sync": sync,
+        "relocation": moved,
         "detail": "",
         "claim": claim,
         "acceptance_delta": delta,
@@ -1470,7 +1608,87 @@ def self_test(
         assert generated_from_files(wired, files_path, Path(tmp) / "absent") == (0, 0)
         assert generated_from_files(wired, None, attrs_path) == (0, 0)
     history_sync_self_test(max_files, max_lines)
+    relocation_self_test(max_files, max_lines)
     print("candidate-admission self-test: all controls passed")
+
+
+def relocation_self_test(max_files: int, max_lines: int) -> None:
+    """#15217: only a verified relocation trades the ordinary caps for the
+    relocation ceilings; every failure leaves the PR on the ordinary route,
+    and every other refusal still applies."""
+    mechanical_relocation.self_test()
+    head = "a" * 40
+    owner = "crates/ripr/src/a.rs"
+    target = "crates/ripr/src/a/tests.rs"
+    base_owner = "pub fn f() {}\n\n#[cfg(test)]\nmod tests {\n    #[test]\n    fn t() {}\n}\n"
+    head_owner = "pub fn f() {}\n\n#[cfg(test)]\nmod tests;\n"
+    head_target = "#[test]\nfn t() {}\n"
+    files = {
+        owner: (base_owner, head_owner),
+        target: (None, head_target),
+        mechanical_relocation.INDIRECT_OWNERS_PATH: (mechanical_relocation.INDIRECT_OWNERS_HEADER, None),
+    }
+    listing = [
+        {"filename": owner, "status": "modified", "sha": mechanical_relocation.git_blob_sha(head_owner)},
+        {"filename": target, "status": "added", "sha": mechanical_relocation.git_blob_sha(head_target)},
+    ]
+
+    def read(path: str, side: str) -> str | None:
+        before, after = files.get(path, (None, None))
+        return before if side == "base" else after
+
+    body = fixture_body(claim="#15193", delta="move tests out of line", extra="Mechanical relocation: inline-cfg-test-v1\n")
+    big = fixture(body=body, head=head, changed_files=2, additions=max_lines, deletions=max_lines)
+    record = relocation_check(big, listing, read)
+    assert record["status"] == "validated", record
+    admitted = decide(big, [big], head, False, max_files, max_lines, relocation=record)
+    assert admitted["status"] == "admitted" and admitted["reason"] == mechanical_relocation.RELOCATION_REASON, admitted
+    # A verified relocation inside the ordinary caps is admitted as ordinary.
+    small = fixture(body=body, head=head, changed_files=2)
+    assert decide(small, [small], head, False, max_files, max_lines, relocation=record)["reason"] == "candidate_current_unique_bounded"
+    # Without the verified record the same PR is ordinary-oversized.
+    assert decide(big, [big], head, False, max_files, max_lines)["reason"] == "qualification_scope_oversized"
+    # Not declared: nothing is read and nothing changes.
+    plain = fixture(body=fixture_body(), head=head)
+    assert relocation_check(plain, None, None) == RELOCATION_NOT_REQUESTED
+    # Declared with another transform id, unreadable facts, an incomplete listing,
+    # or a non-reproduced head: rejected, ordinary caps apply, detail names why.
+    for pr, listed, reader, needle in (
+        (fixture(body=body.replace("inline-cfg-test-v1", "v0"), head=head, changed_files=2), listing, read, "exactly one"),
+        (big, None, None, "could not be read"),
+        (big, listing[:1], read, "incomplete"),
+        # A listing taken at another head names other blobs.
+        (big, [listing[0], {**listing[1], "sha": "0" * 40}], read, "listed blob"),
+    ):
+        rejected = relocation_check(pr, listed, reader)
+        assert rejected["status"] == "rejected" and needle in rejected["detail"], (needle, rejected)
+        decision = decide(big, [big], head, False, max_files, max_lines, relocation=rejected)
+        assert decision["reason"] == "qualification_scope_oversized" and "not honored" in decision["detail"], decision
+
+    def failing(path: str, side: str) -> str | None:
+        raise mechanical_relocation.Refusal("HTTP 502")
+
+    failed = relocation_check(big, listing, failing)
+    assert failed["status"] == "rejected" and "HTTP 502" in failed["detail"], failed
+
+    def crashing(path: str, side: str) -> str | None:
+        raise OSError("gh missing")
+
+    assert "could not be read" in relocation_check(big, listing, crashing)["detail"]
+    files[target] = (None, "#[test]\nfn u() {}\n")
+    assert relocation_check(big, listing, read)["status"] == "rejected"
+    files[target] = (None, head_target)
+    # The relocation ceiling still bounds a verified subject.
+    huge = fixture(body=body, head=head, changed_files=2, additions=mechanical_relocation.MAX_RELOCATION_LINES, deletions=1)
+    over = decide(huge, [huge], head, False, max_files, max_lines, relocation=relocation_check(huge, listing, read))
+    assert over["reason"] == "qualification_scope_oversized" and "relocation ceiling" in over["detail"], over
+    wide = fixture(body=body, head=head, changed_files=mechanical_relocation.MAX_RELOCATION_FILES + 1, additions=1, deletions=1)
+    over = decide(wide, [wide], head, False, max_files, max_lines, relocation=record)
+    assert over["reason"] == "qualification_scope_oversized" and "relocation ceiling" in over["detail"], over
+    # Identity and freshness refusals still win for a verified subject.
+    missing_claim = fixture(body="Mechanical relocation: inline-cfg-test-v1\n", head=head, changed_files=2)
+    assert decide(missing_claim, [missing_claim], head, False, max_files, max_lines, relocation=record)["reason"] == "claim_identity_missing"
+    assert decide(big, [big], "b" * 40, False, max_files, max_lines, relocation=record)["reason"] == "candidate_head_moved"
 
 
 def history_sync_self_test(max_files: int, max_lines: int) -> None:
@@ -1866,6 +2084,17 @@ def main() -> int:
         repository, os.environ.get("ADMISSION_PR_NUMBER", ""), current
     ):
         sync = history_sync_record("rejected", "the PR head moved while the history-sync facts were read", sync)
+    relocation = RELOCATION_NOT_REQUESTED
+    if mechanical_relocation.declared(current.get("body") or "") is not None:
+        listed = load_json(args.pr_files) if args.pr_files else None
+        reader = gh_relocation_reader(repository, current)
+        if isinstance(listed, list) and reader is not None:
+            prefetch(reader, [str(entry.get("filename") or "") for entry in listed if isinstance(entry, dict)])
+        relocation = relocation_check(current, listed if isinstance(listed, list) else None, reader)
+        if relocation["status"] == "validated" and not head_unmoved(
+            repository, os.environ.get("ADMISSION_PR_NUMBER", ""), current
+        ):
+            relocation = relocation_record("rejected", "the PR head moved while the relocation was verified")
     result = decide(
         current,
         load_json(args.open_prs),
@@ -1878,6 +2107,7 @@ def main() -> int:
         args.max_generated_lines,
         concurrent_claims=claims,
         history_sync=sync,
+        relocation=relocation,
     )
     print(json.dumps(result, sort_keys=True))
     return 1 if result["status"] == "refused" else 0

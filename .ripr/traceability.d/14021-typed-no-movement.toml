@@ -7,6 +7,6 @@ tests = [
 code = [
   "crates/ripr/src/agent/artifact.rs::AgentVerifyMovementError",
   "crates/ripr/src/agent/artifact.rs::validate_verify_movement",
-  "crates/ripr/src/cli/commands/agent.rs::AgentVerifyRenderError",
+  "crates/ripr/src/cli/commands/agent.rs::classify_verify_movement_error",
 ]
 metrics = ["unit_test_pass_rate"]

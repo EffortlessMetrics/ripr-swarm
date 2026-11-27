@@ -1,0 +1,2 @@
+<!-- section: Fixed -->
+- A Rust `#[test]` inside a bench (`benches/<name>.rs`) no longer credits a discriminator, because benches default to `test = false` and plain `cargo test` never builds or runs them. ripr read the changed owner as `exposed`; it now withholds that credit as it does for a default example. `[[bench]] test = true`, and a bench file that a running target mounts through `include!` or `#[path]`, keep the credit ([#15262](https://github.com/EffortlessMetrics/ripr-swarm/issues/15262)).

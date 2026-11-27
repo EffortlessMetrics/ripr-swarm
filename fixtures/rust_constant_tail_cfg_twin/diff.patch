@@ -1,0 +1,9 @@
+diff --git a/src/lib.rs b/src/lib.rs
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -1,4 +1,4 @@
+ #[cfg(not(test))]
+ pub fn ready() -> i32 {
+-    1
++    2
+ }

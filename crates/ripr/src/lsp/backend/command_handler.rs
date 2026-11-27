@@ -247,7 +247,7 @@ pub(super) fn receipt_status_from_ledger(
 ) -> (serde_json::Value, serde_json::Value) {
     let not_available = "not_available".to_string();
 
-    let contents = match fs::read_to_string(ledger_path) {
+    let contents = match crate::bounded_input::read_repository_artifact(ledger_path) {
         Ok(c) => c,
         Err(_) => {
             return (
@@ -327,7 +327,7 @@ pub(super) fn read_latest_attempt_outcome(
     let not_available = serde_json::Value::String("not_available".to_string());
 
     // Artifact absent → not_available (do not fabricate).
-    let contents = match fs::read_to_string(ledger_path) {
+    let contents = match crate::bounded_input::read_repository_artifact(ledger_path) {
         Ok(c) => c,
         Err(_) => return not_available,
     };
@@ -377,7 +377,7 @@ pub(super) fn read_latest_attempt_outcome(
 pub(super) fn read_route_quality_summary(path: &std::path::Path) -> serde_json::Value {
     let not_available = serde_json::Value::String("not_available".to_string());
 
-    let contents = match fs::read_to_string(path) {
+    let contents = match crate::bounded_input::read_repository_artifact(path) {
         Ok(c) => c,
         Err(_) => return not_available,
     };
@@ -881,7 +881,7 @@ pub(super) fn evidence_context_packet(
         // The repair start only for a seam `agent repair` would accept (the
         // fail-closed repair-packet flip, RIPR-SPEC-0087 §8, plus a
         // test-surface target); `null` otherwise (#3906).
-        "repair_command": repair_start_command_for(entry, &root),
+        "repair_command": crate::lsp::actions::seam_repair_start_command(entry, snapshot, &root),
         "agent_packet_command": loop_commands::agent_packet_command(
             &root,
             seam_id,

@@ -1,0 +1,22 @@
+{
+  "case_id": "authored-14158-message-only-score",
+  "subject_id": "authored-14158-message-only",
+  "origin": "authored",
+  "anchor": "src/lib.rs:2",
+  "behavior_family": "return_value_arithmetic",
+  "test_shape": "let_bound_result_named_only_in_message",
+  "hard_case": true,
+  "truth": "not_discriminated",
+  "ideal_verdict": "gap",
+  "observed_verdict": "gap",
+  "followed_retarget": false,
+  "changed_since_labeling": false,
+  "observed_classifications": [
+    "reachable_unrevealed"
+  ],
+  "outcome": "ideal",
+  "contradictions": [],
+  "findings_scored": 1,
+  "findings_contradicted": 0,
+  "contradiction_counts": {}
+}
