@@ -7806,7 +7806,7 @@ fn eager_path(
                 || table.label().is_some()
                 || row_array(&table, function, rows_reach_the_loop).is_none()
             {
-                return Err(conditional_construct(&parent));
+                return Err(conditional_construct(&parent, &node));
             }
             if table.syntax().descendants().any(|node| {
                 (ast::BreakExpr::can_cast(node.kind()) || ast::ContinueExpr::can_cast(node.kind()))
@@ -7827,24 +7827,42 @@ fn eager_path(
             || ast::StmtList::can_cast(parent.kind())
             || ast::ParenExpr::can_cast(parent.kind()))
         {
-            return Err(conditional_construct(&parent));
+            return Err(conditional_construct(&parent, &node));
         }
         node = parent;
     }
 }
 
 /// Reader-facing name for a construct that may skip the code inside it.
-fn conditional_construct(node: &SyntaxNode) -> &'static str {
-    if ast::ForExpr::can_cast(node.kind()) {
-        "a `for` loop, which may run zero times"
-    } else if ast::WhileExpr::can_cast(node.kind()) {
-        "a `while` loop, which may run zero times"
-    } else if ast::IfExpr::can_cast(node.kind()) {
-        "an `if` branch"
-    } else if ast::MatchArm::can_cast(node.kind())
-        || ast::MatchArmList::can_cast(node.kind())
-        || ast::MatchExpr::can_cast(node.kind())
-    {
+/// `child` is the node the walk came up from, so a position the construct
+/// always evaluates (an `if` or `while` condition, a `match` scrutinee, a
+/// `for` iterable) is named as that position, never as a branch, arm or
+/// loop body that may be skipped (#15337 review). The refusal is unchanged.
+fn conditional_construct(node: &SyntaxNode, child: &SyntaxNode) -> &'static str {
+    let is = |part: Option<SyntaxNode>| part.is_some_and(|part| &part == child);
+    if let Some(table) = ast::ForExpr::cast(node.clone()) {
+        if is(table.iterable().map(|expr| expr.syntax().clone())) {
+            "the iterable of a `for` loop"
+        } else {
+            "a `for` loop, which may run zero times"
+        }
+    } else if let Some(body) = ast::WhileExpr::cast(node.clone()) {
+        if is(body.condition().map(|expr| expr.syntax().clone())) {
+            "the condition of a `while` loop"
+        } else {
+            "a `while` loop, which may run zero times"
+        }
+    } else if let Some(branch) = ast::IfExpr::cast(node.clone()) {
+        if is(branch.condition().map(|expr| expr.syntax().clone())) {
+            "the condition of an `if`"
+        } else {
+            "an `if` branch"
+        }
+    } else if ast::MatchExpr::can_cast(node.kind()) {
+        // An arm's body stops at its `MatchArm`, so the walk reaches the
+        // `match` itself only from the scrutinee.
+        "the scrutinee of a `match`"
+    } else if ast::MatchArm::can_cast(node.kind()) || ast::MatchArmList::can_cast(node.kind()) {
         "a `match` arm"
     } else if ast::BinExpr::can_cast(node.kind()) {
         "an operand of `&&` or `||`"
