@@ -70,3 +70,14 @@ Command:
 
 Updated:
 - `expected/human.txt`
+
+## Pending — option_chain_mutable_alias (7)
+
+Reason:
+RIPR-SPEC-0108: merge swarm main 14e4b0caf9 (#16429 legend wording and #15526 composed fixtures) on Linux 1.95.0
+
+Command:
+`cargo xtask goldens bless option_chain_mutable_alias --reason "..."`
+
+Updated:
+- `expected/human.txt`

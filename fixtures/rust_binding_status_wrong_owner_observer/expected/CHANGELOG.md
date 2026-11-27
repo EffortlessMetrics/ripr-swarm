@@ -154,3 +154,14 @@ Command:
 
 Updated:
 - `expected/human.txt`
+
+## Pending — rust_binding_status_wrong_owner_observer (14)
+
+Reason:
+RIPR-SPEC-0108: merge swarm main 14e4b0caf9 (#16429 legend wording and #15526 composed fixtures) on Linux 1.95.0
+
+Command:
+`cargo xtask goldens bless rust_binding_status_wrong_owner_observer --reason "..."`
+
+Updated:
+- `expected/human.txt`

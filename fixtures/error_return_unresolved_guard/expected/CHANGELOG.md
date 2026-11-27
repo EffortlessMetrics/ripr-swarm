@@ -81,3 +81,14 @@ Command:
 
 Updated:
 - `expected/human.txt`
+
+## Pending — error_return_unresolved_guard (8)
+
+Reason:
+RIPR-SPEC-0108: merge swarm main 14e4b0caf9 (#16429 legend wording and #15526 composed fixtures) on Linux 1.95.0
+
+Command:
+`cargo xtask goldens bless error_return_unresolved_guard --reason "..."`
+
+Updated:
+- `expected/human.txt`

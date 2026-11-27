@@ -101,3 +101,14 @@ Command:
 
 Updated:
 - `expected/human.txt`
+
+## Pending — match_arm_proximity_other_function_not_credited (10)
+
+Reason:
+RIPR-SPEC-0108: merge swarm main 14e4b0caf9 (#16429 legend wording and #15526 composed fixtures) on Linux 1.95.0
+
+Command:
+`cargo xtask goldens bless match_arm_proximity_other_function_not_credited --reason "..."`
+
+Updated:
+- `expected/human.txt`

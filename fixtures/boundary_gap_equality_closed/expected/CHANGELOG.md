@@ -70,3 +70,14 @@ Command:
 
 Updated:
 - `expected/human.txt`
+
+## Pending — boundary_gap_equality_closed (7)
+
+Reason:
+RIPR-SPEC-0108: merge swarm main 14e4b0caf9 (#16429 legend wording and #15526 composed fixtures) on Linux 1.95.0
+
+Command:
+`cargo xtask goldens bless boundary_gap_equality_closed --reason "..."`
+
+Updated:
+- `expected/human.txt`
