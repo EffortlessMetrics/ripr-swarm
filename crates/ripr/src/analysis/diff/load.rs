@@ -181,7 +181,7 @@ pub(crate) fn load_diff_with_effective_base_core(
             // #4480: stdin is bounded by the shared CLI input cap, so a
             // producer that never closes the pipe cannot grow memory forever.
             let buffer = crate::bounded_input::read_reader(std::io::stdin().lock())
-                .map_err(|err| format!("failed to read diff from stdin: {err}; pipe a unified diff within the input size limit, or pass a diff file path instead of `-`"))?;
+                .map_err(|err| format!("failed to read diff from stdin: {err}; check that the command feeding stdin writes a complete unified diff under the input limit, then rerun"))?;
             return Ok(LoadedDiff {
                 text: decode_diff_text("diff from stdin", buffer)?,
                 effective_base: None,
