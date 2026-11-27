@@ -5315,7 +5315,6 @@ fn ignore_remove_dir_all(path: &std::path::Path) {
     if let Ok(()) = std::fs::remove_dir_all(path) {}
 }
 
-
 /// Operationally different provider refusals require different classified
 /// evidence: a capture failure must not retain missing-input recovery advice.
 fn proptest_cache_identity(
@@ -5327,7 +5326,6 @@ fn proptest_cache_identity(
         Err(failure) => format!("unverified:{failure:?}"),
     }
 }
-
 
 #[cfg(test)]
 mod tests {
