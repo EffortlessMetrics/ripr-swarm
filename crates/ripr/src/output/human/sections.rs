@@ -62,7 +62,8 @@ pub(crate) const HUMAN_EVIDENCE_LEGEND: &str = concat!(
     "    States: yes = evidence found; weak = partial evidence; no = evidence not found; unknown/opaque = analysis limited;\n",
     "      missing = a needed test input or assertion is absent; not established = assertion unconfirmed; not applicable = stage unused\n",
     "    Summary terms: changed behavior = one change point ripr checked; appear noticed by tests = a test appears to notice the change;\n",
-    "      partly noticed = tests appear to notice it only partly; reached but not noticed = tests reach it but nothing appears to notice;\n",
+    "      partly noticed = tests appear to notice it only partly; reached but not noticed = linked to a test, but nothing appears to notice;\n",
+    "      both can rest on a test link ripr could not confirm; the reach stage says which;\n",
     "      no test path = no test path found; unclear = analysis limited, not a verdict;\n",
     "      found = listed for review; suppressed by your settings = hidden by your suppression policy;\n",
     "      base-side = evidence from the old code, not an edit target; candidate line = changed line ripr considers\n",
@@ -86,11 +87,19 @@ fn next_step_prefix(step: &str) -> &'static str {
 /// candidate edit target, so it must not read as an actionable warning. A
 /// configured `warning` is shown as `note`; `off`, `info` and `note` are kept.
 /// Display only: counts, JSON and classification are unchanged.
+///
+/// #15336: the same downgrade covers a reached-class finding whose reach the
+/// evidence does not establish ([`reach_claim_is_unsupported`]): it is a
+/// possible gap, not a confirmed one, so it must not read as a warning beside
+/// a `Why` line that says no test is confirmed to reach the change. It applies
+/// wherever this human finding renderer runs, `check` and `explain` alike, so
+/// one finding never changes severity between the two.
 fn display_severity(finding: &Finding, config: &RiprConfig) -> &'static str {
     let configured = config
         .severity_for_file(&finding.probe.location.file)
         .for_exposure(&finding.class);
-    if finding.source_currentness.is_base_side()
+    if (finding.source_currentness.is_base_side()
+        || reach_claim_is_unsupported(&finding.class, &finding.ripr))
         && configured == crate::config::ConfigSeverity::Warning
     {
         crate::config::ConfigSeverity::Note.as_str()
