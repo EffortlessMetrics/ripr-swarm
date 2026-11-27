@@ -832,6 +832,7 @@ fn public_docs_only_pass_flags_the_command_help_lists() -> Result<(), String> {
 const PORTABLE_TESTS: &[&str] = &[
     "help_documentation_links_work_outside_the_source_checkout",
     "pilot_help_describes_limit_summary_without_inventing_a_quote",
+    "agent_setup_help_is_usable_without_repository_docs",
     "init_ci_provider_errors_recover_near_misses",
     "init_ci_provider_valid_preview_keeps_workflow_contract",
     "workflow_help_lists_the_five_governed_identities",

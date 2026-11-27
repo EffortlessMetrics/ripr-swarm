@@ -832,9 +832,10 @@ pub(crate) struct CachedSeamLimitInfo {
 /// bare `json!` forwarding credit (#16388).
 /// `1.216`: source-bound failed property verification is an opaque repo limit,
 /// with distinct typed failure outcomes in the provider identity (#10864).
+/// `1.217`: a rootless grouped drop-in import is verified by its own
+/// root, and body-scoped macro names join the scan only when invoked bare (#16388).
 /// `1.218`: a match arm whose selecting input no visible test passes reads
-/// activation unknown instead of strongly gripped (#15359; `1.217` is held by
-/// a concurrent lane).
+/// activation unknown instead of strongly gripped (#15359).
 pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.218";
 /// `0.2` → `0.3`: same semantic transition as the outer cache (#3273 /
 /// #3286) — sharded entries derive from the same facts and cannot bypass
@@ -1088,8 +1089,9 @@ pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.218";
 /// `0.216`: same bare logging import route as full `1.214` (#16420).
 /// `0.217`: same json item-macro refusal as full `1.215` (#16388).
 /// `0.218`: same provider-failure limitation as full `1.216` (#10864).
+/// `0.219`: same rootless-group and body-scope reading as full `1.217` (#16388).
 /// `0.220`: same unselected match-arm activation reading as full `1.218`
-/// (#15359; `0.219` is held by a concurrent lane).
+/// (#15359).
 const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.220";
 
 /// Compact-classified seam cache schema. This cache stores the same
@@ -1345,8 +1347,9 @@ const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.220";
 /// `0.216`: same bare logging import route as full `1.214` (#16420).
 /// `0.217`: same json item-macro refusal as full `1.215` (#16388).
 /// `0.218`: same provider-failure limitation as full `1.216` (#10864).
+/// `0.219`: same rootless-group and body-scope reading as full `1.217` (#16388).
 /// `0.220`: same unselected match-arm activation reading as full `1.218`
-/// (#15359; `0.219` is held by a concurrent lane).
+/// (#15359).
 pub(crate) const COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.220";
 
 /// Compact class-count cache used by repo badge rendering. It keys off
@@ -6021,6 +6024,8 @@ mod tests {
         // 1.213 -> 1.214: bare imported logging macros forward (#16420).
         // 1.214 -> 1.215: item macros naming serde_json refuse json! credit (#16388).
         // 1.215 -> 1.216: source-bound failed property verification is an opaque repo limit (#10864).
+        // 1.216 -> 1.217: rootless groups and bare-invocation body scoping (#16388).
+        // 1.217 -> 1.218: an unselected match arm reads activation unknown (#15359).
         assert_eq!(CACHE_SCHEMA_VERSION, "1.218");
         // 1.168 -> 1.169: plain `assert_eq!` literal withhold in the audit (#13005).
         // 0.12 -> 0.13 through 0.14 / 0.15 / 0.16 / 0.17 / 0.18: same
@@ -6214,6 +6219,8 @@ mod tests {
         // 0.215 -> 0.216: same bare logging import route as full 1.214 (#16420).
         // 0.216 -> 0.217: same json item-macro refusal as full 1.215 (#16388).
         // 0.217 -> 0.218: same provider-failure limitation as full 1.216 (#10864).
+        // 0.218 -> 0.219: same rootless-group and body-scope reading as full 1.217 (#16388).
+        // 0.219 -> 0.220: same unselected match-arm reading as full 1.218 (#15359).
         assert_eq!(SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.220");
         assert_eq!(COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.220");
         // 0.170 -> 0.171: same plain `assert_eq!` literal withhold as full 1.169 (#13005).
