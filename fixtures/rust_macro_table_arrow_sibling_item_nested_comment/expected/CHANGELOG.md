@@ -186,3 +186,14 @@ Command:
 
 Updated:
 - `expected/human.txt`
+
+## Pending — rust_macro_table_arrow_sibling_item_nested_comment (16)
+
+Reason:
+RIPR-SPEC-0122: #15336 unconfirmed-reach note severity, possible-gap State line, legend and Terms glosses
+
+Command:
+`cargo xtask goldens bless rust_macro_table_arrow_sibling_item_nested_comment --reason "..."`
+
+Updated:
+- `expected/human.txt`

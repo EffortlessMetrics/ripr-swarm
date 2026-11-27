@@ -171,3 +171,14 @@ Command:
 
 Updated:
 - `expected/human.txt`
+
+## Pending — rust_const_expectation_literal_control (14)
+
+Reason:
+RIPR-SPEC-0122: #15336 unconfirmed-reach note severity, possible-gap State line, legend and Terms glosses
+
+Command:
+`cargo xtask goldens bless rust_const_expectation_literal_control --reason "..."`
+
+Updated:
+- `expected/human.txt`

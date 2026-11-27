@@ -15,7 +15,7 @@ Changed file(s) by language: python = 1
 Analysis outcome: findings below (analysis complete; complete_with_findings)
   Counts: 1 changed file(s), 2 changed line(s), 1 candidate line(s), 1 changed behavior(s) checked, 1 finding(s)
 
-WARNING src/subject.py:2
+NOTE src/subject.py:2
   id: probe:src_subject.py:python_preview:e11cb804
 
 Changed
@@ -34,7 +34,7 @@ Language
   owner kind: function
 
 Static exposure
-  reachable_unrevealed (warning, confidence 0.40)
+  reachable_unrevealed (note, confidence 0.40)
   Why capped: preview adapter: infection/propagation not modeled (Python); syntax-first, no type or import resolution; no related test reaches the changed owner. Preview score, not on the same scale as Rust confidence.
 
 Evidence

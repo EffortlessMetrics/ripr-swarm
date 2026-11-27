@@ -125,3 +125,14 @@ Command:
 
 Updated:
 - `expected/human-full.txt`
+
+## Pending — python_truthiness_swap_inline_rebind_control (11)
+
+Reason:
+RIPR-SPEC-0122: #15336 unconfirmed-reach note severity, possible-gap State line, legend and Terms glosses
+
+Command:
+`cargo xtask goldens bless python_truthiness_swap_inline_rebind_control --reason "..."`
+
+Updated:
+- `expected/human.txt`

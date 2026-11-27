@@ -270,3 +270,14 @@ Command:
 
 Updated:
 - `expected/human-full.txt`
+
+## Pending — typescript_snapshot_single_call_control (22)
+
+Reason:
+RIPR-SPEC-0122: #15336 unconfirmed-reach note severity, possible-gap State line, legend and Terms glosses
+
+Command:
+`cargo xtask goldens bless typescript_snapshot_single_call_control --reason "..."`
+
+Updated:
+- `expected/human.txt`

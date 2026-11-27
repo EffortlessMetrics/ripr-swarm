@@ -191,3 +191,14 @@ Command:
 
 Updated:
 - `expected/human.txt`
+
+## Pending — proximity_unrelated_oracle_not_credited (17)
+
+Reason:
+RIPR-SPEC-0122: #15336 unconfirmed-reach note severity, possible-gap State line, legend and Terms glosses
+
+Command:
+`cargo xtask goldens bless proximity_unrelated_oracle_not_credited --reason "..."`
+
+Updated:
+- `expected/human.txt`

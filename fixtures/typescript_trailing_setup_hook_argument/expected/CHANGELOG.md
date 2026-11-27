@@ -99,3 +99,14 @@ Command:
 
 Updated:
 - `expected/human-full.txt`
+
+## Pending — typescript_trailing_setup_hook_argument (9)
+
+Reason:
+RIPR-SPEC-0122: #15336 unconfirmed-reach note severity, possible-gap State line, legend and Terms glosses
+
+Command:
+`cargo xtask goldens bless typescript_trailing_setup_hook_argument --reason "..."`
+
+Updated:
+- `expected/human.txt`

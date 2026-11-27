@@ -487,3 +487,14 @@ Command:
 
 Updated:
 - `expected/human.txt`
+
+## Pending — benches_harness_evidence (39)
+
+Reason:
+RIPR-SPEC-0122: #15336 unconfirmed-reach note severity, possible-gap State line, legend and Terms glosses
+
+Command:
+`cargo xtask goldens bless benches_harness_evidence --reason "..."`
+
+Updated:
+- `expected/human.txt`

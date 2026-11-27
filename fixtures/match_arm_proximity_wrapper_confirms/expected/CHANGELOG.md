@@ -376,3 +376,14 @@ Command:
 
 Updated:
 - `expected/human.txt`
+
+## Pending — match_arm_proximity_wrapper_confirms (30)
+
+Reason:
+RIPR-SPEC-0122: #15336 unconfirmed-reach note severity, possible-gap State line, legend and Terms glosses
+
+Command:
+`cargo xtask goldens bless match_arm_proximity_wrapper_confirms --reason "..."`
+
+Updated:
+- `expected/human.txt`

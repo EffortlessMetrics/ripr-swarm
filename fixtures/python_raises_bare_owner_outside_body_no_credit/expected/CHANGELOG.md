@@ -56,3 +56,14 @@ Command:
 
 Updated:
 - `expected/human-full.txt`
+
+## Pending — python_raises_bare_owner_outside_body_no_credit (6)
+
+Reason:
+RIPR-SPEC-0122: #15336 unconfirmed-reach note severity, possible-gap State line, legend and Terms glosses
+
+Command:
+`cargo xtask goldens bless python_raises_bare_owner_outside_body_no_credit --reason "..."`
+
+Updated:
+- `expected/human.txt`

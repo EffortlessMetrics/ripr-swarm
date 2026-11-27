@@ -185,3 +185,14 @@ Command:
 
 Updated:
 - `expected/human.txt`
+
+## Pending — macro_passthrough_sibling_item_macro_binding (15)
+
+Reason:
+RIPR-SPEC-0122: #15336 unconfirmed-reach note severity, possible-gap State line, legend and Terms glosses
+
+Command:
+`cargo xtask goldens bless macro_passthrough_sibling_item_macro_binding --reason "..."`
+
+Updated:
+- `expected/human.txt`

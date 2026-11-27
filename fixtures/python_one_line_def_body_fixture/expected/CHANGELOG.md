@@ -177,3 +177,14 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — python_one_line_def_body_fixture (15)
+
+Reason:
+RIPR-SPEC-0122: #15336 unconfirmed-reach note severity, possible-gap State line, legend and Terms glosses
+
+Command:
+`cargo xtask goldens bless python_one_line_def_body_fixture --reason "..."`
+
+Updated:
+- `expected/human.txt`

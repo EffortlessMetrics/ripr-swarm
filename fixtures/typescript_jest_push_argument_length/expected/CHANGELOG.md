@@ -60,3 +60,14 @@ Command:
 
 Updated:
 - `expected/human-full.txt`
+
+## Pending — typescript_jest_push_argument_length (6)
+
+Reason:
+RIPR-SPEC-0122: #15336 unconfirmed-reach note severity, possible-gap State line, legend and Terms glosses
+
+Command:
+`cargo xtask goldens bless typescript_jest_push_argument_length --reason "..."`
+
+Updated:
+- `expected/human.txt`

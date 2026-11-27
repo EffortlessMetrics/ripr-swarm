@@ -323,3 +323,14 @@ Command:
 
 Updated:
 - `expected/human.txt`
+
+## Pending — wildcard_oracle_guarded_wrong (23)
+
+Reason:
+RIPR-SPEC-0122: #15336 unconfirmed-reach note severity, possible-gap State line, legend and Terms glosses
+
+Command:
+`cargo xtask goldens bless wildcard_oracle_guarded_wrong --reason "..."`
+
+Updated:
+- `expected/human.txt`

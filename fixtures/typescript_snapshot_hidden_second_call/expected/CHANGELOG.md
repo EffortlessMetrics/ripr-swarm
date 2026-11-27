@@ -294,3 +294,14 @@ Command:
 
 Updated:
 - `expected/human-full.txt`
+
+## Pending — typescript_snapshot_hidden_second_call (24)
+
+Reason:
+RIPR-SPEC-0122: #15336 unconfirmed-reach note severity, possible-gap State line, legend and Terms glosses
+
+Command:
+`cargo xtask goldens bless typescript_snapshot_hidden_second_call --reason "..."`
+
+Updated:
+- `expected/human.txt`

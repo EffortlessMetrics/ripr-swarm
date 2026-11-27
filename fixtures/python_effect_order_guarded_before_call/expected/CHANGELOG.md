@@ -163,3 +163,14 @@ Command:
 
 Updated:
 - `expected/human-full.txt`
+
+## Pending — python_effect_order_guarded_before_call (14)
+
+Reason:
+RIPR-SPEC-0122: #15336 unconfirmed-reach note severity, possible-gap State line, legend and Terms glosses
+
+Command:
+`cargo xtask goldens bless python_effect_order_guarded_before_call --reason "..."`
+
+Updated:
+- `expected/human.txt`

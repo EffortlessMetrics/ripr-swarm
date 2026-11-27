@@ -828,9 +828,11 @@ pub(crate) struct CachedSeamLimitInfo {
 /// parameter no longer credits the same-spelled module function (#12891).
 /// `1.214`: a bare leveled logging macro behind a verified
 /// `use tracing::info;` or `use log::warn;` is transparent (#16420).
-/// `1.215`: source-bound failed property verification is an opaque repo limit,
+/// `1.215`: an item macro naming `serde_json` refuses
+/// bare `json!` forwarding credit (#16388).
+/// `1.216`: source-bound failed property verification is an opaque repo limit,
 /// with distinct typed failure outcomes in the provider identity (#10864).
-pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.215";
+pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.216";
 /// `0.2` → `0.3`: same semantic transition as the outer cache (#3273 /
 /// #3286) — sharded entries derive from the same facts and cannot bypass
 /// the outer generation bump.
@@ -1081,8 +1083,9 @@ pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.215";
 /// `0.214`: same block-arm parameter reading as full `1.212` (#10357).
 /// `0.215`: same type-parameter-shadowed helper reading as full `1.213` (#12891).
 /// `0.216`: same bare logging import route as full `1.214` (#16420).
-/// `0.217`: same provider-failure limitation as full `1.215` (#10864).
-const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.217";
+/// `0.217`: same json item-macro refusal as full `1.215` (#16388).
+/// `0.218`: same provider-failure limitation as full `1.216` (#10864).
+const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.218";
 
 /// Compact-classified seam cache schema. This cache stores the same
 /// `ClassifiedSeam` envelope shape as the full repo exposure cache, but
@@ -1335,8 +1338,9 @@ const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.217";
 /// `0.214`: same block-arm parameter reading as full `1.212` (#10357).
 /// `0.215`: same type-parameter-shadowed helper reading as full `1.213` (#12891).
 /// `0.216`: same bare logging import route as full `1.214` (#16420).
-/// `0.217`: same provider-failure limitation as full `1.215` (#10864).
-pub(crate) const COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.217";
+/// `0.217`: same json item-macro refusal as full `1.215` (#16388).
+/// `0.218`: same provider-failure limitation as full `1.216` (#10864).
+pub(crate) const COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.218";
 
 /// Compact class-count cache used by repo badge rendering. It keys off
 /// the same workspace state as the full fact cache, but stores only
@@ -1575,9 +1579,12 @@ pub(crate) const COUNT_CACHE_SCHEMA_VERSION: &str = "0.2";
 /// `1.68`: candidates record `anyhow` imports and `anyhow` crate-namespace
 /// rebindings (#10357); earlier candidates let the binding scan skip such a
 /// file.
-/// `1.69`: unresolved property macro facts record `binding_only_identifiers`
+/// `1.69`: an item-position macro call whose tokens name `serde_json` is a
+/// `json` binding candidate (#16388); earlier candidates let the binding
+/// scan skip a file whose macro may alias the root.
+/// `1.70`: unresolved property macro facts record `binding_only_identifiers`
 /// (#10864); earlier entries read an empty set and keep over-withholding.
-pub(crate) const FILE_FACT_CACHE_SCHEMA_VERSION: &str = "1.69";
+pub(crate) const FILE_FACT_CACHE_SCHEMA_VERSION: &str = "1.70";
 
 /// Keep the best-effort classified-seam cache from turning a successful live
 /// analysis into an unbounded post-analysis stall on large repos. Larger live
@@ -5764,8 +5771,9 @@ mod tests {
         // 1.65 -> 1.66: item-position `include!` binds any name (#16060).
         // 1.66 -> 1.67: grouped `self` import binding `serde_json` (#10357).
         // 1.67 -> 1.68: `anyhow` binding candidates (#10357).
-        // 1.68 -> 1.69: property macro binding-only identifiers (#10864).
-        assert_eq!(FILE_FACT_CACHE_SCHEMA_VERSION, "1.69");
+        // 1.68 -> 1.69: item macros naming `serde_json` (#16388).
+        // 1.69 -> 1.70: property macro binding-only identifiers (#10864).
+        assert_eq!(FILE_FACT_CACHE_SCHEMA_VERSION, "1.70");
         // 1.4 -> 1.5: metadata-sourced harness validation (#3634) flips
         // verdicts for workspaces the manifest emulation approximated.
         // 1.5 -> 1.6: the #3636 reachability authority excludes
@@ -6004,8 +6012,9 @@ mod tests {
         // 1.211 -> 1.212: block arms that read a parameter do not rebind it (#10357).
         // 1.212 -> 1.213: a type parameter shadows a same-spelled module helper (#12891).
         // 1.213 -> 1.214: bare imported logging macros forward (#16420).
-        // 1.214 -> 1.215: source-bound failed property verification is an opaque repo limit (#10864).
-        assert_eq!(CACHE_SCHEMA_VERSION, "1.215");
+        // 1.214 -> 1.215: item macros naming serde_json refuse json! credit (#16388).
+        // 1.215 -> 1.216: source-bound failed property verification is an opaque repo limit (#10864).
+        assert_eq!(CACHE_SCHEMA_VERSION, "1.216");
         // 1.168 -> 1.169: plain `assert_eq!` literal withhold in the audit (#13005).
         // 0.12 -> 0.13 through 0.14 / 0.15 / 0.16 / 0.17 / 0.18: same
         // #3731 semantic transition as the outer classified-seam cache,
@@ -6196,9 +6205,10 @@ mod tests {
         // 0.213 -> 0.214: same block-arm parameter reading as full 1.212 (#10357).
         // 0.214 -> 0.215: same type-parameter-shadowed helper reading as full 1.213 (#12891).
         // 0.215 -> 0.216: same bare logging import route as full 1.214 (#16420).
-        // 0.216 -> 0.217: same provider-failure limitation as full 1.215 (#10864).
-        assert_eq!(SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.217");
-        assert_eq!(COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.217");
+        // 0.216 -> 0.217: same json item-macro refusal as full 1.215 (#16388).
+        // 0.217 -> 0.218: same provider-failure limitation as full 1.216 (#10864).
+        assert_eq!(SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.218");
+        assert_eq!(COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.218");
         // 0.170 -> 0.171: same plain `assert_eq!` literal withhold as full 1.169 (#13005).
     }
 

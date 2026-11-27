@@ -178,3 +178,14 @@ Command:
 
 Updated:
 - `expected/human.txt`
+
+## Pending — ts_one_line_if_dead_pin (16)
+
+Reason:
+RIPR-SPEC-0122: #15336 unconfirmed-reach note severity, possible-gap State line, legend and Terms glosses
+
+Command:
+`cargo xtask goldens bless ts_one_line_if_dead_pin --reason "..."`
+
+Updated:
+- `expected/human.txt`

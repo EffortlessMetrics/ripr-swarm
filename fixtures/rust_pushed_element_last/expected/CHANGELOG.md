@@ -279,3 +279,14 @@ Command:
 
 Updated:
 - `expected/human.txt`
+
+## Pending — rust_pushed_element_last (22)
+
+Reason:
+RIPR-SPEC-0122: #15336 unconfirmed-reach note severity, possible-gap State line, legend and Terms glosses
+
+Command:
+`cargo xtask goldens bless rust_pushed_element_last --reason "..."`
+
+Updated:
+- `expected/human.txt`

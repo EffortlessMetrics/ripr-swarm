@@ -210,3 +210,14 @@ Command:
 
 Updated:
 - `expected/human.txt`
+
+## Pending — rust_wrapper_closure_shadowed_callee (17)
+
+Reason:
+RIPR-SPEC-0122: #15336 unconfirmed-reach note severity, possible-gap State line, legend and Terms glosses
+
+Command:
+`cargo xtask goldens bless rust_wrapper_closure_shadowed_callee --reason "..."`
+
+Updated:
+- `expected/human.txt`

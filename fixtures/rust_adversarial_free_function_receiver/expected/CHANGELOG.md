@@ -400,3 +400,14 @@ Command:
 
 Updated:
 - `expected/human-full.txt`
+
+## Pending — rust_adversarial_free_function_receiver (30)
+
+Reason:
+RIPR-SPEC-0122: #15336 unconfirmed-reach note severity, possible-gap State line, legend and Terms glosses
+
+Command:
+`cargo xtask goldens bless rust_adversarial_free_function_receiver --reason "..."`
+
+Updated:
+- `expected/human.txt`
