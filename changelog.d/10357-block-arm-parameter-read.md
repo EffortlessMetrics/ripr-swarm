@@ -1,0 +1,2 @@
+<!-- section: Fixed -->
+- A Rust helper wrapper with a comma-less match block arm that only reads its parameter (`0 => { qty + 1 }`, as rustfmt writes it) now forwards its helper result, so a boundary test of the wrapper can read `exposed`. Match-arm patterns are read from the parser when the wrapper parses cleanly. An arm pattern that binds the parameter, or a macro whose tokens hold arms, still withholds credit (#10357).
