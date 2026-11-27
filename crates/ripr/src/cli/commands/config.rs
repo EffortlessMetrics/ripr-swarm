@@ -161,6 +161,13 @@ fn validate_declared_paths(root: &Path, config: &RiprConfig) -> Result<(), Strin
     ))
 }
 
+fn uninspectable_manifest(display: &str, root: &Path, error: &std::io::Error) -> String {
+    format!(
+        "[suppressions] path `{display}` cannot be inspected under {}: {error}; fix the path or its permissions, then re-run `ripr config validate`",
+        human_path(root),
+    )
+}
+
 /// #15308: the suppressions manifest the config selects is part of the
 /// config. A configured file that does not exist is a typo or an uncommitted
 /// file, and every consumer would otherwise read it as an empty manifest
@@ -173,23 +180,33 @@ fn validate_suppressions_manifest(
     let relative = config.suppressions().path();
     let display = config.suppressions().display_path();
     let manifest = root.join(relative);
-    if crate::config::config_entry_present(&manifest) && !manifest.exists() {
+    // Only a confirmed absence is the silent default case; a permission or
+    // other metadata error must not read as "no manifest".
+    match std::fs::symlink_metadata(&manifest) {
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            if config.suppressions().is_default() {
+                return Ok(None);
+            }
+            return Err(format!(
+                "[suppressions] path `{display}` does not exist under {}; create the file, fix the path in ripr.toml, or remove the key to use the default `{}`",
+                human_path(root),
+                crate::config::DEFAULT_SUPPRESSIONS_PATH,
+            ));
+        }
+        Err(error) => return Err(uninspectable_manifest(&display, root, &error)),
+        Ok(_) => {}
+    }
+    match std::fs::metadata(&manifest) {
+        Ok(_) => {}
         // A dangling link is an entry the loader would read as an empty
         // manifest without a word, at the default path too.
-        return Err(format!(
-            "[suppressions] path `{display}` is a link that names no file under {}; fix or remove the link, then re-run `ripr config validate`",
-            human_path(root),
-        ));
-    }
-    if !manifest.exists() {
-        if config.suppressions().is_default() {
-            return Ok(None);
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            return Err(format!(
+                "[suppressions] path `{display}` is a link that names no file under {}; fix or remove the link, then re-run `ripr config validate`",
+                human_path(root),
+            ));
         }
-        return Err(format!(
-            "[suppressions] path `{display}` does not exist under {}; create the file, fix the path in ripr.toml, or remove the key to use the default `{}`",
-            human_path(root),
-            crate::config::DEFAULT_SUPPRESSIONS_PATH,
-        ));
+        Err(error) => return Err(uninspectable_manifest(&display, root, &error)),
     }
     match load_suppressions_for_root_at(root, relative) {
         // The path is repository text that reaches stdout through a plain

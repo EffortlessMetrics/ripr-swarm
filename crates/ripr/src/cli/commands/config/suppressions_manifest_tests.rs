@@ -249,3 +249,28 @@ fn a_manifest_link_to_a_real_file_is_read() -> Result<(), String> {
     }
     Ok(())
 }
+
+#[cfg(unix)]
+#[test]
+fn an_untraversable_manifest_directory_fails_instead_of_reading_as_absent() -> Result<(), String> {
+    use std::os::unix::fs::PermissionsExt;
+    let root = workspace("untraversable")?;
+    write(&root, ".ripr/suppressions.toml", VALID_MANIFEST)?;
+    let ripr_dir = root.join(".ripr");
+    fs::set_permissions(&ripr_dir, fs::Permissions::from_mode(0o000))
+        .map_err(|error| error.to_string())?;
+    // Root ignores directory permissions, so the stimulus cannot exist there.
+    let blocked = fs::symlink_metadata(ripr_dir.join("suppressions.toml")).is_err();
+    let result = validate_config(&root);
+    let _ = fs::set_permissions(&ripr_dir, fs::Permissions::from_mode(0o755));
+    let _ = fs::remove_dir_all(&root);
+    if !blocked {
+        return Ok(());
+    }
+    match result {
+        Err(error) if error.contains("`.ripr/suppressions.toml` cannot be inspected") => Ok(()),
+        other => Err(format!(
+            "an untraversable manifest directory was read as absent: {other:?}"
+        )),
+    }
+}

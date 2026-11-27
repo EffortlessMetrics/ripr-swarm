@@ -1,2 +1,2 @@
 <!-- section: Fixed -->
-- `ripr config validate` now checks the suppressions manifest the config selects: a configured `[suppressions] path` that does not exist fails instead of passing (every consumer read it as an empty manifest), and a present manifest that does not parse fails with its line-numbered violations (#15308).
+- `ripr config validate` now checks the suppressions manifest the config selects: a configured `[suppressions] path` that does not exist fails instead of passing (every consumer read it as an empty manifest), and a present manifest that does not parse fails with its line-numbered violations; a manifest path that is a dangling link or cannot be inspected (for example an unreadable `.ripr` directory) fails instead of reading as absent (#15308).
