@@ -24,7 +24,7 @@ pub const FIXTURE_GIT_DEADLINE: Duration = Duration::from_secs(30);
 const FIXTURE_GIT_STREAM_CAP: usize = 1024 * 1024;
 
 /// Fixture git subcommands eligible for one retry after a timeout.
-/// A killed `add` can leave `index.lock`, so return its original timeout.
+/// A terminated `add` can leave `index.lock`, so return its original timeout.
 /// `commit` is reconciled against HEAD, and `checkout` is handled by
 /// `is_retryable_checkout`.
 const RETRYABLE_FIXTURE_GIT: &[&str] = &["init", "config", "update-ref", "rev-parse", "status"];

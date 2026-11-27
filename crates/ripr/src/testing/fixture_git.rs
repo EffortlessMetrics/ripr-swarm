@@ -27,7 +27,7 @@ pub(crate) const FIXTURE_GIT_DEADLINE: Duration = Duration::from_secs(30);
 const FIXTURE_GIT_OUTPUT_LIMIT: usize = 4 * 1024 * 1024;
 
 /// Fixture git subcommands eligible for one retry after a timeout.
-/// A killed `add` can leave `index.lock`, so return its original timeout.
+/// A terminated `add` can leave `index.lock`, so return its original timeout.
 /// `commit` is deliberately absent: a timed-out commit may still have
 /// landed, so it is reconciled by checking whether HEAD moved instead
 /// of blindly re-running (a re-run would fail with "nothing to
