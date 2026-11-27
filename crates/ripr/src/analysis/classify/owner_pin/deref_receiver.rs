@@ -36,7 +36,12 @@
 //!   spelled exactly, and it is the only `Deref` impl of its wrapper. Its
 //!   body is exactly that `type Target` and a `fn deref(&self)` returning
 //!   `&self.<field>`, so the deref runs no other code and hands the call the
-//!   value the test built;
+//!   value the test built. Every other `Deref` impl in the workspace
+//!   declares a plain `type Target` naming some other type: not the owner,
+//!   not `Target` or `Self`, and not a name a `type` item or an `as` rename
+//!   introduces, whatever its `fn deref` does (a deref returning `&OTHER`
+//!   still hands a coerced call an owner value). No `impl` header names
+//!   `Borrow`, so a std `Cow` field derefs without workspace code;
 //! - the wrapper is declared exactly once in the workspace, as a non-generic
 //!   `struct` whose only attributes are std derives; no function shares its
 //!   name; no `type` item mentions it; it is never renamed (`Guard as G`);
@@ -260,9 +265,18 @@ pub(super) fn deref_workspace(
         return None;
     }
     let mut wrappers = BTreeMap::new();
+    // A workspace `impl Borrow` may make a std `Cow` field's deref run
+    // workspace code, so the wrapper's projection would not hand the call
+    // the value the test built.
+    if files
+        .iter()
+        .any(|masked| impl_header_names(masked, "Borrow"))
+    {
+        return None;
+    }
     let aliases: BTreeSet<String> = files
         .iter()
-        .flat_map(|masked| type_item_names(masked))
+        .flat_map(|masked| alias_names(masked))
         .collect();
     for (position, item) in deref_impls.iter().enumerate() {
         let Some(target) = item.target.as_deref() else {
@@ -326,8 +340,9 @@ fn workspace_sources_indexed(index: &RustIndex) -> bool {
 
 /// Whether no `Deref` impl other than `deref_impls[position]` may hand a
 /// call `target`. Every other `Deref` impl must declare a plain-identifier
-/// `type Target` that is neither `target` nor a name some `type` item
-/// declares (an alias may name `target`). An impl whose `Target` cannot be
+/// `type Target` that is neither `target`, `Target` or `Self`, nor a name
+/// some `type` item declares or some `as` introduces (either may name
+/// `target`). An impl whose `Target` cannot be
 /// read refuses whatever its body: a deref that runs other code (`&OTHER`)
 /// still reaches `target`, and the projection's field coerces through it.
 fn no_other_deref_may_reach(
@@ -341,24 +356,43 @@ fn no_other_deref_may_reach(
         .enumerate()
         .filter(|(other, item)| *other != position && item.deref)
         .all(|(_, item)| {
-            item.declared
-                .as_deref()
-                .is_some_and(|declared| declared != target && !aliases.contains(declared))
+            item.declared.as_deref().is_some_and(|declared| {
+                declared != target
+                    && declared != "Target"
+                    && declared != "Self"
+                    && !aliases.contains(declared)
+            })
         })
 }
 
-/// Every name a `type` item declares in one masked file, `Target` aside
-/// (the associated type every `Deref` impl declares).
-fn type_item_names(masked: &str) -> Vec<String> {
-    whole_word_offsets(masked, "type")
-        .into_iter()
-        .filter_map(|at| {
-            let rest = masked[at + "type".len()..].trim_start();
-            let rest = rest.strip_prefix("r#").unwrap_or(rest);
-            let end = rest.bytes().take_while(|&byte| is_ident_byte(byte)).count();
-            (end > 0 && &rest[..end] != "Target").then(|| rest[..end].to_string())
-        })
+/// Every name one masked file may use for another type: each name a `type`
+/// item declares (`Target` aside, the associated type every `Deref` impl
+/// declares; a declared `Target` refuses on its own) and each name after
+/// `as` (`use crate::Inner as Other;`, or a cast, which only refuses more).
+fn alias_names(masked: &str) -> Vec<String> {
+    let name_after = |keyword: &'static str| {
+        whole_word_offsets(masked, keyword)
+            .into_iter()
+            .filter_map(move |at| {
+                let rest = masked[at + keyword.len()..].trim_start();
+                let rest = rest.strip_prefix("r#").unwrap_or(rest);
+                let end = rest.bytes().take_while(|&byte| is_ident_byte(byte)).count();
+                (end > 0).then(|| rest[..end].to_string())
+            })
+    };
+    name_after("type")
+        .filter(|name| name != "Target")
+        .chain(name_after("as"))
         .collect()
+}
+
+/// Whether any `impl` header in one masked file spells `name` as a word.
+fn impl_header_names(masked: &str, name: &str) -> bool {
+    whole_word_offsets(masked, "impl").into_iter().any(|at| {
+        let rest = &masked[at + "impl".len()..];
+        let header = &rest[..rest.find(['{', ';']).unwrap_or(rest.len())];
+        !whole_word_offsets(header, name).is_empty()
+    })
 }
 
 /// The plain-identifier `type Target` a `Deref` impl body declares exactly
@@ -660,9 +694,9 @@ fn attributes_are_std_derives(prefix: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::{
-        DerefImpl, attributes_are_std_derives, deref_body_target, file_deref_impls,
-        first_param_is_shared_self, ident_run_start, inside_item_macro, no_other_deref_may_reach,
-        type_item_names, wrapper_spellings_inert,
+        DerefImpl, alias_names, attributes_are_std_derives, deref_body_target, file_deref_impls,
+        first_param_is_shared_self, ident_run_start, impl_header_names, inside_item_macro,
+        no_other_deref_may_reach, wrapper_spellings_inert,
     };
     use std::collections::BTreeSet;
 
@@ -704,10 +738,31 @@ mod tests {
         let alias = format!(
             "{guard} impl Deref for Mid {{ type Target = Alias; fn deref(&self) -> &Alias {{ &OTHER }} }}"
         );
-        let aliases: BTreeSet<String> =
-            type_item_names("type Alias = Inner;").into_iter().collect();
+        let aliases: BTreeSet<String> = alias_names("type Alias = Inner;").into_iter().collect();
         assert!(!admitted(&alias, &aliases));
-        assert_eq!(type_item_names("type Target = Inner; type r#A = B;"), ["A"]);
+        let renamed = format!(
+            "{guard} impl Deref for Mid {{ type Target = Other; fn deref(&self) -> &Other {{ &OTHER }} }}"
+        );
+        let aliases: BTreeSet<String> = alias_names("use crate::Inner as Other;")
+            .into_iter()
+            .collect();
+        assert!(!admitted(&renamed, &aliases));
+        let target_alias = format!(
+            "{guard} impl Deref for Mid {{ type Target = Target; fn deref(&self) -> &Target {{ &OTHER }} }}"
+        );
+        assert!(!admitted(&target_alias, &none));
+        assert_eq!(
+            alias_names("type Target = Inner; type r#A = B; let n = x as u32;"),
+            ["A", "u32"]
+        );
+        assert!(impl_header_names(
+            "impl Borrow<Inner> for Other { }",
+            "Borrow"
+        ));
+        assert!(!impl_header_names(
+            "fn f(x: &impl Display) { x.borrow() }",
+            "Borrow"
+        ));
     }
 
     #[test]
