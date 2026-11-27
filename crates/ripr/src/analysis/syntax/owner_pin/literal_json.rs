@@ -204,15 +204,19 @@ fn use_tree_binds_crate(tree: &ast::UseTree, krate: &str) -> bool {
     }
     let path = path.replace("r#", "");
     let bare = path.strip_prefix("::").unwrap_or(&path);
-    bare != krate && bare != format!("{krate}::{krate}") && path.rsplit("::").next() == Some(krate)
+    let own_macro = bare
+        .strip_prefix(krate)
+        .and_then(|rest| rest.strip_prefix("::"))
+        == Some(krate);
+    bare != krate && !own_macro && path.rsplit("::").next() == Some(krate)
 }
 
 #[cfg(test)]
 mod tests {
     use super::super::owner_pin_assertions;
     use super::{
-        crate_namespace_rebound, json_namespace_rebound, literal_json_import_visible, literal_json_import_visible_among,
-        take_canonical_import_checks, take_use_scan_count,
+        crate_namespace_rebound, json_namespace_rebound, literal_json_import_visible,
+        literal_json_import_visible_among, take_canonical_import_checks, take_use_scan_count,
     };
     use crate::analysis::syntax::parse_clean_source_file;
     use ra_ap_syntax::AstNode;

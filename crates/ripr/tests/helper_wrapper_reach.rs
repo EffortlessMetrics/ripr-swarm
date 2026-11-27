@@ -871,6 +871,7 @@ fn imported_anyhow_wrapper_forwards_unless_anyhow_is_rebound() -> Result<(), Str
         "use anyhow::anyhow;",
         "use anyhow::{anyhow, Result};",
         "use ::anyhow::anyhow;",
+        "use anyhow;\nuse anyhow::anyhow;",
     ] {
         let (source, diff, line) = with_prelude(prelude)?;
         for family in ["predicate", "return_value"] {

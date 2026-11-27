@@ -5,4 +5,6 @@ tests = [
 ]
 code = [
   "crates/ripr/src/analysis/classify/helper_transfer.rs",
+  "crates/ripr/src/analysis/syntax/owner_pin.rs",
+  "crates/ripr/src/analysis/syntax/owner_pin/literal_json.rs",
 ]

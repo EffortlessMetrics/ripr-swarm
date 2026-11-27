@@ -613,12 +613,14 @@ impl MacroBindingCandidates {
         }
     }
 
-    /// Whether the scan may report a site for any trusted name. `Names`
-    /// only ever holds trusted names, so this is its emptiness.
+    /// Whether the scan may report a site for any trusted name or `json`.
+    /// `Names` only ever holds trusted names and the drop-in value macros.
     pub(crate) fn may_bind_any_trusted(&self) -> bool {
         match self {
             Self::Any => true,
-            Self::Names(names) => !names.is_empty(),
+            // `anyhow` is a forwarding-only candidate: no assertion or
+            // reference-count consumer reads it (#10357).
+            Self::Names(names) => names.iter().any(|name| name != "anyhow"),
         }
     }
 }
@@ -1985,6 +1987,10 @@ fn macro_binding_sites_in_tree(
                         // #15263: `use std::vec;` / `use alloc::vec;` names
                         // the standard macro itself, like a standard-root glob.
                         None
+                    } else if item.rename().is_none() && imports_bare_drop_in_crate(&item, name) {
+                        // `use anyhow;` names the extern crate, which lives in
+                        // the type namespace only and binds no macro (#10357).
+                        None
                     } else if !is_drop_in_assertion(&item, name)
                         || drop_in_shadowed(root, external)
                         // A plain import that binds a standard root's name
@@ -3002,6 +3008,32 @@ fn is_standard_macro_import(item: &ast::UseTree, name: &str) -> bool {
         segments.as_slice(),
         [root, imported] if exporters.contains(root) && *imported == name
     )
+}
+
+/// Whether `item` is a top-level `use krate;` or `use ::krate;` of a drop-in
+/// crate whose own name is the trusted macro name (`anyhow`).
+fn imports_bare_drop_in_crate(item: &ast::UseTree, name: &str) -> bool {
+    let top_level = item
+        .syntax()
+        .ancestors()
+        .skip(1)
+        .filter_map(ast::UseTree::cast)
+        .next()
+        .is_none();
+    let path: String = item
+        .path()
+        .map(|path| {
+            path.syntax()
+                .descendants_with_tokens()
+                .filter_map(|element| element.into_token())
+                .filter(|token| !token.kind().is_trivia())
+                .map(|token| token.text().trim_start_matches("r#").to_string())
+                .collect()
+        })
+        .unwrap_or_default();
+    top_level
+        && drop_in_crates(name).contains(&name)
+        && path.strip_prefix("::").unwrap_or(&path) == name
 }
 
 fn is_drop_in_assertion(item: &ast::UseTree, name: &str) -> bool {
