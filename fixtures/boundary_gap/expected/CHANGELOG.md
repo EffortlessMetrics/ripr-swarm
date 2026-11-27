@@ -10,6 +10,17 @@ dependent verify commitments and receipt byte hashes. Weak grip, unchanged
 movement, historical currentness, incomplete receipt status and fail-closed
 first-action routing remain unchanged. No other fixture output is regenerated.
 
+## Pending — corpus cache generation 1.210 for imported json! wrappers (#10357)
+
+A helper wrapper that calls bare `json!` imported by a verified, audited
+`use serde_json::json;` now forwards its helper result, which bumps the
+analyzer cache schema to 1.210. Move the portable unchanged-attempt
+snapshots to 1.210, recompute the `raw_json_placeholder_v1` artifact
+content commitment, then the dependent verify commitments and receipt byte
+hashes. Weak grip, unchanged movement, historical currentness, incomplete
+receipt status and fail-closed first-action routing remain the same. No
+other fixture output is regenerated.
+
 ## Pending — corpus cache generation 1.209 for standard trait rivals (#16040)
 
 A `&self` or `&mut self` trait impl method on the text receiver path is now
