@@ -532,3 +532,47 @@ fn invalid_input_file_refusals_name_the_producer() -> Result<(), String> {
         ],
     )
 }
+
+/// `receipt write` names the checkout fix only when Git could not resolve
+/// HEAD. A HEAD that resolves to an id receipts cannot bind (SHA-256) keeps
+/// the resolver's own advice instead of being told to make a first commit.
+#[test]
+fn receipt_write_head_refusal_names_the_fix_that_applies() -> Result<(), String> {
+    let write = [
+        "receipt",
+        "write",
+        "--gap",
+        "gap:demo",
+        "--verify-command",
+        "cargo test",
+        "--status",
+        "passed",
+    ];
+    let checkout_fix = "; run ripr from inside a Git checkout that has at least one commit";
+
+    let unborn = scratch()?;
+    git(&unborn.0, &["init", "-q"])?;
+    let stderr = refusal(&unborn.0, &write)?;
+    stderr_has_all(
+        &stderr,
+        &[
+            "receipt requires a Git repository with a resolvable HEAD: ",
+            checkout_fix,
+        ],
+    )?;
+
+    let sha256 = scratch()?;
+    git(&sha256.0, &["init", "-q", "--object-format=sha256"])?;
+    git(
+        &sha256.0,
+        &["commit", "-q", "--allow-empty", "-m", "fixture"],
+    )?;
+    let stderr = refusal(&sha256.0, &write)?;
+    stderr_has_all(&stderr, &["returned an invalid commit"])?;
+    if stderr.contains(checkout_fix) {
+        return Err(format!(
+            "a committed SHA-256 checkout got the first-commit advice:\n{stderr}"
+        ));
+    }
+    Ok(())
+}

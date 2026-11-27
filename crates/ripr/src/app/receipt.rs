@@ -133,6 +133,13 @@ pub(crate) fn write_receipt(opts: &ReceiptWriteOptions) -> Result<String, String
         .map_err(|err| format!("resolve receipt repository root failed: {err}; run ripr from an existing directory inside the repository"))?;
     let actual_head =
         crate::agent::artifact::current_git_head(&repository_root).map_err(|err| {
+            // Git resolved HEAD, but to an id receipts cannot bind (for
+            // example a SHA-256 object id). `current_git_head` names its own
+            // repair; the checkout advice below would send the user back to a
+            // condition their repository already meets.
+            if err.contains("returned an invalid commit") {
+                return err;
+            }
             format!(
                 "receipt requires a Git repository with a resolvable HEAD: {err}; \
                  run ripr from inside a Git checkout that has at least one commit"
