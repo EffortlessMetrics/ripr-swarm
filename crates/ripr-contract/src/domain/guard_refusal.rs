@@ -65,6 +65,7 @@ pub fn guard_refusal_digest_classification_hint(
     guard_refusal_classification_hint(reason)
 }
 
+/// Which conditional-return refusal a not-credited assertion note names.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum GuardRefusalKind {
     /// `AssertionRefusal::ValueGuard` (RIPR-SPEC-0240 trap-tally control).
@@ -73,6 +74,8 @@ pub enum GuardRefusalKind {
     GuardedReturn,
 }
 
+/// Reads the guard refusal kind from a not-credited note's wording, or
+/// `None` when it names neither kind.
 pub fn guard_refusal_kind(reason: &str) -> Option<GuardRefusalKind> {
     if reason.contains("spares the value the assertion expects") {
         Some(GuardRefusalKind::ValueGuard)

@@ -87,6 +87,7 @@ impl CandidateRelation {
         reason.candidate_relation()
     }
 
+    /// The stable `snake_case` word for this relation.
     pub fn as_str(self) -> &'static str {
         match self {
             CandidateRelation::DirectOwnerCall => "direct_owner_call",
