@@ -17,7 +17,8 @@ pub enum TestCandidateNextRoute {
     /// At least one producer-backed candidate was selected; run those tests.
     RunTargetedPreflight,
     /// No candidate was selected, but context-only rows exist or the window
-    /// was truncated; inspect them before writing a new test.
+    /// was truncated (possibly with no rows in it); inspect the rows or widen
+    /// discovery before writing a new test.
     InspectWeakCandidates,
     /// The complete discovery set is empty; add a new focused test.
     AddNewFocusedTest,
@@ -71,8 +72,9 @@ pub struct TestCandidateRow {
 pub struct TestCandidateSet {
     /// Producer-backed rows, ordered by relation, then name, file and line.
     pub selected: Vec<TestCandidateRow>,
-    /// Proximity or coincidence rows, in the same order. They are context
-    /// for a reader, not selectors.
+    /// Rows whose relation is not producer-backed (proximity, coincidence,
+    /// opaque helper or macro, or unknown), in the same order. They are
+    /// context for a reader, not selectors.
     pub context_only: Vec<TestCandidateRow>,
     /// Rows present in this bounded window (for example after reveal truncation).
     pub total_discovered: usize,

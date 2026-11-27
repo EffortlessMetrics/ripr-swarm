@@ -42,7 +42,8 @@ pub enum CoreError {
     /// A git invocation that was given a zero deadline, or that exceeded its
     /// cooperative deadline and was terminated.
     GitInvocationTimeout {
-        /// The git command line that timed out, as rendered for diagnostics.
+        /// Description of the git operation that timed out, such as a rendered
+        /// command line or a label like `git root probe in <dir>`.
         operation: String,
         /// The deadline in milliseconds.
         timeout_ms: u128,
