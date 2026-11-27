@@ -239,3 +239,14 @@ Command:
 
 Updated:
 - `expected/human-full.txt`
+
+## Pending — python_module_reader_replacement (20)
+
+Reason:
+RIPR-SPEC-0122: #15336 unconfirmed-reach note severity, possible-gap State line, legend and Terms glosses
+
+Command:
+`cargo xtask goldens bless python_module_reader_replacement --reason "..."`
+
+Updated:
+- `expected/human.txt`

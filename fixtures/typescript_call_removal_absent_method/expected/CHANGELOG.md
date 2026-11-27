@@ -229,3 +229,14 @@ Command:
 
 Updated:
 - `expected/human-full.txt`
+
+## Pending — typescript_call_removal_absent_method (19)
+
+Reason:
+RIPR-SPEC-0122: #15336 unconfirmed-reach note severity, possible-gap State line, legend and Terms glosses
+
+Command:
+`cargo xtask goldens bless typescript_call_removal_absent_method --reason "..."`
+
+Updated:
+- `expected/human.txt`

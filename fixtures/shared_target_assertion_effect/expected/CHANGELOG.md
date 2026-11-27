@@ -238,3 +238,14 @@ Command:
 
 Updated:
 - `expected/human.txt`
+
+## Pending — shared_target_assertion_effect (19)
+
+Reason:
+RIPR-SPEC-0122: #15336 unconfirmed-reach note severity, possible-gap State line, legend and Terms glosses
+
+Command:
+`cargo xtask goldens bless shared_target_assertion_effect --reason "..."`
+
+Updated:
+- `expected/human.txt`

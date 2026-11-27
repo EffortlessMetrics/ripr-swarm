@@ -67,7 +67,7 @@ Drill in:
   ripr explain --root <cwd>/fixtures/rust_macro_transcriber_own_call/input --diff <cwd>/fixtures/rust_macro_transcriber_own_call/diff.patch --mode fast probe:src_lib.rs:predicate:7ce86f3b
   ripr context --root <cwd>/fixtures/rust_macro_transcriber_own_call/input --diff <cwd>/fixtures/rust_macro_transcriber_own_call/diff.patch --mode fast --at probe:src_lib.rs:predicate:7ce86f3b
 
-WARNING ./src/lib.rs:2
+NOTE ./src/lib.rs:2
   id: probe:src_lib.rs:return_value:6b389299
 
 Changed
@@ -82,7 +82,7 @@ Change type
   gap id (for scripts): gap:rust:src/lib.rs:bulk:return_value:return_value:n>=100
 
 Static exposure
-  weakly_exposed (warning, confidence 0.66)
+  weakly_exposed (note, confidence 0.66)
 
 Evidence
   - reach weak: No test is seen calling bulk; tests share only its file or a name token: small_orders_are_not_bulk

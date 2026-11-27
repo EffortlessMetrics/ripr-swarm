@@ -23,3 +23,14 @@ Command:
 
 Updated:
 - `expected/human.txt`
+
+## Pending — rust_return_value_name_only_comparison_tail_far_input (3)
+
+Reason:
+RIPR-SPEC-0122: #15336 unconfirmed-reach note severity, possible-gap State line, legend and Terms glosses
+
+Command:
+`cargo xtask goldens bless rust_return_value_name_only_comparison_tail_far_input --reason "..."`
+
+Updated:
+- `expected/human.txt`

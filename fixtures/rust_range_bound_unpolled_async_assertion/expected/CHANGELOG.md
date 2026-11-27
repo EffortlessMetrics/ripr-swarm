@@ -23,3 +23,14 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — rust_range_bound_unpolled_async_assertion (3)
+
+Reason:
+RIPR-SPEC-0122: #15336 unconfirmed-reach note severity, possible-gap State line, legend and Terms glosses
+
+Command:
+`cargo xtask goldens bless rust_range_bound_unpolled_async_assertion --reason "..."`
+
+Updated:
+- `expected/human.txt`

@@ -103,3 +103,14 @@ Command:
 
 Updated:
 - `expected/human-full.txt`
+
+## Pending — typescript_then_inline_receiver_shadow (9)
+
+Reason:
+RIPR-SPEC-0122: #15336 unconfirmed-reach note severity, possible-gap State line, legend and Terms glosses
+
+Command:
+`cargo xtask goldens bless typescript_then_inline_receiver_shadow --reason "..."`
+
+Updated:
+- `expected/human.txt`

@@ -320,3 +320,14 @@ Command:
 
 Updated:
 - `expected/human-full.txt`
+
+## Pending — python_unittest_list_equal_effectful_argument (26)
+
+Reason:
+RIPR-SPEC-0122: #15336 unconfirmed-reach note severity, possible-gap State line, legend and Terms glosses
+
+Command:
+`cargo xtask goldens bless python_unittest_list_equal_effectful_argument --reason "..."`
+
+Updated:
+- `expected/human.txt`

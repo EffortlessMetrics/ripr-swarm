@@ -100,3 +100,14 @@ Command:
 
 Updated:
 - `expected/human.txt`
+
+## Pending — predicate_pairing_boundary_precision_residuals_7042 (9)
+
+Reason:
+RIPR-SPEC-0122: #15336 unconfirmed-reach note severity, possible-gap State line, legend and Terms glosses
+
+Command:
+`cargo xtask goldens bless predicate_pairing_boundary_precision_residuals_7042 --reason "..."`
+
+Updated:
+- `expected/human.txt`

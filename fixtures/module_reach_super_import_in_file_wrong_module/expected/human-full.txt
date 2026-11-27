@@ -71,7 +71,7 @@ Drill in:
   ripr explain --root <cwd>/fixtures/module_reach_super_import_in_file_wrong_module/input --diff <cwd>/fixtures/module_reach_super_import_in_file_wrong_module/diff.patch --mode fast probe:src_lib.rs:predicate:41e056ec
   ripr context --root <cwd>/fixtures/module_reach_super_import_in_file_wrong_module/input --diff <cwd>/fixtures/module_reach_super_import_in_file_wrong_module/diff.patch --mode fast --at probe:src_lib.rs:predicate:41e056ec
 
-WARNING ./src/lib.rs:2
+NOTE ./src/lib.rs:2
   id: probe:src_lib.rs:return_value:cc17bcd3
 
 Changed
@@ -85,7 +85,7 @@ Change type
   owner:  src/lib.rs::is_bulk
 
 Static exposure
-  weakly_exposed (warning, confidence 0.66)
+  weakly_exposed (note, confidence 0.66)
 
 Evidence
   - reach weak: No test is seen calling is_bulk; tests share only its file or a name token: discount_boundary

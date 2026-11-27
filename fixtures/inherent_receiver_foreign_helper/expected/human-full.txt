@@ -21,7 +21,7 @@ Shared evidence and guidance
   E6 [findings 1, 2]: source assertion argument value 7 at line 20
   N1 [findings 1, 2]: Tests cannot close this static-analysis limitation: ripr cannot trace entry `read_as_object` -> owner `as_object` through a transitive Rust helper path. Inspect the named path and existing assertions through the public API; add a test only for an independently confirmed gap. This limitation does not establish a missing test
 
-Finding 1: WARNING ./src/lib.rs:6
+Finding 1: NOTE ./src/lib.rs:6
   id: probe:src_lib.rs:match_arm:f9032269
 Changed
   before: Self::Object(value) => None,
@@ -33,7 +33,7 @@ Change type
   delta:  control (changes which code path runs)
   owner:  src/lib.rs::impl JsonValue::as_object
 Static exposure
-  weakly_exposed (warning, confidence 0.66)
+  weakly_exposed (note, confidence 0.66)
 Evidence
   shared evidence: E1, E2
   - propagation yes: Changed behavior appears to influence match arm result: Some(*value)
@@ -62,7 +62,7 @@ Drill in:
   ripr explain --root <cwd>/fixtures/inherent_receiver_foreign_helper/input --diff <cwd>/fixtures/inherent_receiver_foreign_helper/diff.patch --mode fast probe:src_lib.rs:match_arm:f9032269
   ripr context --root <cwd>/fixtures/inherent_receiver_foreign_helper/input --diff <cwd>/fixtures/inherent_receiver_foreign_helper/diff.patch --mode fast --at probe:src_lib.rs:match_arm:f9032269
 
-Finding 2: WARNING ./src/lib.rs:6
+Finding 2: NOTE ./src/lib.rs:6
   id: probe:src_lib.rs:return_value:3068903e
 Changed
   before: None
@@ -73,7 +73,7 @@ Change type
   delta:  value (changes a computed value)
   owner:  src/lib.rs::impl JsonValue::as_object
 Static exposure
-  weakly_exposed (warning, confidence 0.66)
+  weakly_exposed (note, confidence 0.66)
 Evidence
   shared evidence: E1, E2
   - propagation weak: No complete owner-bound propagation witness found for returned value: Self::Object(value) => Some(*value)

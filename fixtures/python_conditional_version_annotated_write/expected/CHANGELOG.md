@@ -239,3 +239,14 @@ Command:
 
 Updated:
 - `expected/human-full.txt`
+
+## Pending — python_conditional_version_annotated_write (20)
+
+Reason:
+RIPR-SPEC-0122: #15336 unconfirmed-reach note severity, possible-gap State line, legend and Terms glosses
+
+Command:
+`cargo xtask goldens bless python_conditional_version_annotated_write --reason "..."`
+
+Updated:
+- `expected/human.txt`

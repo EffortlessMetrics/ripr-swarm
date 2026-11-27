@@ -268,3 +268,14 @@ Command:
 
 Updated:
 - `expected/human.txt`
+
+## Pending — rust_returned_type_drop_if_arm (22)
+
+Reason:
+RIPR-SPEC-0122: #15336 unconfirmed-reach note severity, possible-gap State line, legend and Terms glosses
+
+Command:
+`cargo xtask goldens bless rust_returned_type_drop_if_arm --reason "..."`
+
+Updated:
+- `expected/human.txt`

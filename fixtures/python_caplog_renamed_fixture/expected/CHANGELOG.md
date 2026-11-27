@@ -170,3 +170,14 @@ Command:
 
 Updated:
 - `expected/human-full.txt`
+
+## Pending — python_caplog_renamed_fixture (14)
+
+Reason:
+RIPR-SPEC-0122: #15336 unconfirmed-reach note severity, possible-gap State line, legend and Terms glosses
+
+Command:
+`cargo xtask goldens bless python_caplog_renamed_fixture --reason "..."`
+
+Updated:
+- `expected/human.txt`

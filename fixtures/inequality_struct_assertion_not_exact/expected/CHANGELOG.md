@@ -258,3 +258,14 @@ Command:
 
 Updated:
 - `expected/human.txt`
+
+## Pending — inequality_struct_assertion_not_exact (21)
+
+Reason:
+RIPR-SPEC-0122: #15336 unconfirmed-reach note severity, possible-gap State line, legend and Terms glosses
+
+Command:
+`cargo xtask goldens bless inequality_struct_assertion_not_exact --reason "..."`
+
+Updated:
+- `expected/human.txt`

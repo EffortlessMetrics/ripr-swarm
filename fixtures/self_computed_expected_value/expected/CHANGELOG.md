@@ -336,3 +336,14 @@ Command:
 
 Updated:
 - `expected/human.txt`
+
+## Pending — self_computed_expected_value (27)
+
+Reason:
+RIPR-SPEC-0122: #15336 unconfirmed-reach note severity, possible-gap State line, legend and Terms glosses
+
+Command:
+`cargo xtask goldens bless self_computed_expected_value --reason "..."`
+
+Updated:
+- `expected/human.txt`

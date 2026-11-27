@@ -115,3 +115,14 @@ Command:
 
 Updated:
 - `expected/check.json`
+
+## Pending — unsafe_assumption_stop_reason (11)
+
+Reason:
+RIPR-SPEC-0122: #15336 unconfirmed-reach note severity, possible-gap State line, legend and Terms glosses
+
+Command:
+`cargo xtask goldens bless unsafe_assumption_stop_reason --reason "..."`
+
+Updated:
+- `expected/human.txt`

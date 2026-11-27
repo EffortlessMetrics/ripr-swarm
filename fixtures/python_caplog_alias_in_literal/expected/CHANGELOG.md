@@ -200,3 +200,14 @@ Command:
 
 Updated:
 - `expected/check.json`
+
+## Pending — python_caplog_alias_in_literal (17)
+
+Reason:
+RIPR-SPEC-0122: #15336 unconfirmed-reach note severity, possible-gap State line, legend and Terms glosses
+
+Command:
+`cargo xtask goldens bless python_caplog_alias_in_literal --reason "..."`
+
+Updated:
+- `expected/human.txt`
