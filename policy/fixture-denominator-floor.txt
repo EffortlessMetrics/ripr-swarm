@@ -468,6 +468,7 @@ case fixtures/evidence-promotion-honesty-corpus/corpus.json#rust_contradiction_w
 case fixtures/evidence-promotion-honesty-corpus/corpus.json#rust_contradiction_withhold_lone_test
 case fixtures/evidence-promotion-honesty-corpus/corpus.json#rust_contradiction_withhold_mates_only
 case fixtures/evidence-promotion-honesty-corpus/corpus.json#rust_copy_builder_field_write_unmoved_read
+case fixtures/evidence-promotion-honesty-corpus/corpus.json#rust_crate_qualified_same_named_type
 case fixtures/evidence-promotion-honesty-corpus/corpus.json#rust_cross_crate_trait_impl_borrows_no_doctest
 case fixtures/evidence-promotion-honesty-corpus/corpus.json#rust_dep_edge_cross_crate_positive_control
 case fixtures/evidence-promotion-honesty-corpus/corpus.json#rust_dep_edge_cross_crate_wrong_crate_oracle_non_promotion
@@ -1979,6 +1980,7 @@ golden fixtures/rust_contradiction_composed_file_mates/expected human-full.txt h
 golden fixtures/rust_contradiction_lone_test/expected human-full.txt human.txt
 golden fixtures/rust_contradiction_mates_only/expected human-full.txt human.txt
 golden fixtures/rust_copy_builder_field_write/expected human.txt
+golden fixtures/rust_crate_qualified_same_named_type/expected human-full.txt human.txt
 golden fixtures/rust_deleted_guard_same_value/expected human.txt
 golden fixtures/rust_dep_edge_cross_crate_ambiguity/expected human-full.txt human.txt
 golden fixtures/rust_dep_edge_cross_crate_positive/expected human-full.txt human.txt

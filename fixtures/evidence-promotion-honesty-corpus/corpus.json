@@ -22154,6 +22154,34 @@
       ]
     },
     {
+      "id": "rust_crate_qualified_same_named_type",
+      "language": "rust",
+      "tier": "pure",
+      "source_fixture": "fixtures/rust_crate_qualified_same_named_type",
+      "vector": "crate_qualified_receiver_names_a_same_named_type_in_another_module",
+      "probe_family": "predicate",
+      "assertions": [
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "expected_finding_count",
+          "count": 1
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "expected_class",
+          "class": "reachable_unrevealed"
+        },
+        {
+          "type": "maximum_class",
+          "class": "weakly_exposed"
+        }
+      ]
+    },
+    {
       "id": "rust_predicate_owner_value_masked_tuple_projection",
       "language": "rust",
       "tier": "pure",
