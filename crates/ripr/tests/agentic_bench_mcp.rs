@@ -866,6 +866,10 @@ fn snapshot_tree(root: &Path) -> Result<BTreeMap<String, String>, String> {
             let relative = path
                 .strip_prefix(root)
                 .map_err(|error| format!("relativize {}: {error}", path.display()))?;
+            // Git can remove its object maintenance lock after read_dir returns.
+            if relative == Path::new(".git/objects/maintenance.lock") {
+                continue;
+            }
             let key = relative.to_string_lossy().replace('\\', "/");
             let file_type = entry
                 .file_type()
@@ -915,6 +919,47 @@ fn require_tree_equal(
         "{context}: fixture tree drifted: {}",
         drift.join(", ")
     ))
+}
+
+#[test]
+fn snapshot_ignores_only_the_git_objects_maintenance_lock() -> Result<(), Box<dyn std::error::Error>>
+{
+    let fixture = install_fixture("snapshot-lock")?;
+    let root = &fixture.root;
+    let before = snapshot_tree(root)?;
+    let lock = root.join(".git/objects/maintenance.lock");
+    std::fs::write(&lock, b"held")?;
+    require_tree_equal(&before, &snapshot_tree(root)?, "maintenance lock present")?;
+    std::fs::remove_file(lock)?;
+    require_tree_equal(&before, &snapshot_tree(root)?, "maintenance lock gone")?;
+
+    for relative in [".git/index", "src/lib.rs"] {
+        let path = root.join(relative);
+        let original = std::fs::read(&path)?;
+        let mut changed = original.clone();
+        *changed
+            .first_mut()
+            .ok_or("expected nonempty fixture file")? ^= 1;
+        std::fs::write(&path, changed)?;
+        let drift = require_tree_equal(&before, &snapshot_tree(root)?, "same length");
+        assert!(
+            matches!(&drift, Err(message) if message.contains(&format!("modified {relative}"))),
+            "{drift:?}"
+        );
+        std::fs::write(path, original)?;
+    }
+    for relative in [".git/index.lock", "maintenance.lock"] {
+        let path = root.join(relative);
+        std::fs::write(&path, b"held")?;
+        let drift = require_tree_equal(&before, &snapshot_tree(root)?, "other lock");
+        assert!(
+            matches!(&drift, Err(message) if message.contains(&format!("added {relative}"))),
+            "{drift:?}"
+        );
+        std::fs::remove_file(path)?;
+    }
+    require_tree_equal(&before, &snapshot_tree(root)?, "restored fixture")?;
+    Ok(())
 }
 
 /// The status authority boundary: every capability stays `none`.
