@@ -3591,7 +3591,11 @@ fn activate_evidence(
 /// inputs that select other arms is not activated by them, whatever their
 /// oracle: activation reads weak and the arm's pattern is the missing
 /// discriminator, as `ripr check` reads the same arm (RIPR-SPEC-0229). Only
-/// an established activation is weakened.
+/// an established activation is weakened. Every refusal of the shared
+/// reading keeps the stage as it was, except a rebound read macro on the
+/// tests' path (#15233): those inputs, read through a macro whose expansion
+/// is not read, select other arms, so the stage they produced reads unknown,
+/// never the generic `yes` it would otherwise keep.
 ///
 /// #15359: a call to the owner runs the `match`, not every arm of it, so an
 /// established activation of an arm also needs one related test whose input
@@ -3614,16 +3618,24 @@ fn weaken_unselected_arm(
     let Some(owner) = owner_fn else {
         return;
     };
-    if let Some(fact) = super::classify::repo_seam_unselected_arm(
+    match super::classify::repo_seam_unselected_arm(
         seam.file(),
         seam.display_line(),
         owner,
         related,
         index,
     ) {
-        *activate = StageEvidence::new(StageState::Weak, Confidence::Medium, fact.reason.clone());
-        missing.push(fact);
-        return;
+        Some(super::classify::UnselectedArm::Named(fact)) => {
+            *activate =
+                StageEvidence::new(StageState::Weak, Confidence::Medium, fact.reason.clone());
+            missing.push(fact);
+            return;
+        }
+        Some(super::classify::UnselectedArm::ReadMacroRebound(summary)) => {
+            *activate = StageEvidence::new(StageState::Unknown, Confidence::Low, summary);
+            return;
+        }
+        None => {}
     }
     // The `match` header seam (`match (a, b) {`) runs whenever the owner
     // reaches it; only an arm head (`pattern =>`, the seam's normalized

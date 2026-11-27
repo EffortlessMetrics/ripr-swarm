@@ -522,7 +522,9 @@ fn json_rpc_rejections_are_answered_with_spec_codes_and_the_session_survives() -
     }
     // Messages say what is wrong, not just which method was named.
     if messages[0] != "Parse error"
-        || !messages[6].contains("expected `protocolVersion`")
+        // A repeated `initialize` without params names the shape to send,
+        // through the same field hint a malformed first `initialize` gets.
+        || !messages[6].contains("params must be an object with `protocolVersion`")
         || messages[7] != "Method not found: nope/never"
         || !messages[8].starts_with("unknown tool")
     {
@@ -804,7 +806,7 @@ fn optional_tool_arguments_reject_null_and_recover_over_stdio() -> Result<(), St
             "ripr_list_gaps",
             "snapshot_id",
             json!({}),
-            json!("snapshot:sha256:input-control"),
+            json!(format!("snapshot:sha256:{}", "c".repeat(64))),
             "string",
         ),
         ("ripr_list_gaps", "offset", json!({}), json!(0), "integer"),
@@ -841,21 +843,21 @@ fn optional_tool_arguments_reject_null_and_recover_over_stdio() -> Result<(), St
             "ripr_get_gap",
             "snapshot_id",
             json!({"canonical_id": "gap:input-control"}),
-            json!("snapshot:sha256:input-control"),
+            json!(format!("snapshot:sha256:{}", "c".repeat(64))),
             "string",
         ),
         (
             "ripr_prepare_repair",
             "snapshot_id",
             json!({"canonical_id": "gap:input-control"}),
-            json!("snapshot:sha256:input-control"),
+            json!(format!("snapshot:sha256:{}", "c".repeat(64))),
             "string",
         ),
         (
             "ripr_get_repair_card",
             "snapshot_id",
             json!({"canonical_id": "gap:input-control"}),
-            json!("snapshot:sha256:input-control"),
+            json!(format!("snapshot:sha256:{}", "c".repeat(64))),
             "string",
         ),
     ];
@@ -5564,8 +5566,10 @@ fn resource_reads_match_tools_after_refresh() -> Result<(), String> {
         }
     }
 
-    // Tool arguments are canonical JSON ids, not URI segments. A valid
-    // pinned read after the refusals also checks the session is still usable.
+    // Tool arguments are canonical JSON ids, not URI segments. A percent-encoded
+    // id is not of the `snapshot:sha256:<64 hex>` shape, so it is a malformed
+    // argument (#15289), not a stale identity. A valid pinned read after the
+    // refusals also checks the session is still usable.
     let encoded_tool = session.call_tool(
         "snapshot-encoded-tool-id",
         "ripr_list_gaps",
@@ -5579,14 +5583,10 @@ fn resource_reads_match_tools_after_refresh() -> Result<(), String> {
         || encoded_tool
             .pointer("/result/structuredContent/failure/code")
             .and_then(Value::as_str)
-            != Some("stale_snapshot")
-        || encoded_tool
-            .pointer("/result/structuredContent/failure/data/current_snapshot_id")
-            .and_then(Value::as_str)
-            != Some(snapshot_id.as_str())
+            != Some("invalid_argument")
     {
         return Err(format!(
-            "encoded tool snapshot id must remain stale: {encoded_tool}"
+            "encoded tool snapshot id must be a malformed argument: {encoded_tool}"
         ));
     }
     let pinned_list = session.call_tool(
@@ -6107,6 +6107,196 @@ fn refresh_base_argument_recovers_a_repository_without_a_main_default_branch() -
     ] {
         let reply = session.call_tool("bad-args", "ripr_refresh", bad.clone(), timeout)?;
         require_invalid_argument(&reply, &format!("{bad}"))?;
+    }
+    Ok(())
+}
+
+/// The recovery a failed refresh reported, from the attempt or the typed
+/// tool failure, whichever this reply carries.
+fn refresh_failure_recovery(reply: &Value) -> Option<String> {
+    let content = reply.pointer("/result/structuredContent")?;
+    content
+        .pointer("/attempt/failure/recovery")
+        .or_else(|| content.pointer("/failure/recovery"))
+        .and_then(Value::as_str)
+        .map(str::to_string)
+}
+
+/// #15321: a root deleted after the server started fails every refresh the
+/// same way, so the real stdio session must say restart with a valid
+/// `--root`, never retry; the attempt inventory answers the same typed
+/// `workspace_unavailable` instead of blaming the durable store.
+#[test]
+fn deleted_root_after_start_recovers_by_restart_not_retry() -> Result<(), String> {
+    let root = install_b4_repair_ready_fixture()?;
+    let _cleanup = FixtureGuard { root: root.clone() };
+    let mut session = SequentialStdio::spawn(&root)?;
+    let timeout = Duration::from_mins(3);
+    session.call("discover", "server/discover", json!({}), timeout)?;
+    // Control: the same session refreshes while the root exists.
+    let healthy = session.call_tool("healthy", "ripr_refresh", json!({"base": "main"}), timeout)?;
+    let healthy = structured_tool_success(&healthy, "healthy ripr_refresh")?;
+    if healthy.pointer("/attempt/state").and_then(Value::as_str) != Some("completed") {
+        return Err(format!("control refresh must complete: {healthy}"));
+    }
+
+    std::fs::remove_dir_all(&root).map_err(|error| error.to_string())?;
+    if root.exists() {
+        return Err(format!(
+            "fixture root remained after removal: {}",
+            root.display()
+        ));
+    }
+    let gone = session.call_tool("gone", "ripr_refresh", json!({"base": "main"}), timeout)?;
+    let recovery = refresh_failure_recovery(&gone)
+        .ok_or_else(|| format!("refresh on a deleted root lost its recovery: {gone}"))?;
+    if !recovery.contains("restart the server")
+        || !recovery.contains("--root")
+        || recovery.starts_with("retry")
+    {
+        return Err(format!(
+            "a deleted root must recover by restart, not retry: {recovery}"
+        ));
+    }
+    // The structured remedy carries the same no-retry verdict as the prose.
+    let gone_remedy = gone
+        .pointer("/result/structuredContent/attempt/failure/remedy/retry_stated")
+        .or_else(|| gone.pointer("/result/structuredContent/failure/remedy/retry_stated"));
+    if gone_remedy != Some(&Value::Bool(false)) {
+        return Err(format!(
+            "a deleted root's remedy must state no retry: {gone}"
+        ));
+    }
+
+    let attempts =
+        session.call_tool("attempts", "ripr_list_repair_attempts", json!({}), timeout)?;
+    if attempts.pointer("/result/isError").and_then(Value::as_bool) != Some(true) {
+        return Err(format!(
+            "attempt list on a deleted root must refuse: {attempts}"
+        ));
+    }
+    let failure = attempts
+        .pointer("/result/structuredContent/failure")
+        .ok_or_else(|| format!("attempt list lost its typed failure: {attempts}"))?;
+    let failure_recovery = failure
+        .get("recovery")
+        .and_then(Value::as_str)
+        .unwrap_or_default();
+    if failure.get("code").and_then(Value::as_str) != Some("workspace_unavailable")
+        || !failure_recovery.contains("restart the server")
+        || !failure_recovery.contains("--root")
+        || failure.pointer("/remedy/retry_stated") != Some(&Value::Bool(false))
+    {
+        return Err(format!(
+            "attempt list on a deleted root must be workspace_unavailable with restart: {attempts}"
+        ));
+    }
+    Ok(())
+}
+
+/// #15321: on a shallow clone whose base tip was fetched alone, the real
+/// `git diff base...HEAD` finds no merge base; the refresh recovery must
+/// name the history fetch, not a bare retry that fails the same way.
+#[test]
+fn shallow_clone_without_merge_base_recovers_by_fetching_history() -> Result<(), String> {
+    let origin = install_b4_repair_ready_fixture()?;
+    let _origin_cleanup = FixtureGuard {
+        root: origin.clone(),
+    };
+    // Move `main` on so its tip is not on `journey`'s history either.
+    fixture_git_ok(&origin, &["checkout", "-q", "main"])?;
+    std::fs::write(origin.join("README"), "main moves on\n").map_err(|error| error.to_string())?;
+    commit_fixture(&origin, "main moves")?;
+    fixture_git_ok(&origin, &["checkout", "-q", "journey"])?;
+
+    // A spaced clone path: the fetch command must keep it one argument.
+    let clone = origin.with_file_name(format!(
+        "{} shallow",
+        origin
+            .file_name()
+            .and_then(|name| name.to_str())
+            .ok_or("fixture root has no name")?
+    ));
+    let _clone_cleanup = FixtureGuard {
+        root: clone.clone(),
+    };
+    let parent = origin.parent().ok_or("fixture root has no parent")?;
+    let origin_url = format!("file://{}", origin.display());
+    let clone_arg = clone.to_string_lossy().to_string();
+    fixture_git_ok(
+        parent,
+        &[
+            "clone",
+            "-q",
+            "--depth",
+            "1",
+            "--branch",
+            "journey",
+            &origin_url,
+            &clone_arg,
+        ],
+    )?;
+    fixture_git_ok(
+        &clone,
+        &[
+            "fetch",
+            "-q",
+            "--depth",
+            "1",
+            "origin",
+            "main:refs/remotes/origin/main",
+        ],
+    )?;
+    if !clone.join(".git").join("shallow").is_file() {
+        return Err("the fixture clone must be shallow".to_string());
+    }
+
+    let mut session = SequentialStdio::spawn(&clone)?;
+    let timeout = Duration::from_mins(3);
+    session.call("discover", "server/discover", json!({}), timeout)?;
+    let failed = session.call_tool(
+        "shallow",
+        "ripr_refresh",
+        json!({"base": "origin/main"}),
+        timeout,
+    )?;
+    let failed = structured_tool_success(&failed, "shallow ripr_refresh")?;
+    if failed.pointer("/attempt/state").and_then(Value::as_str) != Some("failed")
+        || failed
+            .pointer("/attempt/failure/detail")
+            .and_then(Value::as_str)
+            .is_none_or(|detail| !detail.contains("no merge base"))
+    {
+        return Err(format!(
+            "shallow refresh must fail on the merge base: {failed}"
+        ));
+    }
+    let recovery = failed
+        .pointer("/attempt/failure/recovery")
+        .and_then(Value::as_str)
+        .unwrap_or_default();
+    if !recovery.starts_with("fetch the missing history")
+        || !recovery.contains("fetch --unshallow")
+        || !recovery.contains("fetch-depth: 0")
+        || !recovery.contains(r#""base":"origin/main""#)
+    {
+        return Err(format!(
+            "shallow recovery must name the history fetch before the retry: {recovery}"
+        ));
+    }
+    // The whole spaced root arrives quoted as one `-C` argument.
+    let clone_text = clone.display().to_string();
+    let quoted_root = if cfg!(windows) {
+        format!("\"{clone_text}\"")
+    } else {
+        format!("'{clone_text}'")
+    };
+    if !clone_text.contains(' ')
+        || !recovery.contains(&format!("git -C {quoted_root} fetch --unshallow"))
+    {
+        return Err(format!(
+            "shallow recovery must quote the spaced root {clone_text:?} as one argument: {recovery}"
+        ));
     }
     Ok(())
 }
@@ -8639,6 +8829,271 @@ fn brief_get_gap_text_projects_the_served_document_over_stdio() -> Result<(), St
             "brief get_gap text must be a projection under half the JSON copy: {} vs {}",
             brief_text.len(),
             default_text.len()
+        ));
+    }
+    Ok(())
+}
+
+/// #15170: protocol and argument errors say what to send, in one escaping
+/// rule, with the real limit, and keep their wire codes.
+#[test]
+fn error_text_names_the_fix_for_lifecycle_params_snapshot_and_limit_errors() -> Result<(), String> {
+    let root = workspace_root()?;
+    let init_params = |overrides: Value| {
+        let mut params = json!({
+            "protocolVersion": "2025-06-18",
+            "capabilities": {},
+            "clientInfo": {"name": "t", "version": "1"}
+        });
+        for (key, value) in overrides.as_object().cloned().unwrap_or_default() {
+            params[key] = value;
+        }
+        params
+    };
+    let request = |id: &str, method: &str, params: Value| {
+        line(json!({"jsonrpc": "2.0", "id": id, "method": method, "params": params}))
+    };
+    let tool = |id: &str, name: &str, arguments: Value| {
+        request(
+            id,
+            "tools/call",
+            json!({"_meta": current_meta(), "name": name, "arguments": arguments}),
+        )
+    };
+    let mut bytes = Vec::new();
+    bytes.extend(line(
+        json!({"jsonrpc": "2.0", "id": "pre", "method": "tools/list"}),
+    )?);
+    bytes.extend(request(
+        "bad-version",
+        "initialize",
+        init_params(json!({"protocolVersion": 5})),
+    )?);
+    bytes.extend(request(
+        "null-info",
+        "initialize",
+        init_params(json!({"clientInfo": null})),
+    )?);
+    bytes.extend(request(
+        "no-caps",
+        "initialize",
+        init_params(json!({"capabilities": []})),
+    )?);
+    bytes.extend(request(
+        "discover",
+        "server/discover",
+        json!({"_meta": current_meta()}),
+    )?);
+    bytes.extend(request(
+        "no-name",
+        "tools/call",
+        json!({"_meta": current_meta()}),
+    )?);
+    bytes.extend(request(
+        "bad-args",
+        "tools/call",
+        json!({"_meta": current_meta(), "name": "ripr_list_gaps", "arguments": "x"}),
+    )?);
+    bytes.extend(request(
+        "no-uri",
+        "resources/read",
+        json!({"_meta": current_meta()}),
+    )?);
+    bytes.extend(tool(
+        "snap-abc",
+        "ripr_list_gaps",
+        json!({"snapshot_id": "abc"}),
+    )?);
+    bytes.extend(tool(
+        "snap-empty",
+        "ripr_get_gap",
+        json!({"canonical_id": "x", "snapshot_id": ""}),
+    )?);
+    bytes.extend(tool(
+        "snap-ctl",
+        "ripr_list_gaps",
+        json!({"snapshot_id": "a\u{1b}b\nc\u{202e}d"}),
+    )?);
+    // Negative control: a well-formed identity that is not current is not
+    // malformed; it reaches the snapshot state (no_snapshot before refresh).
+    let well_formed = format!("snapshot:sha256:{}", "0".repeat(64));
+    bytes.extend(tool(
+        "snap-ok",
+        "ripr_list_gaps",
+        json!({"snapshot_id": well_formed}),
+    )?);
+    // An escaped preview larger than the detail bound: the form must still
+    // be named, so it comes before the preview.
+    bytes.extend(tool(
+        "snap-long",
+        "ripr_list_gaps",
+        json!({"snapshot_id": "\u{200b}".repeat(300)}),
+    )?);
+    // Non-object params are refused by the SDK before any handler; the
+    // rejection still names the shape for the methods whose params are
+    // required.
+    bytes.extend(request("arr-init", "initialize", json!([]))?);
+    bytes.extend(request(
+        "arr-call",
+        "tools/call",
+        json!(["ripr_list_gaps"]),
+    )?);
+    bytes.extend(request("arr-read", "resources/read", json!([]))?);
+    bytes.extend(tool(
+        "class-ctl",
+        "ripr_list_gaps",
+        json!({"class": "a\u{1b}b\nc\u{202e}d"}),
+    )?);
+    let mut oversized =
+        br#"{"jsonrpc":"2.0","id":"big","method":"ping","params":{"pad":""#.to_vec();
+    oversized.extend(vec![b'a'; 300 * 1024]);
+    oversized.extend(b"\"}}\n");
+    bytes.extend(oversized);
+    let output = run_mcp(&root, &[&bytes])?;
+    let responses = response_lines(&output)?;
+    let reply = |id: &str| -> Result<&Value, String> {
+        responses
+            .iter()
+            .find(|response| response.get("id") == Some(&json!(id)))
+            .ok_or_else(|| format!("no reply for {id}: {responses:?}"))
+    };
+    let message = |id: &str| -> Result<String, String> {
+        Ok(reply(id)?
+            .pointer("/error/message")
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .to_owned())
+    };
+    let detail = |id: &str| -> Result<String, String> {
+        Ok(reply(id)?
+            .pointer("/result/structuredContent/failure/detail")
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .to_owned())
+    };
+    let code = |id: &str| -> Result<String, String> {
+        Ok(reply(id)?
+            .pointer("/result/structuredContent/failure/code")
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .to_owned())
+    };
+    let pre = message("pre")?;
+    if reply("pre")?.pointer("/error/code") != Some(&json!(-32602))
+        || !pre.contains("if no session is established yet, send an `initialize` request first")
+        || !pre.contains("io.modelcontextprotocol/protocolVersion")
+    {
+        return Err(format!(
+            "pre-initialize error must name the lifecycle: {pre}"
+        ));
+    }
+    for (id, field) in [
+        ("bad-version", "`protocolVersion`"),
+        ("null-info", "`clientInfo`"),
+        ("no-caps", "`capabilities`"),
+    ] {
+        let text = message(id)?;
+        if reply(id)?.pointer("/error/code") != Some(&json!(-32602))
+            || !text.contains(field)
+            || text.contains("_meta")
+        {
+            return Err(format!("malformed initialize must name {field}: {text}"));
+        }
+    }
+    for (id, needles) in [
+        ("no-name", ["`name` (string) is required", "`arguments`"]),
+        (
+            "bad-args",
+            ["`name` (string) is required", "must be an object"],
+        ),
+        ("no-uri", ["`uri` (string) is required", "resources/read"]),
+    ] {
+        let text = message(id)?;
+        if reply(id)?.pointer("/error/code") != Some(&json!(-32602))
+            || needles.iter().any(|needle| !text.contains(needle))
+        {
+            return Err(format!("{id} must say what to pass: {text}"));
+        }
+    }
+    for id in ["snap-abc", "snap-empty", "snap-ctl"] {
+        let text = detail(id)?;
+        if code(id)? != "invalid_argument" || !text.contains("snapshot:sha256:<64 lowercase hex") {
+            return Err(format!(
+                "{id} must be invalid_argument naming the form: {text}"
+            ));
+        }
+    }
+    let long = detail("snap-long")?;
+    if code("snap-long")? != "invalid_argument"
+        || !long.contains("snapshot:sha256:<64 lowercase hex characters>")
+        || !long.contains("omit snapshot_id for the current snapshot")
+        || !long.contains("\\u{200b}")
+    {
+        return Err(format!(
+            "a long escaped snapshot_id preview must not cut off the form: {long}"
+        ));
+    }
+    for (id, needles) in [
+        ("arr-init", ["`initialize`", "`protocolVersion` (string)"]),
+        ("arr-call", ["`tools/call`", "`name` (string)"]),
+        ("arr-read", ["`resources/read`", "`uri` (string)"]),
+    ] {
+        let text = message(id)?;
+        if reply(id)?.pointer("/error/code") != Some(&json!(-32600))
+            || !text.contains("params must be an object")
+            || needles.iter().any(|needle| !text.contains(needle))
+        {
+            return Err(format!("{id} must name the params shape: {text}"));
+        }
+    }
+    if code("snap-ok")? != "no_snapshot" {
+        return Err(format!(
+            "well-formed snapshot_id was misclassified: {}",
+            reply("snap-ok")?
+        ));
+    }
+    for id in ["snap-ctl", "class-ctl"] {
+        let text = detail(id)?;
+        if text.chars().any(|c| c.is_control() || c == '\u{202e}') || !text.contains("\\u{202e}") {
+            return Err(format!(
+                "{id} echoed raw control or bidi characters: {text:?}"
+            ));
+        }
+    }
+    let big = message("big")?;
+    if reply("big")?.pointer("/error/code") != Some(&json!(-32600)) || !big.contains("262144 bytes")
+    {
+        return Err(format!(
+            "oversize error must state the limit: {reply_big:?}",
+            reply_big = reply("big")?
+        ));
+    }
+    // After a legacy handshake a malformed repeat `initialize` reaches the
+    // served-method fallback; it names the bad field the same way.
+    let mut legacy = request("init", "initialize", init_params(json!({})))?;
+    legacy.extend(line(
+        json!({"jsonrpc": "2.0", "method": "notifications/initialized"}),
+    )?);
+    legacy.extend(request(
+        "re-init",
+        "initialize",
+        init_params(json!({"capabilities": []})),
+    )?);
+    let legacy_output = run_mcp(&root, &[&legacy])?;
+    let legacy_responses = response_lines(&legacy_output)?;
+    let re_init = legacy_responses
+        .iter()
+        .find(|response| response.get("id") == Some(&json!("re-init")))
+        .ok_or_else(|| format!("no reply for re-init: {legacy_responses:?}"))?;
+    let re_init_text = re_init
+        .pointer("/error/message")
+        .and_then(Value::as_str)
+        .unwrap_or_default();
+    if re_init.pointer("/error/code") != Some(&json!(-32602))
+        || !re_init_text.contains("`capabilities` is required and must be an object")
+    {
+        return Err(format!(
+            "a repeated malformed initialize must name its bad field: {re_init}"
         ));
     }
     Ok(())

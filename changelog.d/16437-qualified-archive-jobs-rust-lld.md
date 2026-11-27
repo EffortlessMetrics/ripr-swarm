@@ -1,0 +1,2 @@
+<!-- section: Fixed -->
+- Qualified archive packaging/installation (`candidate_harness/archive.rs`) now applies the two-job Cargo cap only on detected low-memory (`< 24 GiB`) multi-core Linux hosts (honoring explicit `CARGO_BUILD_JOBS`), and configures `rust-lld.exe` on `x86_64-pc-windows-msvc` for both extracted archive installs and `compile_harness` (`help_contract.rs`), resolving the Windows 900-second install deadline timeout and MSVC `LNK1181` harness link failure (#15216, #16437).
