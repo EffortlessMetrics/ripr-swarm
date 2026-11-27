@@ -22830,6 +22830,7 @@ mod private_method_owner_tests;
 mod push_length_tests;
 mod reexport_chain_tests;
 mod registration_binding_tests;
+mod renamed_default_runner_tests;
 mod replaced_method_tests;
 mod require_member_import_tests;
 mod rethrow_catch_tests;
