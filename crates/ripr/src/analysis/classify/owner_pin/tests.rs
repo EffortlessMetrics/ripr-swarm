@@ -6399,7 +6399,8 @@ fn any_mention_in_another_macros_arguments_stays_ambiguous() {
 /// #16388: an item macro whose tokens name `serde_json` may alias the root
 /// a bare `json!` import names, so the scan reports a `json` site and the
 /// stored candidates record `json` (the slice-boundary count then reads the
-/// file). An expression-position call naming the root does neither.
+/// file). An expression-position call naming the root does neither, and a
+/// plain `json` import reports no site.
 #[test]
 fn an_item_macro_naming_serde_json_is_a_json_binding_site() {
     let sites = |source: &str| {
@@ -6419,13 +6420,12 @@ fn an_item_macro_naming_serde_json_is_a_json_binding_site() {
         assert!(!sites(source).is_empty(), "{source}");
         assert_eq!(candidates(source), Some(true), "{source}");
     }
-    for source in [
-        "use serde_json::json;",
-        "fn f() { let _ = serde_json::json!(null); shim!(serde_json); }",
-    ] {
-        assert!(sites(source).is_empty(), "{source}");
-        assert_eq!(candidates(source), Some(false), "{source}");
-    }
+    // The import alone reports no site, though its `json` name is still a
+    // stored candidate (every trusted import is).
+    assert!(sites("use serde_json::json;").is_empty());
+    let expression = "fn f() { let _ = serde_json::json!(null); shim!(serde_json); }";
+    assert!(sites(expression).is_empty());
+    assert_eq!(candidates(expression), Some(false));
 }
 
 /// #16420: a file that declares, renames or imports a `tracing` or `log`
