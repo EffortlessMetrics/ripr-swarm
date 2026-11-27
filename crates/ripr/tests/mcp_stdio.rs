@@ -8575,7 +8575,7 @@ fn error_text_names_the_fix_for_lifecycle_params_snapshot_and_limit_errors() -> 
     };
     let pre = message("pre")?;
     if reply("pre")?.pointer("/error/code") != Some(&json!(-32602))
-        || !pre.contains("either send an `initialize` request first")
+        || !pre.contains("if no session is established yet, send an `initialize` request first")
         || !pre.contains("io.modelcontextprotocol/protocolVersion")
     {
         return Err(format!(

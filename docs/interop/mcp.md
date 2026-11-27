@@ -1062,7 +1062,7 @@ handling). Every caller-supplied value echoed into a failure `detail`
 (`canonical_id`, `class`, `language`, `snapshot_id`, `attempt_id`) goes through
 one escaping rule: control characters and bidi or zero-width format characters
 appear as visible escapes (`\n`, `\u{202e}`), and the echo is capped at 256
-characters.
+characters (32 for `class` and `language`).
 
 Unknown argument names are echoed exactly up to 128 Unicode scalar values.
 Longer names use that prefix in `failure.data.argument`, with

@@ -1068,3 +1068,38 @@ async fn signal_raised_during_a_request_ends_the_session_after_its_reply() -> Re
     session.ping("in-flight").await?;
     session.require_clean_end().await
 }
+
+/// #15289: a malformed `initialize` is named by its bad field; params whose
+/// named fields are all well formed get no field hint, so the generic
+/// lifecycle text is used instead of a wrong `clientInfo` claim.
+#[test]
+fn malformed_initialize_hint_names_only_a_field_that_is_wrong() -> Result<(), String> {
+    let base = json!({
+        "protocolVersion": "2025-11-25",
+        "capabilities": {},
+        "clientInfo": { "name": "client", "version": "1.0" },
+    });
+    if let Some(hint) = describe_malformed_initialize(Some(&base)) {
+        return Err(format!("well-formed named fields must get no hint: {hint}"));
+    }
+    let mut no_version = base.clone();
+    no_version["clientInfo"] = json!({ "name": "client" });
+    match describe_malformed_initialize(Some(&no_version)) {
+        Some(hint) if hint.contains("`clientInfo` must carry string `name` and `version`") => {}
+        other => {
+            return Err(format!(
+                "missing clientInfo.version must be named: {other:?}"
+            ));
+        }
+    }
+    let mut bad_version = base;
+    bad_version["protocolVersion"] = json!(7);
+    match describe_malformed_initialize(Some(&bad_version)) {
+        Some(hint) if hint.contains("`protocolVersion`") => {}
+        other => return Err(format!("bad protocolVersion must be named: {other:?}")),
+    }
+    match describe_malformed_initialize(None) {
+        Some(hint) if hint.contains("params must be an object") => Ok(()),
+        other => Err(format!("missing params must be named: {other:?}")),
+    }
+}

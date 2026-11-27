@@ -83,7 +83,7 @@ impl Admission {
             error.error.message = match hint {
                 Some(message) => message.into(),
                 None => format!(
-                    "{}; either send an `initialize` request first (params: protocolVersion, capabilities, clientInfo) then the `notifications/initialized` notification, or complete params._meta with the `io.modelcontextprotocol/...` keys",
+                    "{}; if no session is established yet, send an `initialize` request first (params: protocolVersion, capabilities, clientInfo) then the `notifications/initialized` notification; a session that already uses the inline lifecycle must complete params._meta with the `io.modelcontextprotocol/...` keys",
                     error.error.message
                 )
                 .into(),
@@ -170,8 +170,18 @@ fn describe_malformed_initialize(params: Option<&serde_json::Value>) -> Option<S
         .is_some_and(serde_json::Value::is_object)
     {
         "`clientInfo` is required and must be an object with string `name` and `version`"
-    } else {
+    } else if !object.get("clientInfo").is_some_and(|info| {
+        info.get("name").is_some_and(serde_json::Value::is_string)
+            && info
+                .get("version")
+                .is_some_and(serde_json::Value::is_string)
+    }) {
         "`clientInfo` must carry string `name` and `version`"
+    } else {
+        // The named fields are well formed, so the SDK refused something
+        // else (for example a nested `capabilities` member): no single
+        // field explains it, and the generic lifecycle text is used.
+        return None;
     };
     Some(format!("invalid params for `initialize`: {problem}"))
 }
