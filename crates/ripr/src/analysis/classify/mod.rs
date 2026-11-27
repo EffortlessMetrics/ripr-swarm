@@ -231,8 +231,8 @@ pub(in crate::analysis) use owner_pin::{
     helper_pins_owner_call, literal_matches_assertion_operands, mapped_boolean_assertion,
     matches_owner_ok, owner_builds_declared_error_variant, pin_scope_needs,
     primitive_bool_projected_result_identity, returned_closure_pin_required,
-    selected_unit_error_return, targeted_free_call_reaches_owner,
-    targeted_name_is_alias, targeted_type_name_is_unresolved, trait_impl_self_type_names,
+    selected_unit_error_return, targeted_free_call_reaches_owner, targeted_name_is_alias,
+    targeted_type_name_is_unresolved, trait_impl_self_type_names,
 };
 pub(in crate::analysis) use owner_pin::{
     FallibleCheckReceipt, derived_fields_compare_by_value, fallible_check_receipt,
