@@ -177,10 +177,22 @@ Updated:
 ## Pending — asserting_same_file_test_positive_control (14)
 
 Reason:
-RIPR-SPEC-0122: #15313 Summary names shared candidate lines and says No test gap when State reads no test gap found
+RIPR-SPEC-0224: report no established path for an assertion-free file-proximity row (#14808).
 
 Command:
 `cargo xtask goldens bless asserting_same_file_test_positive_control --reason "..."`
 
 Updated:
-- `expected/human.txt`
+- `expected/check.json`
+- `expected/human-full.txt`
+
+## Pending — asserting_same_file_test_positive_control (15)
+
+Reason:
+RIPR-SPEC-0008: SARIF alert messages are one plain line (#15374)
+
+Command:
+`cargo xtask goldens bless asserting_same_file_test_positive_control --reason "..."`
+
+Updated:
+- `expected/sarif.json`

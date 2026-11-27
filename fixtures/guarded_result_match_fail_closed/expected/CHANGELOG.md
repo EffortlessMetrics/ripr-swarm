@@ -748,10 +748,12 @@ Updated:
 ## Pending — guarded_result_match_fail_closed (56)
 
 Reason:
-RIPR-SPEC-0122: #15313 Summary names shared candidate lines and says No test gap when State reads no test gap found
+RIPR-SPEC-0175: a test whose every mention of the owner's name is a local closure or let binding of its body no longer relates by direct_owner_call (#14552)
 
 Command:
 `cargo xtask goldens bless guarded_result_match_fail_closed --reason "..."`
 
 Updated:
+- `expected/check.json`
 - `expected/human.txt`
+- `expected/human-full.txt`

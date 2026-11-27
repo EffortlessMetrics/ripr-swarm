@@ -120,6 +120,11 @@ pub(crate) const RUST: LanguageProfile = LanguageProfile {
 pub(crate) struct SyntheticMutant {
     pub(crate) id: String,
     pub(crate) mutator: String,
+    /// The producer-reported mutation genre, kept apart from `mutator`:
+    /// `mutator` is the identity label and may name only a site (mutmut
+    /// names a function, not an operator). Empty when the producer named
+    /// no genre; renderers normalize that to `unknown_genre`.
+    pub(crate) genre: String,
     pub(crate) replacement: String,
     pub(crate) start_line: u64,
     pub(crate) start_col: u64,
@@ -518,6 +523,7 @@ fn record(
         ),
         operator_token: "not_applicable",
         verdict_token: token.to_string(),
+        genre: mutant.genre.clone(),
     }
 }
 
@@ -879,6 +885,7 @@ mod tests {
         SyntheticMutant {
             id: id.to_string(),
             mutator: "EqualityOperator".to_string(),
+            genre: "EqualityOperator".to_string(),
             replacement: replacement.to_string(),
             start_line: start.0,
             start_col: start.1,
@@ -891,6 +898,39 @@ mod tests {
     }
 
     const SOURCE: &str = "export function discount(total: number, qty: number): number {\n  if (qty >= 10) {\n    return total * 0.9;\n  }\n  return total;\n}\n";
+
+    #[test]
+    fn record_retains_the_mutator_as_genre() {
+        let mut mutant = mutant("7", (2, 6), (2, 15), "qty > 10", "missed");
+        mutant.mutator = "ConditionalExpression".to_string();
+        mutant.genre = "ConditionalExpression".to_string();
+        let scored = record(
+            "src/price.ts",
+            &mutant,
+            CANONICAL_PRECISE,
+            Some(("exposed", "typescript:src/price.ts::discount", None)),
+        );
+        assert_eq!(scored.genre, "ConditionalExpression");
+        let excluded = record("src/price.ts", &mutant, "no_finding_on_mutated_lines", None);
+        assert_eq!(excluded.genre, "ConditionalExpression");
+    }
+
+    #[test]
+    fn record_does_not_report_an_identity_label_as_genre() {
+        // A producer that names only a site (mutmut) keeps that label for
+        // identity but reports no genre, so renderers use `unknown_genre`.
+        let mut mutant = mutant("pkg.x_f__mutmut_1", (2, 6), (2, 15), "qty > 10", "missed");
+        mutant.mutator = "pkg.x_f".to_string();
+        mutant.genre = String::new();
+        let scored = record(
+            "src/price.ts",
+            &mutant,
+            CANONICAL_PRECISE,
+            Some(("exposed", "typescript:src/price.ts::discount", None)),
+        );
+        assert_eq!(scored.genre, "");
+        assert!(scored.mutant.contains("pkg.x_f"));
+    }
 
     #[test]
     fn single_line_edit_builds_a_one_hunk_diff_and_the_mutated_file() -> Result<(), String> {

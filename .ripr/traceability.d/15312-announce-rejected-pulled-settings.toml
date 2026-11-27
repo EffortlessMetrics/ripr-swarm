@@ -1,0 +1,11 @@
+# Registers the rejected-pull announcement (#15312) under RIPR-SPEC-0136.
+[[extend]]
+id = "RIPR-SPEC-0136"
+tests = [
+  "crates/ripr/src/lsp/tests.rs::framed_lsp_rejected_pulled_settings_warn_naming_each_key_and_accepted_values",
+  "crates/ripr/src/lsp/config.rs::tests::validated_pulled_options_names_every_rejected_key_with_accepted_values",
+]
+code = [
+  "crates/ripr/src/lsp/config.rs",
+  "crates/ripr/src/lsp/backend.rs",
+]

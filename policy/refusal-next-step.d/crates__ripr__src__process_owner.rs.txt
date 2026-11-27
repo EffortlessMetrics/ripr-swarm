@@ -1,0 +1,4 @@
+crates/ripr/src/process_owner.rs|failed to probe owned process: {err}
+crates/ripr/src/process_owner.rs|failed to reap owned process: {err}
+crates/ripr/src/process_owner.rs|incomplete tree cleanup: child custody unavailable: {error}; no fallback signal sent
+crates/ripr/src/process_owner.rs|owned group was signalled but primary reap exceeded its budget

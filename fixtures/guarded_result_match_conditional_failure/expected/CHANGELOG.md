@@ -493,10 +493,10 @@ Updated:
 ## Pending — guarded_result_match_conditional_failure (36)
 
 Reason:
-RIPR-SPEC-0122: #15313 Summary names shared candidate lines and says No test gap when State reads no test gap found
+RIPR-SPEC-0003: the no-changed-Rust-line next step says ripr cannot trace the change and points at the tests that use the macro, attribute or item instead of asking to move the line (#15412)
 
 Command:
 `cargo xtask goldens bless guarded_result_match_conditional_failure --reason "..."`
 
 Updated:
-- `expected/human.txt`
+- `expected/human-full.txt`

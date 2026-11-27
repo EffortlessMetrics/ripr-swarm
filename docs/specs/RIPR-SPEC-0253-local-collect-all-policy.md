@@ -63,6 +63,10 @@ nonzero when any leaf returns an error or when aggregate report publication
 fails. If both happen, the returned error retains the leaf failures and adds
 the aggregate write error. Successful leaves cannot mask a reporting error.
 
+The allow-attribute leaf requires each unguarded source `allow` to carry its own
+reason, including inside conditional attributes. Detached fixture inputs are
+exempt from this rule. Guarded lint budgets retain their exact counts (#14679).
+
 The local-context leaf searches possible drive separators directly. It retains
 its existing ASCII drive-letter and token-boundary rules, consumes colons inside
 an accepted path as part of that path, and preserves Unicode path text and
@@ -193,3 +197,18 @@ CI publication also preserves both legacy `precommit.md` and structured local
 precommit reports. `ci_policy_publication_preserves_local_report_and_local_io_failures`
 checks existing-report preservation, unchanged local content and local write-error
 propagation through the shared publication owner.
+
+## Lint ledger TOML decoding (#13217)
+
+The lint-policy and Clippy-debt leaves read `policy/clippy-lints.toml` through
+one TOML decoder (`xtask/src/policy/lint_ledger.rs`), not a line scanner. A
+planned row keeps its overdue-MSRV and debt-collision obligations whether its
+header is commented or written as an inline array; wrong-typed known fields,
+malformed TOML and duplicate keys refuse; duplicate identities across families
+and states refuse; `clippy::x` and `x` stay separate Rust and Clippy identities;
+source order and per-entry line numbers are preserved; documentary extension
+fields and multiline non-MSRV blockers stay valid. When the ledger cannot be
+decoded, both leaves report the parse violations and stop instead of judging
+coverage from a partial ledger. The `lint_ledger.rs` unit tests, including
+`repository_ledger_has_valid_unique_rows` for the checked-in ledger, carry this
+evidence.

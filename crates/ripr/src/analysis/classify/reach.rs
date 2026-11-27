@@ -184,6 +184,11 @@ const INERT_OWNER_ATTRS: &[&str] = &[
     "rustfmt",
 ];
 
+/// Whether the attribute spelled `path` is one of [`INERT_OWNER_ATTRS`].
+pub(super) fn owner_attribute_is_inert(path: &str) -> bool {
+    INERT_OWNER_ATTRS.contains(&path)
+}
+
 /// RIPR-SPEC-0219: whether a ruled-out owner may be reported as
 /// `(unreferenced in workspace)`. Stricter than
 /// [`owner_may_be_reached_unseen`], and fail closed: the owner's file was

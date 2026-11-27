@@ -29,7 +29,7 @@ use crate::analysis::facts::{
 use crate::domain::StaticLimitKind;
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::path::{Path, PathBuf};
-use std::sync::{Mutex, OnceLock, PoisonError};
+use std::sync::{Arc, Mutex, OnceLock, PoisonError};
 
 /// Maximum call-hop depth for the transitive walk.
 pub(in crate::analysis) const MAX_TRANSITIVE_DEPTH: usize = 5;
@@ -150,7 +150,16 @@ pub(in crate::analysis) struct TransitiveReachIndex<'a> {
     /// changes within a run, but every probe of one changed function asks
     /// again, and the walk dominated a warm diff check on ripr-swarm.
     witnesses: WitnessMemo,
+    /// [`ReachGraph::names_reaching`] by owner name (#15952 follow-up). The
+    /// walk reads only the immutable graph, so an owner's set never changes
+    /// within a run, but every seam of one owner asked again: on a repo-wide
+    /// walk the repeated reverse walk was the largest single cost.
+    reaching: Mutex<HashMap<String, ReachingSlot<'a>>>,
 }
+
+/// One owner name's memoized reverse walk: filled once, shared by every seam
+/// of that owner.
+type ReachingSlot<'a> = Arc<OnceLock<Arc<HashSet<&'a str>>>>;
 
 /// Per-owner-name answers of the two transitive witness searches.
 #[derive(Default)]
@@ -1193,7 +1202,7 @@ pub(super) const IMPLICIT_DISPATCH_METHODS: &[&str] = &[
 /// The owner and the names the bounded reverse walk says reach it (#15026).
 pub(in crate::analysis) struct OwnerCallers<'a> {
     owner_name: String,
-    reaching: HashSet<&'a str>,
+    reaching: Arc<HashSet<&'a str>>,
 }
 
 impl OwnerCallers<'_> {
@@ -1222,7 +1231,7 @@ pub(in crate::analysis) struct OwnerReach<'g, 'a> {
     index: &'a RustIndex,
     graph: &'g ReachGraph<'a>,
     owner_name: String,
-    reaching: HashSet<&'a str>,
+    reaching: Arc<HashSet<&'a str>>,
     /// The owner is, or is reached from, a trait method the language calls
     /// without naming it, so any test may run it.
     implicit_dispatch: bool,
@@ -1498,9 +1507,77 @@ impl OwnerReach<'_, '_> {
                 ast::Expr::MatchExpr(expression) => {
                     expression.expr().is_none_or(|expr| !primitive(&expr))
                 }
+                // #15476: the condition and both branches are read as
+                // expressions of their own; an `if let` is a `LetExpr`,
+                // which stays refused.
+                ast::Expr::IfExpr(expression) => {
+                    expression.condition().is_none_or(|expr| !primitive(&expr))
+                }
                 _ => true,
             }
         })
+    }
+
+    /// #15476: whether `path` (`label`, `crate::label`), called in
+    /// `assertion`, is a free function
+    /// whose result is a pure function of its primitive arguments, so a call
+    /// of it on constant arguments is a constant that observes nothing the
+    /// owner does. The function must be the only indexed one of that name,
+    /// the assertion's call of it must resolve to it under the shared binding
+    /// authority, it must not be or reach the owner, its body must pass the
+    /// closed primitive grammar (no calls, bindings, items or macros; only
+    /// its primitive parameters, literals and closed enum values), and it
+    /// must return a primitive or `&'static str`, so comparing the result
+    /// runs no user code. Fail closed when the owner may be reached
+    /// implicitly.
+    pub(in crate::analysis) fn assertion_calls_closed_constant(
+        &self,
+        owner: &FunctionSummary,
+        test: &TestFact,
+        assertion: &OracleFact,
+        path: &str,
+    ) -> bool {
+        let mut segments: Vec<String> = path.split("::").map(str::to_string).collect();
+        let Some(name) = segments.pop() else {
+            return false;
+        };
+        let name = name.as_str();
+        if self.implicit_dispatch || name == self.owner_name || self.reaching.contains(name) {
+            return false;
+        }
+        let Some([candidate]) = self.graph.by_name.get(name).map(Vec::as_slice) else {
+            return false;
+        };
+        let closure = self
+            .unbounded_reaching
+            .get_or_init(|| self.graph.names_reaching_unbounded(&self.owner_name));
+        candidate.id != owner.id
+            && candidate.item.container == FunctionContainer::Free
+            && !self
+                .graph
+                .function_may_run_owner(name, &self.owner_name, closure)
+            && if segments.is_empty() {
+                self.assertion_names_candidate(test, assertion, candidate)
+            } else {
+                // A qualified call resolves through the same targeted path
+                // binding and call identity the owner-pin readers use.
+                // The targeted path reader takes the qualifier without its
+                // trailing separator (`crate`, `demo`, `super::util`).
+                let prefix = segments.join("::");
+                super::owner_pin::targeted_free_call_reaches_owner(
+                    test,
+                    candidate,
+                    Some(&prefix),
+                    self.index,
+                    &self.index.call_identity_memos.receiver_pin_syntax,
+                ) && shared_owner_call_identity(self.index, candidate).is_none_or(|identity| {
+                    identity.resolve_call(test, self.index, &segments)
+                        == super::call_identity::CallTarget::Owner
+                })
+            }
+            && !self.opposite_kind_function_may_run_owner(candidate)
+            && (super::operand_pin::declared_return_is_primitive(candidate, self.index)
+                || returns_static_str(candidate, self.index))
     }
 
     fn opposite_kind_enum_path_is_closed(
@@ -1567,7 +1644,7 @@ impl OwnerReach<'_, '_> {
                 .and_then(|segment| segment.name_ref())
                 .is_some_and(|name| {
                     let name = name.text();
-                    super::owner_pin::error_enum_compares_payload(name, self.index)
+                    super::owner_pin::derived_fields_compare_by_value(name, self.index)
                         && super::element_field_pin::drop_is_plain_in_closed_sources(
                             self.index, name,
                         )
@@ -1632,6 +1709,64 @@ impl OwnerReach<'_, '_> {
     }
 }
 
+/// #15476: the function declares `-> &'static str`, and its file declares no
+/// item named `str` that could stand for another type.
+fn returns_static_str(function: &FunctionSummary, index: &RustIndex) -> bool {
+    use ra_ap_syntax::{AstNode, ast, ast::HasName};
+    let Some(parse) = index.source_syntax.parse_fragment(&function.body) else {
+        return false;
+    };
+    let Some(returned) = parse
+        .tree()
+        .syntax()
+        .children()
+        .find_map(ast::Fn::cast)
+        .and_then(|definition| definition.ret_type())
+        .and_then(|returned| returned.ty())
+    else {
+        return false;
+    };
+    let squashed: String = returned
+        .syntax()
+        .text()
+        .to_string()
+        .split_whitespace()
+        .collect();
+    if squashed != "&'staticstr" {
+        return false;
+    }
+    let snapshot = index.source_syntax.get(index, &function.file);
+    snapshot
+        .as_ref()
+        .and_then(|snapshot| snapshot.tree())
+        .is_some_and(|tree| {
+            !tree
+                .syntax()
+                .descendants()
+                .filter_map(ast::Item::cast)
+                .any(|item| {
+                    let name = match &item {
+                        ast::Item::Struct(item) => item.name(),
+                        ast::Item::Enum(item) => item.name(),
+                        ast::Item::Union(item) => item.name(),
+                        ast::Item::TypeAlias(item) => item.name(),
+                        ast::Item::Trait(item) => item.name(),
+                        ast::Item::Module(item) => item.name(),
+                        ast::Item::Use(item) => {
+                            return item
+                                .syntax()
+                                .text()
+                                .to_string()
+                                .split(|ch: char| !(ch.is_alphanumeric() || ch == '_'))
+                                .any(|word| word == "str");
+                        }
+                        _ => None,
+                    };
+                    name.is_some_and(|name| name.text() == "str")
+                })
+        })
+}
+
 /// A small value grammar, not a type or value-flow resolver. Every name is an
 /// established primitive parameter; overloaded operators and indirect reads
 /// therefore have no admission. The bound retains uncertainty on deep syntax.
@@ -1690,6 +1825,7 @@ impl<'a> TransitiveReachIndex<'a> {
             graph: OnceLock::new(),
             effect_method_names: super::effect_carrier::EffectMethodNames::new(index),
             witnesses: WitnessMemo::default(),
+            reaching: Mutex::new(HashMap::new()),
         }
     }
 
@@ -1707,7 +1843,7 @@ impl<'a> TransitiveReachIndex<'a> {
         }
         self.witnesses
             .get_or_compute(&self.witnesses.bounded, owner_name, || {
-                let reaching = self.graph().names_reaching(owner_name);
+                let reaching = self.names_reaching(owner_name);
                 if reaching.is_empty() {
                     return None;
                 }
@@ -1737,9 +1873,9 @@ impl<'a> TransitiveReachIndex<'a> {
             .is_some_and(|functions| functions.len() > 1)
             && shared_owner_call_identity(self.index, owner).is_some()
         {
-            self.names_reaching_owner(owner)
+            Arc::new(self.names_reaching_owner(owner))
         } else {
-            graph.names_reaching(owner_name)
+            self.names_reaching(owner_name)
         };
         if reaching.is_empty() {
             return None;
@@ -1844,7 +1980,7 @@ impl<'a> TransitiveReachIndex<'a> {
         if owner_name.is_empty() {
             return None;
         }
-        let reaching = self.graph().names_reaching(owner_name);
+        let reaching = self.names_reaching(owner_name);
         if reaching.is_empty() {
             return None;
         }
@@ -2222,13 +2358,42 @@ impl<'a> TransitiveReachIndex<'a> {
             .collect()
     }
 
+    /// The memoized [`ReachGraph::names_reaching`] set of `owner_name`. The
+    /// map lock covers only the slot lookup; the walk runs under the slot's
+    /// own `OnceLock`, so workers that miss the same owner together wait for
+    /// one walk instead of each running it, and other owners are not blocked.
+    fn names_reaching(&self, owner_name: &str) -> Arc<HashSet<&'a str>> {
+        let slot = {
+            let mut memo = self.reaching.lock().unwrap_or_else(PoisonError::into_inner);
+            match memo.get(owner_name) {
+                Some(slot) => Arc::clone(slot),
+                None => Arc::clone(memo.entry(owner_name.to_string()).or_default()),
+            }
+        };
+        Arc::clone(slot.get_or_init(|| {
+            let mut reaching = self.graph().names_reaching(owner_name);
+            // Kept for the whole run, so drop the growth slack.
+            reaching.shrink_to_fit();
+            Arc::new(reaching)
+        }))
+    }
+
+    /// Drop the memoized reverse walks. They are recomputable, so a windowed
+    /// pass releases them at its window boundary with its other owner detail.
+    pub(in crate::analysis) fn clear_reaching_memo(&self) {
+        self.reaching
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .clear();
+    }
+
     /// Only the bounded reverse name walk to `owner_name`, without the
     /// implicit-dispatch and untraced-path work of [`Self::owner_reach`]:
     /// enough to order related tests by owner nearness (#15026).
     pub(in crate::analysis) fn owner_callers(&self, owner_name: &str) -> OwnerCallers<'a> {
         OwnerCallers {
             owner_name: owner_name.to_string(),
-            reaching: self.graph().names_reaching(owner_name),
+            reaching: self.names_reaching(owner_name),
         }
     }
 
@@ -2236,7 +2401,7 @@ impl<'a> TransitiveReachIndex<'a> {
     /// same-file test of one probe reuses the reverse walk (#6297).
     pub(in crate::analysis) fn owner_reach(&self, owner_name: &str) -> OwnerReach<'_, 'a> {
         let graph = self.graph();
-        let reaching = graph.names_reaching(owner_name);
+        let reaching = self.names_reaching(owner_name);
         // A trait method the language calls without naming it (`format!`
         // calls `fmt`, `==` calls `eq`, `+` calls `add`, `for` calls `next`)
         // leaves no call fact, so an owner that is one, or is reached from
@@ -2329,10 +2494,25 @@ impl<'a> TransitiveReachIndex<'a> {
 /// duplicate declarations, or a stale line/name. Never infer privacy from the
 /// function body's text: that slice starts at `fn` and omits `pub`.
 fn declaration_visibility(index: &RustIndex, function: &FunctionSummary) -> Option<String> {
-    use ra_ap_syntax::{AstNode, ast, ast::HasName, ast::HasVisibility};
+    use ra_ap_syntax::{AstNode, ast::HasVisibility};
+    Some(
+        indexed_declaration(index, function)?
+            .visibility()
+            .map(|visibility| visibility.syntax().text().to_string())
+            .unwrap_or_default(),
+    )
+}
+
+/// The one `fn` declaration the index read `function` from; `None` on
+/// malformed source, duplicate declarations, or a stale line/name.
+pub(super) fn indexed_declaration(
+    index: &RustIndex,
+    function: &FunctionSummary,
+) -> Option<ra_ap_syntax::ast::Fn> {
+    use ra_ap_syntax::{AstNode, ast, ast::HasName};
     let file = index.files().get(&function.file)?;
     let tree = index.source_syntax.get(index, &function.file)?.tree()?;
-    let declarations = tree
+    let mut declarations = tree
         .syntax()
         .descendants()
         .filter_map(ast::Fn::cast)
@@ -2348,17 +2528,9 @@ fn declaration_visibility(index: &RustIndex, function: &FunctionSummary) -> Opti
                     + 1
                     == function.start_line
             })
-        })
-        .collect::<Vec<_>>();
-    let [declaration] = declarations.as_slice() else {
-        return None;
-    };
-    Some(
-        declaration
-            .visibility()
-            .map(|visibility| visibility.syntax().text().to_string())
-            .unwrap_or_default(),
-    )
+        });
+    let declaration = declarations.next()?;
+    declarations.next().is_none().then_some(declaration)
 }
 
 /// Finds a deterministic macro-blocked witness for a `no_static_path` Rust
@@ -4390,6 +4562,70 @@ mod tests {
             workspace_authority: None,
             ..Default::default()
         })
+    }
+
+    /// #16022: the per-owner memo must hand back exactly the set the graph
+    /// walk computes, share one allocation across repeat and concurrent
+    /// lookups, keep owners apart, and recompute after a window clear.
+    #[test]
+    fn memoized_names_reaching_matches_the_graph_walk() {
+        let index = index_with(
+            vec![
+                make_fn("leaf", vec![]),
+                make_fn("mid", vec!["leaf"]),
+                make_fn("top", vec!["mid"]),
+                make_fn("side", vec!["leaf"]),
+                make_fn("lonely", vec![]),
+            ],
+            vec![make_test("covers_top", vec!["top"])],
+        );
+        let reach = TransitiveReachIndex::new(&index);
+        fn sorted<'s>(names: &HashSet<&'s str>) -> BTreeSet<&'s str> {
+            names.iter().copied().collect()
+        }
+
+        let leaf = reach.names_reaching("leaf");
+        assert_eq!(sorted(&leaf), sorted(&reach.graph().names_reaching("leaf")));
+        assert!(
+            leaf.contains("mid") && leaf.contains("top") && leaf.contains("side"),
+            "fixture must give `leaf` transitive callers, found {leaf:?}"
+        );
+        assert!(!leaf.contains("lonely"), "{leaf:?}");
+
+        // A repeat lookup is the stored set, not a second walk.
+        assert!(Arc::ptr_eq(&leaf, &reach.names_reaching("leaf")));
+        assert!(Arc::ptr_eq(&leaf, &reach.owner_callers("leaf").reaching));
+
+        // Owners do not share an entry.
+        let mid = reach.names_reaching("mid");
+        assert_eq!(sorted(&mid), sorted(&reach.graph().names_reaching("mid")));
+        assert_ne!(sorted(&mid), sorted(&leaf));
+        assert!(!mid.contains("side"), "{mid:?}");
+
+        // Racing workers all get the one stored set, equal to the walk.
+        let racing: Vec<Arc<HashSet<&str>>> = std::thread::scope(|scope| {
+            let workers: Vec<_> = (0..4)
+                .map(|_| scope.spawn(|| reach.names_reaching("top")))
+                .collect();
+            workers
+                .into_iter()
+                .filter_map(|worker| worker.join().ok())
+                .collect()
+        });
+        assert_eq!(racing.len(), 4);
+        let stored = reach.names_reaching("top");
+        assert_eq!(
+            sorted(&stored),
+            sorted(&reach.graph().names_reaching("top"))
+        );
+        assert!(racing.iter().all(|set| Arc::ptr_eq(set, &stored)));
+
+        // A window clear drops the entries; the next lookup recomputes an
+        // equal set in a new allocation.
+        reach.clear_reaching_memo();
+        let again = reach.names_reaching("leaf");
+        assert!(!Arc::ptr_eq(&leaf, &again));
+        assert_eq!(sorted(&again), sorted(&leaf));
     }
 
     #[test]

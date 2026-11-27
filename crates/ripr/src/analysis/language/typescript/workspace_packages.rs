@@ -45,10 +45,19 @@ struct WorkspacePackage {
     entry_fields: Vec<String>,
 }
 
+/// Published runtime entry whose contents are outside the workspace source index.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct BuildEntry {
+    pub(crate) main: String,
+    pub(crate) source: Option<String>,
+}
+
 /// Workspace packages by `name`; `None` marks a name two manifests share.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub(crate) struct WorkspacePackages {
     by_name: BTreeMap<String, Option<WorkspacePackage>>,
+    /// An unread root build entry, and its source only when it is unambiguous.
+    build_entries: BTreeMap<PathBuf, BuildEntry>,
     /// Normalized workspace-relative paths of the indexed source files.
     sources: BTreeSet<String>,
 }
@@ -62,7 +71,10 @@ impl WorkspacePackages {
                 dirs.insert(dir);
             }
         }
-        let mut by_name: BTreeMap<String, Option<WorkspacePackage>> = BTreeMap::new();
+        let mut packages = Self {
+            sources: workspace_files.iter().map(|file| normalize(file)).collect(),
+            ..Self::default()
+        };
         for dir in dirs {
             let Ok(text) = read_config_capped(&root.join(&dir).join("package.json")) else {
                 continue;
@@ -70,6 +82,19 @@ impl WorkspacePackages {
             let Ok(manifest) = serde_json::from_str::<serde_json::Value>(&text) else {
                 continue;
             };
+            if let Some(main) = manifest.get("main").and_then(serde_json::Value::as_str)
+                && let Some(stem) = build_entry_stem(main)
+                && !packages.sources.contains(&normalize(&dir.join(main)))
+            {
+                let source = packages.own_build_source(root, &dir, &manifest, stem);
+                packages.build_entries.insert(
+                    dir.clone(),
+                    BuildEntry {
+                        main: main.to_owned(),
+                        source,
+                    },
+                );
+            }
             let Some(name) = manifest.get("name").and_then(serde_json::Value::as_str) else {
                 continue;
             };
@@ -83,19 +108,125 @@ impl WorkspacePackages {
                 exports: manifest.get("exports").cloned(),
                 entry_fields,
             };
-            by_name
+            packages
+                .by_name
                 .entry(name.to_string())
                 .and_modify(|existing| *existing = None)
                 .or_insert(Some(package));
         }
-        Self {
-            by_name,
-            sources: workspace_files.iter().map(|file| normalize(file)).collect(),
+        packages.require_tracked_build_sources(root);
+        packages
+    }
+
+    fn require_tracked_build_sources(&mut self, root: &Path) {
+        let mut wanted = BTreeSet::new();
+        for (dir, entry) in &self.build_entries {
+            if let Some(source) = &entry.source {
+                wanted.insert(source.clone());
+                wanted.insert(normalize(&dir.join("package.json")));
+                wanted.extend(competing_package_modules(dir).map(|path| normalize(&path)));
+            }
+        }
+        if !wanted.is_empty() {
+            let tracked = crate::analysis::committed_source::tracked_files_matching(root, |file| {
+                wanted.contains(file)
+            });
+            for (dir, entry) in &mut self.build_entries {
+                if let Some(source) = &entry.source
+                    && !tracked.as_ref().is_some_and(|files| {
+                        files.contains(&normalize(&dir.join("package.json")))
+                            && files.contains(source)
+                            && !competing_package_modules(dir).any(|path| {
+                                files.contains(&normalize(&path))
+                                    || !matches!(std::fs::symlink_metadata(root.join(path)),
+                                        Err(error) if error.kind() == std::io::ErrorKind::NotFound)
+                            })
+                    })
+                {
+                    entry.source = None;
+                }
+            }
         }
     }
 
     pub(crate) fn is_empty(&self) -> bool {
-        self.by_name.is_empty()
+        self.by_name.is_empty() && self.build_entries.is_empty()
+    }
+
+    pub(crate) fn build_source_in(&self, package: &Path) -> Option<&str> {
+        self.build_entries.get(package)?.source.as_deref()
+    }
+
+    /// Resolve a relative directory import only for the package that owns the importer.
+    pub(crate) fn own_build_entry(
+        &self,
+        root: &Path,
+        importer: &Path,
+        module: &str,
+    ) -> Option<&BuildEntry> {
+        let dir = Path::new(if module.is_empty() { "." } else { module });
+        let entry = self.build_entries.get(dir)?;
+        (package_root_for_file_path(importer, root).as_deref() == Some(dir)).then_some(entry)
+    }
+
+    fn own_build_source(
+        &self,
+        root: &Path,
+        dir: &Path,
+        manifest: &serde_json::Value,
+        stem: &str,
+    ) -> Option<String> {
+        // A bundler can choose a different entry. Only one output stem across
+        // main, module and all root export conditions can support this redirect.
+        if let Some(module) = manifest.get("module")
+            && build_entry_stem(module.as_str()?) != Some(stem)
+        {
+            return None;
+        }
+        if let Some(exports) = manifest.get("exports") {
+            let targets = export_targets(exports, ".")?;
+            let mut runtime = targets.iter().filter(|target| {
+                !super::discovery::is_typescript_declaration_file(Path::new(target))
+            });
+            if build_entry_stem(runtime.next()?) != Some(stem)
+                || runtime.any(|target| build_entry_stem(target) != Some(stem))
+            {
+                return None;
+            }
+        }
+        let mirror = src_mirror(manifest.get("main")?.as_str()?)?;
+        let declared = manifest.get("source");
+        let target = match declared {
+            Some(value) => value.as_str()?,
+            None => &mirror,
+        };
+        let source = self.source_file_for(dir, target)?;
+        // A filename supplied with its extension must match as written.
+        // An absent src/entry.ts cannot designate src/entry.ts.ts.
+        if declared.is_some()
+            && Path::new(target).extension().is_some()
+            && source != normalize(&dir.join(target))
+        {
+            return None;
+        }
+        let path = Path::new(&source);
+        if super::discovery::is_test_file(path)
+            || package_root_for_file_path(path, root).as_deref() != Some(dir)
+            || crate::analysis::committed_source::snapshot_inputs_differ_in(
+                root,
+                Path::new(&normalize(dir)),
+            )
+        {
+            return None;
+        }
+        // Module identity drops extensions. Two indexed sources with the same
+        // stem would both get the relation even for a fully specified source.
+        let stem = normalize(&path.with_extension(""));
+        let siblings = SOURCE_EXTENSIONS
+            .iter()
+            .filter(|ext| self.sources.contains(&format!("{stem}{ext}")))
+            .count();
+        (siblings == 1).then_some(source)
     }
 
     /// Resolves a bare specifier to one workspace-relative source file.
@@ -191,6 +322,36 @@ impl WorkspacePackages {
 
 /// Build-output directory names a mirrored target drops before `src/`.
 const BUILD_DIRS: [&str; 8] = ["dist", "esm", "cjs", "lib", "build", "out", "es", "module"];
+
+/// A runner may prefer a sibling file or fall back to the directory index.
+/// Include TypeScript loader extensions as well as Node's JSON and native
+/// alternatives. At the workspace root we can inspect only its index.
+fn competing_package_modules(dir: &Path) -> impl Iterator<Item = PathBuf> + '_ {
+    let module = normalize(dir);
+    SOURCE_EXTENSIONS
+        .into_iter()
+        .chain([".json", ".node"])
+        .flat_map(move |extension| {
+            let index = dir.join(format!("index{extension}"));
+            let sibling =
+                (!module.is_empty()).then(|| PathBuf::from(format!("{module}{extension}")));
+            std::iter::once(index).chain(sibling)
+        })
+}
+
+/// Only ordinary package-local build paths have a source counterpart.
+fn build_entry_stem(target: &str) -> Option<&str> {
+    let path = target.strip_prefix("./").unwrap_or(target);
+    let (dir, _) = path.split_once('/')?;
+    if !BUILD_DIRS.contains(&dir)
+        || path.contains(['\\', ':'])
+        || path.split('/').any(|part| matches!(part, "" | "." | ".."))
+    {
+        return None;
+    }
+    let (stem, ext) = path.rsplit_once('.')?;
+    matches!(ext, "js" | "jsx" | "mjs" | "cjs").then_some(stem)
+}
 
 /// The `src/` counterpart of a JavaScript build-output target:
 /// `./esm/middleware.mjs` → `src/middleware`, `./index.js` → `src/index`.

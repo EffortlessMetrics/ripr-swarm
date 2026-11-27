@@ -122,3 +122,21 @@ pub(crate) fn output_language_for(path: &Path) -> DomainLanguageId {
         _ => DomainLanguageId::TypeScript,
     }
 }
+
+pub(crate) fn relative_import_base(test_file: &Path, source: &str) -> Option<PathBuf> {
+    // Lexically normalize the joined path so `..` segments collapse before
+    // probing; the test file and specifier are workspace-relative strings.
+    // PathBuf accepts forward slashes in components on every platform.
+    let test_dir = test_file.parent().unwrap_or(Path::new(""));
+    let joined = test_dir.join(source);
+    let mut base = PathBuf::new();
+    for component in joined.components() {
+        match component {
+            std::path::Component::ParentDir if base.pop() => {}
+            std::path::Component::CurDir => {}
+            std::path::Component::Normal(part) => base.push(part),
+            _ => return None,
+        }
+    }
+    Some(base)
+}

@@ -1,0 +1,8 @@
+diff --git a/src/traits.rs b/src/traits.rs
+--- a/src/traits.rs
++++ b/src/traits.rs
+@@ -8,3 +8,3 @@
+     fn contains(&self, other: Self) -> bool {
+-        self.bits() & other.bits() == other.bits()
++        self.bits() & other.bits() != other.bits()
+     }

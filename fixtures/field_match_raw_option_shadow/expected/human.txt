@@ -2,7 +2,7 @@ ripr static RIPR exposure analysis
 mode: fast
 root: fixtures/field_match_raw_option_shadow/input
 
-Summary: 3 changed behaviors checked on 1 candidate line: 0 appear noticed by tests, 3 partly noticed, 0 reached but not noticed, 0 no test path. 3 found, 0 suppressed by your settings (2 base-side evidence, not candidate edit targets)
+Summary: 3 changed behaviors checked: 0 appear noticed by tests, 3 partly noticed, 0 reached but not noticed, 0 no test path. 3 found, 0 suppressed by your settings (2 base-side evidence, not candidate edit targets)
 
 Analysis outcome: findings below (analysis complete)
   Counts: 1 changed file(s), 2 changed line(s), 1 candidate line(s), 3 changed behavior(s) checked, 3 finding(s)
@@ -44,8 +44,7 @@ Write a test for it:
 
 Hidden:
   All 2 omitted finding(s) are base-side evidence, not candidate edit targets.
-    - ./src/lib.rs:6 (weak); kind: match_arm; reason: No strong assertion was detected
-    - ./src/lib.rs:6 (weak); kind: return_value; reason: No assertion was tied to the changed value
+    - ./src/lib.rs:6 (weak); 2 changed behaviors in `charge`; kinds: match_arm, return_value; reason: No assertion was tied to the changed value
   Hidden classes:
     weak = tests reach it but check it only loosely
   Full evidence: rerun with --format human-full

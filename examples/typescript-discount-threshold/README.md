@@ -45,7 +45,11 @@ ripr check --root project --diff change.diff
 ```
 
 The summary now reads `1 appear noticed by tests` and the finding is `exposed`.
-To run the tests themselves: `cd project && npm install && npm test`.
+To run the tests themselves, use Node.js 22.12+ on the 22.x line, 24.x, or 26+:
+
+```bash
+cd project && npm install && npm test
+```
 
 Restore the starting point with
 `git checkout -- project/test/pricing.test.ts`.

@@ -452,3 +452,14 @@ Command:
 
 Updated:
 - `expected/human.txt`
+
+## Pending — predicate_oracle_execution_shadowed (36)
+
+Reason:
+RIPR-SPEC-0197: the repo-seam view no longer credits the rebound assertion macro (#15183), so ripr repair agrees with check and the repair-vs-check conflict advisory is replaced by the missing-evidence refusal; check classification and JSON unchanged
+
+Command:
+`cargo xtask goldens bless predicate_oracle_execution_shadowed --reason "..."`
+
+Updated:
+- `expected/human.txt`

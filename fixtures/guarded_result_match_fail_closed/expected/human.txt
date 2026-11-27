@@ -2,7 +2,7 @@ ripr static RIPR exposure analysis
 mode: fast
 root: fixtures/guarded_result_match_fail_closed/input
 
-Summary: 2 changed behaviors checked on 1 candidate line: 0 appear noticed by tests, 1 partly noticed, 1 reached but not noticed, 0 no test path. 2 found, 0 suppressed by your settings
+Summary: 2 changed behaviors checked: 0 appear noticed by tests, 1 partly noticed, 1 reached but not noticed, 0 no test path. 2 found, 0 suppressed by your settings
 
 Analysis outcome: findings below (analysis complete)
   Counts: 1 changed file(s), 2 changed line(s), 1 candidate line(s), 2 changed behavior(s) checked, 2 finding(s)
@@ -32,7 +32,7 @@ Start here:
       no test path = no test path found; unclear = analysis limited, not a verdict;
       found = listed for review; suppressed by your settings = hidden by your suppression policy;
       base-side = evidence from the old code, not an edit target; candidate line = changed line ripr considers
-    - reach yes: Related tests appear to reach expect_response: direct_owner_call_keeps_the_file_related, message_only_error_predicate_never_pins, shadowed_callee_never_credits_the_seam
+    - reach yes: Related tests appear to reach expect_response: direct_owner_call_keeps_the_file_related, message_only_error_predicate_never_pins, swallowed_error_arm_never_credits
     - infection yes: Reachable tests can plausibly activate this changed behavior
     - 19 more detail line(s) in --format human-full
 

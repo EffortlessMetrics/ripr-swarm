@@ -299,10 +299,10 @@ Updated:
 ## Pending — rust_same_test_disconnected_effect_oracle (23)
 
 Reason:
-RIPR-SPEC-0122: #15313 Summary names shared candidate lines and says No test gap when State reads no test gap found
+RIPR-SPEC-0122: the call_deletion change type reads "a line that makes a call changed"; the family names the probe ripr runs on a changed call, not the edit (#15271); human text only, check.json unchanged
 
 Command:
 `cargo xtask goldens bless rust_same_test_disconnected_effect_oracle --reason "..."`
 
 Updated:
-- `expected/human.txt`
+- `expected/human-full.txt`

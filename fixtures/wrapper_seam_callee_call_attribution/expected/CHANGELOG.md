@@ -569,7 +569,7 @@ Updated:
 ## Pending — wrapper_seam_callee_call_attribution (43)
 
 Reason:
-RIPR-SPEC-0122: #15313 Summary names shared candidate lines and says No test gap when State reads no test gap found
+RIPR-SPEC-0122: the Summary names findings whose reach is a test link ripr could not confirm (#15295)
 
 Command:
 `cargo xtask goldens bless wrapper_seam_callee_call_attribution --reason "..."`

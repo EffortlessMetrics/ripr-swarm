@@ -457,7 +457,7 @@ Updated:
 ## Pending — split_test_boundary_oracle (38)
 
 Reason:
-RIPR-SPEC-0122: #15313 Summary names shared candidate lines and says No test gap when State reads no test gap found
+RIPR-SPEC-0186: the repair explanation identifies the missing exact boundary assertion when the fixture has no paired oracle (#15664).
 
 Command:
 `cargo xtask goldens bless split_test_boundary_oracle --reason "..."`

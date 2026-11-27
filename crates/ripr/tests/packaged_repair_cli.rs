@@ -12,6 +12,8 @@
 mod boundary_gap;
 #[path = "common/mod.rs"]
 mod common;
+#[path = "packaged_repair_cli/no_path_start.rs"]
+mod no_path_start;
 
 use boundary_gap::{
     AFTER_TESTS, BEFORE_TESTS, EQUALITY_SELECTOR, InstalledCandidate, JourneyRoots, boundary_seam,

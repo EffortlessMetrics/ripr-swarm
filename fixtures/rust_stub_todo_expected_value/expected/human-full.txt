@@ -39,6 +39,7 @@ Evidence
   - related test src/lib.rs:13 below_threshold uses strong exact value oracle: assert_eq!(discounted_total(50, 100), 50);
   - related test src/lib.rs:18 boundary_discriminator uses an unclassified oracle, not graded against this probe: assert_eq!(discounted_total(amount, threshold), expected);
   - related test src/lib.rs:15 far_above_threshold uses strong exact value oracle: assert_eq!(discounted_total(10_000, 100), 9_990);
+  - related test src/lib.rs:28 raw_template_boundary uses an unclassified oracle, not graded against this probe: assert_eq!(discounted_total(100, 100).to_string(), format!(r"{expected}"));
   - source assertion argument value 50 at line 13
   - source function argument value amount = 50 at line 13
   - source function argument value discount_threshold = 100 at line 13
@@ -47,7 +48,7 @@ Evidence
   - source function argument value discount_threshold = 100 at line 15
   - source function argument value amount = 100 at line 22
   - source function argument value amount == discount_threshold at line 22
-  - source values (showing 8 of 9 read from related tests; full list in --format json)
+  - source values (showing 8 of 13 read from related tests; full list in --format json)
   - assertion not credited: `assert_eq!` in boundary_discriminator at src/lib.rs:22: the expected value is an unfilled placeholder macro (`todo!`, `unimplemented!`, `unreachable!` or `panic!`), so the assertion pins no value
 
 Weakness

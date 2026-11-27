@@ -209,10 +209,10 @@ Updated:
 ## Pending — effect_assertion_runs_compact_mixed (16)
 
 Reason:
-RIPR-SPEC-0122: #15313 Summary names shared candidate lines and says No test gap when State reads no test gap found
+RIPR-SPEC-0122: the call_deletion change type reads "a line that makes a call changed"; the family names the probe ripr runs on a changed call, not the edit (#15271); human text only, check.json unchanged
 
 Command:
 `cargo xtask goldens bless effect_assertion_runs_compact_mixed --reason "..."`
 
 Updated:
-- `expected/human.txt`
+- `expected/human-full.txt`

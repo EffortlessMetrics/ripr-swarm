@@ -26,10 +26,11 @@ Updated:
 ## Pending — predicate_oracle_disabled_mod_refused (3)
 
 Reason:
-RIPR-SPEC-0122: #15313 Summary names shared candidate lines and says No test gap when State reads no test gap found
+RIPR-SPEC-0153: a mod behind #[cfg(any())] mounts nothing, rustc never compiles its file (#15877)
 
 Command:
 `cargo xtask goldens bless predicate_oracle_disabled_mod_refused --reason "..."`
 
 Updated:
+- `expected/check.json`
 - `expected/human.txt`

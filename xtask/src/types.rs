@@ -18,11 +18,15 @@ pub(crate) struct FilePolicyAllowEntry {
     pub(crate) covered_by: Option<Vec<String>>,
     pub(crate) covered_by_unix: Option<Vec<String>>,
     pub(crate) covered_by_windows: Option<Vec<String>>,
+    pub(crate) covered_by_linux: Option<Vec<String>>,
+    pub(crate) covered_by_macos: Option<Vec<String>>,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum FilePolicyHost {
     Unix,
+    Linux,
+    Macos,
     Windows,
 }
 

@@ -121,6 +121,17 @@ fn portfolio(source: &str, build_jobs: NonZeroUsize) -> Result<Vec<Step>, String
                 .split_once(':')
                 .ok_or("malformed step environment")?;
             let value = value.trim().trim_matches('"');
+            if key == "FRESH_TREE" {
+                if *name != "Golden and fixture contracts"
+                    || value != "${{ steps.goldens_fresh_merge.outputs.worktree }}"
+                    || environment.iter().any(|(existing, _)| existing == key)
+                {
+                    return Err(format!("unsupported event projection: {key}"));
+                }
+                // The rehearsal already runs on its detached subject.
+                environment.push((key.to_owned(), String::new()));
+                continue;
+            }
             if key == "CARGO_BUILD_JOBS" {
                 if *name != "Strict workspace Clippy" || value != CLIPPY_BUILD_JOBS {
                     return Err(format!("unsupported build-job projection: {name}"));
@@ -151,10 +162,22 @@ fn portfolio(source: &str, build_jobs: NonZeroUsize) -> Result<Vec<Step>, String
                 "ADMISSION_HEAD" => Some(("${{ inputs.admission-head }}", Some(""))),
                 "SYNC_SOURCE" => Some(("${{ inputs.history-sync-source }}", Some(""))),
                 "SYNC_BASE" => Some(("${{ inputs.history-sync-base }}", Some(""))),
+                // The honesty digest has no qualification profile or admitted
+                // base in the detached rehearsal; empty inputs select its
+                // local merge-base mode, as before the step took any input.
+                "RIPR_HONESTY_PROFILE" => Some(("${{ inputs.proof-profile }}", Some(""))),
+                "RIPR_HONESTY_ADMITTED_BASE" => {
+                    Some(("${{ steps.admitted.outputs.base }}", Some("")))
+                }
                 _ => None,
             };
             if let Some((expected, projected)) = projection {
-                if *name != "PR evidence" || value != expected {
+                let owner = if key.starts_with("RIPR_HONESTY_") {
+                    "Evidence promotion honesty"
+                } else {
+                    "PR evidence"
+                };
+                if *name != owner || value != expected {
                     return Err(format!("unsupported event projection: {key}"));
                 }
                 if let Some(projected) = projected {
@@ -165,6 +188,11 @@ fn portfolio(source: &str, build_jobs: NonZeroUsize) -> Result<Vec<Step>, String
             } else {
                 environment.push((key.to_owned(), value.to_owned()));
             }
+        }
+        if *name == "Golden and fixture contracts"
+            && !environment.iter().any(|(key, _)| key == "FRESH_TREE")
+        {
+            return Err("missing detached golden worktree projection".into());
         }
         if runs[0].text.contains("${{") {
             return Err(format!("unsupported run expression: {name}"));
@@ -817,6 +845,57 @@ mod tests {
     }
 
     #[test]
+    fn detached_goldens_bind_only_the_reviewed_worktree_projection() -> Result<(), String> {
+        let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("..");
+        let source = fs::read_to_string(root.join(OWNER)).map_err(|error| error.to_string())?;
+        let jobs = self_hosted_build_jobs("true", "6")?;
+        let steps = portfolio(&source, jobs)?;
+        let golden = steps
+            .iter()
+            .find(|step| step.name == "Golden and fixture contracts")
+            .ok_or("missing golden step")?;
+        if !golden
+            .environment
+            .contains(&("FRESH_TREE".into(), String::new()))
+        {
+            return Err("detached golden step could inherit an ambient worktree".into());
+        }
+        let field = "          FRESH_TREE: ${{ steps.goldens_fresh_merge.outputs.worktree }}";
+        for (changed, expected) in [
+            (
+                source.replacen(field, "", 1),
+                "missing detached golden worktree projection",
+            ),
+            (
+                source.replacen(field, &format!("{field}\n{field}"), 1),
+                "unsupported event projection: FRESH_TREE",
+            ),
+            (
+                source.replacen(field, "          FRESH_TREE: /other", 1),
+                "unsupported event projection: FRESH_TREE",
+            ),
+            (
+                source.replacen(field, "          FRESH_TREE: ${{ inputs.unknown }}", 1),
+                "unsupported event projection: FRESH_TREE",
+            ),
+            (
+                source.replace(
+                    "id: formatting",
+                    &format!("id: formatting\n        env:\n{field}"),
+                ),
+                "unsupported event projection: FRESH_TREE",
+            ),
+        ] {
+            if portfolio(&changed, jobs).err().as_deref() != Some(expected) {
+                return Err(format!(
+                    "detached golden projection should refuse: {expected}"
+                ));
+            }
+        }
+        Ok(())
+    }
+
+    #[test]
     fn detached_evidence_does_not_inherit_admission_or_change_subject_projection()
     -> Result<(), String> {
         let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("..");
@@ -836,6 +915,11 @@ mod tests {
             ("${{ inputs.admission-head }}", "ADMISSION_HEAD"),
             ("${{ inputs.history-sync-source }}", "SYNC_SOURCE"),
             ("${{ inputs.history-sync-base }}", "SYNC_BASE"),
+            ("${{ inputs.proof-profile }}", "RIPR_HONESTY_PROFILE"),
+            (
+                "${{ steps.admitted.outputs.base }}",
+                "RIPR_HONESTY_ADMITTED_BASE",
+            ),
         ] {
             for replacement in ["${{ inputs.unknown }}", "history_sync_admitted"] {
                 let changed = source.replace(expression, replacement);

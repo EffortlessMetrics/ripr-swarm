@@ -377,7 +377,7 @@ Updated:
 ## Pending — field_match_macro_option_shadow (29)
 
 Reason:
-RIPR-SPEC-0122: #15313 Summary names shared candidate lines and says No test gap when State reads no test gap found
+RIPR-SPEC-0259: #13037 amendment, a weak finding whose related test already asserts an exact value names the unestablished link instead of the strengthen template; static class unchanged
 
 Command:
 `cargo xtask goldens bless field_match_macro_option_shadow --reason "..."`

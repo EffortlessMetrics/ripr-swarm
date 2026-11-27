@@ -217,10 +217,11 @@ Updated:
 ## Pending — module_reach_absolute_import_rebound (17)
 
 Reason:
-RIPR-SPEC-0122: #15313 Summary names shared candidate lines and says No test gap when State reads no test gap found
+RIPR-SPEC-0115: plain-words next step drops the internal analyzer route name (#15309)
 
 Command:
 `cargo xtask goldens bless module_reach_absolute_import_rebound --reason "..."`
 
 Updated:
+- `expected/check.json`
 - `expected/human.txt`

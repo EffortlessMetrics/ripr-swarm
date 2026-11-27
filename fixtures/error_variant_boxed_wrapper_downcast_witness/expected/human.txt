@@ -2,7 +2,7 @@ ripr static RIPR exposure analysis
 mode: fast
 root: fixtures/error_variant_boxed_wrapper_downcast_witness/input
 
-Summary: 16 changed behaviors checked on 8 candidate lines: 4 appear noticed by tests, 10 partly noticed, 2 reached but not noticed, 0 no test path. 16 found, 0 suppressed by your settings
+Summary: 16 changed behaviors checked: 4 appear noticed by tests, 10 partly noticed, 2 reached but not noticed, 0 no test path. 16 found, 0 suppressed by your settings
 
 Analysis outcome: findings below (analysis complete)
   Counts: 1 changed file(s), 16 changed line(s), 8 candidate line(s), 16 changed behavior(s) checked, 16 finding(s)

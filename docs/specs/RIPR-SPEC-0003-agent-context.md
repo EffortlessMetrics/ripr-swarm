@@ -114,6 +114,15 @@ underspecified metadata, before applying the packet's display limit. A zero
 display limit preserves the total. Rendering preserves producer evidence,
 witnesses, selection and identity algorithms.
 
+### Missing-discriminator parity with check (#10516)
+
+The packet's top-level `missing_discriminators` entries equal the
+`ripr check --json` finding's entries field for field: `value`, `reason` and
+`flow_sink` (`{kind, text, line}` or `null`), rendered through check's own
+flow-sink writer. The field is additive within packet version `1.1`.
+`witness.missing_discriminators` keeps the full fact, including the sink
+`owner` and the discriminator `shape`.
+
 ### Unknown finding guidance (#7477)
 
 For `infection_unknown`, `propagation_unknown`, and `static_unknown`, explain
@@ -186,6 +195,9 @@ Tests:
   with literal finding/class/reason identity, human/JSON section parity, and
   scope-preserving context replay
 - retained boundary, missing-assertion, and no-path verdict-change recipes
+- `crates/ripr/tests/context_json_schema.rs` — every packet of eight committed
+  fixtures and a git fixture conforms to `schemas/ripr/context.schema.json`,
+  and its top-level `missing_discriminators` equal its check finding's array
 - `crates/ripr/tests/cli_smoke/selector_language_recovery.rs` — fresh disabled,
   unavailable-binary and enabled-run scope, exact retry replay from a separate
   Git repository, capped samples, mixed-language hits, and artifact non-invention;

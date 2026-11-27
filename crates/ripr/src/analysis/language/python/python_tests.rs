@@ -867,6 +867,36 @@ fn cli_output_discriminators_cover_echo_streams_and_exit_codes() {
 }
 
 #[test]
+fn appended_value_discriminator_names_contents_not_length() {
+    assert_eq!(
+        python_output_or_call_discriminator("buf.append(msg.upper())").as_deref(),
+        Some("buf contents == [<expected value>]")
+    );
+    assert_eq!(
+        python_output_or_call_discriminator("self.buf.append(msg)").as_deref(),
+        Some("buf contents == [<expected value>]")
+    );
+    assert_eq!(python_output_or_call_discriminator("buf.append()"), None);
+    // A literal argument keeps the literal-based shapes below it.
+    assert_eq!(
+        python_output_or_call_discriminator("print(\"queued\")").as_deref(),
+        Some("output contains \"queued\"")
+    );
+    // A literal append keeps its concrete discriminator; the placeholder
+    // contents shape applies only when no string literal names the value.
+    assert_eq!(
+        python_output_or_call_discriminator("buf.append(\"queued\")").as_deref(),
+        Some("call includes \"queued\"")
+    );
+    assert_eq!(
+        python_output_or_call_discriminator("buf.append('queued')").as_deref(),
+        Some("call includes 'queued'")
+    );
+    // `.push(` is not a Python list append and names no discriminator.
+    assert_eq!(python_output_or_call_discriminator("buf.push(msg)"), None);
+}
+
+#[test]
 fn extract_tests_records_vararg_and_kwarg_pytest_fixtures() -> Result<(), String> {
     let tests = extract_tests(
         Path::new("tests/test_fixtures.py"),
@@ -1278,6 +1308,7 @@ fn body_calls_owner_filters_comments_and_string_mentions() {
         decorator_lines: None,
         parameters: Vec::new(),
         reexport_modules: Vec::new(),
+        class_reexport_modules: Vec::new(),
         star_exported: false,
         ambiguous_src_modules: Vec::new(),
         test_local_shadows: Vec::new(),
@@ -1285,6 +1316,8 @@ fn body_calls_owner_filters_comments_and_string_mentions() {
         module_constants: Vec::new(),
         same_class_callees: Vec::new(),
         module_callees: Vec::new(),
+        route_scope_callees: Vec::new(),
+        route_scope_awaited_callees: Vec::new(),
         class_path: String::new(),
         term_facts: Default::default(),
         class_facts: Default::default(),
@@ -1295,6 +1328,7 @@ fn body_calls_owner_filters_comments_and_string_mentions() {
         nested_result_discarded: false,
         trusted_stdlib_click_alias: false,
         route_returns_body: false,
+        route_dispatch_ambiguous: false,
         route_dict_annotation: false,
     };
 
@@ -1890,6 +1924,7 @@ fn imported_module_matches_owner_compares_last_segment_to_owner_stem() {
         decorator_lines: None,
         parameters: Vec::new(),
         reexport_modules: Vec::new(),
+        class_reexport_modules: Vec::new(),
         star_exported: false,
         ambiguous_src_modules: Vec::new(),
         test_local_shadows: Vec::new(),
@@ -1897,6 +1932,8 @@ fn imported_module_matches_owner_compares_last_segment_to_owner_stem() {
         module_constants: Vec::new(),
         same_class_callees: Vec::new(),
         module_callees: Vec::new(),
+        route_scope_callees: Vec::new(),
+        route_scope_awaited_callees: Vec::new(),
         class_path: String::new(),
         term_facts: Default::default(),
         class_facts: Default::default(),
@@ -1907,6 +1944,7 @@ fn imported_module_matches_owner_compares_last_segment_to_owner_stem() {
         nested_result_discarded: false,
         trusted_stdlib_click_alias: false,
         route_returns_body: false,
+        route_dispatch_ambiguous: false,
         route_dict_annotation: false,
     };
     let dotted = PythonImport {
@@ -1963,6 +2001,7 @@ fn shared_src_layout_module_name_identifies_owner_only_from_its_project() -> Res
         decorator_lines: None,
         parameters: Vec::new(),
         reexport_modules: Vec::new(),
+        class_reexport_modules: Vec::new(),
         star_exported: false,
         ambiguous_src_modules: Vec::new(),
         test_local_shadows: Vec::new(),
@@ -1970,6 +2009,8 @@ fn shared_src_layout_module_name_identifies_owner_only_from_its_project() -> Res
         module_constants: Vec::new(),
         same_class_callees: Vec::new(),
         module_callees: Vec::new(),
+        route_scope_callees: Vec::new(),
+        route_scope_awaited_callees: Vec::new(),
         class_path: String::new(),
         term_facts: Default::default(),
         class_facts: Default::default(),
@@ -1980,6 +2021,7 @@ fn shared_src_layout_module_name_identifies_owner_only_from_its_project() -> Res
         nested_result_discarded: false,
         trusted_stdlib_click_alias: false,
         route_returns_body: false,
+        route_dispatch_ambiguous: false,
         route_dict_annotation: false,
     };
     let sources = [
@@ -2058,6 +2100,7 @@ fn nested_src_layout_rival_claims_tests_under_its_own_root() {
         decorator_lines: None,
         parameters: Vec::new(),
         reexport_modules: Vec::new(),
+        class_reexport_modules: Vec::new(),
         star_exported: false,
         ambiguous_src_modules: Vec::new(),
         test_local_shadows: Vec::new(),
@@ -2065,6 +2108,8 @@ fn nested_src_layout_rival_claims_tests_under_its_own_root() {
         module_constants: Vec::new(),
         same_class_callees: Vec::new(),
         module_callees: Vec::new(),
+        route_scope_callees: Vec::new(),
+        route_scope_awaited_callees: Vec::new(),
         class_path: String::new(),
         term_facts: Default::default(),
         class_facts: Default::default(),
@@ -2075,6 +2120,7 @@ fn nested_src_layout_rival_claims_tests_under_its_own_root() {
         nested_result_discarded: false,
         trusted_stdlib_click_alias: false,
         route_returns_body: false,
+        route_dispatch_ambiguous: false,
         route_dict_annotation: false,
     };
     let sources = [
@@ -2123,6 +2169,7 @@ fn reexport_package_name_with_a_same_project_plain_module_identifies_neither() {
         decorator_lines: None,
         parameters: Vec::new(),
         reexport_modules: vec!["core".to_string()],
+        class_reexport_modules: Vec::new(),
         star_exported: false,
         ambiguous_src_modules: Vec::new(),
         test_local_shadows: Vec::new(),
@@ -2130,6 +2177,8 @@ fn reexport_package_name_with_a_same_project_plain_module_identifies_neither() {
         module_constants: Vec::new(),
         same_class_callees: Vec::new(),
         module_callees: Vec::new(),
+        route_scope_callees: Vec::new(),
+        route_scope_awaited_callees: Vec::new(),
         class_path: String::new(),
         term_facts: Default::default(),
         class_facts: Default::default(),
@@ -2140,6 +2189,7 @@ fn reexport_package_name_with_a_same_project_plain_module_identifies_neither() {
         nested_result_discarded: false,
         trusted_stdlib_click_alias: false,
         route_returns_body: false,
+        route_dispatch_ambiguous: false,
         route_dict_annotation: false,
     };
     let import = PythonImport {
@@ -2192,6 +2242,7 @@ fn reexport_package_receiver_spelling_is_withheld_when_the_package_is_shadowed()
         decorator_lines: None,
         parameters: Vec::new(),
         reexport_modules: vec!["core".to_string()],
+        class_reexport_modules: Vec::new(),
         star_exported: false,
         ambiguous_src_modules: Vec::new(),
         test_local_shadows: Vec::new(),
@@ -2199,6 +2250,8 @@ fn reexport_package_receiver_spelling_is_withheld_when_the_package_is_shadowed()
         module_constants: Vec::new(),
         same_class_callees: Vec::new(),
         module_callees: Vec::new(),
+        route_scope_callees: Vec::new(),
+        route_scope_awaited_callees: Vec::new(),
         class_path: String::new(),
         term_facts: Default::default(),
         class_facts: Default::default(),
@@ -2209,6 +2262,7 @@ fn reexport_package_receiver_spelling_is_withheld_when_the_package_is_shadowed()
         nested_result_discarded: false,
         trusted_stdlib_click_alias: false,
         route_returns_body: false,
+        route_dispatch_ambiguous: false,
         route_dict_annotation: false,
     };
     let mut test = align_importing_test("core", "");
@@ -2252,6 +2306,7 @@ fn src_short_name_with_a_same_project_plain_module_identifies_neither() {
         decorator_lines: None,
         parameters: Vec::new(),
         reexport_modules: Vec::new(),
+        class_reexport_modules: Vec::new(),
         star_exported: false,
         ambiguous_src_modules: Vec::new(),
         test_local_shadows: Vec::new(),
@@ -2259,6 +2314,8 @@ fn src_short_name_with_a_same_project_plain_module_identifies_neither() {
         module_constants: Vec::new(),
         same_class_callees: Vec::new(),
         module_callees: Vec::new(),
+        route_scope_callees: Vec::new(),
+        route_scope_awaited_callees: Vec::new(),
         class_path: String::new(),
         term_facts: Default::default(),
         class_facts: Default::default(),
@@ -2269,6 +2326,7 @@ fn src_short_name_with_a_same_project_plain_module_identifies_neither() {
         nested_result_discarded: false,
         trusted_stdlib_click_alias: false,
         route_returns_body: false,
+        route_dispatch_ambiguous: false,
         route_dict_annotation: false,
     };
     let import = |module: &str| PythonImport {
@@ -2372,6 +2430,7 @@ fn same_stem_related_handles_missing_stems() {
         decorator_lines: None,
         parameters: Vec::new(),
         reexport_modules: Vec::new(),
+        class_reexport_modules: Vec::new(),
         star_exported: false,
         ambiguous_src_modules: Vec::new(),
         test_local_shadows: Vec::new(),
@@ -2379,6 +2438,8 @@ fn same_stem_related_handles_missing_stems() {
         module_constants: Vec::new(),
         same_class_callees: Vec::new(),
         module_callees: Vec::new(),
+        route_scope_callees: Vec::new(),
+        route_scope_awaited_callees: Vec::new(),
         class_path: String::new(),
         term_facts: Default::default(),
         class_facts: Default::default(),
@@ -2389,11 +2450,13 @@ fn same_stem_related_handles_missing_stems() {
         nested_result_discarded: false,
         trusted_stdlib_click_alias: false,
         route_returns_body: false,
+        route_dispatch_ambiguous: false,
         route_dict_annotation: false,
     };
     let test = PythonTest {
         setup_receivers: Vec::new(),
         fixture_defs: Vec::new(),
+        value_helpers: Vec::new(),
         direct_parametrized: Vec::new(),
         unsettled_indirect: Vec::new(),
         parametrize_argnames: Vec::new(),
@@ -4313,6 +4376,7 @@ fn test_has_mocked_module_recognizes_dotted_patch_decorator() {
     let mocked = PythonTest {
         setup_receivers: Vec::new(),
         fixture_defs: Vec::new(),
+        value_helpers: Vec::new(),
         direct_parametrized: Vec::new(),
         unsettled_indirect: Vec::new(),
         parametrize_argnames: Vec::new(),
@@ -4341,6 +4405,7 @@ fn test_has_mocked_module_recognizes_dotted_patch_decorator() {
     let bare = PythonTest {
         setup_receivers: Vec::new(),
         fixture_defs: Vec::new(),
+        value_helpers: Vec::new(),
         direct_parametrized: Vec::new(),
         unsettled_indirect: Vec::new(),
         parametrize_argnames: Vec::new(),
@@ -4367,6 +4432,7 @@ fn test_has_mocked_module_recognizes_dotted_patch_decorator() {
     let clean = PythonTest {
         setup_receivers: Vec::new(),
         fixture_defs: Vec::new(),
+        value_helpers: Vec::new(),
         direct_parametrized: Vec::new(),
         unsettled_indirect: Vec::new(),
         parametrize_argnames: Vec::new(),
@@ -4994,6 +5060,7 @@ fn strong_oracle_observes_owner_distinguishes_aligned_from_orthogonal() {
         decorator_lines: None,
         parameters: Vec::new(),
         reexport_modules: Vec::new(),
+        class_reexport_modules: Vec::new(),
         star_exported: false,
         ambiguous_src_modules: Vec::new(),
         test_local_shadows: Vec::new(),
@@ -5001,6 +5068,8 @@ fn strong_oracle_observes_owner_distinguishes_aligned_from_orthogonal() {
         module_constants: Vec::new(),
         same_class_callees: Vec::new(),
         module_callees: Vec::new(),
+        route_scope_callees: Vec::new(),
+        route_scope_awaited_callees: Vec::new(),
         class_path: String::new(),
         term_facts: Default::default(),
         class_facts: Default::default(),
@@ -5011,6 +5080,7 @@ fn strong_oracle_observes_owner_distinguishes_aligned_from_orthogonal() {
         nested_result_discarded: false,
         trusted_stdlib_click_alias: false,
         route_returns_body: false,
+        route_dispatch_ambiguous: false,
         route_dict_annotation: false,
     };
     let line = "return retry_state.attempt_number > self.max_attempt_number";
@@ -5084,6 +5154,7 @@ fn strong_oracle_observes_owner_resolves_import_alias() {
         decorator_lines: None,
         parameters: Vec::new(),
         reexport_modules: Vec::new(),
+        class_reexport_modules: Vec::new(),
         star_exported: false,
         ambiguous_src_modules: Vec::new(),
         test_local_shadows: Vec::new(),
@@ -5091,6 +5162,8 @@ fn strong_oracle_observes_owner_resolves_import_alias() {
         module_constants: Vec::new(),
         same_class_callees: Vec::new(),
         module_callees: Vec::new(),
+        route_scope_callees: Vec::new(),
+        route_scope_awaited_callees: Vec::new(),
         class_path: String::new(),
         term_facts: Default::default(),
         class_facts: Default::default(),
@@ -5101,6 +5174,7 @@ fn strong_oracle_observes_owner_resolves_import_alias() {
         nested_result_discarded: false,
         trusted_stdlib_click_alias: false,
         route_returns_body: false,
+        route_dispatch_ambiguous: false,
         route_dict_annotation: false,
     };
     let line = "return amount + 2";
@@ -5124,6 +5198,7 @@ fn strong_oracle_observes_owner_resolves_import_alias() {
     let alias_test = PythonTest {
         setup_receivers: Vec::new(),
         fixture_defs: Vec::new(),
+        value_helpers: Vec::new(),
         direct_parametrized: Vec::new(),
         unsettled_indirect: Vec::new(),
         parametrize_argnames: Vec::new(),
@@ -5178,6 +5253,7 @@ fn align_owner(name: &str, qualified: &str) -> PythonOwner {
         decorator_lines: None,
         parameters: Vec::new(),
         reexport_modules: Vec::new(),
+        class_reexport_modules: Vec::new(),
         star_exported: false,
         ambiguous_src_modules: Vec::new(),
         test_local_shadows: Vec::new(),
@@ -5185,6 +5261,8 @@ fn align_owner(name: &str, qualified: &str) -> PythonOwner {
         module_constants: Vec::new(),
         same_class_callees: Vec::new(),
         module_callees: Vec::new(),
+        route_scope_callees: Vec::new(),
+        route_scope_awaited_callees: Vec::new(),
         class_path: String::new(),
         term_facts: Default::default(),
         class_facts: Default::default(),
@@ -5195,6 +5273,7 @@ fn align_owner(name: &str, qualified: &str) -> PythonOwner {
         nested_result_discarded: false,
         trusted_stdlib_click_alias: false,
         route_returns_body: false,
+        route_dispatch_ambiguous: false,
         route_dict_annotation: false,
     }
 }
@@ -5224,6 +5303,7 @@ fn align_importing_test(imported: &str, module: &str) -> PythonTest {
         activation_controls: Vec::new(),
         setup_receivers: Vec::new(),
         fixture_defs: Vec::new(),
+        value_helpers: Vec::new(),
         direct_parametrized: Vec::new(),
         unsettled_indirect: Vec::new(),
         parametrize_argnames: Vec::new(),
@@ -5275,6 +5355,7 @@ fn sink_alignment_is_alias_when_oracle_uses_import_alias() {
     let alias_test = PythonTest {
         setup_receivers: Vec::new(),
         fixture_defs: Vec::new(),
+        value_helpers: Vec::new(),
         direct_parametrized: Vec::new(),
         unsettled_indirect: Vec::new(),
         parametrize_argnames: Vec::new(),
@@ -5997,6 +6078,7 @@ fn test_local_module_shadows_a_bare_owner_import_for_tests_it_precedes() {
         decorator_lines: None,
         parameters: Vec::new(),
         reexport_modules: Vec::new(),
+        class_reexport_modules: Vec::new(),
         star_exported: false,
         ambiguous_src_modules: Vec::new(),
         test_local_shadows: Vec::new(),
@@ -6004,6 +6086,8 @@ fn test_local_module_shadows_a_bare_owner_import_for_tests_it_precedes() {
         module_constants: Vec::new(),
         same_class_callees: Vec::new(),
         module_callees: Vec::new(),
+        route_scope_callees: Vec::new(),
+        route_scope_awaited_callees: Vec::new(),
         class_path: String::new(),
         term_facts: Default::default(),
         class_facts: Default::default(),
@@ -6014,6 +6098,7 @@ fn test_local_module_shadows_a_bare_owner_import_for_tests_it_precedes() {
         nested_result_discarded: false,
         trusted_stdlib_click_alias: false,
         route_returns_body: false,
+        route_dispatch_ambiguous: false,
         route_dict_annotation: false,
     };
     let identifies = |files: &[&str], module: &str, test: &str| {
@@ -6106,6 +6191,7 @@ fn test_local_module_shadow_covers_project_names_import_forms_and_conftest_dirs(
         decorator_lines: None,
         parameters: Vec::new(),
         reexport_modules: Vec::new(),
+        class_reexport_modules: Vec::new(),
         star_exported: false,
         ambiguous_src_modules: Vec::new(),
         test_local_shadows: Vec::new(),
@@ -6113,6 +6199,8 @@ fn test_local_module_shadow_covers_project_names_import_forms_and_conftest_dirs(
         module_constants: Vec::new(),
         same_class_callees: Vec::new(),
         module_callees: Vec::new(),
+        route_scope_callees: Vec::new(),
+        route_scope_awaited_callees: Vec::new(),
         class_path: String::new(),
         term_facts: Default::default(),
         class_facts: Default::default(),
@@ -6123,6 +6211,7 @@ fn test_local_module_shadow_covers_project_names_import_forms_and_conftest_dirs(
         nested_result_discarded: false,
         trusted_stdlib_click_alias: false,
         route_returns_body: false,
+        route_dispatch_ambiguous: false,
         route_dict_annotation: false,
     };
     // All forms of `core` imported by `test`; true when the owner at

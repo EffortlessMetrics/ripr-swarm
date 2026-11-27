@@ -303,7 +303,7 @@ Updated:
 ## Pending — owner_return_pin_json_shadowed_assertion (25)
 
 Reason:
-RIPR-SPEC-0122: #15313 Summary names shared candidate lines and says No test gap when State reads no test gap found
+RIPR-SPEC-0197: the repo-seam view no longer credits the rebound assertion macro (#15183), so ripr repair agrees with check and the repair-vs-check conflict advisory is replaced by the missing-evidence refusal; check classification and JSON unchanged
 
 Command:
 `cargo xtask goldens bless owner_return_pin_json_shadowed_assertion --reason "..."`

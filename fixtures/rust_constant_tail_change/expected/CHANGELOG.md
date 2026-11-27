@@ -73,10 +73,11 @@ Updated:
 ## Pending — rust_constant_tail_change (7)
 
 Reason:
-RIPR-SPEC-0122: #15313 Summary names shared candidate lines and says No test gap when State reads no test gap found
+RIPR-SPEC-0197 (#14936): the deleted same-value guard of pick reads weakly_exposed; gate's guard discriminate stage reads weak
 
 Command:
 `cargo xtask goldens bless rust_constant_tail_change --reason "..."`
 
 Updated:
+- `expected/check.json`
 - `expected/human.txt`
