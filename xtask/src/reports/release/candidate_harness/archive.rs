@@ -19,10 +19,12 @@ use producer::{InstallProducer, InstallToolchain};
 /// Bounded process deadlines for qualified Cargo packaging and installation (#15216).
 const PACKAGE_TIMEOUT: Duration = Duration::from_mins(15);
 const INSTALL_TIMEOUT: Duration = Duration::from_mins(15);
-/// Job cap applied only on memory-constrained hosts (< 24 GiB) so a qualified
-/// release build stays inside the ~9.6 GiB peak observed on Linux cgroup runs
-/// while unconstrained hosts use Cargo's full parallelism to finish well inside
-/// [`INSTALL_TIMEOUT`] (#15216).
+/// Job cap applied only on Linux hosts whose detected `/proc/meminfo` or cgroup
+/// memory bound is below 24 GiB, keeping a qualified release build inside the
+/// ~9.6 GiB peak observed on Linux cgroup runs. Off Linux (including Windows
+/// and macOS) or when memory cannot be read, `host_memory_bytes()` returns
+/// `None` and Cargo uses its own parallelism unless `CARGO_BUILD_JOBS` is set,
+/// so Windows MSVC hosts finish well inside [`INSTALL_TIMEOUT`] (#15216).
 const CONSTRAINED_CARGO_JOBS: usize = 2;
 
 /// Archive custody starts at an observed successful Cargo producer, never a
@@ -263,7 +265,10 @@ mod tests {
             qualified_cargo_jobs_for(false, low, Some(4)),
             Some(CONSTRAINED_CARGO_JOBS)
         );
-        assert_eq!(qualified_cargo_jobs_for(false, low, Some(2)), None);
+        assert_eq!(
+            qualified_cargo_jobs_for(false, low, Some(2)),
+            Some(CONSTRAINED_CARGO_JOBS)
+        );
         assert_eq!(qualified_cargo_jobs_for(false, low, Some(1)), None);
         assert_eq!(qualified_cargo_jobs_for(true, low, Some(32)), None);
         assert_eq!(qualified_cargo_jobs_for(false, high, Some(32)), None);
@@ -702,8 +707,8 @@ fn qualified_cargo_jobs_for(
 ) -> Option<usize> {
     let constrained =
         memory_bytes.is_some_and(|bytes| bytes < crate::cargo_job_cap::LOW_MEMORY_BYTES);
-    let above_cap = cpus.is_some_and(|count| count > CONSTRAINED_CARGO_JOBS);
-    (!explicit_jobs && constrained && above_cap).then_some(CONSTRAINED_CARGO_JOBS)
+    let multi_core = cpus.is_some_and(|count| count > 1);
+    (!explicit_jobs && constrained && multi_core).then_some(CONSTRAINED_CARGO_JOBS)
 }
 
 fn qualified_cargo_jobs() -> Option<usize> {
