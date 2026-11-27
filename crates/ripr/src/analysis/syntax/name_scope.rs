@@ -17,17 +17,27 @@ use super::nesting::parse_clean_source_file;
 use super::ra::LineIndex;
 use crate::analysis::facts::MacroGeneratedOrigin;
 use ra_ap_syntax::{
-    AstNode, SyntaxNode, TextSize,
-    ast::{self, HasGenericArgs, HasGenericParams, HasModuleItem, HasName},
+    AstNode, SyntaxNode, TextRange, TextSize,
+    ast::{self, HasAttrs, HasGenericArgs, HasGenericParams, HasModuleItem, HasName},
 };
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
+use std::sync::Arc;
+
+#[cfg(test)]
+mod index_tests;
+mod local_binding;
+
+pub(crate) use local_binding::{
+    every_mention_bound_locally_in_fragment, every_mention_bound_locally_in_tree,
+};
 
 /// The scopes around one function, innermost first: the function body (and
 /// any enclosing function bodies), then each enclosing inline module, then
-/// the file.
+/// the file. A module or file scope is shared, not copied, between the
+/// functions of one file that a [`TreeScopeIndex`] answers for.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub(crate) struct NameScopes {
-    pub(crate) scopes: Vec<NameScope>,
+    pub(crate) scopes: Vec<Arc<NameScope>>,
 }
 
 /// One local pattern binding site: its earliest file-absolute line, and the
@@ -219,15 +229,444 @@ pub(super) fn name_scopes_in_tree(
     if functions.next().is_some() {
         return None;
     }
-    let modules_of = |node: &SyntaxNode| {
-        let mut modules: Vec<String> = node
+    Some(scopes_around_fn(&function, line_index, |node| {
+        item_scope(node).map(Arc::new)
+    }))
+}
+
+/// For the authored function `fn_name` declared at `fn_line`: when every bare
+/// mention of `name` in its body sits inside a nested block whose own `use`
+/// items bind `name` only by renaming another path (`{ use super::other as
+/// discount; discount(1); }`, #14069), the renamed paths those blocks spell,
+/// one per binding. A path prefix (`name::item`), a method call and a field
+/// access are not mentions. The innermost block that binds `name` decides
+/// each mention; the function body's own items are the body scope's question, not
+/// this one.
+///
+/// `None` (the caller keeps its prior reading) when no mention exists, when
+/// any mention is qualified (`a::name`), reaches the body block without a
+/// binding block, or meets a deciding block that also declares the name, has
+/// only a glob that may bind it, or binds it by a plain or unreadable path;
+/// when the name is itself an imported leaf or a declared name anywhere in
+/// the body (`use super::name as alias;`, a nested `fn name`); and for a
+/// mention inside a `mod` declared in the body, which does not see the
+/// blocks around it; for a mention inside any macro other than a bare std
+/// expression macro (its expansion may add imports), or inside such a macro
+/// when the file redefines or imports its name or holds a glob that may
+/// bring in a same-named macro; and for a block whose item
+/// under `cfg`/`cfg_attr` may bind the name.
+///
+/// `ancestors` are the files of the modules that enclose this file, nearest
+/// first, each declaring the next one's module at its top level (`mod
+/// tests;`). Their `macro_rules!` definitions and `#[macro_use]` items count
+/// like this file's; a `super` glob that leaves this file is followed into
+/// them, reading the top-level imports and globs of each file it reaches
+/// (#16277). A glob that climbs past the last ancestor may bring in a macro.
+/// `None` when the module chain up to the crate root is not known: a macro
+/// defined in an unread enclosing module may then reach the mention, so a
+/// mention inside any macro keeps the prior reading.
+pub(crate) fn nested_block_renames_in_tree(
+    tree: &ast::SourceFile,
+    ancestors: Option<&[ast::SourceFile]>,
+    line_index: &LineIndex,
+    fn_line: usize,
+    fn_name: &str,
+    name: &str,
+) -> Option<Vec<Vec<String>>> {
+    let mut functions = tree.syntax().descendants().filter_map(|node| {
+        let function = ast::Fn::cast(node)?;
+        let token = function.fn_token()?;
+        let named = function.name().is_some_and(|ident| ident.text() == fn_name);
+        (named && line_index.line(token.text_range().start()) == fn_line).then_some(function)
+    });
+    let function = functions.next()?;
+    if functions.next().is_some() {
+        return None;
+    }
+    let body = function.body()?;
+    let mut paths: Vec<Vec<String>> = Vec::new();
+    let mut mentions = 0usize;
+    let mut macro_reach: Option<Option<usize>> = None;
+    for token in body
+        .syntax()
+        .descendants_with_tokens()
+        .filter_map(|element| element.into_token())
+    {
+        if token.kind() != ra_ap_syntax::SyntaxKind::IDENT || unraw(token.text()) != name {
+            continue;
+        }
+        let parent = token.parent()?;
+        if parent
+            .ancestors()
+            .any(|node| ast::Rename::can_cast(node.kind()))
+        {
+            // The bound name of a renaming leaf, not a mention.
+            continue;
+        }
+        if parent
+            .ancestors()
+            .any(|node| ast::Use::can_cast(node.kind()))
+            || ast::Name::can_cast(parent.kind())
+        {
+            return None;
+        }
+        let previous = std::iter::successors(token.prev_token(), |token| token.prev_token())
+            .find(|token| !token.kind().is_trivia());
+        match previous.as_ref().map(|token| token.kind()) {
+            // A method call or field access never names a free function.
+            Some(ra_ap_syntax::T![.]) => continue,
+            Some(ra_ap_syntax::T![::]) => return None,
+            _ => {}
+        }
+        // A path prefix (`name::item`) names a module or type, never the
+        // function; a turbofish (`name::<T>(..)`) still calls it.
+        let mut following = std::iter::successors(token.next_token(), |token| token.next_token())
+            .filter(|token| !token.kind().is_trivia());
+        if following.next().map(|token| token.kind()) == Some(ra_ap_syntax::T![::])
+            && following.next().map(|token| token.kind()) != Some(ra_ap_syntax::T![<])
+        {
+            continue;
+        }
+        mentions += 1;
+        // A `mod` declared inside the body opens a fresh item scope that
+        // does not see the blocks around it. A macro other than a bare std
+        // expression macro may wrap its input in a block with its own
+        // imports, so only those std macros keep the written scopes; a
+        // `macro_rules!` or import reusing such a name in the file voids that.
+        let mut macro_names = Vec::new();
+        for node in parent.ancestors().take_while(|node| node != body.syntax()) {
+            if ast::Module::can_cast(node.kind()) || opaque_macro_call(&node) {
+                return None;
+            }
+            if let Some(name) = ast::MacroCall::cast(node)
+                .and_then(|call| call.path())
+                .and_then(|path| path.segment())
+            {
+                macro_names.push(name.to_string());
+            }
+        }
+        if !macro_names.is_empty() {
+            let reach = (*macro_reach.get_or_insert_with(|| {
+                ancestors.and_then(|ancestors| macro_chain_reach(tree, ancestors))
+            }))?;
+            if macro_names.iter().any(|macro_name| {
+                file_imports_name(tree, macro_name)
+                    || ancestors
+                        .into_iter()
+                        .flatten()
+                        .take(reach)
+                        .any(|file| top_level_imports_name(file, macro_name))
+            }) {
+                return None;
+            }
+        }
+        let mut decided = false;
+        for block in parent.ancestors().filter_map(ast::BlockExpr::cast) {
+            if block.syntax() == body.syntax() {
+                break;
+            }
+            let Some(list) = block.stmt_list() else {
+                continue;
+            };
+            let items: Vec<ast::Item> = list
+                .statements()
+                .filter_map(|statement| match statement {
+                    ast::Stmt::Item(item) => Some(item),
+                    _ => None,
+                })
+                .collect();
+            if items.is_empty() {
+                continue;
+            }
+            // An item under `cfg` or `cfg_attr` may be absent from the
+            // compiled block, so a binding it may supply is not settled.
+            if items.iter().any(|item| {
+                super::source_snapshot::has_cfg_attr(item) && {
+                    let gated = name_scope_for_items(std::slice::from_ref(item));
+                    gated.imports_of(name).next().is_some()
+                        || gated.defines.contains(name)
+                        || gated.child_modules.contains(name)
+                        || !gated.globs.is_empty()
+                }
+            }) {
+                return None;
+            }
+            let scope = name_scope_for_items(&items);
+            let imports: Vec<&UseBinding> = scope.imports_of(name).collect();
+            if scope.defines.contains(name) || scope.child_modules.contains(name) {
+                return None;
+            }
+            if imports.is_empty() {
+                if !scope.globs.is_empty() {
+                    return None;
+                }
+                continue;
+            }
+            for binding in imports {
+                let UseBinding::Renamed(path) = binding else {
+                    return None;
+                };
+                if !paths.contains(path) {
+                    paths.push(path.clone());
+                }
+            }
+            decided = true;
+            break;
+        }
+        if !decided {
+            return None;
+        }
+    }
+    (mentions > 0).then_some(paths)
+}
+
+/// How many enclosing module files the macro scope of `tree` reaches through
+/// glob imports, or `None` when a macro this scan cannot see may shadow a std
+/// expression macro. Any file of the chain (the test file and `ancestors`)
+/// that defines a `macro_rules!` of such a name or carries `#[macro_use]`
+/// answers `None`: textual macro scope needs no glob. Globs are then followed
+/// from the test file upward, each enclosing file read only when a glob
+/// climbs into it, and only its top-level `use` items, which are what a
+/// `super::*` of it imports (#16277).
+fn macro_chain_reach(tree: &ast::SourceFile, ancestors: &[ast::SourceFile]) -> Option<usize> {
+    if std::iter::once(tree)
+        .chain(ancestors)
+        .any(|file| file_rebinds_a_std_macro(file) || file_has_macro_use(file))
+    {
+        return None;
+    }
+    // A `std` root rebound anywhere in the chain (`use self::shim as std;`
+    // under `no_std`) can reach the test file through a `super` glob, so
+    // a `std` glob is trusted only when no chain file binds that name.
+    let std_trusted = !std::iter::once(tree)
+        .chain(ancestors)
+        .any(|file| file_may_bind_name(file, STD_CRATE_ROOT));
+    let mut reach = glob_levels_above(
+        std_trusted,
+        tree.syntax().descendants().filter_map(ast::Use::cast),
+    )?;
+    let mut level = 0;
+    while level < reach {
+        let file = ancestors.get(level)?;
+        level += 1;
+        reach = reach.max(level + glob_levels_above(std_trusted, top_level_uses(file))?);
+    }
+    Some(reach)
+}
+
+/// How many module files above their own the globs of `uses` climb, or
+/// `None` when one may bring in a macro this scan cannot see. A glob of `std`
+/// brings std's own macros when `std_trusted` (no chain file rebinds that
+/// root; `core` and
+/// `alloc` are refused, as for `STD_CRATE_ROOT`: a renamed Cargo dependency
+/// can stand in for either); a glob of only `super` segments climbs past the
+/// file's inline modules by the segments left over. Any other glob, or one
+/// the scan cannot read, answers `None`.
+fn glob_levels_above(std_trusted: bool, uses: impl Iterator<Item = ast::Use>) -> Option<usize> {
+    let mut levels = 0;
+    for item in uses {
+        let depth = item
+            .syntax()
             .ancestors()
             .filter_map(ast::Module::cast)
-            .filter_map(|module| module.name().map(|ident| unraw(ident.text())))
-            .collect();
-        modules.reverse();
-        modules
-    };
+            .filter(|module| module.item_list().is_some())
+            .count();
+        let scope = name_scope_for_items(&[ast::Item::Use(item)]);
+        for glob in &scope.globs {
+            let path = glob.as_ref()?;
+            if std_trusted && path.first().is_some_and(|root| root == STD_CRATE_ROOT) {
+                continue;
+            }
+            if path.is_empty() || !path.iter().all(|segment| segment == "super") {
+                return None;
+            }
+            levels = levels.max(path.len().saturating_sub(depth));
+        }
+    }
+    Some(levels)
+}
+
+/// The `use` items at the top level of `tree`.
+fn top_level_uses(tree: &ast::SourceFile) -> impl Iterator<Item = ast::Use> {
+    tree.items().filter_map(|item| match item {
+        ast::Item::Use(item) => Some(item),
+        _ => None,
+    })
+}
+
+/// Whether a top-level `use` of `tree` binds `name`, by its own leaf or a
+/// rename.
+fn top_level_imports_name(tree: &ast::SourceFile, name: &str) -> bool {
+    let items: Vec<ast::Item> = top_level_uses(tree).map(ast::Item::Use).collect();
+    name_scope_for_items(&items)
+        .imports_of(name)
+        .next()
+        .is_some()
+}
+
+/// Whether any item of the file carries `#[macro_use]`, which brings in
+/// macros from a module or crate this scan does not read.
+fn file_has_macro_use(tree: &ast::SourceFile) -> bool {
+    tree.syntax()
+        .descendants()
+        .filter_map(ast::Attr::cast)
+        .any(|attr| attribute_may_be(&attr, "macro_use"))
+}
+
+/// Whether the attribute is `name`, or a `cfg_attr` that spells `name`
+/// among the attributes it may add (`#[cfg_attr(test, macro_use)]`).
+fn attribute_may_be(attr: &ast::Attr, name: &str) -> bool {
+    match super::module_ancestors::attribute_name(attr).as_str() {
+        "cfg_attr" => attr.syntax().text().to_string().contains(name),
+        attribute => attribute == name,
+    }
+}
+
+/// Whether the file defines a `#[macro_export]` macro under the name of a
+/// std macro the bare-name exemption trusts. Such a macro is placed at the
+/// crate root, where a `use super::*;` glob can bring it into a test file
+/// from a file the module chain never reads.
+pub(crate) fn file_exports_a_std_macro(tree: &ast::SourceFile) -> bool {
+    tree.syntax()
+        .descendants()
+        .filter_map(ast::MacroRules::cast)
+        .filter(|rules| {
+            rules.name().is_some_and(|name| {
+                NAME_FREE_STD_MACROS.contains(&name.text().trim_start_matches("r#"))
+            })
+        })
+        .any(|rules| {
+            rules
+                .attrs()
+                .any(|attr| attribute_may_be(&attr, "macro_export"))
+        })
+}
+
+/// Whether any `use` leaf in the file binds `name`, by its own leaf or a
+/// rename. Read conservatively: an import of std's own item counts too.
+fn file_imports_name(tree: &ast::SourceFile, name: &str) -> bool {
+    tree.syntax()
+        .descendants()
+        .filter_map(ast::Use::cast)
+        .any(|item| {
+            let scope = name_scope_for_items(&[ast::Item::Use(item)]);
+            scope.imports_of(name).next().is_some()
+        })
+}
+
+/// The module or file scope `node` opens, read from its items; `None` for any
+/// other node.
+fn item_scope(node: &SyntaxNode) -> Option<NameScope> {
+    if let Some(module) = ast::Module::cast(node.clone()) {
+        let mut scope = NameScope {
+            modules: modules_of(node),
+            ..NameScope::default()
+        };
+        // `modules_of` walks from the node itself, so the module's own
+        // name is already the last segment.
+        if let Some(items) = module.item_list() {
+            for item in items.items() {
+                record_item(&item, &mut scope);
+            }
+        }
+        Some(scope)
+    } else {
+        ast::SourceFile::cast(node.clone()).map(|file| name_scope_for_file(&file))
+    }
+}
+
+/// Inline module names from the file root down to `node`, `node` included.
+fn modules_of(node: &SyntaxNode) -> Vec<String> {
+    let mut modules: Vec<String> = node
+        .ancestors()
+        .filter_map(ast::Module::cast)
+        .filter_map(|module| module.name().map(|ident| unraw(ident.text())))
+        .collect();
+    modules.reverse();
+    modules
+}
+
+/// Per-file facts that every function asking for its scopes shares (#15185):
+/// where each named `fn` sits, and the scope of each module and of the file.
+/// Built in one walk, so answering for every test in a file with `n` tests
+/// reads the file once instead of `n` times; each answer equals
+/// [`name_scopes_in_tree`]'s.
+pub(crate) struct TreeScopeIndex {
+    /// `fn` nodes by name and the line of their `fn` keyword.
+    functions: HashMap<(String, usize), Vec<TextRange>>,
+    /// Module scopes by the module node's range.
+    modules: HashMap<TextRange, Arc<NameScope>>,
+    file: Arc<NameScope>,
+}
+
+impl TreeScopeIndex {
+    pub(crate) fn new(tree: &ast::SourceFile, line_index: &LineIndex) -> Self {
+        let mut functions: HashMap<(String, usize), Vec<TextRange>> = HashMap::new();
+        let mut modules = HashMap::new();
+        for node in tree.syntax().descendants() {
+            if let Some(function) = ast::Fn::cast(node.clone()) {
+                if let (Some(token), Some(name)) = (function.fn_token(), function.name()) {
+                    let line = line_index.line(token.text_range().start());
+                    functions
+                        .entry((name.text().to_string(), line))
+                        .or_default()
+                        .push(node.text_range());
+                }
+            } else if ast::Module::can_cast(node.kind())
+                && let Some(scope) = item_scope(&node)
+            {
+                modules.insert(node.text_range(), Arc::new(scope));
+            }
+        }
+        Self {
+            functions,
+            modules,
+            file: Arc::new(name_scope_for_file(tree)),
+        }
+    }
+
+    /// [`name_scopes_in_tree`] for the tree this index was built from.
+    pub(crate) fn scopes_for(
+        &self,
+        tree: &ast::SourceFile,
+        line_index: &LineIndex,
+        fn_line: usize,
+        fn_name: &str,
+    ) -> Option<NameScopes> {
+        // Never borrow one of two same-named declarations' scopes.
+        let [range] = self
+            .functions
+            .get(&(fn_name.to_string(), fn_line))?
+            .as_slice()
+        else {
+            return None;
+        };
+        let function = match tree.syntax().covering_element(*range) {
+            ra_ap_syntax::NodeOrToken::Node(node) => node,
+            ra_ap_syntax::NodeOrToken::Token(token) => token.parent()?,
+        }
+        .ancestors()
+        .filter(|node| node.text_range() == *range)
+        .find_map(ast::Fn::cast)?;
+        Some(scopes_around_fn(&function, line_index, |node| {
+            if ast::SourceFile::can_cast(node.kind()) {
+                Some(Arc::clone(&self.file))
+            } else if ast::Module::can_cast(node.kind()) {
+                self.modules.get(&node.text_range()).cloned()
+            } else {
+                None
+            }
+        }))
+    }
+}
+
+/// The scopes around `function`, innermost first. `item_scope` supplies the
+/// scope of each enclosing module and of the file.
+fn scopes_around_fn(
+    function: &ast::Fn,
+    line_index: &LineIndex,
+    item_scope: impl Fn(&SyntaxNode) -> Option<Arc<NameScope>>,
+) -> NameScopes {
     let mut scopes = Vec::new();
     for ancestor in function.syntax().ancestors() {
         if let Some(enclosing_fn) = ast::Fn::cast(ancestor.clone()) {
@@ -288,27 +727,14 @@ pub(super) fn name_scopes_in_tree(
                     }
                 }
             }
+            scopes.push(Arc::new(scope));
+        } else if let Some(scope) = item_scope(&ancestor) {
             scopes.push(scope);
-        } else if let Some(module) = ast::Module::cast(ancestor.clone()) {
-            let mut scope = NameScope {
-                modules: modules_of(&ancestor),
-                ..NameScope::default()
-            };
-            // `modules_of` walks from the node itself, so the module's own
-            // name is already the last segment.
-            if let Some(items) = module.item_list() {
-                for item in items.items() {
-                    record_item(&item, &mut scope);
-                }
-            }
-            scopes.push(scope);
-        } else if let Some(file) = ast::SourceFile::cast(ancestor.clone()) {
-            scopes.push(name_scope_for_file(&file));
         }
         // An `impl` or `trait` binds nothing a path call could name; an
         // associated fn's scope continues at its enclosing module.
     }
-    Some(NameScopes { scopes })
+    NameScopes { scopes }
 }
 
 /// Whether a macro expansion declares anything beyond top-level functions:
@@ -395,18 +821,150 @@ fn binds_outside_a_let(node: &SyntaxNode) -> bool {
 /// would resolve to a different owner, so such a test gets no scopes.
 /// Provenance, not a line lookup, selects the path: a same-name `fn` on the
 /// invocation line is never consulted for a generated test.
+///
+/// `index`, when given, was built from `tree` and answers an authored test
+/// without reading the whole file again.
 pub(crate) fn name_scopes_for_test_caller(
     tree: &ast::SourceFile,
     line_index: &LineIndex,
+    index: Option<&TreeScopeIndex>,
     fn_line: usize,
     fn_name: &str,
     generated: Option<MacroGeneratedOrigin>,
 ) -> Option<NameScopes> {
     match generated {
-        None => name_scopes_in_tree(tree, line_index, fn_line, fn_name),
+        None => match index {
+            Some(index) => index.scopes_for(tree, line_index, fn_line, fn_name),
+            None => name_scopes_in_tree(tree, line_index, fn_line, fn_name),
+        },
         Some(origin) if origin.body_declares_items => None,
-        Some(_) => name_scopes_at_line(tree, line_index, fn_line),
+        Some(_) if file_rebinds_a_std_macro(tree) => None,
+        Some(_) => name_scopes_at_line(tree, line_index, fn_line)
+            .filter(|scopes| !scopes_import_a_std_macro_name(tree, scopes)),
     }
+}
+
+/// A `macro_rules!` anywhere in the file that reuses an exempt std macro name.
+/// Textual macro scope is positional, so any definition counts: the exemption
+/// reads a bare name, and a local definition may expand to a rebinding `use`
+/// (#12852). Macros defined in another file are not seen.
+fn file_rebinds_a_std_macro(tree: &ast::SourceFile) -> bool {
+    tree.syntax()
+        .descendants()
+        .filter_map(ast::MacroRules::cast)
+        .filter_map(|rules| rules.name())
+        .any(|name| NAME_FREE_STD_MACROS.contains(&name.text().trim_start_matches("r#")))
+}
+
+/// An explicit import at the invocation site that binds an exempt std macro
+/// name (`use other::assert_eq;`). Glob imports are not read (#12852).
+/// An import of the real std item of that name is not a rebinding
+/// (`use std::panic;`, `use std::fmt::write;`; #12876).
+fn scopes_import_a_std_macro_name(tree: &ast::SourceFile, scopes: &NameScopes) -> bool {
+    scopes.scopes.iter().any(|scope| {
+        scope.imports.iter().any(|import| {
+            NAME_FREE_STD_MACROS.contains(&import.bound.trim_start_matches("r#"))
+                && !imports_from_the_std_crate(tree, scope, import)
+        })
+    })
+}
+
+/// The crate root whose identity the scan checks from one file. `std` is the
+/// crate the bare-name exemption above already trusts: replacing it through
+/// Cargo would replace the std prelude too. `core` and `alloc` are refused,
+/// because a Cargo dependency renamed to either can stand in for that path
+/// alone, unseen by a syntax scan.
+const STD_CRATE_ROOT: &str = "std";
+
+/// `use std::panic;`-style: the path starts at `std` and ends in the bound
+/// name, so it imports std's own item (a module, function or the std macro
+/// itself), none of which binds names. The root must mean the real crate, so
+/// a `no_std` attribute in the file, a local module, rename, `extern crate ..
+/// as`, use leaf or macro-token use of `std` other than as a path root
+/// anywhere in the file, or a glob in the importing scope, keeps the refusal
+/// (#12876). A crate-root rebinding in another file is not seen, like a macro
+/// defined there.
+fn imports_from_the_std_crate(
+    tree: &ast::SourceFile,
+    scope: &NameScope,
+    import: &UseImport,
+) -> bool {
+    let UseBinding::Path(path) = &import.binding else {
+        return false;
+    };
+    path.len() >= 2
+        && path.first().is_some_and(|root| root == STD_CRATE_ROOT)
+        && scope.globs.is_empty()
+        && !file_may_bind_name(tree, STD_CRATE_ROOT)
+}
+
+/// Any declaration in the file that may bind `name` or make it unavailable: a
+/// named item, rename or pattern, a `use` leaf, an attribute naming
+/// `no_std`, or macro tokens (a `macro_rules!` body or an invocation's input)
+/// that carry `name` anywhere but as the root of a path. A macro argument can
+/// become a binding (`rename!(std)` for `use b as $alias;`).
+fn file_may_bind_name(tree: &ast::SourceFile, name: &str) -> bool {
+    tree.syntax().descendants().any(|node| {
+        if let Some(declared) = ast::Name::cast(node.clone()) {
+            return declared.text().trim_start_matches("r#") == name;
+        }
+        if let Some(item_use) = ast::Use::cast(node.clone()) {
+            return use_item_bindings(&item_use)
+                .imports
+                .iter()
+                .any(|import| import.bound == name);
+        }
+        if let Some(attribute) = ast::Attr::cast(node.clone()) {
+            return attribute
+                .syntax()
+                .descendants_with_tokens()
+                .filter_map(|element| element.into_token())
+                .any(|token| token.text() == "no_std");
+        }
+        let outermost_tokens = ast::TokenTree::can_cast(node.kind())
+            && !node
+                .parent()
+                .is_some_and(|parent| ast::TokenTree::can_cast(parent.kind()));
+        outermost_tokens && token_tree_mentions_off_root(&node, name)
+    })
+}
+
+/// `name` in a macro token sequence anywhere except as a path root: followed
+/// by `::` and not itself after `segment ::`. `std::x` and `::std::x` pass;
+/// `as std`, `mod std`, `rename!(std)` and `a::std::x` do not.
+fn token_tree_mentions_off_root(body: &SyntaxNode, name: &str) -> bool {
+    let mut tokens: Vec<String> = Vec::new();
+    for token in body
+        .descendants_with_tokens()
+        .filter_map(|element| element.into_token())
+        .filter(|token| !token.kind().is_trivia())
+    {
+        let text = token.text().trim_start_matches("r#");
+        // A token tree may lex `::` as one token or as two `:` tokens.
+        if text == ":" && tokens.last().is_some_and(|last| last == ":") {
+            if let Some(last) = tokens.last_mut() {
+                *last = "::".to_string();
+            }
+        } else {
+            tokens.push(text.to_string());
+        }
+    }
+    let is_segment = |text: &str| {
+        text.chars()
+            .next()
+            .is_some_and(|c| c.is_alphanumeric() || c == '_' || c == '$')
+    };
+    let separator_at = |at: usize| tokens.get(at).is_some_and(|text| text == "::");
+    tokens.iter().enumerate().any(|(at, text)| {
+        if text != name {
+            return false;
+        }
+        let qualified = at >= 2
+            && separator_at(at - 1)
+            && tokens.get(at - 2).is_some_and(|before| is_segment(before));
+        let root_position = separator_at(at + 1) && !qualified;
+        !root_position
+    })
 }
 
 fn name_scopes_at_line(
@@ -443,15 +1001,6 @@ fn name_scopes_at_line(
     if invocations_on_line != 1 {
         return None;
     }
-    let modules_of = |node: &SyntaxNode| {
-        let mut modules: Vec<String> = node
-            .ancestors()
-            .filter_map(ast::Module::cast)
-            .filter_map(|module| module.name().map(|ident| unraw(ident.text())))
-            .collect();
-        modules.reverse();
-        modules
-    };
     let mut scopes = Vec::new();
     for ancestor in invocation.syntax().ancestors() {
         if ast::Fn::can_cast(ancestor.kind()) {
@@ -459,19 +1008,8 @@ fn name_scopes_at_line(
             // an invocation inside a function body is refused by the expander.
             return None;
         }
-        if let Some(module) = ast::Module::cast(ancestor.clone()) {
-            let mut scope = NameScope {
-                modules: modules_of(&ancestor),
-                ..NameScope::default()
-            };
-            if let Some(items) = module.item_list() {
-                for item in items.items() {
-                    record_item(&item, &mut scope);
-                }
-            }
-            scopes.push(scope);
-        } else if let Some(file) = ast::SourceFile::cast(ancestor.clone()) {
-            scopes.push(name_scope_for_file(&file));
+        if let Some(scope) = item_scope(&ancestor) {
+            scopes.push(Arc::new(scope));
         }
     }
     (!scopes.is_empty()).then_some(NameScopes { scopes })
@@ -993,6 +1531,7 @@ mod tests {
         name_scopes_for_test_caller(
             &parse.tree(),
             &LineIndex::new(source),
+            None,
             line,
             name,
             Some(MacroGeneratedOrigin {
@@ -1052,8 +1591,41 @@ mod a { child_table!(case); } mod b { use demo::owner; #[test] fn case() { owner
         assert!(parse.is_some());
         let tree = parse.map(|parse| parse.tree());
         assert!(tree.is_some_and(|tree| {
-            name_scopes_for_test_caller(&tree, &LineIndex::new(source), 2, "case", None).is_none()
+            name_scopes_for_test_caller(&tree, &LineIndex::new(source), None, 2, "case", None)
+                .is_none()
         }));
+    }
+
+    #[test]
+    fn a_rebound_std_macro_name_takes_no_invocation_scopes() {
+        let origin = Some(MacroGeneratedOrigin::default());
+        let run = |source: &str, line: usize| -> Result<Option<NameScopes>, String> {
+            let parse = parse_clean_source_file(source).ok_or("parse")?;
+            Ok(name_scopes_for_test_caller(
+                &parse.tree(),
+                &LineIndex::new(source),
+                None,
+                line,
+                "case",
+                origin,
+            ))
+        };
+        // Control: no rebinding, the invocation scopes are borrowed.
+        let plain = "use demo::owner;\nchild_table!(case);\n";
+        assert!(matches!(run(plain, 2), Ok(Some(_))));
+        // A local `macro_rules!` reusing a std name, an explicit import of it.
+        let local = "use demo::owner;\nmacro_rules! assert_eq { () => {}; }\nchild_table!(case);\n";
+        assert!(matches!(run(local, 3), Ok(None)));
+        let imported = "use demo::owner;\nuse other::assert_eq;\nchild_table!(case);\n";
+        assert!(matches!(run(imported, 3), Ok(None)));
+        // Raw identifiers name the same binding, including an import alias.
+        for import in [
+            "use other::r#assert_eq;",
+            "use other::anything as r#assert_eq;",
+        ] {
+            let source = format!("use demo::owner;\n{import}\nchild_table!(case);\n");
+            assert!(matches!(run(&source, 3), Ok(None)), "{import}");
+        }
     }
 
     #[test]

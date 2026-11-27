@@ -110,6 +110,7 @@ pub(super) fn own_crate_test_helper_hop(
         module_qualified: true,
         crate_qualifier: None,
         transparent_macros_rebound: super::transparent_macro_name_rebound(&caller.body, index),
+        verified_macro_roots: super::audited_macro_roots::verified_macro_roots(caller, index),
         diverging_handlers: Vec::new(),
     })
 }

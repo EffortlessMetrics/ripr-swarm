@@ -189,7 +189,7 @@ fn ensure_relative_output_contained_in(cwd: &Path, path: &Path) -> Result<(), St
     ensure_report_output_contained(cwd)
 }
 
-fn ensure_default_output_contained_with(
+pub(crate) fn ensure_default_output_contained_with(
     root: &Path,
     cache_dir_env: Option<&str>,
 ) -> Result<(), String> {

@@ -1,0 +1,2 @@
+<!-- section: Internal / CI -->
+- The extension publish workflow no longer accepts a version already on a marketplace as success by its number: it compares the bytes the channel serves with the release VSIX and fails on any difference, drops `--skip-duplicate`, and checks the VSIX digest and embedded manifest digest before attaching to the GitHub Release ([ripr#1646](https://github.com/EffortlessMetrics/ripr/issues/1646)).

@@ -18,7 +18,7 @@ surfaces where a developer would feel ripr in the inner loop.
 | Muse | Guided setup and one bounded test repair | [Native package guide](../plugins/muse/ripr/README.md): two skills and an explicitly approved MCP server; requires an MCP-capable RIPR build |
 | pre-commit framework | Catches the gap before the push | Commit and push hooks ship in `.pre-commit-hooks.yaml`; local form below |
 | lefthook, husky, plain Git hooks | Teams that do not use pre-commit | Snippets below |
-| GitLab CI and other hosted CI | Not everyone is on GitHub | Snippet below; no generator |
+| GitLab CI and other hosted CI | Not everyone is on GitHub | `ripr init --ci gitlab` writes an advisory merge-request job ([guide](ADOPTING_IN_CI.md#gitlab-merge-requests)); hand-written snippet below |
 | cargo-nextest | The standard Rust test runner | Ordering guidance below; ripr never runs tests |
 | cargo-mutants | The runtime authority ripr is the cheap pre-filter for | Advisory import of existing results; external execution |
 | Dev containers and Docker | Reproducible onboarding | Snippet below |
@@ -68,6 +68,17 @@ passes; `--quiet` keeps stderr progress lines out of the hook log. On a
 before running hooks, so ripr checks exactly the change being committed;
 `pre-commit run --all-files` does not stash, so unstaged edits are included.
 New files stay out of the diff until they are staged.
+In a new repository the first `git commit` has no `HEAD` yet: with
+`--worktree --base HEAD` ripr compares the staged content against the empty
+tree, so the first commit is analyzed like any other change instead of the hook
+failing with "base HEAD does not resolve". Only that literal base gets this;
+`--base <other>` on an unborn branch still exits 2. A commit large enough to
+exceed the diff guard (2000 changed Rust lines, for example one generated
+file) still exits 2, because ripr did not analyze it and does not call it
+clean. The refusal names the ways through: `SKIP=ripr git commit ...` skips the
+hook for that one commit, and `args: [--exclude, "src/generated/**"]` (or
+`--path`) on the hook analyzes a subset and reports the left-out files as not
+analyzed.
 Output is the default human rendering. For a much smaller terminal (about 570
 bytes against about 3,400 for the same one-finding run), add arguments, which
 pre-commit appends to the entry:
@@ -227,6 +238,8 @@ mode so the branch gets the fuller check before it leaves your machine.
 
 ## GitLab CI and other hosted CI
 
+`ripr init --ci gitlab` generates an advisory `.gitlab-ci.yml` job for merge
+requests. The hand-written alternative below also keeps a SARIF file.
 Install the prebuilt archive, verify its checksum, run, keep the report.
 Replace `0.11.0` with the release you pin. The archive name is the one the
 release workflow publishes; 0.11.0 assets must exist first (see

@@ -1,0 +1,2 @@
+<!-- section: Changed -->
+- `ripr outcome` refusals for a snapshot of the wrong shape say to regenerate it with the same command as the other snapshot (`ripr check --format repo-exposure-json` or `ripr check --json`), so both sides use one format. `ripr first-pr --check` refusals that said "recompose" now name `ripr first-pr` and say to rerun it with the packet's original inputs. A missing or malformed no-action ledger names its path and says how to regenerate it (#16019).

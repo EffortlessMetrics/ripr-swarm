@@ -1,0 +1,4 @@
+crates/ripr/src/output/baseline_update.rs|baseline update input must be a JSON object
+crates/ripr/src/output/baseline_update.rs|baseline update skipped summary must be a JSON object
+crates/ripr/src/output/baseline_update.rs|baseline update summary must be a JSON object
+crates/ripr/src/output/baseline_update.rs|baseline update warnings must be a JSON array

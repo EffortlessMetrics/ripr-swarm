@@ -173,6 +173,7 @@ pub(crate) fn rust_mutation_sources(
             .push(SyntheticMutant {
                 id: name.to_string(),
                 mutator: text("genre").to_string(),
+                genre: text("genre").to_string(),
                 replacement: text("replacement").to_string(),
                 start_line: position("/span/start/line").unwrap_or(0),
                 start_col,

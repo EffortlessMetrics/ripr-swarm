@@ -36,6 +36,10 @@ pub fn python_pytest_verify_display_for(
     Some(format!("{interpreter} -m pytest {selector}"))
 }
 
+/// The Python producer's `unittest` display for `qualified` in the file at
+/// `path`. Returns `None` when the path, once a trailing `.py` is removed,
+/// still holds a dot, since `unittest` would read it as a module separator and
+/// could select a different file.
 pub fn python_unittest_verify_display(
     path: &str,
     qualified: &str,
@@ -151,42 +155,74 @@ pub fn command_tokens(command: &str) -> Vec<String> {
     tokens
 }
 
+/// A typed description of one command route a producer offers to a consumer. It
+/// describes the route; it does not authorize running it, and `display` is
+/// never parsed back into `program` and `args`.
 #[derive(Clone, Debug, Eq, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct CommandSpec {
+    /// Must equal [`CommandSpec::SCHEMA_VERSION`].
     pub schema_version: String,
+    /// The route identity; must be non-empty.
     pub command_id: String,
+    /// What the route is for; must match `authority_boundary`.
     pub role: CommandRole,
+    /// How the route may be run.
     pub execution_mode: CommandExecutionMode,
+    /// The program to run; must be non-empty.
     pub program: String,
+    /// The ordered arguments, passed as argv without shell parsing.
     pub args: Vec<String>,
+    /// The working directory, relative to the selected root. Serialized as
+    /// `working_directory`.
     #[serde(rename = "working_directory", alias = "cwd")]
     pub cwd: String,
+    /// Environment variables the route sets.
     pub env_set: Vec<EnvironmentAssignment>,
+    /// Environment variable names the route passes through from the caller.
     pub env_passthrough: Vec<String>,
+    /// How the route's environment is built. Serialized as `environment`.
     #[serde(rename = "environment", alias = "environment_policy")]
     pub environment_policy: EnvironmentPolicy,
+    /// What the route reads on stdin.
     pub stdin: StdinPolicy,
+    /// The timeout in milliseconds, from 1 to 3,600,000.
     pub timeout_ms: u64,
+    /// Whether the route may be cancelled.
     pub cancellation: CancellationPolicy,
+    /// What network access the route needs. Serialized as `network`.
     #[serde(rename = "network", alias = "network_policy")]
     pub network_policy: NetworkPolicy,
+    /// How the route's result is read.
     pub expected_result_parser: ExpectedResultParser,
+    /// Exit codes that count as the expected result; must be non-empty.
     pub expected_exit_codes: Vec<i32>,
+    /// Root-relative paths the route writes.
     pub expected_writes: Vec<String>,
+    /// The route's cost class.
     pub cost_class: CommandCostClass,
+    /// Platforms the route supports; must be non-empty.
     pub platforms: Vec<CommandPlatform>,
+    /// The human display string: not blank, no NUL, at most 512 characters.
+    /// Never execution authority. Serialized as `human_display`.
     #[serde(rename = "human_display", alias = "display")]
     pub display: String,
+    /// The authority the route is limited to; must match `role`.
     pub authority_boundary: CommandAuthorityBoundary,
 }
 
+/// What a command route is for.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum CommandRole {
+    /// `verify`: check a repair.
     Verify,
+    /// `receipt`: write a receipt.
     Receipt,
+    /// `regeneration`: regenerate an artifact.
     Regeneration,
+    /// `inspection`: inspect state without changing it.
     Inspection,
+    /// `targeted_rerun`: rerun a narrowed selection.
     TargetedRerun,
     /// Start one repair attempt for a single bound seam (#6305). The
     /// task-first repair command offers this route only when its producer
@@ -194,102 +230,170 @@ pub enum CommandRole {
     RepairStart,
 }
 
+/// How a command route may be run.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum CommandExecutionMode {
+    /// `direct`: run `program` with `args` as argv, with no shell.
     Direct,
+    /// `shell_required`: the route needs a shell, for example for output
+    /// redirection.
     ShellRequired,
+    /// `manual`: a person runs the route.
     Manual,
 }
 
+/// What a route reads on stdin.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum StdinPolicy {
+    /// `null`: stdin is empty.
     Null,
+    /// `declared`: the route declares its stdin.
     Declared,
 }
 
+/// Whether a running route may be cancelled.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum CancellationPolicy {
+    /// `allowed`.
     Allowed,
+    /// `not_allowed`.
     NotAllowed,
 }
 
+/// What network access a route needs.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum NetworkPolicy {
+    /// `forbidden`: the route must not use the network.
     Forbidden,
+    /// `not_required`: the route does not need the network.
     NotRequired,
+    /// `declared`: the route declares the network access it needs.
     Declared,
+    /// `unrestricted`: the route may use any network access.
     Unrestricted,
 }
 
+/// How a route's environment is built.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum EnvironmentPolicy {
+    /// `clean`: start from an empty environment. An executor may still pass a
+    /// disclosed floor of platform variables such as `PATH`; `ripr`'s own
+    /// verifier does.
     Clean,
+    /// `declared`: use only the declared variables.
     Declared,
+    /// `inherited`: inherit the caller's environment.
     Inherited,
 }
 
+/// One environment variable a route sets.
 #[derive(Clone, Debug, Eq, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct EnvironmentAssignment {
+    /// The variable name; non-empty, with no `=`, NUL or whitespace.
     pub name: String,
+    /// The value; must not contain NUL.
     pub value: String,
 }
 
+/// How a route's result is read.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ExpectedResultParser {
+    /// `exit_code`: from the exit code.
     ExitCode,
+    /// `declared_json`: from the declared JSON output.
     DeclaredJson,
+    /// `declared_text`: from the declared text output.
     DeclaredText,
 }
 
+/// The cost class of a command route, for scheduling.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum CommandCostClass {
+    /// `unknown`: the producer does not know the cost.
     Unknown,
+    /// `pilot`.
     Pilot,
+    /// `check`.
     Check,
+    /// `projection_only`: renders existing evidence.
     ProjectionOnly,
+    /// `bounded_static_analysis`.
     BoundedStaticAnalysis,
+    /// `full_repo_analysis`.
     FullRepoAnalysis,
+    /// `compile_or_test`: compiles or runs tests.
     CompileOrTest,
+    /// `runtime_mutation_or_import`.
     RuntimeMutationOrImport,
 }
 
+/// A platform a route supports.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum CommandPlatform {
+    /// `linux`.
     Linux,
+    /// `macos`.
     Macos,
+    /// `windows`.
     Windows,
 }
 
+/// The authority a route is limited to. Each role has exactly one matching
+/// boundary.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum CommandAuthorityBoundary {
+    /// `verification_route_only`, for `verify`.
     VerificationRouteOnly,
+    /// `receipt_route_only`, for `receipt`.
     ReceiptRouteOnly,
+    /// `regeneration_route_only`, for `regeneration`.
     RegenerationRouteOnly,
+    /// `inspection_route_only`, for `inspection`.
     InspectionRouteOnly,
+    /// `targeted_rerun_route_only`, for `targeted_rerun`.
     TargetedRerunRouteOnly,
+    /// `repair_start_route_only`, for `repair_start`.
     RepairStartRouteOnly,
 }
 
+/// Why [`CommandSpec::validate`] refused a spec.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum CommandSpecValidationError {
+    /// A required field is empty or blank.
     EmptyField(&'static str),
+    /// A field contains a NUL character.
     EmbeddedNul(&'static str),
+    /// The schema version is not [`CommandSpec::SCHEMA_VERSION`].
     InvalidSchemaVersion(String),
-    InvalidRelativePath { field: &'static str, value: String },
+    /// A path is not root-relative: it is absolute, has a drive prefix or
+    /// climbs with `..`. For `cwd`, a scheme prefix or a line terminator is
+    /// also refused.
+    InvalidRelativePath {
+        /// The field holding the path.
+        field: &'static str,
+        /// The value found.
+        value: String,
+    },
+    /// `display` is longer than 512 characters.
     DisplayTooLong,
+    /// The timeout is zero or above 3,600,000 ms.
     InvalidTimeout(u64),
+    /// `expected_exit_codes` is empty.
     EmptyExpectedExitCodes,
+    /// `platforms` is empty.
     EmptyPlatforms,
+    /// An environment variable name is empty or holds `=`, NUL or whitespace.
     InvalidEnvironmentName(String),
+    /// `authority_boundary` does not match `role`.
     AuthorityRoleMismatch,
 }
 
@@ -333,6 +437,7 @@ impl fmt::Display for CommandSpecValidationError {
 impl std::error::Error for CommandSpecValidationError {}
 
 impl CommandSpec {
+    /// The only supported schema version.
     pub const SCHEMA_VERSION: &'static str = "1";
 
     /// True when both specs describe the same executable route: every field
@@ -407,7 +512,7 @@ impl CommandSpec {
         for argument in &self.args {
             validate_no_nul("args", argument)?;
         }
-        validate_root_relative_path("cwd", &self.cwd)?;
+        validate_working_directory(&self.cwd)?;
         for path in &self.expected_writes {
             validate_root_relative_path("expected_writes", path)?;
         }
@@ -450,6 +555,23 @@ fn validate_no_nul(field: &'static str, value: &str) -> Result<(), CommandSpecVa
     } else {
         Ok(())
     }
+}
+
+fn validate_working_directory(value: &str) -> Result<(), CommandSpecValidationError> {
+    validate_root_relative_path("cwd", value)?;
+    // The published working_directory pattern excludes ECMAScript line
+    // terminators and a nonempty scheme prefix before the first separator.
+    let has_scheme_prefix = value
+        .split(['/', '\\'])
+        .next()
+        .is_some_and(|first| first.chars().skip(1).any(|ch| ch == ':'));
+    if has_scheme_prefix || value.contains(['\r', '\n', '\u{2028}', '\u{2029}']) {
+        return Err(CommandSpecValidationError::InvalidRelativePath {
+            field: "cwd",
+            value: value.to_owned(),
+        });
+    }
+    Ok(())
 }
 
 fn validate_root_relative_path(
@@ -801,6 +923,31 @@ mod tests {
     }
 
     #[test]
+    fn working_directory_matches_published_line_and_scheme_rules() -> Result<(), String> {
+        for cwd in [
+            "a\n",
+            "a\rb",
+            "a\u{2028}b",
+            "a\u{2029}b",
+            "src:gen/x",
+            ":x:y",
+        ] {
+            let expected = Err(Refusal::InvalidRelativePath {
+                field: "cwd",
+                value: cwd.into(),
+            });
+            if validated(|spec| spec.cwd = cwd.into()) != expected {
+                return Err(format!("unexpected working_directory verdict for {cwd:?}"));
+            }
+        }
+        for cwd in [":literal", "src/gen:x", "src\\gen:x"] {
+            validated(|spec| spec.cwd = cwd.into()).map_err(|err| err.to_string())?;
+        }
+        validated(|spec| spec.expected_writes = vec!["src:gen/x".into()])
+            .map_err(|err| err.to_string())
+    }
+
+    #[test]
     fn the_timeout_is_bounded_on_both_sides() {
         assert_eq!(
             validated(|spec| spec.timeout_ms = 0),
@@ -1066,6 +1213,52 @@ mod tests {
                 !verify_command_is_unbounded_repo_exposure_snapshot_compare(partial),
                 "{partial:?}"
             );
+        }
+    }
+
+    #[test]
+    fn pytest_display_admits_only_the_listed_interpreters() {
+        for interpreter in crate::domain::PYTEST_VERIFY_INTERPRETERS {
+            assert_eq!(
+                python_pytest_verify_display_for(interpreter, "t.py", "test_a", false),
+                Some(format!("{interpreter} -m pytest t.py::test_a"))
+            );
+        }
+        for refused in ["python3", "", "/usr/bin/python", "env/bin/python"] {
+            assert_eq!(
+                python_pytest_verify_display_for(refused, "t.py", "test_a", false),
+                None,
+                "{refused:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn unittest_module_accepts_either_separator_and_an_extensionless_path() {
+        for path in ["tests\\test_cart.py", "tests/test_cart"] {
+            assert_eq!(
+                python_unittest_verify_display(path, "TestCart.test_total", false),
+                Some("python -m unittest tests.test_cart.TestCart.test_total".to_string()),
+                "{path}"
+            );
+        }
+    }
+
+    #[test]
+    fn only_the_two_spec_sources_are_actionable_verify_provenance() {
+        assert!(actionable_verify_source_is_supported(
+            "canonical_item.verify_command"
+        ));
+        assert!(actionable_verify_source_is_supported(
+            "related_test_or_observer.name"
+        ));
+        for other in [
+            "",
+            "canonical_item",
+            "related_test_or_observer",
+            "verify_command",
+        ] {
+            assert!(!actionable_verify_source_is_supported(other), "{other:?}");
         }
     }
 }

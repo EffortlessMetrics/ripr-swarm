@@ -81,8 +81,7 @@ pub(crate) fn without_unfilled_expected(
     if !matches!(
         classification.strength,
         OracleStrength::Strong | OracleStrength::Medium | OracleStrength::Weak
-    ) || placeholders.is_empty()
-    {
+    ) {
         return classification;
     }
     // #14810 round 3: match against the assertion's semantic operands, not
@@ -107,8 +106,33 @@ pub(crate) fn assertion_reads_placeholder(
     assertion: &str,
     placeholders: &std::collections::BTreeSet<String>,
 ) -> bool {
-    let operand_text = assertion_oracle_text(assertion).unwrap_or_else(|| assertion.to_string());
-    let masked = mask_assertion_reads(&operand_text);
+    if placeholders.is_empty() && !super::placeholder_scope::mentions_placeholder(assertion) {
+        return false;
+    }
+    let Some(operand_text) = assertion_oracle_text(assertion) else {
+        // Unknown helpers retain their whole-expression read, including the
+        // receiver of a method such as `expected.assert_eq(actual)`.
+        return text_reads_placeholder(assertion, placeholders);
+    };
+    let introduces_scope = operand_text.contains('|')
+        || operand_text
+            .split(|ch: char| ch != '_' && !ch.is_alphanumeric())
+            .any(|word| matches!(word, "let" | "match" | "for"));
+    if introduces_scope
+        && let Some(open) = operand_text.find('(')
+        && let Some(operands) = super::arguments::delimited_contents_at(&operand_text, open)
+        && let Some(read) = super::placeholder_scope::scoped_operand_read(&operands, placeholders)
+    {
+        return read;
+    }
+    text_reads_placeholder(&operand_text, placeholders)
+}
+
+pub(super) fn text_reads_placeholder(
+    operand_text: &str,
+    placeholders: &std::collections::BTreeSet<String>,
+) -> bool {
+    let masked = mask_assertion_reads(operand_text);
     placeholders
         .iter()
         .any(|name| reads_local_name(&masked, name))
@@ -156,129 +180,98 @@ fn reads_local_name(masked: &str, name: &str) -> bool {
     false
 }
 
-/// Whether a string literal that opens after `prefix` is a format string:
-/// the first argument of a macro call (`format!(`), or the second after a
-/// plain destination (`write!(f, `). Only a format string's `{name}` hole
-/// reads `name`; an ordinary `"{expected}"` literal is text (#14882 review).
-fn opens_format_string(prefix: &str) -> bool {
-    let trimmed = prefix.trim_end();
-    let macro_open = |head: &str| head.trim_end().ends_with('!');
-    if let Some(head) = trimmed.strip_suffix('(') {
-        return macro_open(head);
+/// Is the next literal in the template slot of a standard formatting macro?
+fn opens_format_string(prefix: &str, raw: bool) -> bool {
+    let prefix = prefix.trim_end();
+    let (before, destination) = if let Some(head) = prefix.strip_suffix(',') {
+        let mut depth = 0usize;
+        let open = head.rfind(|ch| match ch {
+            ')' | ']' | '}' => {
+                depth += 1;
+                false
+            }
+            '(' | '[' | '{' if depth > 0 => {
+                depth -= 1;
+                false
+            }
+            '(' | '[' | '{' | ',' => depth == 0,
+            _ => false,
+        });
+        let Some(open) = open else { return false };
+        if head.as_bytes()[open] == b',' {
+            return false;
+        }
+        (&head[..open], true)
+    } else if let Some(head) = prefix.strip_suffix(['(', '[', '{']) {
+        (head, false)
+    } else {
+        return false;
+    };
+    let Some(path) = before.trim_end().strip_suffix('!') else {
+        return false;
+    };
+    let name = path
+        .trim_end()
+        .rsplit(|ch: char| !(ch == '_' || ch.is_alphanumeric()))
+        .next();
+    // An unresolved macro can be an imported formatting alias. Preserve the
+    // previous conservative read for quoted templates. Raw literals require
+    // a recognized formatting slot before braces count as captures.
+    if !raw && !destination {
+        return true;
     }
-    if let Some(head) = trimmed.strip_suffix(',')
-        && let Some(open) = head.rfind('(')
-    {
-        let destination = head[open + 1..].trim();
-        let plain = !destination.is_empty()
-            && destination
-                .chars()
-                .all(|ch| ch == '_' || ch == '.' || ch == '&' || ch.is_alphanumeric());
-        return plain && macro_open(&head[..open]);
+    if destination {
+        matches!(name, Some("write" | "writeln"))
+    } else {
+        matches!(
+            name,
+            Some(
+                "format"
+                    | "format_args"
+                    | "print"
+                    | "println"
+                    | "eprint"
+                    | "eprintln"
+                    | "panic"
+                    | "unreachable"
+                    | "todo"
+                    | "unimplemented"
+            )
+        )
     }
-    false
 }
 
-/// Mask what is not a read in an assertion operand: comments, string
-/// literals, and the escaped `{{`/`}}` braces of a format string. The
-/// contents of a `{...}` interpolation hole survive, because
-/// `format!("{expected}")` reads `expected` while `"expected"`,
-/// `/* expected */` and `"{{expected}}"` do not (#14810 round 3).
 fn mask_assertion_reads(text: &str) -> String {
-    let chars: Vec<char> = text.chars().collect();
-    let mut out = String::with_capacity(text.len());
-    let mut i = 0;
-    let mut in_line_comment = false;
-    let mut in_block_comment = false;
-    let mut in_string = false;
-    let mut format_string = false;
-    while i < chars.len() {
-        let ch = chars[i];
-        if in_line_comment {
-            if ch == '\n' {
-                in_line_comment = false;
-                out.push('\n');
-            } else {
-                out.push(' ');
-            }
-            i += 1;
+    let (masked, spans) = super::super::mask::mask_with_string_spans(text);
+    let mut reads = masked.clone();
+    for (open, close, raw) in spans {
+        let prefix = if raw {
+            text[..open]
+                .trim_end_matches('#')
+                .strip_suffix('r')
+                .unwrap_or(&text[..open])
+                .len()
+        } else {
+            open
+        };
+        if !opens_format_string(&masked[..prefix], raw) {
             continue;
         }
-        if in_block_comment {
-            if ch == '*' && chars.get(i + 1) == Some(&'/') {
-                in_block_comment = false;
-                out.push_str("  ");
-                i += 2;
-            } else {
-                out.push(if ch == '\n' { '\n' } else { ' ' });
-                i += 1;
-            }
-            continue;
-        }
-        if in_string {
-            if ch == '\\' {
-                out.push(' ');
-                if let Some(&next) = chars.get(i + 1) {
-                    out.push(if next == '\n' { '\n' } else { ' ' });
-                    i += 2;
-                } else {
-                    i += 1;
-                }
+        let mut content = &text[open + 1..close];
+        while let Some((_, after)) = content.split_once('{') {
+            if let Some(rest) = after.strip_prefix('{') {
+                content = rest;
                 continue;
             }
-            if ch == '"' {
-                in_string = false;
-                out.push('"');
-                i += 1;
-                continue;
-            }
-            if ch == '{' && format_string {
-                if chars.get(i + 1) == Some(&'{') {
-                    // `{{` is an escaped brace: literal text, not a read.
-                    out.push_str("  ");
-                    i += 2;
-                    continue;
-                }
-                // An interpolation hole: keep its contents.
-                out.push('{');
-                i += 1;
-                while i < chars.len() && chars[i] != '}' {
-                    out.push(chars[i]);
-                    i += 1;
-                }
-                if i < chars.len() {
-                    out.push('}');
-                    i += 1;
-                }
-                continue;
-            }
-            out.push(if ch == '\n' { '\n' } else { ' ' });
-            i += 1;
-            continue;
+            let Some((field, rest)) = after.split_once('}') else {
+                break;
+            };
+            reads.push(' ');
+            reads.push_str(field);
+            content = rest;
         }
-        if ch == '/' && chars.get(i + 1) == Some(&'/') {
-            in_line_comment = true;
-            out.push_str("  ");
-            i += 2;
-            continue;
-        }
-        if ch == '/' && chars.get(i + 1) == Some(&'*') {
-            in_block_comment = true;
-            out.push_str("  ");
-            i += 2;
-            continue;
-        }
-        if ch == '"' {
-            in_string = true;
-            format_string = opens_format_string(&out);
-            out.push('"');
-            i += 1;
-            continue;
-        }
-        out.push(ch);
-        i += 1;
     }
-    out
+    reads
 }
 
 fn classify_assertion_against(line: &str, decls: &LocalDecls) -> OracleClassification {

@@ -184,6 +184,21 @@ jobs:
           cargo xtask check-release-targets
           cargo test -p xtask --locked policy::distribution:: -- --nocapture
 
+      # Supplemental build-owner proof reuses the already compiled xtask test
+      # binary. Callable qualification retains its existing eight-minute scope.
+      - name: Verify private Cargo output ownership
+        if: ${{ github.event_name == 'pull_request' && !contains(toJSON(inputs), '"subject_sha"') }}
+        timeout-minutes: 5
+        shell: bash
+        run: |
+          set -euo pipefail
+          evidence="${GITHUB_WORKSPACE}/target/ripr/reports/private-cargo-output-source-contract.log"
+          mkdir -p "$(dirname "${evidence}")"
+          cargo test --locked -p xtask --bin xtask \
+            reports::fixtures::preparation::private_build_tests::private_build_owners_ \
+            -- --test-threads=1 --nocapture | tee "${evidence}"
+          grep -F 'test result: ok. 2 passed; 0 failed; 0 ignored;' "${evidence}"
+
       - name: Stage the exact-source ordinary integration runner
         id: ordinary_runner
         shell: bash
@@ -291,6 +306,7 @@ jobs:
             "${evidence}/wheelhouse" \
             "${evidence}/broken/missing-script" \
             "${evidence}/broken/stale-record" \
+            "${evidence}/broken/extra-member" \
             "${evidence}/tooling"
           "${venv}/bin/python" -m pip download \
             --disable-pip-version-check \
@@ -452,6 +468,31 @@ jobs:
                   assert archive.read(license_mit[0]) == Path("LICENSE-MIT").read_bytes()
                   assert archive.read(license_apache[0]) == Path("LICENSE-APACHE").read_bytes()
 
+                  # The full member set (#15216): the executable, wheel metadata,
+                  # the two licenses and maturin's CycloneDX SBOM. Anything else,
+                  # such as a test file or a Python package, fails even when
+                  # RECORD lists it.
+                  assert len(names) == len(set(names)), "duplicate wheel members"
+                  dist_info = f"ripr_rs-{expected_python_version}.dist-info"
+                  assert script == f"ripr_rs-{expected_python_version}.data/scripts/ripr", f"unexpected ripr script path: {script}"
+                  assert metadata_path == f"{dist_info}/METADATA", f"unexpected METADATA path: {metadata_path}"
+                  assert wheel_path == f"{dist_info}/WHEEL", f"unexpected WHEEL path: {wheel_path}"
+                  assert record_path == f"{dist_info}/RECORD", f"unexpected RECORD path: {record_path}"
+                  assert license_mit == [f"{dist_info}/licenses/LICENSE-MIT"], f"unexpected LICENSE-MIT path: {license_mit}"
+                  assert license_apache == [f"{dist_info}/licenses/LICENSE-APACHE"], f"unexpected LICENSE-APACHE path: {license_apache}"
+                  allowed = {script, metadata_path, wheel_path, record_path, *license_mit, *license_apache}
+
+                  def is_sbom(name: str) -> bool:
+                      parts = PurePosixPath(name).parts
+                      return (
+                          len(parts) == 3
+                          and parts[:2] == (dist_info, "sboms")
+                          and parts[2].endswith(".cyclonedx.json")
+                      )
+
+                  unexpected = sorted(name for name in names if name not in allowed and not is_sbom(name))
+                  assert not unexpected, f"unexpected wheel members: {unexpected}"
+
                   record_rows = list(csv.reader(io.StringIO(archive.read(record_path).decode("utf-8"))))
                   record = {row[0]: row[1:] for row in record_rows}
                   assert set(names) == set(record), "RECORD inventory does not equal archive inventory"
@@ -506,6 +547,30 @@ jobs:
           else:
               raise AssertionError("wheel validator accepted payload bytes with a stale RECORD")
 
+          extra_member = evidence / "broken" / "extra-member" / wheel.name
+          extra_name = "ripr_rs/tests/test_cli.py"
+          extra_payload = b"def test_cli():\n    pass\n"
+          with zipfile.ZipFile(wheel) as source, zipfile.ZipFile(extra_member, "w") as destination:
+              for info in source.infolist():
+                  payload = source.read(info.filename)
+                  if info.filename.endswith(".dist-info/RECORD"):
+                      extra_digest = (
+                          base64.urlsafe_b64encode(hashlib.sha256(extra_payload).digest())
+                          .rstrip(b"=")
+                          .decode("ascii")
+                      )
+                      payload += f"{extra_name},sha256={extra_digest},{len(extra_payload)}\n".encode("utf-8")
+                  destination.writestr(info, payload)
+              destination.writestr(extra_name, extra_payload)
+          try:
+              validate(extra_member)
+          except AssertionError as error:
+              extra_member_result = str(error)
+              assert "unexpected wheel members" in extra_member_result
+              assert extra_name in extra_member_result
+          else:
+              raise AssertionError("wheel validator accepted a RECORD-listed test file outside the member set")
+
           receipt = {
               "schema_version": 2,
               "channel": "pypi-local-wheelhouse",
@@ -534,6 +599,10 @@ jobs:
                   {
                       "mutation": "mutated .data/scripts/ripr without updating RECORD",
                       "result": stale_record_result,
+                  },
+                  {
+                      "mutation": "added a RECORD-listed test file outside the member set",
+                      "result": extra_member_result,
                   },
               ],
               "toolchain": {

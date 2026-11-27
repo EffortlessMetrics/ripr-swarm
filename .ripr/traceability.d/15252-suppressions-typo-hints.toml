@@ -1,0 +1,16 @@
+# Suppressions-manifest typos name the valid spelling and do not cascade (#15252).
+[[extend]]
+id = "RIPR-SPEC-0007"
+tests = [
+  "crates/ripr/src/output/suppressions/typo_hint_tests.rs::misspelled_entry_header_is_one_header_violation_with_a_hint",
+  "crates/ripr/src/output/suppressions/typo_hint_tests.rs::single_bracket_header_names_the_array_header",
+  "crates/ripr/src/output/suppressions/typo_hint_tests.rs::unrelated_header_fails_without_a_hint_and_still_rejects_the_manifest",
+  "crates/ripr/src/output/suppressions/typo_hint_tests.rs::a_valid_header_after_an_unknown_table_resumes_normal_checks",
+  "crates/ripr/src/output/suppressions/typo_hint_tests.rs::toml_header_spellings_of_the_entry_header_are_accepted",
+  "crates/ripr/src/output/suppressions/typo_hint_tests.rs::trailing_text_after_the_entry_header_is_rejected",
+  "crates/ripr/src/output/suppressions/typo_hint_tests.rs::misspelled_entry_fields_name_the_nearest_field",
+  "crates/ripr/src/output/suppressions/typo_hint_tests.rs::an_unrelated_entry_field_gets_no_hint",
+  "crates/ripr/src/output/suppressions/typo_hint_tests.rs::an_entry_field_before_any_header_says_where_it_belongs",
+  "crates/ripr/src/output/suppressions/typo_hint_tests.rs::misspelled_kind_names_the_nearest_kind",
+  "crates/ripr/src/output/suppressions/typo_hint_tests.rs::every_listed_entry_field_is_one_the_parser_accepts",
+]

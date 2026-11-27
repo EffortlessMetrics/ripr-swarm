@@ -680,3 +680,16 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — rust_macro_wrapped_assertion_limitation (39)
+
+Reason:
+RIPR-SPEC-0120: a test checking only through an unread assertion-like macro reads assertion_admission_unproven, not has no assertion (#15237)
+
+Command:
+`cargo xtask goldens bless rust_macro_wrapped_assertion_limitation --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`

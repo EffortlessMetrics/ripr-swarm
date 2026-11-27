@@ -1,0 +1,55 @@
+ripr static RIPR exposure analysis
+mode: fast
+root: fixtures/typescript_vitest_unused_default_parameter/input
+config: <cwd>/fixtures/typescript_vitest_unused_default_parameter/input/ripr.toml
+
+Summary: 1 changed behavior checked: 0 appear noticed by tests, 0 partly noticed, 1 reached but not noticed, 0 no test path. 1 found, 0 suppressed by your settings
+
+Changed file(s) by language: typescript = 1
+
+Analysis outcome: findings below (analysis complete)
+  Counts: 1 changed file(s), 2 changed line(s), 1 candidate line(s), 1 changed behavior(s) checked, 1 finding(s)
+
+Start here:
+  State: preview language, advisory only
+  Safe next action: this TypeScript preview finding's repair packet is not ready (TypeScript preview found related test evidence but cannot name a safe target check or observer shape); `ripr pilot`, `ripr agent repair` and `ripr first-pr` will not route it; add or strengthen a test by hand, then rerun `ripr check`
+  File: src/def.ts:3
+  Language: typescript
+  Language status: preview
+  Static exposure: unrevealed (severity: warning, confidence 0.40)
+  Why capped: preview adapter: infection/propagation not modeled (TypeScript); syntax-first, no type or import resolution; the assertion is not confirmed to observe the changed value. Preview score, not on the same scale as Rust confidence.
+  Why unrevealed: a related test reaches this change, but no assertion tells the old and new behavior apart
+  Changed behavior: opts: { level: string } = { level: 'AAA' },
+  Missing check: The change to `pick` only moves the default value of `opts`, and every related call
+    passes that argument: observed `pick` calls: `('x', { level: 'B' })`. The default never applies
+    under the tests, so no assertion can observe it. Add a call that omits the argument
+  Related test: test/def.test.ts:5 pick joins the level
+  Next step — TypeScript preview advisory: every related call passes the argument whose default
+    changed, so the default never applies; add a test call that omits it before strengthening any
+    assertion. No repair packet is emitted
+  Evidence: reach yes · infection no · propagation unknown · observation yes · assertion unknown
+    Stages (static evidence): reach = test path to changed owner; infection = inputs can activate change;
+      propagation = changed effect reaches output; observation = related test/assertion evidence;
+      assertion = a test assertion tells intended from wrong behavior
+    States: yes = evidence found; weak = partial evidence; no = evidence not found; unknown/opaque = analysis limited;
+      missing = a needed test input or assertion is absent; not established = assertion unconfirmed; not applicable = stage unused
+    Summary terms: changed behavior = one change point ripr checked; appear noticed by tests = a test appears to notice the change;
+      partly noticed = tests appear to notice it only partly; reached but not noticed = tests reach it but nothing appears to notice;
+      no test path = no test path found; unclear = analysis limited, not a verdict;
+      found = listed for review; suppressed by your settings = hidden by your suppression policy;
+      base-side = evidence from the old code, not an edit target; candidate line = changed line ripr considers
+    - reach yes: 1 related test(s) found for owner `pick`
+    - infection no: No related call lets the default of `opts` apply: observed `pick` calls: `('x', { level: 'B' })`
+    - 5 more detail line(s) in --format human-full
+
+Next: drill into the top finding:
+  (finding id, for explain/context)
+  ripr explain --root <cwd>/fixtures/typescript_vitest_unused_default_parameter/input --diff <cwd>/fixtures/typescript_vitest_unused_default_parameter/diff.patch --mode fast probe:src_def.ts:typescript_preview:a65132fe
+  ripr context --root <cwd>/fixtures/typescript_vitest_unused_default_parameter/input --diff <cwd>/fixtures/typescript_vitest_unused_default_parameter/diff.patch --mode fast --at probe:src_def.ts:typescript_preview:a65132fe
+  no repair start offered: this finding has no gap ID, so there is no gap to start a repair from; follow the Next step above
+
+More:
+  Full evidence: rerun with --format human-full
+  Machine data: rerun with --format json
+
+Note: 1 TypeScript file analyzed under preview support — preview evidence is advisory and may be incomplete. Treat its findings as advisory, not Rust-grade.

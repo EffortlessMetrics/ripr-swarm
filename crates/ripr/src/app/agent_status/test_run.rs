@@ -20,6 +20,21 @@ pub(super) fn issued_reading(
     reading
 }
 
+/// The `test_run` object for the receipt issued to `manifest`'s attempt, for
+/// a transport that projects one attempt (#16251). It is the object `ripr agent
+/// status --attempt` emits, built from the same retained record, and is `None`
+/// when the receipt does not record that ripr ran no test.
+pub(crate) fn issued_test_run_json(
+    manifest: &RepairAttemptManifest,
+    value: &Value,
+) -> Option<Value> {
+    let reading = issued_reading(manifest, value);
+    reading.test_not_run().then(|| test_run_json(&reading))
+}
+
+/// What a failing run adds when none of its tests is the edited one (#16311).
+const NOT_COVERED_FAILURE: &str = "The reported run also did not include the test this attempt's edit added or changed, so that test has no reported run.";
+
 /// The counts of a caller-reported run, in the words the finish printed.
 pub(crate) fn reported_test_run_counts(run: &ReportedTestRun) -> String {
     format!(
@@ -31,10 +46,66 @@ pub(crate) fn reported_test_run_counts(run: &ReportedTestRun) -> String {
 /// What a caller-reported run leaves to do. A reported failure is named:
 /// static movement `improved` never turns a failing test into a pass.
 pub(crate) fn reported_test_run_next_step(run: &ReportedTestRun) -> String {
+    const BOUND: &str = "ripr checked that the result is bound to this attempt, its HEAD and the test file; it did not run or observe the tests, and the receipt's static movement is separate evidence.";
     if run.failed > 0 {
-        "The reported run has a failing test: make the focused test pass before keeping it. Static movement `improved` does not establish a passing test.".to_string()
+        let failing = "The reported run has a failing test: make the focused test pass before keeping it. Static movement `improved` does not establish a passing test.";
+        // #16311: a failing sibling must not hide that the edited test has
+        // no reported run.
+        match run.edited_test {
+            Some("not_covered") => format!("{failing} {NOT_COVERED_FAILURE}"),
+            _ => failing.to_string(),
+        }
     } else {
-        "ripr checked that the result is bound to this attempt, its HEAD and the test file; it did not run or observe the tests, and the receipt's static movement is separate evidence.".to_string()
+        // #16311: say whether the run included a test the edit added or
+        // changed, when ripr could tell.
+        match run.edited_test {
+            Some("covered") => {
+                format!("The run included a test this attempt's edit added or changed. {BOUND}")
+            }
+            Some("not_covered") => format!(
+                "None of the reported tests is one this attempt's edit added or changed, so the edited test has no reported run. {BOUND}"
+            ),
+            _ => BOUND.to_string(),
+        }
+    }
+}
+
+/// The finish's next step once the caller reported a focused run (#16263).
+///
+/// An `advisory` receipt whose static movement is `improved` asks the caller
+/// to run the focused test; that guidance is the receipt's static-only
+/// default and stays in its digest-bound bytes. When the finish recorded a
+/// run, the summary names what is left instead. A pass credits the added or
+/// edited test only when the finish saw it among the ran tests (#16311);
+/// otherwise it names the missing run or asks the caller to confirm it.
+/// A failure means the patch must change, and a changed patch leaves this
+/// receipt stale. Any other receipt keeps its own step: only it decides
+/// whether it is review evidence.
+pub(crate) fn next_step_after_reported_run(
+    run: Option<&ReportedTestRun>,
+    receipt_status: Option<&str>,
+    movement: Option<&str>,
+    receipt_step: &str,
+) -> String {
+    match run {
+        Some(run) if receipt_status == Some("advisory") && movement == Some("improved") => {
+            if run.failed > 0 {
+                let fix = "Make the focused test pass before keeping it; ripr did not run it. A fix that edits the patch leaves this receipt stale, so do not include it in review; re-check the gap with `ripr check` after the fix.";
+                match run.edited_test {
+                    Some("not_covered") => format!("{fix} {NOT_COVERED_FAILURE}"),
+                    _ => fix.to_string(),
+                }
+            } else {
+                // #16311: credit the edited test only when the finish saw it
+                // among the ran tests.
+                match run.edited_test {
+                    Some("covered") => "Keep the focused test (the reported run included the test you added or edited; ripr ran nothing) and include this receipt in review.".to_string(),
+                    Some("not_covered") => "Run the test you added or edited and keep it only if it passes: the reported run did not include it, and ripr ran nothing. Then include this receipt in review.".to_string(),
+                    _ => "Confirm the reported run included the test you added or edited (ripr could not tell which tests the edit changed, and ran nothing), then include this receipt in review.".to_string(),
+                }
+            }
+        }
+        _ => receipt_step.to_string(),
     }
 }
 
@@ -55,11 +126,43 @@ pub(super) fn test_run_line(reading: &AgentReceiptReading) -> String {
     }
 }
 
+/// The same line for one of several finished attempts in the aggregate
+/// status (#14146): it names the attempt it speaks for.
+pub(super) fn attempt_test_run_line(attempt_id: &str, reading: &AgentReceiptReading) -> String {
+    let line = test_run_line(reading);
+    match line.strip_prefix("Test run: ") {
+        Some(rest) => format!("Test run (attempt `{attempt_id}`): {rest}"),
+        None => line,
+    }
+}
+
+/// How telling a reading is for the aggregate status (#14146), lowest first:
+/// a caller-reported failure, then no recorded run, then a caller-reported
+/// pass. A failure must never sit behind another attempt's reading.
+pub(super) fn aggregate_rank(reading: &AgentReceiptReading) -> u8 {
+    match &reading.reported_test_run {
+        Some(run) if run.failed > 0 => 0,
+        None => 1,
+        Some(_) => 2,
+    }
+}
+
+/// The aggregate JSON `test_run` object: the per-attempt object plus the
+/// `attempt_id` it speaks for (#14146).
+pub(super) fn aggregate_test_run_json(attempt_id: &str, reading: &AgentReceiptReading) -> Value {
+    let mut value = test_run_json(reading);
+    if let Some(object) = value.as_object_mut() {
+        object.insert("attempt_id".to_string(), Value::from(attempt_id));
+    }
+    value
+}
+
 /// The JSON `test_run` object for the same axis. `not_recorded` keeps its
 /// prior shape; `caller_reported` adds the reported counts.
 pub(super) fn test_run_json(reading: &AgentReceiptReading) -> Value {
     match &reading.reported_test_run {
-        Some(run) => serde_json::json!({
+        Some(run) => {
+            let mut value = serde_json::json!({
             "status": "caller_reported",
             "test_changed": reading.test_changed,
             "file": run.file,
@@ -67,7 +170,13 @@ pub(super) fn test_run_json(reading: &AgentReceiptReading) -> Value {
             "passed": run.passed,
             "failed": run.failed,
             "next_step": reported_test_run_next_step(run)
-        }),
+            });
+            // #16311: absent for a run retained before the reading existed.
+            if let (Some(edited_test), Some(object)) = (run.edited_test, value.as_object_mut()) {
+                object.insert("edited_test".to_string(), Value::from(edited_test));
+            }
+            value
+        }
         None => test_not_run_json(reading),
     }
 }
@@ -88,6 +197,86 @@ mod tests {
             ran: passed + failed,
             passed,
             failed,
+            edited_test: None,
+        }
+    }
+
+    #[test]
+    fn the_edited_test_is_credited_only_when_the_run_covered_it() {
+        let step = "Run the focused test and keep it only if it passes.";
+        let with = |edited_test| ReportedTestRun {
+            edited_test,
+            ..run(1, 0)
+        };
+        let next = |run: &ReportedTestRun| {
+            next_step_after_reported_run(Some(run), Some("advisory"), Some("improved"), step)
+        };
+        let covered = with(Some("covered"));
+        assert!(next(&covered).starts_with("Keep the focused test"));
+        assert_eq!(
+            test_run_json(&reading(Some(covered.clone())))["edited_test"],
+            "covered"
+        );
+        let missed = with(Some("not_covered"));
+        assert!(next(&missed).starts_with("Run the test you added or edited"));
+        assert!(reported_test_run_next_step(&missed).starts_with("None of the reported tests"));
+        for unknown in [with(Some("unknown")), with(None)] {
+            assert!(next(&unknown).starts_with("Confirm the reported run included"));
+        }
+        // A failing sibling still names the edited test's missing run.
+        let failed_sibling = ReportedTestRun {
+            edited_test: Some("not_covered"),
+            ..run(0, 1)
+        };
+        let failed_edited = ReportedTestRun {
+            edited_test: Some("covered"),
+            ..run(0, 1)
+        };
+        for (failed, names_missing) in [(&failed_sibling, true), (&failed_edited, false)] {
+            let status_step = reported_test_run_next_step(failed);
+            let finish_step = next(failed);
+            assert!(status_step.starts_with("The reported run has a failing test"));
+            assert!(finish_step.starts_with("Make the focused test pass"));
+            for text in [&status_step, &finish_step] {
+                assert_eq!(text.contains(NOT_COVERED_FAILURE), names_missing, "{text}");
+            }
+        }
+        assert!(
+            test_run_json(&reading(Some(with(None))))
+                .get("edited_test")
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn a_reported_run_replaces_only_the_improved_advisory_run_the_test_step() {
+        let step = "Run the focused test and keep it only if it passes.";
+        let advisory = Some("advisory");
+        let improved = Some("improved");
+        let passed = run(1, 0);
+        let failed = run(0, 1);
+        assert_eq!(
+            next_step_after_reported_run(None, advisory, improved, step),
+            step
+        );
+        let kept = next_step_after_reported_run(Some(&passed), advisory, improved, step);
+        assert!(
+            kept.starts_with("Confirm the reported run included the test you added or edited"),
+            "{kept}"
+        );
+        assert!(!kept.contains("Run the focused test"), "{kept}");
+        let fix = next_step_after_reported_run(Some(&failed), advisory, improved, step);
+        assert!(fix.starts_with("Make the focused test pass"), "{fix}");
+        assert!(fix.contains("do not include it in review"), "{fix}");
+        for (status, movement) in [
+            (Some("limited"), improved),
+            (advisory, Some("unchanged")),
+            (None, improved),
+        ] {
+            assert_eq!(
+                next_step_after_reported_run(Some(&passed), status, movement, step),
+                step
+            );
         }
     }
 

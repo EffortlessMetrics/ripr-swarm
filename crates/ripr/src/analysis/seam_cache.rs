@@ -62,7 +62,7 @@ use super::test_grip_evidence::RelatedTestGrip;
 use super::test_grip_evidence::shared_grips::SharedGrips;
 use crate::config::{
     PYTHON_PROJECT_MARKERS, PYTHON_SOURCE_DIR_MARKERS, TYPESCRIPT_PROJECT_MARKERS,
-    TYPESCRIPT_SOURCE_DIR_MARKERS, detect_javascript_led_root,
+    TYPESCRIPT_SOURCE_DIR_MARKERS, detect_javascript_led_root, root_contains_detectable_python,
     source_dir_contains_detectable_python, source_dir_contains_detectable_typescript,
 };
 use std::collections::{BTreeMap, BTreeSet, HashMap};
@@ -771,7 +771,54 @@ pub(crate) struct CachedSeamLimitInfo {
 /// typed `activation_boundary_input_unresolved` token and the evidence record
 /// no longer derives that category from the sentence (#14951), so a cached
 /// summary without the token would lose its category.
-pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.183";
+/// `1.184`: a macro-generated test takes no invocation scopes when its file or
+/// invocation scope rebinds an exempt std macro name (#12852).
+/// `1.185`: an explicit registered harness uses only the selected Cargo target
+/// key under an aliased workspace root (#15846).
+/// `1.187`: a macro-generated test carrying an unrecognised attribute macro takes
+/// no invocation scopes (#12857).
+/// `1.189`: a std- or core-rooted import of an exempt macro name lets a
+/// generated test keep its invocation scopes when the root is not shadowed (#12876).
+/// `1.191`: a helper wrapper that reads `env!` or `option_env!` forwards
+/// the helper result when neither name is rebound (#10357).
+/// `1.192`: a `std::`/`core::` assertion whose root the manifest binds to a
+/// package reads as an unknown oracle (#10150).
+/// `1.193`: an assertion whose every owner call sits inside an untrusted inner
+/// macro reads as an unknown oracle for that owner (#16188).
+/// `1.194`: a `for` over any non-empty array runs its assertion, not only a
+/// constant-row table (#14116).
+/// `1.195`: an owner result bound to a local that only an untrusted inner macro
+/// uses reads as an unknown oracle for that owner (#16192).
+/// `1.196`: a check helper with `?` lends its assertion when every eager call
+/// is `check(..)?` (#14116).
+/// `1.197`: an owner result unwrapped or chained into a local that only an untrusted
+/// inner macro uses reads as an unknown oracle for that owner (#16219).
+/// `1.198`: an owner call whose result a statement discards (`let _ = pick(0);`,
+/// `pick(0);`) is not a free observation beside a macro-held call (#16258).
+/// `1.199`: a helper wrapper reading `include_str!` or `include_bytes!` forwards
+/// its helper result unless either name is rebound (#10357).
+/// `1.200`: a `matches!` or-pattern whose alternatives all pin a value reads
+/// weak, not exact (#16286).
+/// `1.201`: a renamed call in a test's own module file (`src/tests.rs`) reads
+/// the enclosing module files, so a nested-block rename settles there too (#16277).
+/// `1.202`: `assert_eq!(matches!(..), true)` reads only as strong as its
+/// pattern (#16290).
+/// `1.204`: a test whose every mention of the owner's name is bound by a
+/// local of its body (`let dt = |x| x + 1;`, a nested `fn dt`) no longer
+/// relates by `direct_owner_call` (#14552).
+/// `1.205`: a boolean local compared with `true` reads as its
+/// initializer (#16296).
+/// `1.206`: a helper wrapper that logs through an audited
+/// `tracing::`/`log::` leveled macro forwards (#10357).
+/// `1.207`: a trait impl method on a receiver built by an indexed constructor
+/// relates by `direct_owner_call` unless another method of the name may take
+/// the call, and an inherent by-value twin withholds it (#15956, #15428).
+/// `1.208`: a helper wrapper that builds a value through an
+/// audited `anyhow::anyhow!` or `serde_json::json!` forwards (#10357).
+/// `1.209`: a `&self` or `&mut self` trait impl method is name-only when a
+/// standard trait's method of the name comes at an earlier probing step
+/// (#16040).
+pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.209";
 /// `0.2` → `0.3`: same semantic transition as the outer cache (#3273 /
 /// #3286) — sharded entries derive from the same facts and cannot bypass
 /// the outer generation bump.
@@ -995,7 +1042,29 @@ pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.183";
 /// `0.183`: same failure-seam success-only refusal as full `1.181` (#12757).
 /// `0.184`: same module-const reader entry as full `1.182` (#13592).
 /// `0.185`: same typed boundary-input summary as full `1.183` (#14951).
-const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.185";
+/// `0.186`: same invocation-scope refusal as full `1.184` (#12852).
+/// `0.187`: same explicit Cargo harness target identity as full `1.185` (#15846).
+/// `0.189`: same attribute-macro scope refusal as full `1.187` (#12857).
+/// `0.191`: same std-rooted import exemption as full `1.189` (#12876).
+/// `0.193`: same env!-reading wrapper forwarding as full `1.191` (#10357).
+/// `0.194`: same manifest-rebound assertion root as full `1.192` (#10150).
+/// `0.195`: same macro-held owner call as full `1.193` (#16188).
+/// `0.196`: same non-empty array loop execution as full `1.194` (#14116).
+/// `0.197`: same macro-held owner-result local as full `1.195` (#16192).
+/// `0.198`: same propagated fallible check helper as full `1.196` (#14116).
+/// `0.199`: same chained owner-result local as full `1.197` (#16219).
+/// `0.200`: same discarded owner call as full `1.198` (#16258).
+/// `0.201`: same include-reading wrapper forwarding as full `1.199` (#10357).
+/// `0.202`: same or-pattern oracle reading as full `1.200` (#16286).
+/// `0.203`: same file-module nested-block rename as full `1.201` (#16277).
+/// `0.204`: same compared-pattern oracle reading as full `1.202` (#16290).
+/// `0.206`: same local-binder refusal as full `1.204` (#14552).
+/// `0.207`: same compared-bool-local oracle reading as full `1.205` (#16296).
+/// `0.208`: same audited logging-wrapper forwarding as full `1.206` (#10357).
+/// `0.209`: same constructed trait receiver reading as full `1.207` (#15956).
+/// `0.210`: same audited value-macro wrapper forwarding as full `1.208` (#10357).
+/// `0.211`: same standard trait rival reading as full `1.209` (#16040).
+const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.211";
 
 /// Compact-classified seam cache schema. This cache stores the same
 /// `ClassifiedSeam` envelope shape as the full repo exposure cache, but
@@ -1221,7 +1290,29 @@ const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.185";
 /// `0.183`: same failure-seam success-only refusal as full `1.181` (#12757).
 /// `0.184`: same module-const reader entry as full `1.182` (#13592).
 /// `0.185`: same typed boundary-input summary as full `1.183` (#14951).
-pub(crate) const COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.185";
+/// `0.186`: same invocation-scope refusal as full `1.184` (#12852).
+/// `0.187`: same explicit Cargo harness target identity as full `1.185` (#15846).
+/// `0.189`: same attribute-macro scope refusal as full `1.187` (#12857).
+/// `0.191`: same std-rooted import exemption as full `1.189` (#12876).
+/// `0.193`: same env!-reading wrapper forwarding as full `1.191` (#10357).
+/// `0.194`: same manifest-rebound assertion root as full `1.192` (#10150).
+/// `0.195`: same macro-held owner call as full `1.193` (#16188).
+/// `0.196`: same non-empty array loop execution as full `1.194` (#14116).
+/// `0.197`: same macro-held owner-result local as full `1.195` (#16192).
+/// `0.198`: same propagated fallible check helper as full `1.196` (#14116).
+/// `0.199`: same chained owner-result local as full `1.197` (#16219).
+/// `0.200`: same discarded owner call as full `1.198` (#16258).
+/// `0.201`: same include-reading wrapper forwarding as full `1.199` (#10357).
+/// `0.202`: same or-pattern oracle reading as full `1.200` (#16286).
+/// `0.203`: same file-module nested-block rename as full `1.201` (#16277).
+/// `0.204`: same compared-pattern oracle reading as full `1.202` (#16290).
+/// `0.206`: same local-binder refusal as full `1.204` (#14552).
+/// `0.207`: same compared-bool-local oracle reading as full `1.205` (#16296).
+/// `0.208`: same audited logging-wrapper forwarding as full `1.206` (#10357).
+/// `0.209`: same constructed trait receiver reading as full `1.207` (#15956).
+/// `0.210`: same audited value-macro wrapper forwarding as full `1.208` (#10357).
+/// `0.211`: same standard trait rival reading as full `1.209` (#16040).
+pub(crate) const COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.211";
 
 /// Compact class-count cache used by repo badge rendering. It keys off
 /// the same workspace state as the full fact cache, but stores only
@@ -1443,7 +1534,17 @@ pub(crate) const COUNT_CACHE_SCHEMA_VERSION: &str = "0.2";
 /// and need a re-serialization of every entry to verify, so they are not read.
 /// `1.62`: probe shapes strictly inside a `#[test]` body (and no production
 /// `fn`) are not stored (#13703); `1.61` entries still carry them.
-pub(crate) const FILE_FACT_CACHE_SCHEMA_VERSION: &str = "1.62";
+/// `1.64`: `env` and `option_env` join the trusted macro names, so the
+/// stored binding candidates may name them (#14116); `1.63` candidates
+/// cannot, and would hide a `macro_rules! env` from the binding scan.
+/// `1.63`: a unit owner's tail block of `;`-terminated statements is not
+/// probed as `return_value` (#15459); `1.62` facts still carry that shape.
+/// `1.65`: `include_bytes` and `include_str` join the trusted macro names
+/// (#14116); `1.64` candidates cannot name them, and would hide a
+/// `macro_rules! include_str` from the binding scan.
+/// `1.66`: an item-position `include!` makes a file's binding candidates
+/// `Any` (#16060); earlier candidates let the binding scan skip such a file.
+pub(crate) const FILE_FACT_CACHE_SCHEMA_VERSION: &str = "1.66";
 
 /// Keep the best-effort classified-seam cache from turning a successful live
 /// analysis into an unbounded post-analysis stall on large repos. Larger live
@@ -1704,7 +1805,9 @@ fn seam_cache_store_limit_from_env(
     match value {
         Ok(value) => parse_positive_seam_cache_store_limit(&value, env_name),
         Err(std::env::VarError::NotPresent) => Ok(default_limit),
-        Err(std::env::VarError::NotUnicode(_)) => Err(format!("{env_name} must be valid UTF-8")),
+        Err(std::env::VarError::NotUnicode(_)) => Err(format!(
+            "{env_name} must be valid UTF-8; set it to a whole number above zero, or unset it to use the default"
+        )),
     }
 }
 
@@ -1712,9 +1815,11 @@ fn parse_positive_seam_cache_store_limit(value: &str, env_name: &str) -> Result<
     let trimmed = value.trim();
     let parsed = trimmed
         .parse::<usize>()
-        .map_err(|err| format!("{env_name} must be a positive integer: {err}"))?;
+        .map_err(|err| format!("{env_name} must be a positive integer: {err}; set it to a whole number above zero, or unset it to use the default"))?;
     if parsed == 0 {
-        return Err(format!("{env_name} must be a positive integer"));
+        return Err(format!(
+            "{env_name} must be a positive integer; set it to a whole number above zero, or unset it to use the default"
+        ));
     }
     Ok(parsed)
 }
@@ -2121,6 +2226,17 @@ impl WorkspaceKeyContext<'_> {
                 )),
                 None => workspace_manifests_hash,
             };
+        // #16045 review: a symlinked crate root (`src -> real`,
+        // `src/lib.rs -> ../real/lib.rs`) decides which files the repo
+        // inventory lists, and the link can move with no manifest or Rust
+        // file changing (discovery skips links). Fold where each built root
+        // lands into the key. A workspace without linked roots keeps its key.
+        let workspace_manifests_hash = match linked_crate_root_identity(self.workspace_root) {
+            Some(identity) => hash_str(&format!(
+                "{workspace_manifests_hash}:linked-crate-roots:{identity}"
+            )),
+            None => workspace_manifests_hash,
+        };
         // The registered-harness premise is producer-owned Cargo metadata.
         // Raw configuration, including malformed bytes and absence, changes
         // that premise independently of Rust sources, HEAD and ripr.toml.
@@ -2507,6 +2623,22 @@ impl ModuleTreeScanEnvelope {
             Err("missing or mismatching semantic payload digest".to_owned())
         }
     }
+}
+
+/// Whether a non-empty `RIPR_CACHE_DIR` moves the cache off the default
+/// `target/ripr/cache` base for this process.
+pub(crate) fn cache_base_is_relocated() -> bool {
+    std::env::var(CACHE_DIR_ENV).is_ok_and(|value| !value.trim().is_empty())
+}
+
+/// Repository-relative path of the module-tree scan bundle under the default
+/// cache base (no `RIPR_CACHE_DIR`). The repair edit cage treats this one
+/// fixed-name derived file as unbound attempt state (#15060).
+pub(crate) fn module_tree_scan_bundle_default_relative_path() -> String {
+    format!(
+        "target/ripr/cache/{}/{MODULE_TREE_SCAN_CACHE_SCHEMA_VERSION}/scans.json",
+        CacheLayer::ModuleTreeScans.name()
+    )
 }
 
 /// Persists the module-graph walk's per-file scans between runs so a warm
@@ -4811,6 +4943,39 @@ pub(crate) fn hash_bytes(bytes: &[u8]) -> String {
     format!("{:016x}", fnv1a_64(bytes))
 }
 
+/// Where every symlinked production root the workspace's manifests build
+/// lands, root-relative, or `None` when no built root is reached through a
+/// link (#16045 review).
+fn linked_crate_root_identity(root: &Path) -> Option<String> {
+    let mut manifests = Vec::new();
+    collect_named_workspace_files(root, root, "Cargo.toml", &mut manifests);
+    let relative = |path: &Path| {
+        path.strip_prefix(root)
+            .unwrap_or(path)
+            .to_string_lossy()
+            .replace('\\', "/")
+    };
+    let mut lines = BTreeSet::new();
+    for (manifest, bytes) in manifests {
+        let Ok(text) = std::str::from_utf8(&bytes) else {
+            continue;
+        };
+        let package_dir = match manifest.parent() {
+            Some(parent) if !parent.as_os_str().is_empty() => root.join(parent),
+            _ => root.to_path_buf(),
+        };
+        for (file, dir) in super::workspace::linked_production_roots(root, &package_dir, text) {
+            lines.insert(format!(
+                "{}\t{}\t{}",
+                relative(&manifest),
+                relative(&file),
+                relative(&dir)
+            ));
+        }
+    }
+    (!lines.is_empty()).then(|| hash_str(&lines.into_iter().collect::<Vec<_>>().join("\n")))
+}
+
 fn hash_named_workspace_files(root: &Path, file_name: &str) -> String {
     workspace_named_file_identity(root, file_name)
         .unwrap_or_else(|| hash_str("<no matching workspace files>"))
@@ -4819,8 +4984,8 @@ fn hash_named_workspace_files(root: &Path, file_name: &str) -> String {
 /// Hash the adapter-owned workspace identities that can change analysis.
 /// Cargo consumes manifest contents recursively. The Python inputs tracked
 /// here are presence-only, exactly as no-config detection consumes them:
-/// root marker files and detectable Python source below root `src`/`tests`
-/// (bounded to two presence booleans — never a per-file enumeration).
+/// root marker files, root source presence, and detectable Python source below
+/// root `src`/`tests` (presence booleans, never a per-file enumeration).
 /// TypeScript no-config detection (`tsconfig.json`/`jsconfig.json` and
 /// detectable TypeScript source below `src`/`tests`) binds the same way.
 /// A package-led JavaScript root (#11336: root `package.json` plus detectable
@@ -4834,6 +4999,7 @@ fn hash_named_workspace_files(root: &Path, file_name: &str) -> String {
 /// cache entries without any input change.
 fn hash_workspace_manifests(root: &Path) -> String {
     let cargo_identity = hash_named_workspace_files(root, "Cargo.toml");
+    let python_root_source = root_contains_detectable_python(root);
     let present_python_markers: Vec<&str> = PYTHON_PROJECT_MARKERS
         .iter()
         .copied()
@@ -4855,7 +5021,8 @@ fn hash_workspace_manifests(root: &Path) -> String {
         .filter(|dir| source_dir_contains_detectable_typescript(root, dir))
         .collect();
     let javascript_led_root = detect_javascript_led_root(root);
-    if present_python_markers.is_empty()
+    if !python_root_source
+        && present_python_markers.is_empty()
         && detectable_source_dirs.is_empty()
         && present_typescript_markers.is_empty()
         && detectable_typescript_dirs.is_empty()
@@ -4865,6 +5032,9 @@ fn hash_workspace_manifests(root: &Path) -> String {
     }
 
     let mut identity = format!("cargo={cargo_identity}\n");
+    if python_root_source {
+        identity.push_str("python_root_source=1\n");
+    }
     for marker in present_python_markers {
         identity.push_str("python_marker=");
         identity.push_str(marker);
@@ -5524,7 +5694,11 @@ mod tests {
         // 1.58 -> 1.59: file-fact keys carry the normalized path spelling (#13887).
         // 1.59 -> 1.60: tail if/else branch values probed as return_value (#14385).
         // 1.60 -> 1.61: digest-framed entries verified over stored bytes (#9216).
-        assert_eq!(FILE_FACT_CACHE_SCHEMA_VERSION, "1.62");
+        // 1.62 -> 1.63: unit tail statement blocks are not return values (#15459).
+        // 1.63 -> 1.64: `env`/`option_env` binding candidates (#14116).
+        // 1.64 -> 1.65: `include_bytes`/`include_str` binding candidates (#14116).
+        // 1.65 -> 1.66: item-position `include!` binds any name (#16060).
+        assert_eq!(FILE_FACT_CACHE_SCHEMA_VERSION, "1.66");
         // 1.4 -> 1.5: metadata-sourced harness validation (#3634) flips
         // verdicts for workspaces the manifest emulation approximated.
         // 1.5 -> 1.6: the #3636 reachability authority excludes
@@ -5735,7 +5909,30 @@ mod tests {
         // 1.180 -> 1.181: success-only assertions leave the failure seam undiscriminated (#12757).
         // 1.181 -> 1.182: a same-module reader of a module-level const gains a reader entry (#13592).
         // 1.182 -> 1.183: typed boundary-input activation summary (#14951).
-        assert_eq!(CACHE_SCHEMA_VERSION, "1.183");
+        // 1.183 -> 1.184: rebound std macro names refuse invocation scopes (#12852).
+        // 1.185 -> 1.187: attribute-macro generated tests refuse invocation scopes (#12857).
+        // 1.187 -> 1.189: std-rooted imports keep invocation scopes (#12876).
+        // 1.188 / 0.190 is left for #13041.
+        // 1.189 -> 1.191: env!-reading wrappers forward helper results (#10357).
+        // 1.190 / 0.192 is left for #13041.
+        // 1.191 -> 1.192: manifest-rebound std/core assertion roots read unknown (#10150); 1.190 is left for #13041.
+        // 1.192 -> 1.193: owner calls only an untrusted inner macro holds read unknown (#16188).
+        // 1.193 -> 1.194: a for over any non-empty array runs its assertion (#14116).
+        // 1.194 -> 1.195: owner-result locals only an untrusted inner macro uses read unknown (#16192).
+        // 1.195 -> 1.196: a propagated fallible check helper lends its assertion (#14116).
+        // 1.196 -> 1.197: chained owner-result locals only an untrusted inner macro uses read unknown (#16219).
+        // 1.197 -> 1.198: a discarded owner call is not a free observation beside a macro-held call (#16258).
+        // 1.198 -> 1.199: include_str!/include_bytes! wrappers forward their helper result (#10357).
+        // 1.199 -> 1.200: matches! or-patterns of values read weak (#16286).
+        // 1.200 -> 1.201: nested-block renames settle in a test's own module file (#16277).
+        // 1.201 -> 1.202: assert_eq!(matches!(..), true) follows its pattern (#16290).
+        // 1.202 -> 1.204: a test-local binder of the name withholds direct credit (#14552).
+        // 1.204 -> 1.205: a compared bool local follows its initializer (#16296).
+        // 1.205 -> 1.206: an audited qualified logging macro is transparent (#10357).
+        // 1.206 -> 1.207: constructed trait receivers and by-value twins (#15956, #15428).
+        // 1.207 -> 1.208: an audited qualified value macro is transparent (#10357).
+        // 1.208 -> 1.209: a standard trait method at an earlier probing step (#16040).
+        assert_eq!(CACHE_SCHEMA_VERSION, "1.209");
         // 1.168 -> 1.169: plain `assert_eq!` literal withhold in the audit (#13005).
         // 0.12 -> 0.13 through 0.14 / 0.15 / 0.16 / 0.17 / 0.18: same
         // #3731 semantic transition as the outer classified-seam cache,
@@ -5899,8 +6096,30 @@ mod tests {
         // 0.182 -> 0.183: same failure-seam success-only refusal as full 1.181 (#12757).
         // 0.183 -> 0.184: same module-const reader entry as full 1.182 (#13592).
         // 0.184 -> 0.185: same typed boundary-input summary as full 1.183 (#14951).
-        assert_eq!(SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.185");
-        assert_eq!(COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.185");
+        // 0.185 -> 0.186: same invocation-scope refusal as full 1.184 (#12852).
+        // 0.187 -> 0.189: same attribute-macro scope refusal as full 1.187 (#12857).
+        // 1.186 / 0.188 is left for #13041.
+        // 0.189 -> 0.191: same std-rooted import exemption as full 1.189 (#12876).
+        // 0.191 -> 0.193: same env!-reading wrapper forwarding as full 1.191 (#10357).
+        // 0.193 -> 0.194: same manifest-rebound assertion root as full 1.192 (#10150).
+        // 0.194 -> 0.195: same macro-held owner call as full 1.193 (#16188).
+        // 0.195 -> 0.196: same non-empty array loop execution as full 1.194 (#14116).
+        // 0.196 -> 0.197: same macro-held owner-result local as full 1.195 (#16192).
+        // 0.197 -> 0.198: same propagated fallible check helper as full 1.196 (#14116).
+        // 0.198 -> 0.199: same chained owner-result local as full 1.197 (#16219).
+        // 0.199 -> 0.200: same discarded owner call as full 1.198 (#16258).
+        // 0.200 -> 0.201: same include-reading wrapper forwarding as full 1.199 (#10357).
+        // 0.201 -> 0.202: same or-pattern oracle reading as full 1.200 (#16286).
+        // 0.202 -> 0.203: same file-module nested-block rename as full 1.201 (#16277).
+        // 0.203 -> 0.204: same compared-pattern oracle reading as full 1.202 (#16290).
+        // 0.204 -> 0.206: same local-binder refusal as full 1.204 (#14552).
+        // 0.206 -> 0.207: same compared-bool-local oracle reading as full 1.205 (#16296).
+        // 0.207 -> 0.208: same audited logging-wrapper forwarding as full 1.206 (#10357).
+        // 0.208 -> 0.209: same constructed trait receiver reading as full 1.207 (#15956).
+        // 0.209 -> 0.210: same audited value-macro wrapper forwarding as full 1.208 (#10357).
+        // 0.210 -> 0.211: same standard trait rival reading as full 1.209 (#16040).
+        assert_eq!(SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.211");
+        assert_eq!(COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.211");
         // 0.170 -> 0.171: same plain `assert_eq!` literal withhold as full 1.169 (#13005).
     }
 
@@ -6365,6 +6584,7 @@ mod tests {
             ("1.71", "0.77"),
             ("1.72", "0.78"),
             ("1.73", "0.79"),
+            ("1.184", "0.186"),
         ] {
             for compact in [false, true] {
                 for sharded in [false, true] {
@@ -8489,6 +8709,29 @@ mod tests {
             std::fs::remove_file(&nested).map_err(|err| format!("remove nested {dir}: {err}"))?;
         }
 
+        ignore_remove_dir_all(&root);
+        Ok(())
+    }
+
+    #[test]
+    fn flat_python_presence_changes_detection_cache_identity() -> Result<(), String> {
+        let root = isolated_dir("flat-python-presence");
+        std::fs::create_dir_all(&root).map_err(|err| format!("mkdir: {err}"))?;
+        let baseline = hash_workspace_manifests(&root);
+        let source = root.join("shop.py");
+        std::fs::write(&source, "first").map_err(|err| format!("write: {err}"))?;
+        let present = hash_workspace_manifests(&root);
+        assert_ne!(baseline, present);
+        std::fs::write(&source, "second").map_err(|err| format!("edit: {err}"))?;
+        assert_eq!(present, hash_workspace_manifests(&root));
+        std::fs::write(root.join("test_shop.py"), "test").map_err(|err| format!("test: {err}"))?;
+        std::fs::remove_file(&source).map_err(|err| format!("remove source: {err}"))?;
+        assert_eq!(present, hash_workspace_manifests(&root));
+        std::fs::remove_file(root.join("test_shop.py"))
+            .map_err(|err| format!("remove test: {err}"))?;
+        std::fs::write(root.join("generated_shop.py"), "ignored")
+            .map_err(|err| format!("generated: {err}"))?;
+        assert_eq!(baseline, hash_workspace_manifests(&root));
         ignore_remove_dir_all(&root);
         Ok(())
     }

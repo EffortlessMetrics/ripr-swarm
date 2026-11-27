@@ -1,0 +1,14 @@
+# Registers the [lib] path module-identity controls for #14495 under RIPR-SPEC-0172.
+[[extend]]
+id = "RIPR-SPEC-0172"
+tests = [
+  "crates/ripr/tests/custom_lib_path_module_identity.rs::an_owner_in_the_declared_root_file_is_named_at_the_crate_root",
+  "crates/ripr/tests/custom_lib_path_module_identity.rs::a_module_below_the_declared_root_is_named_from_that_root",
+  "crates/ripr/tests/custom_lib_path_module_identity.rs::a_path_shaped_or_rival_module_path_never_names_the_owner",
+  "crates/ripr/tests/custom_lib_path_module_identity.rs::a_unit_test_beside_the_owner_reads_the_owner_module",
+  "crates/ripr/tests/custom_lib_path_module_identity.rs::a_unit_test_of_a_rival_module_never_names_the_owner",
+  "crates/ripr/tests/custom_lib_path_module_identity.rs::a_renamed_import_of_another_function_never_names_the_owner",
+  "crates/ripr/tests/custom_lib_path_module_identity.rs::a_reexport_is_found_in_the_module_read_from_the_declared_root",
+  "crates/ripr/tests/custom_lib_path_module_identity.rs::a_nested_root_keeps_a_module_named_like_another_target",
+  "crates/ripr/tests/custom_lib_path_module_identity.rs::a_binary_beside_a_custom_root_leaves_its_modules_unplaced",
+]

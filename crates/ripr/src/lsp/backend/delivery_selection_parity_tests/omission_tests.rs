@@ -342,8 +342,15 @@ fn omission_actual_push_document_and_workspace_payload_parity() -> Result<(), St
         );
         let outcome = async {
             let uri = parity_uri("wire.rs")?;
-            for (budget, count, expected_selected, expected_scope) in [
-                (DiagnosticBudget::default(), 51, 50, "document"),
+            let mut previous = Vec::new();
+            for (budget, count, expected_selected, expected_scope, expected_reason) in [
+                (
+                    DiagnosticBudget::default(),
+                    51,
+                    50,
+                    "document",
+                    Some("document_item_limit"),
+                ),
                 (
                     DiagnosticBudget {
                         max_items_per_document: 2,
@@ -353,6 +360,7 @@ fn omission_actual_push_document_and_workspace_payload_parity() -> Result<(), St
                     2,
                     1,
                     "workspace",
+                    Some("workspace_item_limit"),
                 ),
                 (
                     DiagnosticBudget {
@@ -362,6 +370,7 @@ fn omission_actual_push_document_and_workspace_payload_parity() -> Result<(), St
                     2,
                     1,
                     "workspace",
+                    Some("serialized_byte_limit"),
                 ),
                 (
                     DiagnosticBudget {
@@ -372,8 +381,10 @@ fn omission_actual_push_document_and_workspace_payload_parity() -> Result<(), St
                     1,
                     0,
                     "workspace",
+                    Some("workspace_item_limit"),
                 ),
-                (DiagnosticBudget::default(), 1, 1, "document"),
+                (DiagnosticBudget::default(), 1, 1, "document", None),
+                (DiagnosticBudget::default(), 0, 0, "document", None),
             ] {
                 let mut fixture = bounded_workspace(&uri, count, &budget);
                 let workspace_limited = budget.max_items_per_workspace_response <= 2;
@@ -397,10 +408,44 @@ fn omission_actual_push_document_and_workspace_payload_parity() -> Result<(), St
                         )));
                 }
                 let snapshot = commit(service.inner(), fixture)?;
+                // The earlier document is included in workspace status, but
+                // excluded from the tested document's marker counts.
+                let workspace_total = count + usize::from(workspace_limited);
+                let workspace_selected = expected_selected + usize::from(workspace_limited);
+                let expected_omitted = count - expected_selected;
+                let status = service
+                    .inner()
+                    .execute_command_inner(ExecuteCommandParams {
+                        command: COLLECT_WORKSPACE_STATUS_COMMAND.to_string(),
+                        arguments: Vec::new(),
+                        work_done_progress_params: Default::default(),
+                    })
+                    .await
+                    .map_err(|error| error.to_string())?
+                    .ok_or("workspace status must return a result")?;
+                assert_eq!(status["diagnostic_budget_state"]["status"], "available");
+                let status_budget = &status["diagnostic_budget"];
+                assert_eq!(status_budget["schema_version"], "lsp-diagnostic-budget-v1");
+                assert_eq!(status_budget["total_canonical_items"], workspace_total);
+                assert_eq!(status_budget["eligible_items"], workspace_total);
+                assert_eq!(status_budget["selected_count"], workspace_selected);
+                assert_eq!(status_budget["omitted_count"], expected_omitted);
+                assert_eq!(status_budget["overflowed"], expected_reason.is_some());
                 assert_eq!(
-                    applied_result(stored_selection(&snapshot)?)?.selected.len(),
-                    expected_selected + usize::from(workspace_limited)
+                    status_budget["overflow_reasons"],
+                    serde_json::json!(expected_reason.into_iter().collect::<Vec<_>>())
                 );
+                let selected = status_budget["selected"]
+                    .as_array()
+                    .ok_or("status must list selected diagnostics")?;
+                assert_eq!(selected.len(), workspace_selected);
+                let omitted = status_budget["omitted"]
+                    .as_array()
+                    .ok_or("status must list omitted diagnostics")?;
+                assert_eq!(omitted.len(), expected_omitted);
+                for item in omitted {
+                    assert_eq!(item["reason"].as_str(), expected_reason);
+                }
                 service
                     .inner()
                     .restore_document_diagnostics(&uri, false, None)
@@ -461,7 +506,11 @@ fn omission_actual_push_document_and_workspace_payload_parity() -> Result<(), St
                     .inner()
                     .workspace_diagnostic(WorkspaceDiagnosticParams {
                         identifier: None,
-                        previous_result_ids: Vec::new(),
+                        previous_result_ids: if count == 0 {
+                            std::mem::take(&mut previous)
+                        } else {
+                            Vec::new()
+                        },
                         work_done_progress_params: Default::default(),
                         partial_result_params: Default::default(),
                     })
@@ -489,6 +538,10 @@ fn omission_actual_push_document_and_workspace_payload_parity() -> Result<(), St
                     "workspace pull must match actual push payload"
                 );
                 assert_eq!(workspace_item["resultId"], document["resultId"]);
+                previous = vec![PreviousResultId {
+                    uri: uri.clone(),
+                    value: result_id(&document)?,
+                }];
                 assert_eq!(
                     snapshot.diagnostic_count(),
                     count + usize::from(workspace_limited),
@@ -523,10 +576,22 @@ fn omission_actual_push_document_and_workspace_payload_parity() -> Result<(), St
                     marker["data"]["complete_evidence_identity"],
                     "fixed-evidence"
                 );
-                assert!(
-                    marker["data"]["retrieval_route"]
-                        .as_str()
-                        .is_some_and(|route| !route.is_empty())
+                assert_eq!(marker["data"]["kind"], "delivery_limitation");
+                assert_eq!(
+                    marker["data"]["complete_evidence_identity"],
+                    status_budget["complete_evidence_identity"]
+                );
+                assert_eq!(
+                    marker["data"]["snapshot_profile_budget_identity"],
+                    status_budget["snapshot_profile_budget_identity"]
+                );
+                assert_eq!(
+                    marker["data"]["retrieval_route"],
+                    "ripr/listActionableItems"
+                );
+                assert_eq!(
+                    marker["data"]["retrieval_route"],
+                    status_budget["continuation_or_inspect_route"]
                 );
             }
             Ok::<_, String>(())

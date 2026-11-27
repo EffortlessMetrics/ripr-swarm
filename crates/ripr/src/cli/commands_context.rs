@@ -47,7 +47,42 @@ pub(super) fn analysis_outcome_exit_result(
     Ok(())
 }
 
+fn root_metadata_refusal(root: &Path, command_name: &str, error: &std::io::Error) -> String {
+    // NotFound and NotADirectory (ENOTDIR: a file-typed parent such as
+    // `file.txt/sub`) both prove the root is not an existing directory, so
+    // they keep the plain wording; any other kind names the io error.
+    if matches!(
+        error.kind(),
+        std::io::ErrorKind::NotFound | std::io::ErrorKind::NotADirectory
+    ) {
+        return format!(
+            "{command_name} root {} is not a directory; pass the directory that contains the workspace (for a Cargo.toml path, its parent directory)",
+            root.display()
+        );
+    }
+    format!(
+        "{command_name} root {} could not be inspected ({:?}: {error}), so it is not confirmed to be a directory; pass the directory that contains the workspace (for a Cargo.toml path, its parent directory)",
+        root.display(),
+        error.kind()
+    )
+}
+
+/// The shared root gate for a command that writes under `target/ripr`: the
+/// directory check of [`ensure_command_root_dir`] plus the output-containment
+/// check, so a checked-in `target` link cannot redirect its output (#7781).
 pub(super) fn ensure_command_root(root: &Path, command_name: &str) -> Result<(), String> {
+    ensure_command_root_dir(root, command_name)?;
+    // #7781: every command that writes under `target/ripr` shares this
+    // gate, so a checked-in `target` link cannot redirect its output.
+    crate::atomic_file::ensure_default_output_contained(root)
+        .map_err(|error| format!("{command_name}: {error}"))
+}
+
+/// The directory-only part of [`ensure_command_root`] (#15249): refuse a
+/// missing or non-directory `--root` with the shared wording naming the command
+/// actually run. A read-only command uses this form so a hostile `target` link
+/// it never writes through does not refuse it.
+pub(super) fn ensure_command_root_dir(root: &Path, command_name: &str) -> Result<(), String> {
     // Detected once: every branch below keys on the same typed components.
     let stripped = windows_stripped_components(root);
     match std::fs::metadata(root) {
@@ -60,10 +95,6 @@ pub(super) fn ensure_command_root(root: &Path, command_name: &str) -> Result<(),
             if let Some(note) = windows_root_rebind_note(root, command_name) {
                 eprintln!("{note}");
             }
-            // #7781: every command that writes under `target/ripr` shares this
-            // gate, so a checked-in `target` link cannot redirect its output.
-            crate::atomic_file::ensure_default_output_contained(root)
-                .map_err(|error| format!("{command_name}: {error}"))?;
             Ok(())
         }
         // Metadata resolved, so the typed name addresses an existing entry.
@@ -121,10 +152,16 @@ pub(super) fn ensure_command_root(root: &Path, command_name: &str) -> Result<(),
                 ))
             }
         }
-        Ok(_) | Err(_) => Err(format!(
+        // The path exists but is not a directory.
+        Ok(_) => Err(format!(
             "{command_name} root {} is not a directory; pass the directory that contains the workspace (for a Cargo.toml path, its parent directory)",
             root.display()
         )),
+        // Metadata failed. NotFound and NotADirectory prove the root is not a
+        // directory, so the existing wording stands; any other kind
+        // (permissions, a transient sharing violation) does not prove the path is a
+        // non-directory, so the refusal names the actual io error.
+        Err(error) => Err(root_metadata_refusal(root, command_name, &error)),
     }
 }
 
@@ -315,6 +352,40 @@ pub(super) fn refuse_json_envelope_checked(
     base: Option<&str>,
     error: impl Into<crate::core_error::CoreError>,
 ) -> Result<String, String> {
+    refuse_json_envelope_checked_with_format(
+        schema_version,
+        scope,
+        mode,
+        root,
+        base,
+        error,
+        crate::app::OutputFormat::Json,
+    )
+}
+
+/// Render the existing refusal with the requested JSON presentation.
+pub(super) fn refuse_json_envelope_with_format(
+    schema_version: &'static str,
+    scope: &'static str,
+    mode: Option<&'static str>,
+    root: &Path,
+    base: Option<&str>,
+    error: impl Into<crate::core_error::CoreError>,
+    format: crate::app::OutputFormat,
+) -> String {
+    refuse_json_envelope_checked_with_format(schema_version, scope, mode, root, base, error, format)
+        .unwrap_or_else(|failure| failure)
+}
+
+fn refuse_json_envelope_checked_with_format(
+    schema_version: &'static str,
+    scope: &'static str,
+    mode: Option<&'static str>,
+    root: &Path,
+    base: Option<&str>,
+    error: impl Into<crate::core_error::CoreError>,
+    format: crate::app::OutputFormat,
+) -> Result<String, String> {
     let error = error.into();
     let rendered = crate::output::limited_check::render_refusal_envelope(
         &crate::output::limited_check::RefusalEnvelopeContext {
@@ -327,7 +398,9 @@ pub(super) fn refuse_json_envelope_checked(
         &error,
     );
     match rendered {
-        Ok(document) => write_stdout_refusal_json(document)?,
+        Ok(document) => {
+            write_stdout_refusal_json(crate::output::compact_json::finish(document, &format))?
+        }
         Err(render) => return Err(render),
     }
     Ok(error.to_string())
@@ -336,6 +409,31 @@ pub(super) fn refuse_json_envelope_checked(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_metadata_failure_other_than_not_found_names_the_io_error() {
+        let root = Path::new("fx");
+        let denied = std::io::Error::new(std::io::ErrorKind::PermissionDenied, "sharing violation");
+        let message = root_metadata_refusal(root, "check", &denied);
+        assert!(message.contains("PermissionDenied"), "{message}");
+        assert!(message.contains("sharing violation"), "{message}");
+        assert!(!message.contains("is not a directory;"), "{message}");
+
+        let missing = std::io::Error::new(std::io::ErrorKind::NotFound, "gone");
+        let message = root_metadata_refusal(root, "check", &missing);
+        assert!(
+            message.contains("is not a directory; pass the directory"),
+            "{message}"
+        );
+
+        let file_parent = std::io::Error::new(std::io::ErrorKind::NotADirectory, "not a dir");
+        let message = root_metadata_refusal(root, "check", &file_parent);
+        assert!(
+            message.contains("is not a directory; pass the directory"),
+            "{message}"
+        );
+        assert!(!message.contains("could not be inspected"), "{message}");
+    }
 
     struct Guard(std::path::PathBuf);
     impl Drop for Guard {

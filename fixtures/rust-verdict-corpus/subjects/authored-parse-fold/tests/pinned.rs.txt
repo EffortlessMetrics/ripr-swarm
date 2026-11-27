@@ -1,0 +1,11 @@
+use parse_fold::classify_tier;
+
+fn tier_from(text: &str) -> u32 {
+    text.parse().unwrap()
+}
+
+#[test]
+fn ten_is_the_first_high_tier() {
+    assert_eq!(classify_tier(tier_from("9")), "low");
+    assert_eq!(classify_tier(tier_from("10")), "high");
+}

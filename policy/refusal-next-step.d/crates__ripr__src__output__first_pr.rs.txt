@@ -1,0 +1,6 @@
+crates/ripr/src/output/first_pr.rs|failed to create {}: {err}
+crates/ripr/src/output/first_pr.rs|failed to resolve current directory: {err}
+crates/ripr/src/output/first_pr.rs|failed to run git diff: {err}
+crates/ripr/src/output/first_pr.rs|failed to run git: {err}
+crates/ripr/src/output/first_pr.rs|failed to serialize first-pr packet: {err}
+crates/ripr/src/output/first_pr.rs|git diff failed without stderr
