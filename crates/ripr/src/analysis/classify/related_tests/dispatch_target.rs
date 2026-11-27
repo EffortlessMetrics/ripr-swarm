@@ -523,7 +523,8 @@ fn every_mention_is_a_call(text: &str, name: &str) -> bool {
 /// `None` for a smart-pointer receiver (`self: Box<Self>`) or a signature
 /// this cannot read.
 pub(super) fn receiver_kind(body: &str) -> Option<ReceiverKind> {
-    let rest = parameter_list(body)?;
+    let body = without_comments(body);
+    let rest = parameter_list(&body)?;
     let end = rest.find([',', ')'])?;
     let receiver = rest[..end].split_whitespace().collect::<Vec<_>>().join(" ");
     if let Some((binding, ty)) = receiver.split_once(':') {
@@ -540,6 +541,48 @@ pub(super) fn receiver_kind(body: &str) -> Option<ReceiverKind> {
         "mut self" => Some(ReceiverKind::Exclusive),
         _ => None,
     }
+}
+
+/// `text` with each `//` line comment and (nested) `/* */` block comment
+/// replaced by one space, so a comment between `fn`, the name, the generics
+/// and the receiver never hides the parameter list. An unterminated block
+/// comment drops the rest of the text, which then reads as no receiver.
+fn without_comments(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    let mut chars = text.chars().peekable();
+    while let Some(ch) = chars.next() {
+        match (ch, chars.peek()) {
+            ('/', Some('/')) => {
+                for next in chars.by_ref() {
+                    if next == '\n' {
+                        break;
+                    }
+                }
+                out.push(' ');
+            }
+            ('/', Some('*')) => {
+                chars.next();
+                let mut depth = 1usize;
+                while depth > 0 {
+                    match chars.next() {
+                        Some('/') if chars.peek() == Some(&'*') => {
+                            chars.next();
+                            depth += 1;
+                        }
+                        Some('*') if chars.peek() == Some(&'/') => {
+                            chars.next();
+                            depth -= 1;
+                        }
+                        Some(_) => {}
+                        None => return out,
+                    }
+                }
+                out.push(' ');
+            }
+            _ => out.push(ch),
+        }
+    }
+    out
 }
 
 /// The kind a typed receiver's type spells: `Self`, `&Self`, `&'a Self`,
@@ -577,7 +620,7 @@ fn parameter_list(body: &str) -> Option<&str> {
     })?;
     let after_fn = body[keyword + 2..].trim_start();
     let name_len = after_fn
-        .find(|ch: char| !(ch.is_alphanumeric() || ch == '_' || ch == '#'))
+        .find(|ch: char| !(super::ident_continues(ch) || ch == '#'))
         .unwrap_or(after_fn.len());
     if name_len == 0 {
         return None;

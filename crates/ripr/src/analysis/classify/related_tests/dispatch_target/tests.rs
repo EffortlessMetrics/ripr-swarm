@@ -506,6 +506,19 @@ fn the_receiver_is_read_from_the_parameter_list() {
             ReceiverKind::Shared,
         ),
         ("fn r#type(&self) {}", ReceiverKind::Shared),
+        // A comment between the signature's tokens hides nothing (#16419).
+        (
+            "fn area /* units */ (&self) -> u32 {}",
+            ReceiverKind::Shared,
+        ),
+        ("fn /* note */ area(&mut self) {}", ReceiverKind::Exclusive),
+        ("fn area // units\n(self) {}", ReceiverKind::Value),
+        (
+            "fn map<F /* f */: FnMut(&u32) -> u32>(/* recv */ &self) {}",
+            ReceiverKind::Shared,
+        ),
+        // A name with a combining mark is read whole.
+        ("fn cafe\u{301}(&self) {}", ReceiverKind::Shared),
     ] {
         assert_eq!(receiver_kind(signature), Some(kind), "{signature}");
     }
@@ -527,6 +540,7 @@ fn a_smart_pointer_or_unreadable_receiver_is_not_read() {
         "fn area() -> u32 {}",
         "fn area(other: &Self) -> u32 {}",
         "struct Area(u32);",
+        "fn area /* unterminated (&self) {}",
     ] {
         assert_eq!(receiver_kind(signature), None, "{signature}");
     }
