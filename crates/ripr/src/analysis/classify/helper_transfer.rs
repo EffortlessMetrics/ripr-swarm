@@ -4598,15 +4598,21 @@ fn match_arm_patterns_bind(body: &str, parameter: &str) -> Option<bool> {
     use ra_ap_syntax::ast::{self, HasName};
     let parse = crate::analysis::syntax::parse_clean_source_file_memoized(body)?;
     let root = parse.tree();
+    // A pattern macro (`bind!(qty) =>`) can bind any name once expanded.
+    let pattern_macro = root
+        .syntax()
+        .descendants()
+        .any(|node| ast::MacroPat::can_cast(node.kind()));
     let opaque_arms = root
         .syntax()
         .descendants()
         .filter_map(ast::MacroCall::cast)
         .filter_map(|call| call.token_tree())
-        .any(|tree| tree.syntax().text().to_string().contains("=>"));
-    if opaque_arms {
+        .any(|tree| token_tree_holds_arrow(&tree));
+    if pattern_macro || opaque_arms {
         return None;
     }
+    let parameter = parameter.trim_start_matches("r#");
     Some(
         root.syntax()
             .descendants()
@@ -4620,6 +4626,25 @@ fn match_arm_patterns_bind(body: &str, parameter: &str) -> Option<bool> {
                     .any(|name| name.text().trim_start_matches("r#") == parameter)
             }),
     )
+}
+
+/// Whether a macro call's tokens hold `=>` punctuation (one token, or `=`
+/// directly followed by `>`). String literals and comments are single
+/// tokens, so a log message such as `"qty => {qty}"` holds no arrow.
+fn token_tree_holds_arrow(tree: &ra_ap_syntax::ast::TokenTree) -> bool {
+    use ra_ap_syntax::{AstNode, SyntaxKind, T};
+    let tokens: Vec<_> = tree
+        .syntax()
+        .descendants_with_tokens()
+        .filter_map(|element| element.into_token())
+        .collect();
+    tokens.iter().enumerate().any(|(at, token)| {
+        token.kind() == T![=>]
+            || (token.kind() == T![=]
+                && tokens
+                    .get(at + 1)
+                    .is_some_and(|next| next.kind() == SyntaxKind::R_ANGLE))
+    })
 }
 
 /// Where the match arm ending at the end of `before` starts: after the
@@ -5880,9 +5905,18 @@ mod tests {
             // #6780 review round 2: a comma-less block arm before the
             // binding arm must not hide `Some(qty)`.
             "fn w(qty: Option<u32>, f: bool) -> bool { match qty { None => if f { 1 } else { 2 } Some(qty) => is_bulk(qty) } }",
+            // #16406 review: a pattern macro may bind the parameter, and a
+            // macro whose tokens hold an arm stays on the lexical scan.
+            "fn w(qty: u32) -> bool { match Some(qty + 1) { bind!(qty) => is_bulk(qty), None => false } }",
+            "fn w(qty: u32) -> u32 { let _t = arms! { 0 => {\n qty + 1\n }\n Some(qty) => 0 }; 1 }",
         ] {
             assert!(caller_rebinds_parameter(body, "qty"), "{body}");
         }
+        // #16406 review: a raw-identifier parameter spelled `r#qty` in the
+        // signature is rebound by an arm pattern spelled `r#qty`.
+        let raw = "fn w(r#qty: u32) -> bool { match Some(r#qty + 1) { Some(r#qty) => is_bulk(r#qty), None => false } }";
+        assert!(caller_rebinds_parameter(raw, "r#qty"), "{raw}");
+        assert!(match_arm_patterns_bind(raw, "r#qty") == Some(true), "{raw}");
         for body in [
             "fn w(qty: u32) -> u32 { if is_bulk(qty) { 5 } else { 0 } }",
             "fn w(qty: u32) -> bool { qty <= 3 || qty == 9 || qty >= 7 }",
@@ -5898,6 +5932,8 @@ mod tests {
             // #10357 item 4: a comma-less block arm that only reads the
             // parameter does not rebind it for the arms after it.
             "fn w(qty: u32, n: u32) -> u32 { let _t = match n { 0 => {\n qty + 1\n }\n _ => 0, }; if is_bulk(qty) { 5 } else { 0 } }",
+            // #16406 review: an arrow inside a log string is not an arm.
+            "fn w(qty: u32, n: u32) -> u32 { println!(\"qty => {qty}\"); let _t = match n { 0 => {\n qty + 1\n }\n _ => 0, }; if is_bulk(qty) { 5 } else { 0 } }",
         ] {
             assert!(!caller_rebinds_parameter(body, "qty"), "{body}");
         }

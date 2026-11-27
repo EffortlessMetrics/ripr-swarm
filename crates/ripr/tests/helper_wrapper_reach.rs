@@ -931,8 +931,32 @@ fn a_block_arm_that_reads_the_parameter_keeps_forwarding() -> Result<(), String>
         let finding = family_finding(&bulk_source(reads, BOUNDARY_TESTS), BULK_DIFF, family)?;
         assert_eq!(finding["classification"], "exposed", "{family}\n{finding}");
     }
+    // #16406 review: an arrow inside a log string is not an arm, so the
+    // parsed reading still decides.
+    let logged = format!("    println!(\"qty => {{qty}}\");\n{reads}");
+    for family in ["predicate", "return_value"] {
+        let finding = family_finding(&bulk_source(&logged, BOUNDARY_TESTS), BULK_DIFF, family)?;
+        assert_eq!(finding["classification"], "exposed", "{family}\n{finding}");
+    }
+    // #16406 review: a raw-identifier parameter rebound by a raw-identifier
+    // arm pattern sends the arm's value, not the test's, to the helper.
+    let raw = bulk_source(
+        "    match Some(r#qty + 1) {\n        Some(r#qty) => if is_bulk(r#qty) { 5 } else { 0 },\n        None => 0,\n    }",
+        BOUNDARY_TESTS,
+    )
+    .replace("pub fn order_discount(qty: u32)", "pub fn order_discount(r#qty: u32)");
+    for family in ["predicate", "return_value"] {
+        let finding = family_finding(&raw, BULK_DIFF, family)?;
+        assert!(
+            !has_boundary_row(&finding, "qty == 10"),
+            "{family}\n{finding}"
+        );
+        assert_ne!(finding["classification"], "exposed", "{family}\n{finding}");
+    }
     // Controls: an arm pattern that binds `qty`, after a block arm or not,
-    // and a macro whose tokens hold an arm the parser cannot read.
+    // and a macro whose tokens hold an arm the parser cannot read (the
+    // opaque-macro gate also refuses that one; the unit table pins the
+    // rebinding decision itself).
     for rebinds in [
         "    let _tier = match Some(qty) {\n        None => {\n            0\n        }\n        Some(qty) => qty,\n    };\n    if is_bulk(qty) { 5 } else { 0 }",
         "    let _tier = match Some(1) {\n        Some(qty) => qty,\n        None => 0,\n    };\n    if is_bulk(qty) { 5 } else { 0 }",
