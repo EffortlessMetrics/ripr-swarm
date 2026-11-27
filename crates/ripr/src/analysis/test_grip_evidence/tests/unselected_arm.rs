@@ -645,6 +645,38 @@ let _ = $f(Size::Medium);\n    };\n}\n",
     Ok(())
 }
 
+/// #15359 review: a selecting input read through a rebound read macro never
+/// grips the arm strongly. The rebound `assert_eq!` below drops its call
+/// and runs the owner with `Size::Small`, so `Size::Medium` may never run
+/// although the visible input names it. The arm reading keeps the visible
+/// selection (activation `yes`); the oracle reading of the rebound macro
+/// (#15183) is what refuses the strong grip. The standard macro grips it.
+#[test]
+fn a_selecting_input_read_through_a_rebound_read_macro_is_not_strongly_gripped()
+-> Result<(), String> {
+    let body = "#[test]\nfn prices() {\n    assert_eq!(price_cents(Size::Medium), 450);\n    \
+assert_eq!(price_cents(Size::Small), 300);\n}\n";
+    let rebind = "macro_rules! assert_eq {\n    ($f:ident ( $($arg:tt)* ), $expected:expr) => {\n        \
+let _ = $f(Size::Small);\n    };\n}\n";
+    for (prelude, rebound) in [(rebind, true), ("", false)] {
+        let tests = format!("use prices::*;\n\n{prelude}\n{body}");
+        // Fixture premise: the visible input selects the arm in both files.
+        assert_eq!(tests.matches("price_cents(Size::Medium)").count(), 1);
+        assert_eq!(tests.contains("macro_rules! assert_eq"), rebound);
+        let (full, compact, class) = arm_evidence_with_tests(PRICES, &tests, "Size::Medium")?;
+        for (evidence, class) in [(&full, class[0]), (&compact, class[1])] {
+            assert_eq!(missing_values(evidence), Vec::<&str>::new(), "{prelude}");
+            assert_eq!(evidence.activate.state, StageState::Yes, "{evidence:?}");
+            assert_eq!(
+                class == SeamGripClass::StronglyGripped,
+                !rebound,
+                "{prelude}: {evidence:?}"
+            );
+        }
+    }
+    Ok(())
+}
+
 /// #15233: the #15181 refusal fell back to the generic "Observed N concrete
 /// activation value(s)" reading, which reads `yes`, so an arm no visible
 /// input selects could grip strongly. Three test files over the same calls
