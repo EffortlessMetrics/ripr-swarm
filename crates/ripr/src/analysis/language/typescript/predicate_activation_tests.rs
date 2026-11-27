@@ -309,8 +309,9 @@ fn exact_boundary_argument_is_witnessed() -> Result<(), String> {
 /// #16458: a boundary input that reaches the owner only inside a wrapper
 /// call (`Math.max(...)`) or a nested owner call does not witness the
 /// boundary. The wrapper may map both sides to one value, and a nested call
-/// asserts the outer result, which the inner input need not move. The whole
-/// owner call keeps its witness beside a wrapped sibling assertion.
+/// asserts the outer result, which the inner input need not move. A helper
+/// in the owner's own arguments is not a wrapper, and the whole owner call
+/// keeps its witness after a wrapped boundary assertion.
 #[test]
 fn wrapped_or_nested_owner_call_does_not_witness() -> Result<(), String> {
     let source = one_test(
@@ -338,15 +339,57 @@ fn wrapped_or_nested_owner_call_does_not_witness() -> Result<(), String> {
     assert!(!evaluated.witnessed);
 
     let source = one_test(
+        "same-named member wrapper",
+        IMPORT_DISCOUNT,
+        "  expect(other.applyDiscount(applyDiscount(100))).toBe(90);",
+    );
+    let evaluated = evaluate(&DISCOUNT, &source, true)?;
+    assert_eq!(
+        evaluated.activation("same-named member wrapper")?,
+        A::ReachedWithoutDiscriminator,
+        "a same-named method on an unrelated receiver is still a wrapper"
+    );
+    assert!(!evaluated.witnessed);
+
+    for (title, import, body) in [
+        (
+            "generic nested owner",
+            IMPORT_DISCOUNT,
+            "  expect(applyDiscount<number>(90, applyDiscount(100))).toBe(90);",
+        ),
+        (
+            "namespace nested owner",
+            "import * as ns from '../src/pricing';",
+            "  expect(ns.applyDiscount(90, ns.applyDiscount(100))).toBe(90);",
+        ),
+    ] {
+        let evaluated = evaluate(&DISCOUNT, &one_test(title, import, body), true)?;
+        assert_ne!(evaluated.activation(title)?, A::Witnessed, "{title}");
+        assert!(!evaluated.witnessed, "{title}");
+    }
+
+    // Positive controls: a helper inside the owner's own arguments is not a
+    // wrapper, and a boundary wrapper before a direct whole call does not
+    // veto the later witness.
+    let source = one_test(
+        "argument helper",
+        IMPORT_DISCOUNT,
+        "  expect(applyDiscount(100, getTier())).toBe(90);",
+    );
+    let evaluated = evaluate(&DISCOUNT, &source, true)?;
+    assert_eq!(evaluated.activation("argument helper")?, A::Witnessed);
+    assert!(evaluated.witnessed);
+
+    let source = one_test(
         "whole owner call",
         IMPORT_DISCOUNT,
-        "  expect(applyDiscount(100)).toBe(90);\n  expect(Math.max(applyDiscount(50), 0)).toBe(50);",
+        "  expect(Math.max(applyDiscount(100), 100)).toBe(100);\n  expect(applyDiscount(100)).toBe(90);",
     );
     let evaluated = evaluate(&DISCOUNT, &source, true)?;
     assert_eq!(
         evaluated.activation("whole owner call")?,
         A::Witnessed,
-        "a wrapped sibling assertion does not veto the whole call"
+        "a wrapped boundary assertion first does not veto the whole call"
     );
     assert!(evaluated.witnessed);
     Ok(())
