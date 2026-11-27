@@ -1,0 +1,21 @@
+# `ripr baseline create --from-check` builds a whole-repository baseline
+# from a check artifact; its tests were unmapped (#14083 B1a).
+[[extend]]
+id = "RIPR-SPEC-0016"
+tests = [
+  "crates/ripr/src/output/baseline.rs::tests::whole_repo_check_baselines_only_gap_classes_with_canonical_identity",
+  "crates/ripr/src/output/baseline.rs::tests::whole_repo_check_reads_a_terse_document_like_the_full_one",
+  "crates/ripr/src/output/baseline.rs::tests::whole_repo_check_entry_joins_on_the_same_identity_as_a_gate_decision",
+  "crates/ripr/src/output/baseline.rs::tests::whole_repo_check_refuses_scoped_incomplete_or_foreign_artifacts",
+  "crates/ripr/src/output/baseline.rs::tests::whole_repo_check_refuses_bounded_and_partial_scope_documents",
+  "crates/ripr/src/output/baseline.rs::tests::whole_repo_check_without_findings_writes_an_empty_baseline",
+  "crates/ripr/src/cli/commands/baseline.rs::tests::baseline_create_from_check_parses_and_names_its_own_flag",
+  "crates/ripr/tests/cli_smoke.rs::baseline_create_from_check_baselines_a_whole_repo_artifact_and_refuses_a_scoped_one",
+  "crates/ripr/tests/cli_smoke.rs::baseline_create_from_check_accepts_a_real_whole_tree_producer_artifact",
+  "crates/ripr/tests/json_artifact_encoding.rs::a_check_artifact_in_a_powershell_encoding_gives_the_utf8_baseline",
+  "crates/ripr/tests/json_artifact_encoding.rs::a_truncated_utf16_check_artifact_is_refused_by_name",
+]
+code = [
+  "crates/ripr/src/output/baseline.rs",
+  "crates/ripr/src/cli/commands/baseline.rs",
+]

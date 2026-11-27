@@ -530,6 +530,46 @@ Generated CI must not rewrite baselines, run
 `ripr baseline update`, pass `--remove-resolved`, or synthesize an
 `--adopt-new` path.
 
+### Whole-repository baseline from a check artifact
+
+`ripr baseline create --from-check check.json --out <path>` builds the first
+baseline of an entire tree from a `ripr check --format json` (or `json-terse`)
+artifact instead of a gate decision. The producer is
+`ripr check --candidate-tree "$(git rev-parse HEAD^{tree})" --format json`,
+which compares the candidate tree with the empty tree. `--from-check` and
+`--from` are exclusive, and the operator workflow lives in
+`docs/BASELINE_LEDGER_WORKFLOW.md`.
+
+The route projects each finding onto the gate-decision shape and goes through
+the same entry builder as `--from`, so identity, review metadata and skip
+counting have one owner. It is fail-closed. It refuses, naming the producer
+command in the error:
+
+- input that is not a `ripr check` artifact or has no `schema_version`;
+- an artifact without `analysis_outcome`, or whose outcome is not
+  `complete_with_findings` or `complete_no_findings` with
+  `analysis_complete = true`;
+- an artifact that discloses a findings-budget-bounded document (a prefix of
+  the findings) or a partial-scope run;
+- an artifact whose candidate base tree is not the empty tree (a diff-scoped
+  run would baseline only the slice it saw);
+- an artifact without a `findings` array.
+
+It baselines only `weakly_exposed`, `reachable_unrevealed` and
+`no_static_path`. Every other class is counted under `skipped.other` and never
+written. An entry carries the finding's `canonical_gap_id`, the identity
+`baseline diff` joins on; a finding without one is refused rather than
+baselined by path and line. A `json-terse` artifact omits the finding-level
+`canonical_gap_id` and `missing_discriminators` aliases when they equal their
+owners, so each is read from its alias first and its owner
+(`canonical_gap.id`, `activation.missing_discriminators`) second, and a terse
+artifact yields the same baseline as the full one. An artifact with no
+findings writes an empty baseline. A check artifact written by a Windows
+PowerShell redirect (UTF-16LE or UTF-8 with a byte-order mark) gives the same
+baseline as plain UTF-8; UTF-16 that cannot be decoded exactly is refused with
+the encoding named. The result is an ordinary unreviewed `gate_baseline` that
+warns it came from a check artifact, not a gate decision.
+
 ## Required Evidence
 
 The report must include:
@@ -606,6 +646,12 @@ The implementation adds tests for:
 - zero-status rejection of present-but-malformed disclosure envelopes,
   including corrupt predicate-consumed members and blank or missing
   discriminators.
+- `baseline create --from-check`: gap-class-only entries with canonical
+  identity, terse and full artifacts giving the same baseline, the entry
+  joining on the identity a gate decision carries, refusal of scoped,
+  incomplete, foreign, bounded and partial-scope artifacts, an empty baseline
+  from a run without findings, flag parsing, a real whole-tree producer
+  artifact through the binary, and PowerShell-encoded artifacts.
 
 ## Implementation Mapping
 
@@ -616,6 +662,8 @@ The expected implementation surface is:
 - `crates/ripr/src/output/baseline_delta.rs` for JSON/Markdown rendering;
 - `crates/ripr/src/output/baseline_update.rs` for shrink-only baseline
   refreshes;
+- `crates/ripr/src/output/baseline.rs` for `baseline create`, including the
+  `--from-check` projection of a whole-repository check artifact;
 - `docs/OUTPUT_SCHEMA.md` for the public contract;
 - fixtures under `fixtures/boundary_gap/expected/baseline-debt-delta/`;
 - generated CI wiring after the command and fixture contract are pinned, with
