@@ -95,7 +95,6 @@ fn removal_and_registration_rebuild_retire_previous_failure() -> Result<(), Stri
 
 #[test]
 fn repository_provider_failure_uses_the_same_source_bound_diagnosis() -> Result<(), String> {
-    use crate::analysis::seam_classification::{ClassifiedSeam, classify_seam};
     use crate::analysis::seams::{ExpectedSink, RepoSeam, RequiredDiscriminator, SeamKind};
     use crate::analysis::test_grip_evidence::{self, CompactGripContext};
     use crate::domain::StageState;
@@ -191,19 +190,13 @@ fn repository_provider_failure_uses_the_same_source_bound_diagnosis() -> Result<
             ] {
                 assert_eq!(stage.state, StageState::Unknown);
             }
-            let entry = ClassifiedSeam {
-                seam: seam.clone(),
-                class: classify_seam(&seam, &evidence),
-                evidence,
-            };
-            let record = crate::output::evidence_record::evidence_record_for(&entry, None);
-            assert_eq!(record.actionability.class, "static_limitation");
-            assert!(!record.actionability.has_concrete_guidance);
+            // The rendered record for this evidence is pinned in
+            // output::evidence_record (analysis must not import output).
             assert!(
-                record
-                    .static_limitations
-                    .iter()
-                    .any(|limit| limit.reason.contains("same analysis root and environment"))
+                evidence
+                    .reach
+                    .summary
+                    .contains("same analysis root and environment")
             );
         }
         // The authority is the exact invocation's current source, not a stale failure.
