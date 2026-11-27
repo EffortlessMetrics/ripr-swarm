@@ -227,13 +227,33 @@ fn is_exports_object(object: &Expression<'_>) -> bool {
     }
 }
 
-/// `exports` or `module.exports` passed as a call's first argument in the
-/// masked code (`Object.assign(exports, ...)`).
+/// `exports` or `module.exports` passed whole as any argument of a call in
+/// the masked code (`Object.assign(exports, ...)`, `Object.assign(\n
+/// exports, ...)`, `mixin(target, exports)`), where the callee may write any
+/// slot.
 fn exports_object_passed(code: &str) -> bool {
-    ["(exports", "(module.exports"].iter().any(|needle| {
-        code.match_indices(needle).any(|(at, _)| {
-            let rest = code[at + needle.len()..].trim_start();
-            !rest.starts_with(|ch: char| super::is_javascript_identifier_char(ch) || ch == '.')
+    code.match_indices("exports").any(|(at, needle)| {
+        // `module.exports` is the same object; step back over `module.`.
+        let start = code[..at]
+            .strip_suffix("module.")
+            .filter(|head| {
+                !head
+                    .chars()
+                    .next_back()
+                    .is_some_and(|ch| super::is_javascript_identifier_char(ch) || ch == '.')
+            })
+            .map_or(at, str::len);
+        let before = code[..start].chars().next_back();
+        if before.is_some_and(|ch| super::is_javascript_identifier_char(ch) || ch == '.') {
+            return false;
+        }
+        let head = code[..start].trim_end();
+        if !(head.ends_with('(') || head.ends_with(',')) {
+            return false;
+        }
+        let rest = code[at + needle.len()..].trim_start();
+        !rest.starts_with(|ch: char| {
+            super::is_javascript_identifier_char(ch) || matches!(ch, '.' | '=' | '[')
         })
     })
 }

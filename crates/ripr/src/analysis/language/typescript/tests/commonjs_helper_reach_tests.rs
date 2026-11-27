@@ -257,6 +257,22 @@ fn an_unknown_commonjs_export_shape_reaches_nothing() -> Result<(), String> {
             ),
             named.clone(),
         ),
+        // The export object passed to a call on another line, or as a later
+        // argument (review of #16403).
+        (
+            "helper-object-assign-multiline",
+            format!(
+                "{TOTAL}{OTHER}exports.other = other;\nObject.assign(\n  exports,\n  {{ other: (n) => n }}\n);\n"
+            ),
+            named.clone(),
+        ),
+        (
+            "helper-exports-later-argument",
+            format!(
+                "{TOTAL}{OTHER}const mixin = (a, b) => Object.assign(b, a);\nconst target = {{ other: (n) => n }};\nexports.other = other;\nmixin(target, exports);\n"
+            ),
+            named.clone(),
+        ),
         // The local is rebound before it is exported.
         (
             "helper-local-rebound",
@@ -320,6 +336,14 @@ fn commonjs_exports_reads_only_a_known_export_shape() {
     assert!(read("module.exports = { a, ...b };\n").is_empty());
     assert!(read("module.exports = { [k]: a };\n").is_empty());
     assert!(read("exports.a = a;\nObject.assign(exports, b);\n").is_empty());
+    assert!(read("exports.a = a;\nObject.assign(\n  exports,\n  b\n);\n").is_empty());
+    assert!(read("exports.a = a;\nmixin(t, module.exports);\n").is_empty());
+    assert!(read("exports.a = a;\nmixin(t, exports);\n").is_empty());
+    // Reading a slot, or a name that only ends in `exports`, passes nothing.
+    assert_eq!(
+        read("exports.a = a;\nf(exports.a, myexports);\n"),
+        [named("a", "a")]
+    );
     assert_eq!(
         read("module.exports = { a, 'b': c };\n"),
         [named("a", "a"), named("c", "b")]
