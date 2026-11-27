@@ -1,0 +1,2 @@
+<!-- section: Fixed -->
+- A TypeScript test file that loads its runner with `import test = require('tape')`, or binds `node:test` with `import runner = require('node:test')` and picks `test` from it, now registers its tests like the `const test = require('tape')` form it compiles to. Before, those tests were not seen and the changed code read `no_static_path`. A type-only `import type x = require()`, a file that declares its own `require`, and a written namespace still register nothing (#16370).

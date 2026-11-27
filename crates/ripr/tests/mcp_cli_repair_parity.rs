@@ -1258,16 +1258,18 @@ fn proposed_new_test_is_disclosed_by_mcp_and_agrees_with_the_cli_card() -> Resul
     assert_eq!(cli["proposal_kind"], disclosed["kind"], "{cli} vs {item}");
 
     // Readiness agreement: the CLI start gate admits the same seam, and the
-    // edit cage it enforces is the file `ripr_prepare_repair` names.
-    let cage = cli_start_cage_target(&fixture)?
-        .ok_or("the CLI start gate refused the seam MCP lists as ready")?;
-    assert_eq!(cage, mcp_file, "CLI cage vs MCP disclosure: {item}");
+    // edit cage it enforces is the file `ripr_prepare_repair` names. MCP
+    // prepares first: once the CLI has started a durable attempt for the
+    // seam, MCP discloses it instead of preparing a rival (#15244).
     let canonical_id = item["canonical_id"].as_str().ok_or("item omitted id")?;
     let prepare = mcp.tool(
         "ripr_prepare_repair",
         json!({ "canonical_id": canonical_id }),
     )?;
     assert_eq!(prepare["repair_packet_ready"], true, "{prepare}");
+    let cage = cli_start_cage_target(&fixture)?
+        .ok_or("the CLI start gate refused the seam MCP lists as ready")?;
+    assert_eq!(cage, mcp_file, "CLI cage vs MCP disclosure: {item}");
     assert_eq!(prepare["allowed_edit_surface"], json!([cage]), "{prepare}");
     assert_eq!(prepare["fix_site"]["file"], json!(cage), "{prepare}");
     assert_eq!(
@@ -1350,16 +1352,18 @@ fn inline_proposal_only_item_is_ready_and_confined_like_the_cli_cage() -> Result
     assert_eq!(item["repair_packet_ready"], true, "{item}");
     assert!(item["repair_ineligibility"].is_null(), "{item}");
 
-    let policy = cli_start_policy(&fixture)?
-        .ok_or("the CLI start gate refused the seam MCP lists as ready")?;
-    assert_eq!(policy["selected_target"]["path"], "src/lib.rs", "{policy}");
-    assert_eq!(policy["inline_test_module_target"], true, "{policy}");
-
+    // MCP prepares before the CLI starts its durable attempt: afterwards MCP
+    // discloses that attempt instead of preparing a rival (#15244).
     let canonical_id = item["canonical_id"].as_str().ok_or("item omitted id")?;
     let prepare = mcp.tool(
         "ripr_prepare_repair",
         json!({ "canonical_id": canonical_id }),
     )?;
+    let policy = cli_start_policy(&fixture)?
+        .ok_or("the CLI start gate refused the seam MCP lists as ready")?;
+    assert_eq!(policy["selected_target"]["path"], "src/lib.rs", "{policy}");
+    assert_eq!(policy["inline_test_module_target"], true, "{policy}");
+
     assert_eq!(prepare["repair_packet_ready"], true, "{prepare}");
     assert_eq!(
         prepare["allowed_edit_surface"],

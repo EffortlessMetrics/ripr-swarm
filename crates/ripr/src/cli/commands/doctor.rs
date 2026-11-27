@@ -3547,7 +3547,10 @@ fn nearest_existing_dir(path: &Path) -> Result<Option<PathBuf>, String> {
                     std::io::ErrorKind::NotFound | std::io::ErrorKind::NotADirectory
                 ) =>
             {
-                return Err(format!("cannot inspect {}: {error}", probe_dir.display()));
+                return Err(format!(
+                    "cannot inspect {}: {error}; check permissions on that path, then rerun",
+                    probe_dir.display()
+                ));
             }
             Err(_) => match probe_dir.parent() {
                 Some(parent) if parent.as_os_str().is_empty() => {

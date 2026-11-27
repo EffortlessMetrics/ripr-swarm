@@ -1,0 +1,7 @@
+diff --git a/svc/a/core.py b/svc/a/core.py
+--- a/svc/a/core.py
++++ b/svc/a/core.py
+@@ -1,2 +1,2 @@
+ def price(x):
+-    return x + 1
++    return x + 2

@@ -37,6 +37,7 @@ mod drop_dispatch;
 mod equality_dispatch;
 mod generic_sibling;
 mod implicit_dispatch;
+mod into_dispatch;
 mod iterator_dispatch;
 mod operator_dispatch;
 mod parse_dispatch;
@@ -575,7 +576,7 @@ impl RelatedTestCandidateIndex {
         if owner_fn.is_some_and(equality_dispatch::has_partial_eq_shape) {
             extend_bucket(&mut selected, Some(self.by_equality_assert.as_slice()));
         }
-        // Operator, loop, scope-end and `str::parse` syntax has no token worth
+        // Operator, loop, scope-end, `str::parse` and `.into()` syntax has no token worth
         // indexing; same-file tests of such an impl are scanned in full.
         if owner_fn.is_some_and(implicit_dispatch::has_implicit_shape) {
             scan_all = true;
@@ -8923,6 +8924,13 @@ fn owner_call_relation_reason_gated(
                 index,
                 trust_unplaced_standard_root,
             ))
+        // #15277: `let s: Box<dyn Trait> = Box::new(Square(3)); s.area()`
+        // runs `Square`'s `Trait` impl.
+        || impl_trait.as_deref().is_some_and(|trait_name| {
+            super::owner_pin::dyn_box::boxed_receiver_calls_impl(
+                test, owner_name, &impl_type, trait_name, index,
+            )
+        })
     {
         RelationReason::DirectOwnerCall
     } else {

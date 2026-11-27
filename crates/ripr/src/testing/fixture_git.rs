@@ -26,7 +26,8 @@ pub(crate) const FIXTURE_GIT_DEADLINE: Duration = Duration::from_secs(30);
 /// Per-stream capture cap for one fixture invocation.
 const FIXTURE_GIT_OUTPUT_LIMIT: usize = 4 * 1024 * 1024;
 
-/// Fixture git subcommands whose re-execution cannot change fixture state.
+/// Fixture git subcommands eligible for one retry after a timeout.
+/// A terminated `add` can leave `index.lock`, so return its original timeout.
 /// `commit` is deliberately absent: a timed-out commit may still have
 /// landed, so it is reconciled by checking whether HEAD moved instead
 /// of blindly re-running (a re-run would fail with "nothing to
@@ -35,8 +36,7 @@ const FIXTURE_GIT_OUTPUT_LIMIT: usize = 4 * 1024 * 1024;
 /// `is_retryable_checkout`) may be retried, because a timed-out stateful
 /// checkout may already have moved HEAD or created a branch before the
 /// retry runs.
-const RETRYABLE_FIXTURE_GIT: &[&str] =
-    &["init", "config", "add", "update-ref", "rev-parse", "status"];
+const RETRYABLE_FIXTURE_GIT: &[&str] = &["init", "config", "update-ref", "rev-parse", "status"];
 
 /// The git subcommand in `args`, skipping global options, so `["-c",
 /// "init.templateDir=", "init", "-q"]` resolves to `init`. Only the

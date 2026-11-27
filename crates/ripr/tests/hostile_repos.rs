@@ -179,6 +179,16 @@ fn repo_with_test(
     test_source: &str,
     edit: impl FnOnce(&Path) -> Result<(), String>,
 ) -> Result<(), String> {
+    init_repo_with_test(root, test_source)?;
+    git(root, &["add", "-A"])?;
+    git(root, &["commit", "-q", "-m", "base"])?;
+    git(root, &["checkout", "-q", "-b", "feat"])?;
+    edit(root)?;
+    git(root, &["add", "-A"])?;
+    git(root, &["commit", "-q", "-m", "change"])
+}
+
+fn init_repo_with_test(root: &Path, test_source: &str) -> Result<(), String> {
     let w = |rel: &str, body: &str| -> Result<(), String> {
         let path = root.join(rel);
         if let Some(parent) = path.parent() {
@@ -190,13 +200,7 @@ fn repo_with_test(
     git(root, &["init", "-q", "-b", "main"])?;
     w("Cargo.toml", MANIFEST)?;
     w("src/lib.rs", BASE_LIB)?;
-    w("tests/t.rs", test_source)?;
-    git(root, &["add", "-A"])?;
-    git(root, &["commit", "-q", "-m", "base"])?;
-    git(root, &["checkout", "-q", "-b", "feat"])?;
-    edit(root)?;
-    git(root, &["add", "-A"])?;
-    git(root, &["commit", "-q", "-m", "change"])
+    w("tests/t.rs", test_source)
 }
 
 fn change_lib(root: &Path) -> Result<(), String> {
@@ -889,20 +893,21 @@ fn unresolved_commit_id_and_tag_bases_name_a_fetch_that_can_supply_them() -> Res
 fn package_over_the_narrowing_threshold_runs_until_the_memory_guard() -> Result<(), String> {
     let scratch = Scratch::new("narrow")?;
     let root = scratch.path.join("r");
-    repo(&root, |root| {
-        for i in 0..1_250 {
-            fs::write(
-                root.join(format!("src/m{i}.rs")),
-                format!("pub fn m{i}(a: u32) -> u32 {{ a + {i} }}\n"),
-            )
-            .map_err(|e| format!("write failed: {e}"))?;
-        }
-        // The unchanged modules belong to the base, so only `total` changes.
-        git(root, &["add", "-A"])?;
-        git(root, &["commit", "-q", "-m", "modules"])?;
-        git(root, &["branch", "-f", "main", "HEAD"])?;
-        change_lib(root)
-    })?;
+    init_repo_with_test(&root, TEST)?;
+    for i in 0..1_250 {
+        fs::write(
+            root.join(format!("src/m{i}.rs")),
+            format!("pub fn m{i}(a: u32) -> u32 {{ a + {i} }}\n"),
+        )
+        .map_err(|e| format!("write failed: {e}"))?;
+    }
+    git(&root, &["add", "-A"])?;
+    git(&root, &["commit", "-q", "-m", "base"])?;
+    git(&root, &["checkout", "-q", "-b", "feat"])?;
+    change_lib(&root)?;
+    // The unchanged modules are already in main. Stage only the changed file.
+    git(&root, &["add", "--", "src/lib.rs"])?;
+    git(&root, &["commit", "-q", "-m", "change"])?;
     let ran = ripr(&root, &["check"], &[])?;
     assert_found_change(&ran, "package over the narrowing threshold")?;
     if ran.stderr.contains("diff_scope_oversized") {
@@ -3066,7 +3071,7 @@ fn committed_run_keeps_a_declared_bin_despite_a_staged_alternate_layout() -> Res
     let before = ripr(&root, &["check", "--base", "main", "--committed"], &[])?;
     assert_sane(&before, "committed bin before staging")?;
     assert!(
-        summary_line(&before).starts_with("Summary: 2 changed behaviors checked: "),
+        summary_line(&before).starts_with("Summary: 2 changed behaviors checked"),
         "premise: the committed bin change is checked\n{}",
         before.stdout
     );

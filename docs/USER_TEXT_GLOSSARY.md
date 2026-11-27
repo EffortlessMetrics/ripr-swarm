@@ -112,6 +112,16 @@ source file. The list only shrinks: fixing a message means deleting its line,
 and a line whose message is fixed or gone fails the test until it is removed.
 Tracking: #11539, #13688, #14163.
 
+The one exception is a scanner-coverage fix, which may add rows once, in the
+same PR that widens the scan, and only for messages the scan could not see
+before. #16394 is such a fix. Before it, the scan stopped at the `{` of a
+block-bodied closure (`.map_err(|e| { format!(..) })`, the shape rustfmt uses
+for a long message), so those messages were never judged. That PR records the
+real gaps it newly sees. The same PR also stopped counting three shapes as
+missing a cue. A `\` line continuation is folded before the check. A next step
+passed as its own argument to fill a trailing `{}` counts. A step after
+`, then` counts. Ordinary changes still only shrink the list.
+
 ## Baseline ceilings
 
 `main` still contains some banned terms in default output. They are recorded by

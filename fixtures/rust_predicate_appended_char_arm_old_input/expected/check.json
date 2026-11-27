@@ -220,8 +220,8 @@
       "stop_reasons": [],
       "oracle_kind": "relational_check",
       "oracle_strength": "weak",
-      "recommended_next_step": "Replace broad assertions with exact equality or a property that constrains the changed returned value.",
-      "suggested_next_action": "Replace broad assertions with exact equality or a property that constrains the changed returned value.",
+      "recommended_next_step": "The related tests already assert the exact boolean result of `is_separator`, so rewriting them with exact equality would check the same values. Add a test with an input whose boolean result differs between the old and new code, and assert that result.",
+      "suggested_next_action": "The related tests already assert the exact boolean result of `is_separator`, so rewriting them with exact equality would check the same values. Add a test with an input whose boolean result differs between the old and new code, and assert that result.",
       "language": "rust",
       "source_currentness": "candidate_current"
     }

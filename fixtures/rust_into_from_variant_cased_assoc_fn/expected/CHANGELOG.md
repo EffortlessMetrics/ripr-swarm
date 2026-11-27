@@ -1,0 +1,14 @@
+# Golden Output Changes
+
+## Pending — rust_into_from_variant_cased_assoc_fn (1)
+
+Reason:
+RIPR-SPEC-0001: a conversion the .into() reading cannot pin to the changed impl keeps its old relation (#15277 review)
+
+Command:
+`cargo xtask goldens bless rust_into_from_variant_cased_assoc_fn --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
