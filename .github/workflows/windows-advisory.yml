@@ -88,6 +88,8 @@ concurrency:
 # it refuses a target that two parts both ran, and it checks every sample
 # against the executables `cargo test --workspace --no-run` built
 # (`--expected-targets`), so a target that no part selects fails the lane.
+# That list counts only when the build's own status is 0: a build cut off by
+# its deadline lists fewer executables, so it fails the lane too (#14083).
 #
 # Two samples still do not license a bare failed/flaky split. A test missing
 # from a run has not been observed passing — it may have been masked, filtered,
@@ -358,8 +360,10 @@ jobs:
       # that compile (run 2: under 2 minutes), so run 1 was cut at status 124
       # ~4 minutes before the end, 7 test binaries and 3 doctest targets short
       # of run 2 (316/325 and 318/328 targets): the two samples observed
-      # different subject sets. The build outcome here is advisory like any
-      # test outcome; a compile failure is still reported by run 1 itself.
+      # different subject sets. The step stays green, but its status file is
+      # the verdict's proof that the executable list is complete: a nonzero
+      # status (124 is the deadline) leaves both samples incomplete evidence
+      # rather than judged against a short list (#14083).
       - name: Build workspace test binaries (advisory, before run 1)
         if: ${{ !cancelled() }}
         timeout-minutes: 45
@@ -475,7 +479,7 @@ jobs:
         if: ${{ !cancelled() }}
         shell: bash
         run: |
-          cargo xtask windows-advisory-summary --run1 target/windows-run1.log --run1-status target/windows-run1.status --run2 target/windows-run2.log --run2-status target/windows-run2.status --run1-part target/windows-doc-run1.log target/windows-doc-run1.status --run1-part target/integration/windows-integration-a-c-run1.log target/integration/windows-integration-a-c-run1.status --run1-part target/integration/windows-integration-d-o-run1.log target/integration/windows-integration-d-o-run1.status --run1-part target/integration/windows-integration-rest-run1.log target/integration/windows-integration-rest-run1.status --run2-part target/windows-doc-run2.log target/windows-doc-run2.status --run2-part target/integration/windows-integration-a-c-run2.log target/integration/windows-integration-a-c-run2.status --run2-part target/integration/windows-integration-d-o-run2.log target/integration/windows-integration-d-o-run2.status --run2-part target/integration/windows-integration-rest-run2.log target/integration/windows-integration-rest-run2.status --expected-targets target/windows-build.log | tee target/windows-verdict.md | tee -a "$GITHUB_STEP_SUMMARY"
+          cargo xtask windows-advisory-summary --run1 target/windows-run1.log --run1-status target/windows-run1.status --run2 target/windows-run2.log --run2-status target/windows-run2.status --run1-part target/windows-doc-run1.log target/windows-doc-run1.status --run1-part target/integration/windows-integration-a-c-run1.log target/integration/windows-integration-a-c-run1.status --run1-part target/integration/windows-integration-d-o-run1.log target/integration/windows-integration-d-o-run1.status --run1-part target/integration/windows-integration-rest-run1.log target/integration/windows-integration-rest-run1.status --run2-part target/windows-doc-run2.log target/windows-doc-run2.status --run2-part target/integration/windows-integration-a-c-run2.log target/integration/windows-integration-a-c-run2.status --run2-part target/integration/windows-integration-d-o-run2.log target/integration/windows-integration-d-o-run2.status --run2-part target/integration/windows-integration-rest-run2.log target/integration/windows-integration-rest-run2.status --expected-targets target/windows-build.log target/windows-build.status | tee target/windows-verdict.md | tee -a "$GITHUB_STEP_SUMMARY"
 
       # The artifact upload retains file-policy.md with if-no-files-found: ignore,
       # so upload success alone cannot establish provenance. Run the real facade

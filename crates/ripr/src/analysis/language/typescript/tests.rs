@@ -22791,6 +22791,7 @@ mod guard_entry_tests;
 mod implementation_table_tests;
 mod infection_tests;
 mod inherited_and_factory_receiver_tests;
+mod inline_new_getter_read_tests;
 mod instance_class_tests;
 mod instance_factory_tests;
 mod issue10925_alias_resolution_tests;

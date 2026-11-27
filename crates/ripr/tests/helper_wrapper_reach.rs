@@ -776,6 +776,82 @@ fn audited_qualified_value_macro_wrapper_forwards_the_helper_result() -> Result<
 }
 
 #[test]
+fn imported_json_wrapper_forwards_unless_json_is_rebound() -> Result<(), String> {
+    const SERDE_JSON: &str = "serde_json = \"1\"";
+    const AUDITED: &[(&str, &str)] = &[("serde_json", "1.0.154")];
+    let wrapper = "    let _ = json!({ \"qty\": qty });\n    if is_bulk(qty) { 5 } else { 0 }";
+    let with_prelude = |prelude: &str| -> Result<(String, String, usize), String> {
+        let source = format!("{prelude}\n{}", bulk_source(wrapper, BOUNDARY_TESTS));
+        let first = source
+            .lines()
+            .position(|line| line.contains("10 <= qty"))
+            .ok_or("probe")?;
+        let diff = BULK_DIFF.replace("@@ -1,3 +1,3 @@", &format!("@@ -{0},3 +{0},3 @@", first));
+        Ok((source, diff, first + 1))
+    };
+    // `use serde_json::json;` with an audited locked release forwards, and
+    // so do the spellings that also import the crate itself under its own
+    // name, which rustfmt merges into one list (#16350).
+    for prelude in [
+        "use serde_json::json;",
+        "use serde_json::{self, json};",
+        "use serde_json::{self};\nuse serde_json::json;",
+        "use serde_json;\nuse serde_json::json;",
+    ] {
+        let (source, diff, line) = with_prelude(prelude)?;
+        for family in ["predicate", "return_value"] {
+            let finding = finding_with_dependencies(SERDE_JSON, AUDITED, &source, &diff, family)?;
+            assert_eq!(finding["probe"]["line"], line, "{prelude}\n{finding}");
+            assert_eq!(finding["classification"], "exposed", "{prelude}\n{finding}");
+        }
+    }
+    for (label, locked, prelude) in [
+        // A release outside the audit.
+        (
+            "unaudited",
+            &[("serde_json", "1.0.149")][..],
+            "use serde_json::json;",
+        ),
+        // Anything else that may bind `json`.
+        (
+            "local definition",
+            AUDITED,
+            "macro_rules! json { ($($t:tt)*) => { return 5 }; }",
+        ),
+        ("foreign import", AUDITED, "use other::json;"),
+        ("glob import", AUDITED, "use serde_json::*;"),
+        (
+            "macro_use",
+            AUDITED,
+            "#[macro_use]\nextern crate serde_json;",
+        ),
+        (
+            "grouped self import",
+            AUDITED,
+            "use serde_json::json;\nuse other::{serde_json::{self}};",
+        ),
+        (
+            "commented foreign path",
+            AUDITED,
+            "use serde_json::json;\nuse other::/* note */serde_json;",
+        ),
+        (
+            "namespace alias",
+            AUDITED,
+            "use serde_json::json;\nmod serde_json { macro_rules! json { ($($t:tt)*) => { return 5 }; } }",
+        ),
+    ] {
+        let (source, diff, line) = with_prelude(prelude)?;
+        for family in ["predicate", "return_value"] {
+            let finding = finding_with_dependencies(SERDE_JSON, locked, &source, &diff, family)?;
+            assert_eq!(finding["probe"]["line"], line, "{label}\n{finding}");
+            assert_ne!(finding["classification"], "exposed", "{label}\n{finding}");
+        }
+    }
+    Ok(())
+}
+
+#[test]
 fn boolean_return_twin_does_not_borrow_other_calls_or_short_circuit_gates() -> Result<(), String> {
     let split = bulk_source(FORWARDING, "        let _ = order_discount(10);");
     let split = split.replace(
