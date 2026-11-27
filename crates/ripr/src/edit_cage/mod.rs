@@ -26,6 +26,9 @@ use std::time::{Duration, Instant};
 )]
 pub(crate) mod inline_test_region;
 
+/// Pure-insertion content cage for external Rust test-surface files (#8710).
+pub(crate) mod external_test_file_region;
+
 #[cfg(test)]
 mod binding_omission_tests;
 
@@ -197,6 +200,10 @@ pub(crate) struct AttemptDelta {
     /// for every other attempt, which keeps their serialized deltas unchanged.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) inline_test_region: Option<inline_test_region::InlineTestRegionObservation>,
+    /// Pure-insertion observation for an external Rust test file (#8710).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) external_test_file_region:
+        Option<external_test_file_region::ExternalTestFileObservation>,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -210,6 +217,8 @@ pub(crate) struct AttemptBaseline {
     /// test module, captured only when the policy confines the target to it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     inline_test_region: Option<inline_test_region::InlineTestRegionBaseline>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    external_test_file_region: Option<external_test_file_region::ExternalTestFileBaseline>,
     #[cfg(windows)]
     #[serde(skip, default)]
     _unknown_ignored_write_guards: Vec<fs::File>,
@@ -227,6 +236,28 @@ impl AttemptBaseline {
     /// that restate the retained edit surface (repair-attempt binding records).
     pub(crate) fn policy(&self) -> &EditCagePolicy {
         &self.policy
+    }
+
+    /// The governed inline test module's name when the policy confines the
+    /// target to one (the focused-run binding reads it, #13203).
+    pub(crate) fn inline_test_module_name(&self) -> Option<&str> {
+        self.inline_test_region
+            .as_ref()
+            .map(|region| region.module_name.as_str())
+    }
+
+    /// The selected file's text when the attempt began, for the inline region
+    /// the baseline captured (#13203 C's baseline test set).
+    pub(crate) fn inline_test_region_source(&self) -> Option<&str> {
+        self.inline_test_region
+            .as_ref()
+            .map(|region| region.source.as_str())
+    }
+
+    /// The new-test proposal the attempt follows, when its policy records one
+    /// (#13205: the manifest discloses the target's preflight state).
+    pub(crate) fn followed_new_test_proposal(&self) -> Option<&FollowedNewTestProposal> {
+        self.policy.new_test_proposal.as_ref()
     }
 
     /// The baseline index entry metadata (`git ls-files --stage` shape) for
@@ -247,6 +278,15 @@ impl AttemptBaseline {
                 WorktreeIdentity::File { digest, .. } => Some(digest.as_str()),
                 _ => None,
             })
+    }
+
+    /// Whether the baseline captured anything at `path` (a regular file, an
+    /// ignored file, a symlink or a special file): every identity but
+    /// `Missing`. A new-test proposal's premise is that nothing is there.
+    pub(crate) fn worktree_has_anything_at(&self, path: &str) -> bool {
+        self.paths
+            .get(path)
+            .is_some_and(|state| !matches!(state.worktree_identity, WorktreeIdentity::Missing))
     }
 
     /// Whether the capture recorded a condition that left the exact measured
@@ -319,7 +359,42 @@ pub(crate) fn capture_attempt_baseline(
     } else {
         None
     };
-    let mut baseline = capture_repository_state(root, policy.clone(), CaptureTraceLabel::Baseline)?;
+    let mut baseline =
+        capture_repository_state(root.clone(), policy.clone(), CaptureTraceLabel::Baseline)?;
+    let external_target_absent = policy.external_test_file_target
+        && !baseline.ambiguous
+        && external_target_is_absent(&baseline, &policy.selected_target.path)?;
+    let external_test_file_region = if policy.external_test_file_target && !baseline.ambiguous {
+        Some(external_test_file_region::capture_attempt_external_region(
+            &root,
+            &policy.selected_target.path,
+            external_target_absent,
+        )?)
+    } else {
+        None
+    };
+    // The proposal is stale at the moment it is bound when its premise is
+    // already false: an integration proposal names a file that must not
+    // exist yet, an inline proposal an existing production file.
+    if let Some(proposal) = &policy.new_test_proposal {
+        // An integration path holding any identity (a symlink or special file
+        // included) is existing, so the proposal is stale and fails closed.
+        let exists = match proposal.kind {
+            crate::analysis::new_test_target::NewTestKind::Integration => {
+                baseline.worktree_has_anything_at(&proposal.file)
+            }
+            crate::analysis::new_test_target::NewTestKind::InlineUnit => {
+                baseline.worktree_digest(&proposal.file).is_some()
+            }
+        };
+        if let Some(reason) = crate::analysis::new_test_target::proposal_premise_error(
+            proposal.kind,
+            &proposal.file,
+            exists,
+        ) {
+            return Err(reason);
+        }
+    }
     if let Some(region) = &inline_test_region
         && baseline.worktree_digest(&region.path)
             != Some(inline_test_region::digest_bytes(region.source.as_bytes()).as_str())
@@ -328,10 +403,23 @@ pub(crate) fn capture_attempt_baseline(
         // capture; the retained before text would not be the baseline's.
         baseline.ambiguous = true;
     }
+    if let Some(region) = &external_test_file_region
+        && !external_target_absent
+        && baseline.worktree_digest(&region.path)
+            != Some(inline_test_region::digest_bytes(region.source.as_bytes()).as_str())
+    {
+        baseline.ambiguous = true;
+    }
     if let Some(region) = &inline_test_region {
         require_inline_target_at_head(&baseline, &region.path)?;
     }
+    if let Some(region) = &external_test_file_region
+        && !external_target_absent
+    {
+        require_inline_target_at_head(&baseline, &region.path)?;
+    }
     baseline.inline_test_region = inline_test_region;
+    baseline.external_test_file_region = external_test_file_region;
     Ok(baseline)
 }
 
@@ -366,14 +454,32 @@ pub(crate) fn evaluate_repository_edit_cage_with_head_movement(
     baseline: &AttemptBaseline,
     movement: HeadMovement,
 ) -> Result<(AttemptDelta, EditCageVerdict), String> {
+    let (delta, verdict, _, _) =
+        evaluate_repository_edit_cage_with_captured_digest(baseline, movement, None)?;
+    Ok((delta, verdict))
+}
+
+/// Return the selected path's exact identity from the same capture that owns
+/// the verdict. A missing or non-regular file has no digest. The last element
+/// lists the paths left out of the delta as git-invisible line-ending flips
+/// (#13833), so the caller can say why a rewritten file is not listed.
+pub(crate) fn evaluate_repository_edit_cage_with_captured_digest(
+    baseline: &AttemptBaseline,
+    movement: HeadMovement,
+    selected_path: Option<&str>,
+) -> Result<(AttemptDelta, EditCageVerdict, Option<String>, Vec<String>), String> {
     let after = reevaluation_capture(baseline)?;
+    let selected_digest = selected_path
+        .and_then(|path| after.worktree_digest(path))
+        .map(str::to_string);
     let committed = match movement {
         HeadMovement::RequireBaselineHead => (baseline.head == after.head).then(Vec::new),
         HeadMovement::AdmitDescendantCommits => {
             committed_changes(&baseline.root, &baseline.head, &after.head)?
         }
     };
-    let mut delta = delta_from_repository_states(baseline, &after, committed.as_deref());
+    let (mut delta, line_ending_only_paths) =
+        delta_and_line_ending_only_paths(baseline, &after, committed.as_deref(), &BTreeMap::new());
     if let Some(region) = &baseline.inline_test_region
         && delta.changes.iter().any(|change| {
             normalize_repo_relative_path(&change.path).is_ok_and(|path| path == region.path)
@@ -381,8 +487,15 @@ pub(crate) fn evaluate_repository_edit_cage_with_head_movement(
     {
         delta.inline_test_region = Some(observe_inline_target(baseline, &after, region)?);
     }
+    if let Some(region) = &baseline.external_test_file_region
+        && delta.changes.iter().any(|change| {
+            normalize_repo_relative_path(&change.path).is_ok_and(|path| path == region.path)
+        })
+    {
+        delta.external_test_file_region = Some(observe_external_target(baseline, &after, region)?);
+    }
     let verdict = evaluate_edit_cage(&baseline.policy, &delta);
-    Ok((delta, verdict))
+    Ok((delta, verdict, selected_digest, line_ending_only_paths))
 }
 
 /// Retained, independently validated producer bytes for one absent workflow
@@ -502,6 +615,14 @@ pub(crate) fn visit_reconstructed_workflow_deltas(
             })
         {
             delta.inline_test_region = Some(observe_inline_target(baseline, &after, region)?);
+        }
+        if let Some(region) = &baseline.external_test_file_region
+            && delta.changes.iter().any(|change| {
+                normalize_repo_relative_path(&change.path).is_ok_and(|path| path == region.path)
+            })
+        {
+            delta.external_test_file_region =
+                Some(observe_external_target(baseline, &after, region)?);
         }
         visit(delta)?;
     }
@@ -631,9 +752,44 @@ fn require_inline_target_at_head(baseline: &AttemptBaseline, path: &str) -> Resu
         .map(str::to_string);
     if inline_target_copies_at_head(committed.as_deref(), worktree.as_deref(), index.as_deref()) {
         Ok(())
+    } else if baseline.policy().external_test_file_target
+        && baseline.policy().selected_target.matches(path)
+    {
+        Err(external_test_file_region::uncommitted_target_refusal(path))
     } else {
         Err(inline_test_region::uncommitted_target_refusal(path))
     }
+}
+
+/// A new external test has no protected before text only when the trusted
+/// repository snapshot, recorded commit and current safe filesystem path all
+/// establish absence. A deleted tracked file or failed Git read is not absence.
+fn external_target_is_absent(baseline: &AttemptBaseline, path: &str) -> Result<bool, String> {
+    if !baseline.paths.get(path).is_some_and(|state| {
+        state.index_entry.is_none() && matches!(state.worktree_identity, WorktreeIdentity::Missing)
+    }) {
+        return Ok(false);
+    }
+    let committed = git_text(
+        &baseline.root,
+        &["--literal-pathspecs", "ls-tree", &baseline.head, "--", path],
+    )?;
+    if !committed.is_empty() || !writable_path_components_are_safe(&baseline.root, path)? {
+        return Ok(false);
+    }
+    let mut remaining_file_bytes = MAX_CAPTURE_FILE_BYTES;
+    let mut remaining_work_bytes = MAX_CAPTURE_FILE_BYTES;
+    Ok(matches!(
+        worktree_identity(
+            &baseline.root,
+            path,
+            &mut remaining_file_bytes,
+            &mut remaining_work_bytes,
+            false,
+            true,
+        )?,
+        WorktreeIdentity::Missing
+    ))
 }
 
 /// The one law for "the inline target is at HEAD": a committed object exists
@@ -659,6 +815,19 @@ fn inline_target_copies_at_head(
 /// would resolve from the top-level rather than `root`), HEAD is unborn, or
 /// any git command fails for a reason other than the file being absent.
 pub(crate) fn inline_target_is_uncommitted(root: &Path, path: &str) -> bool {
+    target_is_uncommitted(root, path, true)
+}
+
+/// Whether `ripr repair` would refuse `path` as a selected external test
+/// file because its tracked worktree or index copy differs from HEAD (#15265).
+/// The same predicate as [`inline_target_is_uncommitted`] for a file HEAD
+/// carries; a file HEAD does not carry stays with the attempt, which admits a
+/// new external test only when its absence is established.
+pub(crate) fn external_test_target_is_uncommitted(root: &Path, path: &str) -> bool {
+    target_is_uncommitted(root, path, false)
+}
+
+fn target_is_uncommitted(root: &Path, path: &str, absent_at_head: bool) -> bool {
     let Ok(root) = canonical_repository_root(root) else {
         return false;
     };
@@ -677,8 +846,9 @@ pub(crate) fn inline_target_is_uncommitted(root: &Path, path: &str) -> bool {
         return false;
     };
     if listing.is_empty() {
-        // HEAD exists but does not carry the file: the attempt refuses it too.
-        return true;
+        // HEAD exists but does not carry the file: the attempt refuses an
+        // inline target too, and judges a new external test file itself.
+        return absent_at_head;
     }
     // Only a regular-file blob is comparable with `hash-object`; a symlink,
     // directory or submodule entry defers to the attempt.
@@ -790,6 +960,69 @@ fn observe_inline_target(
     ))
 }
 
+fn observe_external_target(
+    baseline: &AttemptBaseline,
+    after: &AttemptBaseline,
+    region: &external_test_file_region::ExternalTestFileBaseline,
+) -> Result<external_test_file_region::ExternalTestFileObservation, String> {
+    let root = &baseline.root;
+    let worktree =
+        inline_test_region::read_attempt_inline_target(root, &region.path).and_then(|bytes| {
+            let digest = inline_test_region::digest_bytes(bytes.as_bytes());
+            if after.worktree_digest(&region.path) == Some(digest.as_str()) {
+                Ok(bytes)
+            } else {
+                Err("the file changed while the after phase observed it".to_string())
+            }
+        });
+    let (worktree_object, object_unreadable) = if worktree.is_ok() {
+        match git_text(root, &["hash-object", "--no-filters", "--", &region.path]) {
+            Ok(object) => (Some(object), None),
+            Err(error) => (None, Some(error)),
+        }
+    } else {
+        (None, None)
+    };
+    let index_object = |state: &AttemptBaseline| {
+        state
+            .index_entry(&region.path)
+            .and_then(|entry| entry.split_ascii_whitespace().nth(1))
+            .map(str::to_string)
+    };
+    let before_index = index_object(baseline);
+    let after_index = index_object(after);
+    let index_matches =
+        after_index == before_index || (after_index.is_some() && after_index == worktree_object);
+    let head_matches = if after.head == baseline.head {
+        true
+    } else {
+        let committed = |head: &str| {
+            git_text(
+                root,
+                &[
+                    "rev-parse",
+                    "--verify",
+                    "--quiet",
+                    &format!("{head}:{}", region.path),
+                ],
+            )
+            .ok()
+        };
+        let before_commit = committed(&baseline.head);
+        let after_commit = committed(&after.head);
+        after_commit == before_commit || (after_commit.is_some() && after_commit == worktree_object)
+    };
+    Ok(external_test_file_region::observe_attempt_external_region(
+        external_test_file_region::ExternalTargetCopies {
+            worktree,
+            index_matches,
+            head_matches,
+            object_unreadable,
+            baseline: region,
+        },
+    ))
+}
+
 /// The path changes committed between the baseline head and the current
 /// head, or `None` when the current head does not descend from the baseline
 /// head or HEAD moved while the range was read. Equal heads commit nothing.
@@ -827,7 +1060,7 @@ fn committed_changes(
             "--no-textconv",
             // Ambient `diff.ignoreSubmodules=all` would hide a committed
             // gitlink change from the attempt's changed-path set.
-            "--ignore-submodules=none",
+            crate::git::SUBMODULE_POINTERS_ONLY,
             "--name-status",
             "-z",
             baseline_head,
@@ -871,7 +1104,7 @@ fn capture_repository_state(
     let ignored = ignored_inventory(&root, &policy)?;
 
     let python_tool_caches = policy.expects_python_tool_caches();
-    let (inventory, mut ambiguous) =
+    let (mut inventory, mut ambiguous) =
         inventory_paths(&tracked, &untracked, &ignored, MAX_CAPTURE_PATHS, |path| {
             python_tool_caches && is_python_tool_cache(path)
         })?;
@@ -882,6 +1115,22 @@ fn capture_repository_state(
         );
     }
 
+    // Git inventories omit a genuinely new target. Retain its Missing identity
+    // through the same bounded capture and stability check as existing paths.
+    if policy.external_test_file_target && !inventory.contains_key(&policy.selected_target.path) {
+        let selected = &policy.selected_target.path;
+        let key = crate::output::path::path_identity_key_on(Path::new(selected), false, true);
+        if inventory.len() >= MAX_CAPTURE_PATHS
+            || inventory.keys().any(|path| {
+                crate::output::path::path_identity_key_on(Path::new(path), false, true) == key
+            })
+        {
+            ambiguous = true;
+        } else {
+            inventory.insert(selected.clone(), false);
+        }
+    }
+
     let mut paths = BTreeMap::new();
     let mut remaining_file_bytes = MAX_CAPTURE_TOTAL_FILE_BYTES;
     let mut remaining_work_bytes = MAX_CAPTURE_TOTAL_WORK_BYTES;
@@ -889,6 +1138,7 @@ fn capture_repository_state(
     let mut unknown_ignored_write_guards = Vec::new();
     #[cfg(windows)]
     let mut expected_write_authorities = Vec::new();
+    let explicit_store_scopes = explicit_store_pair_scopes(&policy);
     let identity_started = Instant::now();
     for (path, ignored_path) in inventory {
         // The before-phase serialization lock is an authority artifact, not
@@ -917,7 +1167,9 @@ fn capture_repository_state(
                 .forbidden_paths
                 .iter()
                 .any(|rule| rule.matches(&path));
-        if writable_surface && !writable_path_components_are_safe(&root, &path)? {
+        if writable_surface
+            && !writable_path_components_are_safe_in(&root, &path, &explicit_store_scopes)?
+        {
             ambiguous = true;
         }
         #[cfg(windows)]
@@ -1054,6 +1306,7 @@ fn capture_repository_state(
         paths,
         ambiguous,
         inline_test_region: None,
+        external_test_file_region: None,
         #[cfg(windows)]
         _unknown_ignored_write_guards: unknown_ignored_write_guards,
         #[cfg(windows)]
@@ -1069,8 +1322,19 @@ const IGNORED_LISTING: [&str; 5] = [
     "-z",
 ];
 
+/// Why the build-output precondition failed. Callers that map the hold to a
+/// typed refusal match the variant, never the rendered wording.
+#[derive(Debug, PartialEq, Eq)]
+pub(crate) enum BuildOutputPreconditionError {
+    /// The build directory is not effectively Git-ignored: a deliberate,
+    /// recoverable hold that started nothing.
+    NotIgnored(String),
+    /// The directory could not be inspected or git could not answer.
+    Inspection(String),
+}
+
 /// Before promising a Rust repair transaction, require Git to ignore the
-/// declared build directory itself. Both callers hold the repair-attempt lock,
+/// declared build directory itself. Its callers hold the repair-attempt lock,
 /// whose creation supplies the directory even before any Cargo build exists.
 /// Query the existing directory without a trailing slash: adding one can make
 /// a child wildcard look like a whole-directory rule despite reincluded output.
@@ -1078,25 +1342,26 @@ const IGNORED_LISTING: [&str; 5] = [
 /// Merely finding some ignored files would accept a partial `target/debug/`
 /// rule while Cargo's root-level output still becomes a terminal cage edit.
 /// This admission check does not change the inventory or verdict authority.
-pub(crate) fn validate_build_output_precondition(
+pub(crate) fn check_build_output_precondition(
     root: &Path,
     policy: &EditCagePolicy,
-) -> Result<(), String> {
+) -> Result<(), BuildOutputPreconditionError> {
+    use BuildOutputPreconditionError::{Inspection, NotIgnored};
     let Some(build_output) = &policy.ignored_build_output else {
         return Ok(());
     };
     let path = root.join(build_output.path());
     let metadata = fs::metadata(&path).map_err(|error| {
-        format!(
+        Inspection(format!(
             "inspect build-output directory {} before ignore admission: {error}",
             path.display()
-        )
+        ))
     })?;
     if !metadata.is_dir() {
-        return Err(format!(
+        return Err(Inspection(format!(
             "build-output path {} must be an existing directory before ignore admission",
             path.display()
-        ));
+        )));
     }
     let directory = format!("{}/", build_output.path());
     let args = [
@@ -1111,17 +1376,18 @@ pub(crate) fn validate_build_output_precondition(
         &args,
         Duration::from_secs(10),
         64 * 1024,
-    )?;
+    )
+    .map_err(|error| Inspection(String::from(error)))?;
     match output.status.code() {
         Some(0) => Ok(()),
-        Some(1) => Err(format!(
-            "Rust repair requires Cargo's build directory `{directory}` to be Git-ignored before the test edit. Add `/{directory}` to the repository's .gitignore (or an equivalent Git exclude rule), then rerun --phase before. A rule for only a child directory is insufficient: Cargo also writes files at the build-directory root."
-        )),
-        _ => Err(format!(
+        Some(1) => Err(NotIgnored(format!(
+            "Rust repair requires Cargo's build directory `{directory}` to be Git-ignored before the test edit. Add `/{directory}` to the repository's .gitignore (or an equivalent Git exclude rule). A rule for only a child directory is insufficient: Cargo also writes files at the build-directory root."
+        ))),
+        _ => Err(Inspection(format!(
             "check build-output ignore precondition failed in {}: git {args:?}: {}",
             root.display(),
             String::from_utf8_lossy(&output.stderr).trim()
-        )),
+        ))),
     }
 }
 
@@ -1387,7 +1653,7 @@ fn eol_only_line_ending_flip(old: &RepositoryPathState, new: &RepositoryPathStat
 /// Whether Git itself would EOL-normalize `path` in `root`'s repository: the
 /// `text` attribute decides when set or unset (`-text`), and `core.autocrlf`
 /// decides when the attribute is unspecified (#7377 review). The EOL-only
-/// skip in [`delta_from_repository_states`] is only sound for paths Git
+/// skip in [`delta_from_repository_states_with_overrides`] is only sound for paths Git
 /// rewrites: for every other path a byte flip stays visible to `git status`
 /// and must keep naming an author in the delta. A probe failure fails
 /// closed — the change stays in the delta.
@@ -1451,21 +1717,26 @@ fn git_applies_eol_normalization(root: &Path, path: &str) -> bool {
 /// `committed` is the tree diff from the baseline head to the after head
 /// when that movement is admitted (empty when HEAD did not move), and `None`
 /// when HEAD movement makes the delta incomparable.
-fn delta_from_repository_states(
-    before: &AttemptBaseline,
-    after: &AttemptBaseline,
-    committed: Option<&[AttemptPathChange]>,
-) -> AttemptDelta {
-    delta_from_repository_states_with_overrides(before, after, committed, &BTreeMap::new())
-}
-
 fn delta_from_repository_states_with_overrides(
     before: &AttemptBaseline,
     after: &AttemptBaseline,
     committed: Option<&[AttemptPathChange]>,
     overrides: &BTreeMap<String, RepositoryPathState>,
 ) -> AttemptDelta {
+    delta_and_line_ending_only_paths(before, after, committed, overrides).0
+}
+
+/// The attempt delta, plus the paths it leaves out as git-invisible
+/// line-ending flips (#13833). The list stays outside the delta so the bound
+/// delta digest and every receipt binding are unchanged by reporting it.
+fn delta_and_line_ending_only_paths(
+    before: &AttemptBaseline,
+    after: &AttemptBaseline,
+    committed: Option<&[AttemptPathChange]>,
+    overrides: &BTreeMap<String, RepositoryPathState>,
+) -> (AttemptDelta, Vec<String>) {
     let mut changes = Vec::new();
+    let mut line_ending_only_paths = Vec::new();
     let paths = before
         .paths
         .keys()
@@ -1475,8 +1746,18 @@ fn delta_from_repository_states_with_overrides(
         .collect::<BTreeSet<_>>();
     let mut changed_symlink = false;
     for path in paths {
-        let old = before.paths.get(&path);
-        let new = overrides.get(&path).or_else(|| after.paths.get(&path));
+        // A retained `Missing` identity with no index entry (an absent external
+        // test target kept in the capture) is absence, so a file created there
+        // reads as Added, not Modified.
+        let is_present = |state: &&RepositoryPathState| {
+            state.index_entry.is_some()
+                || !matches!(state.worktree_identity, WorktreeIdentity::Missing)
+        };
+        let old = before.paths.get(&path).filter(is_present);
+        let new = overrides
+            .get(&path)
+            .or_else(|| after.paths.get(&path))
+            .filter(is_present);
         if old == new {
             continue;
         }
@@ -1497,6 +1778,7 @@ fn delta_from_repository_states_with_overrides(
             && eol_only_line_ending_flip(old, new)
             && git_applies_eol_normalization(&before.root, &path)
         {
+            line_ending_only_paths.push(path);
             continue;
         }
         let untracked = |state: Option<&RepositoryPathState>| {
@@ -1555,7 +1837,7 @@ fn delta_from_repository_states_with_overrides(
                 .cloned();
         }
     }
-    AttemptDelta {
+    let delta = AttemptDelta {
         comparable: before.root == after.root
             && committed.is_some()
             && !before.ambiguous
@@ -1563,7 +1845,12 @@ fn delta_from_repository_states_with_overrides(
             && !changed_symlink,
         changes,
         inline_test_region: None,
-    }
+        external_test_file_region: None,
+    };
+    // A committed change to the same path (admitted descendant commits) is
+    // still in the delta, so it is not reported as a line-ending-only skip.
+    line_ending_only_paths.retain(|path| !delta.changes.iter().any(|change| &change.path == path));
+    (delta, line_ending_only_paths)
 }
 
 /// The selected attempt manifest contains the delta digest itself, so its
@@ -1648,6 +1935,71 @@ pub(crate) fn omit_owned_workflow_backups(
         });
     }
     Ok(())
+}
+
+/// The module-tree scan bundle is the one fixed-name analysis cache file:
+/// every Rust check, the after phase included, rewrites it in place with
+/// derived data. Binding its bytes would make an ordinary re-check after a
+/// finished repair read as drift (#15060). Content-keyed cache entries get
+/// new names, so the later-write filter already drops them; this exception is
+/// that single file, not the cache directory. It never applies to a tracked,
+/// selected, authored or forbidden path, nor to a staged copy, so staging the
+/// bundle after the finish still moves the recomputed delta. With
+/// `RIPR_CACHE_DIR` set, checks write the bundle elsewhere, so the default
+/// path is an ordinary file and keeps its binding.
+pub(crate) fn derived_cache_bundle_path(baseline: &AttemptBaseline) -> Option<String> {
+    derived_cache_bundle_path_with(
+        baseline,
+        crate::analysis::seam_cache::cache_base_is_relocated(),
+    )
+}
+
+fn derived_cache_bundle_path_with(baseline: &AttemptBaseline, relocated: bool) -> Option<String> {
+    if relocated {
+        return None;
+    }
+    let path = crate::analysis::seam_cache::module_tree_scan_bundle_default_relative_path();
+    let policy = baseline.policy();
+    if baseline.index_entry(&path).is_some()
+        || policy.selected_target.matches(&path)
+        || policy
+            .allowed_edit_surface
+            .iter()
+            .any(|rule| rule.matches(&path))
+        || policy
+            .forbidden_paths
+            .iter()
+            .any(|rule| rule.matches(&path))
+        || !policy
+            .expected_operational_writes
+            .iter()
+            .any(|rule| rule.matches(&path))
+    {
+        return None;
+    }
+    Some(path)
+}
+
+/// Remove the unstaged derived cache bundle change (see
+/// [`derived_cache_bundle_path`]) from `delta`. A staged or renamed change of
+/// that path stays, so it still breaks the binding.
+pub(crate) fn omit_derived_cache_bundle(delta: &mut AttemptDelta, baseline: &AttemptBaseline) {
+    if let Some(path) = derived_cache_bundle_path(baseline) {
+        omit_unstaged_change_at(delta, &path);
+    }
+}
+
+fn omit_unstaged_change_at(delta: &mut AttemptDelta, path: &str) {
+    delta.changes.retain(|change| {
+        let derived = change.kind != AttemptPathChangeKind::Renamed
+            && change.previous_path.is_none()
+            && normalize_repo_relative_path(&change.path).is_ok_and(|name| name == path)
+            && change
+                .after_state
+                .as_ref()
+                .is_none_or(|state| state.index_entry.is_none());
+        !derived
+    });
 }
 
 /// The compatibility receipt is a single fixed producer output, not a
@@ -1792,6 +2144,7 @@ pub(crate) fn without_later_operational_writes_protecting(
     AttemptDelta {
         comparable: delta.comparable,
         inline_test_region: delta.inline_test_region.clone(),
+        external_test_file_region: delta.external_test_file_region.clone(),
         changes: delta
             .changes
             .iter()
@@ -1817,16 +2170,180 @@ fn canonical_repository_root(root: &Path) -> Result<PathBuf, String> {
     let top =
         fs::canonicalize(&top).map_err(|err| format!("canonicalize Git top-level {top}: {err}"))?;
     if requested != top {
-        return Err(format!(
-            "attempt root {} is not the exact Git top-level {}",
-            requested.display(),
-            top.display()
-        ));
+        return Err(not_exact_top_level_message(&requested, &top));
     }
     Ok(requested)
 }
 
+fn not_exact_top_level_message(requested: &Path, top: &Path) -> String {
+    format!(
+        "attempt root {} is not the exact Git top-level {}; repair attempts run from the top-level, so rerun `ripr check --root {}` and use the repair command it prints",
+        requested.display(),
+        top.display(),
+        crate::agent::loop_commands::shell_arg(&top.display().to_string())
+    )
+}
+
+/// The Git top-level a repair attempt would need when `root` is a proper
+/// subdirectory of its work tree, `None` for the exact top-level, for a root
+/// that is its own Cargo project outside the enclosing workspace, or when Git
+/// cannot say (those cases keep the attempt's own refusals). The before-phase
+/// entry uses it to refuse a subdirectory `--root` before writing anything;
+/// surfaces that print a repair start should share it too (#15488). It asks Git exactly as
+/// [`canonical_repository_root`] does (same command, environment and deadline),
+/// so check never withholds a start the cage would accept, for example under
+/// an exported `GIT_DIR`.
+pub(crate) fn enclosing_git_top_level_above(root: &Path) -> Option<PathBuf> {
+    let requested = fs::canonicalize(root).ok()?;
+    let top = git_text(&requested, &["rev-parse", "--show-toplevel"]).ok()?;
+    let top = fs::canonicalize(&top).ok()?;
+    if requested == top {
+        return None;
+    }
+    // A root that is its own Cargo project nested inside another Cargo
+    // project is a standalone repository for repair-start purposes, not a
+    // subdirectory of the enclosing work tree (#15488). Requiring the
+    // enclosing top-level to be a Cargo project too keeps a bare Git repo's
+    // `crate/` subdirectory (no root Cargo.toml) refused, and the monorepo
+    // Python `backend/` (no Cargo.toml) refused, while a fixture `input/`
+    // keeps its start without the harness faking a Git top-level.
+    //
+    // A workspace member is the exception: the enclosing workspace claims it,
+    // so it is still a subdirectory of the work tree the attempt refuses, and
+    // printing its start would offer a command that refuses at the before
+    // phase. Only a project the enclosing workspace does not claim is its own
+    // root.
+    if requested.join("Cargo.toml").is_file()
+        && top.join("Cargo.toml").is_file()
+        && !enclosing_workspace_claims(&top, &requested)
+    {
+        return None;
+    }
+    Some(top)
+}
+
+/// Whether the Cargo workspace rooted at `top` claims `root` as one of its
+/// packages. A nested Cargo project the enclosing workspace does not claim is
+/// a standalone project; one it claims is a member, and a member root is still
+/// a subdirectory of the work tree the attempt refuses (#15488).
+///
+/// Fails closed (`true`) whenever the answer is not positively established: an
+/// unreadable or unparsable manifest, a root outside `top`, or a member
+/// pattern this matcher cannot decide keeps the root a subdirectory root, so
+/// no start is printed that the attempt would refuse.
+fn enclosing_workspace_claims(top: &Path, root: &Path) -> bool {
+    let Ok(manifest) = fs::read_to_string(top.join("Cargo.toml")) else {
+        return true;
+    };
+    let Ok(parsed) = toml::from_str::<toml::Value>(&manifest) else {
+        return true;
+    };
+    let Some(workspace) = parsed.get("workspace") else {
+        // No `[workspace]` table: the enclosing manifest is a single package,
+        // so a nested Cargo project is not part of it.
+        return false;
+    };
+    // A package that names this workspace explicitly joins it even when no
+    // member pattern matches.
+    if let Ok(package) = fs::read_to_string(root.join("Cargo.toml"))
+        && let Ok(package) = toml::from_str::<toml::Value>(&package)
+        && package
+            .get("package")
+            .and_then(|package| package.get("workspace"))
+            .is_some()
+    {
+        return true;
+    }
+    let Ok(relative) = root.strip_prefix(top) else {
+        return true;
+    };
+    let relative = relative
+        .components()
+        .map(|component| component.as_os_str().to_string_lossy().into_owned())
+        .collect::<Vec<_>>()
+        .join("/");
+    let patterns = |key: &str| -> Vec<String> {
+        workspace
+            .get(key)
+            .and_then(|value| value.as_array())
+            .map(|values| {
+                values
+                    .iter()
+                    .filter_map(|value| value.as_str().map(str::to_string))
+                    .collect()
+            })
+            .unwrap_or_default()
+    };
+    if patterns("exclude")
+        .iter()
+        .any(|pattern| member_pattern_covers(pattern, &relative))
+    {
+        return false;
+    }
+    patterns("members")
+        .iter()
+        .any(|pattern| member_pattern_covers(pattern, &relative))
+}
+
+/// Whether a Cargo `[workspace] members`/`exclude` pattern covers the
+/// workspace-relative `relative` path. Cargo patterns are globs; this matcher
+/// decides the literal and single-trailing-glob shapes the repository uses and
+/// treats any other glob as covering, so an undecidable pattern keeps the root
+/// a subdirectory root rather than printing a start the attempt would refuse.
+fn member_pattern_covers(pattern: &str, relative: &str) -> bool {
+    let pattern = pattern.trim_end_matches('/');
+    if let Some(prefix) = pattern
+        .strip_suffix("/**")
+        .or_else(|| pattern.strip_suffix("/*"))
+    {
+        return relative == prefix || relative.starts_with(&format!("{prefix}/"));
+    }
+    if pattern.contains(['*', '?', '[']) {
+        return true;
+    }
+    relative == pattern
+}
+
+/// The cage's refusal text for a non-top-level attempt root, produced before
+/// any attempt state is written.
+pub(crate) fn subdirectory_attempt_root_refusal(root: &Path) -> Option<String> {
+    let top = enclosing_git_top_level_above(root)?;
+    let requested = fs::canonicalize(root).ok()?;
+    Some(not_exact_top_level_message(&requested, &top))
+}
+
+/// Repository-relative prefix of the repair-attempt store, the only place
+/// `write_bytes_atomic` publishes by hard link and so the only place a staged
+/// publication pair can legitimately appear.
+const ATTEMPT_STORE_PREFIX: &str = "target/ripr/repair-attempts/";
+
 fn writable_path_components_are_safe(root: &Path, relative: &str) -> Result<bool, String> {
+    writable_path_components_are_safe_in(root, relative, &[])
+}
+
+/// The explicit attempt store's retained subtree, when the policy carries one.
+/// The only operational write the product declares besides the `target/ripr`
+/// subtree is an explicit `--store` outside `target/ripr`
+/// (`include_explicit_store_operational_write`), so a subtree operational rule
+/// outside `target/ripr` is that store's `<store>/<attempt>` directory. Exact
+/// rules and anything under `target/ripr` never qualify (#13553).
+fn explicit_store_pair_scopes(policy: &EditCagePolicy) -> Vec<&CagePathRule> {
+    policy
+        .expected_operational_writes
+        .iter()
+        .filter(|rule| {
+            rule.scope == CagePathScope::Subtree
+                && rule.path != "target/ripr"
+                && !rule.path.starts_with("target/ripr/")
+        })
+        .collect()
+}
+
+fn writable_path_components_are_safe_in(
+    root: &Path,
+    relative: &str,
+    explicit_store_scopes: &[&CagePathRule],
+) -> Result<bool, String> {
     let mut current = root.to_path_buf();
     for component in relative.split('/') {
         current.push(component);
@@ -1843,10 +2360,23 @@ fn writable_path_components_are_safe(root: &Path, relative: &str) -> Result<bool
         if metadata.file_type().is_symlink() || is_windows_reparse_point(&metadata) {
             return Ok(false);
         }
+        // Only the Unix hard-link check below reads the explicit store scopes.
+        #[cfg(not(unix))]
+        let _ = explicit_store_scopes;
         #[cfg(unix)]
         if metadata.is_file() {
             use std::os::unix::fs::MetadataExt as _;
-            if metadata.nlink() != 1 && !links_are_staged_publication_pair(&current, &metadata)? {
+            // The staged-pair exemption exists for the attempt store's exclusive
+            // publisher only. A source or any other writable path with a
+            // `<stem>.tmp-<digits>-<digits>` twin is an unaccounted second name
+            // and stays refused (#12847).
+            if metadata.nlink() != 1
+                && !((relative.starts_with(ATTEMPT_STORE_PREFIX)
+                    || explicit_store_scopes
+                        .iter()
+                        .any(|rule| rule.matches(relative)))
+                    && links_are_staged_publication_pair(&current, &metadata)?)
+            {
                 return Ok(false);
             }
         }
@@ -1859,7 +2389,10 @@ fn writable_path_components_are_safe(root: &Path, relative: &str) -> Result<bool
 /// name that `write_bytes_atomic` links into place before removing. A process
 /// stopped or terminated between the link and the removal leaves exactly this pair
 /// behind, and it aliases nothing outside the governed directory. Any other
-/// link (another directory, another name, an extra count) stays refused.
+/// link (another directory, another name, an extra count) stays refused. When
+/// the listing shows a single name for the inode (a publisher finished after the
+/// caller read the link count), a fresh stat of the path decides: one link, same
+/// device and inode, is safe; anything else stays refused (#12848).
 #[cfg(unix)]
 fn links_are_staged_publication_pair(path: &Path, metadata: &fs::Metadata) -> Result<bool, String> {
     use std::os::unix::fs::MetadataExt as _;
@@ -1889,6 +2422,20 @@ fn links_are_staged_publication_pair(path: &Path, metadata: &fs::Metadata) -> Re
             names.push(name);
         }
     }
+    // A concurrently completing publisher unlinks its staging name after the
+    // caller read `nlink`. Re-read it after the listing: when the listing and
+    // the fresh count agree on a single remaining name, the pair is gone and
+    // the path has one link, which is safe; any other disagreement stays
+    // ambiguous and refused (#12848).
+    if names.len() == 1 {
+        let Ok(fresh) = fs::symlink_metadata(path) else {
+            return Ok(false);
+        };
+        return Ok(fresh.is_file()
+            && fresh.dev() == metadata.dev()
+            && fresh.ino() == metadata.ino()
+            && fresh.nlink() == 1);
+    }
     if u64::try_from(names.len()).ok() != Some(metadata.nlink()) || names.len() != 2 {
         return Ok(false);
     }
@@ -1910,20 +2457,12 @@ fn links_are_staged_publication_pair(path: &Path, metadata: &fs::Metadata) -> Re
 /// directory that cannot be read counts as having residue: currentness fails
 /// closed.
 pub(crate) fn directory_has_staged_publication_residue(directory: &Path) -> bool {
-    #[cfg(unix)]
-    {
-        match fs::read_dir(directory) {
-            Ok(entries) => entries.into_iter().any(|entry| match entry {
-                Ok(entry) => entry.file_name().to_str().is_none_or(is_staging_name),
-                Err(_) => true,
-            }),
-            Err(error) => error.kind() != std::io::ErrorKind::NotFound,
-        }
-    }
-    #[cfg(not(unix))]
-    {
-        let _ = directory;
-        false
+    match fs::read_dir(directory) {
+        Ok(entries) => entries.into_iter().any(|entry| match entry {
+            Ok(entry) => entry.file_name().to_str().is_none_or(is_staging_name),
+            Err(_) => true,
+        }),
+        Err(error) => error.kind() != std::io::ErrorKind::NotFound,
     }
 }
 
@@ -1931,34 +2470,24 @@ pub(crate) fn directory_has_staged_publication_residue(directory: &Path) -> bool
 /// refusal can name the file whose removal restores currentness. A directory
 /// that cannot be read yields none: the caller already failed closed on it.
 pub(crate) fn staged_publication_residue_names(directory: &Path) -> Vec<String> {
-    #[cfg(unix)]
-    {
-        let Ok(entries) = fs::read_dir(directory) else {
-            return Vec::new();
-        };
-        let mut names: Vec<String> = entries
-            .filter_map(Result::ok)
-            .filter_map(|entry| entry.file_name().to_str().map(str::to_string))
-            .filter(|name| is_staging_name(name))
-            .collect();
-        names.sort();
-        names
-    }
-    #[cfg(not(unix))]
-    {
-        let _ = directory;
-        Vec::new()
-    }
+    let Ok(entries) = fs::read_dir(directory) else {
+        return Vec::new();
+    };
+    let mut names: Vec<String> = entries
+        .filter_map(Result::ok)
+        .filter_map(|entry| entry.file_name().to_str().map(str::to_string))
+        .filter(|name| is_staging_name(name))
+        .collect();
+    names.sort();
+    names
 }
 
-#[cfg(unix)]
 fn is_staging_name(name: &str) -> bool {
     name.rsplit_once(".tmp-")
         .is_some_and(|(_, tail)| is_staging_suffix(&format!(".tmp-{tail}")))
 }
 
 /// `.tmp-<pid>-<nonce>` with decimal digits only.
-#[cfg(unix)]
 fn is_staging_suffix(rest: &str) -> bool {
     rest.strip_prefix(".tmp-")
         .and_then(|tail| tail.split_once('-'))
@@ -2043,6 +2572,66 @@ fn git_text(root: &Path, args: &[&str]) -> Result<String, String> {
         .map_err(|err| format!("git {args:?} emitted non-UTF-8 output: {err}"))
 }
 
+/// Name the likely cause of an ambiguous baseline when untracked files that
+/// `.gitignore` does not cover exceed the exact-capture budget (#15902).
+///
+/// The cage snapshots untracked, unignored files exactly, bounded by
+/// [`MAX_CAPTURE_FILE_BYTES`] per file and [`MAX_CAPTURE_TOTAL_FILE_BYTES`] in
+/// total. An installed dependency tree such as `node_modules/` that the
+/// repository forgot to ignore runs past that budget, and the attempt can then
+/// never be scored. This is diagnostic text only: it reads sizes after the
+/// baseline was captured, changes no verdict, and returns `None` whenever the
+/// untracked files alone do not explain the ambiguity or Git cannot answer.
+pub(crate) fn oversized_untracked_cause(root: &Path) -> Option<String> {
+    let untracked = git_bytes(root, &["ls-files", "--others", "--exclude-standard", "-z"]).ok()?;
+    let mut total_bytes = 0u64;
+    let mut files = 0usize;
+    // Top-level entry (`dir/` or a root-level file) -> (bytes, largest file).
+    let mut by_entry: BTreeMap<String, (u64, u64)> = BTreeMap::new();
+    for record in nul_records(&untracked).take(MAX_CAPTURE_PATHS) {
+        let path = record.ok()?;
+        let Ok(metadata) = std::fs::symlink_metadata(root.join(path)) else {
+            continue;
+        };
+        if !metadata.is_file() {
+            continue;
+        }
+        files += 1;
+        total_bytes = total_bytes.saturating_add(metadata.len());
+        let entry = match path.split_once('/') {
+            Some((directory, _)) => format!("{directory}/"),
+            None => path.to_string(),
+        };
+        let (bytes, largest_file) = by_entry.entry(entry).or_default();
+        *bytes = bytes.saturating_add(metadata.len());
+        *largest_file = (*largest_file).max(metadata.len());
+    }
+    // Over the total budget, the entry holding the most bytes is the one to
+    // ignore. Within it, only a single file past the per-file limit can be
+    // the cause, so name the entry that holds that file: ignoring a larger
+    // but harmless directory would leave the baseline ambiguous.
+    let over_total = total_bytes > MAX_CAPTURE_TOTAL_FILE_BYTES;
+    let (entry, _) = by_entry
+        .into_iter()
+        .map(|(entry, (bytes, largest_file))| {
+            (entry, if over_total { bytes } else { largest_file })
+        })
+        .filter(|(_, weight)| over_total || *weight > MAX_CAPTURE_FILE_BYTES)
+        .max_by(|left, right| left.1.cmp(&right.1).then_with(|| right.0.cmp(&left.0)))?;
+    const MIB: u64 = 1024 * 1024;
+    let size = format!("{} MiB", total_bytes.div_ceil(MIB));
+    let budget = MAX_CAPTURE_TOTAL_FILE_BYTES / MIB;
+    let per_file = MAX_CAPTURE_FILE_BYTES / MIB;
+    let place = if over_total {
+        format!(", the largest share under `{entry}`")
+    } else {
+        format!(", and `{entry}` holds a file over the per-file limit")
+    };
+    Some(format!(
+        "likely cause of the ambiguous baseline: {files} untracked file(s) that .gitignore does not cover hold {size}{place}. ripr snapshots tracked and untracked files exactly, up to {budget} MiB in total and {per_file} MiB per file, so committing them does not help. To get a scorable attempt, make Git ignore `{entry}`: add it to .git/info/exclude, or commit a .gitignore rule for it (an uncommitted .gitignore edit would itself be refused as a change outside the test). Then run the same --phase before command again."
+    ))
+}
+
 fn git_bytes(root: &Path, args: &[&str]) -> Result<Vec<u8>, String> {
     let output = crate::git::run_git_output_with_deadline_and_limit(
         root,
@@ -2103,7 +2692,7 @@ const ATTEMPT_STORE_EXACT_MAX_BYTES: u64 = 1024 * 1024;
 /// an unchanged file identically; a file crossing the size threshold between
 /// captures changes identity and fails closed.
 fn is_bulk_attempt_artifact(root: &Path, path: &str) -> bool {
-    path.starts_with("target/ripr/repair-attempts/")
+    path.starts_with(ATTEMPT_STORE_PREFIX)
         && fs::symlink_metadata(root.join(path)).is_ok_and(|metadata| {
             metadata.is_file() && metadata.len() > ATTEMPT_STORE_EXACT_MAX_BYTES
         })
@@ -2494,6 +3083,32 @@ pub(crate) struct EditCagePolicy {
     /// other policy, which keeps their serialized form unchanged.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub(crate) inline_test_module_target: bool,
+    /// The selected target is an external Rust test-surface file whose authored
+    /// edit must be a pure insertion of new test functions (#8710).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub(crate) external_test_file_target: bool,
+    /// The external test-file target is the entry file of a Cargo `[[test]]`
+    /// target the package manifest declares outside the test layouts
+    /// (`[[test]] path = "spec/pricing.rs"`, #15910). The policy constructor
+    /// read the manifest; the baseline capture reads it again. Only ever set
+    /// together with `external_test_file_target`. Absent (false) in every
+    /// other policy, which keeps their serialized form unchanged.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub(crate) declared_cargo_test_target: bool,
+    /// The producer-owned new-test proposal this attempt follows (#13203),
+    /// recorded in the retained baseline policy. Absent for an existing-test
+    /// repair, which keeps every other policy's serialized form unchanged.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) new_test_proposal: Option<FollowedNewTestProposal>,
+}
+
+/// The proposal an attempt follows: its kind and the one file it names. The
+/// file is always the policy's selected target; the baseline refuses a policy
+/// where they differ.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub(crate) struct FollowedNewTestProposal {
+    pub(crate) kind: crate::analysis::new_test_target::NewTestKind,
+    pub(crate) file: String,
 }
 
 impl EditCagePolicy {
@@ -2568,6 +3183,10 @@ pub(crate) enum EditCageViolationKind {
     SelectedTargetNotChanged,
     UnexpectedDeletionOrRename,
     OutsideInlineTestRegion,
+    /// The followed new-test proposal no longer describes the repository: an
+    /// integration file that already existed, or an inline target created
+    /// rather than edited (#13203).
+    StaleNewTestProposal,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Ord, PartialOrd, Serialize, Deserialize)]
@@ -2662,6 +3281,37 @@ pub(crate) fn evaluate_edit_cage(policy: &EditCagePolicy, delta: &AttemptDelta) 
                 ),
             });
         }
+    } else if policy.external_test_file_target {
+        let admitted = delta
+            .external_test_file_region
+            .as_ref()
+            .is_some_and(|observation| {
+                observation.admitted && observation.path == policy.selected_target.path
+            });
+        if !admitted {
+            let detail = delta
+                .external_test_file_region
+                .as_ref()
+                .map(|observation| {
+                    observation
+                        .reason
+                        .as_deref()
+                        .unwrap_or("not admitted")
+                        .to_string()
+                })
+                .unwrap_or_else(|| "the external test file was not observed".to_string());
+            violations.push(EditCageViolation {
+                kind: EditCageViolationKind::OutsideInlineTestRegion,
+                path: policy.selected_target.path.clone(),
+                reason: format!(
+                    "the edit is not a pure insertion of test functions into the selected external test file ({detail}); existing tests must stay byte-identical"
+                ),
+            });
+        }
+    }
+
+    if let Some(proposal) = &policy.new_test_proposal {
+        violations.extend(proposal_violations(policy, proposal, delta));
     }
 
     changed_paths.sort();
@@ -2678,6 +3328,38 @@ pub(crate) fn evaluate_edit_cage(policy: &EditCagePolicy, delta: &AttemptDelta) 
         changed_paths,
         violations,
     }
+}
+
+/// Verdict-time check of the followed proposal against the observed delta: an
+/// integration proposal is realized only by a file the attempt created, and an
+/// inline proposal only by editing an existing file. Anything else leaves the
+/// proposal stale, so the attempt is refused rather than credited.
+fn proposal_violations(
+    policy: &EditCagePolicy,
+    proposal: &FollowedNewTestProposal,
+    delta: &AttemptDelta,
+) -> Vec<EditCageViolation> {
+    use crate::analysis::new_test_target::NewTestKind;
+    delta
+        .changes
+        .iter()
+        .filter(|change| {
+            policy.selected_target.matches(&change.path.to_string_lossy())
+                && matches!(
+                    (proposal.kind, change.kind),
+                    (NewTestKind::Integration, AttemptPathChangeKind::Modified)
+                        | (NewTestKind::InlineUnit, AttemptPathChangeKind::Added)
+                )
+        })
+        .map(|change| EditCageViolation {
+            kind: EditCageViolationKind::StaleNewTestProposal,
+            path: change.path.to_string_lossy().to_string(),
+            reason: match proposal.kind {
+                NewTestKind::Integration => "the proposal named a new integration test file, but the path already existed before the attempt".to_string(),
+                NewTestKind::InlineUnit => "the proposal named an existing file's inline test module, but the attempt created the file".to_string(),
+            },
+        })
+        .collect()
 }
 
 /// True when an `OutsideInlineTestRegion` refusal reports that the selected
@@ -2861,6 +3543,21 @@ fn validate_policy(policy: &EditCagePolicy) -> Vec<EditCageViolation> {
             "the selected target overlaps an explicit forbidden path",
         ));
     }
+    if let Some(proposal) = &policy.new_test_proposal {
+        use crate::analysis::new_test_target::NewTestKind;
+        if proposal.file != selected_path {
+            violations.push(invalid_policy_violation(
+                &selected_path,
+                "the followed new-test proposal names a file other than the selected target",
+            ));
+        }
+        if (proposal.kind == NewTestKind::InlineUnit) != policy.inline_test_module_target {
+            violations.push(invalid_policy_violation(
+                &selected_path,
+                "the followed new-test proposal kind disagrees with the selected target's inline-module confinement",
+            ));
+        }
+    }
     if policy.inline_test_module_target
         && Path::new(&selected_path).extension() != Some(std::ffi::OsStr::new("rs"))
     {
@@ -2868,6 +3565,37 @@ fn validate_policy(policy: &EditCagePolicy) -> Vec<EditCageViolation> {
             &selected_path,
             "an inline test-module target must be a Rust source file",
         ));
+    }
+    if policy.declared_cargo_test_target
+        && (!policy.external_test_file_target
+            || crate::analysis::is_test_surface_path(&selected_path))
+    {
+        violations.push(invalid_policy_violation(
+            &selected_path,
+            "a manifest-declared test target must be an external test file outside the test layouts",
+        ));
+    }
+    if policy.external_test_file_target {
+        if !crate::analysis::is_test_surface_path(&selected_path)
+            && !policy.declared_cargo_test_target
+        {
+            violations.push(invalid_policy_violation(
+                &selected_path,
+                "an external test-file target must be a test-surface path",
+            ));
+        }
+        if Path::new(&selected_path).extension() != Some(std::ffi::OsStr::new("rs")) {
+            violations.push(invalid_policy_violation(
+                &selected_path,
+                "an external test-file target must be a Rust source file",
+            ));
+        }
+        if policy.inline_test_module_target {
+            violations.push(invalid_policy_violation(
+                &selected_path,
+                "a target cannot be both an inline test-module file and an external test file",
+            ));
+        }
     }
     if let Some(build_output) = &policy.ignored_build_output {
         if build_output.scope != CagePathScope::Subtree {
@@ -2943,15 +3671,28 @@ fn path_change_kind_name(kind: AttemptPathChangeKind) -> &'static str {
     }
 }
 
+/// The repository-relative spelling the cage compares. A backslash is a
+/// separator only where the platform reads it as one: on Unix it is a
+/// file-name byte, and folding it to `/` made the capture look for
+/// `src/a/b.rs` when Git tracked `src/a\b.rs`, so an edit to that file was
+/// never observed (#15908).
 fn normalize_repo_relative_path(path: &Path) -> Result<String, String> {
     let raw = path
         .to_str()
-        .ok_or_else(|| "path is not valid UTF-8".to_string())?
-        .replace('\\', "/");
+        .ok_or_else(|| "path is not valid UTF-8".to_string())?;
+    #[cfg(not(unix))]
+    let raw = raw.replace('\\', "/");
     if raw.trim().is_empty() {
         return Err("path is empty".to_string());
     }
-    if raw.starts_with('/')
+    // Fail closed on Windows-shaped roots and traversal on every host: a
+    // name like `\\server\share\x.rs` or `..\x.rs` is a legal Unix file
+    // name, but no repair needs one, and admitting it would let the same
+    // text escape the repository on Windows.
+    if raw.split(['/', '\\']).any(|segment| segment == "..") {
+        return Err("path contains parent traversal".to_string());
+    }
+    if raw.starts_with(['/', '\\'])
         || raw
             .as_bytes()
             .get(1)
@@ -3156,6 +3897,18 @@ mod tests {
                 "the EOL flip moved the verdict beside a real test edit: {verdict:?}"
             ));
         }
+        // #13833: the skip is reported beside the verdict, naming exactly the
+        // flipped file and not the real test edit.
+        let (_, _, _, line_ending_only) = evaluate_repository_edit_cage_with_captured_digest(
+            &baseline,
+            HeadMovement::RequireBaselineHead,
+            None,
+        )?;
+        if line_ending_only != vec!["src/pricing.rs".to_string()] {
+            return Err(format!(
+                "the EOL flip must be reported as line-ending-only: {line_ending_only:?}"
+            ));
+        }
         // Control: a real content change to the same file still enters the
         // delta and still refuses as a forbidden path.
         fs::write(
@@ -3170,6 +3923,16 @@ mod tests {
             .any(|change| change.path.as_path() == std::path::Path::new("src/pricing.rs"))
         {
             return Err("a real edit to the flipped file must enter the delta".to_string());
+        }
+        let (_, _, _, line_ending_only) = evaluate_repository_edit_cage_with_captured_digest(
+            &baseline,
+            HeadMovement::RequireBaselineHead,
+            None,
+        )?;
+        if !line_ending_only.is_empty() {
+            return Err(format!(
+                "a real edit must not be reported as line-ending-only: {line_ending_only:?}"
+            ));
         }
         if verdict.status != EditCageVerdictStatus::Violated
             || !verdict
@@ -3204,6 +3967,16 @@ mod tests {
             .any(|change| change.path.as_path() == std::path::Path::new("src/pricing.rs"))
         {
             return Err(format!("a git-visible EOL flip left the delta: {delta:?}"));
+        }
+        let (_, _, _, line_ending_only) = evaluate_repository_edit_cage_with_captured_digest(
+            &baseline,
+            HeadMovement::RequireBaselineHead,
+            None,
+        )?;
+        if !line_ending_only.is_empty() {
+            return Err(format!(
+                "a git-visible EOL flip must not be reported as skipped: {line_ending_only:?}"
+            ));
         }
         if verdict.status != EditCageVerdictStatus::Violated
             || !verdict
@@ -3433,7 +4206,211 @@ mod tests {
             ignored_build_output: None,
             untracked_build_lockfile: None,
             inline_test_module_target: false,
+            external_test_file_target: true,
+            declared_cargo_test_target: false,
+            new_test_proposal: None,
         })
+    }
+
+    const SELECTED_TEST_COMPLIANT_EDIT: &str = "fn boundary() {}\n\n#[test]\nfn added() {}\n";
+
+    fn admitted_external_test_observation() -> external_test_file_region::ExternalTestFileObservation
+    {
+        external_test_file_region::ExternalTestFileObservation {
+            path: "tests/pricing.rs".to_string(),
+            admitted: true,
+            reason: None,
+        }
+    }
+
+    fn delta_with_admitted_external_test(changes: Vec<AttemptPathChange>) -> AttemptDelta {
+        AttemptDelta {
+            comparable: true,
+            inline_test_region: None,
+            external_test_file_region: Some(admitted_external_test_observation()),
+            changes,
+        }
+    }
+
+    fn integration_proposal_policy() -> Result<EditCagePolicy, String> {
+        let mut policy = policy()?;
+        policy.selected_target = CagePathRule::exact("tests/price.rs")?;
+        policy.allowed_edit_surface = vec![CagePathRule::exact("tests/price.rs")?];
+        policy.new_test_proposal = Some(FollowedNewTestProposal {
+            kind: crate::analysis::new_test_target::NewTestKind::Integration,
+            file: "tests/price.rs".to_string(),
+        });
+        Ok(policy)
+    }
+
+    /// #13203: a created file at the proposed path is credited; a file at any
+    /// other path, even another test surface, is not.
+    #[test]
+    fn integration_proposal_is_bound_only_by_the_created_proposed_file() -> Result<(), String> {
+        let fixture = git_fixture("proposal-bound")?;
+        let policy = integration_proposal_policy()?;
+        let baseline = capture_attempt_baseline(&fixture.root, &policy)?;
+        fs::write(fixture.root.join("tests/price.rs"), "#[test]\nfn t() {}\n")
+            .map_err(|err| format!("create proposed file: {err}"))?;
+        let (_, verdict) = evaluate_repository_edit_cage_with_delta(&baseline)?;
+        if verdict.status != EditCageVerdictStatus::Compliant {
+            return Err(format!("the proposed file was not credited: {verdict:?}"));
+        }
+
+        let fixture = git_fixture("proposal-other-file")?;
+        let baseline = capture_attempt_baseline(&fixture.root, &policy)?;
+        fs::write(
+            fixture.root.join("tests/elsewhere.rs"),
+            "#[test]\nfn t() {}\n",
+        )
+        .map_err(|err| format!("create out-of-cage file: {err}"))?;
+        let (_, verdict) = evaluate_repository_edit_cage_with_delta(&baseline)?;
+        let kinds: Vec<_> = verdict.violations.iter().map(|v| v.kind).collect();
+        if verdict.status != EditCageVerdictStatus::Violated
+            || !kinds.contains(&EditCageViolationKind::OutsideAllowedSurface)
+            || !kinds.contains(&EditCageViolationKind::SelectedTargetNotChanged)
+        {
+            return Err(format!("an out-of-cage file was credited: {verdict:?}"));
+        }
+        Ok(())
+    }
+
+    /// #13203: an integration proposal whose file already exists is stale at
+    /// the moment it is bound, and an existing file later seen as modified is
+    /// stale at the verdict.
+    #[test]
+    fn integration_proposal_for_an_existing_file_is_stale() -> Result<(), String> {
+        let fixture = git_fixture("proposal-stale")?;
+        fs::write(fixture.root.join("tests/price.rs"), "fn existing() {}\n")
+            .map_err(|err| format!("pre-create proposed file: {err}"))?;
+        git_ok(&fixture.root, &["add", "."])?;
+        git_ok(&fixture.root, &["commit", "-qm", "file appeared"])?;
+        let policy = integration_proposal_policy()?;
+        match capture_attempt_baseline(&fixture.root, &policy) {
+            Err(error) if error.contains("proposal is stale") => {}
+            other => {
+                return Err(format!(
+                    "a stale proposal was bound: {:?}",
+                    other.map(|_| ())
+                ));
+            }
+        }
+        let delta = AttemptDelta {
+            comparable: true,
+            changes: vec![AttemptPathChange::modified("tests/price.rs")],
+            inline_test_region: None,
+            external_test_file_region: None,
+        };
+        let verdict = evaluate_edit_cage(&policy, &delta);
+        if verdict.status != EditCageVerdictStatus::Violated
+            || !verdict
+                .violations
+                .iter()
+                .any(|v| v.kind == EditCageViolationKind::StaleNewTestProposal)
+        {
+            return Err(format!(
+                "a modified proposed file was credited: {verdict:?}"
+            ));
+        }
+        Ok(())
+    }
+
+    fn inline_proposal_policy(file: &str, confined: bool) -> Result<EditCagePolicy, String> {
+        let mut policy = policy()?;
+        policy.selected_target = CagePathRule::exact(file)?;
+        policy.allowed_edit_surface = vec![CagePathRule::exact(file)?];
+        policy.forbidden_paths = vec![CagePathRule::exact("Cargo.toml")?];
+        policy.inline_test_module_target = confined;
+        policy.external_test_file_target = false;
+        policy.new_test_proposal = Some(FollowedNewTestProposal {
+            kind: crate::analysis::new_test_target::NewTestKind::InlineUnit,
+            file: file.to_string(),
+        });
+        Ok(policy)
+    }
+
+    /// #13203: an inline proposal names an existing production file. Missing
+    /// at bind time is refused (by the region capture when the module is
+    /// confined, by the proposal's own check otherwise), and a created inline
+    /// target is stale at the verdict.
+    #[test]
+    fn inline_proposal_for_a_missing_file_is_stale() -> Result<(), String> {
+        let fixture = git_fixture("inline-proposal-missing")?;
+        let confined = inline_proposal_policy("src/absent.rs", true)?;
+        if capture_attempt_baseline(&fixture.root, &confined).is_ok() {
+            return Err("an inline proposal for a missing file was bound".to_string());
+        }
+        let unconfined = inline_proposal_policy("src/absent.rs", false)?;
+        match capture_attempt_baseline(&fixture.root, &unconfined) {
+            Err(error) if error.contains("proposal is stale") => {}
+            other => {
+                return Err(format!(
+                    "a stale inline proposal was bound: {:?}",
+                    other.map(|_| ())
+                ));
+            }
+        }
+        let policy = inline_proposal_policy("src/pricing.rs", true)?;
+        let delta = AttemptDelta {
+            comparable: true,
+            changes: vec![AttemptPathChange::added("src/pricing.rs")],
+            inline_test_region: None,
+            external_test_file_region: None,
+        };
+        let verdict = evaluate_edit_cage(&policy, &delta);
+        if verdict.status != EditCageVerdictStatus::Violated
+            || !verdict
+                .violations
+                .iter()
+                .any(|v| v.kind == EditCageViolationKind::StaleNewTestProposal)
+        {
+            return Err(format!("a created inline target was credited: {verdict:?}"));
+        }
+        Ok(())
+    }
+
+    /// #13203: a symlink at the integration path is something there, so the
+    /// proposal is stale at bind time and fails closed.
+    #[cfg(unix)]
+    #[test]
+    fn integration_proposal_over_a_symlink_is_stale() -> Result<(), String> {
+        let fixture = git_fixture("proposal-symlink")?;
+        std::os::unix::fs::symlink("pricing.rs", fixture.root.join("tests/price.rs"))
+            .map_err(|err| format!("create symlink: {err}"))?;
+        match capture_attempt_baseline(&fixture.root, &integration_proposal_policy()?) {
+            Err(error) if error.contains("proposal is stale") => Ok(()),
+            other => Err(format!(
+                "a proposal over a symlink was bound: {:?}",
+                other.map(|_| ())
+            )),
+        }
+    }
+
+    /// #13203: the followed proposal must agree with the cage's own shape; a
+    /// disagreement fails closed as an invalid policy, never a credited edit.
+    #[test]
+    fn proposal_kind_must_agree_with_the_cage_shape() -> Result<(), String> {
+        let mut inline_without_confinement = integration_proposal_policy()?;
+        if let Some(proposal) = inline_without_confinement.new_test_proposal.as_mut() {
+            proposal.kind = crate::analysis::new_test_target::NewTestKind::InlineUnit;
+        }
+        let mut other_file = integration_proposal_policy()?;
+        if let Some(proposal) = other_file.new_test_proposal.as_mut() {
+            proposal.file = "tests/other.rs".to_string();
+        }
+        let delta = AttemptDelta {
+            comparable: true,
+            changes: vec![AttemptPathChange::added("tests/price.rs")],
+            inline_test_region: None,
+            external_test_file_region: None,
+        };
+        for policy in [inline_without_confinement, other_file] {
+            let verdict = evaluate_edit_cage(&policy, &delta);
+            if verdict.status != EditCageVerdictStatus::Incomparable {
+                return Err(format!("a disagreeing proposal was credited: {verdict:?}"));
+            }
+        }
+        Ok(())
     }
 
     #[test]
@@ -3516,6 +4493,7 @@ mod tests {
         policy.allowed_edit_surface = vec![CagePathRule::exact("src/pricing.rs")?];
         policy.forbidden_paths = vec![CagePathRule::exact("Cargo.toml")?];
         policy.inline_test_module_target = true;
+        policy.external_test_file_target = false;
         let verdict_for = |after: &str| {
             let observation = inline_test_region::observe_attempt_inline_region(
                 inline_test_region::InlineTargetCopies {
@@ -3531,6 +4509,7 @@ mod tests {
                 &AttemptDelta {
                     comparable: true,
                     inline_test_region: Some(observation),
+                    external_test_file_region: None,
                     changes: vec![AttemptPathChange::modified("src/pricing.rs")],
                 },
             )
@@ -3575,6 +4554,7 @@ mod tests {
         policy.allowed_edit_surface = vec![CagePathRule::exact("src/pricing.rs")?];
         policy.forbidden_paths = vec![CagePathRule::exact("Cargo.toml")?];
         policy.inline_test_module_target = true;
+        policy.external_test_file_target = false;
 
         // Clean: the predicate and the attempt both admit.
         assert!(!inline_target_is_uncommitted(
@@ -3655,6 +4635,42 @@ mod tests {
         Ok(())
     }
 
+    /// #15265: the external test predicate shares the inline one for a file
+    /// HEAD carries, but leaves a file HEAD lacks to the attempt, which may
+    /// create a new external test file there.
+    #[test]
+    fn external_test_uncommitted_predicate_leaves_new_files_to_the_attempt() -> Result<(), String> {
+        let fixture = git_fixture("external-test-uncommitted-predicate")?;
+        fs::create_dir_all(fixture.root.join("tests"))
+            .map_err(|err| format!("create tests dir: {err}"))?;
+        let committed = "#[test]\nfn a() {}\n";
+        fs::write(fixture.root.join("tests/pricing.rs"), committed)
+            .map_err(|err| format!("write external test: {err}"))?;
+        git_ok(&fixture.root, &["add", "."])?;
+        git_ok(&fixture.root, &["commit", "-qm", "external test"])?;
+
+        assert!(!external_test_target_is_uncommitted(
+            &fixture.root,
+            "tests/pricing.rs"
+        ));
+        fs::write(
+            fixture.root.join("tests/pricing.rs"),
+            format!("{committed}\n#[test]\nfn b() {{}}\n"),
+        )
+        .map_err(|err| format!("dirty external test: {err}"))?;
+        assert!(external_test_target_is_uncommitted(
+            &fixture.root,
+            "tests/pricing.rs"
+        ));
+        // Absent from HEAD: the inline predicate refuses, the external one defers.
+        assert!(inline_target_is_uncommitted(&fixture.root, "tests/new.rs"));
+        assert!(!external_test_target_is_uncommitted(
+            &fixture.root,
+            "tests/new.rs"
+        ));
+        Ok(())
+    }
+
     fn commit_target_ignore(fixture: &GitFixture) -> Result<(), String> {
         fs::write(fixture.root.join(".gitignore"), "target/\n")
             .map_err(|err| format!("write target ignore: {err}"))?;
@@ -3712,10 +4728,12 @@ mod tests {
                 "fn boundary() { /* pre-existing selected-test edit */ }\n",
             )
             .map_err(|err| format!("write pre-existing dirty selected test: {err}"))?;
+            git_ok(&fixture.root, &["add", "tests/pricing.rs"])?;
+            git_ok(&fixture.root, &["commit", "-qm", "pre-existing test edit"])?;
             let baseline = capture_attempt_baseline(&fixture.root, &policy()?)?;
             fs::write(
                 fixture.root.join("tests/pricing.rs"),
-                "fn boundary() { assert_eq!(2 + 2, 4); }\n",
+                "fn boundary() { /* pre-existing selected-test edit */ }\n\n#[test]\nfn focused() {}\n",
             )
             .map_err(|err| format!("write selected test edit: {err}"))?;
             if staged {
@@ -3745,8 +4763,11 @@ mod tests {
         )
         .map_err(|err| format!("write baseline ignored output: {err}"))?;
         let baseline = capture_attempt_baseline(&fixture.root, &policy()?)?;
-        fs::write(fixture.root.join("tests/pricing.rs"), "fn repaired() {}\n")
-            .map_err(|err| format!("write selected test: {err}"))?;
+        fs::write(
+            fixture.root.join("tests/pricing.rs"),
+            SELECTED_TEST_COMPLIANT_EDIT,
+        )
+        .map_err(|err| format!("write selected test: {err}"))?;
         fs::write(
             fixture.root.join("target/ripr/reports/agent-receipt.json"),
             "after\n",
@@ -3773,8 +4794,11 @@ mod tests {
         create_oversized_ignored_file(&fixture, "target/cache/preexisting.bin")?;
 
         let baseline = capture_attempt_baseline(&fixture.root, &policy()?)?;
-        fs::write(fixture.root.join("tests/pricing.rs"), "fn repaired() {}\n")
-            .map_err(|err| format!("write selected test: {err}"))?;
+        fs::write(
+            fixture.root.join("tests/pricing.rs"),
+            SELECTED_TEST_COMPLIANT_EDIT,
+        )
+        .map_err(|err| format!("write selected test: {err}"))?;
 
         let verdict = evaluate_repository_edit_cage(&baseline)?;
         assert_eq!(verdict.status, EditCageVerdictStatus::Compliant);
@@ -3789,8 +4813,11 @@ mod tests {
         create_oversized_ignored_file(&fixture, "target/cache/preexisting.bin")?;
 
         let baseline = capture_attempt_baseline(&fixture.root, &policy()?)?;
-        fs::write(fixture.root.join("tests/pricing.rs"), "fn repaired() {}\n")
-            .map_err(|err| format!("write selected test: {err}"))?;
+        fs::write(
+            fixture.root.join("tests/pricing.rs"),
+            SELECTED_TEST_COMPLIANT_EDIT,
+        )
+        .map_err(|err| format!("write selected test: {err}"))?;
         fs::write(fixture.root.join("src/pricing.rs"), "pub fn changed() {}\n")
             .map_err(|err| format!("write forbidden source: {err}"))?;
         fs::write(fixture.root.join("Cargo.toml"), "[workspace]\nmembers=[]\n")
@@ -3824,8 +4851,11 @@ mod tests {
         create_oversized_ignored_file(&fixture, "target/cache/unknown.bin")?;
 
         let baseline = capture_attempt_baseline(&fixture.root, &policy()?)?;
-        fs::write(fixture.root.join("tests/pricing.rs"), "fn repaired() {}\n")
-            .map_err(|err| format!("write selected test: {err}"))?;
+        fs::write(
+            fixture.root.join("tests/pricing.rs"),
+            SELECTED_TEST_COMPLIANT_EDIT,
+        )
+        .map_err(|err| format!("write selected test: {err}"))?;
 
         #[cfg(windows)]
         {
@@ -3987,13 +5017,19 @@ mod tests {
                     "fixture did not expose reincluded build output for {rule:?}"
                 ));
             }
-            match validate_build_output_precondition(&fixture.root, &build_output_policy()?) {
+            match check_build_output_precondition(&fixture.root, &build_output_policy()?) {
                 Ok(()) => return Err(format!("child wildcard unexpectedly admitted for {rule:?}")),
-                Err(error)
-                    if error.contains("Rust repair requires") && error.contains("Git-ignored") => {}
+                // The hold is its own variant: callers never match wording.
+                // Each caller appends its own rerun (#14394), so the detail
+                // names no phase flag the `ripr repair` façade never takes.
+                Err(BuildOutputPreconditionError::NotIgnored(detail)) => {
+                    if detail.contains("--phase") || detail.contains("rerun") {
+                        return Err(format!("detail names a rerun: {detail}"));
+                    }
+                }
                 Err(error) => {
                     return Err(format!(
-                        "unexpected precondition failure for {rule:?}: {error}"
+                        "unexpected precondition failure for {rule:?}: {error:?}"
                     ));
                 }
             }
@@ -4060,6 +5096,9 @@ mod tests {
             ignored_build_output: None,
             untracked_build_lockfile: None,
             inline_test_module_target: false,
+            external_test_file_target: false,
+            declared_cargo_test_target: false,
+            new_test_proposal: None,
         };
         Ok((fixture, policy))
     }
@@ -4123,6 +5162,7 @@ mod tests {
                 &AttemptDelta {
                     comparable: true,
                     inline_test_region: None,
+                    external_test_file_region: None,
                     changes,
                 },
                 bound_paths,
@@ -4531,8 +5571,11 @@ mod tests {
         write_cargo_build_output(&fixture, "baseline build")?;
 
         let declared = capture_attempt_baseline(&fixture.root, &build_output_policy()?)?;
-        fs::write(fixture.root.join("tests/pricing.rs"), "fn repaired() {}\n")
-            .map_err(|err| format!("write selected test: {err}"))?;
+        fs::write(
+            fixture.root.join("tests/pricing.rs"),
+            SELECTED_TEST_COMPLIANT_EDIT,
+        )
+        .map_err(|err| format!("write selected test: {err}"))?;
         write_cargo_build_output(&fixture, "rebuilt by cargo test")?;
         write_fixture_file(&fixture, "target/debug/deps/pricing-2", "new test binary")?;
         write_fixture_file(&fixture, "target/ripr/reports/agent-receipt.json", "{}")?;
@@ -4559,6 +5602,9 @@ mod tests {
         // undeclared baseline refuses the rebuild's writes while it is held.
         drop(declared);
         write_cargo_build_output(&fixture, "baseline build")?;
+        fs::write(fixture.root.join("tests/pricing.rs"), "fn boundary() {}\n")
+            .map_err(|err| format!("reset selected test before undeclared capture: {err}"))?;
+        git_ok(&fixture.root, &["checkout", "--", "tests/pricing.rs"])?;
         let undeclared = capture_attempt_baseline(&fixture.root, &policy()?)?;
         #[cfg(windows)]
         for relative in CARGO_BUILD_OUTPUT {
@@ -4612,8 +5658,11 @@ mod tests {
             .push(CagePathRule::subtree("target/debug/forbidden")?);
 
         let baseline = capture_attempt_baseline(&fixture.root, &policy)?;
-        fs::write(fixture.root.join("tests/pricing.rs"), "fn repaired() {}\n")
-            .map_err(|err| format!("write selected test: {err}"))?;
+        fs::write(
+            fixture.root.join("tests/pricing.rs"),
+            SELECTED_TEST_COMPLIANT_EDIT,
+        )
+        .map_err(|err| format!("write selected test: {err}"))?;
         write_cargo_build_output(&fixture, "rebuilt by cargo test")?;
         write_fixture_file(&fixture, "notes.log", "ignored but not build output")?;
         write_fixture_file(&fixture, "target/notes.rs", "untracked, not ignored")?;
@@ -4704,6 +5753,7 @@ mod tests {
                 &AttemptDelta {
                     comparable: true,
                     inline_test_region: None,
+                    external_test_file_region: None,
                     changes: vec![AttemptPathChange::modified("tests/pricing.rs")],
                 },
             );
@@ -4751,8 +5801,11 @@ mod tests {
         // Cargo creates the lockfile between the phases; Git never tracks it.
         let fixture = git_fixture("untracked-lockfile-created")?;
         let baseline = capture_attempt_baseline(&fixture.root, &lockfile_policy()?)?;
-        fs::write(fixture.root.join("tests/pricing.rs"), "fn repaired() {}\n")
-            .map_err(|err| format!("write selected edit: {err}"))?;
+        fs::write(
+            fixture.root.join("tests/pricing.rs"),
+            SELECTED_TEST_COMPLIANT_EDIT,
+        )
+        .map_err(|err| format!("write selected edit: {err}"))?;
         fs::write(fixture.root.join("Cargo.lock"), "version = 4\n")
             .map_err(|err| format!("write generated lockfile: {err}"))?;
         let verdict = evaluate_repository_edit_cage(&baseline)?;
@@ -4773,8 +5826,11 @@ mod tests {
         let mut undeclared = lockfile_policy()?;
         undeclared.untracked_build_lockfile = None;
         let baseline = capture_attempt_baseline(&fixture.root, &undeclared)?;
-        fs::write(fixture.root.join("tests/pricing.rs"), "fn repaired() {}\n")
-            .map_err(|err| format!("write selected edit: {err}"))?;
+        fs::write(
+            fixture.root.join("tests/pricing.rs"),
+            SELECTED_TEST_COMPLIANT_EDIT,
+        )
+        .map_err(|err| format!("write selected edit: {err}"))?;
         fs::write(fixture.root.join("Cargo.lock"), "version = 4\n")
             .map_err(|err| format!("write generated lockfile: {err}"))?;
         let verdict = evaluate_repository_edit_cage(&baseline)?;
@@ -4788,8 +5844,11 @@ mod tests {
         // Staging the generated lockfile makes it tracked: an edit again.
         let fixture = git_fixture("untracked-lockfile-staged")?;
         let baseline = capture_attempt_baseline(&fixture.root, &lockfile_policy()?)?;
-        fs::write(fixture.root.join("tests/pricing.rs"), "fn repaired() {}\n")
-            .map_err(|err| format!("write selected edit: {err}"))?;
+        fs::write(
+            fixture.root.join("tests/pricing.rs"),
+            SELECTED_TEST_COMPLIANT_EDIT,
+        )
+        .map_err(|err| format!("write selected edit: {err}"))?;
         fs::write(fixture.root.join("Cargo.lock"), "version = 4\n")
             .map_err(|err| format!("write generated lockfile: {err}"))?;
         git_ok(&fixture.root, &["add", "Cargo.lock"])?;
@@ -4808,8 +5867,11 @@ mod tests {
         git_ok(&fixture.root, &["add", "Cargo.lock"])?;
         git_ok(&fixture.root, &["commit", "-qm", "track lockfile"])?;
         let baseline = capture_attempt_baseline(&fixture.root, &lockfile_policy()?)?;
-        fs::write(fixture.root.join("tests/pricing.rs"), "fn repaired() {}\n")
-            .map_err(|err| format!("write selected edit: {err}"))?;
+        fs::write(
+            fixture.root.join("tests/pricing.rs"),
+            SELECTED_TEST_COMPLIANT_EDIT,
+        )
+        .map_err(|err| format!("write selected edit: {err}"))?;
         fs::write(fixture.root.join("Cargo.lock"), "version = 4\n# updated\n")
             .map_err(|err| format!("modify tracked lockfile: {err}"))?;
         let verdict = evaluate_repository_edit_cage(&baseline)?;
@@ -4831,14 +5893,10 @@ mod tests {
         policy
             .allowed_edit_surface
             .push(CagePathRule::exact("target/ripr/authored.json")?);
-        let bound = AttemptDelta {
-            comparable: true,
-            inline_test_region: None,
-            changes: vec![
-                AttemptPathChange::modified("tests/pricing.rs"),
-                AttemptPathChange::added("target/ripr/workflow/agent-verify.json"),
-            ],
-        };
+        let bound = delta_with_admitted_external_test(vec![
+            AttemptPathChange::modified("tests/pricing.rs"),
+            AttemptPathChange::added("target/ripr/workflow/agent-verify.json"),
+        ]);
         let bound_verdict = evaluate_edit_cage(&policy, &bound);
         assert_eq!(bound_verdict.status, EditCageVerdictStatus::Compliant);
         assert_eq!(
@@ -4851,6 +5909,7 @@ mod tests {
                 &AttemptDelta {
                     comparable: true,
                     inline_test_region: None,
+                    external_test_file_region: bound.external_test_file_region.clone(),
                     changes,
                 },
                 &bound_verdict.changed_paths,
@@ -4900,6 +5959,7 @@ mod tests {
             &AttemptDelta {
                 comparable: false,
                 inline_test_region: None,
+                external_test_file_region: None,
                 changes: bound.changes.clone(),
             },
             &bound_verdict.changed_paths,
@@ -4920,6 +5980,7 @@ mod tests {
                 &AttemptDelta {
                     comparable: true,
                     inline_test_region: None,
+                    external_test_file_region: None,
                     changes: vec![AttemptPathChange::modified("tests/pricing.rs")],
                 },
             );
@@ -4948,8 +6009,11 @@ mod tests {
         // compliant (with the committed path observed) when admitted.
         let fixture = git_fixture("committed-test")?;
         let baseline = capture_attempt_baseline(&fixture.root, &lockfile_policy()?)?;
-        fs::write(fixture.root.join("tests/pricing.rs"), "fn repaired() {}\n")
-            .map_err(|err| format!("write selected edit: {err}"))?;
+        fs::write(
+            fixture.root.join("tests/pricing.rs"),
+            SELECTED_TEST_COMPLIANT_EDIT,
+        )
+        .map_err(|err| format!("write selected edit: {err}"))?;
         git_ok(&fixture.root, &["commit", "-qam", "focused test"])?;
         let (exact, _) = evaluate_repository_edit_cage_with_head_movement(
             &baseline,
@@ -4974,8 +6038,11 @@ mod tests {
         let fixture = git_fixture("committed-production")?;
         let baseline = capture_attempt_baseline(&fixture.root, &lockfile_policy()?)?;
         let base_head = git_text(&fixture.root, &["rev-parse", "HEAD"])?;
-        fs::write(fixture.root.join("tests/pricing.rs"), "fn repaired() {}\n")
-            .map_err(|err| format!("write selected edit: {err}"))?;
+        fs::write(
+            fixture.root.join("tests/pricing.rs"),
+            SELECTED_TEST_COMPLIANT_EDIT,
+        )
+        .map_err(|err| format!("write selected edit: {err}"))?;
         fs::write(
             fixture.root.join("src/pricing.rs"),
             "pub fn price() { todo() }\n",
@@ -5002,8 +6069,11 @@ mod tests {
         // descends from the baseline head.
         let fixture = git_fixture("amended-baseline")?;
         let baseline = capture_attempt_baseline(&fixture.root, &lockfile_policy()?)?;
-        fs::write(fixture.root.join("tests/pricing.rs"), "fn repaired() {}\n")
-            .map_err(|err| format!("write selected edit: {err}"))?;
+        fs::write(
+            fixture.root.join("tests/pricing.rs"),
+            SELECTED_TEST_COMPLIANT_EDIT,
+        )
+        .map_err(|err| format!("write selected edit: {err}"))?;
         git_ok(&fixture.root, &["commit", "-qa", "--amend", "--no-edit"])?;
         let (delta, verdict) = evaluate_repository_edit_cage_with_head_movement(
             &baseline,
@@ -5039,8 +6109,11 @@ mod tests {
             .map_err(|err| format!("read expected cache timestamp: {err}"))?;
 
         let baseline = capture_attempt_baseline(&fixture.root, &policy()?)?;
-        fs::write(fixture.root.join("tests/pricing.rs"), "fn repaired() {}\n")
-            .map_err(|err| format!("write selected test: {err}"))?;
+        fs::write(
+            fixture.root.join("tests/pricing.rs"),
+            SELECTED_TEST_COMPLIANT_EDIT,
+        )
+        .map_err(|err| format!("write selected test: {err}"))?;
         mutate_oversized_file(&fixture, "target/ripr/cache.bin")?;
         let file = fs::OpenOptions::new()
             .write(true)
@@ -5067,8 +6140,11 @@ mod tests {
         commit_target_ignore(&fixture)?;
         create_oversized_ignored_file(&fixture, "target/ripr/cache.bin")?;
         let baseline = capture_attempt_baseline(&fixture.root, &policy()?)?;
-        fs::write(fixture.root.join("tests/pricing.rs"), "fn repaired() {}\n")
-            .map_err(|err| format!("write selected test: {err}"))?;
+        fs::write(
+            fixture.root.join("tests/pricing.rs"),
+            SELECTED_TEST_COMPLIANT_EDIT,
+        )
+        .map_err(|err| format!("write selected test: {err}"))?;
         assert_eq!(
             evaluate_repository_edit_cage(&baseline)?.status,
             EditCageVerdictStatus::Incomparable
@@ -5094,8 +6170,11 @@ mod tests {
             .map_err(|err| format!("create escaping hardlink: {err}"))?;
 
         let baseline = capture_attempt_baseline(&fixture.root, &policy()?)?;
-        fs::write(fixture.root.join("tests/pricing.rs"), "fn repaired() {}\n")
-            .map_err(|err| format!("write selected test: {err}"))?;
+        fs::write(
+            fixture.root.join("tests/pricing.rs"),
+            SELECTED_TEST_COMPLIANT_EDIT,
+        )
+        .map_err(|err| format!("write selected test: {err}"))?;
         fs::write(&link, "outside-after\n")
             .map_err(|err| format!("write through escaping hardlink: {err}"))?;
         assert_eq!(
@@ -5133,8 +6212,11 @@ mod tests {
             !baseline.is_ambiguous(),
             "retained attempt artifacts beyond the exact-capture budget must not make the baseline ambiguous"
         );
-        fs::write(fixture.root.join("tests/pricing.rs"), "fn repaired() {}\n")
-            .map_err(|err| format!("write selected test: {err}"))?;
+        fs::write(
+            fixture.root.join("tests/pricing.rs"),
+            SELECTED_TEST_COMPLIANT_EDIT,
+        )
+        .map_err(|err| format!("write selected test: {err}"))?;
         assert_eq!(
             evaluate_repository_edit_cage(&baseline)?.status,
             EditCageVerdictStatus::Compliant
@@ -5148,7 +6230,9 @@ mod tests {
     {
         let fixture = git_fixture("staged-publication-pair")?;
         commit_target_ignore(&fixture)?;
-        let dir = fixture.root.join("target/ripr/artifacts");
+        let dir = fixture
+            .root
+            .join("target/ripr/repair-attempts/attempt-1/artifacts");
         fs::create_dir_all(&dir).map_err(|err| format!("create artifacts dir: {err}"))?;
         let destination = dir.join("after.check-findings.json");
         fs::write(&destination, "{}\n").map_err(|err| format!("write destination: {err}"))?;
@@ -5157,12 +6241,240 @@ mod tests {
 
         assert!(writable_path_components_are_safe(
             &fixture.root,
-            "target/ripr/artifacts/after.check-findings.json"
+            "target/ripr/repair-attempts/attempt-1/artifacts/after.check-findings.json"
         )?);
         assert!(writable_path_components_are_safe(
             &fixture.root,
-            "target/ripr/artifacts/after.check-findings.tmp-441-3"
+            "target/ripr/repair-attempts/attempt-1/artifacts/after.check-findings.tmp-441-3"
         )?);
+        Ok(())
+    }
+
+    /// The pair rule is limited to the attempt store (#12847): the same
+    /// destination-plus-staging-name shape elsewhere is an unaccounted second
+    /// name for the file and stays refused.
+    #[cfg(unix)]
+    #[test]
+    fn staged_publication_pair_outside_the_attempt_store_stays_unsafe() -> Result<(), String> {
+        let fixture = git_fixture("staged-pair-outside-store")?;
+        commit_target_ignore(&fixture)?;
+        // The sibling spellings share the store's name as a prefix without the
+        // trailing separator (#13553): they are not the store.
+        for dir_relative in [
+            "src",
+            "target/ripr/artifacts",
+            "target/ripr/workflow",
+            "target/ripr/repair-attempts-old",
+            "target/ripr/repair-attempts-old/attempt-1/artifacts",
+        ] {
+            let dir = fixture.root.join(dir_relative);
+            fs::create_dir_all(&dir).map_err(|err| format!("create {dir_relative}: {err}"))?;
+            let destination = dir.join("lib.rs");
+            fs::write(&destination, "{}\n")
+                .map_err(|err| format!("write {dir_relative}: {err}"))?;
+            fs::hard_link(&destination, dir.join("lib.tmp-1-1"))
+                .map_err(|err| format!("link staging name in {dir_relative}: {err}"))?;
+            assert!(
+                !writable_path_components_are_safe(
+                    &fixture.root,
+                    &format!("{dir_relative}/lib.rs")
+                )?,
+                "{dir_relative}: a staged pair outside the attempt store must stay unsafe"
+            );
+        }
+        // The same shape inside the attempt store is still accepted.
+        let store = fixture
+            .root
+            .join("target/ripr/repair-attempts/attempt-1/artifacts");
+        fs::create_dir_all(&store).map_err(|err| format!("create store: {err}"))?;
+        let destination = store.join("lib.rs");
+        fs::write(&destination, "{}\n").map_err(|err| format!("write store file: {err}"))?;
+        fs::hard_link(&destination, store.join("lib.tmp-1-1"))
+            .map_err(|err| format!("link store staging name: {err}"))?;
+        assert!(writable_path_components_are_safe(
+            &fixture.root,
+            "target/ripr/repair-attempts/attempt-1/artifacts/lib.rs"
+        )?);
+        Ok(())
+    }
+
+    /// A plain file spelled exactly like the store directory is not the store
+    /// (#13553): the prefix carries its trailing separator, so a staging-shaped
+    /// twin of that file stays refused.
+    #[cfg(unix)]
+    #[test]
+    fn staged_pair_on_a_file_named_like_the_attempt_store_stays_unsafe() -> Result<(), String> {
+        let fixture = git_fixture("staged-pair-store-named-file")?;
+        commit_target_ignore(&fixture)?;
+        let parent = fixture.root.join("target/ripr");
+        fs::create_dir_all(&parent).map_err(|err| format!("create target/ripr: {err}"))?;
+        let file = parent.join("repair-attempts");
+        fs::write(&file, "{}\n").map_err(|err| format!("write store-named file: {err}"))?;
+        fs::hard_link(&file, parent.join("repair-attempts.tmp-1-1"))
+            .map_err(|err| format!("link staging name: {err}"))?;
+        assert!(
+            !writable_path_components_are_safe(&fixture.root, "target/ripr/repair-attempts")?,
+            "a file named like the store must not borrow the store's pair exemption"
+        );
+        Ok(())
+    }
+
+    /// An explicit store outside `target/ripr` accepts the same interrupted
+    /// pair, bound to its own `<store>/<attempt>` subtree and nothing else
+    /// (#13553).
+    #[cfg(unix)]
+    #[test]
+    fn explicit_store_staged_pair_is_scoped_to_its_attempt_subtree() -> Result<(), String> {
+        let fixture = git_fixture("staged-pair-explicit-store")?;
+        commit_target_ignore(&fixture)?;
+        let mut policy = policy()?;
+        policy.expected_operational_writes = vec![
+            CagePathRule::subtree("target/ripr")?,
+            CagePathRule::subtree("stores/one/attempt-1")?,
+            CagePathRule::exact("notes/exact.rs")?,
+        ];
+        let scopes = explicit_store_pair_scopes(&policy);
+        assert_eq!(
+            scopes.iter().map(|rule| rule.path()).collect::<Vec<_>>(),
+            vec!["stores/one/attempt-1"],
+            "only the subtree outside target/ripr is the explicit store"
+        );
+        for (dir_relative, safe) in [
+            ("stores/one/attempt-1/artifacts", true),
+            ("stores/one/attempt-10/artifacts", false),
+            ("stores/one/attempt-1-old", false),
+            ("stores/two/attempt-1/artifacts", false),
+            ("notes", false),
+        ] {
+            let dir = fixture.root.join(dir_relative);
+            fs::create_dir_all(&dir).map_err(|err| format!("create {dir_relative}: {err}"))?;
+            let file_name = if dir_relative == "notes" {
+                "exact.rs"
+            } else {
+                "lib.rs"
+            };
+            let destination = dir.join(file_name);
+            fs::write(&destination, "{}\n")
+                .map_err(|err| format!("write {dir_relative}: {err}"))?;
+            let staging = dir.join(format!("{}.tmp-1-1", file_name.trim_end_matches(".rs")));
+            fs::hard_link(&destination, &staging)
+                .map_err(|err| format!("link staging name in {dir_relative}: {err}"))?;
+            assert_eq!(
+                writable_path_components_are_safe_in(
+                    &fixture.root,
+                    &format!("{dir_relative}/{file_name}"),
+                    &scopes
+                )?,
+                safe,
+                "{dir_relative}: staged pair acceptance"
+            );
+            // Without the explicit-store scope no spelling outside the default
+            // store is accepted.
+            assert!(
+                !writable_path_components_are_safe(
+                    &fixture.root,
+                    &format!("{dir_relative}/{file_name}")
+                )?,
+                "{dir_relative}: default policy must keep refusing"
+            );
+        }
+        Ok(())
+    }
+
+    /// The capture path carries the explicit store's scope into the pair rule
+    /// (#13553): an interrupted pair in the store leaves the baseline
+    /// comparable, while the same pair elsewhere under an operational write
+    /// still marks it ambiguous.
+    #[cfg(unix)]
+    #[test]
+    fn capture_accepts_an_explicit_store_pair_and_still_flags_other_pairs() -> Result<(), String> {
+        let mut outcomes = Vec::new();
+        for dir_relative in ["stores/one/attempt-1/artifacts", "target/ripr/artifacts"] {
+            let fixture = git_fixture("capture-explicit-store-pair")?;
+            commit_target_ignore(&fixture)?;
+            let dir = fixture.root.join(dir_relative);
+            fs::create_dir_all(&dir).map_err(|err| format!("create {dir_relative}: {err}"))?;
+            let destination = dir.join("lib.rs");
+            fs::write(&destination, "{}\n")
+                .map_err(|err| format!("write {dir_relative}: {err}"))?;
+            fs::hard_link(&destination, dir.join("lib.tmp-1-1"))
+                .map_err(|err| format!("link staging name in {dir_relative}: {err}"))?;
+            let mut policy = policy()?;
+            policy
+                .expected_operational_writes
+                .push(CagePathRule::subtree("stores/one/attempt-1")?);
+            let baseline = capture_attempt_baseline(&fixture.root, &policy)?;
+            // The after phase re-captures through the same inventory path.
+            let after = reevaluation_capture(&baseline)?;
+            outcomes.push((dir_relative, baseline.is_ambiguous(), after.is_ambiguous()));
+        }
+        assert_eq!(
+            outcomes,
+            vec![
+                ("stores/one/attempt-1/artifacts", false, false),
+                ("target/ripr/artifacts", true, true)
+            ],
+            "the explicit store's pair is comparable; a pair outside any store is ambiguous"
+        );
+        Ok(())
+    }
+
+    /// A live publisher removes its staging name between the caller's `nlink`
+    /// read and the directory listing (#12848). The stale two-link metadata
+    /// must resolve to the single remaining link, not a transient refusal; a
+    /// destination that still has a second link elsewhere stays refused.
+    #[cfg(unix)]
+    #[test]
+    fn staging_name_removed_after_the_nlink_read_is_not_ambiguous() -> Result<(), String> {
+        use std::os::unix::fs::MetadataExt as _;
+        let fixture = git_fixture("staged-pair-live-writer")?;
+        let external = external_fixture("staged-pair-live-writer")?;
+        commit_target_ignore(&fixture)?;
+        let dir = fixture
+            .root
+            .join("target/ripr/repair-attempts/attempt-1/artifacts");
+        fs::create_dir_all(&dir).map_err(|err| format!("create store: {err}"))?;
+        let destination = dir.join("after.json");
+        fs::write(&destination, "{}\n").map_err(|err| format!("write destination: {err}"))?;
+        let staging = dir.join("after.tmp-7-1");
+        fs::hard_link(&destination, &staging).map_err(|err| format!("link staging: {err}"))?;
+        let stale = fs::symlink_metadata(&destination).map_err(|err| format!("stat: {err}"))?;
+        assert_eq!(stale.nlink(), 2, "fixture must read two links first");
+
+        fs::remove_file(&staging).map_err(|err| format!("publisher unlink: {err}"))?;
+        assert!(
+            links_are_staged_publication_pair(&destination, &stale)?,
+            "a pair that completed after the nlink read is one safe link"
+        );
+
+        // A second link outside the directory is not a completed publication.
+        let outside = external.root.join("outside.json");
+        fs::hard_link(&destination, &outside).map_err(|err| format!("link outside: {err}"))?;
+        assert!(
+            !links_are_staged_publication_pair(&destination, &stale)?,
+            "an external second link must stay refused"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn staged_publication_residue_is_detected_by_name_on_every_platform() -> Result<(), String> {
+        assert!(is_staging_name("after.check-findings.tmp-441-3"));
+        assert!(!is_staging_name("notes.tmp-x-1"));
+        assert!(!is_staging_name("after.check-findings.json"));
+        let fixture = git_fixture("staged-residue-by-name")?;
+        let dir = fixture.root.join("artifacts");
+        fs::create_dir_all(&dir).map_err(|err| format!("create dir: {err}"))?;
+        fs::write(dir.join("after.check-findings.json"), "{}\n")
+            .map_err(|err| format!("write destination: {err}"))?;
+        assert!(!directory_has_staged_publication_residue(&dir));
+        fs::write(dir.join("after.check-findings.tmp-441-3"), "{}\n")
+            .map_err(|err| format!("write staging: {err}"))?;
+        assert!(directory_has_staged_publication_residue(&dir));
+        assert_eq!(
+            staged_publication_residue_names(&dir),
+            vec!["after.check-findings.tmp-441-3".to_string()]
+        );
         Ok(())
     }
 
@@ -5170,7 +6482,9 @@ mod tests {
     #[test]
     fn staged_publication_residue_is_reported_for_currentness() -> Result<(), String> {
         let fixture = git_fixture("staged-publication-residue")?;
-        let dir = fixture.root.join("target/ripr/artifacts");
+        let dir = fixture
+            .root
+            .join("target/ripr/repair-attempts/attempt-1/artifacts");
         assert!(!directory_has_staged_publication_residue(&dir));
         fs::create_dir_all(&dir).map_err(|err| format!("create artifacts dir: {err}"))?;
         let destination = dir.join("after.check-findings.json");
@@ -5194,7 +6508,9 @@ mod tests {
         let fixture = git_fixture("unstaged-hardlinks")?;
         let external = external_fixture("unstaged-hardlinks")?;
         commit_target_ignore(&fixture)?;
-        let dir = fixture.root.join("target/ripr/artifacts");
+        let dir = fixture
+            .root
+            .join("target/ripr/repair-attempts/attempt-1/artifacts");
         fs::create_dir_all(&dir).map_err(|err| format!("create artifacts dir: {err}"))?;
         let destination = dir.join("after.check-findings.json");
         fs::write(&destination, "{}\n").map_err(|err| format!("write destination: {err}"))?;
@@ -5211,7 +6527,7 @@ mod tests {
             assert!(
                 !writable_path_components_are_safe(
                     &fixture.root,
-                    "target/ripr/artifacts/after.check-findings.json"
+                    "target/ripr/repair-attempts/attempt-1/artifacts/after.check-findings.json"
                 )?,
                 "{label} link must stay unsafe"
             );
@@ -5224,7 +6540,7 @@ mod tests {
         assert!(
             !writable_path_components_are_safe(
                 &fixture.root,
-                "target/ripr/artifacts/after.check-findings.json"
+                "target/ripr/repair-attempts/attempt-1/artifacts/after.check-findings.json"
             )?,
             "a third link must stay unsafe"
         );
@@ -5252,8 +6568,11 @@ mod tests {
             .map_err(|err| format!("create escaping expected symlink: {err}"))?;
 
         let baseline = capture_attempt_baseline(&fixture.root, &policy()?)?;
-        fs::write(fixture.root.join("tests/pricing.rs"), "fn repaired() {}\n")
-            .map_err(|err| format!("write selected test: {err}"))?;
+        fs::write(
+            fixture.root.join("tests/pricing.rs"),
+            SELECTED_TEST_COMPLIANT_EDIT,
+        )
+        .map_err(|err| format!("write selected test: {err}"))?;
         fs::write(link.join("outside.bin"), "outside-after\n")
             .map_err(|err| format!("write through escaping symlink: {err}"))?;
         assert_eq!(
@@ -5277,8 +6596,11 @@ mod tests {
         file.set_len(MAX_CAPTURE_FILE_BYTES + 1)
             .map_err(|err| format!("size oversized fixture: {err}"))?;
         let baseline = capture_attempt_baseline(&fixture.root, &policy()?)?;
-        fs::write(fixture.root.join("tests/pricing.rs"), "fn repaired() {}\n")
-            .map_err(|err| format!("write selected test: {err}"))?;
+        fs::write(
+            fixture.root.join("tests/pricing.rs"),
+            SELECTED_TEST_COMPLIANT_EDIT,
+        )
+        .map_err(|err| format!("write selected test: {err}"))?;
 
         assert_eq!(
             evaluate_repository_edit_cage(&baseline)?.status,
@@ -5330,8 +6652,11 @@ mod tests {
         )?;
 
         let baseline = capture_attempt_baseline(&fixture.root, &policy()?)?;
-        fs::write(fixture.root.join("tests/pricing.rs"), "fn repaired() {}\n")
-            .map_err(|err| format!("write selected test: {err}"))?;
+        fs::write(
+            fixture.root.join("tests/pricing.rs"),
+            SELECTED_TEST_COMPLIANT_EDIT,
+        )
+        .map_err(|err| format!("write selected test: {err}"))?;
 
         let verdict = evaluate_repository_edit_cage(&baseline)?;
         assert_eq!(verdict.status, EditCageVerdictStatus::Compliant);
@@ -5343,8 +6668,11 @@ mod tests {
     fn repository_delta_retains_every_forbidden_attempt_edit() -> Result<(), String> {
         let fixture = git_fixture("forbidden")?;
         let baseline = capture_attempt_baseline(&fixture.root, &policy()?)?;
-        fs::write(fixture.root.join("tests/pricing.rs"), "fn repaired() {}\n")
-            .map_err(|err| format!("write selected test: {err}"))?;
+        fs::write(
+            fixture.root.join("tests/pricing.rs"),
+            SELECTED_TEST_COMPLIANT_EDIT,
+        )
+        .map_err(|err| format!("write selected test: {err}"))?;
         fs::write(fixture.root.join("src/pricing.rs"), "pub fn changed() {}\n")
             .map_err(|err| format!("write production edit: {err}"))?;
         fs::write(fixture.root.join("Cargo.toml"), "[workspace]\nmembers=[]\n")
@@ -5616,10 +6944,13 @@ mod tests {
         fs::remove_file(&link).map_err(|err| format!("remove baseline symlink: {err}"))?;
         symlink("../Cargo.toml", &link)
             .map_err(|err| format!("retarget tracked symlink: {err}"))?;
-        fs::write(fixture.root.join("tests/pricing.rs"), "fn repaired() {}\n")
-            .map_err(|err| format!("write simultaneous selected edit: {err}"))?;
+        fs::write(
+            fixture.root.join("tests/pricing.rs"),
+            SELECTED_TEST_COMPLIANT_EDIT,
+        )
+        .map_err(|err| format!("write simultaneous selected edit: {err}"))?;
 
-        let after = capture_attempt_baseline(&fixture.root, &policy()?)?;
+        let after = super::reevaluation_capture(&baseline)?;
         let before_link = baseline
             .paths
             .get("tests/tracked-link")
@@ -5633,7 +6964,12 @@ mod tests {
         }
         let verdict = evaluate_edit_cage(
             &baseline.policy,
-            &delta_from_repository_states(&baseline, &after, Some(&[])),
+            &delta_from_repository_states_with_overrides(
+                &baseline,
+                &after,
+                Some(&[]),
+                &BTreeMap::new(),
+            ),
         );
         if verdict.status != EditCageVerdictStatus::Incomparable {
             return Err(format!(
@@ -5658,8 +6994,11 @@ mod tests {
         permissions.set_mode(0o755);
         fs::set_permissions(&production, permissions)
             .map_err(|err| format!("chmod production fixture: {err}"))?;
-        fs::write(fixture.root.join("tests/pricing.rs"), "fn repaired() {}\n")
-            .map_err(|err| format!("write simultaneous selected edit: {err}"))?;
+        fs::write(
+            fixture.root.join("tests/pricing.rs"),
+            SELECTED_TEST_COMPLIANT_EDIT,
+        )
+        .map_err(|err| format!("write simultaneous selected edit: {err}"))?;
         let verdict = evaluate_repository_edit_cage(&baseline)?;
         if verdict.status != EditCageVerdictStatus::Violated {
             return Err(format!(
@@ -5686,8 +7025,11 @@ mod tests {
         fs::remove_file(&link).map_err(|err| format!("remove first symlink: {err}"))?;
         symlink(std::ffi::OsString::from_vec(vec![b'a', 0x81]), &link)
             .map_err(|err| format!("create second non-UTF8 symlink: {err}"))?;
-        fs::write(fixture.root.join("tests/pricing.rs"), "fn repaired() {}\n")
-            .map_err(|err| format!("write simultaneous selected edit: {err}"))?;
+        fs::write(
+            fixture.root.join("tests/pricing.rs"),
+            SELECTED_TEST_COMPLIANT_EDIT,
+        )
+        .map_err(|err| format!("write simultaneous selected edit: {err}"))?;
         let verdict = evaluate_repository_edit_cage(&baseline)?;
         if verdict.status != EditCageVerdictStatus::Incomparable {
             return Err(format!(
@@ -5702,14 +7044,10 @@ mod tests {
     fn selected_test_plus_expected_receipt_write_is_compliant() -> Result<(), String> {
         let verdict = evaluate_edit_cage(
             &policy()?,
-            &AttemptDelta {
-                comparable: true,
-                inline_test_region: None,
-                changes: vec![
-                    AttemptPathChange::modified("tests\\pricing.rs"),
-                    AttemptPathChange::added("target/ripr/reports/agent-receipt.json"),
-                ],
-            },
+            &delta_with_admitted_external_test(vec![
+                AttemptPathChange::modified("./tests/pricing.rs"),
+                AttemptPathChange::added("target/ripr/reports/agent-receipt.json"),
+            ]),
         );
         assert_eq!(verdict.status, EditCageVerdictStatus::Compliant);
         assert!(verdict.violations.is_empty());
@@ -5730,6 +7068,7 @@ mod tests {
             &AttemptDelta {
                 comparable: true,
                 inline_test_region: None,
+                external_test_file_region: None,
                 changes: vec![
                     AttemptPathChange::modified("tests/pricing.rs"),
                     AttemptPathChange::modified("src/pricing.rs"),
@@ -5751,6 +7090,7 @@ mod tests {
             &AttemptDelta {
                 comparable: true,
                 inline_test_region: None,
+                external_test_file_region: None,
                 changes: vec![AttemptPathChange::added(
                     "target/ripr/reports/agent-receipt.json",
                 )],
@@ -5774,6 +7114,7 @@ mod tests {
                 &AttemptDelta {
                     comparable: true,
                     inline_test_region: None,
+                    external_test_file_region: None,
                     changes: vec![change],
                 },
             );
@@ -5795,6 +7136,7 @@ mod tests {
             &AttemptDelta {
                 comparable: true,
                 inline_test_region: None,
+                external_test_file_region: None,
                 changes: vec![AttemptPathChange::renamed(
                     "tests/other.rs",
                     "tests/pricing.rs",
@@ -5827,12 +7169,16 @@ mod tests {
             ignored_build_output: None,
             untracked_build_lockfile: None,
             inline_test_module_target: false,
+            external_test_file_target: false,
+            declared_cargo_test_target: false,
+            new_test_proposal: None,
         };
         let verdict = evaluate_edit_cage(
             &subtree_policy,
             &AttemptDelta {
                 comparable: true,
                 inline_test_region: None,
+                external_test_file_region: None,
                 changes: vec![AttemptPathChange::modified("tests/pricing/boundary.rs")],
             },
         );
@@ -5874,6 +7220,7 @@ mod tests {
                 &AttemptDelta {
                     comparable: true,
                     inline_test_region: None,
+                    external_test_file_region: None,
                     changes: vec![AttemptPathChange::modified("tests/pricing.rs")],
                 },
             );
@@ -5891,11 +7238,25 @@ mod tests {
 
     #[test]
     fn deserialized_path_rules_reuse_the_repository_path_validator() -> Result<(), String> {
-        let normalized =
-            serde_json::from_str::<CagePathRule>(r#"{"path":"tests\\pricing.rs","scope":"exact"}"#)
-                .map_err(|error| error.to_string())?;
+        let normalized = serde_json::from_str::<CagePathRule>(
+            r#"{"path":"./tests/pricing.rs","scope":"exact"}"#,
+        )
+        .map_err(|error| error.to_string())?;
         assert_eq!(normalized.path, "tests/pricing.rs");
         assert_eq!(normalized.scope, CagePathScope::Exact);
+        // A backslash is a separator on Windows and a file-name byte on Unix
+        // (#15908): the rule names the path Git reports on this platform.
+        let backslash =
+            serde_json::from_str::<CagePathRule>(r#"{"path":"tests\\pricing.rs","scope":"exact"}"#)
+                .map_err(|error| error.to_string())?;
+        assert_eq!(
+            backslash.path,
+            if cfg!(unix) {
+                "tests\\pricing.rs"
+            } else {
+                "tests/pricing.rs"
+            }
+        );
 
         for invalid in [
             r#"{"path":"../tests/pricing.rs","scope":"exact"}"#,
@@ -5946,6 +7307,7 @@ mod tests {
             &AttemptDelta {
                 comparable: true,
                 inline_test_region: None,
+                external_test_file_region: None,
                 changes: vec![malformed_change],
             },
         );
@@ -5966,12 +7328,21 @@ mod tests {
     fn parent_drive_and_unc_paths_fail_closed() -> Result<(), String> {
         let drive_path = format!("{}:\\tests\\pricing.rs", 'C');
         let unc_path = ["", "", "server", "share", "test.rs"].join("\\");
-        for path in ["../tests/pricing.rs".to_string(), drive_path, unc_path] {
+        // `..\` and a leading `\` fail closed on every host, including Unix
+        // where they are legal file-name bytes (#15908).
+        let backslash_parent = ["..", "tests", "pricing.rs"].join("\\");
+        for path in [
+            "../tests/pricing.rs".to_string(),
+            backslash_parent,
+            drive_path,
+            unc_path,
+        ] {
             let verdict = evaluate_edit_cage(
                 &policy()?,
                 &AttemptDelta {
                     comparable: true,
                     inline_test_region: None,
+                    external_test_file_region: None,
                     changes: vec![AttemptPathChange::modified(path)],
                 },
             );
@@ -5990,6 +7361,7 @@ mod tests {
             &AttemptDelta {
                 comparable: false,
                 inline_test_region: None,
+                external_test_file_region: None,
                 changes: vec![AttemptPathChange::modified("tests/pricing.rs")],
             },
         );
@@ -6044,5 +7416,75 @@ mod tests {
             .collect();
         assert_eq!(paths, vec![PathBuf::from("vendor/lib")]);
         Ok(())
+    }
+
+    /// #15488: a Cargo workspace member is still a subdirectory of the work
+    /// tree the attempt refuses, so its printed start must stay withheld. A
+    /// nested Cargo project the enclosing workspace does not claim is a
+    /// standalone project and keeps its start.
+    #[test]
+    fn a_workspace_member_root_is_still_a_subdirectory_but_an_unclaimed_project_is_not()
+    -> Result<(), String> {
+        let fixture = git_fixture("workspace-member")?;
+        let top = fs::canonicalize(&fixture.root)
+            .map_err(|err| format!("canonicalize fixture: {err}"))?;
+        fs::write(
+            top.join("Cargo.toml"),
+            "[workspace]\nmembers = [\"crates/member\"]\n",
+        )
+        .map_err(|err| format!("write workspace manifest: {err}"))?;
+        let member = top.join("crates/member");
+        fs::create_dir_all(member.join("src")).map_err(|err| format!("create member: {err}"))?;
+        fs::write(
+            member.join("Cargo.toml"),
+            "[package]\nname = \"member\"\nversion = \"0.0.0\"\n",
+        )
+        .map_err(|err| format!("write member manifest: {err}"))?;
+        fs::write(member.join("src/lib.rs"), "pub fn price() {}\n")
+            .map_err(|err| format!("write member source: {err}"))?;
+        let standalone = top.join("fixtures/standalone/input");
+        fs::create_dir_all(standalone.join("src"))
+            .map_err(|err| format!("create standalone: {err}"))?;
+        fs::write(
+            standalone.join("Cargo.toml"),
+            "[package]\nname = \"standalone\"\nversion = \"0.0.0\"\n",
+        )
+        .map_err(|err| format!("write standalone manifest: {err}"))?;
+        fs::write(standalone.join("src/lib.rs"), "pub fn price() {}\n")
+            .map_err(|err| format!("write standalone source: {err}"))?;
+        git_ok(&top, &["add", "."])?;
+        git_ok(&top, &["commit", "-qm", "workspace"])?;
+
+        assert_eq!(
+            enclosing_git_top_level_above(&member),
+            Some(top.clone()),
+            "a workspace member root must stay a subdirectory root"
+        );
+        assert_eq!(
+            enclosing_git_top_level_above(&standalone),
+            None,
+            "an unclaimed nested Cargo project is its own root"
+        );
+        Ok(())
+    }
+
+    /// The member matcher decides the literal and single-trailing-glob shapes
+    /// Cargo manifests use, and treats any other glob as covering so an
+    /// undecidable pattern keeps the root a subdirectory root.
+    #[test]
+    fn member_patterns_decide_literals_and_trailing_globs() {
+        assert!(member_pattern_covers("crates/ripr", "crates/ripr"));
+        assert!(!member_pattern_covers(
+            "crates/ripr",
+            "crates/ripr-contract"
+        ));
+        assert!(!member_pattern_covers("crates/ripr", "fixtures/x/input"));
+        assert!(member_pattern_covers("crates/*", "crates/ripr"));
+        assert!(!member_pattern_covers("crates/*", "fixtures/x/input"));
+        assert!(member_pattern_covers("tools/**", "tools/repo-policy"));
+        assert!(!member_pattern_covers("tools/**", "fixtures/x/input"));
+        // An undecidable glob covers, so the root stays a subdirectory root.
+        assert!(member_pattern_covers("crates/*/nested", "crates/a/nested"));
+        assert!(member_pattern_covers("*", "fixtures/x/input"));
     }
 }

@@ -1,0 +1,6 @@
+[[extend]]
+id = "RIPR-SPEC-0001"
+tests = [
+  "crates/ripr/src/output/json/terse.rs::tests::terse_drops_finding_activation_copies_only_when_equal_and_non_empty",
+  "crates/ripr/tests/cli_smoke/agent_output_budget.rs::agent_facing_outputs_stay_inside_their_byte_budgets",
+]

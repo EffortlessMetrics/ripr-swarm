@@ -1,0 +1,7 @@
+# Registers the char-literal owner-tail return sink (#15029) under
+# RIPR-SPEC-0001.
+[[extend]]
+id = "RIPR-SPEC-0001"
+tests = [
+  "crates/ripr/src/analysis/classify/flow.rs::tests::char_literal_tail_reaches_the_return_sink",
+]

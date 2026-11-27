@@ -187,6 +187,12 @@ required per the additive field policy in [`docs/OUTPUT_SCHEMA.md`](../OUTPUT_SC
 ### Non-claims
 
 - This spec does NOT change the exit code or gate authority.
+- `ripr check --format agent` discloses the same state with `unanalyzed=`
+  lines (`uncommitted_edits`, `untracked`, `gitignored`) and never prints
+  `done=` after them: the terminal becomes `stop=changes were not analyzed`.
+  The block derives from the shared verification refusals
+  (`unanalyzed_working_tree`, `untracked_source_excluded`), so gitignored-only
+  source is disclosed but does not withhold `done=` (#13926).
 - An empty result with this disclosure does NOT mean the diff is safe; it
   means the committed history had no probes AND uncommitted changes were excluded.
 - This spec does NOT change what the analyzer classifies.
@@ -253,6 +259,8 @@ required per the additive field policy in [`docs/OUTPUT_SCHEMA.md`](../OUTPUT_SC
   (`--committed` half)
 - `crates/ripr/tests/cli_smoke.rs::check_default_base_with_clean_worktree_keeps_no_scope_note_only`
 - `crates/ripr/tests/cli_smoke.rs::check_base_names_diff_files_with_uncommitted_edits`
+- `crates/ripr/src/output/human/agent_tests.rs::empty_report_over_unanalyzed_files_stops_instead_of_done`
+- `crates/ripr/src/output/human/agent_tests.rs::exposed_only_run_with_unanalyzed_files_stops_instead_of_done`
 
 ## Implementation Mapping
 
@@ -262,6 +270,7 @@ required per the additive field policy in [`docs/OUTPUT_SCHEMA.md`](../OUTPUT_SC
 | `working_tree_has_tracked_changes` fn | `crates/ripr/src/analysis/diff/load.rs` |
 | SPEC-0112 disclosure block | `crates/ripr/src/cli/commands/check.rs` |
 | Human rendering | `crates/ripr/src/output/human.rs` |
+| Agent rendering | `crates/ripr/src/output/human/agent.rs` |
 | JSON field | `crates/ripr/src/output/json/report.rs` |
 
 ## CI Proof

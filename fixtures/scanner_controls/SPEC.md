@@ -30,6 +30,16 @@ infection stage reads `Changed boundary input is unresolved` naming
 `final_state` (RIPR-SPEC-0001, #6674) rather than inventing a state or
 asking for a missing input.
 
+The expected static class per finding (machine-checked against
+`expected/check.json` by `check-fixture-contracts`, #12928):
+
+```expected-classes
+probe:src_lib.rs:predicate:f4ed635d -> infection_unknown
+probe:src_lib.rs:predicate:10d9563b -> infection_unknown
+probe:src_lib.rs:predicate:df1a9a22 -> infection_unknown
+probe:src_lib.rs:predicate:ab4a8a0d -> infection_unknown
+```
+
 ## Must Not
 
 - Promote any control past its fail-closed class on call reach alone.

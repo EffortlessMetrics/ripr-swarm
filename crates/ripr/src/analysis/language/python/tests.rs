@@ -793,6 +793,7 @@ use super::bounded_read::{
     DEFAULT_PYTHON_MAX_FILE_READ_BYTES, DEFAULT_PYTHON_MAX_WORKSPACE_FILES,
     DEFAULT_PYTHON_MAX_WORKSPACE_READ_BYTES,
 };
+use super::no_behavior::BracketLine;
 use super::owners_tests::{extract_owners, extract_tests};
 use super::sink_alignment::{
     enclosing_literal_pair, oracle_compares_whole_collection, oracle_contains_value_literal,
@@ -1449,6 +1450,228 @@ fn classify_probe_shape_recognizes_python_field_and_call_shapes() {
     let (family, delta) = classify_probe_shape("    callback = MagicMock(name=\"receipt\")");
     assert_eq!(family, ProbeFamily::SideEffect);
     assert_eq!(delta, DeltaKind::Effect);
+}
+
+// #15357: a changed entry of a multi-line `return {` literal names an exact
+// read of its key; the shape is closed.
+#[test]
+fn multiline_return_dict_entry_names_an_exact_key_read() -> Result<(), String> {
+    let source = "def default_headers():\n    return {\n        \"User-Agent\": USER_AGENT,\n        \"Accept-Encoding\": \"gzip, deflate, br\",\n        \"Extra\": {\n            \"inner\": 1,\n        },\n        \"Call\": make(),\n    }\n";
+    let owners = extract_owners(Path::new("src/h.py"), source);
+    let owner = owners
+        .iter()
+        .find(|owner| owner.name == "default_headers")
+        .ok_or_else(|| "owner must be extracted".to_string())?;
+    let line_text = |line: usize| source.lines().nth(line - 1).unwrap_or_default();
+    let value = |line: usize, span: Option<(usize, usize)>, src: Option<&str>| {
+        super::discriminators::python_multiline_return_dict_entry_discriminator(
+            line,
+            line_text(line),
+            span,
+            src,
+            owner,
+            None,
+        )
+        .map(|fact| fact.value)
+    };
+    let span = Some((2, 9));
+    assert_eq!(
+        value(4, span, Some(source)).as_deref(),
+        Some("result[\"Accept-Encoding\"] == \"gzip, deflate, br\"")
+    );
+    // A non-literal value names the placeholder, never the computation.
+    assert_eq!(
+        value(8, span, Some(source)).as_deref(),
+        Some("result[\"Call\"] == <expected value>")
+    );
+    // Inside a nested literal, on the opening or closing line, or without a
+    // bracket span or source: no key read is named.
+    assert_eq!(value(6, span, Some(source)), None);
+    assert_eq!(value(2, span, Some(source)), None);
+    assert_eq!(value(9, span, Some(source)), None);
+    assert_eq!(value(4, None, Some(source)), None);
+    assert_eq!(value(4, span, None), None);
+    // A statement that is not a bare `return {` (a keyword argument dict, a
+    // plain assignment) keeps the generic path.
+    let assigned = source.replace("    return {", "    headers = {");
+    assert_eq!(value(4, span, Some(&assigned)), None);
+    let called = source.replace("    return {", "    return dict(a={");
+    assert_eq!(value(4, span, Some(&called)), None);
+    // A closing line that combines or indexes the literal returns another
+    // value, so the entry is not what the caller reads for its key.
+    for suffix in ["} | overrides", "}[\"Accept-Encoding\"]", "}.copy()"] {
+        let combined = source.replace("\n    }\n", &format!("\n    {suffix}\n"));
+        assert_ne!(combined, source, "the closing line must be replaced");
+        assert_eq!(value(4, span, Some(&combined)), None, "{suffix}");
+    }
+    Ok(())
+}
+
+// #15357: the entry shape is closed against comprehensions, later overrides,
+// comments, shared lines, escaped keys and set literals.
+#[test]
+fn multiline_return_dict_entry_refuses_what_it_cannot_prove() -> Result<(), String> {
+    let check = |body: &str, changed: usize| -> Result<Option<String>, String> {
+        let source = format!("def f(items):\n    return {{\n{body}    }}\n");
+        let owners = extract_owners(Path::new("src/h.py"), &source);
+        let owner = owners
+            .iter()
+            .find(|owner| owner.name == "f")
+            .ok_or_else(|| "owner must be extracted".to_string())?;
+        let line = changed + 2;
+        let total = source.lines().count();
+        Ok(
+            super::discriminators::python_multiline_return_dict_entry_discriminator(
+                line,
+                source.lines().nth(line - 1).unwrap_or_default(),
+                Some((2, total)),
+                Some(&source),
+                owner,
+                None,
+            )
+            .map(|fact| fact.value),
+        )
+    };
+    // Control: the same shape with a plain literal body names the read.
+    assert_eq!(
+        check("        \"k\": 1,\n        \"j\": 2,\n", 1)?.as_deref(),
+        Some("result[\"k\"] == 1")
+    );
+    // A comprehension body: later `for`/`async for`/`if`, or one on the line.
+    assert_eq!(
+        check("        \"k\": v\n        for v in items\n", 1)?,
+        None
+    );
+    assert_eq!(
+        check("        \"k\": v\n        async for v in items\n", 1)?,
+        None
+    );
+    assert_eq!(
+        check(
+            "        \"k\": v\n        for v in items\n        if v\n",
+            1
+        )?,
+        None
+    );
+    assert_eq!(check("        \"k\": v for v in items\n", 1)?, None);
+    // A later spread or duplicate key overrides the entry.
+    assert_eq!(check("        \"k\": 1,\n        **extra,\n", 1)?, None);
+    assert_eq!(check("        \"k\": 1,\n        \"k\": 2,\n", 1)?, None);
+    assert_eq!(check("        \"k\": 1,\n        'k': 2,\n", 1)?, None);
+    // A trailing comment, two entries on one line, an escaped-quote key.
+    assert_eq!(check("        \"k\": 1,  # note\n", 1)?, None);
+    assert_eq!(check("        \"k\": 1, \"j\": 2,\n", 1)?, None);
+    assert_eq!(check("        \"k\\\"q\": 1,\n", 1)?, None);
+    // A set literal with quoted elements has no key to read.
+    assert_eq!(check("        \"a\",\n        \"b\",\n", 1)?, None);
+    // A value that continues on the next line (implicit string concatenation,
+    // a `+` continuation) is only partly spelled on the changed line.
+    assert_eq!(
+        check("        \"m\": \"hello\"\n        \" world\",\n", 1)?,
+        None
+    );
+    assert_eq!(check("        \"m\": 1\n        + 2,\n", 1)?, None);
+    // The last entry may omit its trailing comma: the closing brace follows.
+    assert_eq!(
+        check("        \"j\": 2,\n        \"m\": \"hello\"\n", 2)?.as_deref(),
+        Some("result[\"m\"] == \"hello\"")
+    );
+    // A later dynamic key (a parameter may equal `k`), an escaped spelling of
+    // the same key, or a later comment line can override or hide an override.
+    assert_eq!(check("        \"k\": 1,\n        items: 2,\n", 1)?, None);
+    assert_eq!(
+        check("        \"k\": 1,\n        \"\\x6b\": 2,\n", 1)?,
+        None
+    );
+    assert_eq!(check("        \"k\": 1,\n        # \"k\": 2,\n", 1)?, None);
+    // A later line with several entries is read whole, and a line that closes
+    // a nested value may not start another entry.
+    assert_eq!(
+        check("        \"k\": 1,\n        \"j\": 2, \"k\": 5,\n", 1)?,
+        None
+    );
+    assert_eq!(
+        check("        \"k\": 1,\n        \"j\": 2, **over,\n", 1)?,
+        None
+    );
+    assert_eq!(
+        check(
+            "        \"k\": 1,\n        \"n\": {\n            \"x\": 1}, \"k\": 5,\n",
+            1
+        )?,
+        None
+    );
+    assert_eq!(
+        check("        \"k\": 1,\n        \"j\": 2, \"m\": 3,\n", 1)?.as_deref(),
+        Some("result[\"k\"] == 1")
+    );
+    // Later nested values are skipped; only their entry keys are read.
+    assert_eq!(
+        check(
+            "        \"k\": 1,\n        \"n\": {\n            \"k\": 2,\n        },\n",
+            1
+        )?
+        .as_deref(),
+        Some("result[\"k\"] == 1")
+    );
+    Ok(())
+}
+
+// #13630: the field-value missing check localizes a `return {...}` change
+// against the paired old line; without one the unlocalized pick stands.
+#[test]
+fn return_dict_missing_check_localizes_changed_entry_from_old_line() -> Result<(), String> {
+    let source = "class Item:\n    def to_dict(self):\n        return {\"sku\": self.sku, \"qty\": self.quantity}\n";
+    let owners = extract_owners(Path::new("src/fx/core.py"), source);
+    let owner = owners
+        .iter()
+        .find(|owner| owner.name.ends_with("to_dict"))
+        .ok_or_else(|| "to_dict owner must be extracted".to_string())?;
+    let new = "        return {\"sku\": self.sku, \"qty\": self.quantity}";
+    let values = |old: Option<&str>| -> Vec<String> {
+        super::discriminators::python_missing_discriminators(
+            &ProbeFamily::FieldConstruction,
+            3,
+            new,
+            old,
+            owner,
+            None,
+        )
+        .into_iter()
+        .map(|missing| missing.value)
+        .collect()
+    };
+    // Renamed key: the new key, not the unchanged first entry.
+    assert_eq!(
+        values(Some(
+            "        return {\"sku\": self.sku, \"quantity\": self.quantity}"
+        )),
+        vec!["qty == <expected value>"]
+    );
+    // Re-valued single entry.
+    assert_eq!(
+        values(Some(
+            "        return {\"sku\": self.sku, \"qty\": self.count}"
+        )),
+        vec!["qty == <expected value>"]
+    );
+    // Several entries changed: the whole dict, no single key.
+    assert_eq!(
+        values(Some(
+            "        return {\"id\": self.sku, \"quantity\": self.quantity}"
+        )),
+        vec!["return value == <expected value>"]
+    );
+    // No paired old line, an old line that is not a dict, or an old line
+    // whose entries are unchanged (reorder): the unlocalized pick stands.
+    for old in [
+        None,
+        Some("        return self.legacy_dict()"),
+        Some("        return {\"qty\": self.quantity, \"sku\": self.sku}"),
+    ] {
+        assert_eq!(values(old), vec!["sku == <expected value>"], "{old:?}");
+    }
+    Ok(())
 }
 
 #[test]
@@ -4201,6 +4424,323 @@ fn real_body_change_in_same_function_still_classifies() -> Result<(), String> {
 }
 
 #[test]
+fn bracket_continuation_ranges_cover_lines_that_start_inside_a_bracket() -> Result<(), String> {
+    // #13875: lines 3-5 start inside `BadPayload(`; the brackets inside the
+    // string and the comment on line 7 are not brackets.
+    let source = concat!(
+        "def f(e):\n",
+        "    raise BadPayload(\n",
+        "        \"Could not load (the payload\"\n",
+        "        \" because\",\n",
+        "    ) from e\n",
+        "    x = [1, 2]\n",
+        "    # (not a bracket\n",
+        "    return x\n",
+    );
+    let facts = super::no_behavior::BracketEvidence::read(Some(source), None);
+    for line in 1..=8 {
+        let expected = (3..=5).contains(&line);
+        assert_eq!(facts.new_line_in(line), expected);
+        assert_eq!(facts.line(line, None).span, expected.then_some((2, 5)));
+    }
+    let malformed = super::no_behavior::BracketEvidence::read(Some("x = (\n"), None);
+    assert!(malformed.new_line_in(1));
+    assert!(malformed.line(1, None).span.is_none());
+    Ok(())
+}
+
+#[test]
+fn explicit_join_ranges_use_token_gaps_and_keep_indentation_boundaries() {
+    let source = concat!(
+        "def f(ok):\n",             // 1
+        "    if ok:\n",             // 2
+        "        return \"\"\"a\n", // 3
+        "inside\n",                 // 4: inside the first token
+        "b\"\"\" \\\n",             // 5
+        " \"c\" \\\n",              // 6: arbitrary continuation indentation
+        "            \"d\"\n",      // 7
+        "    \"standalone\"\n",     // 8: real dedent and logical newline
+    );
+    for text in [source.to_owned(), source.replace('\n', "\r\n")] {
+        let evidence = super::no_behavior::BracketEvidence::read(Some(&text), Some(&text));
+        for line in 1..=8 {
+            let expected = (6..=7).contains(&line);
+            assert_eq!(evidence.new_line_in(line), expected, "{line}");
+            assert_eq!(evidence.old_line_in(line), expected, "{line}");
+            assert_eq!(evidence.line(line, None).span, expected.then_some((3, 7)));
+        }
+    }
+    let string_receiver = "\"a\" \\\n  \"b\" \\\n  .format_map(values)\n";
+    let evidence = super::no_behavior::BracketEvidence::read(Some(string_receiver), None);
+    assert_eq!(evidence.line(2, None).span, Some((1, 3)));
+    // A space after the backslash is a lexer error. Keep existing fallback.
+    let bad = "x = \"a\" \\ \n    \"b\"\n";
+    let evidence = super::no_behavior::BracketEvidence::read(Some(bad), None);
+    assert!(evidence.new_line_in(2));
+    assert_eq!(evidence.line(2, None).span, None);
+    assert!(!evidence.old_line_in(2));
+}
+
+#[test]
+fn a_bare_string_inside_brackets_is_behavior_but_comments_stay_no_ops() {
+    use super::no_behavior::is_python_no_behavior_line_at;
+    assert!(!is_python_no_behavior_line_at(
+        "        \"Could not load\"",
+        true
+    ));
+    assert!(is_python_no_behavior_line_at(
+        "        \"Could not load\"",
+        false
+    ));
+    assert!(is_python_no_behavior_line_at("        # a comment", true));
+    assert!(is_python_no_behavior_line_at("   ", true));
+}
+
+#[test]
+fn a_changed_message_string_on_a_continuation_line_gets_a_probe() -> Result<(), String> {
+    // #13875 (mutmut on itsdangerous 672971d6, serializer.py:266): the first
+    // part of an implicitly concatenated message argument changed. It is an
+    // argument, not a docstring, so it must not be dropped as a no-op.
+    let source = concat!(
+        "def load(payload):\n",
+        "    raise BadPayload(\n",
+        "        \"Could not load the payload\"\n",
+        "        \" because of an error.\",\n",
+        "    )\n",
+    );
+    let file = Path::new("src/serializer.py");
+    let owners = extract_owners(file, source);
+    let tests = extract_tests(
+        Path::new("tests/test_serializer.py"),
+        "from src.serializer import load\n\n\ndef test_load():\n    load(b\"x\")\n",
+    );
+    let context = |in_brackets: bool| PythonNoBehaviorContext {
+        brackets: BracketLine {
+            new_in: in_brackets,
+            old_in: in_brackets,
+            span: in_brackets.then_some((2, 5)),
+            ..BracketLine::default()
+        },
+        ..PythonNoBehaviorContext::default()
+    };
+    let new = "        \"XXCould not load the payloadXX\"";
+    let old = Some("        \"Could not load the payload\"");
+    let inside = classify_change_with_context(
+        file,
+        3,
+        new,
+        old,
+        &owners,
+        &tests,
+        context(true),
+        Some(source),
+    );
+    assert!(
+        inside.is_some(),
+        "a changed argument string must carry a probe"
+    );
+    // Control: the same text as a standalone string statement stays a no-op.
+    let outside = classify_change_with_context(
+        file,
+        3,
+        new,
+        old,
+        &owners,
+        &tests,
+        context(false),
+        Some(source),
+    );
+    assert!(
+        outside.is_none(),
+        "a standalone string statement is still a no-op"
+    );
+    Ok(())
+}
+
+#[test]
+fn an_unlexable_file_keeps_a_changed_bare_string_quiet() {
+    // #13875 fallback: an unlexable new file counts every line as inside
+    // brackets with no statement span, and an unlexable old file does the
+    // same for the old line. With nothing to shape it by, a string-to-string
+    // edit keeps the earlier no-op reading on both sides.
+    let source = "def f():\n    \"Sum the items.\"\n    return 1\n";
+    let file = Path::new("src/m.py");
+    let owners = extract_owners(file, source);
+    let tests = extract_tests(
+        Path::new("tests/test_m.py"),
+        "from src.m import f\n\n\ndef test_f():\n    assert f() == 1\n",
+    );
+    let context = PythonNoBehaviorContext {
+        brackets: BracketLine {
+            new_in: true,
+            old_in: true,
+            span: None,
+            ..BracketLine::default()
+        },
+        ..PythonNoBehaviorContext::default()
+    };
+    let finding = classify_change_with_context(
+        file,
+        2,
+        "    \"Sum all items.\"",
+        Some("    \"Sum the items.\""),
+        &owners,
+        &tests,
+        context,
+        Some(source),
+    );
+    assert!(finding.is_none(), "{finding:?}");
+    // Control: the old line was real code, so the edit keeps its probe.
+    let from_code = classify_change_with_context(
+        file,
+        2,
+        "    \"Sum all items.\"",
+        Some("    total = 2"),
+        &owners,
+        &tests,
+        context,
+        Some(source),
+    );
+    assert!(
+        from_code.is_some(),
+        "replacing code with a string is behavior"
+    );
+}
+
+#[test]
+fn a_bracketed_raise_message_is_not_credited_to_a_return_assertion() -> Result<(), String> {
+    // #13875: the message takes the raise's error-path family, so the
+    // related assertions are selected for an error path and a strong return
+    // assertion behind a guard the activation gate cannot resolve does not
+    // observe it.
+    let source = concat!(
+        "def f(item):\n",
+        "    if item.is_bad():\n",
+        "        raise ValueError(\n",
+        "            \"bad item\"\n",
+        "        )\n",
+        "    return 1\n",
+    );
+    let file = Path::new("src/m.py");
+    let owners = extract_owners(file, source);
+    let tests = extract_tests(
+        Path::new("tests/test_m.py"),
+        "from src.m import f\nfrom tests.helpers import make_item\n\n\ndef test_f():\n    assert f(make_item()) == 1\n",
+    );
+    let context = PythonNoBehaviorContext {
+        brackets: BracketLine {
+            new_in: true,
+            old_in: true,
+            span: Some((3, 5)),
+            ..BracketLine::default()
+        },
+        ..PythonNoBehaviorContext::default()
+    };
+    let finding = classify_change_with_context(
+        file,
+        4,
+        "            \"XXbad itemXX\"",
+        Some("            \"bad item\""),
+        &owners,
+        &tests,
+        context,
+        Some(source),
+    )
+    .ok_or_else(|| "a changed message argument must carry a probe".to_string())?;
+    assert_eq!(finding.probe.family, ProbeFamily::ErrorPath, "{finding:?}");
+    assert_ne!(finding.class, ExposureClass::Exposed, "{finding:?}");
+    Ok(())
+}
+
+#[test]
+fn a_changed_message_argument_with_a_trailing_comma_is_an_error_path() -> Result<(), String> {
+    // #13875: `"msg",` inside `raise E(` is the same bare string argument as
+    // `"msg"`, so it takes the raise statement's shape. Before, it was read as
+    // a predicate and reported `exposed` by a test that never raises.
+    let source = concat!(
+        "def check(n):\n",
+        "    if n < 0:\n",
+        "        raise ValueError(\n",
+        "            \"negative\",\n",
+        "        )\n",
+        "    return n\n",
+    );
+    let file = Path::new("pkg/__init__.py");
+    let owners = extract_owners(file, source);
+    let tests = extract_tests(
+        Path::new("tests/test_check.py"),
+        "from pkg import check\n\n\ndef test_check():\n    assert check(2) == 2\n",
+    );
+    let context = PythonNoBehaviorContext {
+        brackets: BracketLine {
+            new_in: true,
+            old_in: true,
+            span: Some((3, 5)),
+            ..BracketLine::default()
+        },
+        ..PythonNoBehaviorContext::default()
+    };
+    let finding = classify_change_with_context(
+        file,
+        4,
+        "            \"XXnegativeXX\",",
+        Some("            \"negative\","),
+        &owners,
+        &tests,
+        context,
+        Some(source),
+    )
+    .ok_or_else(|| "a changed message argument must carry a probe".to_string())?;
+    assert_eq!(finding.probe.family, ProbeFamily::ErrorPath, "{finding:?}");
+    Ok(())
+}
+
+#[test]
+fn a_changed_message_argument_with_a_trailing_comment_is_an_error_path() -> Result<(), String> {
+    // #13875 review: a trailing `# comment` after `"msg",` must not hide the
+    // bare string argument, or the line falls back to a predicate shape and a
+    // test that never raises is credited with exposing the message. A `#`
+    // inside the string itself stays part of the string.
+    let source = concat!(
+        "def check(n):\n",
+        "    if n < 0:\n",
+        "        raise ValueError(\n",
+        "            \"negative #1\",  # must be positive\n",
+        "        )\n",
+        "    return n\n",
+    );
+    let file = Path::new("pkg/__init__.py");
+    let owners = extract_owners(file, source);
+    let tests = extract_tests(
+        Path::new("tests/test_check.py"),
+        "from pkg import check\n\n\ndef test_check():\n    assert check(2) == 2\n",
+    );
+    let context = PythonNoBehaviorContext {
+        brackets: BracketLine {
+            new_in: true,
+            old_in: true,
+            span: Some((3, 5)),
+            ..BracketLine::default()
+        },
+        ..PythonNoBehaviorContext::default()
+    };
+    let finding = classify_change_with_context(
+        file,
+        4,
+        "            \"XXnegative #1XX\",  # must be positive",
+        Some("            \"negative #1\",  # must be positive"),
+        &owners,
+        &tests,
+        context,
+        Some(source),
+    )
+    .ok_or_else(|| "a changed message argument must carry a probe".to_string())?;
+    assert_eq!(finding.probe.family, ProbeFamily::ErrorPath, "{finding:?}");
+    assert_ne!(finding.class, ExposureClass::Exposed, "{finding:?}");
+    Ok(())
+}
+
+#[test]
 fn no_behavior_line_detection_is_conservative() {
     // No-op shapes:
     assert!(is_python_no_behavior_line("    \"\"\"A docstring.\"\"\""));
@@ -4498,9 +5038,10 @@ fn approx_band_outside_the_bounded_shape_keeps_abstaining() -> Result<(), String
         ExposureClass::StaticUnknown,
         Some(StaticLimitKind::UnsupportedSyntax),
     );
-    // The old value was already outside the band, a non-literal argument, a
-    // positional band, an operator the evaluation does not model and a value on
-    // the band edge are not decided.
+    // The old value was already outside the band, a non-literal argument, an
+    // operator the evaluation does not model and a value on the band edge are
+    // not decided. (A positional band is read since #13723,
+    // `approx_band_tests.rs`.)
     for (old, new, assertion) in [
         (
             "3.0 * radius * radius",
@@ -4511,11 +5052,6 @@ fn approx_band_outside_the_bounded_shape_keeps_abstaining() -> Result<(), String
             "3.14159 * radius * radius",
             "3.2 * radius * radius",
             "assert circle_area(n) == pytest.approx(12.566, rel=1e-3)",
-        ),
-        (
-            "3.14159 * radius * radius",
-            "3.2 * radius * radius",
-            "assert circle_area(2) == pytest.approx(12.566, 1e-3)",
         ),
         (
             "3.14159 * radius ** 2",
@@ -4733,6 +5269,7 @@ fn a_caplog_that_is_not_the_builtin_fixture_keeps_abstaining() -> Result<(), Str
                 literal_params: None,
                 isolated: false,
                 scope_imports: Vec::new(),
+                client_fixture_chain: Vec::new(),
             });
         }
         tests
@@ -6451,7 +6988,8 @@ fn transitive_reach_witness_silences_with_no_link_guidance() -> Result<(), Strin
         .position(|line| line == changed)
         .ok_or_else(|| "fixture source must contain the changed line".to_string())?
         + 1;
-    let owners = extract_owners(Path::new("src/table.py"), source);
+    let mut owners = extract_owners(Path::new("src/table.py"), source);
+    super::related_tests::apply_class_facts(&mut owners);
     let tests = extract_tests(
         Path::new("tests/test_table.py"),
         "from src.table import Table\n\ndef test_print_table():\n    table = Table()\n    assert table is not None\n",
@@ -7670,6 +8208,108 @@ fn repo_working_set_limit(limit: usize) -> repo::RepoWorkingSetLimit {
     }
 }
 
+#[test]
+fn bare_bool_credit_requires_a_proven_bool_target_in_both_modes() -> Result<(), String> {
+    let test = "from rules import is_adult\n\ndef test_boundary():\n    assert is_adult(18)\n    assert not is_adult(17)\n";
+    let rebound = "from rules import is_adult\n\nis_adult = lambda age: age >= 18\n\ndef test_boundary():\n    assert is_adult(18)\n    assert not is_adult(17)\n";
+    for (label, expression, test_source, kind, strength) in [
+        (
+            "bool",
+            "age >= 18",
+            test,
+            OracleKind::ExactValue,
+            OracleStrength::Strong,
+        ),
+        (
+            "truthy",
+            "age if age >= 18 else 0",
+            test,
+            OracleKind::SmokeOnly,
+            OracleStrength::Smoke,
+        ),
+        (
+            "rebound",
+            "age >= 18",
+            rebound,
+            OracleKind::SmokeOnly,
+            OracleStrength::Smoke,
+        ),
+    ] {
+        let root = unique_repo_test_root(label);
+        let line = format!("    return {expression}");
+        write_repo_file(
+            &root.join("rules.py"),
+            &format!("def is_adult(age):\n{line}\n"),
+        )?;
+        write_repo_file(&root.join("tests/test_rules.py"), test_source)?;
+        let changed = ChangedFile {
+            path: PathBuf::from("rules.py"),
+            added_lines: vec![ChangedLine {
+                line: 2,
+                new_side_line: 2,
+                text: line,
+            }],
+            removed_lines: Vec::new(),
+        };
+        let options = repo_options(&root);
+        let policy = OraclePolicy::default();
+        let diff = PythonAdapter.analyze_diff(&options, &policy, &[changed])?;
+        let repo = PythonAdapter.analyze_repo(&options, &policy)?;
+        assert_eq!(diff.changed_files, 1);
+        assert_eq!(repo.production_files, 1);
+        assert!(repo.partial_reason.is_none());
+        let mut runs = vec![
+            ("diff", diff.findings, &kind, &strength),
+            ("repo", repo.findings, &kind, &strength),
+        ];
+        if kind == OracleKind::ExactValue {
+            write_repo_file(&root.join("unreadable.py"), "def broken(:\n")?;
+            let partial = PythonAdapter.analyze_repo(&options, &policy)?;
+            assert!(
+                partial
+                    .partial_reason
+                    .as_deref()
+                    .is_some_and(|reason| reason.contains("failed to read or parse"))
+            );
+            runs.push((
+                "partial repo",
+                partial.findings,
+                &OracleKind::SmokeOnly,
+                &OracleStrength::Smoke,
+            ));
+        }
+        std::fs::remove_dir_all(&root).map_err(|err| err.to_string())?;
+        for (mode, findings, expected_kind, expected_strength) in runs {
+            let finding = findings
+                .iter()
+                .find(|finding| {
+                    finding.probe.location.file == Path::new("rules.py")
+                        && finding.probe.location.line == 2
+                })
+                .ok_or_else(|| format!("{label}/{mode}: missing rules.py:2"))?;
+            let [related] = finding.related_tests.as_slice() else {
+                return Err(format!(
+                    "{label}/{mode}: expected one related test: {finding:?}"
+                ));
+            };
+            assert_eq!(related.file, Path::new("tests/test_rules.py"));
+            assert_eq!(related.name, "test_boundary");
+            assert_eq!(
+                (&related.oracle_kind, &related.oracle_strength),
+                (expected_kind, expected_strength),
+                "{label}/{mode}"
+            );
+            let expected_class = if *expected_strength == OracleStrength::Strong {
+                ExposureClass::Exposed
+            } else {
+                ExposureClass::WeaklyExposed
+            };
+            assert_eq!(finding.class, expected_class, "{label}/{mode}");
+        }
+    }
+    Ok(())
+}
+
 fn fnv1a64(bytes: &[u8]) -> u64 {
     let mut hash: u64 = 0xcbf2_9ce4_8422_2325;
     for byte in bytes {
@@ -8213,10 +8853,8 @@ def test_loyalty_price_context(tmp_path):
 
 #[test]
 fn method_owners_need_an_attribute_reference_and_dunders_a_class_reference() -> Result<(), String> {
-    let owners = extract_owners(
-        Path::new("src/account.py"),
-        "class Account:\n    def __init__(self, balance):\n        self._balance = balance\n\n    @property\n    def balance(self):\n        return max(0, self._balance)\n\n    def close(self):\n        return 0\n",
-    );
+    let account_source = "class Account:\n    def __init__(self, balance):\n        self._balance = balance\n\n    @property\n    def balance(self):\n        return max(0, self._balance)\n\n    def close(self):\n        return 0\n";
+    let owners = extract_owners(Path::new("src/account.py"), account_source);
     let init = flat_owner(&owners, "Account.__init__")?;
     let balance = flat_owner(&owners, "Account.balance")?;
     let close = flat_owner(&owners, "Account.close")?;
@@ -8228,8 +8866,33 @@ fn method_owners_need_an_attribute_reference_and_dunders_a_class_reference() -> 
 
     assert_eq!(
         candidate_relations(balance, &tests),
-        vec![("test_balance_property".to_string(), "same_stem")],
-        "`._balance` is not `.balance`; only the property read references the owner"
+        vec![("test_balance_property".to_string(), "property_read")],
+        "`._balance` is not `.balance`; only the property read relates, as a property read (#15490)"
+    );
+    // The read is compared relationally, never with a literal, so the
+    // property keeps its limit and takes no credit (#15490).
+    let finding = classify_change_with_source(
+        Path::new("src/account.py"),
+        7,
+        "        return max(0, self._balance)",
+        Some("        return max(1, self._balance)"),
+        &owners,
+        &tests,
+        Some(account_source),
+    )
+    .ok_or("the balance change must yield a finding")?;
+    assert_eq!(finding.class, ExposureClass::StaticUnknown);
+    assert!(
+        finding
+            .evidence
+            .iter()
+            .any(|line| line == "static_limit decorator_indirection: `property`"),
+        "{:?}",
+        finding.evidence
+    );
+    assert_ne!(
+        finding.alignment_reason.as_deref(),
+        Some("strong_oracle_observes_property_read")
     );
     assert_eq!(
         candidate_relations(close, &tests),
@@ -8452,6 +9115,55 @@ fn unbound_dunder_owner_is_a_dynamic_dispatch_limit_not_no_static_path() -> Resu
 }
 
 #[test]
+fn unbound_dunder_reach_stage_is_unknown_while_ordinary_untested_owner_stays_no()
+-> Result<(), String> {
+    // #15339: the dynamic_dispatch limit says ripr "does not claim that no
+    // test reaches the owner"; the reach stage must not claim it either.
+    let owner_file = Path::new("src/cachetools/__init__.py");
+    let owner_source = "class FIFOCache:\n    def __setitem__(self, key, value):\n        self.data[key] = value\n\n\ndef plain_helper(x):\n    return x + 1\n";
+    let owners = extract_owners(owner_file, owner_source);
+    let tests = extract_tests(
+        Path::new("tests/test_fifo.py"),
+        "import cachetools\n\n\nclass TestFifo:\n    Cache = cachetools.FIFOCache\n\n    def test_insert(self):\n        cache = self.Cache(maxsize=2)\n        cache[1] = 1\n        assert cache[1] == 1\n",
+    );
+    assert_eq!(tests.len(), 1, "fixture must parse the test");
+    let finding = classify_change(
+        owner_file,
+        3,
+        "        self.data[key] = value",
+        &owners,
+        &tests,
+    )
+    .ok_or("dunder edit must produce a finding")?;
+    assert_eq!(finding.class, ExposureClass::StaticUnknown);
+    assert!(
+        finding
+            .missing
+            .iter()
+            .any(|l| l.contains("dynamic_dispatch")),
+        "limit must be present: {:?}",
+        finding.missing
+    );
+    let reach = &finding.ripr.reach;
+    assert_eq!(reach.state, StageState::Unknown, "{}", reach.summary);
+    assert!(!reach.summary.contains("0 related"), "{}", reach.summary);
+    // The limit abstains; the summary must not assert that a test reaches the owner.
+    assert!(
+        reach.summary.contains("may be reached"),
+        "{}",
+        reach.summary
+    );
+    assert!(!reach.summary.contains(" is reached"), "{}", reach.summary);
+
+    // Negative control: an ordinary unexercised function keeps `reach no`.
+    let finding = classify_change(owner_file, 7, "    return x + 1", &owners, &tests)
+        .ok_or("plain edit must produce a finding")?;
+    assert_eq!(finding.ripr.reach.state, StageState::No);
+    assert!(finding.ripr.reach.summary.contains("0 related"));
+    Ok(())
+}
+
+#[test]
 fn structural_lines_of_a_multi_line_def_header_carry_no_behavior() {
     use super::no_behavior::{is_structural_def_header_line, is_structural_def_header_text};
     // cachetools c0fdf6a reflowed `TLRUCache.__setitem__`'s signature.
@@ -8583,6 +9295,24 @@ fn header_param_line_defaults_reads_defaults_on_one_header_line() {
     assert_eq!(names("    x=1,  # was 2"), None);
     assert_eq!(names("    return f(x=1)"), None);
     assert_eq!(names("    ):"), None);
+}
+
+/// #15292: the multi-line header span skips string literals, so brackets and
+/// `#` inside defaults never move the header end into the body, and a shape
+/// the scan cannot follow gives no span.
+#[test]
+fn multi_line_def_header_span_skips_string_literals() {
+    let span = super::no_behavior::multi_line_def_header_span;
+    let body = "    return sep\n";
+    let empty = format!("def f(\n    sep=\"\",\n    end='',\n):\n{body}");
+    assert_eq!(span(&empty, 1), Some((1, 4)));
+    let prefixed = format!("def f(\n    sep=r\"(\",\n    tag=b'#[',\n) -> int:  # note\n{body}");
+    assert_eq!(span(&prefixed, 1), Some((1, 4)));
+    let triple = format!("def f(\n    doc=\"\"\"a (\n    b: \"\"\",\n):\n{body}");
+    assert_eq!(span(&triple, 1), Some((1, 4)));
+    // A one-quote string left open at the end of a line is not followed.
+    let open = format!("def f(\n    sep=\"(\\\n\",\n):\n{body}");
+    assert_eq!(span(&open, 1), None);
 }
 
 /// Classifies `line` of a multi-line header with the diff producer's flag.
@@ -10753,6 +11483,103 @@ fn caplog_absence_reads_the_edit_keeps_absent_stay_a_gap() -> Result<(), String>
     Ok(())
 }
 
+// #15250: a message-only logging edit is observed only through the captured
+// output. An exact pin on the owner's result (`== False`, `is False`) passes
+// on both versions, so it never credits the edit nor hides the caplog reading.
+#[test]
+fn caplog_an_exact_return_pin_does_not_credit_a_message_only_log_edit() -> Result<(), String> {
+    for pin in [
+        "assert check_balance(5) is False",
+        "assert check_balance(5) == False",
+        "result = check_balance(5)\n        assert result is False",
+    ] {
+        let kept = format!(
+            "def test_low_balance(caplog):\n    with caplog.at_level(logging.WARNING):\n        {pin}\n    assert \"deprecated warning\" not in caplog.text\n"
+        );
+        assert_eq!(
+            classify_log_text_edit(
+                AUDIT_OWNER,
+                "log.warning(\"balance low: %s\", balance)",
+                &kept
+            )?,
+            (ExposureClass::WeaklyExposed, None),
+            "{pin}"
+        );
+        let unread = format!(
+            "def test_low_balance(caplog):\n    with caplog.at_level(logging.WARNING):\n        {pin}\n"
+        );
+        assert_ne!(
+            classify_log_text_edit(
+                AUDIT_OWNER,
+                "log.warning(\"balance low: %s\", balance)",
+                &unread
+            )?
+            .0,
+            ExposureClass::Exposed,
+            "{pin}"
+        );
+    }
+    Ok(())
+}
+
+// #15250 review: a strong result pin conjoined with a caplog read (or a
+// `caplog` mention only in the failure message) must not grade a
+// logging-only edit; the finding abstains.
+#[test]
+fn a_result_pin_beside_a_caplog_mention_abstains_on_a_message_only_log_edit() -> Result<(), String>
+{
+    for assertion in [
+        "assert check_balance(5) is False and \"deprecated warning\" not in caplog.text",
+        "assert check_balance(5) is False, \"see caplog\"",
+    ] {
+        let test = format!(
+            "def test_low_balance(caplog):\n    with caplog.at_level(logging.WARNING):\n        {assertion}\n"
+        );
+        assert_eq!(
+            classify_log_text_edit(
+                AUDIT_OWNER,
+                "log.warning(\"balance low: %s\", balance)",
+                &test
+            )?,
+            (
+                ExposureClass::StaticUnknown,
+                Some(StaticLimitKind::UnsupportedSyntax)
+            ),
+            "{assertion}"
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn only_an_inert_logger_call_is_a_message_only_log_edit() {
+    use super::caplog_text::is_message_only_log_call_edit as log_only;
+    let old = Some("        log.warning(\"low balance: %s\", balance)");
+    // Message, level, keyword and inert-argument rewrites on a logger.
+    for new in [
+        "        log.warning(\"balance low: %s\", balance)",
+        "        log.info(\"low balance: %s\", balance + 1)",
+        "        log.exception(\"low: %s\", self.balance, exc_info=True)",
+    ] {
+        assert!(log_only(old, new), "{new}");
+    }
+    assert!(log_only(
+        None,
+        "        self._logger.error(\"x %s\", items[0])"
+    ));
+    // A call in an argument, another receiver, a non-logger object or a
+    // replaced non-log line can change what the owner returns.
+    for (old, new) in [
+        (old, "        log.warning(\"low balance: %s\", pop())"),
+        (old, "        audit.warning(\"low balance: %s\", balance)"),
+        (None, "        parser.error(\"missing argument\")"),
+        (None, "        math.log(balance)"),
+        (Some("        balance -= 1"), "        log.warning(\"x\")"),
+    ] {
+        assert!(!log_only(old, new), "{old:?} -> {new}");
+    }
+}
+
 #[test]
 fn caplog_absence_with_a_whole_message_compares_the_whole_message() -> Result<(), String> {
     // `not in caplog.messages` holds the text only when a whole message equals
@@ -11194,6 +12021,52 @@ fn protocol_entry_receiver_rebound_by_a_spelling_the_scan_missed_is_not_credited
 }
 
 #[test]
+fn protocol_entry_multiline_receiver_rebinding_withholds_credit() -> Result<(), String> {
+    for middle in [
+        "    (x,\n     (r)) = 1, [1]\n",
+        "    (x,\n     r) = 1, [1]\n",
+        "    if (True and\n        True): (x, (r)) = 1, [1]\n",
+        "    for (x,\n         (r)) in [(1, [1])]:\n        pass\n",
+        "    with (manager() as\n          (x, (r))):\n        pass\n",
+        "    del x, (r)\n",
+    ] {
+        let (finding, relations) = classify_reversed_guard(&reversed_receiver_src(middle))?;
+        assert_ne!(finding.class, ExposureClass::Exposed, "{middle:?}");
+        assert!(
+            relations
+                .iter()
+                .all(|(_, kind)| *kind != "protocol_entry_call"),
+            "{middle:?}: {relations:?}"
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn protocol_entry_multiline_receiver_reads_keep_credit() -> Result<(), String> {
+    for middle in [
+        "    x = (1,\n         (r))\n",
+        "    x = f(1,\n          (r))\n",
+        "    if (True and\n        True): x = (1, (r))\n",
+        "    (x, values[(r)]) = 1, 2\n",
+        "    text = '''for (x,\n     (r)) in items: global x, r'''\n",
+        "    # (x,\n    # (r)) = 1, [1]\n",
+    ] {
+        let source = reversed_receiver_src(middle)
+            .replace("numeric_range(0)", "numeric_range(2)")
+            .replace("== [1]", "== [1, 0]");
+        let (finding, relations) = classify_reversed_guard(&source)?;
+        assert_eq!(finding.class, ExposureClass::Exposed, "{middle:?}");
+        assert_eq!(
+            relations,
+            vec![("test_x".to_string(), "protocol_entry_call")],
+            "{middle:?}"
+        );
+    }
+    Ok(())
+}
+
+#[test]
 fn protocol_entry_receiver_reads_that_resemble_a_rebind_stay_credited() -> Result<(), String> {
     for middle in [
         // Comparisons are not augmented assignments.
@@ -11298,6 +12171,7 @@ fn protocol_entry_receiver_reads_that_resemble_global_del_or_type_stay_credited(
 fn match_case_capture_of_the_receiver_counts_as_a_binding_target() {
     use super::related_tests::binds_in_target_list;
     for body in [
+        "r = make()\nmatch value:\n    case Foo(\n        key=(r)\n    ):\n        pass\n",
         "r = make()\ncase (r):\n    pass\n",
         "r = make()\ncase [r]:\n    pass\n",
         "r = make()\n    case (r):\n        pass\n",
@@ -11309,6 +12183,9 @@ fn match_case_capture_of_the_receiver_counts_as_a_binding_target() {
         assert!(binds_in_target_list(body, "r"), "{body:?}");
     }
     for body in [
+        "r = make()\nmatch value:\n    case r.VALUE:\n        pass\n",
+        "r = make()\nmatch value:\n    case Other(\n        key=r.VALUE\n    ):\n        pass\n",
+        "r = make()\ndef helper():\n    match value:\n        case Other(\n            key=(r)\n        ):\n            pass\n",
         "r = make()\nif (r):\n    pass\n",
         "r = make()\nif [r]:\n    pass\n",
         "r = make()\ncase_count = (r)\n",
@@ -11364,6 +12241,7 @@ fn name_prefilter_keeps_a_fixture_only_mention() {
             literal_params: None,
             isolated: false,
             scope_imports: Vec::new(),
+            client_fixture_chain: Vec::new(),
         });
     }
     assert_eq!(owners[0].name, "make_order");

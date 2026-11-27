@@ -283,6 +283,11 @@ fn suggested_assertion_shape(
             .to_string();
     }
 
+    if finding.recommended_next_step.as_deref() == Some(crate::domain::TERNARY_COMPARISON_NEXT_STEP)
+    {
+        return crate::domain::TERNARY_COMPARISON_NEXT_STEP.to_string();
+    }
+
     // A strong snapshot or exact-value check already exists, so asking for
     // another one is misleading: the gap is the missing tie to the changed line.
     // Fire only when the classifier reached its strong-but-untied conclusion:
@@ -858,9 +863,9 @@ mod tests {
         typescript_preview_card_json_value,
     };
     use crate::domain::{
-        ActivationEvidence, Confidence, DeltaKind, ExposureClass, Finding, LanguageId,
-        LanguageStatus, MissingDiscriminatorFact, OracleKind, OracleStrength, OwnerKind, Probe,
-        ProbeFamily, ProbeId, RelatedTest, RevealEvidence, RiprEvidence,
+        ActivationEvidence, Confidence, DeltaKind, DiscriminatorShape, ExposureClass, Finding,
+        LanguageId, LanguageStatus, MissingDiscriminatorFact, OracleKind, OracleStrength,
+        OwnerKind, Probe, ProbeFamily, ProbeId, RelatedTest, RevealEvidence, RiprEvidence,
         STRONG_CHECK_UNTIED_NEXT_STEP, SourceLocation, StageEvidence, StageState, StaticLimitKind,
     };
     use std::path::PathBuf;
@@ -875,6 +880,8 @@ mod tests {
             value: "amount == threshold".to_string(),
             reason: "missing exact boundary".to_string(),
             flow_sink: None,
+            shape: DiscriminatorShape::Boundary,
+            drafted_boundary: None,
         }];
         assert!(typescript_preview_card(&finding).is_some());
         for currentness in [
@@ -897,6 +904,8 @@ mod tests {
             value: "amount == threshold".to_string(),
             reason: "missing exact boundary".to_string(),
             flow_sink: None,
+            shape: DiscriminatorShape::Boundary,
+            drafted_boundary: None,
         }];
 
         let card = typescript_preview_card(&finding)
@@ -968,6 +977,8 @@ mod tests {
             value: "amount == threshold".to_string(),
             reason: "missing exact boundary".to_string(),
             flow_sink: None,
+            shape: DiscriminatorShape::Boundary,
+            drafted_boundary: None,
         }];
         assert!(!shape(&named)?.contains(untied));
 
@@ -1878,6 +1889,7 @@ mod tests {
             id: "probe:src_pricing.ts:2:typescript_preview".to_string(),
             canonical_gap: None,
             probe: Probe {
+                before_condition: None,
                 id: ProbeId("probe:src_pricing.ts:2:typescript_preview".to_string()),
                 location: SourceLocation::new("src/pricing.ts", 2, 1),
                 owner: Some(crate::domain::SymbolId(

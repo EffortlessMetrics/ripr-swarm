@@ -14,7 +14,7 @@ use std::path::Path;
 ///
 /// One owner for card, stub, and packet JSON refusals (#9127): terminal-safe
 /// JSON, a trailing newline, then the chunked stdout writer.
-pub(super) fn write_stdout_refusal_json(document: String) -> Result<(), String> {
+pub(in crate::cli) fn write_stdout_refusal_json(document: String) -> Result<(), String> {
     write_stdout_chunked(&prepared_stdout_refusal_json(document))
 }
 
@@ -47,7 +47,42 @@ pub(super) fn analysis_outcome_exit_result(
     Ok(())
 }
 
+fn root_metadata_refusal(root: &Path, command_name: &str, error: &std::io::Error) -> String {
+    // NotFound and NotADirectory (ENOTDIR: a file-typed parent such as
+    // `file.txt/sub`) both prove the root is not an existing directory, so
+    // they keep the plain wording; any other kind names the io error.
+    if matches!(
+        error.kind(),
+        std::io::ErrorKind::NotFound | std::io::ErrorKind::NotADirectory
+    ) {
+        return format!(
+            "{command_name} root {} is not a directory; pass the directory that contains the workspace (for a Cargo.toml path, its parent directory)",
+            root.display()
+        );
+    }
+    format!(
+        "{command_name} root {} could not be inspected ({:?}: {error}), so it is not confirmed to be a directory; pass the directory that contains the workspace (for a Cargo.toml path, its parent directory)",
+        root.display(),
+        error.kind()
+    )
+}
+
+/// The shared root gate for a command that writes under `target/ripr`: the
+/// directory check of [`ensure_command_root_dir`] plus the output-containment
+/// check, so a checked-in `target` link cannot redirect its output (#7781).
 pub(super) fn ensure_command_root(root: &Path, command_name: &str) -> Result<(), String> {
+    ensure_command_root_dir(root, command_name)?;
+    // #7781: every command that writes under `target/ripr` shares this
+    // gate, so a checked-in `target` link cannot redirect its output.
+    crate::atomic_file::ensure_default_output_contained(root)
+        .map_err(|error| format!("{command_name}: {error}"))
+}
+
+/// The directory-only part of [`ensure_command_root`] (#15249): refuse a
+/// missing or non-directory `--root` with the shared wording naming the command
+/// actually run. A read-only command uses this form so a hostile `target` link
+/// it never writes through does not refuse it.
+pub(super) fn ensure_command_root_dir(root: &Path, command_name: &str) -> Result<(), String> {
     // Detected once: every branch below keys on the same typed components.
     let stripped = windows_stripped_components(root);
     match std::fs::metadata(root) {
@@ -60,10 +95,6 @@ pub(super) fn ensure_command_root(root: &Path, command_name: &str) -> Result<(),
             if let Some(note) = windows_root_rebind_note(root, command_name) {
                 eprintln!("{note}");
             }
-            // #7781: every command that writes under `target/ripr` shares this
-            // gate, so a checked-in `target` link cannot redirect its output.
-            crate::atomic_file::ensure_default_output_contained(root)
-                .map_err(|error| format!("{command_name}: {error}"))?;
             Ok(())
         }
         // Metadata resolved, so the typed name addresses an existing entry.
@@ -121,10 +152,16 @@ pub(super) fn ensure_command_root(root: &Path, command_name: &str) -> Result<(),
                 ))
             }
         }
-        Ok(_) | Err(_) => Err(format!(
+        // The path exists but is not a directory.
+        Ok(_) => Err(format!(
             "{command_name} root {} is not a directory; pass the directory that contains the workspace (for a Cargo.toml path, its parent directory)",
             root.display()
         )),
+        // Metadata failed. NotFound and NotADirectory prove the root is not a
+        // directory, so the existing wording stands; any other kind
+        // (permissions, a transient sharing violation) does not prove the path is a
+        // non-directory, so the refusal names the actual io error.
+        Err(error) => Err(root_metadata_refusal(root, command_name, &error)),
     }
 }
 
@@ -233,20 +270,38 @@ pub(super) fn load_root_input_and_config(root: &Path) -> Result<(CheckInput, Rip
 /// underlying write small enough to avoid that limit. Write errors are
 /// returned as `Err` rather than panicking, so a failed write surfaces as
 /// a normal CLI error instead of aborting the process.
+///
+/// Test builds must publish through the capture-aware `print!` path. libtest
+/// intercepts only the macro route; raw Write-handle bytes reach the real
+/// stdout, where an in-process command document interleaves with a concurrent
+/// `test NAME ... ok` row and the fail-closed windows-advisory summarizer
+/// rejects the whole run as an unrecognized observation (nightly
+/// 41778491177, run 1, #9272: `test cli::commands::check::tests::
+/// enclosing_workspace_does_not_claim_a_nested_repository ... {`). Production
+/// keeps the handle path: a closed stdout stays a returned `Err` instead of a
+/// `print!` panic, and the chunked writes stay bounded for the console limit.
 pub(super) fn write_stdout_chunked(text: &str) -> Result<(), String> {
     crate::analysis::cancellation::begin_cli_publication()?;
-    use std::io::Write;
-    const CHUNK: usize = 16 * 1024;
-    let stdout = std::io::stdout();
-    let mut handle = stdout.lock();
-    for chunk in text.as_bytes().chunks(CHUNK) {
-        handle
-            .write_all(chunk)
-            .map_err(|err| format!("write to stdout failed: {err}; check the reader of ripr's output is still open, then rerun"))?;
+    #[cfg(test)]
+    {
+        print!("{text}");
+        Ok(())
     }
-    handle
-        .flush()
-        .map_err(|err| format!("flush stdout failed: {err}; check the reader of ripr's output is still open, then rerun"))
+    #[cfg(not(test))]
+    {
+        use std::io::Write;
+        const CHUNK: usize = 16 * 1024;
+        let stdout = std::io::stdout();
+        let mut handle = stdout.lock();
+        for chunk in text.as_bytes().chunks(CHUNK) {
+            handle
+                .write_all(chunk)
+                .map_err(|err| format!("write to stdout failed: {err}; check the reader of ripr's output is still open, then rerun"))?;
+        }
+        handle
+            .flush()
+            .map_err(|err| format!("flush stdout failed: {err}; check the reader of ripr's output is still open, then rerun"))
+    }
 }
 
 /// Typed refusal for a [`load_for_root`] failure (#6834, shared #7331).
@@ -297,6 +352,40 @@ pub(super) fn refuse_json_envelope_checked(
     base: Option<&str>,
     error: impl Into<crate::core_error::CoreError>,
 ) -> Result<String, String> {
+    refuse_json_envelope_checked_with_format(
+        schema_version,
+        scope,
+        mode,
+        root,
+        base,
+        error,
+        crate::app::OutputFormat::Json,
+    )
+}
+
+/// Render the existing refusal with the requested JSON presentation.
+pub(super) fn refuse_json_envelope_with_format(
+    schema_version: &'static str,
+    scope: &'static str,
+    mode: Option<&'static str>,
+    root: &Path,
+    base: Option<&str>,
+    error: impl Into<crate::core_error::CoreError>,
+    format: crate::app::OutputFormat,
+) -> String {
+    refuse_json_envelope_checked_with_format(schema_version, scope, mode, root, base, error, format)
+        .unwrap_or_else(|failure| failure)
+}
+
+fn refuse_json_envelope_checked_with_format(
+    schema_version: &'static str,
+    scope: &'static str,
+    mode: Option<&'static str>,
+    root: &Path,
+    base: Option<&str>,
+    error: impl Into<crate::core_error::CoreError>,
+    format: crate::app::OutputFormat,
+) -> Result<String, String> {
     let error = error.into();
     let rendered = crate::output::limited_check::render_refusal_envelope(
         &crate::output::limited_check::RefusalEnvelopeContext {
@@ -309,7 +398,9 @@ pub(super) fn refuse_json_envelope_checked(
         &error,
     );
     match rendered {
-        Ok(document) => write_stdout_refusal_json(document)?,
+        Ok(document) => {
+            write_stdout_refusal_json(crate::output::compact_json::finish(document, &format))?
+        }
         Err(render) => return Err(render),
     }
     Ok(error.to_string())
@@ -318,6 +409,31 @@ pub(super) fn refuse_json_envelope_checked(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_metadata_failure_other_than_not_found_names_the_io_error() {
+        let root = Path::new("fx");
+        let denied = std::io::Error::new(std::io::ErrorKind::PermissionDenied, "sharing violation");
+        let message = root_metadata_refusal(root, "check", &denied);
+        assert!(message.contains("PermissionDenied"), "{message}");
+        assert!(message.contains("sharing violation"), "{message}");
+        assert!(!message.contains("is not a directory;"), "{message}");
+
+        let missing = std::io::Error::new(std::io::ErrorKind::NotFound, "gone");
+        let message = root_metadata_refusal(root, "check", &missing);
+        assert!(
+            message.contains("is not a directory; pass the directory"),
+            "{message}"
+        );
+
+        let file_parent = std::io::Error::new(std::io::ErrorKind::NotADirectory, "not a dir");
+        let message = root_metadata_refusal(root, "check", &file_parent);
+        assert!(
+            message.contains("is not a directory; pass the directory"),
+            "{message}"
+        );
+        assert!(!message.contains("could not be inspected"), "{message}");
+    }
 
     struct Guard(std::path::PathBuf);
     impl Drop for Guard {
@@ -725,6 +841,79 @@ mod tests {
         assert!(error.contains("\"x.\" normalizes to \"x\""), "{error}");
         assert!(error.contains("\"y.\" normalizes to \"y\""), "{error}");
         assert!(error.contains("pass a path without them"), "{error}");
+        Ok(())
+    }
+
+    // Probe child for `stdout_publication_is_captured_in_test_builds`: it
+    // publishes a marker document through the shared stdout owner. Inside a
+    // captured harness run the bytes must land in libtest's capture buffer —
+    // dropped for a passing test — never in the piped stdout the parent reads.
+    #[test]
+    fn stdout_capture_probe_writes_a_document() -> Result<(), String> {
+        write_stdout_chunked("{\"probe\":\"stdout-capture\",\"run_status\":\"captured\"}\n")
+    }
+
+    // The fail-closed windows-advisory summarizer parses `test NAME ... ok`
+    // rows out of the streamed cargo log (#9272). libtest intercepts only the
+    // macro publication route, so raw Write-handle stdout bytes from an
+    // in-process command run interleave with a concurrent row and the
+    // summarizer refuses the whole run as an unrecognized observation
+    // (nightly 41778491177, run 1: `test cli::commands::check::tests::
+    // enclosing_workspace_does_not_claim_a_nested_repository ... {`). The
+    // test-build owners route through the capture-aware macro path; this pin
+    // re-executes this test harness as a child whose stdout is a pipe (the
+    // established re-exec pattern: git.rs flood/hang, cli_smoke stdin_probe)
+    // and fails when document bytes escape into it. Renaming a pinned child
+    // test requires renaming its exact name here with it.
+    #[test]
+    fn stdout_publication_is_captured_in_test_builds() -> Result<(), String> {
+        let harness = std::env::current_exe()
+            .map_err(|err| format!("resolve the current test harness: {err}"))?;
+        let children: [(&str, &[&str]); 2] = [
+            (
+                // Direct call into the shared publication owner.
+                "cli::commands_context::tests::stdout_capture_probe_writes_a_document",
+                &["\"probe\":\"stdout-capture\"", "run_status"],
+            ),
+            (
+                // The real streamed repo-exposure publication site.
+                "cli::commands::check::tests::check_repo_exposure_json_streams_output",
+                &["\"content_sha256\"", "\"seam_kind\""],
+            ),
+        ];
+        for (child_test, markers) in children {
+            let output = std::process::Command::new(&harness)
+                .args(["--exact", child_test, "--test-threads=1"])
+                // The pin is about capture; an ambient nocapture switch would
+                // print the marker through the macro route and false-fail it.
+                .env_remove("RUST_TEST_NOCAPTURE")
+                .output()
+                .map_err(|err| format!("spawn capture child harness for {child_test}: {err}"))?;
+            if !output.status.success() {
+                return Err(format!(
+                    "capture child harness failed for {child_test} ({}): {}",
+                    output.status,
+                    String::from_utf8_lossy(&output.stderr)
+                ));
+            }
+            let stdout = String::from_utf8_lossy(&output.stdout);
+            // The exact success row, not the summary line: `test result: ok`
+            // also follows an ignored child, which would false-pass the pin.
+            let success_row = format!("test {child_test} ... ok");
+            if !stdout.contains(&success_row) {
+                return Err(format!(
+                    "the pinned child test did not pass in the child harness (rename it here with the source): {stdout}"
+                ));
+            }
+            for marker in markers {
+                if stdout.contains(marker) {
+                    return Err(format!(
+                        "raw document bytes escaped libtest capture into the child harness stdout (marker {marker} present); \
+                         the test-build stdout publication must keep the capture-aware macro route (see write_stdout_chunked): {stdout}"
+                    ));
+                }
+            }
+        }
         Ok(())
     }
 }

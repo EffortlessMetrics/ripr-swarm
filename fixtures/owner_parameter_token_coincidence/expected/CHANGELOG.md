@@ -362,3 +362,51 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — owner_parameter_token_coincidence (29)
+
+Reason:
+RIPR-SPEC-0423: additive evidence_stages rows and agent stages= line; human rendering unchanged
+
+Command:
+`cargo xtask goldens bless owner_parameter_token_coincidence --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
+
+## Pending — owner_parameter_token_coincidence (30)
+
+Reason:
+RIPR-SPEC-0423: additive evidence_stages rows and agent stages= line; no test attribution; human rendering unchanged
+
+Command:
+`cargo xtask goldens bless owner_parameter_token_coincidence --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
+
+## Pending — owner_parameter_token_coincidence (31)
+
+Reason:
+RIPR-SPEC-0224 #14483: the JSON oracle summary and the Related test headline rank rows by the shared observation tier, so a no_call_path or assertion_not_observing row no longer speaks for the finding while a row that reaches the change is listed
+
+Command:
+`cargo xtask goldens bless owner_parameter_token_coincidence --reason "..."`
+
+Updated:
+- `expected/check.json`
+
+## Pending — owner_parameter_token_coincidence (32)
+
+Reason:
+RIPR-SPEC-0122: the top-gap Safe next action points at the Next step the digest prints (#14173)
+
+Command:
+`cargo xtask goldens bless owner_parameter_token_coincidence --reason "..."`
+
+Updated:
+- `expected/human.txt`

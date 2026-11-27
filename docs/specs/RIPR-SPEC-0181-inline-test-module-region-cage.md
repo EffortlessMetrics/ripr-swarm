@@ -100,6 +100,19 @@ target only through this cage:
   `inline_test_module_target`. Any other production path, and any second
   allowed path that is not a test surface, is still refused before a cage
   exists.
+- A test surface is a path of the shared test-file conventions, or (#15910)
+  the entry file of a Cargo `[[test]]` target the nearest package manifest
+  declares outside them (`[[test]] path = "spec/pricing.rs"`). The manifest
+  half is read at the gate (`edit_cage_policy_from_packet_in`) and again by
+  the before phase, never taken from the packet: it admits only a Rust file
+  outside `src/`, `benches/`, `examples/`, `xtask/` and the non-source
+  directories, that `cargo test` runs through libtest, and that the manifest
+  names as no other target's root or build script. Such a file is an external
+  test-file target (`declared_cargo_test_target` on the policy) under the
+  same pure-insertion confinement as a `tests/` file. The producer records
+  the same answer on the related test (`test_kind: declared_integration`), so
+  `ripr check`, the repair card and the packet offer the start the gate
+  admits.
 - The before phase (`capture_attempt_baseline`) reads the file through the
   same no-follow containment, refuses a generated file (built-in naming or
   the repository's configured `generated_file_patterns`, which the seam

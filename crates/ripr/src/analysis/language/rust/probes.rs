@@ -15,6 +15,8 @@ use crate::analysis::probes::{
 };
 use crate::domain::{ExposureClass, Finding, Probe, StaticLimitKind, StopReason};
 
+mod mask_memo;
+
 /// RIPR-SPEC-0369: a changed line inside a `verus! { .. }` token tree is Verus
 /// syntax, not Rust. The probe seeder already emits one `static_unknown` probe
 /// per region; this names the limitation. It never changes the class, so the
@@ -382,8 +384,8 @@ pub(super) fn attach_changed_binding_predicate_evidence(
         _ => format!("`{}`", relation.initializer),
     };
     finding.evidence.push(format!(
-        "binding_predicate_relation: changed binding `{}` initializer {initializer_range} flows into predicate operand at line {}",
-        relation.binding, relation.predicate_line
+        "binding_predicate_relation: changed binding `{}` initializer {initializer_range} flows into predicate operand at line {} (changed `let {}` declared at line {})",
+        relation.binding, relation.predicate_line, relation.binding, relation.binding_line
     ));
     if !literal_byte_length_resolves(finding, relation)
         && let BindingValueResolution::Unresolved { earliest_operation } =
@@ -538,7 +540,15 @@ fn contains_identifier_token(text: &str, ident: &str) -> bool {
         .any(|token| token == ident)
 }
 
+/// `text` with Rust comments and string literals blanked, every byte offset
+/// and newline kept. Answered through a per-thread memo of recent long
+/// texts: every seam of an owner masks the same owner body (#15189).
 pub(crate) fn mask_rust_comments_and_strings(text: &str) -> String {
+    mask_memo::masked(text, scan_rust_comments_and_strings)
+}
+
+/// The uncached masking pass behind [`mask_rust_comments_and_strings`].
+fn scan_rust_comments_and_strings(text: &str) -> String {
     let bytes = text.as_bytes();
     let mut masked = bytes.to_vec();
     let mut index = 0usize;
@@ -961,6 +971,7 @@ mod tests {
             id: "probe:src_lib.rs:binding:test".to_string(),
             canonical_gap: None,
             probe: Probe {
+                before_condition: None,
                 id: ProbeId("probe:src_lib.rs:binding:test".to_string()),
                 location: SourceLocation::new("src/lib.rs", 2, 1),
                 owner: Some(SymbolId(owner.to_string())),
@@ -1155,14 +1166,14 @@ mod tests {
             start_line: 1,
             end_line: 8,
             body: body.into(),
-            calls: vec![],
+            calls: crate::analysis::facts::SharedFactSlice::empty(),
             returns: vec![],
-            literals: vec![],
+            literals: crate::analysis::facts::SharedFactSlice::empty(),
             source_role: FunctionSourceRole::Production,
-            attrs: vec![],
+            attrs: crate::analysis::facts::SharedFactSlice::empty(),
             impl_attrs: Vec::new(),
-            nested_fn_names: Vec::new(),
-            let_bindings: Vec::new(),
+            nested_fn_names: crate::analysis::facts::SharedFactSlice::empty(),
+            let_bindings: crate::analysis::facts::SharedFactSlice::empty(),
             impl_context: Default::default(),
             item: Default::default(),
         }
@@ -1306,6 +1317,7 @@ mod tests {
 
         let relation = ChangedBindingPredicateUse {
             binding: "end".to_string(),
+            binding_line: 2,
             initializer: "input.rfind(delim).map_or(0, |idx| idx)".to_string(),
             predicate_expression: "end == start".to_string(),
             predicate_line: 4,
@@ -1319,7 +1331,7 @@ mod tests {
         assert_eq!(finding.static_limit_kind, None);
         assert!(finding.stop_reasons.is_empty());
         assert!(finding.evidence.iter().any(|line| {
-            line == "binding_predicate_relation: changed binding `end` initializer `input.find(delim).map_or(0, |idx| idx)` -> `input.rfind(delim).map_or(0, |idx| idx)` flows into predicate operand at line 4"
+            line == "binding_predicate_relation: changed binding `end` initializer `input.find(delim).map_or(0, |idx| idx)` -> `input.rfind(delim).map_or(0, |idx| idx)` flows into predicate operand at line 4 (changed `let end` declared at line 2)"
         }));
         assert!(finding.evidence.iter().any(|line| {
             line.contains("binding_predicate_value_unresolved: operand value of `end` unresolved at earliest initializer operation `rfind`")

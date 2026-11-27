@@ -129,6 +129,11 @@ refusal is the honest resolution.
   or a `--at --kind` file-parse selection with no classified entry), the
   ready document omits `next_repair` and the human output prints no
   repair line; no route is invented.
+- A `--seam-id` stub resolves a seam past the workspace seam cap (#14369),
+  but `ripr agent repair --phase before` reads the capped inventory and
+  refuses that seam. Such a stub stands and omits `next_repair`; a seam
+  inside the cap keeps its pointer, and the pointed-to start runs. The
+  same gap on `--at FILE:LINE` is tracked by #14377.
 - `agent stub --write` on a seam whose placement diverges from the packet
   surface refuses before writing, names both files and the supported
   route, and leaves the tree untouched.
@@ -150,6 +155,8 @@ refusal is the honest resolution.
   (extended: an agreeing placement omits `placement_divergence` entirely)
 - `crates/ripr/src/cli/commands/agent_stub.rs::tests::divergence_warning_names_both_files_and_the_consequence`
 - `crates/ripr/src/cli/commands/agent_stub.rs::tests::divergent_write_refuses_before_writing_with_actionable_guidance`
+- `crates/ripr/tests/agent_stub_compiles.rs::seam_id_stub_names_a_repair_start_only_when_the_capped_before_phase_finds_it`
+  (past the cap the stub omits the pointer the capped before phase would refuse; in cap it runs)
 
 ## Acceptance Examples
 

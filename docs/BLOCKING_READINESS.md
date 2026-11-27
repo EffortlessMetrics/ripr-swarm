@@ -110,6 +110,13 @@ that changed the decision.
 Preview-language findings can be acknowledged as advisory review context, but
 acknowledgement does not promote them into gate eligibility.
 
+A changed test keeps a policy-eligible gap advisory only when that test
+reaches the gap's owner: the diff touched a test function that calls the
+owner directly, through a helper, or through a verified re-export chain.
+Editing an unrelated test, even one in the same file, leaves the gap
+eligible to block, so touching tests near a change is not a way around the
+gate (RIPR-SPEC-0014, #13893).
+
 ## Use Baseline Check
 
 Use `baseline-check` after the repository has reviewed current gate output and

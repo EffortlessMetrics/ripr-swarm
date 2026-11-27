@@ -75,6 +75,11 @@ verification step.
    `{ "status": "not_actionable_or_incomplete", "reason": "..." }`
    sentinel when the gap is not actionable or the packet is incomplete.
    Never emits a partial packet.
+6. When neither artifact holds a packet (#13636), emits the same sentinel
+   with a `reason` that names both artifact paths and the per-change route:
+   `ripr check --root .` to list the gaps, then the repair start `check`
+   prints for one (`ripr repair <id> --root .` for Rust). It does not point
+   at the whole-repo `ripr pilot` or gap-ledger recipes.
 
 ### Actionable verification provenance
 
@@ -183,7 +188,10 @@ Not-actionable / incomplete sentinel:
 
 ## Acceptance Examples
 
-1. No artifact on disk → null (no sentinel, no packet).
+1. No current analysis snapshot → `analysis_snapshot_stale` sentinel (no
+   packet). A current snapshot with no artifact on disk →
+   `not_actionable_or_incomplete` sentinel whose `reason` names both
+   artifact paths and the `ripr check` route (Behavior item 6; no packet).
 2. Actionable-gaps.json with missing `receipt_command` → sentinel with
    `status: "not_actionable_or_incomplete"`.
 3. Well-formed actionable-gaps.json → full packet with real integer
@@ -197,7 +205,8 @@ Not-actionable / incomplete sentinel:
 
 ## Test Mapping
 
-- `crates/ripr/src/lsp/tests.rs::execute_command_collect_repair_packet_no_snapshot_and_no_file_returns_null`
+- `crates/ripr/src/lsp/tests.rs::execute_command_collect_repair_packet_no_snapshot_and_no_file_returns_sentinel`
+- `crates/ripr/src/lsp/tests.rs::execute_command_collect_repair_packet_without_a_packet_source_names_the_route`
 - `crates/ripr/src/lsp/tests.rs::execute_command_collect_repair_packet_incomplete_gap_returns_sentinel`
 - `crates/ripr/src/lsp/tests.rs::execute_command_collect_repair_packet_complete_gap_returns_full_packet`
 - `crates/ripr/src/lsp/tests.rs::execute_command_collect_repair_packet_registered_in_capabilities`
@@ -231,6 +240,8 @@ Not-actionable / incomplete sentinel:
 
 ## Failure Modes
 
-- No artifact on disk → null (safe fallback, not an error).
+- No current snapshot → `analysis_snapshot_stale` sentinel; current snapshot
+  but no artifact on disk → sentinel naming the `ripr check` route. Neither is
+  an error, and neither is a packet.
 - Incomplete packet → sentinel, never a partial packet.
 - `source_location` line is zero or absent → `source_location_unresolved`, never fabricated.

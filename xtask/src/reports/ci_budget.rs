@@ -324,17 +324,18 @@ fn run_routed_lane(run: &RawRun) -> &'static str {
 }
 
 /// Classify a failed run's failure from its log text. The disk-guard signal
-/// (issue #1058) wins over everything: a "disk guard" message or exit 75 is
-/// always infrastructure, never a product failure.
+/// (issue #1058) takes precedence only in runtime output. GitHub's command
+/// previews contain unexecuted branches and are not failure evidence.
 fn classify_failure(log: &str) -> &'static str {
-    let lower = log.to_lowercase();
+    let runtime = runtime_log(log);
+    let lower = runtime.to_lowercase();
     if lower.contains("disk guard")
         || lower.contains("disk-guard")
         || lower.contains("exit 75")
         || lower.contains("exit code 75")
     {
         "infra_disk_guard"
-    } else if log.trim().is_empty() {
+    } else if runtime.trim().is_empty() {
         "unknown"
     } else if lower.contains("lost communication")
         || lower.contains("received a shutdown signal")
@@ -348,9 +349,53 @@ fn classify_failure(log: &str) -> &'static str {
     }
 }
 
+/// Retain runtime output and ordinary diagnostic groups, excluding only the
+/// runner's `Run ...` command-preview groups (including their environment).
+fn runtime_log(log: &str) -> String {
+    let mut preview_depth = 0usize;
+    let mut output = String::new();
+    for line in log.lines() {
+        let message = runner_log_message(line);
+        if preview_depth > 0 {
+            if message.starts_with("##[group]") {
+                preview_depth = preview_depth.saturating_add(1);
+            } else if message == "##[endgroup]" {
+                preview_depth -= 1;
+            }
+        } else if message == "##[group]Run"
+            || message.starts_with("##[group]Run ")
+            || message.starts_with("##[group]Run\t")
+        {
+            // A script whose first line is blank opens as `##[group]Run `
+            // with nothing after the space; trimming yields the bare marker.
+            preview_depth = 1;
+        } else {
+            output.push_str(line);
+            output.push('\n');
+        }
+    }
+    output
+}
+
+fn runner_log_message(line: &str) -> &str {
+    // `gh run view --log-failed` prepends job, step, and UTC timestamp.
+    // Raw/offline logs may omit either prefix. Do not recognize marker text
+    // embedded in an echoed shell statement as an actual runner marker.
+    let payload = line.splitn(3, '\t').nth(2).unwrap_or(line).trim();
+    if let Some((timestamp, message)) = payload.split_once(' ')
+        && timestamp.ends_with('Z')
+        && timestamp.as_bytes().get(4) == Some(&b'-')
+        && timestamp.contains('T')
+    {
+        return message.trim();
+    }
+    payload
+}
+
 /// Extract the GB-free figure reported near a disk-guard message, if present.
 fn extract_disk_guard_gb_free(log: &str) -> Option<f64> {
-    let lines: Vec<&str> = log.lines().collect();
+    let runtime = runtime_log(log);
+    let lines: Vec<&str> = runtime.lines().collect();
     for (index, line) in lines.iter().enumerate() {
         let lower = line.to_lowercase();
         if lower.contains("disk guard")
@@ -846,6 +891,70 @@ fn markdown_cell(text: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn command_preview_is_not_failure_evidence() -> Result<(), String> {
+        let log = "job\tstep\t2026-11-06T00:00:00Z ##[group]Run status=pass\n\
+                   job\tstep\t2026-11-06T00:00:00Z message=\"disk-guard tempfailed; 12 GB free; exit 75\"\n\
+                   job\tstep\t2026-11-06T00:00:00Z echo runner_capacity_unavailable\n\
+                   job\tstep\t2026-11-06T00:00:00Z ##[endgroup]\n\
+                   job\tstep\t2026-11-06T00:00:01Z test result: FAILED\n";
+        if classify_failure(log) != "product" || extract_disk_guard_gb_free(log).is_some() {
+            return Err("echoed shell source was credited as a disk-guard failure".to_string());
+        }
+        let actual_guard = format!("{log}##[warning]disk guard tempfail; 8 GB free\n");
+        if classify_failure(&actual_guard) != "infra_disk_guard"
+            || extract_disk_guard_gb_free(&actual_guard) != Some(8.0)
+        {
+            return Err("actual disk-guard output was lost after a command preview".to_string());
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn blank_first_line_command_preview_is_not_failure_evidence() -> Result<(), String> {
+        // A script whose first line is blank opens as `##[group]Run ` with
+        // nothing after the space; trimming must not lose the opener.
+        let log =
+            "##[group]Run \nci-disk-guard /mnt/ci-scratch 35\n##[endgroup]\ntest result: FAILED\n";
+        if classify_failure(log) != "product" || extract_disk_guard_gb_free(log).is_some() {
+            return Err("blank-first-line preview was credited as runtime evidence".to_string());
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn command_preview_does_not_hide_real_runner_shutdown() -> Result<(), String> {
+        let preview =
+            "##[group]Run echo 'lost communication'\nreceived a shutdown signal\n##[endgroup]\n";
+        if classify_failure(&format!("{preview}test result: FAILED")) != "product" {
+            return Err(
+                "echoed runner diagnostic was credited as infrastructure failure".to_string(),
+            );
+        }
+        if classify_failure(&format!(
+            "{preview}The runner has received a shutdown signal"
+        )) != "infra_other"
+        {
+            return Err("actual runner shutdown was lost after a command preview".to_string());
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn preview_filter_preserves_diagnostic_groups_and_refuses_incomplete_previews()
+    -> Result<(), String> {
+        let log = "##[group]Run shell command\necho ##[endgroup]\n##[group]nested preview\ndisk guard\n##[endgroup]\n##[endgroup]\n##[group]Diagnostics\ntest result: FAILED\n##[endgroup]\n";
+        if runtime_log(log) != "##[group]Diagnostics\ntest result: FAILED\n##[endgroup]\n"
+            || classify_failure(log) != "product"
+        {
+            return Err("preview filtering changed an ordinary diagnostic group".to_string());
+        }
+        if classify_failure("##[group]Run echo disk-guard\nexit 75") != "unknown" {
+            return Err("an incomplete command preview supplied failure evidence".to_string());
+        }
+        Ok(())
+    }
 
     fn run_list_sample() -> &'static str {
         r#"[

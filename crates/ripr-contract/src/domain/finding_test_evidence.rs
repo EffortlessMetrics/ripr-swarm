@@ -120,6 +120,7 @@ mod tests {
                 normalized_discriminator: "amount == threshold".to_string(),
             }),
             probe: Probe {
+                before_condition: None,
                 id: ProbeId("probe:pricing".to_string()),
                 location: SourceLocation::new("src/pricing.rs", 12, 5),
                 owner: None,
@@ -141,10 +142,12 @@ mod tests {
                 observed_values: Vec::new(),
                 missing_discriminators: missing_discriminators
                     .iter()
-                    .map(|value| MissingDiscriminatorFact {
-                        value: (*value).to_string(),
-                        reason: "fixture".to_string(),
-                        flow_sink: None,
+                    .map(|value| {
+                        MissingDiscriminatorFact::equality_spelled(
+                            (*value).to_string(),
+                            "fixture".to_string(),
+                            None,
+                        )
                     })
                     .collect(),
             },

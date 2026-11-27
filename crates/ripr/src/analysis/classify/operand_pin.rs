@@ -13,6 +13,10 @@
 
 mod primitive_binding;
 use primitive_binding::TypeSite;
+pub(super) use primitive_binding::{
+    callable_context_is_closed, closed_primitive_parameters, declared_return_is_primitive,
+    enum_constructor_context_is_closed,
+};
 
 use super::super::rust_index::{RustIndex, TestSummary};
 use crate::analysis::facts::{FunctionContainer, FunctionSummary};
@@ -1018,11 +1022,11 @@ mod tests {
             file: "src/lib.rs".into(),
             start_line: 1,
             end_line: body_lines.len(),
-            calls: Vec::new(),
-            literals: Vec::new(),
-            attrs: Vec::new(),
-            nested_fn_names: Vec::new(),
-            let_bindings: Vec::new(),
+            calls: crate::analysis::facts::SharedFactSlice::empty(),
+            literals: crate::analysis::facts::SharedFactSlice::empty(),
+            attrs: crate::analysis::facts::SharedFactSlice::empty(),
+            nested_fn_names: crate::analysis::facts::SharedFactSlice::empty(),
+            let_bindings: crate::analysis::facts::SharedFactSlice::empty(),
             generated: None,
         }
     }

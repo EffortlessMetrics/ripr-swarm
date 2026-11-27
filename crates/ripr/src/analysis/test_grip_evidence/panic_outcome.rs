@@ -49,8 +49,7 @@ pub(super) fn deciding_tests<'a>(
 
 fn clause(tests: &[String]) -> String {
     format!(
-        "{} ({} passes only if something panics, and ripr does not resolve whether the changed code causes that panic), so no gap is reported",
-        LIMIT.as_str(),
+        "({} passes only if something panics, and ripr does not resolve whether the changed code causes that panic), so no gap is reported",
         tests.join(", ")
     )
 }
@@ -69,10 +68,12 @@ pub(super) fn withhold(seam: &RepoSeam, evidence: &mut TestGripEvidence, tests: 
     {
         return false;
     }
+    evidence.discriminate.static_limit_kind = Some(LIMIT);
     evidence.discriminate.summary = format!(
-        "{}; Discrimination unresolved: {}",
-        evidence.discriminate.summary,
-        clause(tests)
+        "{}: {}; Original discrimination: {}",
+        LIMIT.as_str(),
+        clause(tests),
+        evidence.discriminate.summary
     );
     true
 }

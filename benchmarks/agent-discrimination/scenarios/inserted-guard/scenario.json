@@ -1,0 +1,30 @@
+{
+  "schema_version": "ripr-agent-discrimination-scenario-v1",
+  "scenario": "inserted-guard",
+  "crate_name": "inserted-guard",
+  "title": "Inserted guard: negative amounts return zero from total_after_fee",
+  "initial_commit_message": "Initial pricing helpers with baseline tests",
+  "change_commit_message": "Return zero for negative amounts in total_after_fee",
+  "changed_files": [
+    "src/lib.rs"
+  ],
+  "baseline_tests_discriminate": false,
+  "deterministic_identity": {
+    "author": "agent-bench <agent-bench@local>",
+    "commit_1_date": "2026-11-04T15:50:04-05:00",
+    "commit_2_date": "2026-11-04T15:50:08-05:00",
+    "reproduces_seed_study_head": "86625387aaf5908ada16a691fe11b2e1616f86ad"
+  },
+  "source": "Validated Nov 2-4 agent-efficiency study harness on the recording host, encoded with the issue #13113 validity fixes.",
+  "seed_study_context_bytes_original_capture": {
+    "vanilla.txt": 1178,
+    "ripr-context.txt": 5128,
+    "tool-note.txt": 1120
+  },
+  "checked_in_context_bytes": {
+    "vanilla.txt": 1178,
+    "ripr-context.txt": 5116,
+    "tool-note.txt": 1096
+  },
+  "checked_in_context_bytes_note": "ripr-context.txt and tool-note.txt were sanitized at encode time (machine path prefixes -> placeholders, see results/seed-study/README.md); vanilla.txt bytes are unmodified, so its checked-in bytes equal the study capture."
+}

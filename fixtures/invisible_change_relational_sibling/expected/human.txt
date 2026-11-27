@@ -9,7 +9,7 @@ Analysis outcome: findings below (analysis complete)
 
 Start here:
   State: a test gap to inspect or repair
-  Safe next action: inspect or repair the selected non-exposed gap; this is static advisory evidence only
+  Safe next action: follow the Next step below; this is static advisory evidence only
   File: ./src/lib.rs:2
   Static exposure: weak (severity: warning, confidence 0.92)
   Why weak: a related test reaches this change, but no assertion tells the old and new behavior apart
@@ -33,7 +33,7 @@ Start here:
       base-side = evidence from the old code, not an edit target; candidate line = changed line ripr considers
     - reach yes: Related tests appear to reach backoff_ms: first_attempt_waits_the_base, retries_grow_past_the_first_wait
     - infection weak: Every related test's assertions hold with the same truth value on the baseline and the change, so no assertion tells the versions apart
-    - 11 more detail line(s) in --format human-full
+    - 12 more detail line(s) in --format human-full
 
 Next: drill into the top finding:
   (finding id, for explain/context)

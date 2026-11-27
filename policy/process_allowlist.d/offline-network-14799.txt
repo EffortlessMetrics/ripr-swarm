@@ -1,0 +1,1 @@
+crates/ripr/tests/cli_smoke/offline_network.rs|Command::new|5|offline-network|#14799: no-network proof runs the built ripr binary (optionally under `unshare -rn`, which only removes network access) with a proxy/GIT_ALLOW_PROTOCOL seal, builds local git fixtures, and probes `unshare -rn true` once. No network, no shell.

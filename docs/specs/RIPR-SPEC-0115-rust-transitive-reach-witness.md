@@ -232,7 +232,7 @@ requirements in this spec remain unchanged.
    includes "the test `test_uses_outer` (tests/it.rs:NN) calls `outer`, an entry point that may
    lead here." Fixture: `fixtures/rust_transitive_reach_positive/` (re-blessed: message-only drift).
 
-2. **Test-helper public API chain (witness named)**: an integration test calls a helper,
+2. [abstain] **Test-helper public API chain (witness named)**: an integration test calls a helper,
    the helper calls a public API function, and that API flows through internal helpers to
    the changed owner within the bounded walk. Result: `no_static_path` +
    `static_limit_kind: rust_transitive_reach_unresolved`, and the evidence names the helper

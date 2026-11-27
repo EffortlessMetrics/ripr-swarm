@@ -31,7 +31,7 @@
     }
    },
    "head-no-ignore": {
-    "commit": "7831d6f6e31fe47fad83d204f8644bd9618f2bb4",
+    "commit": "7eaa951e85de8ede45441272f06fb99327440416",
     "tree": "36e9bee8d075276b344af3389b3ad76510b2f930",
     "files": {
      "Cargo.toml": "fe2217ea6b4f2cc34ca43a7b8e2b277a417fed51a0a4912333f9bbe2a1e5a89d",
@@ -46,9 +46,34 @@
    "GIT_AUTHOR_DATE=2026-10-01T00:00:00Z GIT_COMMITTER_DATE=2026-10-01T00:00:00Z git commit -m 'base: exclusive gold-tier boundary with below/above tests'",
    "write the head snapshot files (repository/head/*) and `git add -A`",
    "GIT_AUTHOR_DATE=2026-10-01T00:01:00Z GIT_COMMITTER_DATE=2026-10-01T00:01:00Z git commit -m 'head: move gold-tier boundary to include exactly 20; ignore cargo build output'",
-   "branch variant/no-ignore at the base commit, check out the head src/lib.rs without .gitignore, and commit with the same fixed dates to reproduce the variant commit"
+   "branch variant/no-ignore at the base commit, write repository/head-no-ignore/* without .gitignore, git add -A, and commit using the complete variant_construction_recipe metadata; git commit -m adds one final LF to the message"
   ],
-  "recipe_note": "Pinned author/committer identity, fixed timestamps and core.autocrlf=false make every commit and tree object reproducible; the recorded commit and tree identities were reproduced from this recipe before being committed."
+  "variant_construction_recipe": [
+   {
+    "snapshot": "head-no-ignore",
+    "parent": "base",
+    "branch": "variant/no-ignore",
+    "commit": {
+     "author_name": "ripr fixture",
+     "author_email": "fixture@example.invalid",
+     "author_date": "2026-10-01T00:02:00Z",
+     "committer_name": "ripr fixture",
+     "committer_email": "fixture@example.invalid",
+     "committer_date": "2026-10-01T00:02:00Z",
+     "message": "variant: no-ignore"
+    }
+   }
+  ],
+  "historical_unreproduced_commits": [
+   {
+    "snapshot": "head-no-ignore",
+    "commit": "7831d6f6e31fe47fad83d204f8644bd9618f2bb4",
+    "tree": "36e9bee8d075276b344af3389b3ad76510b2f930",
+    "source": "https://github.com/EffortlessMetrics/ripr-swarm/blob/6220c7e2d1f97e0ed02ec24cda92e0e8e1c341ef/fixtures/blind_journey_installed_rust/manifest.json",
+    "reason": "The retained original recipe omits the variant message and unambiguous author/committer dates. This historical pin was not reproduced or recovered; the active variant uses newly specified canonical metadata over the unchanged tree and base parent."
+   }
+  ],
+  "recipe_note": "The active base/head identities are unchanged. The corrected no-ignore commit is newly constructed, not recovered historical metadata. Rebuild all active snapshots from their exact retained bytes as SHA-1 repositories with core.autocrlf=false, regular 100644 files, pinned identities/dates, commit.cleanup=verbatim, no templates, hooks, signing, inherited repository selectors, global/system config or external ignore rules."
  },
  "journey": {
   "eligible_items": ["seam-tier-boundary-equality"],

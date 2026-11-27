@@ -4,14 +4,54 @@
 use std::path::PathBuf;
 use std::process::Command;
 
+/// The `max-changed-lines` value the workflow actually wires, so the wrapper
+/// tests certify the same cap the gate uses instead of a third copy (#14513).
+fn wired_max_changed_lines() -> Result<String, String> {
+    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("..");
+    let workflow = std::fs::read_to_string(root.join(".github/workflows/routed-rust.yml"))
+        .map_err(|e| e.to_string())?;
+    let mut values = Vec::new();
+    for rest in workflow.split("max-changed-lines:").skip(1) {
+        let rest = rest.trim_start();
+        let rest = rest
+            .strip_prefix('\'')
+            .ok_or_else(|| "max-changed-lines value must be quoted".to_string())?;
+        let end = rest
+            .find('\'')
+            .ok_or_else(|| "max-changed-lines value must close".to_string())?;
+        values.push(rest[..end].to_string());
+    }
+    assert_eq!(values.len(), 2, "expected two max-changed-lines inputs");
+    assert_eq!(values[0], values[1], "max-changed-lines inputs disagree");
+    Ok(values[0].clone())
+}
+
+/// The size fixture's total changed lines: the wired cap plus the 1700-line
+/// exempt lockfile plus 3, so the residual is always just over the cap.
+fn size_fixture_total() -> Result<u64, String> {
+    Ok(wired_max_changed_lines()?
+        .parse::<u64>()
+        .map_err(|e| e.to_string())?
+        + 1700
+        + 3)
+}
+
 fn run_python_control(script: &str, argument: &str, expected: &str) -> Result<(), String> {
+    run_python_args(script, &[std::ffi::OsStr::new(argument)], expected)
+}
+
+fn run_python_args(
+    script: &str,
+    arguments: &[&std::ffi::OsStr],
+    expected: &str,
+) -> Result<(), String> {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("..");
     let path = root
         .join(".github/actions/pr-candidate-admission")
         .join(script);
     let output = Command::new("python3")
         .arg(&path)
-        .arg(argument)
+        .args(arguments)
         .output()
         .map_err(|error| format!("python3 must be available for {script}: {error}"))?;
     let stdout = String::from_utf8_lossy(&output.stdout);
@@ -41,6 +81,39 @@ fn history_sync_scope_real_bash_controls_pass() -> Result<(), String> {
 #[test]
 fn history_sync_live_authorization_controls_pass() -> Result<(), String> {
     run_python_control("test_history_sync_live.py", "-q", "Ran 26 tests in")
+}
+
+#[cfg(unix)]
+#[test]
+fn mechanical_relocation_result_controls_pass() -> Result<(), String> {
+    // #15217: the verified-relocation evidence rules of the Result block.
+    run_python_control("test_relocation_scope.py", "-q", "Ran 7 tests in")
+}
+
+#[test]
+fn mechanical_relocation_verifier_self_test_passes() -> Result<(), String> {
+    run_python_control(
+        "mechanical_relocation.py",
+        "self-test",
+        "mechanical relocation self-test: pass",
+    )
+}
+
+/// #15217: the verifier refuses owners another file loads through `#[path]`
+/// or `include!`; the checked-in list must match a fresh scan of the tree.
+#[test]
+fn mechanical_relocation_indirect_owner_list_is_current() -> Result<(), String> {
+    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("..");
+    run_python_args(
+        "mechanical_relocation.py",
+        &[
+            "indirect-owners".as_ref(),
+            "--check".as_ref(),
+            "--repo".as_ref(),
+            root.as_os_str(),
+        ],
+        "policy/relocation-indirect-owners.txt: current",
+    )
 }
 
 #[test]
@@ -288,7 +361,10 @@ esac
         .env("ADMISSION_EXPECTED_HEAD", "a".repeat(40))
         .env("ADMISSION_DOCS_ONLY", "false")
         .env("ADMISSION_MAX_CHANGED_FILES", "160")
-        .env("ADMISSION_MAX_CHANGED_LINES", "3000")
+        .env("ADMISSION_MAX_CHANGED_LINES", wired_max_changed_lines()?)
+        // #14932: the workflow always hands the anchor in; the mock live ref is
+        // d*40, so that is the pinned trusted source for these controls.
+        .env("ADMISSION_TRUSTED_SHA", "d".repeat(40))
         .env("ADMISSION_MODE", "admit")
         .status()
         .map_err(|e| e.to_string())?;
@@ -737,10 +813,11 @@ case "$url" in
   */contents/*) echo "gh: Not Found (HTTP 404)" >&2; exit 1 ;;
   */files?*) cat "$CONTROL_TMP/files.json" ;;
   */pulls\?state*) echo '[]' ;;
-  *pulls/10) if [ "$jq_arg" = ".head.sha" ]; then if [ "$(cat "$CONTROL_TMP/head_after")" = unreadable ]; then echo "gh: Bad Gateway (HTTP 502)" >&2; exit 1; fi; cat "$CONTROL_TMP/head_after"; else echo '{"number":10,"state":"open","draft":false,"head":{"sha":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","repo":{"full_name":"o/r"}},"base":{"ref":"main","sha":"dddddddddddddddddddddddddddddddddddddddd"},"changed_files":4,"additions":5003,"deletions":0,"body":"Governing issue or accepted claim: #5391\nAcceptance delta (one sentence): size envelope control"}'; fi ;;
+  *pulls/10) if [ "$jq_arg" = ".head.sha" ]; then if [ "$(cat "$CONTROL_TMP/head_after")" = unreadable ]; then echo "gh: Bad Gateway (HTTP 502)" >&2; exit 1; fi; cat "$CONTROL_TMP/head_after"; else echo '{"number":10,"state":"open","draft":false,"head":{"sha":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","repo":{"full_name":"o/r"}},"base":{"ref":"main","sha":"dddddddddddddddddddddddddddddddddddddddd"},"changed_files":4,"additions":__TOTAL__,"deletions":0,"body":"Governing issue or accepted claim: #5391\nAcceptance delta (one sentence): size envelope control"}'; fi ;;
   *) echo '{}' ;;
 esac
 "#;
+    let gh = gh.replace("__TOTAL__", &size_fixture_total()?.to_string());
     std::fs::write(tmp.join("gh"), gh).map_err(|e| e.to_string())?;
     let _ = Command::new("chmod").arg("+x").arg(tmp.join("gh")).status();
     // Python's subprocess cannot launch an extensionless script on Windows; a
@@ -767,7 +844,10 @@ esac
         .env("ADMISSION_EXPECTED_HEAD", "a".repeat(40))
         .env("ADMISSION_DOCS_ONLY", "false")
         .env("ADMISSION_MAX_CHANGED_FILES", "160")
-        .env("ADMISSION_MAX_CHANGED_LINES", "3000")
+        .env("ADMISSION_MAX_CHANGED_LINES", wired_max_changed_lines()?)
+        // #14932: the workflow always hands the anchor in; the mock live ref is
+        // d*40, so that is the pinned trusted source for these controls.
+        .env("ADMISSION_TRUSTED_SHA", "d".repeat(40))
         .env("ADMISSION_MODE", "admit")
         .status()
         .map_err(|e| e.to_string())?;
@@ -807,7 +887,7 @@ const STABLE_HEAD: &str = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
 
 #[test]
 fn wrapper_admits_a_lockfile_pr_whose_listing_lacks_counts() -> Result<(), String> {
-    // 5003 lines in total; 1700 are listed on one lockfile, the other two lockfiles
+    // The fixture total is the wired cap plus 1703; 1700 are listed on one lockfile, the other two lockfiles
     // and src/lib.rs list without counts. The hand-written file is bounded by its
     // base+head lines (5+5), everything else is generated.
     let (code, reason, lines) = size_outcome(&SizeCase {
@@ -832,7 +912,10 @@ fn wrapper_counts_everything_when_the_head_moves_after_the_file_listing() -> Res
             blobs: "ok",
             compare: "ok",
         })?;
-        if code != 1 || reason != "qualification_scope_oversized" || lines != "5003" {
+        if code != 1
+            || reason != "qualification_scope_oversized"
+            || lines != size_fixture_total()?.to_string()
+        {
             return Err(format!(
                 "head_after={head_after} discounts nothing, got {code} {reason} {lines}"
             ));
@@ -858,8 +941,11 @@ fn wrapper_keeps_the_residual_counted_when_a_bound_cannot_be_read() -> Result<()
             blobs,
             compare,
         })?;
-        // Only the listed 1700-line lockfile stays exempt: 5003 - 1700.
-        if code != 1 || reason != "qualification_scope_oversized" || lines != "3303" {
+        // Only the listed 1700-line lockfile stays exempt: total - 1700.
+        if code != 1
+            || reason != "qualification_scope_oversized"
+            || lines != (size_fixture_total()? - 1700).to_string()
+        {
             return Err(format!(
                 "blobs={blobs} compare={compare} must keep the residual counted, got {code} {reason} {lines}"
             ));

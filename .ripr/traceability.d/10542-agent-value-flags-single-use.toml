@@ -3,7 +3,7 @@ id = "RIPR-SPEC-0011"
 tests = [
   "crates/ripr/src/cli/agent.rs::tests::agent_value_flags_refuse_repeats",
   "crates/ripr/src/cli/agent.rs::tests::agent_verify_rejects_empty_gap_id",
-  "crates/ripr/src/cli/agent.rs::tests::agent_root_stays_last_win",
+  "crates/ripr/src/cli/agent.rs::tests::agent_root_reconciles_repeats",
 ]
 code = [
   "crates/ripr/src/cli/agent.rs::refuse_repeated_flag",

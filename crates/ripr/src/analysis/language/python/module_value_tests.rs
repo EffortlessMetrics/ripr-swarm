@@ -51,6 +51,9 @@ fn classify_edit(
     });
     let context = PythonNoBehaviorContext {
         sole_line_replacement: sole,
+        // This unit fixture declares its one flat module and all consumers;
+        // physical/configured import custody is exercised by the app tests.
+        module_import_unshadowed: true,
         ..PythonNoBehaviorContext::default()
     };
     classify_change_with_context(
@@ -108,7 +111,19 @@ fn assert_abstains(finding: &Finding) {
 #[test]
 fn constant_read_by_a_called_function_with_a_pinning_literal_is_credited() -> Check {
     // 11 > 10 holds, 11 > 12 fails: the assertion notices the edit.
-    assert_credited(&classify_limit(&limit_test("    assert over_limit(11)"))?);
+    let finding = classify_limit(&limit_test("    assert over_limit(11)"))?;
+    assert_credited(&finding);
+    // The string-reader propagation witness does not widen numeric credits.
+    assert_eq!(
+        finding.ripr.propagate.state,
+        crate::domain::StageState::Weak
+    );
+    assert!(
+        finding
+            .flow_sinks
+            .iter()
+            .all(|sink| sink.kind != crate::domain::FlowSinkKind::ReturnValue)
+    );
     assert_credited(&classify_limit(&limit_test(
         "    assert over_limit(11) == True",
     ))?);
@@ -249,6 +264,57 @@ fn the_edit_must_be_the_files_only_changed_line() -> Check {
     Ok(())
 }
 
+pub(crate) fn python_module_fstring_reader_finding(
+    body: &str,
+    test: &str,
+) -> Result<Finding, String> {
+    classify_fstring_reader(body, test)
+}
+
+pub(crate) fn python_module_string_reader_finding(
+    source: &str,
+    old: &str,
+    tests: &[(&str, &str)],
+    edited: bool,
+    others: &[(&str, &str)],
+) -> Result<Finding, String> {
+    classify_string_reader(source, old, tests, edited, others)
+}
+
+pub(crate) fn python_module_value_without_import_identity(
+    source: &str,
+    new: &str,
+    old: &str,
+    test_files: &[(&str, &str)],
+    edited: bool,
+) -> Option<Finding> {
+    let own = Path::new("hostile/settings.py");
+    let owners = owners_of(source);
+    let mut tests = tests_of(test_files);
+    for test in &mut tests {
+        test.constant_rebinding.edited_in_diff = edited;
+    }
+    classify_change_with_context(
+        own,
+        1,
+        new,
+        Some(old),
+        &owners,
+        &tests,
+        PythonNoBehaviorContext {
+            sole_line_replacement: true,
+            ..PythonNoBehaviorContext::default()
+        },
+        Some(source),
+    )
+}
+
+pub(crate) fn python_module_reader_assertion_parses(source: &str) -> Result<(), String> {
+    super::source_facts::parse_module_result(Path::new("repair.py"), source)
+        .map(|_| ())
+        .map_err(|error| format!("the proposed discriminator must be Python syntax: {error}"))
+}
+
 fn classify_fstring_reader(body: &str, test: &str) -> Result<Finding, String> {
     let source = format!("GREETING = 'hi'\n\n\ndef greet(name):\n{body}\n");
     classify_edit(
@@ -288,23 +354,274 @@ fn fstring_constant_reader_credits_an_exact_old_value_pin() -> Check {
             "assert greet('bob') == '{hello} / bob / hello ☃'",
         ),
     ] {
-        assert_credited(&classify_fstring_reader(body, &fstring_test(assertion))?);
+        let finding = classify_fstring_reader(body, &fstring_test(assertion))?;
+        assert_credited(&finding);
+        assert_eq!(finding.ripr.propagate.state, crate::domain::StageState::Yes);
+        assert!(
+            finding
+                .flow_sinks
+                .iter()
+                .any(|sink| sink.kind == crate::domain::FlowSinkKind::ReturnValue)
+        );
     }
     Ok(())
 }
 
 #[test]
-fn fstring_constant_reader_requires_old_true_new_false() -> Check {
+fn module_string_reader_narrative_stays_with_the_selected_credit() -> Check {
+    use crate::domain::{FlowSinkKind, StageState};
+
+    let imports = "from hostile.settings import GREETING, greet\n\n\n";
+    let direct = "def test_direct():\n    assert GREETING == 'hello'\n";
+    let reader = "def test_reader():\n    assert greet('bob') == 'hello, bob'\n";
+    for reader_first in [false, true] {
+        let (first, second, assertion) = if reader_first {
+            (reader, direct, "assert greet('bob') == 'hello, bob'")
+        } else {
+            (direct, reader, "assert GREETING == 'hello'")
+        };
+        let test = format!("{imports}{first}\n\n{second}");
+        let finding = classify_fstring_reader("    return f'{GREETING}, {name}'", &test)?;
+        assert_credited(&finding);
+        assert_eq!(finding.observed_sink.as_deref(), Some(assertion));
+        assert_eq!(
+            finding
+                .evidence
+                .iter()
+                .filter(|line| line.starts_with("module_value_read:"))
+                .count(),
+            2,
+            "{finding:?}"
+        );
+        let (narrative, kind, text, line, propagation) = if reader_first {
+            (
+                concat!(
+                    "Related Python test reaches a string reader of `<module>` with an ",
+                    "`exact_value` oracle. The evaluated comparison accepts exactly one ",
+                    "of the old and new return values."
+                ),
+                FlowSinkKind::ReturnValue,
+                "return f'{GREETING}, {name}'",
+                5,
+                StageState::Yes,
+            )
+        } else {
+            (
+                concat!(
+                    "Related Python test reaches `<module>` with an `exact_value` oracle. ",
+                    "Static evidence suggests the changed behavior is observed under ",
+                    "an exact-value check."
+                ),
+                FlowSinkKind::Unknown,
+                "GREETING = 'hi'",
+                1,
+                StageState::Weak,
+            )
+        };
+        assert_eq!(finding.missing, vec![narrative.to_string()], "{finding:?}");
+        assert_eq!(finding.flow_sinks.len(), 1, "{finding:?}");
+        let sink = finding.flow_sinks.first().ok_or("the selected sink")?;
+        assert_eq!(sink.kind, kind);
+        assert_eq!(sink.text, text);
+        assert_eq!(sink.line, line);
+        assert_eq!(finding.ripr.propagate.state, propagation);
+    }
+    Ok(())
+}
+
+#[test]
+fn fstring_constant_reader_requires_a_deciding_assertion() -> Check {
     for assertion in [
-        "assert 'bob' in greet('bob')",
-        "assert greet('bob') == 'hi, bob'",
         "assert greet('bob') == 'unrelated'",
+        "assert False and greet('bob') == 'hello, bob'",
+        "assert False and greet('bob') == 'hi, bob'",
         "greet('bob')\n    assert 'bob' == 'bob'",
     ] {
         assert_no_module_value_credit(&classify_fstring_reader(
             "    return f'{GREETING}, {name}'",
             &fstring_test(assertion),
         )?);
+    }
+    Ok(())
+}
+
+fn classify_string_reader(
+    source: &str,
+    old: &str,
+    tests: &[(&str, &str)],
+    edited: bool,
+    others: &[(&str, &str)],
+) -> Result<Finding, String> {
+    let own = Path::new("hostile/settings.py");
+    let mut owners = owners_of(source);
+    let mut extracted = tests_of(tests);
+    let foreign = super::module_value::ForeignWrites::scan(
+        own,
+        others
+            .iter()
+            .chain(tests.iter())
+            .map(|(file, text)| (Path::new(file), *text))
+            .chain([(own, source)]),
+        false,
+    );
+    for owner in owners.iter_mut().filter(|owner| owner.is_module_owner()) {
+        owner.foreign_writes = foreign.clone();
+    }
+    for test in &mut extracted {
+        test.constant_rebinding.edited_in_diff = edited;
+    }
+    let new = source
+        .lines()
+        .next()
+        .ok_or("missing constant declaration")?;
+    classify_change_with_context(
+        own,
+        1,
+        new,
+        Some(old),
+        &owners,
+        &extracted,
+        PythonNoBehaviorContext {
+            sole_line_replacement: true,
+            // This isolated source set has no filesystem/config overrides.
+            // Its scanned foreign modules must still preserve identity.
+            module_import_unshadowed: !foreign.shares_module_name()
+                && !foreign.reflection_elsewhere()
+                && !foreign.names_may_differ_elsewhere(),
+            ..PythonNoBehaviorContext::default()
+        },
+        Some(source),
+    )
+    .ok_or_else(|| "the string edit must yield a finding".to_string())
+}
+
+const STRING_READER: &str =
+    "GREETING = 'hi'\n\n\ndef greet(name):\n    return f'{GREETING}, {name}'\n";
+
+#[test]
+fn module_string_import_identity_guards_direct_and_forwarded_old_pins() -> Check {
+    use super::module_value::{
+        ForeignIndex, ForwarderModule, ModuleEdit, module_constant_evidence,
+    };
+
+    let own = Path::new("hostile/settings.py");
+    let bridge = Path::new("hostile/bridge.py");
+    let bridge_source =
+        "from .settings import greet\n\ndef welcome(name):\n    return greet(name)\n";
+    for (test, credit_count) in [
+        (
+            "from hostile.settings import GREETING\n\ndef test_it():\n    assert GREETING == 'hello'\n",
+            1,
+        ),
+        (
+            "from hostile.bridge import welcome\n\ndef test_it():\n    assert welcome('bob') == 'hello, bob'\n",
+            0,
+        ),
+    ] {
+        let sources = [
+            (own, STRING_READER),
+            (bridge, bridge_source),
+            (Path::new("hostile/__init__.py"), ""),
+            (Path::new("tests/test_settings.py"), test),
+        ];
+        let index = ForeignIndex::build(sources.into_iter(), false);
+        let mut foreign = index.excluding(own);
+        foreign.set_forwarders(vec![ForwarderModule {
+            file: bridge.to_path_buf(),
+            source: bridge_source.to_string(),
+            foreign: index.excluding(bridge),
+        }]);
+        let mut owners = owners_of(STRING_READER);
+        owners.extend(extract_owners(bridge, bridge_source));
+        for owner in owners
+            .iter_mut()
+            .filter(|owner| owner.is_module_owner() && owner.file == own)
+        {
+            owner.foreign_writes = foreign.clone();
+        }
+        let module = owners
+            .iter()
+            .find(|owner| owner.is_module_owner() && owner.file == own)
+            .ok_or("the isolated fixture needs its module owner")?;
+        let tests = tests_of(&[("tests/test_settings.py", test)]);
+        let edit = ModuleEdit {
+            file: own,
+            line: 1,
+            line_text: "GREETING = 'hi'",
+            old_line_text: Some("GREETING = 'hello'"),
+            new_source: STRING_READER,
+        };
+        // The fact admits the direct module. The forwarder is an additional
+        // import route and cannot borrow the changed file's custody proof.
+        let admitted = module_constant_evidence(&edit, module, &owners, &tests, true);
+        assert_eq!(admitted.credits.len(), credit_count, "{test}");
+        assert_eq!(admitted.unresolved_string_read, credit_count == 0, "{test}");
+        let refused = module_constant_evidence(&edit, module, &owners, &tests, false);
+        assert!(refused.unresolved_string_read, "{test}");
+        assert!(refused.credits.is_empty(), "{test}");
+        assert!(refused.string_pins.is_empty(), "{test}");
+        assert!(refused.current_pins.is_empty(), "{test}");
+        assert!(refused.weak_reads.is_empty(), "{test}");
+    }
+    Ok(())
+}
+
+#[test]
+fn module_string_reader_rejects_opaque_foreign_bindings() -> Check {
+    use super::module_value::{ForeignWrites, ModuleEdit, module_constant_evidence};
+
+    let own = Path::new("hostile/settings.py");
+    for foreign_source in [
+        "import importlib\nsetattr(importlib.import_module('host' + 'ile.set' + 'tings'), 'gr' + 'eet', lambda name: 'hi, bob')\n",
+        "ｇreet = replacement\n",
+        "target.__class__ = Replacement\n",
+    ] {
+        for assertion in [
+            "assert 'bob' in greet('bob')",
+            "assert greet('bob') == 'hi, bob'",
+            "assert greet('bob') == 'hello, bob'",
+        ] {
+            let test = fstring_test(assertion);
+            let tests = tests_of(&[("tests/test_settings.py", &test)]);
+            let mut owners = owners_of(STRING_READER);
+            let edit = ModuleEdit {
+                file: own,
+                line: 1,
+                line_text: "GREETING = 'hi'",
+                old_line_text: Some("GREETING = 'hello'"),
+                new_source: STRING_READER,
+            };
+            let module = owners
+                .iter()
+                .find(|owner| owner.is_module_owner())
+                .ok_or("the isolated reader needs its module owner")?;
+            let admitted = module_constant_evidence(&edit, module, &owners, &tests, true);
+            assert_eq!(admitted.credits.len() + admitted.weak_reads.len(), 1);
+            let foreign = ForeignWrites::scan(
+                own,
+                [
+                    (own, STRING_READER),
+                    (Path::new("conftest.py"), foreign_source),
+                    (Path::new("tests/test_settings.py"), test.as_str()),
+                ]
+                .into_iter(),
+                false,
+            );
+            for owner in owners.iter_mut().filter(|owner| owner.is_module_owner()) {
+                owner.foreign_writes = foreign.clone();
+            }
+            let module = owners
+                .iter()
+                .find(|owner| owner.is_module_owner())
+                .ok_or("the opaque reader needs its module owner")?;
+            // A true physical-module fact must not erase opaque binding facts.
+            let refused = module_constant_evidence(&edit, module, &owners, &tests, true);
+            assert!(refused.unresolved_string_read, "{foreign_source}");
+            assert!(refused.credits.is_empty(), "{foreign_source}");
+            assert!(refused.string_pins.is_empty(), "{foreign_source}");
+            assert!(refused.current_pins.is_empty(), "{foreign_source}");
+            assert!(refused.weak_reads.is_empty(), "{foreign_source}");
+        }
     }
     Ok(())
 }

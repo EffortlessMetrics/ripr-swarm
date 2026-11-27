@@ -11,6 +11,7 @@
 
 use super::admission::PythonAssertionAdmission;
 use super::module_constants::mentions_identifier;
+use super::oracles::constant_truth;
 use super::owners_tests::{decorator_names, test_imports};
 use super::related_tests::{import_source_module_matches_owner, test_body_binds_local};
 use super::source_utils::{SourceText, text_for_range};
@@ -34,11 +35,14 @@ pub(super) fn collect_fixture_defs(
 ) -> Vec<PythonFixtureDef> {
     let mut defs = Vec::new();
     let mut aliases = fixture_aliases(module_imports);
+    let mut asyncio_aliases: Vec<String> = Vec::new();
+    let binds_asyncio_module = binds_pytest_asyncio_module(statements, source);
     for stmt in statements {
         // An alias stops being pytest's decorator once a statement before the
         // decorated def rebinds the name (#10473), and starts again when a
         // later pytest import binds it.
         update_aliases_for_binding(stmt, &mut aliases);
+        update_asyncio_aliases(stmt, source, &aliases, &mut asyncio_aliases);
         let (name, decorators, body, range) = match stmt {
             Stmt::FunctionDef(function) => (
                 function.name.as_str(),
@@ -74,6 +78,7 @@ pub(super) fn collect_fixture_defs(
                     literal_params: None,
                     isolated: false,
                     scope_imports: Vec::new(),
+                    client_fixture_chain: Vec::new(),
                 });
             }
             continue;
@@ -84,9 +89,29 @@ pub(super) fn collect_fixture_defs(
             file: file.to_path_buf(),
             body_text: text_for_range(source, range),
             imports: test_imports(file, module_imports, body),
-            literal_construction: literal_construction(stmt, statements, source, &aliases, false),
-            inert_tool: literal_construction(stmt, statements, source, &aliases, true)
-                .filter(|class| is_inert_tool_import(statements, class)),
+            literal_construction: literal_construction(
+                stmt,
+                statements,
+                source,
+                FixtureDecoratorNames {
+                    aliases: &aliases,
+                    asyncio_aliases: &asyncio_aliases,
+                    binds_asyncio_module,
+                },
+                false,
+            ),
+            inert_tool: literal_construction(
+                stmt,
+                statements,
+                source,
+                FixtureDecoratorNames {
+                    aliases: &aliases,
+                    asyncio_aliases: &asyncio_aliases,
+                    binds_asyncio_module,
+                },
+                true,
+            )
+            .filter(|class| is_inert_tool_import(statements, class)),
             literal_params: super::param_fixtures::literal_params(
                 stmt,
                 statements,
@@ -95,9 +120,93 @@ pub(super) fn collect_fixture_defs(
             ),
             isolated: false,
             scope_imports: Vec::new(),
+            client_fixture_chain: Vec::new(),
         });
     }
     defs
+}
+
+/// Track, statement by statement, which [`fixture_aliases`] are bound to
+/// `pytest_asyncio.fixture` at this point of the module
+/// (`from pytest_asyncio import fixture as afx`). Any other binding of the
+/// name, including `from pytest import fixture as afx`, ends it.
+fn update_asyncio_aliases(
+    stmt: &Stmt,
+    source: &str,
+    aliases: &[String],
+    asyncio_aliases: &mut Vec<String>,
+) {
+    // A conditional re-import can revoke an existing provider. Keep it only
+    // when it survives every possible arm. A read of the alias binds nothing.
+    if let Stmt::If(branch) = stmt {
+        let condition = constant_truth(&branch.test);
+        for (suite, reachable) in [
+            (&branch.body, condition != Some(false)),
+            (&branch.orelse, condition != Some(true)),
+        ] {
+            if reachable && !suite.is_empty() && !asyncio_aliases.is_empty() {
+                let mut possible = asyncio_aliases.clone();
+                for child in suite {
+                    let mut child_aliases = aliases.to_vec();
+                    update_aliases_for_binding(child, &mut child_aliases);
+                    update_asyncio_aliases(child, source, &child_aliases, &mut possible);
+                }
+                asyncio_aliases.retain(|alias| possible.contains(alias));
+            }
+        }
+    }
+    if matches!(
+        stmt,
+        Stmt::Try(_)
+            | Stmt::TryStar(_)
+            | Stmt::For(_)
+            | Stmt::AsyncFor(_)
+            | Stmt::With(_)
+            | Stmt::AsyncWith(_)
+            | Stmt::While(_)
+            | Stmt::Match(_)
+            | Stmt::Delete(_)
+    ) {
+        let text = text_for_range(source, stmt.range());
+        asyncio_aliases.retain(|alias| !mentions_identifier(&text, alias));
+    }
+    if let Stmt::ImportFrom(import) = stmt {
+        let from_asyncio = import.level.is_none_or(|level| level.to_u32() == 0)
+            && import
+                .module
+                .as_ref()
+                .is_some_and(|module| module.as_str() == "pytest_asyncio");
+        for name in &import.names {
+            let local = name.asname.as_ref().unwrap_or(&name.name).to_string();
+            asyncio_aliases.retain(|alias| *alias != local);
+            if from_asyncio && name.name.as_str() == "fixture" {
+                asyncio_aliases.push(local);
+            }
+        }
+    }
+    asyncio_aliases.retain(|alias| aliases.contains(alias));
+}
+
+/// `import pytest_asyncio` (no `as`) is the module's only binding of the
+/// name, so `@pytest_asyncio.fixture` is that plugin's decorator.
+fn binds_pytest_asyncio_module(statements: &[Stmt], source: &str) -> bool {
+    let imports_module = statements.iter().any(|stmt| {
+        matches!(stmt, Stmt::Import(import) if import.names.iter().any(|name| {
+            name.name.as_str() == "pytest_asyncio" && name.asname.is_none()
+        }))
+    });
+    imports_module && module_binding_count(statements, source, "pytest_asyncio") == Some(1)
+}
+
+/// The decorator spellings in effect at one fixture definition.
+#[derive(Clone, Copy)]
+struct FixtureDecoratorNames<'a> {
+    /// Names bound to `pytest.fixture` or `pytest_asyncio.fixture`.
+    aliases: &'a [String],
+    /// The subset imported from `pytest_asyncio`.
+    asyncio_aliases: &'a [String],
+    /// [`binds_pytest_asyncio_module`], read once per file.
+    binds_asyncio_module: bool,
 }
 
 /// Local names this file binds to pytest's fixture decorator with
@@ -232,20 +341,39 @@ fn renames_to_caplog(decorators: &[Expr], aliases: &[String]) -> bool {
 /// `params=` and no `autouse=`) on a synchronous def with no parameters whose
 /// body is an optional docstring and `return Class(<literals>)`. Such a
 /// fixture hands each test the same object `account = Account(100)` would
-/// build in its body. `None` for any other shape, and when the file binds the
-/// fixture's name or the class name more than once (or star-imports), since
-/// the value pytest registers is then not the one read here.
+/// build in its body. A coroutine def counts only under
+/// `pytest_asyncio.fixture`, which awaits it and hands the test its returned
+/// value; plain `pytest.fixture` hands a coroutine def's test the un-awaited
+/// coroutine unless the project configures asyncio auto mode. `None` for any
+/// other shape, and when the file binds the fixture's name or the class name
+/// more than once (or star-imports), since the value pytest registers is then
+/// not the one read here.
 fn literal_construction(
     stmt: &Stmt,
     statements: &[Stmt],
     source: &str,
-    aliases: &[String],
+    names: FixtureDecoratorNames<'_>,
     allow_request_param: bool,
 ) -> Option<String> {
-    let Stmt::FunctionDef(function) = stmt else {
-        return None;
+    let aliases = names.aliases;
+    let (function_name, decorator_list, args, function_body, coroutine) = match stmt {
+        Stmt::FunctionDef(function) => (
+            function.name.as_str(),
+            &function.decorator_list,
+            &function.args,
+            &function.body,
+            false,
+        ),
+        Stmt::AsyncFunctionDef(function) => (
+            function.name.as_str(),
+            &function.decorator_list,
+            &function.args,
+            &function.body,
+            true,
+        ),
+        _ => return None,
     };
-    let [decorator] = function.decorator_list.as_slice() else {
+    let [decorator] = decorator_list.as_slice() else {
         return None;
     };
     let decorator_target = match decorator {
@@ -270,13 +398,22 @@ fn literal_construction(
         Expr::Call(_) => return None,
         other => other,
     };
-    if !decorator_names(std::slice::from_ref(decorator_target))
+    let target_names = decorator_names(std::slice::from_ref(decorator_target));
+    if !target_names
         .iter()
         .any(|name| is_fixture_decorator_name(name, aliases))
     {
         return None;
     }
-    let args = &function.args;
+    if coroutine
+        && !target_names.iter().any(|name| {
+            (name == "pytest_asyncio.fixture" && names.binds_asyncio_module)
+                || (names.asyncio_aliases.iter().any(|alias| alias == name)
+                    && aliases.iter().any(|alias| alias == name))
+        })
+    {
+        return None;
+    }
     // A lone unused `request` parameter (`def runner(request): return
     // CliRunner()`): the body is only a literal-argument call, so it cannot
     // read `request.param` or `request.node`.
@@ -293,7 +430,7 @@ fn literal_construction(
     {
         return None;
     }
-    let body = match function.body.as_slice() {
+    let body = match function_body.as_slice() {
         [Stmt::Expr(docstring), rest @ ..]
             if matches!(
                 &*docstring.value,
@@ -313,16 +450,24 @@ fn literal_construction(
     let Expr::Name(class) = &*call.func else {
         return None;
     };
-    if !call.args.iter().all(is_literal_argument)
+    // The inert-tool read keeps bare literals only; the instance read also
+    // takes a display of literals (`Cart([3, 4])`), which builds the same
+    // fresh value on every call as the inlined construction would.
+    let literal: fn(&Expr) -> bool = if allow_request_param {
+        is_literal_argument
+    } else {
+        is_literal_display_argument
+    };
+    if !call.args.iter().all(literal)
         || !call
             .keywords
             .iter()
-            .all(|keyword| keyword.arg.is_some() && is_literal_argument(&keyword.value))
+            .all(|keyword| keyword.arg.is_some() && literal(&keyword.value))
     {
         return None;
     }
     let class = class.id.to_string();
-    (module_binding_count(statements, source, function.name.as_str()) == Some(1)
+    (module_binding_count(statements, source, function_name) == Some(1)
         && module_binding_count(statements, source, &class) == Some(1))
     .then_some(class)
 }
@@ -337,6 +482,26 @@ pub(super) fn is_literal_argument(expr: &Expr) -> bool {
                 if matches!(constant.value, Constant::Int(_) | Constant::Float(_))
         ),
         _ => false,
+    }
+}
+
+/// A literal argument, or a list, tuple, set or dict display built only from
+/// such arguments (`[3, 4]`, `(1, "a")`, `{"k": [1]}`). A display names no
+/// variable and calls nothing, so each evaluation builds an equal fresh value.
+/// A starred element, a `**` entry or a comprehension is not a display of
+/// literals.
+fn is_literal_display_argument(expr: &Expr) -> bool {
+    match expr {
+        Expr::List(list) => list.elts.iter().all(is_literal_display_argument),
+        Expr::Tuple(tuple) => tuple.elts.iter().all(is_literal_display_argument),
+        Expr::Set(set) => set.elts.iter().all(is_literal_display_argument),
+        Expr::Dict(dict) => {
+            dict.keys
+                .iter()
+                .all(|key| key.as_ref().is_some_and(is_literal_display_argument))
+                && dict.values.iter().all(is_literal_display_argument)
+        }
+        other => is_literal_argument(other),
     }
 }
 
@@ -582,9 +747,19 @@ pub(super) fn mark_isolated_fixture_defs(
                             }
                             if let Some(side) = side_by_file.get(&file) {
                                 scope_modules.extend(side.imported_modules.iter().cloned());
+                                // An import whose workspace modules define no
+                                // fixture cannot bring one into the scope, so
+                                // the owner check need not see it.
                                 scope_imports.extend(
                                     side.from_imports
                                         .iter()
+                                        .filter(|import| {
+                                            !import_brings_no_fixture(
+                                                import,
+                                                defs_by_file,
+                                                side_by_file,
+                                            )
+                                        })
                                         .map(|import| (file.clone(), import.clone())),
                                 );
                                 if side.opaque
@@ -628,6 +803,137 @@ pub(super) fn mark_isolated_fixture_defs(
             def.scope_imports = scope_imports;
         }
     }
+}
+
+/// Public top-level modules of the Python standard library (CPython 3.13
+/// `sys.stdlib_module_names`, without the interpreter's own `test` package
+/// and the bundled applications). None of them defines a pytest fixture.
+const STDLIB_MODULES: &str = "\
+    __future__ abc argparse array ast asyncio atexit base64 bdb binascii bisect builtins \
+    bz2 cProfile calendar cmath cmd code codecs codeop collections colorsys compileall \
+    concurrent configparser contextlib contextvars copy copyreg csv ctypes curses \
+    dataclasses datetime dbm decimal difflib dis doctest email encodings ensurepip enum \
+    errno faulthandler fcntl filecmp fileinput fnmatch fractions ftplib functools gc \
+    genericpath getopt getpass gettext glob graphlib grp gzip hashlib heapq hmac html \
+    http imaplib importlib inspect io ipaddress itertools json keyword linecache locale \
+    logging lzma mailbox marshal math mimetypes mmap modulefinder msvcrt multiprocessing \
+    netrc nt ntpath nturl2path numbers opcode operator optparse os pathlib pdb pickle \
+    pickletools pkgutil platform plistlib poplib posix posixpath pprint profile pstats \
+    pty pwd py_compile pyclbr pydoc pyexpat queue quopri random re readline reprlib \
+    resource rlcompleter runpy sched secrets select selectors shelve shlex shutil signal \
+    site smtplib socket socketserver sqlite3 sre_compile sre_constants sre_parse ssl \
+    stat statistics string stringprep struct subprocess symtable sys sysconfig syslog \
+    tabnanny tarfile tempfile termios textwrap threading time timeit tkinter token \
+    tokenize tomllib trace traceback tracemalloc tty turtle types typing unicodedata \
+    unittest urllib uuid venv warnings wave weakref webbrowser winreg winsound wsgiref \
+    xml xmlrpc zipapp zipfile zipimport zlib zoneinfo";
+
+/// Whether `head`, the first segment of a dotted module, names a
+/// standard-library module.
+pub(super) fn is_stdlib_module(head: &str) -> bool {
+    STDLIB_MODULES
+        .split_ascii_whitespace()
+        .any(|module| module == head)
+}
+
+/// Most workspace modules read behind one scope import before the read gives
+/// up and leaves the import to the owner check.
+const MAX_FIXTURE_FREE_MODULES: usize = 256;
+
+/// Whether `from M import y` cannot bring a pytest fixture into the scope:
+/// `M` is an absolute import that resolves to a workspace module, and neither
+/// it, `M.y`, nor any workspace module they import in turn defines a fixture,
+/// imports pytest (the only way to build one), or is opaque. A fixture pytest
+/// registers from an imported name is a fixture some module defined, so a
+/// closure without one hands the conftest plain objects only. A
+/// standard-library module no workspace file shadows brings none either.
+/// Fails closed for an unresolved relative import, any other module outside
+/// the workspace (named by the scope import or anywhere in the closure, since a
+/// third-party module can hand a fixture on), and a closure larger than
+/// [`MAX_FIXTURE_FREE_MODULES`].
+fn import_brings_no_fixture(
+    import: &PythonImport,
+    defs_by_file: &BTreeMap<PathBuf, Vec<PythonFixtureDef>>,
+    side_by_file: &BTreeMap<PathBuf, FixtureSideEffects>,
+) -> bool {
+    let root = import.source_module.as_str();
+    if root.is_empty() || root.starts_with('.') || import.imported == "*" {
+        return false;
+    }
+    let files_of = |module: &str| -> Vec<&PathBuf> {
+        let path = module.replace('.', "/");
+        let suffixes = [format!("{path}.py"), format!("{path}/__init__.py")];
+        side_by_file
+            .keys()
+            .filter(|file| {
+                let file = super::normalized_path(file);
+                suffixes
+                    .iter()
+                    .any(|suffix| file == *suffix || file.ends_with(&format!("/{suffix}")))
+            })
+            .collect()
+    };
+    // A standard-library name no workspace file answers to is the standard
+    // library's module, which defines no pytest fixture.
+    let unshadowed_stdlib = |module: &str| {
+        let head = module.split('.').next().unwrap_or(module);
+        is_stdlib_module(head) && files_of(head).is_empty() && files_of(module).is_empty()
+    };
+    if files_of(root).is_empty() {
+        return unshadowed_stdlib(root);
+    }
+    let submodule = format!("{root}.{}", import.imported);
+    let mut pending: Vec<&str> = vec![root, submodule.as_str()];
+    let mut seen_modules: BTreeSet<&str> = BTreeSet::new();
+    let mut seen_files: BTreeSet<&PathBuf> = BTreeSet::new();
+    while let Some(module) = pending.pop() {
+        if module.is_empty() || !seen_modules.insert(module) {
+            continue;
+        }
+        if seen_modules.len() > MAX_FIXTURE_FREE_MODULES {
+            return false;
+        }
+        let head = module.trim_start_matches('.');
+        let head = head.split('.').next().unwrap_or(head);
+        if head.starts_with("pytest") || head.starts_with("_pytest") || head == "conftest" {
+            return false;
+        }
+        let files = files_of(module);
+        if files.is_empty() {
+            // `M.name` for a name `M` binds is read with `M`. Any other
+            // module is outside the workspace: only the standard library is
+            // known to hand over no fixture.
+            let parent_in_workspace = module
+                .rsplit_once('.')
+                .is_some_and(|(parent, _)| !files_of(parent).is_empty());
+            if !parent_in_workspace && !unshadowed_stdlib(module) {
+                return false;
+            }
+        }
+        // Loading `a.b.c` runs `a/__init__.py` and `a/b/__init__.py` first,
+        // and a name read off a parent package is whatever they bound.
+        // A parent with no fixture facts of its own has nothing to read.
+        let mut parent = module;
+        while let Some((prefix, _)) = parent.rsplit_once('.') {
+            if !files_of(prefix).is_empty() {
+                pending.push(prefix);
+            }
+            parent = prefix;
+        }
+        for file in files {
+            if !seen_files.insert(file) {
+                continue;
+            }
+            let Some(side) = side_by_file.get(file) else {
+                continue;
+            };
+            if side.opaque || defs_by_file.get(file).is_some_and(|defs| !defs.is_empty()) {
+                return false;
+            }
+            pending.extend(side.imported_modules.iter().map(String::as_str));
+        }
+    }
+    true
 }
 
 /// Whether a workspace module the scope imports, directly or through the
@@ -820,8 +1126,10 @@ pub(super) fn inert_tool_fixture(test: &PythonTest, fixture: &str) -> bool {
 }
 
 /// Whether the test's signature takes `fixture` as a parameter pytest
-/// injects: a positional or keyword parameter without a default. pytest
-/// leaves `account=FakeAccount(100)` alone, so the default is what runs.
+/// injects: a required positional-or-keyword or keyword-only parameter. The
+/// fixture argument reader skips positional-only parameters for a test as it
+/// does for a fixture, and it leaves `account=FakeAccount(100)` alone, so the
+/// default is what runs.
 pub(super) fn injected_parameter(test: &PythonTest, fixture: &str) -> bool {
     let Ok(Mod::Module(module)) = parse(&test.body_text, Mode::Module, "<python-test-signature>")
     else {
@@ -832,9 +1140,8 @@ pub(super) fn injected_parameter(test: &PythonTest, fixture: &str) -> bool {
         Some(Stmt::AsyncFunctionDef(function)) => &function.args,
         _ => return false,
     };
-    args.posonlyargs
+    args.args
         .iter()
-        .chain(&args.args)
         .chain(&args.kwonlyargs)
         .any(|arg| arg.def.arg.as_str() == fixture && arg.default.is_none())
 }
@@ -864,8 +1171,110 @@ pub(super) fn attach_fixture_defs(
                 attached.push(def.clone());
             }
         }
+        for def in &mut attached {
+            def.client_fixture_chain =
+                client_fixture_chain(def, &test.file, defs_by_file, &test.direct_parametrized);
+        }
         test.fixture_defs = attached;
     }
+}
+
+/// Whether `name` is a parameter pytest injects into the fixture whose
+/// definition text is `body_text`: a required positional-or-keyword or
+/// keyword-only parameter. pytest's fixture argument reader skips
+/// positional-only parameters, and it leaves a defaulted parameter
+/// (`def client(items_app=other)`) at its default, so neither requests a
+/// fixture of that name.
+fn fixture_injects_parameter(body_text: &str, name: &str) -> bool {
+    let Ok(Mod::Module(module)) = parse(body_text, Mode::Module, "<python-fixture-signature>")
+    else {
+        return false;
+    };
+    let args = match module.body.first() {
+        Some(Stmt::FunctionDef(function)) => &function.args,
+        Some(Stmt::AsyncFunctionDef(function)) => &function.args,
+        _ => return false,
+    };
+    args.args
+        .iter()
+        .chain(&args.kwonlyargs)
+        .any(|arg| arg.def.arg.as_str() == name && arg.default.is_none())
+}
+
+/// The fixture definitions a route-client fixture's application parameter
+/// resolves through, in order (#14141): the client fixture's unrebound
+/// parameter names another fixture, that fixture's returned name may name
+/// a further fixture, and so on, capped at
+/// [`super::route_client::MAX_CLIENT_FIXTURE_CHAIN`]. Dependencies resolve
+/// from the requesting test's scope first (its module, then the conftest
+/// chain from there), as pytest resolves a fixture dependency for the test
+/// that ultimately requests it, falling back to the requesting fixture's
+/// file and its conftest chain. A dependency the test directly parametrizes
+/// is supplied by pytest rather than by its fixture, and a parameter with
+/// a default is never injected, so either ends the chain. An unresolved,
+/// cyclic or over-cap link ends the chain; the reader in
+/// `related_tests.rs` then fails closed.
+fn client_fixture_chain(
+    start: &PythonFixtureDef,
+    test_file: &Path,
+    defs_by_file: &BTreeMap<PathBuf, Vec<PythonFixtureDef>>,
+    direct_parametrized: &[String],
+) -> Vec<PythonFixtureDef> {
+    let mut chain: Vec<PythonFixtureDef> = Vec::new();
+    let mut current = start.clone();
+    let mut is_client = true;
+    for _ in 0..super::route_client::MAX_CLIENT_FIXTURE_CHAIN {
+        let candidate = if is_client {
+            super::route_client::fixture_client_app_name(&current.body_text)
+        } else {
+            super::route_client::fixture_returned_name(&current.body_text)
+        };
+        is_client = false;
+        let Some(candidate) = candidate else {
+            break;
+        };
+        if direct_parametrized.iter().any(|name| name == &candidate)
+            || !fixture_injects_parameter(&current.body_text, &candidate)
+            || !super::route_client::is_unrebound_parameter(&current.body_text, &candidate)
+        {
+            break;
+        }
+        let Some(next) = resolve(test_file, &candidate, defs_by_file)
+            .or_else(|| resolve_from_fixture(&current.file, &candidate, defs_by_file))
+        else {
+            break;
+        };
+        if chain
+            .iter()
+            .any(|def: &PythonFixtureDef| def.name == next.name && def.file == next.file)
+            || (next.name == start.name && next.file == start.file)
+        {
+            break;
+        }
+        let mut next = next.clone();
+        next.client_fixture_chain = Vec::new();
+        chain.push(next.clone());
+        current = next;
+    }
+    chain
+}
+
+/// Resolve fixture `name` as pytest would for a fixture defined in
+/// `fixture_file`: that file first, then conftests up its chain.
+fn resolve_from_fixture<'a>(
+    fixture_file: &Path,
+    name: &str,
+    defs_by_file: &'a BTreeMap<PathBuf, Vec<PythonFixtureDef>>,
+) -> Option<&'a PythonFixtureDef> {
+    let find = |file: &Path| {
+        defs_by_file
+            .get(file)
+            .and_then(|defs| defs.iter().rev().find(|def| def.name == name))
+    };
+    if let Some(def) = find(fixture_file) {
+        return Some(def);
+    }
+    conftest_chain(fixture_file).find_map(|conftest| find(&conftest))
 }
 
 fn resolve<'a>(

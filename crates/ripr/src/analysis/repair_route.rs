@@ -263,8 +263,8 @@ pub(crate) enum RepairPacketIneligibility {
     /// selected target.
     RouteNotReady,
     /// The seam's evidence names a static limitation `check` reports as a
-    /// limitation rather than a gap (today: a `#[should_panic]` test whose
-    /// panic outcome is unresolved, #10703), so there is no gap to repair.
+    /// limitation rather than a gap: an unresolved expected panic (#10703)
+    /// or owner-bound field snapshot (#13278), so there is no gap to repair.
     NamedStaticLimitation,
 }
 
@@ -302,6 +302,9 @@ pub(crate) fn repair_packet_eligibility(entry: &ClassifiedSeam) -> RepairPacketE
     } else if entry
         .evidence
         .names_static_limit(crate::domain::StaticLimitKind::RustPanicOutcomeUnresolved)
+        || entry
+            .evidence
+            .names_static_limit(crate::domain::StaticLimitKind::RustFrameworkOracleUnresolved)
     {
         Some(RepairPacketIneligibility::NamedStaticLimitation)
     } else if !readiness.is_repair_ready() {
@@ -1105,8 +1108,8 @@ mod tests {
         RelatedTestGrip, RelationConfidence, TestGripEvidence, TestTargetEvidence,
     };
     use crate::domain::{
-        Confidence, MissingDiscriminatorFact, OracleKind, OracleStrength, RelationReason,
-        StageEvidence, StageState,
+        Confidence, DiscriminatorShape, MissingDiscriminatorFact, OracleKind, OracleStrength,
+        RelationReason, StageEvidence, StageState,
     };
     use std::path::{Path, PathBuf};
 
@@ -1131,6 +1134,7 @@ mod tests {
 
     fn rust_related_test(relation_reason: RelationReason) -> RelatedTestGrip {
         RelatedTestGrip {
+            assertion_targets_non_function: None,
             test_name: "below_threshold_has_no_discount".to_string(),
             file: PathBuf::from("tests/pricing.rs"),
             line: 12,
@@ -1149,6 +1153,7 @@ mod tests {
 
     fn external_related_test() -> RelatedTestGrip {
         RelatedTestGrip {
+            assertion_targets_non_function: None,
             test_name: "fetch blob resizes".to_string(),
             file: PathBuf::from("test/js/web/fetch/blob.test.ts"),
             line: 9,
@@ -1186,6 +1191,8 @@ mod tests {
                     value: "discount_threshold (equality boundary)".to_string(),
                     reason: "observed values do not include the equality-boundary case".to_string(),
                     flow_sink: None,
+                    shape: DiscriminatorShape::Other,
+                    drafted_boundary: None,
                 }],
                 new_test_target: None,
                 statically_contradicted_related_tests: 0,
@@ -1201,6 +1208,7 @@ mod tests {
                 file: PathBuf::from("src/pricing.rs"),
                 owner: "pricing::discounted_total".to_string(),
                 provenance: NewTestProposalProvenance::ProducerOwned,
+                workspace_identity: String::new(),
             }),
             region: None,
             blocker: None,

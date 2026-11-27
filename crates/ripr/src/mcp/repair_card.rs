@@ -23,9 +23,9 @@
 
 use super::gaps::GapItem;
 use super::workspace::{
-    AttemptFailure, CODE_ANALYSIS_FAILED, CODE_ITEM_NOT_FOUND, CODE_NO_SNAPSHOT,
-    CODE_STALE_SNAPSHOT, CODE_WORKSPACE_UNAVAILABLE, RECOVERY_REPAIR_TOO_LARGE, Snapshot,
-    WorkspaceSession, bounded_document,
+    AttemptFailure, CODE_ANALYSIS_FAILED, CODE_NO_SNAPSHOT, CODE_STALE_SNAPSHOT,
+    CODE_WORKSPACE_UNAVAILABLE, RECOVERY_REPAIR_TOO_LARGE, Snapshot, WorkspaceSession,
+    bounded_document,
 };
 use crate::agent::artifact::git_output;
 use crate::agent::command_specs::{AgentArtifactRoute, agent_inspection_command_spec};
@@ -246,7 +246,8 @@ pub(crate) fn gather_seam_inventory(
                 crate::app::task_first::inventory_for_repair(root, config)
                     .map(|(_, limit_info)| limit_info),
             ),
-        };
+        }
+        .with_evidence_limitations(&scoped.evidence_limitations);
         consumed_sources = scoped.consumed_sources;
         candidate_seams = scoped.classified;
     }
@@ -376,7 +377,21 @@ fn retain_unambiguous_item_bindings(bindings: &mut Vec<SeamCardBinding>) {
 /// the CLI's words (`agent card seam_id <id> <reason>`) minus the root-bound
 /// remedy command, which this root-relative adapter words as a repository
 /// command instead (#10718).
-fn policy_omitted_failure(seam_id: &str, reason: &str) -> AttemptFailure {
+fn policy_omitted_failure(seam_id: &str, reason: &str, closed_gap: bool) -> AttemptFailure {
+    // The default policy omits `strongly_gripped` seams because the existing
+    // tests already pin the change: a closed gap, not a configuration problem.
+    // The typed code stays `policy_omitted` (pinned); only the words change.
+    // Closed only when the ITEM's own finding is `exposed`: a weaker finding
+    // bound to a strongly gripped seam is still open (typed check on the item).
+    if closed_gap {
+        return AttemptFailure::new(
+            AgentCardRefusalKind::PolicyOmitted.as_str(),
+            format!(
+                "agent card seam_id {seam_id} is already gripped by existing tests: the change is already pinned and there is no repair card to read; nothing to do. The agent policy {reason}."
+            ),
+            "none: the gap is closed; ripr_refresh only after further edits. Change the agent policy (`ripr agent brief --seam-id <seam> --json` shows it) only to list gripped seams anyway",
+        );
+    }
     agent_card_failure(AgentCardError::refusal(
         AgentCardRefusalKind::PolicyOmitted,
         format!(
@@ -418,7 +433,9 @@ fn unbound_item_refusal(item: &GapItem, producers: &SnapshotCardProducers) -> At
                 .and_then(|entry| {
                     policy.omission_reason_for_class(entry.class, Some(entry.seam.file()))
                 })
-                .map_or_else(unbound, |reason| policy_omitted_failure(&seam_id, &reason))
+                .map_or_else(unbound, |reason| {
+                    policy_omitted_failure(&seam_id, &reason, item.is_closed_gap())
+                })
         }
         RepairSubjectOutcome::Unknown => agent_card_failure(AgentCardError::refusal(
             AgentCardRefusalKind::SeamNotFound,
@@ -482,13 +499,8 @@ impl WorkspaceSession {
         root: Option<&Path>,
     ) -> Result<Value, AttemptFailure> {
         let snapshot = self.active_snapshot(requested)?;
-        let Some(item) = snapshot.item(canonical_id) else {
-            return Err(AttemptFailure::new(
-                CODE_ITEM_NOT_FOUND,
-                format!("no canonical item {canonical_id} exists in the current snapshot"),
-                "list the current canonical ids with ripr_list_gaps, then retry",
-            ));
-        };
+        // #14138: a withheld owner opt-out id refuses with `owner_opt_out`.
+        let item = snapshot.require_item(canonical_id)?;
         // A saved tracked-worktree snapshot serves a card only when its source
         // custody was established at refresh (#7357): the findings and the seam
         // inventory consumed the same Rust bytes. Anything else refuses with
@@ -560,7 +572,11 @@ impl WorkspaceSession {
         if let Some(reason) = AgentBriefPolicy::from_config(&producers.config)
             .omission_reason_for_class(entry.class, Some(entry.seam.file()))
         {
-            return Err(policy_omitted_failure(entry.seam.id().as_str(), &reason));
+            return Err(policy_omitted_failure(
+                entry.seam.id().as_str(),
+                &reason,
+                item.is_closed_gap(),
+            ));
         }
         // The bind-time join is re-verified against the committed findings on
         // every read by re-running the shared bind rule itself: the retained
@@ -608,6 +624,24 @@ impl WorkspaceSession {
                 "run ripr_refresh again to analyze the current source, then retry",
             )
             .with_data(json!({ "current_snapshot_id": snapshot.snapshot_id })));
+        }
+        // The shared per-item admission (`ripr_list_gaps` / `ripr_prepare_repair`)
+        // holds a start whose inline test target has uncommitted changes
+        // (#11397). The card reads that same verdict from the committed item,
+        // after the drift check, so it never claims `repair_ready` where the
+        // item is refused and list, prepare and card never disagree.
+        if let Some(file) = item.repair_readiness.held_file.as_deref() {
+            return Err(agent_card_failure(AgentCardError::refusal(
+                AgentCardRefusalKind::IncompleteInventory,
+                format!(
+                    "repair card for canonical item {} was refused: {}. Commit or stash `{file}`, then run ripr_refresh again",
+                    item.canonical_id,
+                    item.repair_readiness
+                        .seam_detail
+                        .as_deref()
+                        .unwrap_or("the shared repair gate refuses this seam")
+                ),
+            )));
         }
         let readiness = repair_packet_eligibility(entry).readiness;
         let seam_id = entry.seam.id().as_str().to_string();
@@ -660,6 +694,13 @@ impl WorkspaceSession {
             witness: witness.as_ref(),
             finding_id: finding_id.as_deref(),
             finding_gap_id: finding_gap_id.as_deref(),
+            unreferenced_new_function:
+                crate::app::repair_card_handoff::bound_finding_is_unreferenced_new_function(
+                    &snapshot.findings,
+                    entry,
+                    readiness.canonical_gap_id.as_deref(),
+                    &producers.candidate_seams,
+                ),
             attempt: attempt.as_ref(),
             packet_json: &packet_json,
             repository_head: &producers.repository_head,
@@ -716,7 +757,7 @@ impl WorkspaceSession {
                 "the card binds the analyzed repository head and commit-time currentness of its snapshot; a HEAD move or edit after ripr_refresh changes what the CLI would bind live, so refresh again before comparing card identities across transports",
                 "the next-action display binds the portable root `.` and is presentation only; the host-local root path is intentionally not projected and the display is never execution authority",
                 "attempt state is re-read from the durable store at card-read time; in-memory session transactions never ride a card and stay reachable through ripr_prepare_repair / ripr_get_repair_attempt",
-                "the card's seam inventory and evidence facts ran with the same resolved workspace configuration as the snapshot's findings (#6825 review); compare cards across transports only at equal config identity",
+                "the card's seam inventory and evidence facts ran with the same resolved workspace configuration as the snapshot's findings; compare cards across transports only at equal config identity",
             ],
             "links": {
                 "snapshot": format!("ripr://snapshot/{snapshot_id}"),
@@ -782,6 +823,60 @@ fn mcp_detail_routes(card: &Value, canonical_id: &str) -> Vec<Value> {
 
 #[cfg(test)]
 mod tests {
+    /// Closed gap: the card says "nothing to do" only when the caller's typed
+    /// `GapItem::is_closed_gap` holds; the pinned `policy_omitted` code never
+    /// changes and every other case keeps the policy wording.
+    #[test]
+    fn policy_omitted_says_nothing_to_do_only_for_a_closed_gap() {
+        let reason =
+            "is configured off for strongly_gripped seams and is not included in agent results";
+        let closed = policy_omitted_failure("seam-a", reason, true);
+        assert_eq!(closed.code, "policy_omitted");
+        assert!(
+            closed.detail.contains("already gripped"),
+            "{}",
+            closed.detail
+        );
+        assert!(closed.detail.contains("nothing to do"), "{}", closed.detail);
+        assert!(closed.recovery.starts_with("none: the gap is closed"));
+        // Negative control: the same strongly_gripped reason for an item that
+        // is not a closed gap (weaker class, or exposed but refused for
+        // another cause) keeps the policy wording.
+        let open = policy_omitted_failure("seam-a", reason, false);
+        assert_eq!(open.code, "policy_omitted");
+        assert!(!open.detail.contains("nothing to do"), "{}", open.detail);
+        assert!(
+            open.recovery.contains("inspect it with"),
+            "{}",
+            open.recovery
+        );
+    }
+
+    /// The card's gate is the list's gate: `exposed` AND already gripped.
+    #[test]
+    fn closed_gap_needs_exposed_and_seam_already_gripped() -> Result<(), String> {
+        let gap = |class: &str, code: Option<&'static str>| -> Result<bool, String> {
+            let mut item =
+                GapItem::from_finding(&crate::mcp::gaps::test_finding()?, Path::new("."))?;
+            item.class = class.to_string();
+            item.repair_readiness.ineligibility = code;
+            Ok(item.is_closed_gap())
+        };
+        let gripped = Some(crate::mcp::repair_admission::SEAM_ALREADY_GRIPPED);
+        assert!(gap("exposed", gripped)?);
+        assert!(!gap("weakly_exposed", gripped)?);
+        assert!(!gap(
+            "exposed",
+            Some(crate::mcp::repair_admission::SEAM_INVENTORY_TRUNCATED)
+        )?);
+        assert!(!gap(
+            "exposed",
+            Some(crate::mcp::repair_admission::SEAM_WORKTREE_SOURCE)
+        )?);
+        assert!(!gap("exposed", None)?);
+        Ok(())
+    }
+
     use super::*;
     use crate::analysis::seams::{
         ExpectedSink, RepoSeam, RequiredDiscriminator, SeamGripClass, SeamKind,
@@ -793,6 +888,7 @@ mod tests {
     use crate::domain::{
         Confidence, ExposureClass, FindingCanonicalGap, OracleKind, OracleStrength,
     };
+    use crate::mcp::workspace::CODE_ITEM_NOT_FOUND;
     use std::path::PathBuf;
     use std::sync::Arc;
 
@@ -824,6 +920,7 @@ mod tests {
             evidence: TestGripEvidence {
                 seam_id,
                 related_tests: vec![Arc::new(RelatedTestGrip {
+                    assertion_targets_non_function: None,
                     test_name: "discounted_total_boundary".to_string(),
                     file: PathBuf::from("tests/pricing.rs"),
                     line: 12,
@@ -883,8 +980,11 @@ mod tests {
             untracked_working_tree_source_paths: Vec::new(),
             ignored_working_tree_source_paths: Vec::new(),
             unlinked_python_tests: None,
+            owner_opt_outs: Vec::new(),
             suppression: None,
             partial_scope: None,
+            file_fact_cache: None,
+
             analyzed_revisions: None,
         })
     }
@@ -929,6 +1029,7 @@ mod tests {
             superseded_attempts: std::collections::BTreeMap::new(),
             desired_base: None,
             desired_source: Default::default(),
+            desired_source_defaulted: false,
             superseded_order: std::collections::VecDeque::new(),
         })
     }
@@ -958,6 +1059,7 @@ mod tests {
             superseded_attempts: std::collections::BTreeMap::new(),
             desired_base: None,
             desired_source: Default::default(),
+            desired_source_defaulted: false,
             superseded_order: std::collections::VecDeque::new(),
         })
     }
@@ -976,6 +1078,67 @@ mod tests {
             .map_err(|error| format!("clock: {error}"))?
             .as_nanos();
         Ok(std::env::temp_dir().join(format!("ripr-mcp-repair-card-{nanos}")))
+    }
+
+    /// A committed repository whose one production file holds a boundary seam.
+    fn refresh_repo() -> Result<PathBuf, String> {
+        let root = temp_root()?;
+        std::fs::create_dir_all(root.join("src")).map_err(|error| error.to_string())?;
+        std::fs::write(
+            root.join("src/foo.rs"),
+            "pub fn discount(amount: i32, threshold: i32) -> bool { amount >= threshold }\n",
+        )
+        .map_err(|error| error.to_string())?;
+        let git = crate::testing::fixture_git::fixture_git_ok;
+        git(&root, &["init", "-q"])?;
+        git(
+            &root,
+            &["config", "user.email", "ripr-test@example.invalid"],
+        )?;
+        git(&root, &["config", "user.name", "RIPR Test"])?;
+        git(&root, &["add", "."])?;
+        git(&root, &["commit", "-q", "--no-gpg-sign", "-m", "fixture"])?;
+        Ok(root)
+    }
+
+    fn refresh_completeness(
+        root: &Path,
+    ) -> Result<super::super::repair_admission::InventoryCompleteness, String> {
+        let mut finding = super::super::gaps::test_finding()?;
+        finding.probe.location.file = root.join("src/foo.rs");
+        let inventory = gather_seam_inventory(root, &RiprConfig::default(), &[finding])
+            .map_err(|failure| format!("refresh inventory failed: {}", failure.code))?;
+        Ok(inventory.completeness)
+    }
+
+    /// #13340: a refresh whose scoped evidence pass failed closed (the
+    /// shared-table warm panicked) must not report a complete inventory; the
+    /// healthy control on a separate root stays complete.
+    #[test]
+    fn failed_evidence_warm_makes_the_refresh_inventory_unverified() -> Result<(), String> {
+        use super::super::repair_admission::InventoryCompleteness;
+        use crate::analysis::test_grip_evidence::WarmPanicGuard;
+        let control = refresh_repo()?;
+        let healthy = refresh_completeness(&control);
+        let _ = std::fs::remove_dir_all(&control);
+        assert_eq!(healthy?, InventoryCompleteness::Complete);
+
+        for point in [1, 2] {
+            let root = refresh_repo()?;
+            let armed = {
+                let _armed = WarmPanicGuard::arm(point);
+                refresh_completeness(&root)
+            };
+            let _ = std::fs::remove_dir_all(&root);
+            match armed? {
+                InventoryCompleteness::Unverified(detail) => assert!(
+                    detail.contains("seam evidence pass failed"),
+                    "arm({point}): {detail}"
+                ),
+                other => return Err(format!("arm({point}) must be Unverified: {other:?}")),
+            }
+        }
+        Ok(())
     }
 
     #[test]
@@ -1011,7 +1174,7 @@ mod tests {
         let mut finding = super::super::gaps::test_finding()?;
         finding.probe.location.file = root.join("pricing_%FF.rs");
         let item = GapItem::from_finding(&finding, &root)?;
-        if item.file != "./pricing_%25FF.rs" {
+        if item.file != "pricing_%25FF.rs" {
             return Err(format!("wire spelling must stay encoded: {}", item.file));
         }
         let changed = inventory_changed_files(&root, std::slice::from_ref(&finding));
@@ -1475,6 +1638,7 @@ mod tests {
             evidence: TestGripEvidence {
                 seam_id,
                 related_tests: vec![Arc::new(RelatedTestGrip {
+                    assertion_targets_non_function: None,
                     test_name: "discounted_total_boundary".to_string(),
                     file: PathBuf::from("tests/pricing.rs"),
                     line: 12,

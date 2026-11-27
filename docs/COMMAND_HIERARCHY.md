@@ -18,16 +18,17 @@ see [installation](QUICKSTART.md#installation) for published and source builds.
 | Record result usefulness | `ripr feedback record --snapshot ID --reason CODE` | Local receipt bound to a snapshot; diagnostics, classification, baselines, suppressions, gates, and gap closure stay unchanged. |
 | Check configuration | `ripr config validate` | Validation of `ripr.toml` without analysis. |
 | Start the LSP sidecar | `ripr lsp --stdio` | Saved-workspace feedback for an LSP client. |
-| Serve MCP | `ripr mcp --stdio` | [Read-only workspace status and static analysis session](interop/mcp.md): an explicit `ripr_refresh` analyzes committed input; uncommitted input needs the opt-in `source: "worktree"`. No edit or project-test authority. |
+| Serve MCP | `ripr mcp --stdio` | [Read-only workspace status and static analysis session](interop/mcp.md): `ripr_refresh` reads saved tracked edits when any exist, else committed input, like `ripr check`; `source` forces `committed` or `worktree`. No edit or project-test authority. |
 | Read detailed help | `ripr help <command>`, `ripr help workflow [name]`, or `ripr help --all` | Options for one command, one bounded workflow's steps, or the full reference. |
 
 The bare `cache`, `baseline`, `policy`, `reports`, `calibrate`, `zero`,
-`assistant-loop`, `config`, `pr-ledger`, `pr-review`, `coverage-grip`, and `gate`
-groups print their own help and exit successfully. For example, `ripr cache`
-shows the same help as `ripr help cache`, without reading configuration or
+`assistant-loop`, `config`, `pr-ledger`, `pr-review`, `pr-comments`,
+`coverage-grip`, and `gate` groups print their own help and exit successfully.
+For example, `ripr cache` shows the same help as `ripr help cache`, without reading configuration or
 writing reports. Choose a subcommand to perform an operation; its required
 inputs still apply. `ripr gate --pr-guidance PATH` also accepts the flag-first
-evaluation shorthand. `ripr pr-comments` retains its default `plan` action.
+evaluation shorthand. `ripr pr-comments` no longer implies `plan`: run
+`ripr pr-comments plan` to write the comment plan.
 
 Mistyped `agent` subcommands list the accepted children and suggest a nearby
 spelling when one exists: `ripr agent brief2` suggests `brief`. Suggestions
@@ -67,6 +68,24 @@ and prints the continuation command. The continue command runs the after
 phase, which records static evidence after the edit and emits the receipt.
 Test execution and static movement are separate observations.
 
+Both commands accept `--json` for a machine driver (#11584). `ripr repair
+--json` prints the repair packet, including `repair_attempt.attempt_id`, on
+stdout in place of the summary and card; a repeated start prints the existing
+attempt's status document. `ripr continue --json` prints the after-phase
+document, or the attempt's status document when it is already complete.
+Under `continue --json`, a typed after-phase refusal or failure prints its
+document on stdout (`repair_after_refusal`, `repair_after_failure`, or the
+verify document) with the same exit code and stderr prose. Every other
+refusal keeps its exit code and stderr prose under `--json`. The typed
+`repair` refusals and `continue` selection refusals (no current attempt,
+several attempts, an ended attempt, a blocked baseline, an unanchored root)
+also write the `cli_refusal` document with their reason `code` and
+`disposition` (#14931); operational errors before the verify step and argv
+usage errors outside the `cli_refusal` classes keep empty stdout. An unknown flag (or, for `continue`,
+a stray positional argument) under `--json` keeps exit `2` and its stderr
+prose and also writes the standalone `cli_refusal` document to stdout
+(`docs/OUTPUT_SCHEMA.md`, #6834 decision).
+
 Keep the printed continuation command when changing sessions, or rerun
 `ripr continue --attempt ATTEMPT_ID --root .`. The seam ID selects the
 gap; the attempt ID selects its prepared transaction. To recover, run
@@ -94,7 +113,9 @@ ripr agent repair --root . --attempt <repair-attempt-id> --phase verify --verify
 `verify` accepts only `--attempt`, not a seam selector. The verification authority
 must match the edit authority. Trust-selection flags belong on `before` only.
 Optional `--verify-rollback` requests restoration after observation; inspect the
-reported rollback result rather than assuming restoration.
+reported rollback result rather than assuming restoration. The after phase of
+`agent repair` accepts optional `--test-result FILE`, a caller-run libtest result
+that is validated and recorded, never executed by ripr.
 
 Follow [the governed Python sequence](REPAIR_ATTEMPT.md#governed-python-sequence)
 for selection, authorization, and recovery. Execution success does not itself

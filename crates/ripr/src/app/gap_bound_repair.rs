@@ -73,10 +73,11 @@ pub(crate) const GAP_BOUND_PACKET_ARTIFACT: &str = "target/ripr/workflow/gap-rep
 /// consumer reads one artifact kind as the other.
 pub(crate) const GAP_BOUND_BEFORE_SNAPSHOT_ROLE: &str = "before_check_findings";
 
-/// Whether a finding is static-limited: the producer's named limitation or an
-/// unknown/no-path class. `ripr check` offers no start for one, so the before
-/// phase must not accept one either.
-pub(crate) fn finding_is_static_limited(finding: &Finding) -> bool {
+/// Whether check reads a finding as unreached or limited: the producer's named
+/// limitation, or an unknown/no-path class. This is a reading of what check
+/// knows (wording and ranking), not start eligibility: a no-path finding whose
+/// owner nothing in the workspace calls is still unreached here (#15926).
+pub(crate) fn finding_reads_unreached_or_limited(finding: &Finding) -> bool {
     finding.static_limit_kind.is_some()
         || matches!(
             finding.class,
@@ -85,6 +86,20 @@ pub(crate) fn finding_is_static_limited(finding: &Finding) -> bool {
                 | crate::domain::ExposureClass::PropagationUnknown
                 | crate::domain::ExposureClass::StaticUnknown
         )
+}
+
+/// Whether a finding is static-limited for repair starts: check reads it as
+/// unreached or limited ([`finding_reads_unreached_or_limited`]) and offers no
+/// start for it, so the before phase must not accept one either.
+///
+/// #15926: a changed owner nothing in the workspace names (RIPR-SPEC-0219) is
+/// a test-side gap, not a static limit: check knows no test reaches it, and
+/// the work is writing that test. The human triage already reads it so
+/// (#14919); the repair route and the repair screen now agree, so check,
+/// bare repair, pilot and the card offer the same start. Wording and ranking
+/// that speak to reachability read [`finding_reads_unreached_or_limited`].
+pub(crate) fn finding_is_static_limited(finding: &Finding) -> bool {
+    !finding.is_unreferenced_no_static_path() && finding_reads_unreached_or_limited(finding)
 }
 
 /// The validated GapRecord of a finding that may start a gap-bound repair, or
@@ -103,7 +118,10 @@ pub(crate) fn startable_typescript_gap_record(finding: &Finding) -> Option<GapRe
 /// `root` (the live diff source selection included; `base: None` lets the
 /// loader resolve the default base exactly as check does). The one analysis
 /// behind a gap-bound before snapshot and behind the start admission that
-/// `ripr agent status` consults (#10001), so they cannot drift.
+/// `ripr agent status` consults (#10001), so they cannot drift. With no
+/// `base` on a clean checkout of the comparison base, it rescopes to the last
+/// commit under check's own guards (#13644, #16082), as the bare human check
+/// does.
 pub(crate) fn default_check_output(
     root: &std::path::Path,
     base: Option<&str>,
@@ -131,8 +149,32 @@ pub(crate) fn default_check_output(
     } else {
         super::AnalysisProgressScope::Diff
     };
+    let rescope_input = (base.is_none() && !worktree_run).then(|| {
+        let mut retry = input.clone();
+        retry.base = Some(super::diff_source::LAST_COMMIT_BASE.to_string());
+        retry
+    });
+    let git_timeout = input.git_timeout;
     let mut output = super::check_with_progress_core(input, config, scope, None)
         .map_err(|error| error.to_string())?;
+    if let Some(retry) = rescope_input
+        && super::diff_source::last_commit_fallback_applies(&output, root, git_timeout)
+    {
+        // Check prints the retry's own stderr notes only when it replaces
+        // the shown output; this caller shows none of check's stderr, so
+        // they are dropped either way.
+        let (retried, _disclosures) = crate::analysis::capture_disclosures(|| {
+            super::check_with_progress_core(retry, config, scope, None)
+        });
+        if let Ok(retried) = retried
+            && retried
+                .analysis_outcome
+                .as_ref()
+                .is_some_and(|outcome| outcome.counts.changed_file_count > 0)
+        {
+            output = retried;
+        }
+    }
     // The same disclosure normalization `ripr check` applies: a working-tree
     // read analyzed the live files, so the committed-history flag is off.
     if worktree_run {
@@ -281,7 +323,32 @@ pub(crate) fn lookup_python_gap_start(
     };
     match validate_agent_gap_record_packet(&record) {
         Ok(()) => GapStartLookup::Ready(Box::new(record)),
-        Err(reason) => GapStartLookup::NotReady { reason },
+        Err(reason) => GapStartLookup::NotReady {
+            reason: python_not_ready_reason(finding, &record, reason),
+        },
+    }
+}
+
+/// The refusal reason for a Python gap the shared readiness owner declined
+/// (#13790). The decision is already made; this only names why when the
+/// record says the finding has no repair card and the finding's Missing check
+/// says the changed predicate holds several comparisons, and adds the
+/// by-hand test shape. Every other refusal keeps the owner's reason as is.
+fn python_not_ready_reason(finding: &Finding, record: &GapRecord, reason: String) -> String {
+    let no_card = record.static_limit_kind.as_deref()
+        == Some(
+            crate::output::gap_decision_ledger::PYTHON_REPAIR_CARD_UNAVAILABLE_STATIC_LIMIT_KIND,
+        );
+    if !no_card || !finding.activation.missing_discriminators.is_empty() {
+        return reason;
+    }
+    match crate::output::human::multi_comparison_predicate(&finding.missing) {
+        Some(predicate) => format!(
+            "{reason} ({}).\nBy hand: {}",
+            predicate.reason(),
+            predicate.manual_test_shape()
+        ),
+        None => reason,
     }
 }
 
@@ -433,6 +500,40 @@ mod tests {
         }
     }
 
+    /// #15926: a no-path finding whose owner nothing in the workspace names
+    /// is a test-side gap, not a static limit; dropping the marker or adding
+    /// a named limitation keeps it limited.
+    #[test]
+    fn an_unreferenced_no_path_owner_is_not_static_limited() -> Result<(), String> {
+        let unreferenced = || {
+            let mut finding = complete_finding();
+            finding.class = crate::domain::ExposureClass::NoStaticPath;
+            finding.ripr.reach.state = StageState::No;
+            finding.ripr.reach.summary = format!(
+                "no caller of the owner {}",
+                crate::domain::UNREFERENCED_IN_WORKSPACE
+            );
+            finding
+        };
+        if !unreferenced().is_unreferenced_no_static_path() {
+            return Err("fixture: the finding must read as unreferenced".to_string());
+        }
+        if finding_is_static_limited(&unreferenced()) {
+            return Err("an unreferenced no-path owner must not be static-limited".to_string());
+        }
+        let mut referenced = unreferenced();
+        referenced.ripr.reach.summary = "no caller of the owner".to_string();
+        if !finding_is_static_limited(&referenced) {
+            return Err("a referenced no-path finding stays static-limited".to_string());
+        }
+        let mut named = unreferenced();
+        named.static_limit_kind = Some(crate::domain::StaticLimitKind::ProofHarnessNotEvaluated);
+        if !finding_is_static_limited(&named) {
+            return Err("a named limitation stays static-limited".to_string());
+        }
+        Ok(())
+    }
+
     const PY_GAP: &str =
         "gap:python:pricing/core.py:bulk_discount_rate:predicate_boundary:predicate:units>=20";
 
@@ -568,5 +669,55 @@ mod tests {
             GapStartLookup::NoSuchGap => Ok(()),
             _ => Err("an unknown id must resolve NoSuchGap".to_string()),
         }
+    }
+
+    const MULTI_MISSING: &str = "A strong Python oracle reaches `discount`, but static evidence does not place a related test input at the changed predicate boundary. The changed predicate `rate < 0 or rate >= 1` holds 2 relational comparisons; static evidence cannot establish which boundary a related test call pins.";
+
+    fn no_card_record() -> GapRecord {
+        GapRecord {
+            static_limit_kind: Some(
+                crate::output::gap_decision_ledger::PYTHON_REPAIR_CARD_UNAVAILABLE_STATIC_LIMIT_KIND
+                    .to_string(),
+            ),
+            ..GapRecord::default()
+        }
+    }
+
+    #[test]
+    fn a_declined_multi_comparison_gap_names_the_reason_and_rows() {
+        // #13790: the owner already refused; the reason gains the cause and
+        // the by-hand shape.
+        let mut finding = complete_finding();
+        finding.missing = vec![MULTI_MISSING.to_string()];
+        finding.activation.missing_discriminators.clear();
+        let reason = python_not_ready_reason(
+            &finding,
+            &no_card_record(),
+            "is not agent-packet eligible: not_repairable".to_string(),
+        );
+        assert_eq!(
+            reason,
+            "is not agent-packet eligible: not_repairable (the changed predicate `rate < 0 or rate >= 1` holds 2 comparisons, so static evidence cannot tell which boundary a test pins).\nBy hand: add one test row per boundary (`rate == 0`, `rate == 1`)"
+        );
+    }
+
+    #[test]
+    fn other_declines_keep_the_owner_reason_unchanged() {
+        let owner = "is not agent-packet eligible: not_repairable".to_string();
+        let mut finding = complete_finding();
+        finding.activation.missing_discriminators.clear();
+        // No multi-comparison Missing check: unchanged.
+        finding.missing = vec!["static evidence names no concrete missing check".to_string()];
+        assert_eq!(
+            python_not_ready_reason(&finding, &no_card_record(), owner.clone()),
+            owner
+        );
+        // A record that is not the no-repair-card decline: unchanged, even
+        // when the Missing check names several comparisons.
+        finding.missing = vec![MULTI_MISSING.to_string()];
+        assert_eq!(
+            python_not_ready_reason(&finding, &GapRecord::default(), owner.clone()),
+            owner
+        );
     }
 }

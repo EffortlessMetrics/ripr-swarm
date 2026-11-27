@@ -1,0 +1,19 @@
+# Registers the file-scoped ambiguity validation and the uncapped seam-id stub (#14369).
+[[extend]]
+id = "RIPR-SPEC-0122"
+tests = [
+  "crates/ripr/tests/agent_stub_compiles.rs::printed_seam_id_route_yields_its_stub_past_the_seam_cap",
+  "crates/ripr/src/app/test_stub.rs::tests::failed_evidence_warm_refuses_scoped_test_stub",
+]
+code = [
+  "crates/ripr/src/analysis/seam_inventory.rs",
+]
+
+[[extend]]
+id = "RIPR-SPEC-0287"
+tests = [
+  "crates/ripr/tests/agent_stub_compiles.rs::seam_id_stub_names_a_repair_start_only_when_the_capped_before_phase_finds_it",
+]
+code = [
+  "crates/ripr/src/app/test_stub.rs",
+]

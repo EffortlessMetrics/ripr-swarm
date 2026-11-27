@@ -1,0 +1,8 @@
+# Registers the appended integer and char equality `||` arm readings and the
+# appended-arm owner-tail return sink (#15027) under RIPR-SPEC-0001.
+[[extend]]
+id = "RIPR-SPEC-0001"
+tests = [
+  "crates/ripr/src/analysis/classify/infection.rs::tests::an_input_equal_to_an_appended_integer_or_char_arm_reaches_the_change",
+  "crates/ripr/src/analysis/classify/flow.rs::tests::appended_equality_arm_tail_reaches_return_sink_and_other_or_tails_do_not",
+]

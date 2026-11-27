@@ -25,7 +25,7 @@
 //! languages project the same compact identity shape from their own changed
 //! line; each language keeps its own matcher by contract.
 
-use crate::analysis::classify::comparison_operands;
+use crate::analysis::classify::{changed_comparison_conjunct, comparison_operands};
 use crate::analysis::seams::SeamKind;
 use crate::domain::{FindingCanonicalGap, ProbeFamily, SymbolId};
 use std::path::Path;
@@ -177,14 +177,28 @@ fn rust_behavior_kind(probe_family: &ProbeFamily) -> &'static str {
 fn normalize_rust_gap_discriminator(probe_family: &ProbeFamily, expression: &str) -> String {
     let text = expression.trim();
     let stripped = match probe_family {
-        ProbeFamily::Predicate => comparison_operands(text)
+        // The same single-comparison reading as the classifier (#14719,
+        // #9637), so `a && s.len() > 1` names `s.len() == 1`, never the
+        // conjunction. Seams carry no pre-edit text, so neither side passes
+        // one, and finding and seam ids stay equal. A shape with no single
+        // comparison keeps its existing id.
+        ProbeFamily::Predicate => changed_comparison_conjunct(text, None)
+            .and_then(comparison_operands)
+            .or_else(|| comparison_operands(text))
             .map(|(left, right)| format!("{left} == {right}"))
             .unwrap_or_else(|| strip_predicate_statement(text)),
         ProbeFamily::ReturnValue | ProbeFamily::ErrorPath => strip_return_statement(text),
         ProbeFamily::MatchArm => strip_match_arm_arrow(text),
         _ => text.to_string(),
     };
-    rust_gap_key_text(&encode_rust_string_literals(&stripped))
+    const MAX_DISCRIMINATOR_BYTES: usize = 256;
+    let key = rust_gap_key_text(&encode_rust_string_literals(&stripped));
+    if key.len() <= MAX_DISCRIMINATOR_BYTES {
+        return key;
+    }
+    // Hash the complete historical key to preserve its equivalence rules.
+    // A readable key cannot contain '~', so it cannot impersonate a digest.
+    format!("sha256~{}", super::sha256_hex(key.as_bytes()))
 }
 
 /// Encode Rust string and char literals into collision-free key tokens
@@ -370,6 +384,48 @@ mod tests {
     }
 
     #[test]
+    fn compound_predicate_names_only_its_one_comparison() -> Result<(), String> {
+        // #14719: `a && s.len() > 1` names `s.len() == 1`, the boundary the
+        // classifier reads (#9637), never the conjunction split at `>`.
+        let gap = gap_for(
+            Path::new("src/lib.rs"),
+            Some(owner("src/lib.rs", "flag")),
+            &ProbeFamily::Predicate,
+            "s.starts_with('-') && s.len() > 1",
+        )?;
+        assert_eq!(gap.normalized_discriminator, "s.len==1");
+        let gated = gap_for(
+            Path::new("src/lib.rs"),
+            Some(owner("src/lib.rs", "discount")),
+            &ProbeFamily::Predicate,
+            "if member && total >= 120 {",
+        )?;
+        assert_eq!(gated.normalized_discriminator, "total==120");
+        assert_eq!(
+            gated.id,
+            "gap:rust:src/lib.rs:discount:predicate_boundary:predicate:total==120"
+        );
+        // A quoted operator in the sibling is not a second comparison.
+        let quoted = gap_for(
+            Path::new("src/lib.rs"),
+            Some(owner("src/lib.rs", "flag")),
+            &ProbeFamily::Predicate,
+            "s.starts_with('>') && s.len() > 1",
+        )?;
+        assert_eq!(quoted.normalized_discriminator, "s.len==1");
+        // Two comparisons have no single boundary, so the id stays the one
+        // the whole-text reading always minted.
+        let ranged = gap_for(
+            Path::new("src/lib.rs"),
+            Some(owner("src/lib.rs", "is_adult")),
+            &ProbeFamily::Predicate,
+            "age >= 18 && age < 65",
+        )?;
+        assert_eq!(ranged.normalized_discriminator, "age==18_age<65");
+        Ok(())
+    }
+
+    #[test]
     fn non_comparison_predicates_fall_back_to_the_statement_text() -> Result<(), String> {
         let gap = gap_for(
             Path::new("src/lib.rs"),
@@ -405,13 +461,23 @@ mod tests {
 
     #[test]
     fn windows_separators_normalize_into_the_identity() -> Result<(), String> {
+        let path = PathBuf::from("src\\pricing.rs");
+        // The owner names the file the way the seam side spells it.
+        let owner_file = crate::analysis::stable_path_text(&path);
         let gap = gap_for(
-            &PathBuf::from("src\\pricing.rs"),
-            Some(owner("src/pricing.rs", "discounted_total")),
+            &path,
+            Some(owner(&owner_file, "discounted_total")),
             &ProbeFamily::Predicate,
             "if amount >= discount_threshold {",
         )?;
-        assert_eq!(gap.file, "src/pricing.rs");
+        // A backslash is a separator on Windows and a file-name byte, spelled
+        // `%5C`, on Unix (#15908).
+        let expected = if cfg!(unix) {
+            "src%5Cpricing.rs"
+        } else {
+            "src/pricing.rs"
+        };
+        assert_eq!(gap.file, expected);
         assert_eq!(gap.owner, "discounted_total");
         Ok(())
     }
@@ -470,6 +536,55 @@ mod tests {
         assert_eq!(underscored.normalized_discriminator, "s==lit615f62");
         assert_ne!(spaced.id, underscored.id);
         assert_ne!(spaced.normalized_discriminator, "s==a_b");
+        Ok(())
+    }
+
+    #[test]
+    fn bounded_discriminators_preserve_short_ids_and_name_the_exact_seam() -> Result<(), String> {
+        let prefix = "gap:rust:src/lib.rs:calc:return_value:return_value:";
+        let exact = "a".repeat(256);
+        let spaced = r#"return "a b";"#;
+        let cases = [
+            (spaced.to_string(), "lit612062".to_string()),
+            (exact.clone(), exact),
+            (
+                "a".repeat(257),
+                "sha256~e8d95cc2b4bc198c54b40bd214df958afb65f5e73d2c2eafe0593cf5c635c1f0"
+                    .to_string(),
+            ),
+            (
+                format!(r#"x * 2 + "{}".len()"#, "a".repeat(2000)),
+                "sha256~25578d0848c47891e227e09c7560bc6ffcdc741ade0c824fe93583118aed94ce"
+                    .to_string(),
+            ),
+            (
+                format!(r#"x * 2 + "{}b".len()"#, "a".repeat(1999)),
+                "sha256~fc896d466b15d52f35cb4f5ced854e6c88c037607c36f367dac8e1ee098e9c07"
+                    .to_string(),
+            ),
+            (
+                format!(r#"x * 2 + "{}".len()"#, "é🚀".repeat(5000)),
+                "sha256~6f805134fdc47fd0d1fabc2aa902146f112317923eb18e9f20cf63e12b5a687d"
+                    .to_string(),
+            ),
+        ];
+        for (expression, expected) in cases {
+            let gap = gap_for(
+                Path::new("src/lib.rs"),
+                Some(owner("src/lib.rs", "calc")),
+                &ProbeFamily::ReturnValue,
+                &expression,
+            )?;
+            assert_eq!(gap.normalized_discriminator, expected);
+            assert_eq!(gap.id, format!("{prefix}{expected}"));
+            assert!(producer_gap_names_seam_shape(
+                &gap.id,
+                "src/lib.rs",
+                "calc",
+                SeamKind::ReturnValue,
+                &expression
+            ));
+        }
         Ok(())
     }
 
@@ -610,22 +725,23 @@ mod tests {
     }
 
     /// #8638: the finding side mints from the producer's path and the seam
-    /// side from the seam's path after `stable_path_text`; both normalize
-    /// Windows-style separators, so the ids match byte-for-byte.
+    /// side from the seam's path after `stable_path_text`; both spell the file
+    /// the same way (`/` for a Windows separator, `%5C` for a literal Unix
+    /// backslash, #15908), so the ids match byte-for-byte.
     #[test]
     fn finding_and_seam_paths_agree_after_stable_path_text() -> Result<(), String> {
         let windows = PathBuf::from("src\\pricing.rs");
+        let seam_file = crate::analysis::stable_path_text(&windows);
         let gap = gap_for(
             &windows,
-            Some(owner("src/pricing.rs", "score")),
+            Some(owner(&seam_file, "score")),
             &ProbeFamily::Predicate,
             "if a >= b {",
         )?;
-        let seam_file = crate::analysis::stable_path_text(&windows);
         assert_eq!(
             rust_gap_id_for_seam_shape(
                 &seam_file,
-                "src/pricing.rs::score",
+                &format!("{seam_file}::score"),
                 SeamKind::PredicateBoundary,
                 "if a >= b {"
             )

@@ -49,6 +49,13 @@
         "observe": {"state":"weak","confidence":"low","summary":"Strongest extracted Python oracle kind: `relational_check` (rank 3)"},
         "discriminate": {"state":"weak","confidence":"low","summary":"Python preview adapter found no strong discriminator; missing proof: `return value == \"coupon expired\"`."}
        },
+      "evidence_stages": [
+        {"stage":"reach","state":"yes","confidence":"low"},
+        {"stage":"infect","state":"yes","confidence":"low"},
+        {"stage":"propagate","state":"yes","confidence":"low"},
+        {"stage":"observe","state":"weak","confidence":"low"},
+        {"stage":"discriminate","state":"weak","confidence":"low"}
+      ],
       "evidence_path": ["reach yes: 1 related Python test(s) found for owner `warn_coupon`", "infection yes: Changed Python return expression can alter the owner return value: `return \"coupon expired\"`", "propagation yes: Changed Python return value is already at the owner output boundary.", "observation weak: Strongest extracted Python oracle kind: `relational_check` (rank 3)", "discriminator weak: Python preview adapter found no strong discriminator; missing proof: `return value == \"coupon expired\"`.", "local flow reaches returned value: return \"coupon expired\" (line 3)", "related test tests/test_notifications.py:7 test_warn_coupon_output_message uses weak relational check oracle: self.assertIn(\"coupon expired\", result.output)", "missing discriminator return value == \"coupon expired\": changed Python returned-value at line 3 lacks a concrete repair discriminator"],
       "flow_sinks": [
         {"kind":"return_value","text":"return \"coupon expired\"","line":3}

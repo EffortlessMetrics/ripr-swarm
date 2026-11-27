@@ -1,5 +1,5 @@
 //! Current repository guides must agree with the candidate's rendered help.
-//! These seven source-checkout audits are deliberately outside the published crate.
+//! The source-checkout audits also cover the lockstep crate publication guide.
 
 #[path = "../../crates/ripr/tests/common/help_contract.rs"]
 mod help_contract;
@@ -11,6 +11,8 @@ use ripr_help::{rendered_help, run_ripr};
 const COMMAND_HIERARCHY_DOC: &str = include_str!("../../docs/COMMAND_HIERARCHY.md");
 const ROOT_README: &str = include_str!("../../README.md");
 const QUICKSTART_DOC: &str = include_str!("../../docs/QUICKSTART.md");
+const WHY_RIPR_DOC: &str = include_str!("../../docs/WHY_RIPR.md");
+const BOUNDARY_GAP_HUMAN: &str = include_str!("../../fixtures/boundary_gap/expected/human.txt");
 const EXIT_CODES_DOC: &str = include_str!("../../docs/EXIT_CODES.md");
 const FIRST_RUN_REPORT_TEMPLATE: &str =
     include_str!("../../.github/ISSUE_TEMPLATE/first_run_report.yml");
@@ -40,6 +42,7 @@ const PUBLIC_COMMAND_DOCS: &[(&str, &str)] = &[
         include_str!("../../editors/vscode/README.md"),
     ),
     ("docs/QUICKSTART.md", QUICKSTART_DOC),
+    ("docs/WHY_RIPR.md", WHY_RIPR_DOC),
     ("docs/COMMAND_HIERARCHY.md", COMMAND_HIERARCHY_DOC),
     ("docs/EXIT_CODES.md", EXIT_CODES_DOC),
     (
@@ -148,6 +151,12 @@ fn doc_section(doc: &str, heading: &str) -> Result<String, String> {
         .ok_or_else(|| format!("document has no content for `{heading}`"))
 }
 
+const README_ARCHIVE_CHECK: &str = " && ./ripr-bin/ripr check";
+
+fn readme_first_run_checks_installed_archive(block: &str) -> bool {
+    block.contains("sha256sum -c") && block.ends_with(README_ARCHIVE_CHECK)
+}
+
 /// Keep task ownership and executable entry points aligned without pinning
 /// editorial prose.
 #[test]
@@ -158,9 +167,10 @@ fn docs_keep_the_canonical_role_vocabulary() -> Result<(), String> {
     // alternative below it. The block must verify the download and end by
     // inspecting a change.
     let first_run = first_bash_block(ROOT_README)?;
-    if !first_run.contains("sha256sum -c") || !first_run.ends_with(" ripr check") {
+    if !readme_first_run_checks_installed_archive(&first_run) {
         return Err(
-            "README first run must install a checksummed ripr and inspect a change".to_string(),
+            "README first run must verify the archive and inspect a change with the extracted ripr"
+                .to_string(),
         );
     }
     for target in [
@@ -424,34 +434,36 @@ fn first_run_guard_does_not_credit_a_later_correct_example() -> Result<(), Strin
     if first_bash_block(changed)? == "ripr check" {
         return Err("a later command must not hide a wrong first-run route".to_string());
     }
-    for (surface, section, expected) in [
-        (
-            "README",
-            doc_section(ROOT_README, "## The first useful run")?,
-            "cargo install ripr ripr check",
-        ),
-        (
-            "Quickstart CLI",
-            doc_section(QUICKSTART_DOC, "## CLI First Hour")?,
-            "ripr check",
-        ),
+    let readme = first_bash_block(&doc_section(ROOT_README, "## The first useful run")?)?;
+    let install = readme
+        .strip_suffix(README_ARCHIVE_CHECK)
+        .ok_or("README negative controls need the guarded extracted command")?;
+    for wrong in [
+        " && ripr check",
+        " ./ripr-bin/ripr check",
+        " && ./ripr-bin/ripr doctor",
+        " && ./ripr-bin/ripr pilot --root .",
+        " && ./ripr-bin/ripr check --base origin/main",
     ] {
-        for command in [
-            "ripr doctor",
-            "ripr pilot --root .",
-            "ripr check --base origin/main",
-        ] {
-            let wrong = section.replacen("\nripr check\n", &format!("\n{command}\n"), 1);
-            if wrong == section {
-                return Err(format!(
-                    "{surface} negative control did not change a command"
-                ));
-            }
-            if first_bash_block(&wrong)? == expected {
-                return Err(format!(
-                    "{surface} first-run guard accepted `{command}` before a later correct example"
-                ));
-            }
+        if readme_first_run_checks_installed_archive(&format!("{install}{wrong}")) {
+            return Err(format!("README first-run guard accepted `{wrong}`"));
+        }
+    }
+
+    let quickstart = doc_section(QUICKSTART_DOC, "## CLI First Hour")?;
+    for command in [
+        "ripr doctor",
+        "ripr pilot --root .",
+        "ripr check --base origin/main",
+    ] {
+        let wrong = quickstart.replacen("\nripr check\n", &format!("\n{command}\n"), 1);
+        if wrong == quickstart {
+            return Err("Quickstart CLI negative control did not change a command".to_string());
+        }
+        if first_bash_block(&wrong)? == "ripr check" {
+            return Err(format!(
+                "Quickstart CLI first-run guard accepted `{command}` before a later correct example"
+            ));
         }
     }
     Ok(())
@@ -521,6 +533,110 @@ fn first_run_surfaces_require_clean_checkout_guidance() -> Result<(), String> {
     }
     let help = rendered_help(&["--help"])?;
     canonical_first_run_command(&without_clean_checkout_note(&help))?;
+    Ok(())
+}
+
+/// #13323: the CLI First Hour must read run -> what you see -> what to do
+/// next -> reference, so a reader wanting the first result no longer reads
+/// progress rules, the glossary, the schema-value mapping, and JSON/agent
+/// handling first. The excerpt must quote the checked fixture output, and
+/// every piece of moved mechanism must live inside the marked reference
+/// subsection.
+fn quickstart_cli_first_hour_order(section: &str) -> Result<(), String> {
+    let see = section
+        .find("### What you see")
+        .ok_or_else(|| "Quickstart CLI First Hour lost `### What you see`".to_string())?;
+    let next = section
+        .find("### What to do next")
+        .ok_or_else(|| "Quickstart CLI First Hour lost `### What to do next`".to_string())?;
+    let reference = section
+        .find("### Reference: output mechanics and terms")
+        .ok_or_else(|| {
+            "Quickstart CLI First Hour lost `### Reference: output mechanics and terms`".to_string()
+        })?;
+    if !(see < next && next < reference) {
+        return Err(
+            "Quickstart CLI First Hour must read what-you-see, then what-to-do-next, then the reference"
+                .to_string(),
+        );
+    }
+    // The excerpt quotes the checked fixture output: whole lines, in order.
+    let (_, after_fence) = section
+        .split_once("```text\n")
+        .ok_or_else(|| "Quickstart CLI First Hour excerpt lost its text fence".to_string())?;
+    let (fence, _) = after_fence
+        .split_once("```")
+        .ok_or_else(|| "Quickstart CLI First Hour excerpt has no closing fence".to_string())?;
+    let mut fixture_lines = BOUNDARY_GAP_HUMAN.lines();
+    let mut quoted = 0;
+    for line in fence.lines().filter(|l| !l.trim().is_empty()) {
+        quoted += 1;
+        if !fixture_lines.any(|fixture_line| fixture_line == line) {
+            return Err(format!(
+                "CLI First Hour excerpt line is missing or out of order in the fixture: {line}"
+            ));
+        }
+    }
+    if quoted < 4 {
+        return Err("expected the CLI First Hour excerpt to quote at least four lines".to_string());
+    }
+    // The moved mechanism lives inside the reference subsection...
+    let reference_body = &section[reference..];
+    for needle in [
+        "ripr progress:",
+        "| Term |",
+        "weakly_exposed",
+        "canonical_next_action",
+    ] {
+        assert_contains(
+            "Quickstart CLI First Hour reference",
+            reference_body,
+            needle,
+        )?;
+    }
+    // ...and none of it may appear ahead of that subsection.
+    let before_reference = &section[..reference];
+    for needle in [
+        "ripr progress:",
+        "| Term |",
+        "weakly_exposed",
+        "canonical_next_action",
+    ] {
+        if before_reference.contains(needle) {
+            return Err(format!(
+                "Quickstart CLI First Hour mechanism `{needle}` moved ahead of the reference subsection"
+            ));
+        }
+    }
+    Ok(())
+}
+
+#[test]
+fn quickstart_cli_first_hour_puts_the_result_before_the_reference() -> Result<(), String> {
+    let section = doc_section(QUICKSTART_DOC, "## CLI First Hour")?;
+    quickstart_cli_first_hour_order(&section)?;
+    // Negative controls: a renamed reference heading, mechanism promoted
+    // ahead of the result, and a dropped excerpt must each fail.
+    let renamed = section.replace("### Reference: output mechanics and terms", "### Notes");
+    if quickstart_cli_first_hour_order(&renamed).is_ok() {
+        return Err(
+            "CLI First Hour order guard accepted a renamed reference subsection".to_string(),
+        );
+    }
+    let promoted = section.replacen(
+        "### What you see",
+        "### What you see\n\n`ripr progress: <stage> [<scope>]`\n",
+        1,
+    );
+    if quickstart_cli_first_hour_order(&promoted).is_ok() {
+        return Err(
+            "CLI First Hour order guard accepted progress rules ahead of the result".to_string(),
+        );
+    }
+    let no_excerpt = section.replacen("```text\n", "```\n", 1);
+    if quickstart_cli_first_hour_order(&no_excerpt).is_ok() {
+        return Err("CLI First Hour order guard accepted a dropped checked excerpt".to_string());
+    }
     Ok(())
 }
 
@@ -752,23 +868,51 @@ const PORTABLE_TESTS: &[&str] = &[
     "per_command_help_renders_the_catalog_example",
     "help_all_rejects_trailing_arguments",
     "help_all_flag_pair_is_rejected_outside_check",
+    "help_route_typos_name_the_route_that_works",
 ];
 
+/// The rendered-help harness is a development test: the published package
+/// carries none of `tests/` (#15216). Qualification compiles the same files
+/// standalone against the installed candidate
+/// (`candidate_harness/archive/help_contract.rs`); this compiles them the same
+/// way against the checkout candidate.
 #[test]
-fn packaged_help_target_runs_every_case_and_rejects_missing_shared_asset() -> Result<(), String> {
-    use ripr_help::{Scratch, compile_portable, extracted_package, require_success, run};
+fn help_harness_stays_out_of_the_package_and_runs_every_case_standalone() -> Result<(), String> {
+    use ripr_help::{
+        Scratch, compile_portable, extracted_package, require_success, run, workspace,
+    };
     let scratch = Scratch::new("packaged-help-contract")?;
-    let package = extracted_package(&scratch.0)?;
+    let extracted = extracted_package(&scratch.0)?;
+    if extracted.join("tests").exists() {
+        return Err(format!(
+            "the published ripr package carries development tests under {}",
+            extracted.join("tests").display()
+        ));
+    }
+    let package = scratch.0.join("help-harness");
+    for relative in [
+        "tests/cli_help_hierarchy.rs",
+        "tests/common/help_contract.rs",
+        "tests/common/help_workspace.rs",
+    ] {
+        let target = package.join(relative);
+        let parent = target
+            .parent()
+            .ok_or_else(|| format!("{relative} has no parent"))?;
+        std::fs::create_dir_all(parent).map_err(|error| error.to_string())?;
+        std::fs::copy(workspace().join("crates/ripr").join(relative), &target)
+            .map_err(|error| format!("copy {relative}: {error}"))?;
+    }
     let executable = scratch
         .0
         .join(format!("help-tests{}", std::env::consts::EXE_SUFFIX));
     require_success(
         compile_portable(&package, &executable)?,
-        "extracted help compile",
+        "standalone help compile",
     )?;
     let mut list = std::process::Command::new(&executable);
     list.arg("--list").current_dir(&scratch.0);
-    let inventory = require_success(run(list)?, "extracted help inventory")?;
+    let inventory = require_success(run(list)?, "standalone help inventory")?;
     let inventory = String::from_utf8(inventory.stdout).map_err(|error| error.to_string())?;
     let actual = inventory
         .lines()
@@ -785,14 +929,14 @@ fn packaged_help_target_runs_every_case_and_rejects_missing_shared_asset() -> Re
     }
     let mut execute = std::process::Command::new(&executable);
     execute.arg("--test-threads=1").current_dir(&scratch.0);
-    let result = require_success(run(execute)?, "extracted help execution")?;
+    let result = require_success(run(execute)?, "standalone help execution")?;
     let text = String::from_utf8(result.stdout).map_err(|error| error.to_string())?;
     if !text.contains(&format!(
         "test result: ok. {} passed; 0 failed; 0 ignored; 0 measured; 0 filtered out",
         PORTABLE_TESTS.len()
     )) {
         return Err(format!(
-            "extracted target did not run all {} portable cases:\n{text}",
+            "standalone harness did not run all {} portable cases:\n{text}",
             PORTABLE_TESTS.len()
         ));
     }
@@ -814,4 +958,154 @@ fn packaged_help_target_runs_every_case_and_rejects_missing_shared_asset() -> Re
         ));
     }
     Ok(())
+}
+
+/// The "why ripr" page quotes real output and states the static-only limits.
+/// Every quoted output line must exist in the checked fixture output, and the
+/// page must keep its non-claims, so the pitch cannot drift from the product.
+#[test]
+fn why_ripr_quotes_checked_output_and_keeps_its_limits() -> Result<(), String> {
+    let fence = WHY_RIPR_DOC
+        .split("```text\n")
+        .nth(1)
+        .and_then(|rest| rest.split("```").next())
+        .ok_or("docs/WHY_RIPR.md must quote ripr output in a text block")?;
+    let mut quoted = 0;
+    let mut fixture_lines = BOUNDARY_GAP_HUMAN.lines();
+    for line in fence.lines().filter(|l| !l.trim().is_empty()) {
+        quoted += 1;
+        // Whole lines, in fixture order (not merely somewhere in it).
+        if !fixture_lines.any(|fixture_line| fixture_line == line) {
+            return Err(format!(
+                "quoted line is missing or out of order in the fixture: {line}"
+            ));
+        }
+    }
+    if quoted < 4 {
+        return Err("expected the four-line boundary example".to_string());
+    }
+    for needle in [
+        "does not run your tests or",
+        "not a clean bill of health",
+        "not a runtime mutation result",
+    ] {
+        assert_contains("docs/WHY_RIPR.md", WHY_RIPR_DOC, needle)?;
+    }
+    assert_contains("README.md", ROOT_README, "docs/WHY_RIPR.md")?;
+    assert_contains(
+        "docs/README.md",
+        include_str!("../../docs/README.md"),
+        "(WHY_RIPR.md)",
+    )?;
+    Ok(())
+}
+
+const LEAD_NEEDLES: [&str; 4] = [
+    "Your tests pass. Would they notice if the change you just made were wrong?",
+    "a changed behavior no test appears to check",
+    "the missing case or assertion",
+    "Where a repair route exists, it also names the test to add.",
+];
+
+fn lead_gap(doc: &str) -> Option<&'static str> {
+    let lead = normalized(doc.split("\n## ").next().unwrap_or(doc));
+    LEAD_NEEDLES
+        .into_iter()
+        .find(|needle| !lead.contains(needle))
+}
+
+/// The three public leads (README, crate README, quickstart) open with the
+/// developer's question and carry the same bounded promise: a changed behavior
+/// no test appears to check, the missing case or assertion, and the test to add
+/// only where a repair route exists. Dropping the route qualifier would turn
+/// the lead into an unconditional repair claim the status table denies.
+#[test]
+fn public_leads_ask_the_question_and_qualify_the_test_to_add() -> Result<(), String> {
+    let leads: [(&str, &str); 3] = [
+        ("README.md", ROOT_README),
+        (
+            "crates/ripr/README.md",
+            include_str!("../../crates/ripr/README.md"),
+        ),
+        ("docs/QUICKSTART.md", QUICKSTART_DOC),
+    ];
+    for (name, doc) in leads {
+        if let Some(missing) = lead_gap(doc) {
+            return Err(format!("{name} lead is missing: {missing}"));
+        }
+    }
+    // Negative control: the same check must reject an unqualified lead.
+    let unqualified = normalized(ROOT_README).replace(
+        "Where a repair route exists, it also names",
+        "It also names",
+    );
+    if lead_gap(&unqualified).is_none() {
+        return Err("an unqualified repair promise passed the lead check".to_string());
+    }
+    Ok(())
+}
+
+// Keep the fully qualified test selector stable when moving this guide check
+// onto the required docs-only test target (#15796).
+mod publish_rehearsal {
+    mod tests {
+        use std::fs;
+
+        #[test]
+        fn release_guide_binds_to_lockstep_contract_dependency() -> Result<(), String> {
+            let ripr_manifest = fs::read_to_string(concat!(
+                env!("CARGO_MANIFEST_DIR"),
+                "/../crates/ripr/Cargo.toml"
+            ))
+            .map_err(|e| format!("read ripr Cargo.toml: {e}"))?;
+            let release_doc =
+                fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/../docs/RELEASE.md"))
+                    .map_err(|e| format!("read docs/RELEASE.md: {e}"))?;
+
+            if ripr_manifest.contains("ripr-contract") {
+                // Standalone product dry-run must not appear as an instruction line.
+                for line in release_doc.lines() {
+                    assert_ne!(
+                        line.trim(),
+                        "cargo publish -p ripr --dry-run",
+                        "docs/RELEASE.md must not instruct standalone `cargo publish -p ripr --dry-run`"
+                    );
+                }
+                // Commands must appear as instruction lines, not merely as a
+                // substring of prose: a required command inside a "do not run"
+                // sentence would otherwise satisfy the check.
+                for required in [
+                    "cargo xtask publish-dry-run",
+                    "cargo xtask publish-precheck",
+                    "cargo search ripr-contract",
+                ] {
+                    assert!(
+                        release_doc
+                            .lines()
+                            .any(|line| line.trim_start().starts_with(required)),
+                        "docs/RELEASE.md must give `{required}` as an instruction line, not only mention it"
+                    );
+                }
+                // The real publish runs from the kept stage (#14198), so the guide
+                // must name those exact commands. A prefix match would let the
+                // `ripr-contract` line satisfy the `ripr` requirement.
+                for required in [
+                    "cargo publish --allow-dirty -p ripr-contract",
+                    "cargo publish --allow-dirty -p ripr",
+                ] {
+                    assert!(
+                        release_doc.lines().any(|line| line.trim() == required),
+                        "docs/RELEASE.md must give `{required}` as its own instruction line"
+                    );
+                }
+                for required in ["crates/ripr-contract", "Partial-publication recovery"] {
+                    assert!(
+                        release_doc.contains(required),
+                        "docs/RELEASE.md missing lockstep publication requirement `{required}`"
+                    );
+                }
+            }
+            Ok(())
+        }
+    }
 }

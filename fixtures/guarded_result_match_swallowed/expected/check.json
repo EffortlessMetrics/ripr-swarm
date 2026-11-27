@@ -41,6 +41,13 @@
         "observe": {"state":"no","confidence":"medium","summary":"No statically established oracle: assertion execution or macro binding is unestablished (rust_assertion_context_unestablished)"},
         "discriminate": {"state":"no","confidence":"medium","summary":"No statically established assertion can discriminate the changed behavior; execution or macro binding is unestablished (rust_assertion_context_unestablished)"}
        },
+      "evidence_stages": [
+        {"stage":"reach","state":"yes","confidence":"medium"},
+        {"stage":"infect","state":"yes","confidence":"medium"},
+        {"stage":"propagate","state":"yes","confidence":"high"},
+        {"stage":"observe","state":"no","confidence":"medium"},
+        {"stage":"discriminate","state":"no","confidence":"medium"}
+      ],
       "evidence_path": ["reach yes: Related tests appear to reach expect_ready: logs_failures_without_discriminating, wildcard_panic_without_variant_pin", "infection yes: Reachable tests can plausibly activate this changed behavior", "propagation yes: Complete propagation witness reaches error variant: Result::Err(ParseError::InvalidData)", "observation no: No statically established oracle: assertion execution or macro binding is unestablished (rust_assertion_context_unestablished)", "discriminator no: No statically established assertion can discriminate the changed behavior; execution or macro binding is unestablished (rust_assertion_context_unestablished)", "local flow reaches error variant: Result::Err(ParseError::InvalidData) (line 9)", "related test tests/messages.rs:4 logs_failures_without_discriminating uses no oracle", "related test tests/messages.rs:14 wildcard_panic_without_variant_pin uses no oracle", "source function argument value kind = \"busy\" at line 5", "source function argument value len = 12 at line 5", "source assertion argument value 12 at line 9", "source function argument value kind = \"busy\" at line 15", "source function argument value len = 12 at line 15", "source assertion argument value 12 at line 16", "missing discriminator ParseError::InvalidData: No exact error variant assertion for ParseError::InvalidData"],
       "flow_sinks": [
         {"kind":"error_variant","text":"Result::Err(ParseError::InvalidData)","line":9}
@@ -144,8 +151,8 @@
           "oracle": "",
           "relation_reason": "direct_owner_call",
           "relation_confidence": "high",
-          "miss": "assertion_not_credited",
-          "why": "assertion not credited: ripr could not establish that this assertion counts here"
+          "miss": "assertion_inert",
+          "why": "assertion inert: this test's assertion has a shape that can keep it from running as a standard check here"
         },
         {
           "name": "wildcard_panic_without_variant_pin",
@@ -156,8 +163,8 @@
           "oracle": "",
           "relation_reason": "direct_owner_call",
           "relation_confidence": "high",
-          "miss": "assertion_not_credited",
-          "why": "assertion not credited: ripr could not establish that this assertion counts here"
+          "miss": "assertion_inert",
+          "why": "assertion inert: this test's assertion has a shape that can keep it from running as a standard check here"
         }
       ],
       "stop_reasons": [],
@@ -200,6 +207,13 @@
         "observe": {"state":"no","confidence":"medium","summary":"No statically established oracle: assertion execution or macro binding is unestablished (rust_assertion_context_unestablished)"},
         "discriminate": {"state":"no","confidence":"medium","summary":"No statically established assertion can discriminate the changed behavior; execution or macro binding is unestablished (rust_assertion_context_unestablished)"}
        },
+      "evidence_stages": [
+        {"stage":"reach","state":"yes","confidence":"medium"},
+        {"stage":"infect","state":"yes","confidence":"medium"},
+        {"stage":"propagate","state":"yes","confidence":"high"},
+        {"stage":"observe","state":"no","confidence":"medium"},
+        {"stage":"discriminate","state":"no","confidence":"medium"}
+      ],
       "evidence_path": ["reach yes: Related tests appear to reach expect_ready: logs_failures_without_discriminating, wildcard_panic_without_variant_pin", "infection yes: Reachable tests can plausibly activate this changed behavior", "propagation yes: Complete propagation witness reaches error variant: Result::Err(ParseError::InvalidData)", "observation no: No statically established oracle: assertion execution or macro binding is unestablished (rust_assertion_context_unestablished)", "discriminator no: No statically established assertion can discriminate the changed behavior; execution or macro binding is unestablished (rust_assertion_context_unestablished)", "local flow reaches error variant: Result::Err(ParseError::InvalidData) (line 9)", "related test tests/messages.rs:4 logs_failures_without_discriminating uses no oracle", "related test tests/messages.rs:14 wildcard_panic_without_variant_pin uses no oracle", "source function argument value kind = \"busy\" at line 5", "source function argument value len = 12 at line 5", "source assertion argument value 12 at line 9", "source function argument value kind = \"busy\" at line 15", "source function argument value len = 12 at line 15", "source assertion argument value 12 at line 16", "missing discriminator ParseError::InvalidData: No exact error variant assertion for ParseError::InvalidData"],
       "flow_sinks": [
         {"kind":"error_variant","text":"Result::Err(ParseError::InvalidData)","line":9}
@@ -303,8 +317,8 @@
           "oracle": "",
           "relation_reason": "direct_owner_call",
           "relation_confidence": "high",
-          "miss": "assertion_not_credited",
-          "why": "assertion not credited: ripr could not establish that this assertion counts here"
+          "miss": "assertion_inert",
+          "why": "assertion inert: this test's assertion has a shape that can keep it from running as a standard check here"
         },
         {
           "name": "wildcard_panic_without_variant_pin",
@@ -315,8 +329,8 @@
           "oracle": "",
           "relation_reason": "direct_owner_call",
           "relation_confidence": "high",
-          "miss": "assertion_not_credited",
-          "why": "assertion not credited: ripr could not establish that this assertion counts here"
+          "miss": "assertion_inert",
+          "why": "assertion inert: this test's assertion has a shape that can keep it from running as a standard check here"
         }
       ],
       "stop_reasons": [],

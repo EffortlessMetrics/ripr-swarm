@@ -1,0 +1,72 @@
+# CONTEXT: ripr analyzer output
+# Crate: flipped-comparison
+# ripr version: ripr 0.11.0 (e19f45c83e93855317059944b91e36932e58a7c7)
+# Captured with: ripr check --root <CRATE_PATH> --base HEAD~1 --format agent
+# plus ripr explain on the top finding (ripr's own suggested follow-up).
+# ripr is a static advisory tool: it does not write tests.
+
+===== ripr check --root <CRATE_PATH> --base HEAD~1 --format agent =====
+#ripr agent static-advisory base=HEAD~1 findings=1 gaps=1 weakly_exposed=1
+weakly_exposed|src/lib.rs:7|age > 65|missing=age == 65|test=t1|id=probe:src_lib.rs:predicate:2aec71a0
+t1=tests/baseline.rs:6 checkout_applies_senior_rate_for_retirees exact_value `assert_eq!(discount_percent(88), 10);` miss=missing_input
+next=ripr explain --root <study-harness>/flipped-comparison --base "HEAD~1" --committed probe:src_lib.rs:predicate:2aec71a0
+
+===== ripr explain (top finding): explain --root <study-harness>/flipped-comparison --base HEAD~1 --committed probe:src_lib.rs:predicate:2aec71a0 =====
+WARNING ./src/lib.rs:7
+  id: probe:src_lib.rs:predicate:2aec71a0
+
+Changed
+  before: age >= 65
+  after:  age > 65
+
+Change type
+  a condition or comparison changed
+  family: predicate
+  delta:  control (changes which code path runs)
+  owner:  src/lib.rs::discount_percent
+  gap id (for scripts): gap:rust:src/lib.rs:discount_percent:predicate_boundary:predicate:age==65
+
+Static exposure
+  weakly_exposed (warning, confidence 0.92)
+
+Evidence
+  - reach yes: Related tests appear to reach discount_percent: checkout_applies_senior_rate_for_retirees, checkout_applies_standard_rate_for_teens, senior_member_gets_discount
+  - infection weak: Related tests contain input values, but the equality-boundary check is missing
+  - propagation yes: Changed behavior appears to influence returned value: 10
+  - observation yes: A related test observes a value or effect near the changed behavior
+  - discriminator missing: `age == 65`; related oracle: Strong oracle found: exact value or pattern assertion
+  - local flow reaches returned value: 10 (line 8)
+  - related test tests/baseline.rs:6 checkout_applies_senior_rate_for_retirees uses strong exact value oracle: assert_eq!(discount_percent(88), 10); misses: no test input reaches `age == 65`
+  - related test tests/baseline.rs:11 checkout_applies_standard_rate_for_teens uses strong exact value oracle: assert_eq!(discount_percent(17), 0); misses: no test input reaches `age == 65`
+  - related test src/lib.rs:19 senior_member_gets_discount uses strong exact value oracle: assert_eq!(discount_percent(70), 10); misses: no test input reaches `age == 65`
+  - related test src/lib.rs:24 young_member_gets_no_discount uses strong exact value oracle: assert_eq!(discount_percent(30), 0); misses: no test input reaches `age == 65`
+  - source assertion argument value 10 at tests/baseline.rs:7
+  - source function argument value age = 88 at tests/baseline.rs:7
+  - source assertion argument value 0 at tests/baseline.rs:12
+  - source function argument value age = 17 at tests/baseline.rs:12
+  - source assertion argument value 10 at src/lib.rs:20
+  - source function argument value age = 70 at src/lib.rs:20
+  - source assertion argument value 0 at src/lib.rs:25
+  - source function argument value age = 30 at src/lib.rs:25
+
+Weakness
+  - missing discriminator age == 65: No related test call uses age equal to 65; observed age values: 17, 30, 70, 88; target 65 value: 65
+
+Next step
+  Add boundary tests for below, equal, and above the changed threshold with exact assertions
+
+Why this verdict
+  Tests examined: 4 listed (4 assertion row(s) of 4)
+  - tests/baseline.rs:6 checkout_applies_senior_rate_for_retirees: misses: no test input reaches `age == 65`
+      checked: assert_eq!(discount_percent(88), 10)
+  - tests/baseline.rs:11 checkout_applies_standard_rate_for_teens: misses: no test input reaches `age == 65`
+      checked: assert_eq!(discount_percent(17), 0)
+  - src/lib.rs:19 senior_member_gets_discount: misses: no test input reaches `age == 65`
+      checked: assert_eq!(discount_percent(70), 10)
+  - src/lib.rs:24 young_member_gets_no_discount: misses: no test input reaches `age == 65`
+      checked: assert_eq!(discount_percent(30), 0)
+  To change the verdict, a test needs to:
+  - use an input that reaches `age == 65`
+
+Next: ripr context --root <study-harness>/flipped-comparison --base "HEAD~1" --committed --at probe:src_lib.rs:predicate:2aec71a0
+

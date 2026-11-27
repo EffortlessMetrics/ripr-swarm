@@ -1,0 +1,2 @@
+crates/ripr/tests/typescript_jsx_owner_render.rs|Command::new|1|cli-tests|#15295: runs the built ripr binary (`ripr check`) against inline temp TypeScript workspaces. No shell, network, or user-repository mutation.
+crates/ripr/tests/typescript_jsx_owner_render.rs|use std::process::Command|1|cli-tests|#15295: imports Command for the single `ripr check` spawn above.

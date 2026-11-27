@@ -3,8 +3,9 @@ import * as crypto from 'crypto';
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
-import { probeStandardLspCompatibility, REQUIRED_SERVER_COMMANDS, textDocumentSyncAdmissionFailureReason } from '../../src/lspCompatibility';
-import { probeServerVersion } from '../../src/serverResolver';
+import { probeStandardLspCompatibility, REQUIRED_SERVER_COMMANDS, textDocumentSyncAdmissionFailureReason, windowsShellArguments } from '../../src/lspCompatibility';
+import { probeServerVersion, serverLaunchCommand } from '../../src/serverResolver';
+import { spawnClientProcess } from '../clientLaunch';
 
 // A terminated descendant is reparented to PID 1. Where PID 1 does not reap
 // orphans (some containers), it stays a zombie and `kill(pid, 0)` still
@@ -368,6 +369,93 @@ suite('Standard LSP compatibility probe', () => {
       }
     }
     assert.strictEqual(selected, 1);
+  });
+
+  test('passes configured serverArgs instead of hardcoded lsp --stdio', async function () {
+    this.timeout(25_000);
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'ripr-lsp-args-'));
+    temporaryRoots.push(root);
+    const argsRecord = path.join(root, 'argv.json');
+    const script = path.join(root, 'server.js');
+    fs.writeFileSync(
+      script,
+      `require('fs').writeFileSync(${JSON.stringify(argsRecord)}, JSON.stringify(process.argv.slice(2)));\n` +
+      fakeServerSource('valid', advertisedCapabilities)
+    );
+    const command = process.platform === 'win32' ? path.join(root, 'ripr.cmd') : path.join(root, 'ripr');
+    const useShell = process.platform === 'win32';
+    if (process.platform === 'win32') {
+      fs.writeFileSync(command, `@echo off\r\n"${process.execPath}" "${script}" %*\r\nexit /b %errorlevel%\r\n`);
+    } else {
+      fs.writeFileSync(command, `#!/bin/sh\nexec "${process.execPath}" "${script}" "$@"\n`, { mode: 0o755 });
+    }
+    const marker = path.join(root, 'RIPR_MARKER');
+    const customArgs = [
+      'custom-subcommand',
+      'argument with space',
+      '',
+      `a"&echo RIPR_MARKER>"${marker}"&rem "`,
+      '--stdio'
+    ];
+    const result = await probeStandardLspCompatibility(command, useShell, fakeProbeTimeoutMs, undefined, customArgs);
+    assert.strictEqual(result.status, 'compatible', JSON.stringify(result));
+    assert.deepStrictEqual(JSON.parse(fs.readFileSync(argsRecord, 'utf8')), customArgs);
+    assert.ok(!fs.existsSync(marker), 'cmd.exe executed the embedded-quote marker during the shell probe');
+
+    const nativeResult = await probeStandardLspCompatibility(
+      process.execPath,
+      false,
+      fakeProbeTimeoutMs,
+      undefined,
+      [script, ...customArgs]
+    );
+    assert.strictEqual(nativeResult.status, 'compatible', JSON.stringify(nativeResult));
+    assert.deepStrictEqual(JSON.parse(fs.readFileSync(argsRecord, 'utf8')), customArgs);
+    assert.ok(!fs.existsSync(marker), 'the embedded-quote marker ran during the native probe');
+  });
+
+  test('client shell launch preserves metacharacter and spaced .cmd paths with exact argv', async function () {
+    if (process.platform !== 'win32') {
+      this.skip();
+      return;
+    }
+    this.timeout(25_000);
+    for (const directory of ['A&B', 'ripr tools']) {
+      const root = fs.mkdtempSync(path.join(os.tmpdir(), 'ripr-lsp-client-launch-'));
+      temporaryRoots.push(root);
+      const marker = path.join(root, 'RIPR_MARKER');
+      const customArgs = ['argument with space', '', 'plain', `a"&echo RIPR_MARKER>"${marker}"&rem "`];
+      const commandRoot = path.join(root, directory);
+      fs.mkdirSync(commandRoot, { recursive: true });
+      const command = path.join(commandRoot, 'ripr.cmd');
+      const argsRecord = path.join(root, 'argv.json');
+      const script = path.join(root, 'server.js');
+      fs.writeFileSync(
+        script,
+        `require('fs').writeFileSync(${JSON.stringify(argsRecord)}, JSON.stringify(process.argv.slice(2)));\n`
+      );
+      fs.writeFileSync(command, `@echo off\r\n"${process.execPath}" "${script}" %*\r\nexit /b %errorlevel%\r\n`);
+      const launchArgs = windowsShellArguments(customArgs);
+      const child = spawnClientProcess(serverLaunchCommand(command, true), launchArgs, true);
+      assert.deepStrictEqual(child.spawnargs.slice(0, 4), [process.env.ComSpec ?? 'cmd.exe', '/d', '/s', '/c']);
+      assert.strictEqual(child.spawnargs[4], `"${serverLaunchCommand(command, true)} ${launchArgs.join(' ')}"`);
+      const exitCode = await new Promise<number | null>((resolve, reject) => {
+        child.once('error', reject);
+        child.once('close', resolve);
+      });
+      assert.strictEqual(exitCode, 0, `${directory}: shell could not launch ${command}`);
+      assert.deepStrictEqual(JSON.parse(fs.readFileSync(argsRecord, 'utf8')), customArgs);
+      assert.ok(!fs.existsSync(marker), 'cmd.exe executed the embedded-quote marker during the client shell launch');
+
+      const native = spawnClientProcess(process.execPath, [script, ...customArgs], false);
+      const nativeExitCode = await new Promise<number | null>((resolve, reject) => {
+        native.once('error', reject);
+        native.once('close', resolve);
+      });
+      assert.strictEqual(nativeExitCode, 0, `${directory}: native launch failed`);
+      assert.deepStrictEqual(JSON.parse(fs.readFileSync(argsRecord, 'utf8')), customArgs);
+      assert.ok(!fs.existsSync(marker), 'the embedded-quote marker ran during the client native launch');
+    }
   });
 
   function descendantPidPath(prefix: string): string {

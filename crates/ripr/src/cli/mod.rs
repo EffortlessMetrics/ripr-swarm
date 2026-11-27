@@ -14,17 +14,23 @@ mod exit_kani;
 pub(crate) mod help;
 mod help_flags;
 mod help_json;
+mod help_leaf;
 pub(crate) mod interrupt;
 mod parse;
 pub(crate) mod progress;
 mod rerun;
 mod suggest;
+mod usage_refusal;
 mod workflow_catalog;
 
 pub(crate) use parse::expect_value;
+pub(crate) use parse::reconcile_root;
 #[doc(hidden)]
-pub use parse::extract_global_verbose;
+pub use parse::{extract_global_verbose, split_long_flag_values};
 pub(crate) use suggest::unknown_argument;
+
+#[doc(hidden)]
+pub use commands::impacted_evidence_command::run_impacted_evidence_at;
 
 /// The command completed. Shared by `Ok(())` paths and by the
 /// `help --json` exit contract (`docs/EXIT_CODES.md`).
@@ -116,7 +122,18 @@ pub fn run_with_interrupt_handling(args: Vec<String>) -> Result<(), CommandError
 }
 
 fn run_with_policy(args: Vec<String>, interrupt_handling: bool) -> Result<(), CommandError> {
+    // #11584: under an explicit JSON request a usage-class failure also writes
+    // a standalone `cli_refusal` document to stdout; exit code and stderr
+    // prose are unchanged. The argv copy is only read for that request check.
+    usage_refusal::reset();
+    // #14292: `--name=value` means `--name value` on every command family;
+    // the rewrite runs once here, before every reader of argv below.
+    let args = parse::split_long_flag_values(args);
+    let argv = args.clone();
     let outcome = run_command(args, interrupt_handling);
+    if let Err(error) = &outcome {
+        usage_refusal::emit_for(&argv, error);
+    }
     // #5213: observe this process's own CPU time and peak resident memory
     // once the command has finished, so the peak covers rendering and
     // serialization instead of stopping at the analysis boundary. Emits
@@ -124,6 +141,31 @@ fn run_with_policy(args: Vec<String>, interrupt_handling: bool) -> Result<(), Co
     // default stdout JSON and default stderr stay byte-identical.
     crate::analysis::resource_cost::emit_run_resource_cost();
     outcome
+}
+
+/// `ripr help --json`: the strict one-flag machine-discovery route (#4825).
+fn machine_discovery_route(args: &[String]) -> bool {
+    // `args` still carries argv[0]; the command body starts at index 1.
+    args.get(1).is_some_and(|arg| arg == "help") && args.get(2).is_some_and(|arg| arg == "--json")
+}
+
+/// Routes where the `RIPR_VERBOSE` environment twin may apply: never a
+/// version query in any position (`ripr lsp --version` included) and never
+/// the machine-discovery route.
+fn env_verbose_applies(args: &[String]) -> bool {
+    !machine_discovery_route(args)
+        && !args
+            .iter()
+            .skip(1)
+            .any(|arg| matches!(arg.as_str(), "--version" | "-V"))
+}
+
+/// Whether `RIPR_VERBOSE` asks for the global verbose diagnostics. Shared by
+/// the CLI dispatch and the binary's MCP route so both read one switch.
+#[doc(hidden)]
+pub fn verbose_requested_by_env() -> bool {
+    let value = std::env::var(progress::VERBOSE_ENV).ok();
+    progress::verbose_env_value(value.as_deref())
 }
 
 fn run_command(mut args: Vec<String>, interrupt_handling: bool) -> Result<(), CommandError> {
@@ -136,7 +178,9 @@ fn run_command(mut args: Vec<String>, interrupt_handling: bool) -> Result<(), Co
     // `ripr -v -v mcp` routed. Version is a side-effect-free identity
     // query, so it must not emit the verbose diagnostic even when callers
     // append or prepend the flag.
-    if !version_requested && parse::extract_global_verbose(&mut args) {
+    let argv_before_extraction = args.clone();
+    let verbose_flag = !version_requested && parse::extract_global_verbose(&mut args);
+    if verbose_flag {
         crate::set_verbose(true);
         // #4825: the machine-discovery route has a strict one-flag grammar and
         // a silent-stderr contract. Combining it with the global verbosity
@@ -146,11 +190,28 @@ fn run_command(mut args: Vec<String>, interrupt_handling: bool) -> Result<(), Co
         if args.get(1).is_some_and(|arg| arg == "help")
             && args.get(2).is_some_and(|arg| arg == "--json")
         {
-            return Err(CommandError::from(
-                "usage: ripr help --json (this route accepts no other arguments); drop the extra arguments, or run `ripr --help` to list commands".to_string(),
-            ));
+            // The extraction removed the flag, so the stray argument is
+            // the first token of the original argv that is not one of the
+            // two route tokens (#16072). That is the verbosity flag itself
+            // unless another extra precedes it.
+            let mut route = ["help", "--json"].into_iter().peekable();
+            let stray = argv_before_extraction
+                .iter()
+                .skip(1)
+                .find(|arg| route.next_if(|token| arg.as_str() == *token).is_none())
+                .cloned();
+            return Err(CommandError::from(command::strict_route_usage(
+                "help --json",
+                stray.as_slice(),
+            )));
         }
         eprintln!("ripr: verbose mode enabled");
+    } else if env_verbose_applies(&args) && verbose_requested_by_env() {
+        // `RIPR_VERBOSE` turns on only the stderr diagnostics. It prints no
+        // notice of its own and never changes stdout, so an exported variable
+        // leaves completions, machine-discovery and parsed-stdout routes as
+        // they are.
+        crate::set_stderr_diagnostics(true);
     }
     // Selection is side-effect-free parsing; the lock is acquired before the
     // first side-effecting step (workflow execution and attempt publication),
@@ -201,7 +262,17 @@ pub(in crate::cli) fn drive_before_phase_deferring_stdout(
 ) -> Result<(String, String), CommandError> {
     drive_before_phase_inner(options).map_err(|error| match error {
         // A deliberate typed refusal: the façade exits with the decision code.
-        BeforePhaseError::Refused(message) => CommandError::Decision(message),
+        BeforePhaseError::Refused(message) => {
+            // The start refusal already carries its code line; note the
+            // same typed document `typed_decision` would, so `--json` on the
+            // façade sees it too (#14931).
+            if let Some((code, prose)) =
+                crate::app::task_first::RepairRefusalCode::split_stderr_line(&message)
+            {
+                crate::cli::usage_refusal::note_typed_refusal(code, prose);
+            }
+            CommandError::Decision(message)
+        }
         BeforePhaseError::Other(error) => error,
     })
 }
@@ -272,6 +343,9 @@ fn drive_before_phase_inner(
     // and the Rust seam inventory cannot translate. The gap id is the attempt
     // identity (the manifest's seam slot); the seam translator is skipped,
     // and `--seam-id gap:...` keeps its translating behaviour untouched.
+    // #15249: a missing or non-directory `--root` is the shared root refusal,
+    // not a git failure from the seam translation or the workflow lock below.
+    commands_context::ensure_command_root(&options.root, "agent repair --phase before")?;
     if let Some(gap_id) = options.gap_id.clone() {
         options.seam_id = Some(gap_id);
     } else if let Some(seam_id) = options.seam_id.clone() {
@@ -279,6 +353,13 @@ fn drive_before_phase_inner(
             &options.root,
             &seam_id,
         )?);
+    }
+    // A repair attempt exists only at the exact Git top-level (#15363). Refuse
+    // a subdirectory root after the write-free seam translation (so a stale
+    // `--seam-id` still names itself) and before the locks or any workflow
+    // write create state under that root's `target/ripr`.
+    if let Some(refusal) = crate::edit_cage::subdirectory_attempt_root_refusal(&options.root) {
+        return Err(refusal.into());
     }
     let _workflow_lock = lock_repair_workflow(&options.root)?;
     let _before_lock = lock_before_repair_attempt(&options.root)?;
@@ -295,7 +376,9 @@ fn drive_before_phase_inner(
         .is_some()
         .then(|| GapWorkflowArtifactBackup::capture(&options.root));
     let published = match commands::run_before_repair_with_identity(options.clone(), &identity) {
-        Ok(()) => persist_before_repair_attempt(&options, &identity).map_err(Into::into),
+        Ok(()) => {
+            persist_before_repair_attempt(&options, &identity).map_err(BeforePhaseError::from)
+        }
         Err(error) => Err(error),
     };
     let stdout_document = match published {
@@ -364,8 +447,12 @@ impl GapWorkflowArtifactBackup {
         for (path, prior) in self.entries {
             match prior {
                 Some(bytes) => {
+                    // Replace, never rewrite in place: an interrupted restore
+                    // then leaves the overwritten file or the prior one, not a
+                    // truncated copy of the prior evidence.
                     if std::fs::read(&path).ok().as_deref() != Some(bytes.as_slice())
-                        && let Err(error) = std::fs::write(&path, bytes)
+                        && let Err(error) =
+                            crate::atomic_file::write(&path, &bytes, "prior workflow artifact")
                     {
                         failures.push(format!("restore {} failed: {error}", path.display()));
                     }
@@ -501,6 +588,44 @@ fn baseline_ambiguous_disclosure_lines(baseline_path: &Path) -> Vec<String> {
     ]
 }
 
+/// The before phase's stderr attempt lines (waiting state, manifest path,
+/// and the `ripr: attempt next command:` protocol line), printed only when
+/// stdout does not already carry the start result (#13803).
+fn before_phase_attempt_stderr(
+    attempt_id: &str,
+    manifest_path: &Path,
+    next_command: &str,
+    baseline_ambiguous: bool,
+    focused_result_requirement: Option<&str>,
+) {
+    if baseline_ambiguous {
+        eprintln!(
+            "ripr: repair attempt {attempt_id} is waiting for your test, though its unclear starting state (above) means ripr cannot score this attempt either way; for a scorable attempt, restart from a clean state as described above."
+        );
+    } else {
+        eprintln!("ripr: repair attempt {attempt_id} is waiting for your test");
+    }
+    eprintln!(
+        "{}",
+        crate::output::human::terminal_safe(format!(
+            "ripr: attempt manifest: {}",
+            crate::output::path::human_path(manifest_path)
+        ))
+    );
+    // Human next-step lines teach `ripr continue` for ordinary attempts
+    // (#7879). The persisted manifest and JSON continuation keep the
+    // advanced `--phase after` spelling.
+    // #16164: a proposal attempt's requirement precedes the command naming it.
+    if let Some(requirement) = focused_result_requirement {
+        eprintln!("ripr: {requirement}");
+    }
+    let follow_up = crate::agent::human_after_phase_follow_up(next_command);
+    eprintln!("ripr: attempt next command: {follow_up}");
+    if let Some(form) = crate::output::markdown::powershell_text_variant(&follow_up) {
+        eprintln!("ripr: attempt next command (PowerShell): {form}");
+    }
+}
+
 /// Publish one before attempt and return its success stdout: the exact
 /// document the caller prints (or holds, façade-side, until its follow-on
 /// card renders). Composing the document without printing keeps one owner
@@ -537,7 +662,7 @@ fn persist_before_repair_attempt(
         )
     })?;
     let mut policy =
-        crate::app::repair_attempt::edit_cage_policy_from_packet(&packet_text, seam_id)?;
+        crate::app::repair_attempt::edit_cage_policy_from_packet_in(root, &packet_text, seam_id)?;
     crate::app::repair_attempt::include_resolved_explicit_store_operational_write(
         &mut policy,
         root,
@@ -548,9 +673,24 @@ fn persist_before_repair_attempt(
         crate::app::repair_attempt::RepairAttemptStoreAccess::Open,
     )?;
     // Recheck immediately before baseline capture so ignore-rule drift observed
-    // during preparation refuses attempt publication.
-    crate::edit_cage::validate_build_output_precondition(root, &policy)
-        .map_err(|error| format!("{error} No repair attempt was started. Fix the cause above and rerun the repair command."))?;
+    // during preparation stops attempt publication.
+    crate::edit_cage::check_build_output_precondition(root, &policy).map_err(|error| {
+        let rerun = if options.gap_id.is_some() {
+            "the same `ripr agent repair --phase before` command".to_string()
+        } else {
+            format!("`{}`", crate::app::task_first::repair_rerun_command(root, seam_id))
+        };
+        // #13452: this recheck runs after the before phase already rewrote
+        // shared workflow files, so it can never be the clean "nothing was
+        // started" refusal the early admission gives: the shared files may
+        // already differ from before. Both outcomes are operational failures
+        // that say so.
+        let detail = crate::app::task_first::build_output_precondition_detail(error);
+        format!(
+            "{} No repair attempt was started, but shared workflow files under target/ripr/workflow may already have been rewritten.\nnext: once the build directory is Git-ignored and inspectable, rerun {rerun}",
+            detail.trim_end()
+        )
+    })?;
     let edit_cage_baseline = root.join("target/ripr/workflow/attempt-baseline.json");
     crate::app::repair_attempt::write_edit_cage_baseline(root, &edit_cage_baseline, &policy)?;
 
@@ -644,6 +784,22 @@ fn persist_before_repair_attempt(
             path: &binding.record_path,
         });
     }
+    // #16164: an attempt that follows a new-test proposal finishes only with a
+    // focused result, so its published after command names the flag up front
+    // instead of letting the first after phase learn it from a refusal. The
+    // cage policy derived from this packet is the one proposal authority.
+    let next_command_suffix = format!(
+        "{}{}",
+        binding
+            .as_ref()
+            .map(|_| crate::agent::PYTHON_REPAIR_AUTHORIZATION_SUFFIX)
+            .unwrap_or_default(),
+        if policy.new_test_proposal.is_some() {
+            crate::app::focused_run::PROPOSAL_FOCUSED_RESULT_FLAG
+        } else {
+            ""
+        }
+    );
     let begin_options = crate::app::repair_attempt::BeginRepairAttemptOptions {
         root,
         root_argument: root,
@@ -656,9 +812,8 @@ fn persist_before_repair_attempt(
         // explicit authorization, so the published follow-up must name
         // the required flags with an explicit placeholder identity — the
         // driver never persists a granted authorization.
-        next_command_suffix: binding
-            .as_ref()
-            .map(|_| crate::agent::PYTHON_REPAIR_AUTHORIZATION_SUFFIX),
+        next_command_suffix: (!next_command_suffix.is_empty())
+            .then_some(next_command_suffix.as_str()),
         store: options.store.as_deref(),
     };
     let result = match gap_binding {
@@ -706,6 +861,22 @@ fn persist_before_repair_attempt(
         packet_path: crate::agent::loop_commands::display_path(&agent_packet),
         baseline_ambiguous,
         typescript_test_cache_guidance,
+        focused_test_command: focused_test_command(root, &packet_text),
+        declared_cargo_test_target: policy.declared_cargo_test_target,
+        // #16186: name the command resolved for the proposed file's own
+        // package and target when it can be established.
+        focused_result_requirement: policy.new_test_proposal.as_ref().map(|proposal| {
+            let resolved = (proposal.kind
+                == crate::analysis::new_test_target::NewTestKind::Integration)
+                .then(|| crate::app::test_stub::focused_result_run_command(root, &proposal.file))
+                .flatten();
+            crate::app::focused_run::proposal_focused_result_requirement(
+                "This attempt",
+                resolved
+                    .as_deref()
+                    .map(|command| (command, proposal.file.as_str())),
+            )
+        }),
     };
     if let Some(binding) = &binding {
         eprintln!(
@@ -713,6 +884,19 @@ fn persist_before_repair_attempt(
             binding.verified.attempt_id, binding.verified.selection_digest
         );
     }
+    // #13803: without `--json` the stdout summary already names the target,
+    // the one edit surface with its terminality, the packet path, and the
+    // one next command. Stderr then keeps only what stdout does not say
+    // (progress narration and the redirect warning), so an agent reading
+    // both streams sees one copy of the next command instead of two. The
+    // gap-bound start keeps its stderr route: its directive (commit the
+    // test; closure is checked first) is not in the stdout summary.
+    let stdout_owns_start = options.gap_id.is_none()
+        && commands::before_phase_stdout_owns_start_result(
+            &packet_text,
+            options.json,
+            &continuation,
+        );
     // #7204: an attempt whose captured baseline is already ambiguous can
     // never be scored, so the disclosure comes BEFORE any edit directive and
     // the ambiguous branch replaces the unqualified "Next: add ..." line —
@@ -724,12 +908,23 @@ fn persist_before_repair_attempt(
                 crate::output::human::terminal_safe(format!("ripr: {line}"))
             );
         }
+        // #15902: when unignored untracked files alone exceed the capture
+        // budget, say so and name the fix instead of leaving the generic
+        // "resolve the workspace condition" text as the only guidance.
+        if let Some(cause) = crate::edit_cage::oversized_untracked_cause(root) {
+            eprintln!(
+                "{}",
+                crate::output::human::terminal_safe(format!("ripr: {cause}"))
+            );
+        }
     } else if options.gap_id.is_some() {
         // #9103: the gap-bound after phase enforces this cage, so the
         // guidance matches the seam-bound one except for the committed test.
         eprintln!(
             "ripr: repair started. Next: add or strengthen one focused test in the packet's test file and commit it (leave production code unchanged), then run the command printed below. The after phase checks closure first: a gap that does not read exposed is refused and the attempt stays retryable; once the gap reads exposed, the attempt fails if any file outside that test file changed."
         );
+    } else if stdout_owns_start {
+        // The stdout summary carries this seam route's edit directive.
     } else if policy.inline_test_module_target {
         // #5210: the cage admits only new test functions inserted into the
         // target's inline test module, so "strengthen" an existing test, or
@@ -748,35 +943,28 @@ fn persist_before_repair_attempt(
     } else {
         "target/ripr/workflow/agent-packet.json"
     };
-    eprintln!(
-        "ripr: write this command's output outside the repo (for example under target/ripr/): a file inside it (such as `> packet.json` or `2> before.err`) counts as an edit and fails the repair. The packet is already at {packet_location}. The same applies to the next step."
-    );
-    if baseline_ambiguous {
+    if stdout_owns_start {
+        // The stdout summary already names the packet path.
         eprintln!(
-            "ripr: repair attempt {} is waiting for your test, though its unclear starting state (above) means ripr cannot score this attempt either way; for a scorable attempt, restart from a clean state as described above.",
-            result.manifest.repair_attempt_id.as_str()
+            "ripr: write this command's output outside the repo (for example under target/ripr/): a file inside it (such as `> packet.json` or `2> before.err`) counts as an edit and fails the repair. The same applies to the next step."
         );
     } else {
         eprintln!(
-            "ripr: repair attempt {} is waiting for your test",
-            result.manifest.repair_attempt_id.as_str()
+            "ripr: write this command's output outside the repo (for example under target/ripr/): a file inside it (such as `> packet.json` or `2> before.err`) counts as an edit and fails the repair. The packet is already at {packet_location}. The same applies to the next step."
         );
     }
-    eprintln!(
-        "{}",
-        crate::output::human::terminal_safe(format!(
-            "ripr: attempt manifest: {}",
-            crate::output::path::human_path(&result.manifest_path)
-        ))
-    );
-    // Human next-step lines teach `ripr continue` for ordinary attempts
-    // (#7879). The persisted manifest and JSON continuation keep the
-    // advanced `--phase after` spelling.
-    let follow_up = crate::agent::human_after_phase_follow_up(&result.manifest.next_command);
-    eprintln!("ripr: attempt next command: {follow_up}");
-    let next_powershell = crate::output::markdown::powershell_text_variant(&follow_up);
-    if let Some(form) = &next_powershell {
-        eprintln!("ripr: attempt next command (PowerShell): {form}");
+    if !stdout_owns_start {
+        // With `--json` (or an unreadable or ambiguous summary) stderr keeps
+        // the protocol-bearing attempt lines; otherwise stdout's
+        // `Next, after the test edit:` line is the one copy, and the
+        // manifest stays reachable through `ripr agent status`.
+        before_phase_attempt_stderr(
+            result.manifest.repair_attempt_id.as_str(),
+            &result.manifest_path,
+            &result.manifest.next_command,
+            baseline_ambiguous,
+            continuation.focused_result_requirement.as_deref(),
+        );
     }
     // The stdout document owns its trailer: the after-edit directive, or the
     // #7204 ambiguity warning and clean-state restart for an unscorable
@@ -787,6 +975,19 @@ fn persist_before_repair_attempt(
         options.json,
         &continuation,
     )
+}
+
+/// The exact native command for the packet's suggested Rust test (#14320),
+/// read from the first packet's `recommended_test`. `None` when the packet
+/// names no file or test name, or no exact command can be established.
+fn focused_test_command(root: &std::path::Path, packet: &str) -> Option<String> {
+    let value: serde_json::Value = serde_json::from_str(packet).ok()?;
+    let test = value.pointer("/packets/0/recommended_test")?;
+    // The packet spells the file as stable path text; the manifest lookup
+    // compares native names (`spec/discount%.rs`, not `spec/discount%25.rs`).
+    let file = crate::analysis::decode_stable_path_text(test.get("file")?.as_str()?);
+    let name = test.get("name")?.as_str()?;
+    crate::app::test_stub::focused_test_run_command(root, file.to_str()?, name)
 }
 
 #[cfg(test)]
@@ -875,6 +1076,47 @@ mod tests {
             }
             if packet.exists() {
                 return Err("a file the failed start created was kept".to_string());
+            }
+            Ok(())
+        })();
+        std::fs::remove_dir_all(&root)
+            .map_err(|error| format!("remove {} failed: {error}", root.display()))?;
+        result
+    }
+
+    /// The restore replaces each overwritten file instead of rewriting it in
+    /// place: a reader still holding the overwritten file (modelled by a hard
+    /// link) keeps its bytes, while the path carries the complete prior bytes.
+    /// An in-place truncate-and-write changes the held bytes too, and is what
+    /// leaves a truncated baseline behind when a restore is interrupted.
+    #[test]
+    fn gap_artifact_backup_restore_replaces_files_instead_of_rewriting_them() -> Result<(), String>
+    {
+        let root = test_root("gap-backup-replace")?;
+        let result = (|| -> Result<(), String> {
+            let workflow = root.join("target/ripr/workflow");
+            std::fs::create_dir_all(&workflow).map_err(|e| e.to_string())?;
+            let baseline = workflow.join("attempt-baseline.json");
+            std::fs::write(&baseline, b"sentinel-baseline").map_err(|e| e.to_string())?;
+            let backup = GapWorkflowArtifactBackup::capture(&root);
+            std::fs::write(&baseline, b"overwritten-by-failed-start").map_err(|e| e.to_string())?;
+            let held = workflow.join("attempt-baseline.json.held");
+            std::fs::hard_link(&baseline, &held).map_err(|e| e.to_string())?;
+            backup.restore()?;
+            if std::fs::read(&baseline).map_err(|e| e.to_string())? != b"sentinel-baseline" {
+                return Err("prior baseline bytes were not restored".to_string());
+            }
+            if std::fs::read(&held).map_err(|e| e.to_string())? != b"overwritten-by-failed-start" {
+                return Err("the baseline was rewritten in place".to_string());
+            }
+            let mut names = std::fs::read_dir(&workflow)
+                .map_err(|e| e.to_string())?
+                .filter_map(Result::ok)
+                .map(|entry| entry.file_name().to_string_lossy().into_owned())
+                .collect::<Vec<_>>();
+            names.sort();
+            if names != ["attempt-baseline.json", "attempt-baseline.json.held"] {
+                return Err(format!("restore left extra files: {names:?}"));
             }
             Ok(())
         })();
@@ -1189,6 +1431,31 @@ mod tests {
             run(args(&["ripr", "-v", "-v", "check", "--format", "xml"])),
             Err(CommandError::Failure(
                 "unknown format \"xml\". Common analysis formats: human, human-full, json, github, sarif. Run `ripr check --help --all` for every accepted format."
+                    .to_string()
+            ))
+        );
+    }
+
+    #[test]
+    fn run_reads_flag_equals_value_like_the_spaced_spelling() {
+        // #14292: the rewrite runs on the `run` path, so `--format=xml`
+        // reaches check's own format validation like `--format xml`.
+        let format_error = Err(CommandError::Failure(
+            "unknown format \"xml\". Common analysis formats: human, human-full, json, github, sarif. Run `ripr check --help --all` for every accepted format."
+                .to_string(),
+        ));
+        assert_eq!(run(args(&["ripr", "check", "--format=xml"])), format_error);
+        assert_eq!(
+            run(args(&["ripr", "check", "--format", "xml"])),
+            format_error
+        );
+        // A switch given a boolean literal stays one token and is refused
+        // as typed, never read as the switch plus a stray value. The refusal
+        // names it as a switch (#15898).
+        assert_eq!(
+            run(args(&["ripr", "check", "--quiet=false"])),
+            Err(CommandError::Failure(
+                "unknown check argument \"--quiet=false\". `--quiet` is a switch and takes no value: write `--quiet` alone; a switch is on when present and off when absent. Run `ripr check --help --all`."
                     .to_string()
             ))
         );

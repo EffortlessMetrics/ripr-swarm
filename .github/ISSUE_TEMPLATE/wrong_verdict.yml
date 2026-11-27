@@ -38,6 +38,14 @@ body:
     validations:
       required: false
   - type: textarea
+    id: verbose_log
+    attributes:
+      label: Verbose log (optional)
+      description: "Rerun the same command with `-v` and paste stderr, for example `ripr -v check 2> ripr-debug.log`. Set `RIPR_VERBOSE=1` when you cannot edit the command (editor, MCP host, hook, CI). It shows phase timings and why each finding got its class. It carries paths and short source excerpts, so remove anything private."
+      render: text
+    validations:
+      required: false
+  - type: textarea
     id: expected
     attributes:
       label: What you expected instead

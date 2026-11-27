@@ -42,6 +42,12 @@ pub(crate) enum PilotCurrentChange {
         /// independent of whether supplemental classification ran or succeeded.
         /// Absent when no source-admission observation was requested.
         absent_file_limitations: Option<Vec<AnalysisLimitation>>,
+        /// The change classification's own pass-wide limitations (#13340): the
+        /// one `producer_failure` when its evidence warm failed and every
+        /// classified seam carries the opaque stand-in. Kept apart from
+        /// `absent_file_limitations`: it is not an absent file. Empty for a
+        /// healthy classification, and when none ran.
+        evidence_limitations: Vec<AnalysisLimitation>,
     },
     /// The default diff loaded and is empty: there is no current change.
     /// `working_tree` still records the diff source, which `ripr check` picks
@@ -104,6 +110,7 @@ impl PilotCurrentChange {
             seams: ChangeSeams::default(),
             diff_only: Vec::new(),
             absent_file_limitations: None,
+            evidence_limitations: Vec::new(),
         }
     }
 
@@ -129,6 +136,17 @@ impl PilotCurrentChange {
         }
         if let Self::Changed { seams, .. } = &mut self {
             *seams = counted;
+        }
+        self
+    }
+
+    /// Record how many gripped seams on the change `ripr check` reads as a
+    /// gap or a limit (#15278); `None` when check could not confirm its
+    /// reading. No effect without a change.
+    pub(crate) fn with_check_reads_open(mut self, count: Option<usize>) -> Self {
+        if let Self::Changed { seams, .. } = &mut self {
+            seams.check_reads_open = count.unwrap_or(0);
+            seams.check_unconfirmed = count.is_none();
         }
         self
     }
@@ -173,8 +191,13 @@ impl PilotCurrentChange {
     ) -> ChangeClassification<'a> {
         match change {
             Some(Ok(scoped)) => {
+                // A failed evidence warm gave every classified seam the opaque
+                // stand-in (#13340), so the change was not actually analyzed:
+                // the seam-limit caveat must stay and the cut seams do not
+                // count as analyzed, exactly as when the classification failed.
+                let evidence_failed = !scoped.evidence_limitations.is_empty();
                 let added = self.add_cut_seams(classified, scoped.classified);
-                if let Some(info) = limit.as_mut() {
+                if let Some(info) = limit.as_mut().filter(|_| !evidence_failed) {
                     info.analyzed = info.analyzed.saturating_add(added);
                     // Every seam the limit cut was on the change: nothing
                     // is left unanalyzed, so no limit applies.
@@ -184,8 +207,13 @@ impl PilotCurrentChange {
                 }
                 ChangeClassification {
                     added,
-                    caveat_limit: None,
+                    caveat_limit: if evidence_failed {
+                        limit.as_ref()
+                    } else {
+                        None
+                    },
                     absent_file_limitations: Some(scoped.absent_file_limitations),
+                    evidence_limitations: scoped.evidence_limitations,
                     error: None,
                 }
             }
@@ -193,6 +221,7 @@ impl PilotCurrentChange {
                 added: 0,
                 caveat_limit: limit.as_ref(),
                 absent_file_limitations: None,
+                evidence_limitations: Vec::new(),
                 error: Some(error),
             },
             None => ChangeClassification {
@@ -201,6 +230,7 @@ impl PilotCurrentChange {
                     .as_ref()
                     .filter(|_| !self.is_changed() || !self.changed_rust_files().is_empty()),
                 absent_file_limitations: None,
+                evidence_limitations: Vec::new(),
                 error: None,
             },
         }
@@ -271,6 +301,33 @@ impl PilotCurrentChange {
             *absent_file_limitations = limitations;
         }
         self
+    }
+
+    /// Record the change classification's pass-wide limitations (#13340).
+    pub(crate) fn with_evidence_limitations(
+        mut self,
+        limitations: Vec<AnalysisLimitation>,
+    ) -> Self {
+        if let Self::Changed {
+            evidence_limitations,
+            ..
+        } = &mut self
+        {
+            *evidence_limitations = limitations;
+        }
+        self
+    }
+
+    /// The change classification's pass-wide limitations; empty when healthy,
+    /// when none ran, and without a change.
+    pub(crate) fn evidence_limitations(&self) -> &[AnalysisLimitation] {
+        match self {
+            Self::Changed {
+                evidence_limitations,
+                ..
+            } => evidence_limitations,
+            Self::NoChange { .. } | Self::Unavailable { .. } => &[],
+        }
     }
 
     /// Canonical absent-file disclosures, or no source-admission observation.
@@ -381,6 +438,9 @@ pub(crate) struct ChangeClassification<'a> {
     pub(crate) caveat_limit: Option<&'a SeamLimitInfo>,
     /// Recorded coverage only after a successful supplement, empty on recovery.
     pub(crate) absent_file_limitations: Option<Vec<AnalysisLimitation>>,
+    /// The classification's pass-wide limitations (#13340); empty unless its
+    /// evidence warm failed.
+    pub(crate) evidence_limitations: Vec<AnalysisLimitation>,
     /// Why the change could not be classified, when it could not.
     pub(crate) error: Option<String>,
 }
@@ -396,6 +456,15 @@ pub(crate) struct ChangeSeams {
     /// `(analyzed, total)` when the inventory seam limit left seams
     /// unclassified: the change may have seams among them.
     pub(crate) unanalyzed: Option<(usize, usize)>,
+    /// Of the touched seams the inventory reads as strongly gripped, the
+    /// ones whose changed code `ripr check` reads as a gap or a limit
+    /// (#15278). Pilot judges the whole spot and check the changed lines, so
+    /// "already gripped" alone would contradict check for these.
+    pub(crate) check_reads_open: usize,
+    /// Whether a gripped seam was on the change but `ripr check` could not
+    /// confirm its reading of the changed code (it failed or ran out of
+    /// pilot's deadline), so "already gripped" must not stand alone.
+    pub(crate) check_unconfirmed: bool,
 }
 
 /// Slash-separated path without leading `./`, so the seam inventory's paths

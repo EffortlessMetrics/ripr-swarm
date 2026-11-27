@@ -482,6 +482,16 @@ Static limitation only:
 - Given report-only static limitation evidence with no bounded repair route,
   the packet selects a no-action or inspection state.
 - It does not render a PR repair instruction.
+- When current review cards place a weak, ungripped or
+  reached-but-unrevealed static-limitation (or unknown-state) finding on a
+  changed line (a placement with a path and a line), none carries a repair
+  start, and the selected head is the live `HEAD`, the packet selects the
+  inspection state (`blocked_artifact`, reason code
+  `changed_gaps_without_repair_start`) with one
+  `ripr check --root <root> --base <base> --format human-full` next command,
+  not no-action. Cards with no placement, navigation-only cross-language
+  cards, cards outside the changed lines, and gap-ledger-scoped cards keep
+  the no-action route.
 
 Configured gate:
 
@@ -518,7 +528,7 @@ Follow-up implementation should add or update:
   no-action states;
 - a foreign-working-directory replay proving every generated artifact command
   reads and writes the selected root when pasted elsewhere (#3948, #4287):
-  `crates/ripr/tests/generated_review_workflow.rs::generated_first_pr_artifact_commands_run_from_a_foreign_working_directory`;
+  `crates/ripr/tests/generated_review_workflow/main.rs::generated_first_pr_artifact_commands_run_from_a_foreign_working_directory`;
 - a dangling `ripr.toml` symlink is present but unreadable in first-pr
   preflight, not built-in defaults:
   `crates/ripr/src/output/first_pr/preflight.rs::tests::dangling_ripr_toml_symlink_is_present_not_built_in_defaults`;

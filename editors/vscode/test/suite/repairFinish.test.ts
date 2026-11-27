@@ -54,6 +54,24 @@ suite('Repair finish helpers (#4647)', () => {
     }
   });
 
+  test('Continue excludes retained baseline limits even with an old after command (#13216)', () => {
+    const rows = parseAttemptInventory({
+      schema_version: '0.1',
+      repair_attempts: [
+        { attempt_id: 'ambiguous', state: 'awaiting_edit', disposition: 'baseline_ambiguous', baseline_ambiguous: true, command: 'ripr agent repair --attempt ambiguous --phase after' },
+        { attempt_id: 'unavailable', state: 'awaiting_edit', disposition: 'baseline_unavailable', baseline_ambiguous: null, baseline_unavailable_reason: 'retained baseline cannot be read', command: 'ripr agent repair --attempt unavailable --phase after' }
+      ]
+    });
+    assert.ok(rows);
+    assert.deepStrictEqual(liveRepairAttemptRows(rows), []);
+    assert.deepStrictEqual(resolveLiveAttemptForFinish(rows, { rememberedAttemptId: 'ambiguous' }), { kind: 'no_attempts' });
+    assert.deepStrictEqual(resolveLiveAttemptForFinish(rows, { explicitAttemptId: 'ambiguous' }), { kind: 'unknown_attempt', attemptId: 'ambiguous' });
+    assert.deepStrictEqual(liveRepairAttemptRows([
+      ...rows,
+      { attemptId: 'clean', state: 'awaiting_edit', disposition: 'resumable', command: 'ripr agent repair --attempt clean --phase after' }
+    ]).map((row) => row.attemptId), ['clean']);
+  });
+
   test('parseAfterPhaseRepairFinish reads repair_after_refusal without strengthening', () => {
     const parsed = parseAfterPhaseRepairFinish(
       JSON.stringify({

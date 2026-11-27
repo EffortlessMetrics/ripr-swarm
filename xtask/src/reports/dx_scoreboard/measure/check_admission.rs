@@ -15,8 +15,9 @@
 //! clean.
 //!
 //! Root identity is compared in producer encoding: the expected checkout
-//! unifies `\\` to `/` and encodes each `%` as `%25`, then matches the
-//! producer root after the same separator unification. Decoding `%25` on
+//! unifies `\\` to `/`, folds Windows verbatim prefixes on Windows, and
+//! encodes each `%` as `%25`, then matches the normalized producer root.
+//! Decoding `%25` on
 //! both sides would reject a checkout whose name contains literal `%25`
 //! (producer `%2525`). That is a local compare, not a copy of ripr's
 //! private `stable_path_text`. Head is checked only when the producer
@@ -50,7 +51,11 @@ const INCOMPLETE_KINDS: [&str; 3] = [
 ];
 /// The only typed outcome limitations a complete kind may carry
 /// (`validate_outcome` in `crates/ripr/src/analysis_outcome.rs`).
-const COMPLETE_KIND_ALLOWED_LIMITATIONS: [&str; 2] = ["eol_only_churn", "verification_only_change"];
+const COMPLETE_KIND_ALLOWED_LIMITATIONS: [&str; 3] = [
+    "eol_only_churn",
+    "verification_only_change",
+    "requested_scope_excluded",
+];
 
 /// Identity the measured child was asked to analyze.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -486,7 +491,7 @@ pub(crate) fn findings_rendering_truncated(check: &Value) -> bool {
 
 fn field_matches(field: &str, actual: &str, expected: &str) -> bool {
     if field == "root" {
-        encode_expected_root(expected) == unify_root_separators(actual)
+        encode_expected_root(expected) == plain_root_text(actual)
     } else {
         actual == expected
     }
@@ -496,15 +501,41 @@ fn unify_root_separators(value: &str) -> String {
     value.replace('\\', "/")
 }
 
-/// Encode a checkout root the way the producer writes it: `/` separators
-/// and `%` → `%25`. Applied only to the expected harness root. Not a copy
-/// of private `stable_path_text` (no invalid-byte codec).
-fn encode_expected_root(value: &str) -> String {
-    unify_root_separators(value).replace('%', "%25")
+/// Reduce a root to the plain form the producer writes: `/` separators and
+/// no Windows verbatim prefix. The harness root comes from
+/// `fs::canonicalize`, which yields `\\?\H:\...` / `\\?\UNC\server\...`
+/// on Windows, while the producer reports the plain drive / UNC forms;
+/// without this reduction every Windows warm sample is rejected.
+fn plain_root_text(value: &str) -> String {
+    let unified = unify_root_separators(value);
+    if !cfg!(windows) {
+        return unified;
+    }
+    if let Some(rest) = unified.strip_prefix("//?/") {
+        let bytes = rest.as_bytes();
+        if bytes.first().is_some_and(u8::is_ascii_alphabetic) && bytes.get(1) == Some(&b':') {
+            return rest.to_string();
+        }
+        if rest
+            .get(..4)
+            .is_some_and(|prefix| prefix.eq_ignore_ascii_case("UNC/"))
+            && let Some(tail) = rest.get(4..).filter(|tail| !tail.is_empty())
+        {
+            return format!("//{tail}");
+        }
+    }
+    unified
 }
 
-/// Complete kinds may disclose only `eol_only_churn` and
-/// `verification_only_change`. A missing, non-array,
+/// Encode a checkout root the way the producer writes it: plain `/`
+/// separators and `%` → `%25`. Applied only to the expected harness root.
+/// Not a copy of private `stable_path_text` (no invalid-byte codec).
+fn encode_expected_root(value: &str) -> String {
+    plain_root_text(value).replace('%', "%25")
+}
+
+/// Complete kinds may disclose only `eol_only_churn`,
+/// `verification_only_change` and `requested_scope_excluded`. A missing, non-array,
 /// or kind-less `limitations` value is not an empty allowlist (#7276).
 fn complete_kind_has_incomplete_limitation(
     outcome: &serde_json::Map<String, Value>,
@@ -758,6 +789,58 @@ mod tests {
             .ok_or_else(|| format!("fixture for removing `{field}` is not an object"))?;
         object.remove(field);
         Ok(doc)
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn verbatim_harness_root_admits_plain_producer_root() -> Result<(), String> {
+        let drive = ["H:", "corpus%25-a"].join(r"\");
+        let unc = ["server", "share", "corpus%25-a"].join(r"\");
+        for (root, producer) in [
+            (format!(r"\\?\{drive}"), drive.replace('\\', "/")),
+            (
+                format!(r"\\?\UNC\{unc}"),
+                format!("//{}", unc.replace('\\', "/")),
+            ),
+            (
+                format!(r"\\?\unc\{unc}"),
+                format!("//{}", unc.replace('\\', "/")),
+            ),
+        ] {
+            let mut expected = subject();
+            expected.root = root;
+            let mut doc = complete_document("complete_with_findings", vec![one_finding()]);
+            *doc.get_mut("root").ok_or("fixture root missing")? =
+                json!(producer.replace('%', "%25"));
+            if !admit_check_sample(false, true, &doc.to_string(), &expected).is_complete() {
+                return Err(format!(
+                    "plain producer root did not admit against {}",
+                    expected.root
+                ));
+            }
+            *doc.get_mut("root").ok_or("fixture root missing")? =
+                json!(["H:", "elsewhere"].join("/"));
+            if admit_check_sample(false, true, &doc.to_string(), &expected).is_complete() {
+                return Err("different producer root admitted".to_string());
+            }
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn root_normalization_preserves_unrecognized_prefixes() -> Result<(), String> {
+        for root in ["//?/device/corpus", "//?/UNC/", "//?/💻/corpus"] {
+            if plain_root_text(root) != root {
+                return Err(format!("unrecognized root prefix changed: {root}"));
+            }
+        }
+        if !cfg!(windows) {
+            let root = "//?/H:/corpus";
+            if plain_root_text(root) != root {
+                return Err("Windows-looking root changed on a non-Windows host".to_string());
+            }
+        }
+        Ok(())
     }
 
     #[test]

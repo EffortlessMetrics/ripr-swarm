@@ -1,5 +1,12 @@
 # Golden Output Changes
 
+## Pending — cross-surface annotation conformance (#12925)
+
+Add the existing finding projection as `sarif.json` and `github.txt` under
+RIPR-SPEC-0008 cross-surface conformance. Class, canonical identity,
+configured severity and refusal guidance come from the existing producer;
+the check/human goldens and analyzer behavior are unchanged.
+
 ## Pending — typescript_infection_shapes (1)
 
 Reason:
@@ -203,3 +210,110 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — typescript_infection_shapes (18)
+
+Reason:
+RIPR-SPEC-0423: additive evidence_stages rows and agent stages= line; human rendering unchanged
+
+Command:
+`cargo xtask goldens bless typescript_infection_shapes --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+
+## Pending — typescript_infection_shapes (19)
+
+Reason:
+RIPR-SPEC-0423: additive evidence_stages rows and agent stages= line; no test attribution; human rendering unchanged
+
+Command:
+`cargo xtask goldens bless typescript_infection_shapes --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+
+## Pending — typescript_infection_shapes (20)
+
+Reason:
+RIPR-SPEC-0122: one blank line, not two, separates the More block from a trailing Note (#14318)
+
+Command:
+`cargo xtask goldens bless typescript_infection_shapes --reason "..."`
+
+Updated:
+- `expected/human.txt`
+
+## Pending — typescript_infection_shapes (21)
+
+Reason:
+RIPR-SPEC-0243: say('a', true) fills the changed default loud = true, so it never applies (#15393)
+
+Command:
+`cargo xtask goldens bless typescript_infection_shapes --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/sarif.json`
+- `expected/github.txt`
+
+## Pending — typescript_infection_shapes (22)
+
+Reason:
+RIPR-SPEC-0243 #15393: a filled default's advice asks for a call that omits the argument
+
+Command:
+`cargo xtask goldens bless typescript_infection_shapes --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/sarif.json`
+- `expected/github.txt`
+
+## Pending — typescript_infection_shapes (23)
+
+Reason:
+RIPR-SPEC-0008: preview-language GitHub file= and SARIF uris anchored at the checkout top level (#15367)
+
+Command:
+`cargo xtask goldens bless typescript_infection_shapes --reason "..."`
+
+Updated:
+- `expected/sarif.json`
+- `expected/github.txt`
+
+## Pending — typescript_infection_shapes (24)
+
+Reason:
+RIPR-SPEC-0008: SARIF alert messages are one plain line (#15374)
+
+Command:
+`cargo xtask goldens bless typescript_infection_shapes --reason "..."`
+
+Updated:
+- `expected/sarif.json`
+
+## Pending — typescript_infection_shapes (25)
+
+Reason:
+RIPR-SPEC-0008: SARIF one-line message for the finding main reclassified as reachable_unrevealed (#15374)
+
+Command:
+`cargo xtask goldens bless typescript_infection_shapes --reason "..."`
+
+Updated:
+- `expected/sarif.json`
+
+## Pending — typescript_infection_shapes (26)
+
+Reason:
+RIPR-SPEC-0008: SARIF reach and exercise wording follows the stage evidence (#15374)
+
+Command:
+`cargo xtask goldens bless typescript_infection_shapes --reason "..."`
+
+Updated:
+- `expected/sarif.json`

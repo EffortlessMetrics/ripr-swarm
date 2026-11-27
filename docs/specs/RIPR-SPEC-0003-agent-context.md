@@ -1,6 +1,6 @@
 # RIPR-SPEC-0003: Agent Context Packet
 
-Status: planned
+Status: accepted
 
 ## Problem
 
@@ -57,6 +57,35 @@ retain their existing behavior. Recorded `--from` lookups do not infer these
 facts from ambient configuration: the artifact has no complete advisory carrier.
 Exit 2, prose stderr and empty stdout remain the miss contract (#10720).
 
+A well-formed `file:line` miss on any route (fresh or `--from`) adds one
+bounded sentence naming where this scope's findings are (#14384): up to five
+lines with findings in the named file (then "and N more"), shown
+root-relative, counting other files the path also matches, with a suggested
+`file:line` that the same resolver selects as exactly one finding (or a
+pointer to probe ids when every listed line holds several); otherwise up to
+five files that hold findings; otherwise that the scope has none. A
+`file:line:column` selector, including one on an extensionless file, is told
+to drop the column; the miss cause and this sentence share one column-form
+detector (#14511). Id selectors keep
+their existing miss text, and the typed selector never enters a command. On a
+fresh run whose miss-cause clause (#14077) already names the same file's
+other finding lines, that sentence is not repeated. That clause offers for
+retry only lines the same resolver selects as exactly one finding, and names
+lines several findings share with a pointer to probe ids (#14492).
+The empty-scope and other-file forms claim no findings exist only when the
+run is known complete: a fresh run with an incomplete producer outcome, a
+partial diff scope, a non-`Ok` language run or unanalyzed preview files says
+analysis was incomplete (#14406), stated once when the miss cause already
+says so, and a replayed `--from` miss says the artifact does not
+record whether its run was complete (#14440), so a finding there may be
+missing. When no finding path matches exactly but one matches ignoring ASCII
+case, the sentence starts "Paths match case-sensitively." and names the
+correctly cased file and selector; resolution itself stays case-sensitive
+(#14416). For such a path-shaped selector the fresh-run miss cause gives
+no clause of its own, so it never calls a wrong-case path present but
+finding-free on a case-insensitive filesystem while this sentence names its
+findings (#14676).
+
 The packet should include:
 
 - task kind
@@ -85,11 +114,22 @@ underspecified metadata, before applying the packet's display limit. A zero
 display limit preserves the total. Rendering preserves producer evidence,
 witnesses, selection and identity algorithms.
 
+### Missing-discriminator parity with check (#10516)
+
+The packet's top-level `missing_discriminators` entries equal the
+`ripr check --json` finding's entries field for field: `value`, `reason` and
+`flow_sink` (`{kind, text, line}` or `null`), rendered through check's own
+flow-sink writer. The field is additive within packet version `1.1`.
+`witness.missing_discriminators` keeps the full fact, including the sink
+`owner` and the discriminator `shape`.
+
 ### Unknown finding guidance (#7477)
 
 For `infection_unknown`, `propagation_unknown`, and `static_unknown`, explain
-renders `To investigate this uncertainty:` using the same reconciled next step
-as JSON findings and context. This is an evidence-resolution experiment, not a
+renders the same reconciled next step as JSON findings and context, once, in its
+`Next step` section; the verdict block points there instead of repeating it. A
+finding with no recommended step keeps the step under `To investigate this
+uncertainty:` in the verdict block. This is an evidence-resolution experiment, not a
 promise that a test changes the static verdict or proof that a test is missing.
 Existing producer-specific limitation advice remains authoritative.
 
@@ -144,7 +184,7 @@ The context packet should not:
 
 ## Test Mapping
 
-Planned tests:
+Tests:
 
 - golden context packet for boundary gap
 - golden context packet for weak error oracle
@@ -155,6 +195,9 @@ Planned tests:
   with literal finding/class/reason identity, human/JSON section parity, and
   scope-preserving context replay
 - retained boundary, missing-assertion, and no-path verdict-change recipes
+- `crates/ripr/tests/context_json_schema.rs` — every packet of eight committed
+  fixtures and a git fixture conforms to `schemas/ripr/context.schema.json`,
+  and its top-level `missing_discriminators` equal its check finding's array
 - `crates/ripr/tests/cli_smoke/selector_language_recovery.rs` — fresh disabled,
   unavailable-binary and enabled-run scope, exact retry replay from a separate
   Git repository, capped samples, mixed-language hits, and artifact non-invention;
@@ -162,7 +205,7 @@ Planned tests:
 
 ## Implementation Mapping
 
-Planned modules:
+Modules:
 
 - `domain` context data types
 - `app` context use case

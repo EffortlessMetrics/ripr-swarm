@@ -1,5 +1,6 @@
 //! RIPR-SPEC-0069: compatibility of the complete public context packet.
 
+use ripr::domain::DiscriminatorShape;
 use std::{collections::BTreeMap, path::Path};
 
 use ripr::config::RiprConfig;
@@ -35,6 +36,7 @@ fn finding() -> Finding {
         id: "probe:src_lib_rs:9:predicate".into(),
         canonical_gap: None,
         probe: Probe {
+            before_condition: None,
             id: ProbeId("probe:src_lib_rs:9:predicate".into()),
             location: SourceLocation::new("src/lib.rs", 9, 1),
             owner: None,
@@ -66,6 +68,8 @@ fn finding() -> Finding {
                 value: "amount == threshold".into(),
                 reason: "the equality boundary is not distinguished".into(),
                 flow_sink: None,
+                shape: DiscriminatorShape::Boundary,
+                drafted_boundary: None,
             }],
         },
         stop_reasons: Vec::new(),

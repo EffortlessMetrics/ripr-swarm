@@ -429,6 +429,21 @@ struct Rate {
     rate: f64,
 }
 
+impl Rate {
+    fn display_percent(&self) -> String {
+        let denominator = u128::from(self.denominator);
+        // Round the exact fraction to tenths of a percent, with ties rounded
+        // up as in the canonical receipt. The receipt's decimal is already rounded.
+        let scaled = u128::from(self.numerator) * 1_000;
+        let Some(tenths) = (scaled + denominator / 2).checked_div(denominator) else {
+            // The parser rejects the canonical empty-population marker ("n/a").
+            // Preserve the legacy display for a zero denominator with a numeric rate.
+            return percent(self.rate);
+        };
+        format!("{}.{}%", tenths / 10, tenths % 10)
+    }
+}
+
 fn req_rate(value: &Value, key: &str, ctx: &str) -> Result<Rate, String> {
     let node = field(value, key);
     let numerator = field(node, "numerator")
@@ -741,7 +756,7 @@ fn derived(id: &str, r: &Receipts) -> Result<Option<Derived>, String> {
                 &format!(
                     "verdict corpus, upstream cases only; all {} cases: {}",
                     all.denominator,
-                    percent(all.rate)
+                    all.display_percent()
                 ),
             )
         }
@@ -1391,7 +1406,7 @@ fn shortfalls(page: &mut Page, r: &Receipts, bars: &[Bar]) -> Result<(), String>
         "- **Wrong gaps.** On changes from real repositories ripr reported a gap on {} of {} whose tests caught every listed mutant ({}): {}. On the authored cases, which were written to fill empty corpus cells, it did so on {} of {} ({}).",
         false_actionable.numerator,
         false_actionable.denominator,
-        percent(false_actionable.rate),
+        false_actionable.display_percent(),
         if false_cases.is_empty() {
             "no case recorded".to_string()
         } else {
@@ -1399,7 +1414,7 @@ fn shortfalls(page: &mut Page, r: &Receipts, bars: &[Bar]) -> Result<(), String>
         },
         authored_false_actionable.numerator,
         authored_false_actionable.denominator,
-        percent(authored_false_actionable.rate)
+        authored_false_actionable.display_percent()
     ));
 
     let abstention = origin_rate(&r.verdicts, "upstream", "abstention_rate")?;
@@ -1408,10 +1423,10 @@ fn shortfalls(page: &mut Page, r: &Receipts, bars: &[Bar]) -> Result<(), String>
         "- **Mostly unsure.** On real-repository changes it abstained on {} of {} cases ({}); on the authored cases, {} of {} ({}). Abstaining is the safe failure, but each abstention is a change ripr gave the developer no help on.",
         abstention.numerator,
         abstention.denominator,
-        percent(abstention.rate),
+        abstention.display_percent(),
         authored_abstention.numerator,
         authored_abstention.denominator,
-        percent(authored_abstention.rate)
+        authored_abstention.display_percent()
     ));
 
     let families = field(&r.mutation, "scored_families");
@@ -1801,7 +1816,7 @@ fn verdict_section(page: &mut Page, verdicts: &Value) -> Result<(), String> {
             "{}/{} ({})",
             rate.numerator,
             rate.denominator,
-            percent(rate.rate)
+            rate.display_percent()
         )
     };
     let mut rate_rows = Vec::new();
@@ -2824,6 +2839,73 @@ mod tests {
     }
 
     #[test]
+    fn verdict_percentages_round_counts_once() -> Result<(), String> {
+        let mut receipts = load(&workspace_root())?;
+        receipts.verdicts["abstention_rate"] =
+            serde_json::json!({"numerator": 314, "denominator": 871, "rate": "0.3605"});
+        receipts.verdicts["by_origin"]["upstream"]["abstention_rate"] =
+            serde_json::json!({"numerator": 38, "denominator": 41, "rate": "0.9268"});
+        receipts.verdicts["by_origin"]["authored"]["abstention_rate"] =
+            serde_json::json!({"numerator": 276, "denominator": 830, "rate": "0.3325"});
+
+        let mut table = Page(String::new());
+        verdict_section(&mut table, &receipts.verdicts)?;
+        let row = table
+            .0
+            .lines()
+            .find(|line| line.starts_with("| Abstained ("))
+            .ok_or("missing verdict table abstention row")?;
+        assert!(
+            row.contains("| 314/871 (36.1%) | 38/41 (92.7%) | 276/830 (33.3%) |"),
+            "{row}"
+        );
+
+        let mut prose = Page(String::new());
+        shortfalls(&mut prose, &receipts, &bars(&receipts)?)?;
+        assert!(
+            prose
+                .0
+                .contains("on the authored cases, 276 of 830 (33.3%)"),
+            "{}",
+            prose.0
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn verdict_percentage_uses_canonical_half_up_ties() -> Result<(), String> {
+        let receipt =
+            serde_json::json!({"tie": {"numerator": 1, "denominator": 16, "rate": "0.0625"}});
+        assert_eq!(req_rate(&receipt, "tie", "test")?.display_percent(), "6.3%");
+        Ok(())
+    }
+
+    #[test]
+    fn verdict_zero_denominator_preserves_existing_receipt_behavior() -> Result<(), String> {
+        let mut receipts = load(&workspace_root())?;
+        receipts.verdicts["abstention_rate"] =
+            serde_json::json!({"numerator": 0, "denominator": 0, "rate": "n/a"});
+
+        let mut page = Page(String::new());
+        let result = verdict_section(&mut page, &receipts.verdicts);
+        assert_eq!(
+            result,
+            Err("verdict-corpus: `abstention_rate` has no rate".to_string())
+        );
+
+        receipts.verdicts["abstention_rate"]["rate"] = Value::from("0.0000");
+        let mut page = Page(String::new());
+        verdict_section(&mut page, &receipts.verdicts)?;
+        let row = page
+            .0
+            .lines()
+            .find(|line| line.starts_with("| Abstained ("))
+            .ok_or("missing verdict table abstention row")?;
+        assert!(row.contains("| 0/0 (0.0%) |"), "{row}");
+        Ok(())
+    }
+
+    #[test]
     fn formatting_keeps_units_readable() {
         assert_eq!(fmt_value(237_697.110_6, "ms"), "237.7 s");
         assert_eq!(fmt_value(1.0, "findings"), "1 finding");
@@ -2867,8 +2949,8 @@ mod tests {
         Ok(())
     }
 
-    /// A verdict corpus under `root` holding only what the receipt derives
-    /// from: the header's spec and non-claims, and one row file per row.
+    /// A verdict corpus with case and subject definitions copied independently
+    /// of its rows: a corrupted row must not define its own truth or origin.
     fn write_verdict_corpus(root: &Path, rows: &[Value]) -> Result<(), String> {
         write_verdict_corpus_with(root, "RIPR-SPEC-0219", &[], rows)
     }
@@ -2882,7 +2964,10 @@ mod tests {
         let corpus = root.join(VERDICT_CORPUS);
         let rows_dir = corpus.join("expected/rows");
         fs::create_dir_all(&rows_dir).map_err(|e| e.to_string())?;
-        let header = serde_json::json!({"spec": spec, "non_claims": non_claims});
+        let source = workspace_root().join(VERDICT_CORPUS);
+        let mut header = read_json(&source.join("corpus.json"))?;
+        header["spec"] = Value::from(spec);
+        header["non_claims"] = Value::from(non_claims);
         fs::write(
             corpus.join("corpus.json"),
             serde_json::to_vec_pretty(&header).map_err(|e| e.to_string())?,
@@ -2890,6 +2975,8 @@ mod tests {
         .map_err(|e| e.to_string())?;
         let cases_dir = corpus.join("cases");
         fs::create_dir_all(&cases_dir).map_err(|e| e.to_string())?;
+        let subjects_dir = corpus.join("subjects");
+        fs::create_dir_all(&subjects_dir).map_err(|e| e.to_string())?;
         for row in rows {
             let id = text(row, "case_id");
             fs::write(
@@ -2897,10 +2984,14 @@ mod tests {
                 serde_json::to_vec_pretty(row).map_err(|e| e.to_string())?,
             )
             .map_err(|e| e.to_string())?;
-            // The receipt checks rows against the case ids, so each row needs its case.
-            fs::write(
-                cases_dir.join(format!("{id}.json")),
-                serde_json::json!({ "case_id": id }).to_string(),
+            let case_path = source.join("cases").join(format!("{id}.json"));
+            let case = read_json(&case_path)?;
+            fs::copy(&case_path, cases_dir.join(format!("{id}.json")))
+                .map_err(|e| e.to_string())?;
+            let subject = text(&case, "subject_id");
+            fs::copy(
+                source.join("subjects").join(format!("{subject}.json")),
+                subjects_dir.join(format!("{subject}.json")),
             )
             .map_err(|e| e.to_string())?;
         }
@@ -2925,6 +3016,38 @@ mod tests {
             report["non_claims"].as_array().map_or(&[], Vec::as_slice),
             report["rows"].as_array().map_or(&[], Vec::as_slice),
         )
+    }
+
+    #[test]
+    fn verdict_receipt_rejects_a_row_that_hides_a_false_verdict() -> Result<(), String> {
+        let source = workspace_root().join(VERDICT_CORPUS);
+        // Retained runtime-labeled case truth stays discriminated. This
+        // injected observation tests reporting, not a fresh analyzer result.
+        let id = "accounts-balance-add";
+        let case = read_json(&source.join("cases").join(format!("{id}.json")))?;
+        assert_eq!(case["truth"]["state"], "discriminated");
+        let mut row = read_json(&source.join("expected/rows").join(format!("{id}.json")))?;
+        row["observed_verdict"] = Value::from("gap");
+        row["outcome"] = Value::from("false_actionable");
+        row["observed_classifications"] = serde_json::json!(["weakly_exposed"]);
+        let dir = crate::tests::temp_dir("public-proof-verdict-integrity");
+        write_verdict_corpus(&dir, &[row.clone()])?;
+        let report: Value = serde_json::from_slice(&canonical_bytes(&dir, VERDICT_CORPUS)?)
+            .map_err(|e| e.to_string())?;
+        assert_eq!(report["false_verdict_rate"]["numerator"], 1);
+        assert_eq!(report["false_verdict_rate"]["denominator"], 1);
+        row["outcome"] = Value::from("ideal");
+        write_verdict_corpus(&dir, &[row])?;
+        let result = canonical_bytes(&dir, VERDICT_CORPUS);
+        fs::remove_dir_all(&dir).map_err(|e| e.to_string())?;
+        let err = result
+            .err()
+            .ok_or("public proof accepted a hidden false verdict")?;
+        assert!(
+            err.contains(id) && err.contains("scoring definition"),
+            "{err}"
+        );
+        Ok(())
     }
 
     #[test]
@@ -2993,6 +3116,9 @@ mod tests {
             write_source_from_receipt(&dir, source, &receipts.join(receipt))?;
         }
         copy_lane_baselines(&real, &dir)?;
+        // The corpus rows' abstention-expected flags are re-derived from the
+        // specs beside `fixtures/` (RIPR-SPEC-0219), so the copy carries them.
+        crate::tests::copy_dir_recursive(&real.join("docs/specs"), &dir.join("docs/specs"))?;
         // In sync: the check passes before any source moves.
         check_receipts(&dir)?;
         // Bump one bar's title in the dx source; a refresh must move that page line.

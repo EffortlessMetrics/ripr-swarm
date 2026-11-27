@@ -42,7 +42,15 @@ pub(super) const MAX_DIFF_PATH_COMPONENTS: usize = 256;
 /// separator count over the raw line: a `diff --git` line carries two paths,
 /// so the line allowance is twice the per-path bound plus the side prefixes.
 pub(super) fn path_marker_exceeds_depth_bound(raw: &str) -> bool {
-    const PREFIXES: [&str; 5] = ["--- ", "+++ ", "diff --git ", "rename from ", "rename to "];
+    const PREFIXES: [&str; 7] = [
+        "--- ",
+        "+++ ",
+        "diff --git ",
+        "rename from ",
+        "rename to ",
+        "copy from ",
+        "copy to ",
+    ];
     PREFIXES.iter().any(|prefix| raw.starts_with(prefix))
         && raw.bytes().filter(|byte| *byte == b'/').count() > 2 * MAX_DIFF_PATH_COMPONENTS + 4
 }
@@ -84,6 +92,25 @@ pub(super) fn parse_git_old_path(raw: &str) -> Option<PathBuf> {
     };
     let path = path.without_side_prefix("a/");
     confine_to_relative_path(&path)
+}
+
+/// #15665: the path of a `--no-prefix` binary section. Its header repeats one
+/// token (`diff --git src/x.rs src/x.rs`) and its sentinel repeats the same
+/// token on both sides; only that exact agreement is read, so a prefixed,
+/// mnemonic or custom-prefix section is never respelled here. The token is
+/// decoded and confined like every other diff path.
+pub(super) fn parse_prefixless_binary_path(header: &str, sentinel: &str) -> Option<PathBuf> {
+    let marker = header.trim_end_matches('\r').strip_prefix("diff --git ")?;
+    let middle = marker.len() / 2;
+    if marker.len() % 2 == 0 || marker.as_bytes().get(middle) != Some(&b' ') {
+        return None;
+    }
+    let (old, new) = (marker.get(..middle)?, marker.get(middle + 1..)?);
+    let sentinel = sentinel.trim_end_matches('\r');
+    if old != new || sentinel != format!("Binary files {old} and {new} differ") {
+        return None;
+    }
+    confine_to_relative_path(&parse_diff_path_token(old)?)
 }
 
 /// Check both identities against the complete header, using rename metadata to
@@ -195,6 +222,14 @@ pub(super) fn parse_rename_from_path(raw: &str) -> Option<PathBuf> {
 
 pub(super) fn parse_rename_to_path(raw: &str) -> Option<PathBuf> {
     parse_rename_path_marker(raw, "rename to ")
+}
+
+pub(super) fn parse_copy_from_path(raw: &str) -> Option<PathBuf> {
+    parse_rename_path_marker(raw, "copy from ")
+}
+
+pub(super) fn parse_copy_to_path(raw: &str) -> Option<PathBuf> {
+    parse_rename_path_marker(raw, "copy to ")
 }
 
 fn parse_rename_path_marker(raw: &str, prefix: &str) -> Option<PathBuf> {
@@ -1395,6 +1430,61 @@ mod tests {
     }
 
     #[test]
+    fn prefixless_binary_sections_read_only_on_exact_agreement() {
+        let read = |header: &str, sentinel: &str| parse_prefixless_binary_path(header, sentinel);
+        assert_eq!(
+            read(
+                "diff --git src/tax.rs src/tax.rs",
+                "Binary files src/tax.rs and src/tax.rs differ"
+            ),
+            Some(PathBuf::from("src/tax.rs"))
+        );
+        assert_eq!(
+            read(
+                "diff --git tax.rs tax.rs",
+                "Binary files tax.rs and tax.rs differ"
+            ),
+            Some(PathBuf::from("tax.rs"))
+        );
+        assert_eq!(
+            read(
+                "diff --git \"src/caf\\303\\251.rs\" \"src/caf\\303\\251.rs\"",
+                "Binary files \"src/caf\\303\\251.rs\" and \"src/caf\\303\\251.rs\" differ"
+            ),
+            Some(PathBuf::from("src/café.rs"))
+        );
+        // Prefixed sides, a rename, a deletion and traversal are not read.
+        assert_eq!(
+            read(
+                "diff --git a/src/x.rs b/src/x.rs",
+                "Binary files a/src/x.rs and b/src/x.rs differ"
+            ),
+            None
+        );
+        assert_eq!(
+            read(
+                "diff --git src/a.rs src/b.rs",
+                "Binary files src/a.rs and src/b.rs differ"
+            ),
+            None
+        );
+        assert_eq!(
+            read(
+                "diff --git src/x.rs src/x.rs",
+                "Binary files src/x.rs and /dev/null differ"
+            ),
+            None
+        );
+        assert_eq!(
+            read(
+                "diff --git ../x.rs ../x.rs",
+                "Binary files ../x.rs and ../x.rs differ"
+            ),
+            None
+        );
+    }
+
+    #[test]
     fn parse_git_old_path_confines_the_section_identity() {
         assert_eq!(
             parse_git_old_path("diff --git a/src/old.rs b/src/old.rs"),
@@ -1500,5 +1590,224 @@ mod tests {
     fn parse_old_path_marker_rejects_non_markers() {
         assert!(!parse_old_path_marker("+++ b/src/lib.rs"));
         assert!(!parse_old_path_marker("regular line"));
+    }
+
+    /// #13949: on Windows `\` separates components and `C:` is a drive prefix,
+    /// so backslash traversal and drive-letter spellings must confine like
+    /// their `/` forms. Windows-only because `Path` on other hosts reads those
+    /// spellings as one literal file name.
+    #[cfg(windows)]
+    #[test]
+    fn windows_separator_and_drive_spellings_are_confined() {
+        // The drive letter is assembled so the repository's local-path
+        // scanner does not read the fixture as a machine path.
+        let drive = "C";
+        for marker in [
+            "+++ b/..\\..\\evil.rs".to_string(),
+            "+++ b/src\\..\\..\\evil.rs".to_string(),
+            format!("+++ {drive}:/evil.rs"),
+            format!("+++ {drive}:evil.rs"),
+            format!("+++ b/{drive}:/evil.rs"),
+            "+++ \\\\server\\share\\evil.rs".to_string(),
+            "+++ \"b/..\\\\..\\\\evil.rs\"".to_string(),
+        ] {
+            let marker = marker.as_str();
+            assert_eq!(parse_new_path_marker(marker), None, "{marker}");
+            assert!(is_new_path_marker(marker), "{marker} must stay a boundary");
+        }
+        // `Path` equality compares components, so compare the stored spelling
+        // as text: the confined path must keep git's `/`, not the native `\`.
+        assert_eq!(
+            parse_new_path_marker("+++ b/src\\a.rs")
+                .as_deref()
+                .and_then(Path::to_str),
+            Some("src/a.rs")
+        );
+    }
+
+    /// Quote `bytes` the way git does under `core.quotePath=true`: octal for
+    /// bytes at or above 0x80 and for control bytes, named escapes for the
+    /// C ones, and a backslash before `\` and `"`.
+    #[cfg(unix)]
+    fn git_c_quote(bytes: &[u8]) -> String {
+        let mut quoted = String::from("\"");
+        for &byte in bytes {
+            match byte {
+                0x07 => quoted.push_str("\\a"),
+                0x08 => quoted.push_str("\\b"),
+                b'\t' => quoted.push_str("\\t"),
+                b'\n' => quoted.push_str("\\n"),
+                0x0b => quoted.push_str("\\v"),
+                0x0c => quoted.push_str("\\f"),
+                b'\r' => quoted.push_str("\\r"),
+                b'"' => quoted.push_str("\\\""),
+                b'\\' => quoted.push_str("\\\\"),
+                0x20..=0x7e => quoted.push(byte as char),
+                other => quoted.push_str(&format!("\\{other:03o}")),
+            }
+        }
+        quoted.push('"');
+        quoted
+    }
+
+    /// What confinement must make of `bytes`, computed without the parser:
+    /// empty and `.` segments vanish, any `..` segment rejects, and nothing
+    /// left rejects.
+    #[cfg(unix)]
+    fn expected_confined(bytes: &[u8]) -> Option<Vec<u8>> {
+        let mut kept: Vec<&[u8]> = Vec::new();
+        for segment in bytes.split(|byte| *byte == b'/') {
+            match segment {
+                b"" | b"." => {}
+                b".." => return None,
+                other => kept.push(other),
+            }
+        }
+        (!kept.is_empty()).then(|| kept.join(&b'/'))
+    }
+
+    #[cfg(unix)]
+    proptest::proptest! {
+        #![proptest_config(proptest::test_runner::Config {
+            cases: std::env::var("PROPTEST_CASES")
+                .ok()
+                .and_then(|value| value.parse().ok())
+                .unwrap_or(256),
+            failure_persistence: None,
+            ..proptest::test_runner::Config::default()
+        })]
+
+        /// #13949: a git C-quoted old-path marker (octal escapes, quotes,
+        /// backslashes, non-UTF-8 bytes) confines to exactly the relative
+        /// path an independent oracle predicts, and an accepted path never
+        /// carries `..`, a root or a prefix.
+        #[test]
+        fn proptest_c_quoted_old_path_confines_like_the_oracle(
+            segments in proptest::collection::vec(
+                proptest::prop_oneof![
+                    2 => proptest::strategy::Just(b"..".to_vec()),
+                    2 => proptest::strategy::Just(b".".to_vec()),
+                    1 => proptest::strategy::Just(Vec::new()),
+                    6 => proptest::collection::vec(
+                        proptest::prop_oneof![
+                            4 => 0x20u8..=0x7e,
+                            1 => 1u8..=0x1f,
+                            2 => 0x80u8..=0xff,
+                            1 => proptest::strategy::Just(b'.'),
+                            1 => proptest::strategy::Just(b'"'),
+                            1 => proptest::strategy::Just(b'\\'),
+                        ],
+                        0..6,
+                    ),
+                ],
+                0..6,
+            ),
+            leading_slash in proptest::bool::ANY,
+        ) {
+            use std::os::unix::ffi::OsStrExt;
+            let mut bytes: Vec<u8> = segments.join(&b'/');
+            if leading_slash {
+                bytes.insert(0, b'/');
+            }
+            let marker = format!("--- {}", git_c_quote(&[b"a/".as_slice(), &bytes].concat()));
+            let confined = parse_old_path_for_confinement(&marker);
+            // `a//x` strips one side prefix and leaves the absolute `/x`.
+            let expected = if bytes.first() == Some(&b'/') {
+                None
+            } else {
+                expected_confined(&bytes)
+            };
+            proptest::prop_assert_eq!(
+                confined.as_ref().map(|path| path.as_os_str().as_bytes().to_vec()),
+                expected
+            );
+            if let Some(path) = confined {
+                proptest::prop_assert!(path.is_relative());
+                proptest::prop_assert!(
+                    path.components().all(|part| matches!(part, Component::Normal(_)))
+                );
+            }
+        }
+
+        /// #13949: the same oracle holds for the new-path marker when git
+        /// C-quotes it, so the `+++` reader cannot drift from the `---` one.
+        #[test]
+        fn proptest_c_quoted_new_path_confines_like_the_oracle(
+            segments in proptest::collection::vec(
+                proptest::prop_oneof![
+                    2 => proptest::strategy::Just(b"..".to_vec()),
+                    2 => proptest::strategy::Just(b".".to_vec()),
+                    1 => proptest::strategy::Just(Vec::new()),
+                    6 => proptest::collection::vec(
+                        proptest::prop_oneof![
+                            4 => 0x20u8..=0x7e,
+                            1 => 1u8..=0x1f,
+                            2 => 0x80u8..=0xff,
+                            1 => proptest::strategy::Just(b'.'),
+                            1 => proptest::strategy::Just(b'"'),
+                            1 => proptest::strategy::Just(b'\\'),
+                        ],
+                        0..6,
+                    ),
+                ],
+                0..6,
+            ),
+        ) {
+            use std::os::unix::ffi::OsStrExt;
+            let bytes: Vec<u8> = segments.join(&b'/');
+            let marker = format!("+++ {}", git_c_quote(&[b"b/".as_slice(), &bytes].concat()));
+            let confined = parse_new_path_marker(&marker);
+            let expected = if bytes.first() == Some(&b'/') {
+                None
+            } else {
+                expected_confined(&bytes)
+            };
+            proptest::prop_assert_eq!(
+                confined.as_ref().map(|path| path.as_os_str().as_bytes().to_vec()),
+                expected
+            );
+        }
+
+        /// #13949: a non-quoted `+++` marker (git leaves ordinary names
+        /// unquoted) confines like the oracle, strips exactly one `b/`, and is
+        /// always recognized as a file-section boundary even when confinement
+        /// rejects it (#2099): a rejected marker must not leave its hunk as
+        /// payload of the previous file.
+        #[test]
+        fn proptest_unquoted_new_path_marker_confines_and_stays_a_boundary(
+            segments in proptest::collection::vec(
+                proptest::prop_oneof![
+                    2 => proptest::strategy::Just("..".to_string()),
+                    2 => proptest::strategy::Just(".".to_string()),
+                    1 => proptest::strategy::Just(String::new()),
+                    1 => proptest::strategy::Just("b".to_string()),
+                    6 => "[!#-\\[\\]-~]{1,6}",
+                ],
+                0..6,
+            ),
+            with_prefix in proptest::bool::ANY,
+        ) {
+            use std::os::unix::ffi::OsStrExt;
+            let path = segments.join("/");
+            let token = if with_prefix { format!("b/{path}") } else { path };
+            let marker = format!("+++ {token}");
+            // The oracle strips exactly one `b/` and then applies the shared
+            // segment rules; a leading `/` is a root and rejects.
+            let body = token.strip_prefix("b/").unwrap_or(&token);
+            let expected = if body.starts_with('/') {
+                None
+            } else {
+                expected_confined(body.as_bytes())
+            };
+            proptest::prop_assert_eq!(
+                parse_new_path_marker(&marker)
+                    .as_ref()
+                    .map(|path| path.as_os_str().as_bytes().to_vec()),
+                expected
+            );
+            if !token.is_empty() {
+                proptest::prop_assert!(is_new_path_marker(&marker));
+            }
+        }
     }
 }

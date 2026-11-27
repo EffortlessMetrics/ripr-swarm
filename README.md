@@ -29,9 +29,14 @@
 eligible repairs, not coverage, runtime mutation outcomes, or all test gaps.
 See docs/BADGE_POLICY.md and docs/VERIFICATION.md. -->
 
-ripr reads your diff and related tests to find potential gaps in what they
-check. It explains the evidence and suggests where a focused test could help.
-Use the finding during review or hand it to a coding agent.
+Your tests pass. Would they notice if the change you just made were wrong?
+
+ripr reads your diff and the related tests and names a changed behavior no
+test appears to check, plus the missing case or assertion. Where a repair route
+exists, it also names the test to add. It does not run your tests or any
+mutants. Use the finding in review, or hand the gap to a coding agent.
+[Why ripr](docs/WHY_RIPR.md) covers how this differs from coverage, mutation
+testing and formal verification.
 
 A test can run the changed code without checking the behavior that changed:
 
@@ -65,10 +70,11 @@ shown) and runs ripr on your change:
 ```bash
 v=0.10.0; t=x86_64-unknown-linux-gnu; f=ripr-server-v$v-$t.tar.gz
 b=https://github.com/EffortlessMetrics/ripr/releases/download/v$v
-curl -fsSLO $b/$f && curl -fsSLO $b/$f.sha256
-echo "$(cat $f.sha256)  $f" | { sha256sum -c - || shasum -a 256 -c -; } && tar xzf $f \
-  && export PATH="$PWD:$PATH"   # ./ripr is now first on PATH for this shell
-ripr check
+curl -fsSLO "$b/$f" && curl -fsSLO "$b/$f.sha256" && \
+  echo "$(cat $f.sha256)  $f" | { sha256sum -c - || shasum -a 256 -c -; } \
+  && mkdir ripr-bin && tar xzf $f -C ripr-bin \
+  && export PATH="$PWD/ripr-bin:$PATH" \
+  && ./ripr-bin/ripr check
 ```
 
 On macOS set `t=aarch64-apple-darwin` (Apple silicon) or
@@ -83,6 +89,10 @@ analysis could not complete. On the base branch itself there are no changed
 files, and ripr says so. A result with no findings or limited evidence is not a
 clean bill of health. If a check cannot complete, run `ripr doctor` (standalone;
 it exits 3 when a check fails).
+
+No change of your own to try it on? The [starter examples](examples/README.md)
+are three small projects (Rust, Python and TypeScript) with a known gap and the
+one added assertion that closes it.
 
 The example output above and `--worktree` come from the 0.11 development build,
 which is not yet the published release. In it, `ripr check` uses uncommitted
@@ -109,6 +119,7 @@ published-versus-development split and build times.
 | Review a change | Inspect possible assertion gaps and the evidence behind them. | [CLI quickstart](docs/QUICKSTART.md#cli-first-hour) |
 | Analyze a Python change (preview) | Auto-enable the preview from project markers, inspect the advisory boundary gap, and follow the printed pytest/unittest route. | [Python first hour](docs/QUICKSTART.md#python-first-hour-preview) |
 | Write a focused test | Prepare a supported repair, edit the test yourself or with an agent, and compare the static evidence afterward. | [Repair a gap](docs/QUICKSTART.md#agent-or-reviewer-first-hour) |
+| Work in Muse | Install the native plugin, approve its MCP server, and use guided setup and test repair with an MCP-capable development build. | [Muse plugin guide](plugins/muse/ripr/README.md) |
 | Work in VS Code | Inspect saved-workspace diagnostics, open a related test, and copy a test brief. | [Editor quickstart](docs/QUICKSTART.md#vs-code-first-hour) |
 | Review in GitHub | Run `ripr init --ci github` to generate an advisory PR workflow with a summary and downloadable evidence. | [CI quickstart](docs/QUICKSTART.md#ci-first-hour) |
 
@@ -124,8 +135,8 @@ Using a coding agent? `ripr init --agents claude|codex|cursor|all` adds a short
 find-gap, write-test, verify loop with an explicit done and stop rule to your
 agent's instruction file (see the [agent quickstart](docs/AGENT_QUICKSTART.md)).
 Or run `ripr check`, then run the follow-up commands it
-prints exactly as printed; their IDs belong to that run. For repairs,
-`ripr check` prints the `ripr repair` command when an eligible repair exists; `ripr pilot --root .` is optional broader exploration.
+prints exactly as printed; their IDs belong to that run. When an eligible
+repair exists, `ripr check` prints the `ripr repair` command.
 Add `--format json` for machine-readable results. Repair-attempt file rules,
 card handoff and exit codes are in the
 [agent repair details](docs/QUICKSTART.md#agent-repair-details),
@@ -165,8 +176,8 @@ a promise that every surface is available from the published package.
 
 With no `ripr.toml`, ripr analyzes Rust and also enables Python preview when
 it detects Python project markers or Python source under `src/` or `tests/`;
-TypeScript preview is likewise enabled when it detects a root `tsconfig.json`
-or `jsconfig.json`, or TypeScript source under `src/` or `tests/`; otherwise
+TypeScript preview is likewise enabled when it detects a root `tsconfig.json`,
+`jsconfig.json`, `deno.json` or `deno.jsonc`, or TypeScript source under `src/` or `tests/`; otherwise
 TypeScript/JavaScript is enabled through `[languages] enabled` in `ripr.toml`,
 and a `ripr.toml` that sets `enabled = ["rust"]` keeps Python off (and
 TypeScript off too)
@@ -183,10 +194,11 @@ and limits; the [capability matrix](docs/CAPABILITY_MATRIX.md) and
 
 ## Docs
 
-[Quickstart](docs/QUICKSTART.md) · [Configuration](docs/CONFIGURATION.md) ·
+[Quickstart](docs/QUICKSTART.md) · [Upgrading from 0.10](docs/INSTALL_CHANNELS.md#upgrading-from-010-to-011) ·
+[Configuration](docs/CONFIGURATION.md) ·
 [Editor extension](docs/EDITOR_EXTENSION.md) · [Agent guide](docs/LLM_OPERATOR_GUIDE.md) ·
-[Output formats](docs/OUTPUT_SCHEMA.md) · [Proof and limits](docs/PUBLIC_PROOF.md) ·
-[All documentation](docs/README.md)
+[Output formats](docs/OUTPUT_SCHEMA.md) · [Integrations and Git hooks](docs/INTEGRATIONS.md) ·
+[Proof and limits](docs/PUBLIC_PROOF.md) · [All documentation](docs/README.md)
 
 For the full test-and-evidence walkthrough, see [Targeted tests](docs/TARGETED_TEST_WORKFLOW.md),
 [First PR workflow](docs/FIRST_PR_WORKFLOW.md), and [repair recovery](docs/REPAIR_ATTEMPT.md).

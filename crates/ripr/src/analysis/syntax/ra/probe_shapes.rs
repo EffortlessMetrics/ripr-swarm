@@ -73,6 +73,107 @@ impl ProbeShapeNodes {
     }
 }
 
+/// #14385: when the owner's tail is an `if`/`else`, each branch block's tail
+/// value is what the owner returns, so it is probed like the tail itself.
+/// `else if` chains and branch tails that are nested `if`s recurse; branch
+/// tails that are `match`/loops follow `is_tail_return_value_text` and get no
+/// shape. A value on a line of its `if`'s condition gets none: an inline branch
+/// already flows to the return through that line's predicate (#7626), and a
+/// second shape there would add a row the predicate already judges.
+pub(super) fn push_tail_if_branch_return_values(
+    shapes: &mut Vec<ProbeShapeFact>,
+    line_index: &LineIndex,
+    text: &str,
+    source: &Arc<str>,
+    tail: &ast::Expr,
+) {
+    let ast::Expr::IfExpr(if_expr) = tail else {
+        return;
+    };
+    let condition_lines = if_expr.condition().map(|condition| {
+        let range = condition.syntax().text_range();
+        line_index.line(range.start())..=line_index.line_for_range_end(range.end())
+    });
+    let mut branch_tails = Vec::new();
+    if let Some(value) = if_expr.then_branch().and_then(|block| block.tail_expr()) {
+        branch_tails.push(value);
+    }
+    match if_expr.else_branch() {
+        Some(ast::ElseBranch::Block(block)) => {
+            if let Some(value) = block.tail_expr() {
+                branch_tails.push(value);
+            }
+        }
+        Some(ast::ElseBranch::IfExpr(nested)) => branch_tails.push(ast::Expr::IfExpr(nested)),
+        None => return,
+    }
+    for value in branch_tails {
+        let range = value.syntax().text_range();
+        let value_text = slice_text(text, range.start(), range.end());
+        let value_line = line_index.line(range.start());
+        let own_line = !condition_lines
+            .as_ref()
+            .is_some_and(|lines| lines.contains(&value_line));
+        // A nested control-flow branch tail is decided by AST kind, not text,
+        // so `if\n` or `match\n` formatting cannot admit the whole expression.
+        let control_flow = matches!(
+            value,
+            ast::Expr::IfExpr(_)
+                | ast::Expr::MatchExpr(_)
+                | ast::Expr::WhileExpr(_)
+                | ast::Expr::ForExpr(_)
+                | ast::Expr::LoopExpr(_)
+        );
+        // A comparison or boolean branch value is already a predicate probe;
+        // a second, weaker return-value row on the same expression would be a
+        // false actionable gap when the predicate is discriminated
+        // (verdict corpus `spec-b-0159-recursive-helper`).
+        // Parentheses and `!` wrap the same predicate, so they are peeled first.
+        let mut core = value.clone();
+        loop {
+            let inner = match &core {
+                ast::Expr::ParenExpr(paren) => paren.expr(),
+                ast::Expr::PrefixExpr(prefix) if prefix.op_kind() == Some(ast::UnaryOp::Not) => {
+                    prefix.expr()
+                }
+                _ => None,
+            };
+            match inner {
+                Some(inner) => core = inner,
+                None => break,
+            }
+        }
+        let predicate_value = ast::BinExpr::cast(core.syntax().clone()).is_some_and(|inner| {
+            inner
+                .op_kind()
+                .is_some_and(|op| matches!(op, ast::BinaryOp::CmpOp(_) | ast::BinaryOp::LogicOp(_)))
+        });
+        if own_line && !control_flow && !predicate_value && is_tail_return_value_text(&value_text) {
+            push_probe_shape(
+                shapes,
+                line_index,
+                text,
+                source,
+                ProbeShapeKind::ReturnValue,
+                range.start(),
+                range.end(),
+            );
+            if has_error_path_text(&value_text) {
+                push_probe_shape(
+                    shapes,
+                    line_index,
+                    text,
+                    source,
+                    ProbeShapeKind::ErrorPath,
+                    range.start(),
+                    range.end(),
+                );
+            }
+        }
+        push_tail_if_branch_return_values(shapes, line_index, text, source, &value);
+    }
+}
+
 pub(super) fn extract_parser_probe_shapes(
     function: &ast::Fn,
     text: &str,
@@ -193,7 +294,13 @@ pub(super) fn extract_parser_probe_shapes(
     if let Some(tail_expr) = body.as_ref().and_then(|body| body.tail_expr()) {
         let range = tail_expr.syntax().text_range();
         let tail_text = slice_text(text, range.start(), range.end());
-        if is_tail_return_value_text(&tail_text) {
+        // #15459: a unit owner's tail block that ends in a `;`-terminated
+        // statement yields `()`, not a returned value; its statements keep
+        // their own side_effect/call_deletion probes.
+        let unit_statement_block = function.ret_type().is_none()
+            && ast::BlockExpr::cast(tail_expr.syntax().clone())
+                .is_some_and(|block| block.tail_expr().is_none());
+        if !unit_statement_block && is_tail_return_value_text(&tail_text) {
             push_probe_shape(
                 &mut shapes,
                 line_index,
@@ -215,6 +322,7 @@ pub(super) fn extract_parser_probe_shapes(
                 );
             }
         }
+        push_tail_if_branch_return_values(&mut shapes, line_index, text, source, &tail_expr);
     }
 
     for call_expr in nodes.call_exprs {

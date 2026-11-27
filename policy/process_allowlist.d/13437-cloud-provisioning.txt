@@ -1,0 +1,6 @@
+xtask/tests/developer_provisioning.rs|Command::new|1|rust/setup|#13437: Runs the Node built-in provisioning controls with null stdin and isolated fixtures; no real installation or network, outer Nextest deadline bounds the test.
+xtask/tests/developer_provisioning.rs|use std::process::Command|1|rust/setup|#13437: Imports the standard process owner for the controlled pre-compiler setup tests.
+tools/provision-dev.cjs|child_process|1|rust/setup|#13437: Explicit Linux provisioning owns bounded child process groups for SDK acquisition, native prerequisites, locked dependencies, and the existing editor smoke; ordinary activation remains non-installing.
+tools/provision-dev.cjs|cp.spawn|1|rust/setup|#13437: One bounded native command owner launches the detached provisioning process group; all callers use this owner.
+tools/provision-dev.test.cjs|child_process|3|rust/setup|#13437: Isolated executable fixtures and owned process controls verify upgrades, failure propagation, reuse, deadlines, and cancellation without real installation or network.
+tools/provision-dev.test.cjs|cp.spawn|8|rust/setup|#13437: Six synchronous isolated fixture/CLI launches and two asynchronous owned cancellation-fixture launches; extra calls require an explicit count update.

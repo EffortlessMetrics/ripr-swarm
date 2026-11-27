@@ -202,7 +202,9 @@ class Gh:
 
     def api(self, args):
         try:
-            result = subprocess.run(["gh", "api", *args], capture_output=True, text=True, timeout=45, check=False)
+            result = subprocess.run(["gh", "api", *args], capture_output=True, text=True, encoding="utf-8", timeout=45, check=False)
+        except UnicodeError as error:
+            raise Refusal("GitHub response is not valid UTF-8") from error
         except (OSError, subprocess.TimeoutExpired) as error:
             raise Refusal(f"GitHub request unavailable: {error}") from error
         if result.returncode:

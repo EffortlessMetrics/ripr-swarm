@@ -331,6 +331,13 @@
         {
           "name": "finding_id",
           "role": "canonical",
+          "surface": "schemas/ripr/check.schema.json",
+          "visibility": "public",
+          "removal_generation": null
+        },
+        {
+          "name": "finding_id",
+          "role": "canonical",
           "surface": "crates/ripr/src/lsp/action_contract.rs",
           "visibility": "public",
           "removal_generation": null
@@ -515,6 +522,13 @@
       "invalidation": "Source location or seam span change. Canonical gap grouping must not be used as a substitute.",
       "persistence": "Usable as a before/after locator. Must not be persisted as CanonicalItemId.",
       "serialization": [
+        {
+          "name": "seam_id",
+          "role": "canonical",
+          "surface": "schemas/ripr/check.schema.json",
+          "visibility": "public",
+          "removal_generation": null
+        },
         {
           "name": "seam_id",
           "role": "canonical",

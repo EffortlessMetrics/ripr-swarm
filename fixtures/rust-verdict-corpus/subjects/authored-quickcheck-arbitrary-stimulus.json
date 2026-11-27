@@ -1,0 +1,13 @@
+{
+  "subject_id": "authored-quickcheck-arbitrary-stimulus",
+  "origin": "authored",
+  "version_label": "authored 2026-11-08; #11545 QuickCheck Arbitrary generator stimulus; labeled against quickcheck 1.1.0 from crates.io (not vendored)",
+  "license": "MIT OR Apache-2.0",
+  "shared_corpus": null,
+  "retained_files": [
+    {"path": "Cargo.lock", "sha256": "881a959442aa404b78b872f02be07116be0d1d7d3940aedf9ce860ac51bdbe40"},
+    {"path": "Cargo.toml", "sha256": "f5369f3b363b9fe536edc0c0bb417cdf284d4d0f4da163e2f42bf799587766e5"},
+    {"path": "src/lib.rs", "sha256": "9c865052460d2c8ae7562742cdbaae18eb8d18f9d7ad9747ecf0c8e0c1fd7eac"},
+    {"path": "tests/gap.rs", "sha256": "fbdac2d435c4035ba3319407f60f39caf99197993ae7ceb3467fe210f778b6b4"}
+  ]
+}

@@ -15,7 +15,7 @@ Start here:
   Why unrevealed: a related test reaches this change, but no assertion observes the changed behavior
   Changed behavior: if a >= b {
   Missing check (1 of 4): a == b
-  Related test: tests/it.rs:8 test_inner_with_custom_assertion_macro (has no assertion)
+  Related test: tests/it.rs:8 test_inner_with_custom_assertion_macro (assertion admission unproven: ripr could not establish that this assertion counts here)
   Next step: Inspect the custom assertion macro's definition and run the existing test; its spelling does not establish assertion semantics
   Evidence: reach yes · infection weak · propagation yes · observation no · assertion no
     Stages (static evidence): reach = test path to changed owner; infection = inputs can activate change;

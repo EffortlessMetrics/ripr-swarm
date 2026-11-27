@@ -104,9 +104,51 @@ On the stub path, the grip-class disclosure names the real reason:
 - A class a user severity actually disables keeps the packet/brief wording
   (`seam <id> is configured off for <class> seams and is not included in
   agent results`): there the config is the real reason.
+- The stub's own seam is not `strongly_gripped` while its expected value is
+  still an unfilled placeholder (`let expected: i32 = todo!(..)`), because
+  that assertion pins no value (#14810); for the stub fixture it classifies
+  `propagation_unknown`. In that state the second `--write` emits no
+  grip-omission warning at all: the class is headline-eligible, so nothing
+  is omitted. The contract is that it must not claim `strongly_gripped` and
+  must not say "configured off". Once the value is filled in, the seam is
+  `strongly_gripped` again and the warning above applies.
 - The disclosure remains a warning, not a refusal: a `strongly_gripped`
   seam stays `state: "ready"` / exit 0 (RIPR-SPEC-0003-family scaffold
   semantics, #7290).
+
+### Return-value stubs assert on the owner call inline (#13602)
+
+A return-value stub whose return type is `PartialEq + Debug` and that has no
+error-variant shape asserts on the owner call directly:
+`assert_eq!(find_sku(skus, name), expected);`. It does not bind the call to
+`let actual` first. The `reveal` stage confirms observation of a returned value
+by matching the owner call's argument tokens in the assertion operand; a
+let-bound `actual` carries none, so the filled stub's own assertion read as
+`miss=observation_unconfirmed` and the stub never closed the gap it was written
+for. Error-variant (`matches!`) and non-`PartialEq` shapes keep the
+`let actual` binding, because their assertion is not an equality on the call.
+An owner that can mutate its inputs (`&mut self` or a `&mut` argument) also
+keeps the binding, made once before `expected`, so an expected value derived
+from post-call state still reads that state after the call.
+This changes the emitted stub only; classifier credit rules are unchanged.
+
+### Repair start names the focused run command (#14320)
+
+The human `ripr repair` / `ripr agent repair --phase before` start prints `Run
+the new test: <command>` before the continue line when the recommended test's
+exact command is established, spelled like the stub run command: a file in an
+integration target runs as `--test TARGET NAME` when the package's manifest or
+`tests/` discovery names that target (`harness = false`, `required-features`
+and an unestablished `autotests` leave it unnamed) and the name is a plain
+cargo target name (ASCII alphanumerics, `_`, `-`, not starting with `-`). The
+manifest path renders natively, so a literal `\` in a Unix checkout root is
+kept. Every other case gets no line, the packet's name filter staying the only
+hint: inline module tests (whether a by-name run reaches one depends on `[lib]
+test`, `cfg` and feature gates and `#[path]` resolution that a static walk
+cannot settle, and a wrong filter runs 0 tests and exits 0), `src/tests/`
+module files, benches, examples and build scripts, a registered target ripr
+cannot name, a non-Rust file, a non-identifier test name, or a file outside
+any package. JSON output is unchanged.
 
 ## Required Evidence
 
@@ -119,7 +161,10 @@ On the stub path, the grip-class disclosure names the real reason:
 - The `strongly_gripped` disclosure on the stub path names the grip and the
   real reason, never "configured off"; a config-disabled class (for
   example `weakly_gripped = "off"` in `ripr.toml`) still reads "configured
-  off".
+  off". While the stub's expected value is an unfilled placeholder the seam
+  is not `strongly_gripped` (#14810; `propagation_unknown` for the stub
+  fixture), so the second write emits no grip-omission warning and must not
+  claim `strongly_gripped`.
 
 ## Test Mapping
 
@@ -130,6 +175,10 @@ On the stub path, the grip-class disclosure names the real reason:
 - `crates/ripr/src/cli/commands/agent_stub.rs::tests::config_disabled_class_stub_keeps_the_configured_off_wording`
 - `crates/ripr/tests/agent_stub_at_disclosure.rs::second_write_reports_already_written_instead_of_a_duplicate`
 - `crates/ripr/tests/agent_stub_compiles.rs::at_kind_stub_discloses_strongly_gripped_classification`
+- `crates/ripr/src/app/test_stub.rs::tests::focused_test_run_command_names_the_target_or_refuses`
+- `crates/ripr/src/app/test_stub.rs::tests::focused_test_run_command_keeps_a_literal_backslash_unix_root`
+- `crates/ripr/src/cli/commands/agent.rs::tests::human_stdout_names_the_focused_test_command_when_known`
+- `crates/ripr/tests/cli_smoke/agent_output_budget.rs::agent_repair_start_prints_one_next_command_inside_a_line_budget`
 - `crates/ripr/tests/agent_stub_at_disclosure.rs::off_line_predicate_note_precedes_the_grip_class_warning`
   (ordering pin; the grip warning wording it pins is the new reasoned
   form)
@@ -163,6 +212,16 @@ A user test named `price_boundary_discriminator` with different body
 content still yields `test_name: "price_boundary_discriminator_2"` and a
 normal write.
 
+While the stub's expected value is still an unfilled `todo!()`, the seam is
+not `strongly_gripped` (#14810; `propagation_unknown` for this fixture), so
+the same second `--write` prints no grip line and its `warnings` array is
+empty:
+
+```text
+Stub already written at src/lib.rs:16 (existing inline module).
+Run it: cargo test --manifest-path Cargo.toml clamp_to_boundary_discriminator
+```
+
 With `weakly_gripped = "off"` in `ripr.toml`, a weakly gripped seam's stub
 disclosure still reads `seam <id> is configured off for weakly_gripped
 seams and is not included in agent results`.
@@ -190,6 +249,8 @@ seams and is not included in agent results`.
   `stub_grip_omission_reason`, which names the real reason for
   `strongly_gripped` and defers to the packet/brief wording only for
   classes a user severity actually disables.
+- `crates/ripr/src/app/test_stub.rs` owns `focused_test_run_command`;
+  `crates/ripr/src/cli/commands/agent.rs` prints it in the repair start.
 - `crates/ripr/src/cli/help/agent.rs`, `docs/AGENT_WORKFLOWS.md`, and
   `docs/OUTPUT_SCHEMA.md` carry the user-visible contract text.
 

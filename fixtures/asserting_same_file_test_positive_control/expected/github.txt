@@ -1,0 +1,1 @@
+::notice file=fixtures/asserting_same_file_test_positive_control/input/src/lib.rs,line=11,title=ripr exposed::Static RIPR exposure finding Canonical gap: gap:rust:src/lib.rs:impl Wrapper::get:return_value:return_value:let_v=self.inner.get_v

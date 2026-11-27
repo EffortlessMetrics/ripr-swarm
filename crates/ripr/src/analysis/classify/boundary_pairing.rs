@@ -5,12 +5,13 @@
 //! boundary call from one test and an exact oracle from another is a false
 //! `exposed` (#4828): `>=` → `>` still passes both tests.
 
-use super::super::facts::CallFact;
+use super::super::facts::{CallFact, FunctionContainer};
 use super::super::rust_index::{
     FunctionSummary, OracleFact, RustIndex, TestSummary, extract_literals,
 };
 use super::activation::{
-    call_arguments, comparison_operands, function_parameters, owner_argument_values,
+    boundary_parameter_field_projection, call_arguments, comparison_operands, function_parameters,
+    owner_argument_values,
 };
 use super::helper_transfer::{HelperChain, asserting_method_entry, chain_forwards_owner_result};
 use super::owner_pin::closure_adaptor::{
@@ -24,8 +25,81 @@ use crate::domain::*;
 use crate::value_origins::LocatedActivationEvidence as ActivationEvidence;
 #[cfg(test)]
 use crate::value_origins::LocatedValueFact as ValueFact;
+use ra_ap_syntax::ast::{HasArgList, HasName};
+use ra_ap_syntax::{AstNode, ast};
 
 mod bound_result;
+
+/// A whole returned comparison with a sibling gate needs an observed call on
+/// which the old and new Boolean results differ. Read both results from the
+/// same asserted operands so another call cannot lend its input or oracle.
+pub(in crate::analysis) fn unpaired_return_gate(
+    probe: &Probe,
+    owner: &FunctionSummary,
+    tests: &[&TestSummary],
+    index: &RustIndex,
+    admitted: impl Fn(&TestSummary, &OracleFact) -> bool,
+) -> Option<String> {
+    use super::owner_pin::short_circuit::ShortCircuitTail;
+    if probe.family != ProbeFamily::ReturnValue
+        || !(probe.expression.contains("&&") || probe.expression.contains("||"))
+    {
+        return None;
+    }
+    let after = ShortCircuitTail::parse(&owner.body, &probe.expression)?;
+    let before = after.with_chain(probe.before.as_deref()?)?;
+    let change = after.comparison_gate(&before)?;
+    let paired = tests.iter().any(|test| {
+        test.assertions.iter().any(|assertion| {
+            if !(test.start_line..=test.end_line).contains(&assertion.line)
+                || !admitted(test, assertion)
+                || !super::call_identity::boundary_owner_calls_resolve(
+                    index,
+                    owner,
+                    test,
+                    &assertion.text,
+                    assertion.line,
+                )
+            {
+                return false;
+            }
+            let bare = assertion_comparison_operands(&assertion.text).is_none();
+            asserted_result_operands(test, &assertion.text, owner)
+                .iter()
+                .any(|operand| {
+                    let bound = super::owner_pin::let_bound_owner_call(
+                        test,
+                        assertion,
+                        operand,
+                        "",
+                        &owner.name,
+                        true,
+                        bare,
+                    );
+                    let (call, line) = match bound {
+                        Some(call) => {
+                            // The initializer is a borrowed slice of this test's body.
+                            let offset = call.as_ptr() as usize - test.body.as_ptr() as usize;
+                            let line = test.start_line
+                                + test.body[..offset]
+                                    .bytes()
+                                    .filter(|ch| *ch == b'\n')
+                                    .count();
+                            (call, line)
+                        }
+                        None => (operand.as_str(), assertion.line),
+                    };
+                    super::owner_pin::is_whole_free_owner_call(call, &owner.name)
+                        && super::call_identity::boundary_owner_calls_resolve(
+                            index, owner, test, call, line,
+                        )
+                        && call_arguments(call, &owner.name)
+                            .is_some_and(|args| change.witnessed_by(test, &args, line, &owner.name))
+                })
+        })
+    });
+    (!paired).then(|| format!("Propagation unknown: no observed call establishes a changed return through the Boolean gate `{}`", change.gate_name))
+}
 
 /// Token carried in the discriminate summary when a predicate would otherwise
 /// read `exposed` without an admitted oracle on the boundary call.
@@ -33,7 +107,7 @@ pub(in crate::analysis) const SAME_TEST_PAIRING_MISSING: &str = "same_test_pairi
 
 pub(in crate::analysis) fn same_test_pairing_missing_summary() -> String {
     format!(
-        "Discriminator unconfirmed: no admitted discriminating oracle is paired with the owner's boundary call ({SAME_TEST_PAIRING_MISSING}); a boundary input and a separate exact oracle do not establish that discriminator"
+        "Check unconfirmed: no supported assertion that distinguishes the changed behavior is paired with the owner's boundary call ({SAME_TEST_PAIRING_MISSING}); a boundary input and a separate exact assertion do not establish that pairing"
     )
 }
 
@@ -78,9 +152,28 @@ pub(in crate::analysis) fn wrapper_return_boundary_pinned(
     let literal = |text: &str| {
         matches!(text.trim(), "true" | "false") || argument_is_whole_numeric_literal(text.trim())
     };
+    // #13625: the entry may be spelled through a module path
+    // (`krate::inner::entry(10)`) exactly as through a bare import. A path
+    // spelling counts only when the shared call-identity authority settles
+    // that spelled path on this wrapper; a path that names another module's
+    // same-named function stays refused. Only a free wrapper qualifies:
+    // `qualified_owner_calls_resolve` admits every spelling of a non-free
+    // owner, so a method wrapper must not borrow a path-spelled `X::name(..)`.
+    let free_wrapper = hop.caller.item.container == FunctionContainer::Free;
+    let whole_call_of = |subject: &str| {
+        super::owner_pin::direct_call_name(subject) == Some(name)
+            || (free_wrapper
+                && path_qualified_whole_call(subject, name).is_some()
+                && super::call_identity::qualified_owner_calls_resolve(
+                    index,
+                    &hop.caller,
+                    test,
+                    subject,
+                    assertion.line,
+                ))
+    };
     let whole_call = assertion_comparison_operands(&assertion.text).is_some_and(|[left, right]| {
-        (super::owner_pin::direct_call_name(left) == Some(name) && literal(right))
-            || (super::owner_pin::direct_call_name(right) == Some(name) && literal(left))
+        (whole_call_of(left) && literal(right)) || (whole_call_of(right) && literal(left))
     });
     assertion.text.trim_start().starts_with("assert_eq!")
         && assertion.kind == OracleKind::ExactValue
@@ -225,7 +318,7 @@ fn test_pairs_boundary_input_with_oracle(
             activation,
             scope,
             &calls_resolve,
-            assertion.line,
+            (assertion.line, None),
         );
         if !assertion_admitted(test, assertion)
             || !(assertion_is_discriminating(assertion) || owner_pinned(test, assertion))
@@ -260,7 +353,7 @@ fn test_pairs_boundary_input_with_oracle(
             .unwrap_or_else(|| assertion.text.clone());
         (calls_resolve(&operands, assertion.line)
             && assertion_observes_boundary_owner_call(
-                probe, owner, test, assertion, &operands, activation, scope,
+                probe, owner, test, assertion, &operands, activation, index,
             ))
             || assertion_observes_bound_name(&operands, &bound_names)
             // The wrapper entry path keeps the strict discriminating-oracle
@@ -306,11 +399,43 @@ fn assertion_names_one_entry_call(
                     })
         })
         && owner_call_count(&assertion.text, entry) == 1
-        && owner_call_count(&assertion.text, &owner.name) == 0
+        && !mentions_owner_call(&assertion.text, &owner.name)
+}
+
+/// `Some(prefix)` when `subject` is one whole call `a::b::name(..)` through a
+/// module path of plain identifiers: the same shape as
+/// `direct_call_name` with a non-empty path in front. The path is only
+/// shape-checked here; the caller settles what it names.
+fn path_qualified_whole_call<'a>(subject: &'a str, name: &str) -> Option<&'a str> {
+    let subject = subject.trim();
+    let open = subject.find('(')?;
+    let head = subject[..open].trim_end();
+    let prefix = head.strip_suffix(name)?.strip_suffix("::")?;
+    let plain_path = !prefix.is_empty()
+        && prefix.split("::").all(|segment| {
+            let mut chars = segment.chars();
+            chars
+                .next()
+                .is_some_and(|first| first.is_ascii_alphabetic() || first == '_')
+                && chars.all(|c| c.is_ascii_alphanumeric() || c == '_')
+        });
+    if !plain_path {
+        return None;
+    }
+    let call = &subject[prefix.len() + 2..];
+    (super::owner_pin::direct_call_name(call) == Some(name)).then_some(prefix)
 }
 
 fn owner_call_count(text: &str, name: &str) -> usize {
     owner_call_argument_lists(text, name).len()
+}
+
+/// Whether `text` may hold any call of `name`: a plain call, or a turbofish
+/// or macro spelling the plain argument reader cannot see (#15277 review).
+/// It can only overcount, so the "no direct owner call" refusals read it.
+fn mentions_owner_call(text: &str, name: &str) -> bool {
+    owner_call_count(text, name) > 0
+        || super::owner_pin::closure_adaptor::call_count(text, name) > 0
 }
 
 /// Activation already recorded a boundary `==` row bound down the chain
@@ -334,7 +459,7 @@ fn assertion_observes_boundary_entry_call(
             && fact.value.contains(" == ")
             && call_line.contains(&assertion.text)
             && owner_call_count(call_line, entry) == 1
-            && owner_call_count(call_line, &owner.name) == 0
+            && !mentions_owner_call(call_line, &owner.name)
     })
 }
 
@@ -604,7 +729,28 @@ fn whole_owner_call_operands(
     assertion_text: &str,
     owner: &FunctionSummary,
 ) -> Vec<Vec<String>> {
-    let operands: Vec<String> = match assertion_comparison_operands(assertion_text) {
+    asserted_result_operands(test, assertion_text, owner)
+        .iter()
+        .filter_map(|operand| {
+            let operand = operand.trim();
+            let lists = owner_call_argument_lists(operand, &owner.name);
+            let [(_, arguments)] = lists.as_slice() else {
+                return None;
+            };
+            (operand.starts_with(&format!("{}(", owner.name))
+                && delimited_contents_at(operand, owner.name.len())
+                    .is_some_and(|contents| contents.len() + owner.name.len() + 2 == operand.len()))
+            .then(|| arguments.clone())
+        })
+        .collect()
+}
+
+fn asserted_result_operands(
+    test: &TestSummary,
+    assertion_text: &str,
+    owner: &FunctionSummary,
+) -> Vec<String> {
+    match assertion_comparison_operands(assertion_text) {
         // An expected side that reaches the owner again compares the owner
         // with itself (`assert_eq!(pos(&[0]), pos(&[0]))`): nothing pairs.
         Some(compared) => {
@@ -634,21 +780,7 @@ fn whole_owner_call_operands(
                     .to_string(),
             ]
         }
-    };
-    operands
-        .iter()
-        .filter_map(|operand| {
-            let operand = operand.trim();
-            let lists = owner_call_argument_lists(operand, &owner.name);
-            let [(_, arguments)] = lists.as_slice() else {
-                return None;
-            };
-            (operand.starts_with(&format!("{}(", owner.name))
-                && delimited_contents_at(operand, owner.name.len())
-                    .is_some_and(|contents| contents.len() + owner.name.len() + 2 == operand.len()))
-            .then(|| arguments.clone())
-        })
-        .collect()
+    }
 }
 
 /// Whether an activation value (`input == 10`, or a conjunction such as
@@ -669,7 +801,7 @@ fn fact_matches_fed_literals(value: &str, fed: &[(String, String)]) -> bool {
 /// past their spelling (`10u32` and `10`, `1_000` and `1000`); a hex, octal,
 /// binary, float or other form must match exactly, since a partial reader
 /// would equate `0x10` with `0`.
-fn same_scalar_literal(fed: &str, literal: &str) -> bool {
+pub(in crate::analysis) fn same_scalar_literal(fed: &str, literal: &str) -> bool {
     fed == literal
         || decimal_integer_value(fed)
             .is_some_and(|value| Some(value) == decimal_integer_value(literal))
@@ -677,7 +809,7 @@ fn same_scalar_literal(fed: &str, literal: &str) -> bool {
 
 /// `-?digits` with `_` separators and an optional integer type suffix,
 /// as its canonical digits; `None` for any other spelling.
-fn decimal_integer_value(text: &str) -> Option<String> {
+pub(in crate::analysis::classify) fn decimal_integer_value(text: &str) -> Option<String> {
     let (sign, rest) = text
         .strip_prefix('-')
         .map_or(("", text), |rest| ("-", rest));
@@ -691,6 +823,13 @@ fn decimal_integer_value(text: &str) -> Option<String> {
     ];
     (!digits.is_empty() && !rest.starts_with('_') && integer_suffix.contains(&suffix))
         .then(|| format!("{sign}{digits}"))
+}
+
+/// #13037: whether `text` is exactly one whole decimal integer literal
+/// (optional sign, `_` separators, integer type suffix), the only scalar
+/// shape the multi-exit scalar return gates read past its spelling.
+pub(in crate::analysis) fn is_whole_decimal_literal(text: &str) -> bool {
+    decimal_integer_value(text).is_some()
 }
 
 /// The helper call's arguments when each is a whole scalar literal and no
@@ -739,7 +878,7 @@ fn owner_parameter_literals(
         .collect()
 }
 
-fn assertion_is_discriminating(assertion: &OracleFact) -> bool {
+pub(in crate::analysis) fn assertion_is_discriminating(assertion: &OracleFact) -> bool {
     matches!(assertion.strength, OracleStrength::Strong)
         || matches!(
             assertion.kind,
@@ -756,10 +895,40 @@ fn assertion_observes_boundary_owner_call(
     assertion: &OracleFact,
     operands: &str,
     activation: &ActivationEvidence,
-    scope: super::argument_fold::FoldScope<'_>,
+    index: &RustIndex,
 ) -> bool {
+    let scope = super::argument_fold::FoldScope::of_test(test, index);
     let subject = assertion_subject(operands);
-    let lists = owner_call_sites(&subject, owner);
+    // With several occurrences on a captured line, literal activation must
+    // belong to the call result the assertion actually observes (#13373).
+    // Looking through a call argument or arithmetic can borrow an inner
+    // boundary input even when the outer expression masks its result.
+    let lists = if owner.impl_context == crate::analysis::facts::FunctionImplContext::Free
+        && (line_owner_call_count(test, assertion.line, owner) > 1
+            || free_owner_calls_in_text(&subject, owner) > 1)
+    {
+        observed_free_owner_call_sites(&subject, owner, index)
+    } else {
+        owner_call_sites(&subject, owner)
+    };
+    // #13037: a comparison guarded by `&& flag` pairs only with a call that
+    // sits on the boundary and holds every guard. A guarded shape the rule
+    // declines pairs with nothing: the readings below see the comparison
+    // without its guards.
+    if let Some(guarded) = super::activation::guarded_comparison(probe, owner) {
+        return lists
+            .iter()
+            .try_fold(false, |any, arguments| {
+                let values: Vec<Vec<String>> = arguments
+                    .iter()
+                    .map(|argument| pairing_argument_values(test, argument, scope))
+                    .collect();
+                guarded
+                    .call_reaches_boundary(probe, owner, index, &values)
+                    .map(|reached| any || reached)
+            })
+            .unwrap_or(false);
+    }
     if lists
         .iter()
         .any(|arguments| argument_list_activates_boundary(probe, owner, test, arguments, scope))
@@ -793,13 +962,138 @@ fn assertion_observes_boundary_owner_call(
                 name: owner.name.clone(),
                 text: assertion.text.clone().into(),
             },
+            &test.file,
         )
+}
+
+/// Argument lists of the free-owner calls that an assertion on `line`
+/// directly observes, read the way the probe path pairs a boundary input
+/// with its assertion on a multi-occurrence line (#13373). The seam path
+/// uses it to credit a second same-line call only when an assertion observes
+/// that call's result (#14487): a call under an operator, inside another
+/// call's arguments, or outside any assertion lends no input. Only the
+/// test's own discriminating assertions count: an assertion credited from a
+/// check helper on another file or line never shares the call's line, and a
+/// weak or relational assertion (`assert!(ok(11))`, which the probe admits
+/// only through its owner-return pin) does not add a row, so this reading is
+/// never looser than the probe's pairing.
+///
+/// The assertion's whole text must sit on `line_text`, the call's captured
+/// physical line: a multi-line assertion's continuation lines hold calls the
+/// caller's line-scoped identity guard never read.
+pub(in crate::analysis) fn observed_owner_call_rows_on_line(
+    test: &TestSummary,
+    line: usize,
+    line_text: &str,
+    owner: &FunctionSummary,
+    index: &RustIndex,
+) -> Vec<Vec<String>> {
+    if !(test.start_line..=test.end_line).contains(&line) {
+        return Vec::new();
+    }
+    test.assertions
+        .iter()
+        .filter(|assertion| {
+            let text = assertion.text.trim();
+            assertion.line == line
+                && assertion_is_discriminating(assertion)
+                && !text.is_empty()
+                && !text.contains('\n')
+                && line_text.contains(text)
+        })
+        .flat_map(|assertion| {
+            let operands = crate::analysis::extract::assertion_oracle_text(&assertion.text)
+                .unwrap_or_else(|| assertion.text.clone());
+            observed_free_owner_call_sites(&assertion_subject(&operands), owner, index)
+        })
+        .collect()
+}
+
+/// Directly observed free-owner returns in a multi-occurrence assertion.
+/// Parentheses, tuples and non-repeated arrays retain their values. A call's
+/// arguments, operators, projections and arbitrary wrappers
+/// do not establish observation of a nested call's return. Definition identity
+/// is still checked by the existing caller, not by this shape selection.
+fn observed_free_owner_call_sites(
+    subject: &str,
+    owner: &FunctionSummary,
+    index: &RustIndex,
+) -> Vec<Vec<String>> {
+    let wrapped = format!("fn ripr_boundary_subject() {{ let _ = ({subject}); }}");
+    let Some(parsed) = index.source_syntax.parse_fragment(&wrapped) else {
+        return Vec::new();
+    };
+    let Some(value) = parsed
+        .tree()
+        .syntax()
+        .descendants()
+        .find_map(ast::LetStmt::cast)
+        .and_then(|binding| binding.initializer())
+    else {
+        return Vec::new();
+    };
+    let mut pending = vec![value];
+    let mut calls = Vec::new();
+    while let Some(value) = pending.pop() {
+        match value {
+            ast::Expr::ParenExpr(inner) => pending.extend(inner.expr()),
+            ast::Expr::TupleExpr(tuple) => pending.extend(tuple.fields()),
+            ast::Expr::ArrayExpr(array) if array.semicolon_token().is_none() => {
+                pending.extend(array.exprs());
+            }
+            ast::Expr::CallExpr(call) => {
+                let Some(ast::Expr::PathExpr(callee)) = call.expr() else {
+                    continue;
+                };
+                let Some(name) = callee
+                    .path()
+                    .and_then(|path| path.segment())
+                    .and_then(|segment| segment.name_ref())
+                else {
+                    continue;
+                };
+                if name.text() != owner.name.as_str() {
+                    continue;
+                }
+                let text = call.syntax().text().to_string();
+                let at = usize::from(
+                    name.syntax().text_range().start() - call.syntax().text_range().start(),
+                );
+                let masked = crate::analysis::extract::mask_comments_and_strings(&text);
+                if super::related_tests::is_free_function_call_at(&masked, at, &owner.name)
+                    && let Some(arguments) = call.arg_list()
+                {
+                    calls.push(
+                        arguments
+                            .args()
+                            .map(|arg| arg.syntax().text().to_string())
+                            .collect(),
+                    );
+                }
+            }
+            _ => {}
+        }
+    }
+    calls
 }
 
 /// Owner calls the test's call facts record on one line, counting each
 /// distinct fact text once so per-line and per-call extraction agree. For
 /// a free owner a same-named `Type::name(..)` or `value.name(..)` spelling
 /// inside a fact text is not the owner's call (#6713).
+/// Counts free-function owner calls spelled in `text` itself. A multi-line
+/// assertion records only its opening line, so call facts keyed by physical
+/// line can miss calls on continuation lines (`assert_eq!(\n band(band(9)),
+/// 1\n)`); the assertion's own text is the authority there.
+fn free_owner_calls_in_text(text: &str, owner: &FunctionSummary) -> usize {
+    let name = owner.name.as_str();
+    let masked = crate::analysis::extract::mask_comments_and_strings(text);
+    masked
+        .match_indices(name)
+        .filter(|(at, _)| super::related_tests::is_free_function_call_at(&masked, *at, name))
+        .count()
+}
+
 fn line_owner_call_count(test: &TestSummary, line: usize, owner: &FunctionSummary) -> usize {
     let name = owner.name.as_str();
     let mut texts = test
@@ -812,7 +1106,20 @@ fn line_owner_call_count(test: &TestSummary, line: usize, owner: &FunctionSummar
     texts.dedup();
     texts
         .into_iter()
-        .map(|text| owner_call_sites(text, owner).len().max(1))
+        .map(|text| {
+            if owner.impl_context == crate::analysis::facts::FunctionImplContext::Free {
+                let masked = crate::analysis::extract::mask_comments_and_strings(text);
+                masked
+                    .match_indices(name)
+                    .filter(|(at, _)| {
+                        super::related_tests::is_free_function_call_at(&masked, *at, name)
+                    })
+                    .count()
+                    .max(1)
+            } else {
+                owner_call_sites(text, owner).len().max(1)
+            }
+        })
         .sum()
 }
 
@@ -829,7 +1136,7 @@ fn boundary_bound_locals(
     activation: &ActivationEvidence,
     scope: super::argument_fold::FoldScope<'_>,
     calls_resolve: &dyn Fn(&str, usize) -> bool,
-    before_assertion_line: usize,
+    before: (usize, Option<usize>),
 ) -> Vec<String> {
     // Last binding of a name wins so `let got = gate(10); let got = gate(100)`
     // does not keep the shadowed boundary result. A post-let mutation
@@ -843,7 +1150,7 @@ fn boundary_bound_locals(
     // stays on the original line so a quoted boundary argument
     // (`gate("alpha")`) is still visible; mutation walks the mask.
     // Line-start `let` keeps an unmutated binding inside a block pairing.
-    // Mutations on or after `before_assertion_line` must not void an earlier
+    // Mutations after the observation must not void an earlier
     // assertion's valid pairing (#7042 item 1). Bindings are tracked per
     // brace depth so an inner block's mutation does not void an outer binding
     // (#7042 item 3).
@@ -854,10 +1161,18 @@ fn boundary_bound_locals(
     let mut pending = String::new();
     for (offset, original_line) in test.body.lines().enumerate() {
         let line_number = test.start_line + offset;
-        if line_number > before_assertion_line {
+        if line_number > before.0 {
             break;
         }
         let masked_line = masked_lines.get(offset).copied().unwrap_or(original_line);
+        // A helper may share its line with an earlier reassignment or a
+        // later shadow. Stop at the actual call, keeping only its prefix.
+        let (original_line, masked_line) = match before {
+            (line, Some(column)) if line_number == line => {
+                (&original_line[..column], &masked_line[..column])
+            }
+            _ => (original_line, masked_line),
+        };
         let bound = let_binding_name(masked_line).and_then(|_| let_binding_name(original_line));
         if let Some(name) = bound.as_deref() {
             // Only this binding's initializer supplies its result. An
@@ -1094,14 +1409,134 @@ fn owner_call_activates_boundary(
         if argument_list_activates_boundary(probe, owner, test, arguments, scope) {
             return true;
         }
-        if !owner_call_arguments_admit_activation_fallback(probe, owner, arguments) {
+        // #13037: the guarded argument check above already read this call's
+        // own guards and boundary; a line-level fact may belong to a sibling
+        // call on the same line that holds the guards.
+        if super::activation::guarded_comparison(probe, owner).is_some()
+            || !owner_call_arguments_admit_activation_fallback(probe, owner, arguments)
+        {
             return false;
         }
     }
     // A projected block tail cannot borrow an earlier discarded call's
     // line-level activation. Keep the original binding fact for the
     // unchanged nonblock fallback, never the shortened result text.
-    !result.block_tail && sites.len() == 1 && activation_marks_boundary_call(activation, call)
+    !result.block_tail
+        && sites.len() == 1
+        && activation_marks_boundary_call(activation, call, &test.file)
+}
+
+/// Eager helper call statements in the test itself. Keep the syntax node
+/// with its complete arguments so both the values and the observation
+/// position belong to this call, even when the invocation spans lines.
+pub(in crate::analysis) fn test_helper_call_arguments(
+    test: &TestSummary,
+    helper: &str,
+    index: &RustIndex,
+) -> Vec<(ast::CallExpr, Vec<String>)> {
+    let body = index
+        .source_syntax
+        .parse_fragment(&test.body)
+        .and_then(|parse| parse.tree().syntax().children().find_map(ast::Fn::cast))
+        .and_then(|function| function.body())
+        .and_then(|body| body.stmt_list());
+    let Some(body) = body else { return Vec::new() };
+    body.statements()
+        .filter_map(|statement| match statement {
+            ast::Stmt::ExprStmt(statement) => statement.expr(),
+            _ => None,
+        })
+        .chain(body.tail_expr())
+        .filter_map(|expression| match expression {
+            ast::Expr::CallExpr(call) if call.expr()?.syntax().text() == helper => {
+                let arguments = call
+                    .arg_list()?
+                    .args()
+                    .map(|arg| arg.syntax().text().to_string())
+                    .collect();
+                Some((call, arguments))
+            }
+            _ => None,
+        })
+        .collect()
+}
+
+/// A test-local asserting helper can receive the owner result as a value
+/// (including a clone), or through an invoked zero-argument callback. Verify
+/// the input of this argument's own call, independently of other statements.
+pub(in crate::analysis) fn helper_argument_is_boundary_call(
+    probe: &Probe,
+    owner: &FunctionSummary,
+    test: &TestSummary,
+    argument: &str,
+    helper_call: &ast::CallExpr,
+    activation: &ActivationEvidence,
+    index: &RustIndex,
+) -> bool {
+    let argument = argument.trim();
+    let expression = argument.strip_prefix("||").unwrap_or(argument).trim();
+    let expression = expression.strip_suffix(".clone()").unwrap_or(expression);
+    let scope = super::argument_fold::FoldScope::of_test(test, index);
+    let resolves = |text: &str, line| {
+        super::call_identity::boundary_owner_calls_resolve(index, owner, test, text, line)
+    };
+    let whole_owner_call = |text: &str| {
+        super::owner_pin::direct_call_name(text) == Some(owner.name.as_str())
+            || (owner.item.container == FunctionContainer::Free
+                && path_qualified_whole_call(text, &owner.name).is_some())
+    };
+    let start = helper_call.syntax().text_range().start();
+    let Some(prefix) = test.body.get(..usize::from(start)) else {
+        return false;
+    };
+    let line = test.start_line + prefix.bytes().filter(|byte| *byte == b'\n').count();
+    if argument_is_plain_identifier(expression) {
+        // Only declarations preceding the observation can shadow the
+        // line-start binding that boundary_bound_locals recognizes.
+        let Some(function) = helper_call.syntax().ancestors().find_map(ast::Fn::cast) else {
+            return false;
+        };
+        let preceding_bindings = function
+            .syntax()
+            .descendants()
+            .filter(|node| node != function.syntax())
+            .filter_map(|node| ast::AnyHasName::cast(node).and_then(|named| named.name()))
+            .filter(|name| name.syntax().text_range().end() <= start && name.text() == expression)
+            .count();
+        if preceding_bindings != 1 {
+            return false;
+        }
+        let column = prefix.rsplit('\n').next().map_or(0, str::len);
+        return boundary_bound_locals(
+            probe,
+            owner,
+            test,
+            activation,
+            scope,
+            &|binding, line| {
+                let initializer = binding
+                    .split_once('=')
+                    .map_or(binding, |(_, rhs)| rhs)
+                    .trim();
+                whole_owner_call(initializer)
+                    && resolves(initializer, line)
+                    && (line_owner_call_count(test, line, owner) <= 1
+                        || owner_call_sites(initializer, owner).iter().any(|args| {
+                            argument_list_activates_boundary(probe, owner, test, args, scope)
+                        }))
+            },
+            (line, Some(column)),
+        )
+        .iter()
+        .any(|name| name == expression);
+    }
+    if !whole_owner_call(expression) || !resolves(expression, line) {
+        return false;
+    }
+    let calls = owner_call_sites(expression, owner);
+    matches!(calls.as_slice(), [args] if argument_list_activates_boundary(
+        probe, owner, test, args, scope
+    ))
 }
 
 fn argument_list_activates_boundary(
@@ -1115,10 +1550,23 @@ fn argument_list_activates_boundary(
         .iter()
         .map(|argument| pairing_argument_values(test, argument, scope))
         .collect();
-    let Some((left, right)) = comparison_operands(&probe.expression) else {
+    let parameters = function_parameters(owner);
+    // #13037: a guarded comparison is reached only by a call that holds
+    // every guard, and its boundary operand is the comparison's alone (not
+    // `5 && !x`).
+    let guarded = super::activation::guarded_comparison(probe, owner);
+    if guarded
+        .as_ref()
+        .is_some_and(|guarded| !guarded.guards_hold_in(&parameters, &arg_values))
+    {
+        return false;
+    }
+    let expression = guarded
+        .as_ref()
+        .map_or(probe.expression.as_str(), |guarded| guarded.comparison());
+    let Some((left, right)) = comparison_operands(expression) else {
         return false;
     };
-    let parameters = function_parameters(owner);
     let left_index = parameter_index(&parameters, &left);
     let right_index = parameter_index(&parameters, &right);
     if let (Some(left_index), Some(right_index)) = (left_index, right_index) {
@@ -1292,6 +1740,17 @@ fn pairing_argument_values(
     if argument_is_direct_pairing_shape(trimmed) {
         return owner_argument_values(test, trimmed);
     }
+    // A parenthesized whole literal is that literal: a `#[test_case(10 =>
+    // 90)]` row's synthesized comparison writes its argument as `(10)` so a
+    // negated literal keeps its sign (RIPR-SPEC-0231).
+    if let Some(inner) = trimmed
+        .strip_prefix('(')
+        .and_then(|rest| rest.strip_suffix(')'))
+        .map(str::trim)
+        .filter(|inner| argument_is_whole_scalar_literal(inner))
+    {
+        return owner_argument_values(test, inner);
+    }
     // RIPR-SPEC-0158 #21: arithmetic over the test's own literal bindings is
     // the whole argument's value, exactly as the literal it computes would be.
     super::argument_fold::folded_argument(&test.body, trimmed, scope)
@@ -1359,8 +1818,27 @@ fn owner_call_arguments_admit_activation_fallback(
         arguments.get(idx).is_some_and(|argument| {
             let argument = argument.trim();
             argument_is_activation_fallback_shape(argument)
+                || argument_names_boundary_parameter(
+                    argument,
+                    &parameters,
+                    left.as_str(),
+                    right.as_str(),
+                )
                 || (slice_len_operand && literal_slice_length(argument).is_some())
         })
+    })
+}
+
+fn argument_names_boundary_parameter(
+    argument: &str,
+    parameters: &[String],
+    left: &str,
+    right: &str,
+) -> bool {
+    let argument = argument.trim().trim_start_matches('&').trim();
+    [left, right].into_iter().any(|operand| {
+        boundary_parameter_field_projection(parameters, operand)
+            .is_some_and(|(parameter, _)| argument == parameter.trim())
     })
 }
 
@@ -1495,12 +1973,32 @@ fn values_overlap(left: &[String], right: &[String]) -> bool {
 
 /// Infection already recorded that this owner-call line sits on the boundary
 /// (`left == right` from named constants, helper hops, or local bindings).
-fn activation_marks_boundary_call(activation: &ActivationEvidence, call: &CallFact) -> bool {
+/// #14726: a row located in another file never marks this test's call.
+/// Lines repeat across test files (`tests/a.rs:5` and `tests/b.rs:5`), so a
+/// boundary input another file's test feeds would otherwise pair with an
+/// assertion that never runs it. A row without a recorded file keeps the
+/// line rule, as before.
+fn activation_marks_boundary_call(
+    activation: &ActivationEvidence,
+    call: &CallFact,
+    test_file: &std::path::Path,
+) -> bool {
     activation.observed_values.iter().any(|fact| {
         fact.line == call.line
+            && fact.file.as_deref().is_none_or(|file| file == test_file)
             && fact.value.contains(" == ")
-            && (fact.text.is_empty() || fact.text.contains(&*call.text))
+            && activation_fact_text_pairs_call(fact.text.as_str(), call.text.as_str())
     })
+}
+
+/// Pair activation rows keyed by a bare owner call with assertions that embed
+/// that call (`assert_eq!(owner(x), ..)`), and keep the existing superset match
+/// when the row carries the full assertion text.
+fn activation_fact_text_pairs_call(fact_text: &str, call_text: &str) -> bool {
+    if fact_text.is_empty() {
+        return true;
+    }
+    fact_text.contains(call_text) || call_text.contains(fact_text)
 }
 
 #[cfg(test)]
@@ -1564,6 +2062,94 @@ mod tests {
             None,
             &index,
         )
+    }
+
+    // #13625: only a whole call through a plain module path is a qualified
+    // entry spelling; anything else keeps the bare-name reading.
+    #[test]
+    fn path_qualified_whole_call_reads_only_a_whole_plain_path_call() {
+        assert_eq!(
+            path_qualified_whole_call("krate::inner::entry(10)", "entry"),
+            Some("krate::inner")
+        );
+        assert_eq!(
+            path_qualified_whole_call(" crate::entry (10) ", "entry"),
+            Some("crate")
+        );
+        for refused in [
+            "entry(10)",
+            "other::entry(10).wrapping_add(1)",
+            "krate::entry(10) * 0",
+            "krate::entry_two(10)",
+            "krate::sub_entry(10)",
+            "Type::<T>::entry(10)",
+            "x.krate::entry(10)",
+            "::entry(10)",
+            "krate::inner::entry",
+        ] {
+            assert_eq!(
+                path_qualified_whole_call(refused, "entry"),
+                None,
+                "{refused}"
+            );
+        }
+    }
+
+    #[test]
+    fn field_assignment_row_pairs_assert_eq_call_text() {
+        let activation = ActivationEvidence {
+            observed_values: vec![ValueFact {
+                file: None,
+                line: 53,
+                text: "is_stale(&manifest)".to_string(),
+                value: "manifest.version == CURRENT".to_string(),
+                context: ValueContext::FunctionArgument,
+            }],
+            missing_discriminators: Vec::new(),
+        };
+        let call = CallFact {
+            line: 53,
+            name: "is_stale".into(),
+            text: "assert_eq!(is_stale(&manifest), true);".into(),
+        };
+        assert!(activation_marks_boundary_call(
+            &activation,
+            &call,
+            std::path::Path::new("tests/a.rs")
+        ));
+    }
+
+    /// #14726: the same line in another test file is another call.
+    #[test]
+    fn located_row_marks_only_a_call_in_its_own_file() {
+        let row = |file: Option<&str>| ActivationEvidence {
+            observed_values: vec![ValueFact {
+                file: file.map(PathBuf::from),
+                line: 5,
+                text: String::new(),
+                value: "flag == \"--verbose\"".to_string(),
+                context: ValueContext::FunctionArgument,
+            }],
+            missing_discriminators: Vec::new(),
+        };
+        let call = CallFact {
+            line: 5,
+            name: "options_from_flag".into(),
+            text: "assert!(options_from_flag(\"-v\").verbose);".into(),
+        };
+        let here = std::path::Path::new("tests/eval_reference.rs");
+        assert!(activation_marks_boundary_call(
+            &row(Some("tests/eval_reference.rs")),
+            &call,
+            here
+        ));
+        assert!(!activation_marks_boundary_call(
+            &row(Some("tests/t.rs")),
+            &call,
+            here
+        ));
+        // A row with no recorded file keeps the line rule.
+        assert!(activation_marks_boundary_call(&row(None), &call, here));
     }
 
     #[test]
@@ -1877,14 +2463,14 @@ mod tests {
             body:
                 "pub fn bulk_rate(items: u32) -> u32 { if items >= BULK_ITEMS { 90 } else { 100 } }"
                     .into(),
-            calls: vec![],
+            calls: crate::analysis::facts::SharedFactSlice::empty(),
             returns: vec![],
-            literals: vec![],
+            literals: crate::analysis::facts::SharedFactSlice::empty(),
             source_role: FunctionSourceRole::Production,
-            attrs: vec![],
+            attrs: crate::analysis::facts::SharedFactSlice::empty(),
             impl_attrs: Vec::new(),
-            nested_fn_names: Vec::new(),
-            let_bindings: Vec::new(),
+            nested_fn_names: crate::analysis::facts::SharedFactSlice::empty(),
+            let_bindings: crate::analysis::facts::SharedFactSlice::empty(),
             impl_context: Default::default(),
             item: Default::default(),
         };
@@ -1934,14 +2520,14 @@ mod tests {
             start_line: 1,
             end_line: 3,
             body: "pub fn gate(input: u32, context: u32) -> bool { input >= 10 }".into(),
-            calls: vec![],
+            calls: crate::analysis::facts::SharedFactSlice::empty(),
             returns: vec![],
-            literals: vec![],
+            literals: crate::analysis::facts::SharedFactSlice::empty(),
             source_role: FunctionSourceRole::Production,
-            attrs: vec![],
+            attrs: crate::analysis::facts::SharedFactSlice::empty(),
             impl_attrs: Vec::new(),
-            nested_fn_names: Vec::new(),
-            let_bindings: Vec::new(),
+            nested_fn_names: crate::analysis::facts::SharedFactSlice::empty(),
+            let_bindings: crate::analysis::facts::SharedFactSlice::empty(),
             impl_context: Default::default(),
             item: Default::default(),
         };
@@ -1990,14 +2576,14 @@ mod tests {
             start_line: 1,
             end_line: 3,
             body: "pub fn gate(input: u32, marker: u32) -> bool { input >= 10 }".into(),
-            calls: vec![],
+            calls: crate::analysis::facts::SharedFactSlice::empty(),
             returns: vec![],
-            literals: vec![],
+            literals: crate::analysis::facts::SharedFactSlice::empty(),
             source_role: FunctionSourceRole::Production,
-            attrs: vec![],
+            attrs: crate::analysis::facts::SharedFactSlice::empty(),
             impl_attrs: Vec::new(),
-            nested_fn_names: Vec::new(),
-            let_bindings: Vec::new(),
+            nested_fn_names: crate::analysis::facts::SharedFactSlice::empty(),
+            let_bindings: crate::analysis::facts::SharedFactSlice::empty(),
             impl_context: Default::default(),
             item: Default::default(),
         };
@@ -2041,14 +2627,14 @@ mod tests {
             end_line: 5,
             body: "pub fn gate(raw: u32, threshold: u32) -> bool {\n    let amount = raw;\n    amount >= threshold\n}"
                 .into(),
-            calls: vec![],
+            calls: crate::analysis::facts::SharedFactSlice::empty(),
             returns: vec![],
-            literals: vec![],
+            literals: crate::analysis::facts::SharedFactSlice::empty(),
             source_role: FunctionSourceRole::Production,
-            attrs: vec![],
+            attrs: crate::analysis::facts::SharedFactSlice::empty(),
             impl_attrs: Vec::new(),
-            nested_fn_names: Vec::new(),
-            let_bindings: Vec::new(),
+            nested_fn_names: crate::analysis::facts::SharedFactSlice::empty(),
+            let_bindings: crate::analysis::facts::SharedFactSlice::empty(),
             impl_context: Default::default(),
             item: Default::default(),
         };
@@ -2092,14 +2678,14 @@ mod tests {
             end_line: 5,
             body: "pub fn gate(raw: u32, threshold: u32) -> bool {\n    let amount = raw;\n    amount >= threshold\n}"
                 .into(),
-            calls: vec![],
+            calls: crate::analysis::facts::SharedFactSlice::empty(),
             returns: vec![],
-            literals: vec![],
+            literals: crate::analysis::facts::SharedFactSlice::empty(),
             source_role: FunctionSourceRole::Production,
-            attrs: vec![],
+            attrs: crate::analysis::facts::SharedFactSlice::empty(),
             impl_attrs: Vec::new(),
-            nested_fn_names: Vec::new(),
-            let_bindings: Vec::new(),
+            nested_fn_names: crate::analysis::facts::SharedFactSlice::empty(),
+            let_bindings: crate::analysis::facts::SharedFactSlice::empty(),
             impl_context: Default::default(),
             item: Default::default(),
         };
@@ -2208,14 +2794,14 @@ mod tests {
             start_line: 1,
             end_line: 3,
             body: "pub fn gate(input: u32, marker: u32) -> bool { input >= 10 }".into(),
-            calls: vec![],
+            calls: crate::analysis::facts::SharedFactSlice::empty(),
             returns: vec![],
-            literals: vec![],
+            literals: crate::analysis::facts::SharedFactSlice::empty(),
             source_role: FunctionSourceRole::Production,
-            attrs: vec![],
+            attrs: crate::analysis::facts::SharedFactSlice::empty(),
             impl_attrs: Vec::new(),
-            nested_fn_names: Vec::new(),
-            let_bindings: Vec::new(),
+            nested_fn_names: crate::analysis::facts::SharedFactSlice::empty(),
+            let_bindings: crate::analysis::facts::SharedFactSlice::empty(),
             impl_context: Default::default(),
             item: Default::default(),
         };
@@ -2991,14 +3577,14 @@ mod tests {
             end_line: 6,
             body: "pub fn discounted_total(amount: i32, discount_threshold: i32) -> i32 { amount }"
                 .into(),
-            calls: vec![],
+            calls: crate::analysis::facts::SharedFactSlice::empty(),
             returns: vec![],
-            literals: vec![],
+            literals: crate::analysis::facts::SharedFactSlice::empty(),
             source_role: FunctionSourceRole::Production,
-            attrs: vec![],
+            attrs: crate::analysis::facts::SharedFactSlice::empty(),
             impl_attrs: Vec::new(),
-            nested_fn_names: Vec::new(),
-            let_bindings: Vec::new(),
+            nested_fn_names: crate::analysis::facts::SharedFactSlice::empty(),
+            let_bindings: crate::analysis::facts::SharedFactSlice::empty(),
             impl_context: Default::default(),
             item: Default::default(),
         };
@@ -3062,14 +3648,14 @@ mod tests {
             start_line: 9,
             end_line: 16,
             body: "pub fn classify(input: &str) -> &'static str { input }".into(),
-            calls: vec![],
+            calls: crate::analysis::facts::SharedFactSlice::empty(),
             returns: vec![],
-            literals: vec![],
+            literals: crate::analysis::facts::SharedFactSlice::empty(),
             source_role: FunctionSourceRole::Production,
-            attrs: vec![],
+            attrs: crate::analysis::facts::SharedFactSlice::empty(),
             impl_attrs: Vec::new(),
-            nested_fn_names: Vec::new(),
-            let_bindings: Vec::new(),
+            nested_fn_names: crate::analysis::facts::SharedFactSlice::empty(),
+            let_bindings: crate::analysis::facts::SharedFactSlice::empty(),
             impl_context: Default::default(),
             item: Default::default(),
         };
@@ -3120,9 +3706,11 @@ mod tests {
                 arguments: vec!["qty".to_string()],
                 receiver: None,
                 through_macro: false,
+                multi_site: false,
                 module_qualified: false,
                 crate_qualifier: None,
                 transparent_macros_rebound: false,
+                verified_macro_roots: Vec::new(),
                 diverging_handlers: Vec::new(),
             }],
             stop_above: None,
@@ -3664,7 +4252,8 @@ mod tests {
             "#[rstest]".to_string(),
             "#[case(100)]".to_string(),
             "#[case(99)]".to_string(),
-        ];
+        ]
+        .into();
         assert!(argument_list_activates_boundary(
             &probe,
             &owner,
@@ -3676,6 +4265,7 @@ mod tests {
 
     fn predicate_probe(expression: &str) -> Probe {
         Probe {
+            before_condition: None,
             id: ProbeId("probe:test".to_string()),
             location: SourceLocation::new("src/lib.rs", 2, 1),
             owner: Some(SymbolId("src/lib.rs::gate".to_string())),
@@ -4194,14 +4784,14 @@ mod tests {
             start_line: 1,
             end_line: 3,
             body: "pub fn gate(input: u32) -> bool { input >= 10 }".into(),
-            calls: vec![],
+            calls: crate::analysis::facts::SharedFactSlice::empty(),
             returns: vec![],
-            literals: vec![],
+            literals: crate::analysis::facts::SharedFactSlice::empty(),
             source_role: FunctionSourceRole::Production,
-            attrs: vec![],
+            attrs: crate::analysis::facts::SharedFactSlice::empty(),
             impl_attrs: Vec::new(),
-            nested_fn_names: Vec::new(),
-            let_bindings: Vec::new(),
+            nested_fn_names: crate::analysis::facts::SharedFactSlice::empty(),
+            let_bindings: crate::analysis::facts::SharedFactSlice::empty(),
             impl_context: Default::default(),
             item: Default::default(),
         }
@@ -4220,7 +4810,7 @@ mod tests {
             start_line: 1,
             end_line: 4,
             body: body.into(),
-            calls,
+            calls: calls.into(),
             assertions,
             literals: literals
                 .iter()
@@ -4228,12 +4818,59 @@ mod tests {
                     line: 1,
                     value: (*value).to_string(),
                 })
-                .collect(),
-            attrs: Vec::new(),
-            nested_fn_names: Vec::new(),
-            let_bindings: Vec::new(),
+                .collect::<Vec<_>>()
+                .into(),
+            attrs: crate::analysis::facts::SharedFactSlice::empty(),
+            nested_fn_names: crate::analysis::facts::SharedFactSlice::empty(),
+            let_bindings: crate::analysis::facts::SharedFactSlice::empty(),
             generated: None,
         }
+    }
+
+    #[test]
+    fn mentions_owner_call_sees_a_turbofish_owner_call() {
+        // #15277 review: the #6780 "assertion holds no direct owner call"
+        // refusal must see `owner::<u8>(3)`, while the exact `!= 1` helper
+        // counts keep reading plain calls only.
+        assert!(mentions_owner_call(
+            "assert_eq!(wrapper(10), owner::<u8>(3));",
+            "owner"
+        ));
+        assert!(mentions_owner_call(
+            "assert_eq!(wrapper(10), owner(3));",
+            "owner"
+        ));
+        assert!(!mentions_owner_call("assert_eq!(wrapper(10), 3);", "owner"));
+        assert_eq!(owner_call_count("owner::<u8>(2)", "owner"), 0);
+    }
+
+    #[test]
+    fn a_turbofish_block_tail_meets_the_local_binding_refusal() {
+        // #15277: `gate::<u8>(5)` is the same bare call as `gate(5)`, so a
+        // test-local `gate` that could capture it refuses the block tail. A
+        // module-path call cannot be captured by a local binding.
+        let mut owner = gate_owner();
+        owner.item.container = crate::analysis::facts::FunctionContainer::Free;
+        let shadowed = "fn t() { let gate = |x: u32| x > 3; let n = { gate::<u8>(5) }; }";
+        let clean = "fn t() { let n = { gate::<u8>(5) }; }";
+        assert!(
+            bound_result::boundary_call("let n = { gate::<u8>(5) }", &owner, shadowed).is_none(),
+            "a turbofish block tail beside a local `gate` must not bind the owner result"
+        );
+        assert!(
+            bound_result::boundary_call("let n = { gate::<u8>(5) }", &owner, clean)
+                .is_some_and(|result| result.block_tail && result.text == "gate::<u8>(5)"),
+            "a turbofish block tail with no local `gate` binds the owner result"
+        );
+        assert!(
+            bound_result::boundary_call(
+                "let n = { m::gate(5) }",
+                &owner,
+                "fn t() { let gate = |x: u32| x > 3; let n = { m::gate(5) }; }",
+            )
+            .is_some_and(|result| result.block_tail),
+            "a module-path block tail is not captured by a local `gate`"
+        );
     }
 
     fn call(name: &str, text: &str) -> CallFact {

@@ -1,0 +1,43 @@
+schema_version = "2.0"
+id = "ripr.slice.muse-plugin-eval-ingest.v1"
+generation = 1
+source_issue = "issue:13120"
+design_reference = "docs/verification/muse-plugin-eval.md#contract"
+change_class = "behavior_change"
+
+claim_boundary = """
+One canonical muse-plugin-eval-v1 record projects through existing DX
+source-owned ingestion. Optional structured observations supply independent
+agent.muse_* axes; sparse records retain context with all axes not measured.
+Missing is not measured. The importer checks input consistency, not artifact
+authenticity, canonical repair validity, plugin qualification or efficacy.
+"""
+
+non_goals = [
+  "plugins/muse/ripr package changes",
+  "agent execution or evidence backfill",
+  "general comparator or gate redesign",
+  "baseline promotion or empirical efficiency targets",
+  "CI, release or registry publication",
+]
+return_conditions = [
+  "Return if omitted observations become zero or success.",
+  "Return if a static or setup result becomes executed discrimination.",
+  "Return if a prose reference can replace an identified durable manifest.",
+  "Return if multiple Muse records enter one invocation.",
+  "Return if canonical context contradicts the structured observations.",
+]
+owned_seams = ["seam:ripr:xtask:muse-plugin-eval-ingestion"]
+shared_seams = ["seam:ripr:xtask:dx-scoreboard-source-admission"]
+forbidden_seams = ["seam:ripr:muse-plugin:packaging", "seam:ripr:release:promotion"]
+
+[[requirement_delta]]
+requirement_id = "issue:13120#acceptance"
+requirement_generation = 1
+
+[implementation_claim]
+status = "implemented"
+[evidence]
+state = "outstanding"
+[support_claim]
+state = "unchanged"

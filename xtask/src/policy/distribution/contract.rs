@@ -58,6 +58,7 @@ pub(crate) struct TargetContract {
     pub(crate) executable: String,
     pub(crate) archive: String,
     pub(crate) wheel_family: String,
+    pub(crate) wheel_platform_tag: String,
     pub(crate) npm_package: String,
     pub(crate) npm_os: String,
     pub(crate) npm_cpu: String,

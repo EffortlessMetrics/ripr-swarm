@@ -52,7 +52,6 @@ Drill in:
   ripr explain --root <cwd>/fixtures/python_call_chain_subclass_override/input --diff <cwd>/fixtures/python_call_chain_subclass_override/diff.patch --mode fast probe:reach_ledger.py:python_preview:872af001
   ripr context --root <cwd>/fixtures/python_call_chain_subclass_override/input --diff <cwd>/fixtures/python_call_chain_subclass_override/diff.patch --mode fast --at probe:reach_ledger.py:python_preview:872af001
 
-
 Note: ripr found no static test path for any of the 1 changed expression(s) in this diff. Scope
   analyzed: 1 changed expression(s) and 0 statically linked related test(s). This is not a coverage
   assessment. A test may already exercise these changes through macros, helper-call chains, or

@@ -1,0 +1,1 @@
+editors/vscode/test/suite/download_hardening.test.ts|cp.execFile|1|vscode-tests|Builds throwaway tar archives with the system tar in an isolated os.tmpdir() directory to prove inspectTarArchive rejects symlink and traversal members against real tar listings (#13640). No shell, network, or repository mutation.

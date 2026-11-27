@@ -1,0 +1,7 @@
+# The gated `mod name;` declaration is matched by name and line (#14681).
+[[extend]]
+id = "RIPR-SPEC-0240"
+code = [
+  "crates/ripr/src/analysis/syntax/owner_pin.rs",
+  "crates/ripr/src/analysis/classify/refusal_miss.rs",
+]

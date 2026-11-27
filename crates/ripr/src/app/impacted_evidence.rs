@@ -11,20 +11,17 @@ use std::env;
 use std::fs;
 use std::path::Path;
 
-use crate::cli::unknown_argument;
 use crate::output::markdown::{code_span, inline_prose, table_cell_text, table_code_span};
-
-use super::subcommand::{NonEmptyPlaceholder, invocation_repo_root, non_empty_arg};
 
 const DEFAULT_PR_EVIDENCE_JSON: &str = "target/ripr/pr/repo-exposure.json";
 const IMPACTED_JSON: &str = "target/xtask/impacted-evidence/latest.json";
 const IMPACTED_MD: &str = "target/xtask/impacted-evidence/latest.md";
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-struct ImpactedEvidenceOptions {
-    pr_evidence: String,
-    labels: Vec<String>,
-    check: bool,
+pub(crate) struct ImpactedEvidenceOptions {
+    pub(crate) pr_evidence: String,
+    pub(crate) labels: Vec<String>,
+    pub(crate) check: bool,
 }
 
 impl Default for ImpactedEvidenceOptions {
@@ -37,35 +34,30 @@ impl Default for ImpactedEvidenceOptions {
     }
 }
 
-pub(crate) fn run_impacted_evidence(args: &[String]) -> Result<(), String> {
-    run_impacted_evidence_at(&invocation_repo_root()?, args)
-}
-
-/// Shared entry point for `ripr impacted-evidence` (rooted at the working
+/// Shared use case for `ripr impacted-evidence` (rooted at the working
 /// directory) and the compatibility `cargo xtask impacted-evidence` route
 /// (rooted at the xtask workspace), so refusal and routing logic has one owner.
-pub fn run_impacted_evidence_at(repo: &Path, args: &[String]) -> Result<(), String> {
-    run_impacted_evidence_with(repo, args, require_pr_evidence)
+/// Argv parsing lives in `cli::commands::impacted_evidence`.
+pub(crate) fn execute_impacted_evidence_at(
+    repo: &Path,
+    options: &ImpactedEvidenceOptions,
+) -> Result<(), String> {
+    execute_impacted_evidence_with(repo, options, require_pr_evidence)
 }
 
 /// The run with its evidence loader injected, so a test can stand in for a
 /// concurrent run that writes outputs while the evidence is being read.
-fn run_impacted_evidence_with(
+fn execute_impacted_evidence_with(
     repo: &Path,
-    args: &[String],
+    options: &ImpactedEvidenceOptions,
     load_pr_evidence: impl FnOnce(&Path, &str) -> Result<PrEvidenceInput, String>,
 ) -> Result<(), String> {
-    if args.iter().any(|arg| arg == "--help" || arg == "-h") {
-        print_help();
-        return Ok(());
-    }
-    let options = parse_options(args)?;
     // Taken before the evidence is read, so a refusal removes only outputs
     // that already existed when this run started (#5307).
     let previous = stamp_outputs(repo);
     let input = load_pr_evidence(repo, &options.pr_evidence)
         .map_err(|err| refuse_with_stale_cleanup(repo, err, options.check, &previous))?;
-    let packet = packet_from_input(&options, &input);
+    let packet = packet_from_input(options, &input);
     let json_text = serde_json::to_string_pretty(&packet)
         .map_err(|err| format!("serialize impacted evidence: {err}"))?;
     let markdown = render_impacted_evidence_markdown(&packet);
@@ -74,61 +66,6 @@ fn run_impacted_evidence_with(
     } else {
         write_outputs(repo, &json_text, &markdown)
     }
-}
-
-fn parse_options(args: &[String]) -> Result<ImpactedEvidenceOptions, String> {
-    let mut options = ImpactedEvidenceOptions::default();
-    let mut i = 0usize;
-    while i < args.len() {
-        match args[i].as_str() {
-            "--pr-evidence" => {
-                i += 1;
-                options.pr_evidence = non_empty_arg(
-                    "impacted-evidence",
-                    args,
-                    i,
-                    "--pr-evidence",
-                    NonEmptyPlaceholder::Value,
-                )?
-                .to_string();
-            }
-            "--label" => {
-                i += 1;
-                options.labels.push(
-                    non_empty_arg(
-                        "impacted-evidence",
-                        args,
-                        i,
-                        "--label",
-                        NonEmptyPlaceholder::Value,
-                    )?
-                    .to_string(),
-                );
-            }
-            "--labels" => {
-                i += 1;
-                options.labels.extend(split_labels(non_empty_arg(
-                    "impacted-evidence",
-                    args,
-                    i,
-                    "--labels",
-                    NonEmptyPlaceholder::Value,
-                )?));
-            }
-            "--check" => options.check = true,
-            other => return Err(unknown_argument("impacted-evidence", other)),
-        }
-        i += 1;
-    }
-    options.labels = normalize_labels(&options.labels);
-    Ok(options)
-}
-
-fn print_help() {
-    println!(
-        "{}",
-        crate::cli::help::render_command_help(IMPACTED_EVIDENCE_HELP, &[])
-    );
 }
 
 /// Help body for `ripr impacted-evidence`. Also the flag source for
@@ -492,7 +429,7 @@ fn refuse_with_stale_cleanup(
 
 fn load_pr_evidence(repo: &Path, relative: &str) -> PrEvidenceInput {
     let path = repo.join(relative);
-    let Ok(text) = fs::read_to_string(&path) else {
+    let Ok(text) = crate::bounded_input::read_to_string(&path) else {
         return PrEvidenceInput {
             value: None,
             state: InputState::Missing,
@@ -699,15 +636,21 @@ fn string_field<'a>(value: &'a Value, key: &str, fallback: &'a str) -> &'a str {
 fn check_outputs(repo: &Path, json_text: &str, markdown: &str) -> Result<(), String> {
     let json_path = repo.join(IMPACTED_JSON);
     let md_path = repo.join(IMPACTED_MD);
-    let actual_json = fs::read_to_string(&json_path)
-        .map_err(|err| format!("missing or unreadable {IMPACTED_JSON}: {err}"))?;
-    let actual_md = fs::read_to_string(&md_path)
-        .map_err(|err| format!("missing or unreadable {IMPACTED_MD}: {err}"))?;
+    let actual_json = fs::read_to_string(&json_path).map_err(|err| {
+        format!(
+            "missing or unreadable {IMPACTED_JSON}: {err}; rerun the same `ripr impacted-evidence` command without --check to write it"
+        )
+    })?;
+    let actual_md = fs::read_to_string(&md_path).map_err(|err| {
+        format!(
+            "missing or unreadable {IMPACTED_MD}: {err}; rerun the same `ripr impacted-evidence` command without --check to write it"
+        )
+    })?;
     if actual_json == format!("{json_text}\n") && actual_md == markdown {
         println!("Impacted evidence contract ok: {IMPACTED_JSON}");
         Ok(())
     } else {
-        Err("impacted evidence is stale; run `ripr impacted-evidence`".to_string())
+        Err("impacted evidence is stale; rerun the same `ripr impacted-evidence` command without --check to refresh it".to_string())
     }
 }
 
@@ -718,9 +661,9 @@ fn write_outputs(repo: &Path, json_text: &str, markdown: &str) -> Result<(), Str
         fs::create_dir_all(parent).map_err(|err| format!("create impacted evidence dir: {err}"))?;
     }
     crate::output::file_write::write(&json_path, format!("{json_text}\n").as_bytes())
-        .map_err(|err| format!("failed to write {IMPACTED_JSON}: {err}"))?;
+        .map_err(|err| format!("failed to write {IMPACTED_JSON}: {err}; make sure the output file and its directory are writable, then rerun the same `ripr impacted-evidence` command"))?;
     crate::output::file_write::write(&md_path, markdown.as_bytes())
-        .map_err(|err| format!("failed to write {IMPACTED_MD}: {err}"))?;
+        .map_err(|err| format!("failed to write {IMPACTED_MD}: {err}; make sure the output file and its directory are writable, then rerun the same `ripr impacted-evidence` command"))?;
     println!("Wrote {IMPACTED_JSON}");
     println!("Wrote {IMPACTED_MD}");
     Ok(())
@@ -733,7 +676,7 @@ fn labels_from_env() -> Vec<String> {
         .unwrap_or_default()
 }
 
-fn split_labels(labels: &str) -> Vec<String> {
+pub(crate) fn split_labels(labels: &str) -> Vec<String> {
     labels
         .split([',', '\n', ';'])
         .map(str::trim)
@@ -742,7 +685,7 @@ fn split_labels(labels: &str) -> Vec<String> {
         .collect()
 }
 
-fn normalize_labels(labels: &[String]) -> Vec<String> {
+pub(crate) fn normalize_labels(labels: &[String]) -> Vec<String> {
     labels
         .iter()
         .map(|label| label.trim().to_ascii_lowercase())
@@ -759,6 +702,8 @@ fn first_line(value: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    // cfg(test) only: drive argv through the CLI adapter (tracked in #5193).
+    use crate::cli::commands::impacted_evidence_command::parse_options;
 
     #[test]
     fn parse_rejects_blank_label_values() -> Result<(), String> {
@@ -1039,7 +984,7 @@ mod tests {
         fs::write(repo.join(IMPACTED_JSON), "{}").map_err(|err| err.to_string())?;
         fs::write(repo.join(IMPACTED_MD), "old").map_err(|err| err.to_string())?;
         // No PR evidence exists, so the run refuses.
-        let result = run_impacted_evidence_at(&repo, &[]);
+        let result = execute_impacted_evidence_at(&repo, &ImpactedEvidenceOptions::default());
         let json_left = repo.join(IMPACTED_JSON).exists();
         let md_left = repo.join(IMPACTED_MD).exists();
         fs::remove_dir_all(&repo).map_err(|err| format!("cleanup {}: {err}", repo.display()))?;
@@ -1066,11 +1011,15 @@ mod tests {
             .map_err(|err| format!("create {}: {err}", repo.display()))?;
         fs::write(repo.join(IMPACTED_JSON), "{}").map_err(|err| err.to_string())?;
         fs::write(repo.join(IMPACTED_MD), "old").map_err(|err| err.to_string())?;
-        let result = run_impacted_evidence_with(&repo, &[], |repo, _relative| {
-            fs::write(repo.join(IMPACTED_JSON), r#"{"status":"concurrent"}"#)
-                .map_err(|err| err.to_string())?;
-            Err("PR evidence is missing or unreadable.".to_string())
-        });
+        let result = execute_impacted_evidence_with(
+            &repo,
+            &ImpactedEvidenceOptions::default(),
+            |repo, _relative| {
+                fs::write(repo.join(IMPACTED_JSON), r#"{"status":"concurrent"}"#)
+                    .map_err(|err| err.to_string())?;
+                Err("PR evidence is missing or unreadable.".to_string())
+            },
+        );
         let json = fs::read_to_string(repo.join(IMPACTED_JSON));
         let md_left = repo.join(IMPACTED_MD).exists();
         fs::remove_dir_all(&repo).map_err(|err| format!("cleanup {}: {err}", repo.display()))?;
@@ -1243,7 +1192,7 @@ mod tests {
             r#"{"summary":{"ripr_severe_gap":false,"requires_targeted_mutation":false}}"#,
         )
         .map_err(|err| err.to_string())?;
-        run_impacted_evidence_at(&repo, &[])?;
+        execute_impacted_evidence_at(&repo, &ImpactedEvidenceOptions::default())?;
         assert!(
             repo.join(IMPACTED_JSON).exists(),
             "outputs land under the given root"

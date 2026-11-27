@@ -694,29 +694,14 @@ pub(super) fn read_artifact_capped(path: &Path) -> CappedArtifactRead {
 /// `limit + 1` bytes, so a file that grows concurrently is rejected rather
 /// than read in full.
 pub(super) fn read_artifact_capped_with_limit(path: &Path, limit: u64) -> CappedArtifactRead {
-    use std::io::Read as _;
-    let file = match std::fs::File::open(path) {
-        Ok(file) => file,
-        Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
-            return CappedArtifactRead::Missing;
-        }
-        Err(_) => return CappedArtifactRead::Unusable,
-    };
-    let mut contents = String::new();
-    match file
-        .take(limit.saturating_add(1))
-        .read_to_string(&mut contents)
-    {
-        Ok(_) => {}
-        Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
-            return CappedArtifactRead::Missing;
-        }
-        Err(_) => return CappedArtifactRead::Unusable,
+    // The shared owner refuses anything that is not a regular file (following
+    // links) before opening it, so a checkout-supplied FIFO cannot block the
+    // sidecar on open (#15275).
+    match crate::bounded_input::read_repository_artifact_with_limit(path, limit) {
+        Ok(contents) => CappedArtifactRead::Contents(contents),
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => CappedArtifactRead::Missing,
+        Err(_) => CappedArtifactRead::Unusable,
     }
-    if contents.len() as u64 > limit {
-        return CappedArtifactRead::Unusable;
-    }
-    CappedArtifactRead::Contents(contents)
 }
 
 #[cfg(all(test, unix))]
@@ -790,7 +775,11 @@ fn paths_equal_or_below(root: &Path, candidate: &Path) -> bool {
     )
 }
 
-fn paths_equal_or_below_on(root: &Path, candidate: &Path, case_insensitive: bool) -> bool {
+pub(super) fn paths_equal_or_below_on(
+    root: &Path,
+    candidate: &Path,
+    case_insensitive: bool,
+) -> bool {
     if case_insensitive {
         let fold = |path: &Path| {
             path.components()
@@ -1127,6 +1116,45 @@ mod tests {
         );
 
         std::fs::remove_dir_all(&dir).map_err(|err| err.to_string())?;
+        Ok(())
+    }
+
+    /// A checkout can supply `target/ripr/reports/*` as a FIFO or a link to
+    /// `/dev/zero`; the capped read must refuse both without blocking (#15275).
+    #[cfg(unix)]
+    #[test]
+    fn read_artifact_capped_refuses_fifo_and_device_links_without_blocking() -> Result<(), String> {
+        let suffix = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_nanos();
+        let dir = std::env::temp_dir().join(format!("ripr-uri-capped-nonregular-{suffix}"));
+        std::fs::create_dir_all(&dir).map_err(|err| err.to_string())?;
+        let fifo = dir.join("fifo.json");
+        let made = std::process::Command::new("mkfifo")
+            .arg(&fifo)
+            .status()
+            .map_err(|err| format!("mkfifo: {err}"))?;
+        assert!(made.success(), "mkfifo failed");
+        let link = dir.join("zero.json");
+        std::os::unix::fs::symlink("/dev/zero", &link).map_err(|err| err.to_string())?;
+        let (tx, rx) = std::sync::mpsc::channel();
+        let probes = [fifo, link];
+        std::thread::spawn(move || {
+            let outcomes = probes
+                .iter()
+                .map(|probe| read_artifact_capped(probe))
+                .collect::<Vec<_>>();
+            let _ = tx.send(outcomes);
+        });
+        let outcomes = rx
+            .recv_timeout(std::time::Duration::from_secs(10))
+            .map_err(|err| format!("a non-regular artifact read blocked: {err}"))?;
+        let _ = std::fs::remove_dir_all(&dir);
+        assert_eq!(
+            outcomes,
+            vec![CappedArtifactRead::Unusable, CappedArtifactRead::Unusable]
+        );
         Ok(())
     }
 

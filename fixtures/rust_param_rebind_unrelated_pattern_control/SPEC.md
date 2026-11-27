@@ -18,6 +18,13 @@ The boundary is read from the test input `20`: infection is `yes`, so the
 rebinding fixtures' `infection_unknown` comes from the rebinding, not from the
 shape of the comparison.
 
+The expected static class per finding (machine-checked against
+`expected/check.json` by `check-fixture-contracts`, #12928):
+
+```expected-classes
+probe:src_lib.rs:predicate:e1aa58e8 -> exposed
+```
+
 ## Must Not
 
 Treat an unrelated pattern binding as a rebinding of `n`.

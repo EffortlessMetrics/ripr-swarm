@@ -117,9 +117,9 @@ fn given_a_handler_that_asserts_or_nests_a_failure_then_the_try_body_is_read() {
 #[test]
 fn given_a_qualified_or_starred_catch_then_swallowing_still_hides_the_try_body() {
     assert_eq!(
-        assertion_count(
-            "    try:\n        assert f(3) == 21\n    except builtins.AssertionError:\n        pass\n"
-        ),
+        first(
+            "import builtins\nfrom m import f\ndef test_x():\n    try:\n        assert f(3) == 21\n    except builtins.AssertionError:\n        pass\n"
+        ).assertions.len(),
         0
     );
     assert_eq!(
@@ -429,4 +429,222 @@ fn given_distinct_or_wrapping_bindings_then_no_test_is_shadowed() {
             "{source}"
         );
     }
+}
+
+#[test]
+fn ordered_handler_reraise_before_broad_swallow_keeps_assertion() {
+    assert_eq!(
+        assertion_count(
+            "    try:\n        assert f(2) == 4\n    except AssertionError:\n        raise\n    except Exception:\n        pass\n"
+        ),
+        1,
+        "the first matching handler re-raises; the later swallower never runs"
+    );
+}
+
+#[test]
+fn ordered_handler_first_match_controls_swallowing() {
+    for (handlers, expected) in [
+        (
+            "except Exception:\n        pass\n    except AssertionError:\n        raise",
+            0,
+        ),
+        (
+            "except ValueError:\n        raise\n    except AssertionError:\n        raise\n    except Exception:\n        pass",
+            1,
+        ),
+        (
+            "except (ValueError, TypeError):\n        raise\n    except Exception:\n        pass",
+            0,
+        ),
+        ("except ValueError:\n        pass", 1),
+        (
+            "except ():\n        pass\n    except AssertionError:\n        raise\n    except:\n        pass",
+            1,
+        ),
+        (
+            "except (ValueError, AssertionError):\n        raise\n    except Exception:\n        pass",
+            1,
+        ),
+        (
+            "except* AssertionError:\n        raise\n    except* Exception:\n        pass",
+            1,
+        ),
+    ] {
+        assert_eq!(
+            assertion_count(&format!(
+                "    try:\n        assert f(2) == 4\n    {handlers}\n"
+            )),
+            expected,
+            "{handlers}"
+        );
+    }
+}
+
+#[test]
+fn ordered_handler_unknown_types_keep_an_unresolved_assertion() {
+    for kind in [
+        "ProjectError",
+        "project.Error",
+        "choose_error()",
+        "(ValueError, ProjectError)",
+        "(AssertionError, ProjectError)",
+        "((AssertionError,),)",
+    ] {
+        let test = first(&format!(
+            "from m import f\ndef test_x():\n    try:\n        assert f(2) == 4\n    except {kind}:\n        raise\n    except Exception:\n        pass\n"
+        ));
+        assert_eq!(test.assertions.len(), 1, "{kind}");
+        assert_eq!(
+            test.assertions[0].oracle_strength,
+            crate::domain::OracleStrength::Unknown,
+            "{kind}"
+        );
+        assert_eq!(
+            test.assertion_admission,
+            super::admission::PythonAssertionAdmission::Unresolved,
+            "{kind}"
+        );
+    }
+    // A later unknown handler cannot affect an earlier definite match.
+    assert_eq!(
+        assertion_count(
+            "    try:\n        assert f(2) == 4\n    except AssertionError:\n        pass\n    except ProjectError:\n        raise\n"
+        ),
+        0
+    );
+}
+
+#[test]
+fn ordered_handler_rebound_names_do_not_establish_a_match_or_nonmatch() {
+    for (header, parameters, prefix, kind) in [
+        ("ValueError = AssertionError\n", "", "", "ValueError"),
+        ("class ValueError(Exception): pass\n", "", "", "ValueError"),
+        ("from project import ValueError\n", "", "", "ValueError"),
+        ("", "ValueError", "", "ValueError"),
+        ("", "", "    ValueError = AssertionError\n", "ValueError"),
+        (
+            "",
+            "",
+            "    try:\n        pass\n    except Exception as ValueError:\n        pass\n",
+            "ValueError",
+        ),
+        (
+            "def replace():\n    global ValueError\n    ValueError = AssertionError\n",
+            "",
+            "",
+            "ValueError",
+        ),
+        ("from project import *\n", "", "", "ValueError"),
+        (
+            "globals()['ValueError'] = AssertionError\n",
+            "",
+            "",
+            "ValueError",
+        ),
+        (
+            "__builtins__['ValueError'] = AssertionError\n",
+            "",
+            "",
+            "ValueError",
+        ),
+        (
+            "helper.__globals__['ValueError'] = AssertionError\n",
+            "",
+            "",
+            "ValueError",
+        ),
+        (
+            "frame.f_builtins['ValueError'] = AssertionError\n",
+            "",
+            "",
+            "ValueError",
+        ),
+        (
+            "if (ValueError := AssertionError): pass\n",
+            "",
+            "",
+            "ValueError",
+        ),
+        (
+            "match obj:\n    case ValueError: pass\n",
+            "",
+            "",
+            "ValueError",
+        ),
+        ("Exception = ValueError\n", "", "", "Exception"),
+        (
+            "import builtins\nbuiltins.AssertionError = ValueError\n",
+            "",
+            "",
+            "builtins.AssertionError",
+        ),
+        (
+            "import builtins\nbuiltins = project\n",
+            "",
+            "",
+            "builtins.AssertionError",
+        ),
+        (
+            "import builtins\nalias = builtins\n",
+            "",
+            "",
+            "AssertionError",
+        ),
+        ("", "", "", "builtins.AssertionError"),
+    ] {
+        let source = format!(
+            "from m import f\n{header}\ndef test_x({parameters}):\n{prefix}    try:\n        assert f(2) == 4\n    except {kind}:\n        raise\n    except Exception:\n        pass\n"
+        );
+        let test = first(&source);
+        assert_eq!(test.assertions.len(), 1, "{source}");
+        assert_eq!(
+            test.assertions[0].oracle_strength,
+            crate::domain::OracleStrength::Unknown,
+            "{source}"
+        );
+    }
+}
+
+#[test]
+fn ordered_handler_qualified_builtin_requires_its_unmodified_import() {
+    for (handler, expected) in [("raise", 1), ("pass", 0)] {
+        let source = format!(
+            "import builtins\nfrom m import f\ndef test_x():\n    try:\n        assert f(2) == 4\n    except builtins.AssertionError:\n        {handler}\n    except Exception:\n        pass\n"
+        );
+        assert_eq!(first(&source).assertions.len(), expected, "{source}");
+    }
+}
+
+#[test]
+fn ordered_handler_classification_distinguishes_reraise_swallow_and_unknown() -> Result<(), String>
+{
+    use crate::domain::ExposureClass;
+    let file = Path::new("m.py");
+    let source = "def f(x):\n    return x * 2\n";
+    let owners = super::owners_tests::extract_owners(file, source);
+    assert_eq!(owners.iter().filter(|owner| owner.name == "f").count(), 1);
+    for (kind, body, expected) in [
+        ("AssertionError", "raise", ExposureClass::Exposed),
+        ("AssertionError", "pass", ExposureClass::WeaklyExposed),
+        ("ProjectError", "raise", ExposureClass::StaticUnknown),
+        ("ProjectError", "pass", ExposureClass::StaticUnknown),
+    ] {
+        let tests = parse(&format!(
+            "from m import f\ndef test_x():\n    try:\n        assert f(2) == 4\n    except {kind}:\n        {body}\n    except Exception:\n        pass\n"
+        ));
+        assert_eq!(tests.len(), 1);
+        let finding = super::classify::classify_change_with_source(
+            file,
+            2,
+            "    return x * 2",
+            Some("    return x * 3"),
+            &owners,
+            &tests,
+            Some(source),
+        )
+        .ok_or("fixture must classify its changed return")?;
+        assert_eq!(finding.class, expected, "{kind}: {body}: {finding:?}");
+    }
+    Ok(())
 }

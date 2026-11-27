@@ -30,12 +30,13 @@ use crate::analysis::seams::{
     ExpectedSink, OwnerCallShape, RepoSeam, RequiredDiscriminator, SeamGripClass, SeamKind,
 };
 use crate::analysis::test_grip_evidence::TestGripEvidence;
-use crate::cli::commands::agent_card::agent_card_plain_lines;
 use crate::domain::{
     Confidence, DEFAULT_REPAIR_CARD_MAX_DETAIL_ITEMS, DEFAULT_REPAIR_CARD_MAX_SERIALIZED_BYTES,
     DiagnosticConfidence, DiagnosticFixSite, DiagnosticWitness, DiagnosticWitnessLimitation,
-    MissingDiscriminatorFact, RepairCardSnapshotCurrentness, StageEvidence, StageState,
+    DiscriminatorShape, MissingDiscriminatorFact, RepairCardSnapshotCurrentness, StageEvidence,
+    StageState,
 };
+use crate::output::agent_card::agent_card_plain_lines;
 use crate::output::json::render_pretty_with_newline;
 
 use super::repair_attempt::{RepairAttemptId, RepairAttemptManifest, RepairAttemptState};
@@ -108,6 +109,7 @@ pub(crate) fn measurement_witness() -> DiagnosticWitness {
         probe_family: "predicate_boundary".to_string(),
         changed_expression: "amount >= discount_threshold".to_string(),
         before: Some("amount - 10".to_string()),
+        before_condition: None,
         after: Some("amount - 20".to_string()),
         expected_sink: Some("return_value".to_string()),
         missing_discriminators: vec![MissingDiscriminatorFact {
@@ -116,6 +118,8 @@ pub(crate) fn measurement_witness() -> DiagnosticWitness {
                      boundary itself is not pinned"
                 .to_string(),
             flow_sink: None,
+            shape: DiscriminatorShape::Other,
+            drafted_boundary: None,
         }],
         fix_site: Some(DiagnosticFixSite {
             file: "tests/pricing.rs".to_string(),
@@ -165,6 +169,7 @@ fn measurement_attempt(
         limitations: Vec::new(),
         non_claims: Vec::new(),
         after: None,
+        focused_receipt_evaluation: None,
         last_after_refusal: None,
         after_refusal_count: 0,
         after_refusal_history: Vec::new(),
@@ -233,6 +238,7 @@ fn measure_profile(profile: &SyntheticProfile) -> Result<Value, String> {
         witness: profile.witness.as_ref(),
         finding_id,
         finding_gap_id: None,
+        unreferenced_new_function: false,
         attempt: attempt.as_ref(),
         packet_json: &packet_json,
         repository_head: "abc123",
@@ -244,7 +250,7 @@ fn measure_profile(profile: &SyntheticProfile) -> Result<Value, String> {
     // Measure the default brief a person reads, not the `--verbose` ledger
     // card (#10693). The measurement has no checkout to bind, so the closing
     // packet line carries the typed command's portable display.
-    let human_lines = agent_card_plain_lines(&card, &next_command_display, None, None);
+    let human_lines = agent_card_plain_lines(&card, &next_command_display, None, None, None);
     let human_rendered = format!("{}\n", human_lines.join("\n"));
     let packet_surfaces_seam = {
         let envelope: Value = serde_json::from_str(&packet_json)

@@ -290,3 +290,41 @@ fn init_agents_block_commands_run_with_documented_exits() -> Result<(), String> 
 
     Ok(())
 }
+
+/// The generated instruction must keep policy-bearing artifact replay in its
+/// printed format: requesting agent output makes this combination invalid.
+#[test]
+fn init_agents_policy_artifact_replay_keeps_its_supported_format() -> Result<(), String> {
+    let repo = Repo::fresh_gap_repo()?;
+    let section = repo.init_agents_block()?;
+    assert!(
+        section
+            .contains("only if no `--format` is present; for `--from` plus `--suppression-policy`")
+    );
+    assert!(section.contains("keep it as printed"));
+    let args = [
+        "explain",
+        "--from",
+        "missing-artifact.json",
+        "--suppression-policy",
+        "missing-policy.toml",
+        "probe:missing",
+    ];
+    let ordinary = repo.ripr(&args)?;
+    let mut compact_args = args.to_vec();
+    compact_args.extend(["--format", "agent"]);
+    let compact = repo.ripr(&compact_args)?;
+    let refusal = "cannot apply `--suppression-policy` to a `--from` replay";
+    assert!(
+        !combined_output(&ordinary).contains(refusal),
+        "ordinary route must reach its own input error: {}",
+        combined_output(&ordinary)
+    );
+    assert_eq!(exit_code(&compact), Some(2));
+    assert!(
+        combined_output(&compact).contains(refusal),
+        "compact route must expose the compatibility refusal: {}",
+        combined_output(&compact)
+    );
+    Ok(())
+}

@@ -1,0 +1,2 @@
+tools/repo-policy/tests/shard_verifier_artifact.rs|Command::new|1|shard-verifier-artifact-proof|#14580: Linux-only GNU timeout bounds the actual workflow launch/helper controls with inert ZIP marker executables and fixture GitHub/Git commands; no hosted network, workspace build or production spawn.
+tools/repo-policy/tests/shard_verifier_artifact.rs|use std::process::Command|1|shard-verifier-artifact-proof|#14580: import for the same bounded local executable-transport controls.

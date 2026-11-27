@@ -1,0 +1,18 @@
+# Ordered handler identity and safe refusal (RIPR-SPEC-0238 rule 23).
+[[extend]]
+id = "RIPR-SPEC-0238"
+tests = [
+  "crates/ripr/src/analysis/language/python/unreachable_assertion_tests.rs::ordered_handler_reraise_before_broad_swallow_keeps_assertion",
+  "crates/ripr/src/analysis/language/python/unreachable_assertion_tests.rs::ordered_handler_first_match_controls_swallowing",
+  "crates/ripr/src/analysis/language/python/unreachable_assertion_tests.rs::ordered_handler_unknown_types_keep_an_unresolved_assertion",
+  "crates/ripr/src/analysis/language/python/unreachable_assertion_tests.rs::ordered_handler_rebound_names_do_not_establish_a_match_or_nonmatch",
+  "crates/ripr/src/analysis/language/python/unreachable_assertion_tests.rs::ordered_handler_qualified_builtin_requires_its_unmodified_import",
+  "crates/ripr/src/analysis/language/python/unreachable_assertion_tests.rs::ordered_handler_classification_distinguishes_reraise_swallow_and_unknown",
+]
+code = [
+  "crates/ripr/src/analysis/language/python/oracles.rs",
+  "crates/ripr/src/analysis/language/python/oracles/handler_types.rs",
+  "crates/ripr/src/analysis/language/python/source_utils.rs",
+  "crates/ripr/src/analysis/language/python/module_constants.rs",
+  "crates/ripr/src/analysis/language/python/fact_store.rs",
+]

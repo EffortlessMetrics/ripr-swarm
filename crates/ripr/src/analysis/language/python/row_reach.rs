@@ -714,9 +714,7 @@ fn after_dot_api_is_trusted(code: &str, name_start: usize, ident: &str, test: &P
         return false;
     };
     let before = before.trim_end();
-    let receiver_start = before
-        .rfind(|ch: char| !(ch == '_' || ch.is_ascii_alphanumeric()))
-        .map_or(0, |idx| idx + 1);
+    let receiver_start = trailing_name_start(before, false);
     let receiver = &before[receiver_start..];
     // A longer chain (`a.b.approx`), a call or a subscript result is unknown.
     if receiver.is_empty() || before[..receiver_start].ends_with(['.', ')', ']']) {
@@ -757,6 +755,18 @@ fn is_name_of_owner(owner: &PythonOwner, call_names: &[String], ident: &str) -> 
             .any(|name| name.rsplit('.').next() == Some(ident))
 }
 
+/// The byte offset where the name ending `before` starts: an identifier,
+/// or a dotted chain of them when `dotted`. A non-ASCII char continues the
+/// name (`größe`), so the char that ends the scan is ASCII and one byte wide
+/// (#14089); the name stays whole instead of being cut inside a char.
+fn trailing_name_start(before: &str, dotted: bool) -> usize {
+    before
+        .rfind(|ch: char| {
+            !(ch == '_' || ch.is_ascii_alphanumeric() || !ch.is_ascii() || (dotted && ch == '.'))
+        })
+        .map_or(0, |idx| idx + 1)
+}
+
 /// `module.owner(` where the dotted chain before the call is a recognized
 /// module-qualified spelling of the owner.
 fn qualified_call_is_owner(
@@ -766,9 +776,7 @@ fn qualified_call_is_owner(
     call_names: &[String],
 ) -> bool {
     let before = &code[..name_start];
-    let chain_start = before
-        .rfind(|ch: char| !(ch == '.' || ch == '_' || ch.is_ascii_alphanumeric()))
-        .map_or(0, |idx| idx + 1);
+    let chain_start = trailing_name_start(before, true);
     let qualified = format!("{}{ident}", &before[chain_start..]);
     call_names.contains(&qualified)
 }
@@ -876,4 +884,38 @@ fn code_only(body: &str) -> Option<String> {
         idx += 1;
     }
     Some(out)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{qualified_call_is_owner, trailing_name_start};
+
+    /// #14089: the scan stopped on a non-ASCII identifier char and the slice
+    /// began one byte later, inside it.
+    #[test]
+    fn a_non_ascii_receiver_or_module_chain_stays_whole() {
+        let code = "assert größe.owner(1) == 2";
+        let name_start = code.len() - "owner(1) == 2".len();
+        assert_eq!(&code[name_start..name_start + 5], "owner");
+        assert!(qualified_call_is_owner(
+            code,
+            name_start,
+            "owner",
+            &["größe.owner".to_string()]
+        ));
+        assert!(!qualified_call_is_owner(
+            code,
+            name_start,
+            "owner",
+            &["e.owner".to_string()]
+        ));
+        let before = "x = prüfer";
+        assert_eq!(&before[trailing_name_start(before, false)..], "prüfer");
+        let before = "x = a.grö";
+        assert_eq!(&before[trailing_name_start(before, false)..], "grö");
+        assert_eq!(&before[trailing_name_start(before, true)..], "a.grö");
+        let before = "x = pkg.mod";
+        assert_eq!(&before[trailing_name_start(before, false)..], "mod");
+        assert_eq!(&before[trailing_name_start(before, true)..], "pkg.mod");
+    }
 }

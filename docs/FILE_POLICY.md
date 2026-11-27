@@ -27,8 +27,12 @@ in one Rust-read policy file.
 ### Host applicability of test coverage
 
 `covered_by` remains required and applies on every host. Optional
-`covered_by_unix` and `covered_by_windows` arrays supplement those common
-checks with `cargo test` selectors for the named host family. These scoped
+`covered_by_unix`, `covered_by_windows`, `covered_by_linux`, and
+`covered_by_macos` arrays supplement those common checks with `cargo test`
+selectors for the named host family or OS. Unix selectors apply to Linux and
+macOS as well as other Unix hosts; Linux and macOS selectors apply only to
+that OS. Eligibility comes from the executing xtask host, never a selector
+command's `--target` or an environment override. These scoped
 arrays must be nonempty. Unknown platform fields, duplicate keys, malformed
 TOML, and non-test commands in scoped arrays are rejected.
 
@@ -45,6 +49,14 @@ declared applicability, selected counts, and test identities in
 `target/ripr/reports/file-policy.md`. An inapplicable selector is explicitly
 `not_applicable`, with `selected=not_enumerated`; it provides no coverage on
 that host. Enumeration does not claim the tests executed or passed.
+
+The Contabo Bash route uses `covered_by_linux` for its example tests,
+including the contract JSON selector. The result-policy selector keeps its
+existing Unix scope because it retains static tests on macOS. The required common
+`covered_by = []` declares no portable test coverage. Windows and macOS
+report the Linux-scoped example selectors as not applicable; Linux still rejects an empty or
+failed enumeration. Simulated host controls test eligibility only and do not
+establish native Windows/macOS execution or a successful scheduled lane.
 
 For the portable native consumer, common packet-digest and source controls
 remain required on Windows. The native check/pilot integration target and
@@ -78,8 +90,31 @@ Today, retained programming surfaces are:
   to run in Python-capable agent environments that cannot compile RIPR or
   search PATH for it. Packet staging and oracles stay in Rust/`xtask`.
 
+The exact `tools/activate-rust.sh` and `tools/test-activate-rust.sh` paths are also
+retained for #13123. Activation must source exports into its Bash caller before
+Cargo is usable. Its Bash controls inspect caller options, positional arguments
+and variable attributes directly; `cargo test -p xtask --test rust_activation`
+owns their Unix test integration. This exception does not retain other scripts
+under `tools/`.
+
+The explicit pre-compiler Node provisioner and its isolated controls are retained
+at `tools/provision-dev.cjs` and `tools/provision-dev.test.cjs` (#13437). They
+require the image's checked Node runtime, reuse existing setup authorities, and
+run before Rust or npm dependencies are installed. Their process and network
+surfaces remain subject to the count policies; the exception does not extend to
+neighboring files.
+
 Other repo automation, release helpers, fixture runners, and policy checks
 should be converted to Rust/`xtask` rather than newly allowlisted.
+
+The exact `tools/ci/shard-verifier-artifact.py` and
+`tools/ci/test_shard_verifier_artifact.py` paths are retained for #14580. The
+unprivileged verify job has no Rust toolchain and must validate the downloaded
+`xtask` before executing it. Its stdlib Python controls exercise that bootstrap
+and the actual workflow shell with inert ZIP payloads; the Linux Rust-owned
+`shard_verifier_artifact` integration target runs them during qualification.
+The exception does not retain other scripts under `tools/ci/` or make candidate
+execution suitable for a privileged finalizer.
 
 If the file does not match the current allowlist, update the allowlist with an
 owner and reason in the same PR. If it is a programming-language file, also

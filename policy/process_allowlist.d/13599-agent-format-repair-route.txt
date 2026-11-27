@@ -1,0 +1,2 @@
+crates/ripr/tests/check_agent_repair_route_agree.rs|Command::new|1|13599-agent-format-repair-route|Spawns only the built ripr binary (CARGO_BIN_EXE_ripr) against an isolated fixture repo to compare human, agent and JSON output; fixed argv, no shell or network.
+crates/ripr/tests/check_agent_repair_route_agree.rs|use std::process::Command|1|13599-agent-format-repair-route|Import for the single built-binary spawn above.

@@ -1,0 +1,26 @@
+[[extend]]
+id = "RIPR-SPEC-0240"
+tests = [
+  "crates/ripr/src/analysis/test_grip_evidence/tests/panic_marker.rs::ordinary_panic_token_test_name_stays_unmarked_in_full_and_compact",
+  "crates/ripr/src/analysis/test_grip_evidence/tests/panic_marker.rs::full_and_compact_preserve_real_panic_and_weak_assertion_control",
+  "crates/ripr/src/analysis/test_grip_evidence/tests/panic_marker.rs::framework_uncertainty_preserves_an_existing_real_panic_marker",
+  "crates/ripr/src/output/pilot/tests/panic_outcome.rs::source_mentions_do_not_manufacture_a_panic_limitation",
+  "crates/ripr/tests/task_first_facade/panic_marker.rs::an_ordinary_panic_token_test_name_keeps_pilot_and_brief_recommendations",
+  "crates/ripr/tests/task_first_facade/panic_marker.rs::a_field_snapshot_cannot_replace_an_established_panic_explanation",
+]
+
+[[extend]]
+id = "RIPR-SPEC-0021"
+tests = [
+  "crates/ripr/src/output/pilot/tests/panic_outcome.rs::source_mentions_do_not_manufacture_a_panic_limitation",
+  "crates/ripr/tests/task_first_facade/panic_marker.rs::an_ordinary_panic_token_test_name_keeps_pilot_and_brief_recommendations",
+  "crates/ripr/tests/task_first_facade/panic_marker.rs::a_field_snapshot_cannot_replace_an_established_panic_explanation",
+]
+
+[[extend]]
+id = "RIPR-SPEC-0108"
+tests = [
+  "fixtures/evidence-promotion-honesty-corpus/cases/rust_repo_panic_marker_neutral.json",
+  "fixtures/evidence-promotion-honesty-corpus/cases/rust_repo_panic_marker_collision.json",
+  "fixtures/evidence-promotion-honesty-corpus/cases/rust_repo_panic_marker_coexist.json",
+]

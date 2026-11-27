@@ -1,0 +1,12 @@
+diff --git a/src/lib.rs b/src/lib.rs
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -33,7 +33,7 @@ mod tests {
+     impl quickcheck::Arbitrary for Window {
+         fn arbitrary(g: &mut quickcheck::Gen) -> Self {
+             let a = <u8 as quickcheck::Arbitrary>::arbitrary(g);
+-            Window(a, a.wrapping_add(4))
++            Window(a, a.wrapping_add(7))
+         }
+     }
+ 

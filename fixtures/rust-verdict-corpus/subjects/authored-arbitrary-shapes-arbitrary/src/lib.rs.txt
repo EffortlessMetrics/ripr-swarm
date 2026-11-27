@@ -1,0 +1,15 @@
+pub mod shapes;
+
+#[derive(Clone, Debug)]
+pub struct Pair(pub u8, pub u8);
+
+pub fn gap(pair: &Pair) -> u8 {
+    pair.1.wrapping_sub(pair.0)
+}
+
+impl<'a> arbitrary::Arbitrary<'a> for Pair {
+    fn arbitrary(u: &mut arbitrary::Unstructured<'a>) -> arbitrary::Result<Self> {
+        let a: u8 = u.arbitrary()?;
+        Ok(Pair(a, a.wrapping_add(2)))
+    }
+}

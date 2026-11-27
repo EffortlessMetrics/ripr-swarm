@@ -221,6 +221,22 @@ session-local locators. Consumers MUST treat the identifier as opaque:
 parse nothing out of it beyond the `gap` prefix, and compare it only as a
 whole string.
 
+The readable Rust **finding** ID (`gap:rust:{file}:{owner}:{behavior_kind}:{probe_kind}:{discriminator}`)
+and its seam-side reconstruction share a discriminator. Keep its original
+normalized bytes through 256 bytes inclusive. Above 256 bytes, encode the whole
+normalized discriminator as `sha256~` followed by the 64 lowercase hex digits
+of its SHA-256 digest. The hash input is exactly the previous discriminator,
+including the hex encoding of quoted literal bytes. The readable normalization
+cannot emit `~`, so the two spellings are disjoint. This bounds one field,
+including expressions with many literals or long nonliteral terms. File and
+owner lengths, the full ID length and other report text have separate sizes.
+
+For an existing ID with a discriminator over the limit, rerun `ripr check`
+against the same source and review the new ID before refreshing the affected
+baseline or ledger entry. Use that ID for new receipts. Old receipts retain
+their historical ID and only join artifacts with that exact spelling. There
+is no automatic alias or carry-forward of evidence across the change (#15353).
+
 ## Related-Test Ranking
 
 The record copies ranked related-test evidence from repo exposure. Ranking is
@@ -230,13 +246,20 @@ deterministic and uses:
 2. relation reason priority;
 3. oracle strength;
 4. activation-value overlap;
-5. file, name, and line.
+5. whether the test calls the owner or a function the bounded caller walk
+   says reaches it (#15026);
+6. file, name, and line.
 
 The rank affects the capped `related_tests` array and the nearest related test
 to imitate. It must not change `related_tests_total`, mint a new seam identity,
 or turn a weak relationship into a strong one. Activation overlap is a static
 tie-breaker from values RIPR already observes, for example a direct owner call
 whose predicate-boundary arguments are equal at the changed boundary.
+Owner nearness is a tie-breaker too: among otherwise equal rows, a test that
+reaches the owner through a caller chain is named before a neighbour that
+only sorts earlier by file or name. It never fails open (an unknown
+call or implicit dispatch does not count), and it only reorders rows equal on
+keys 1-4, across files as well as within one.
 
 ## Oracle Semantics
 
@@ -431,7 +454,29 @@ and reason even when every stage remains `yes` or `no`. The raw grip class and
 stage states remain unchanged, while actionability is `static_limitation` and
 the canonical item is a limitation without a focused repair command. Pilot
 and agent brief consumers withhold the seam using the same static-limitation
-decision (#12977).
+decision (#12977). Full and compact producers reserve the exact
+`rust_panic_outcome_unresolved: ` discrimination-summary prefix (#13291).
+The shared marker reader governs admission and projection together: source
+identifiers in another stage or later in a summary cannot manufacture this
+category or an expected-panic warning. The producer preserves its deciding
+test explanation and the original discrimination summary. A later framework
+field-snapshot adaptation preserves an already-established panic marker.
+
+Owner-bound field snapshots use the same rule for the producer-named
+`rust_framework_oracle_unresolved` limitation (#13278). Full and compact
+repository evidence consult the existing framework reader before related-test
+display caps. The record preserves the original field grip class, all five
+stage states and the discrimination reason, even when the stages are concrete.
+The producer reserves the `rust_framework_oracle_unresolved: ` prefix of the
+discrimination summary; the shared reader of this marker requires that exact
+prefix. Merely mentioning the code in a test name or another stage does not
+create a limitation or change selection. Its limitation category is
+`rust_framework_oracle_unresolved`, with route
+`analysis/oracle-semantics-audit-fixes`. Pilot, agent brief and repair admission
+withhold the field seam. An otherwise identical unmarked entry remains
+selectable. Literal redactions that name the changed field keep their gap;
+unread snapshot bytes or configuration receive no positive credit. This rule
+does not apply the marker to return-value seams or other framework idioms.
 
 The activation limitation category `field_assignment_value_unresolved` routes
 to `analysis/field-assignment-value-resolution`. It names a direct field write
@@ -464,9 +509,12 @@ count by itself and it does not claim mutation execution.
 
 | Behavior | Test |
 | --- | --- |
+| Rust finding and seam IDs share the cutoff and digest | `bounded_discriminators_preserve_short_ids_and_name_the_exact_seam` |
+| A long Rust literal yields one ID usable by explain, repair and receipts | `long_literal_gap_round_trips_through_explain_repair_and_receipt` |
 | Record carries identity, evidence path, recommendation, actionability, and calibration placeholder | `evidence_record_carries_identity_path_guidance_and_calibration_placeholder` |
 | Unknown stages become static limitations | `evidence_record_names_static_limitations_from_unknown_stages` |
 | A producer-named panic limitation preserves its stage, state, reason, category and route without reclassifying the seam | `named_panic_limit_withholds_pilot_and_brief_without_reclassifying` |
+| A named field-snapshot limitation alone withholds recommendation and repair while preserving class, stages and reason | `a_named_field_snapshot_limit_alone_withholds_pilot_brief_and_repair` |
 | Opaque classification is static limitation work | `evidence_record_marks_opaque_seams_as_static_limitation_work` |
 | Unsupported direct field assignments use their named limitation and analyzer route | `evidence_record_normalizes_static_limitation_categories` |
 | Repo exposure schema and metrics remain present | `json_carries_schema_version_scope_and_metrics` |
@@ -488,6 +536,7 @@ count by itself and it does not claim mutation execution.
 | Generated canonical identity groups equivalent raw seams | `canonical_gap_identities_report_group_size_for_equivalent_gaps` |
 | Related-test ranking prefers strong oracle imitation targets inside the same relation | `given_related_tests_with_same_relation_when_ranked_then_strong_oracle_precedes_smoke_oracle` |
 | Related-test ranking uses activation overlap before file ordering inside the same relation and oracle strength | `given_related_tests_with_same_relation_and_oracle_when_ranked_then_activation_overlap_precedes_file_order` |
+| Related-test ranking names a test that reaches the owner through a caller chain before name-order neighbours | `related_tests_name_the_owner_caller_test_before_name_order_neighbours` |
 | Fixture contract corpus pins representative record shapes | `evidence_record_contract_fixture_corpus_is_valid` |
 | Fixture contract checker reports record-shape drift | `evidence_record_contract_fixture_guard_reports_missing_fields` |
 | Fixture contract checker requires oracle semantics shape | `evidence_record_contract_fixture_guard_requires_oracle_semantics` |
@@ -503,6 +552,7 @@ count by itself and it does not claim mutation execution.
 
 | Surface | File |
 | --- | --- |
+| Readable Rust finding ID and seam reconstruction | `crates/ripr/src/analysis/language/rust/probe_shape.rs` |
 | Evidence record projection | `crates/ripr/src/output/evidence_record.rs` |
 | Repo exposure JSON attachment | `crates/ripr/src/output/repo_exposure.rs` |
 | Agent seam packet projection | `crates/ripr/src/output/agent_seam_packets.rs` |

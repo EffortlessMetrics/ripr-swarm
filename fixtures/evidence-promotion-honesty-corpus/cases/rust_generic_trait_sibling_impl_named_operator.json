@@ -1,0 +1,33 @@
+{
+  "id": "rust_generic_trait_sibling_impl_named_operator",
+  "language": "rust",
+  "tier": "pure",
+  "source_fixture": "fixtures/rust_generic_trait_sibling_impl_named_operator",
+  "vector": "generic_trait_sibling_impl_named_operator_selects_sibling",
+  "probe_family": "call_deletion",
+  "assertions": [
+    {
+      "type": "must_not_report_clean"
+    },
+    {
+      "type": "expected_finding_count",
+      "count": 1
+    },
+    {
+      "type": "must_not_promote"
+    },
+    {
+      "type": "expected_class",
+      "class": "reachable_unrevealed"
+    },
+    {
+      "type": "expected_related_test",
+      "name": "adding_raw_units_extends_the_length",
+      "file": "src/lib.rs",
+      "line": 26,
+      "kind": "exact_value",
+      "strength": "strong",
+      "relation_reason": "weak_token_substring"
+    }
+  ]
+}

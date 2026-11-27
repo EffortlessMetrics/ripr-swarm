@@ -1,10 +1,10 @@
-# Remainder of #5319: Show Status one surface; hide unavailable status item.
+# Remainder of #5319: Show Status one surface; serverUnavailable visibility revised by #13638.
 [[extend]]
 id = "RIPR-SPEC-0049"
 tests = [
   "editors/vscode/test/suite/status_render.test.ts::every status kind has an explicit visibility",
   "editors/vscode/test/suite/status_render.test.ts::opens the output panel once and raises no notification",
-  "editors/vscode/test/suite/extension.test.ts::main status bar visibility hides disabled and serverUnavailable and keeps noWorkspace",
+  "editors/vscode/test/suite/extension.test.ts::main status bar visibility hides disabled and keeps serverUnavailable and noWorkspace",
 ]
 code = [
   "editors/vscode/src/statusRender.ts",

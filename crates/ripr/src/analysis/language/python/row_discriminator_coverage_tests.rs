@@ -5,11 +5,7 @@ use super::row_discriminator_coverage::{
 use crate::domain::{MissingDiscriminatorFact, OracleKind, OracleStrength, ProbeFamily};
 
 fn fact(value: &str) -> MissingDiscriminatorFact {
-    MissingDiscriminatorFact {
-        value: value.to_string(),
-        reason: "test".to_string(),
-        flow_sink: None,
-    }
+    MissingDiscriminatorFact::equality_spelled(value.to_string(), "test".to_string(), None)
 }
 
 #[test]

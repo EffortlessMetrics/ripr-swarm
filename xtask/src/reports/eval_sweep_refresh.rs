@@ -42,10 +42,12 @@
 //!   infrastructure, parse, timeout, unsupported, partial, and stale outcomes
 //!   all stay rows in the candidate denominator under the owned 0.3 status
 //!   vocabulary; infrastructure failures at or after materialization (cache
-//!   creation, analysis spawn, raw retention, binary-identity drift) are
+//!   creation, analysis spawn, first-pass raw retention, binary-identity drift) are
 //!   contained as typed `tempfail` rows naming their cause, so the route
 //!   ALWAYS produces the full candidate receipt denominator; a failed row
-//!   retains its available evidence and can never count as complete.
+//!   retains its available evidence and can never count as complete. A repeat
+//!   retention failure preserves the retained first pass but withdraws the
+//!   comparison, so dropping a run cannot improve the gate.
 //! - Terminal states stay distinct: `complete`/`partial`/`parse-failed`/
 //!   `timed-out`/`crashed`/`unsupported`/`tempfail`/`stale` are derived from
 //!   producer facts (rail-enforced timeout, exit status, captured JSON,
@@ -106,6 +108,8 @@ use super::eval_sweep_check::{
     validate_run_receipt,
 };
 use crate::run::{capture_bytes_in_dir_with_timeout, capture_output_with_timeout};
+
+mod retention;
 
 const DEFAULT_MANIFEST: &str = "fixtures/python-eval-sweep/manifest.json";
 const DEFAULT_CHECKOUT_ROOT: &str = "target/ripr/eval-sweep/checkouts";
@@ -1410,18 +1414,16 @@ fn run_stability_pass(
     timeout: Duration,
     subject_id: &str,
     first: &AnalysisPass,
-) -> StabilityResult {
+) -> retention::StabilityAttempt {
     // Fail-closed at the owner: only a complete first result may enter the
     // repeat phase at all. Equal gap sets of two failures would otherwise
     // read as `stable`; a non-complete first result never runs a repeat and
     // never claims stability, whatever the call site does.
     if !matches!(first.status, RunStatus::Complete) {
-        return StabilityResult::NotCompared {
-            limitation: format!(
-                "first pass ended in status `{}`; the stability pass runs only where the first result is complete, so no repeat is spent and no stability is claimed",
-                first.status.as_str()
-            ),
-        };
+        return retention::StabilityAttempt::not_started(format!(
+            "first pass ended in status `{}`; the stability pass runs only where the first result is complete, so no repeat is spent and no stability is claimed",
+            first.status.as_str()
+        ));
     }
     let second = match run_analysis_pass(
         binary,
@@ -1433,12 +1435,12 @@ fn run_stability_pass(
     ) {
         Ok(pass) => pass,
         Err(error) => {
-            return StabilityResult::NotCompared {
-                limitation: format!("stability pass could not run: {error}"),
-            };
+            return retention::StabilityAttempt::capture_failed(format!(
+                "stability pass could not run: {error}"
+            ));
         }
     };
-    compare_passes(first, second)
+    retention::StabilityAttempt::captured(first, second)
 }
 
 /// Pure repeat decision over a complete first pass and its second pass: a
@@ -1872,6 +1874,9 @@ struct SubjectExecution {
     stability_performed: bool,
     stability_limitation: Option<String>,
     output_identity_stable: Option<bool>,
+    /// Retained diagnostic output from a repeat that could not compare.
+    /// Successful comparisons keep their existing row-level digest binding.
+    retained_repeat: Option<retention::RetainedRepeat>,
     /// The honest config identity detected for this subject's tree.
     config_profile: String,
     /// The subject-root config file's out-relative path, when one exists.
@@ -1883,8 +1888,9 @@ struct SubjectExecution {
     /// working-set cap); `None` when the walk was complete or never ran.
     corpus_limitation: Option<String>,
     /// A named infrastructure failure contained at this subject (cache
-    /// creation, spawn, raw retention, binary-identity drift): the row is a
-    /// typed `tempfail` and the execution receipt names the cause.
+    /// creation, spawn, raw retention, binary-identity drift). Without retained
+    /// first-pass evidence the row is `tempfail`; repeat retention failure
+    /// preserves that first pass with its comparison unavailable.
     infrastructure_limitation: Option<String>,
 }
 
@@ -1942,7 +1948,7 @@ fn assemble_execution_receipt(
     let subjects: Vec<Value> = executions
         .iter()
         .map(|execution| {
-            json!({
+            let mut subject = json!({
                 "id": execution.subject_id,
                 "status": execution.row.status,
                 "materialization": {
@@ -1969,7 +1975,11 @@ fn assemble_execution_receipt(
                     "limitation": execution.stability_limitation,
                 },
                 "infrastructure_limitation": execution.infrastructure_limitation,
-            })
+            });
+            if let Some(retained) = &execution.retained_repeat {
+                subject["stability"]["retained_output"] = retained.to_json(&execution.subject_id);
+            }
+            subject
         })
         .collect();
     json!({
@@ -2073,8 +2083,8 @@ struct CandidateOut {
 }
 
 /// Contains a post-materialization infrastructure failure (cache creation,
-/// analysis spawn, raw retention, binary-identity drift) at its subject: the
-/// row is a typed `tempfail` assembled from the verified facts with no
+/// analysis spawn, first-pass raw retention, binary-identity drift) at its
+/// subject: the row is a typed `tempfail` assembled from the verified facts with no
 /// captured pass — the route ALWAYS produces the full eight-row candidate
 /// denominator, and the execution receipt names the cause. Captured bytes
 /// whose retention failed are not digested (digests bind retained bytes).
@@ -2104,6 +2114,7 @@ fn infrastructure_failure_execution(context: ReadyContext, limitation: String) -
         stability_performed: false,
         stability_limitation: None,
         output_identity_stable: None,
+        retained_repeat: None,
         config_profile: context.config_profile,
         subject_config_path: context.subject_config_path,
         corpus_state: corpus_selection_state(context.corpus),
@@ -2154,6 +2165,7 @@ fn refresh_subject(
                 stability_performed: false,
                 stability_limitation: None,
                 output_identity_stable: None,
+                retained_repeat: None,
                 config_profile: CONFIG_PROFILE_UNOBSERVED.to_string(),
                 subject_config_path: None,
                 corpus_state: corpus_selection_state(None),
@@ -2186,6 +2198,7 @@ fn refresh_subject(
                 stability_performed: false,
                 stability_limitation: None,
                 output_identity_stable: None,
+                retained_repeat: None,
                 config_profile: CONFIG_PROFILE_UNOBSERVED.to_string(),
                 subject_config_path: None,
                 corpus_state: corpus_selection_state(None),
@@ -2250,7 +2263,7 @@ fn refresh_subject(
             // Stability runs only where the first result is complete enough
             // for a meaningful comparison (gated again inside the pass).
             let stability = if matches!(first.status, RunStatus::Complete) {
-                let result = run_stability_pass(
+                Some(run_stability_pass(
                     binary,
                     &dir,
                     &diff_absolute,
@@ -2258,86 +2271,11 @@ fn refresh_subject(
                     timeout,
                     id,
                     &first,
-                );
-                if let StabilityResult::Compared {
-                    repeat_stdout,
-                    repeat_stderr,
-                    ..
-                } = &result
-                    && let Err(error) =
-                        write_repeat_raw_output(staging, id, repeat_stdout, repeat_stderr)
-                {
-                    return infrastructure_failure_execution(
-                        context(),
-                        format!(
-                            "the repeat pass ran but its raw evidence could not be retained under the candidate tree: {error}"
-                        ),
-                    );
-                }
-                Some(result)
+                ))
             } else {
                 None
             };
-
-            // Binary identity re-verification after THIS subject's runs: a
-            // concurrent rebuild is a typed tempfail row disposition named in
-            // the execution receipt — never a silent stale identity, and the
-            // captured passes are discarded rather than attributed to an
-            // unknown binary.
-            if let Some(drift) = binary_identity_drift(binary) {
-                return infrastructure_failure_execution(context(), drift);
-            }
-
-            let row = assemble_row(RowInputs {
-                subject,
-                binary,
-                diff_portable: &subject.synthetic_diff,
-                diff_digest: Some(diff_digest),
-                materialization: &Materialization::Materialized {
-                    dir: dir.clone(),
-                    source,
-                },
-                first: Some(&first),
-                stability: stability.as_ref(),
-                corpus: Some(&corpus),
-                config_profile: &config_profile,
-            });
-            let analysis_limitations = analysis_limitations(&first);
-            let (stability_performed, stability_limitation, output_identity_stable) =
-                match &stability {
-                    Some(StabilityResult::Compared {
-                        output_identity_stable,
-                        ..
-                    }) => (true, None, Some(*output_identity_stable)),
-                    Some(StabilityResult::NotCompared { limitation }) => {
-                        (true, Some(limitation.clone()), None)
-                    }
-                    None => (
-                        false,
-                        Some(format!(
-                            "first pass ended in status `{}`; a stability comparison needs a complete first pass",
-                            first.status.as_str()
-                        )),
-                        None,
-                    ),
-                };
-            SubjectExecution {
-                subject_id: id.clone(),
-                row,
-                materialization_state: "materialized",
-                materialization_source: Some(source),
-                materialization_limitation: None,
-                analysis_complete: Some(first.complete),
-                analysis_limitations,
-                stability_performed,
-                stability_limitation,
-                output_identity_stable,
-                config_profile,
-                subject_config_path,
-                corpus_state: corpus_selection_state(Some(&corpus)),
-                corpus_limitation: corpus.limitation.clone(),
-                infrastructure_limitation: None,
-            }
+            retention::finish_subject_analysis(context(), first, stability, staging)
         }
     }
 }
@@ -2389,7 +2327,8 @@ fn write_raw_output(
 /// Retains the stability pass's raw stdout AND stderr under
 /// `<staging>/raw/<id>/` (`pass2-stdout.txt` / `pass2-stderr.txt`):
 /// SPEC-0086's retention contract covers each pass, so the second pass keeps
-/// both streams and binds the stderr digest into the row's `repeat` block.
+/// both streams. Comparisons bind stderr in the row's `repeat` block;
+/// non-comparable captures bind both streams in the execution receipt.
 fn write_repeat_raw_output(
     staging: &Path,
     subject_id: &str,
@@ -2565,6 +2504,8 @@ fn render_report_markdown(exec_receipt: &Value) -> String {
 mod python_eval_sweep_refresh {
     use super::super::eval_sweep_check::check_artifacts;
     use super::*;
+
+    mod repeat_retention;
 
     const DIGEST_ONE: &str = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
     const VALID_SHA_A: &str = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
@@ -3644,6 +3585,7 @@ mod python_eval_sweep_refresh {
             stability_performed: true,
             stability_limitation: None,
             output_identity_stable: Some(true),
+            retained_repeat: None,
             config_profile: CONFIG_PROFILE_SUBJECT.to_string(),
             subject_config_path: Some("ripr.toml".to_string()),
             corpus_state: "selected",
@@ -3750,6 +3692,7 @@ mod python_eval_sweep_refresh {
                 stability_performed: stability.is_some(),
                 stability_limitation: None,
                 output_identity_stable: None,
+                retained_repeat: None,
                 config_profile: CONFIG_PROFILE_SUBJECT.to_string(),
                 subject_config_path: None,
                 corpus_state: corpus_selection_state(None),
@@ -3908,6 +3851,7 @@ mod python_eval_sweep_refresh {
                 stability_performed: stability.is_some(),
                 stability_limitation: None,
                 output_identity_stable: None,
+                retained_repeat: None,
                 config_profile: CONFIG_PROFILE_SUBJECT.to_string(),
                 subject_config_path: None,
                 corpus_state: "selected",
@@ -3944,11 +3888,11 @@ mod python_eval_sweep_refresh {
                 &first,
             );
             assert!(
-                matches!(&decision, StabilityResult::NotCompared { limitation }
+                matches!(&decision.result, StabilityResult::NotCompared { limitation }
                     if limitation.contains("runs only where the first result is complete")),
                 "{name}: bounded first pass must not reach a repeat"
             );
-            let (row_status, gate) = gate_of(&first, Some(&decision));
+            let (row_status, gate) = gate_of(&first, Some(&decision.result));
             assert_ne!(row_status, "complete", "{name}");
             assert_ne!(gate.as_deref(), Some("pass"), "{name}: bounded first pass");
         }
@@ -4051,7 +3995,7 @@ mod python_eval_sweep_refresh {
                 "s",
                 &first,
             );
-            match result {
+            match result.result {
                 StabilityResult::NotCompared { limitation } => {
                     assert!(
                         limitation.contains(status.as_str()),

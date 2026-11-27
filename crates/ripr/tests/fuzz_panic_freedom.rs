@@ -27,6 +27,14 @@ const CASE_DEADLINE: Duration = Duration::from_mins(1);
 const MAX_INPUT_BYTES: usize = 400_000;
 const DEFAULT_CASES: u32 = 12;
 
+#[path = "fuzz_panic_freedom/seeds.rs"]
+mod seeds;
+#[cfg(feature = "lang-python")]
+use seeds::PYTHON_CASES;
+use seeds::RUST_CASES;
+#[cfg(feature = "lang-typescript")]
+use seeds::TS_CASES;
+
 const RUST_SEED: &str = r##"use std::collections::BTreeMap;
 
 /// Doc comment with a 'quote and a "string.
@@ -649,34 +657,37 @@ proptest! {
     #![proptest_config(config())]
 
     #[test]
-    fn rust_sources_never_panic_or_hang(edits in edits()) {
-        source_case(CARGO_TOML, "Cargo.toml", RUST_TOML, "src/lib.rs", RUST_SEED, RUST_EDITED, &edits)?;
+    fn rust_sources_never_panic_or_hang(seed_index in 0usize..RUST_CASES.len(), edits in edits()) {
+        let (seed, edited) = RUST_CASES[seed_index];
+        source_case(CARGO_TOML, "Cargo.toml", RUST_TOML, "src/lib.rs", seed, edited, &edits)?;
     }
 
     #[cfg(feature = "lang-python")]
     #[test]
-    fn python_sources_never_panic_or_hang(edits in edits()) {
+    fn python_sources_never_panic_or_hang(seed_index in 0usize..PYTHON_CASES.len(), edits in edits()) {
+        let (seed, edited) = PYTHON_CASES[seed_index];
         source_case(
             "[project]\nname = \"fuzz-subject\"\nversion = \"0.0.0\"\n",
             "pyproject.toml",
             PYTHON_TOML,
             "pkg/account.py",
-            PYTHON_SEED,
-            PYTHON_EDITED,
+            seed,
+            edited,
             &edits,
         )?;
     }
 
     #[cfg(feature = "lang-typescript")]
     #[test]
-    fn typescript_sources_never_panic_or_hang(edits in edits()) {
+    fn typescript_sources_never_panic_or_hang(seed_index in 0usize..TS_CASES.len(), edits in edits()) {
+        let (seed, edited) = TS_CASES[seed_index];
         source_case(
             "{\"name\":\"fuzz-subject\",\"version\":\"0.0.0\"}",
             "package.json",
             TS_TOML,
             "src/account.ts",
-            TS_SEED,
-            TS_EDITED,
+            seed,
+            edited,
             &edits,
         )?;
     }
@@ -745,14 +756,13 @@ fn mutations_change_the_input_and_stay_bounded() {
 /// without reaching analysis.
 #[test]
 fn unmutated_seeds_reach_analysis() -> Result<(), String> {
-    let cases: Vec<(&str, &str, &str, &str, &str, &str)> = vec![
+    let cases = vec![
         (
             CARGO_TOML,
             "Cargo.toml",
             RUST_TOML,
             "src/lib.rs",
-            RUST_SEED,
-            RUST_EDITED,
+            &RUST_CASES[..],
         ),
         #[cfg(feature = "lang-python")]
         (
@@ -760,8 +770,7 @@ fn unmutated_seeds_reach_analysis() -> Result<(), String> {
             "pyproject.toml",
             PYTHON_TOML,
             "pkg/account.py",
-            PYTHON_SEED,
-            PYTHON_EDITED,
+            &PYTHON_CASES[..],
         ),
         #[cfg(feature = "lang-typescript")]
         (
@@ -769,31 +778,39 @@ fn unmutated_seeds_reach_analysis() -> Result<(), String> {
             "package.json",
             TS_TOML,
             "src/account.ts",
-            TS_SEED,
-            TS_EDITED,
+            &TS_CASES[..],
         ),
     ];
-    for (manifest, manifest_name, ripr_toml, path, seed, edited) in cases {
-        let diff = replace_diff(path, seed, edited.as_bytes());
-        let workspace = Workspace::create(&[
-            (manifest_name, manifest.as_bytes()),
-            (path, edited.as_bytes()),
-            ("ripr.toml", ripr_toml.as_bytes()),
-            ("fuzz.diff", &diff),
-        ])?;
-        let output = workspace
-            .command()
-            .output()
-            .map_err(|error| format!("spawn ripr failed: {error}"))?;
-        if !output.status.success() {
-            return Err(format!(
-                "{path}: baseline refused: {}",
-                String::from_utf8_lossy(&output.stderr)
-            ));
-        }
-        let report = String::from_utf8_lossy(&output.stdout);
-        if !report.contains("\"findings\": [\n    {") {
-            return Err(format!("{path}: baseline produced no findings"));
+    for (manifest, manifest_name, ripr_toml, path, seeds) in cases {
+        for (seed_index, (seed, edited)) in seeds.iter().enumerate() {
+            let diff = replace_diff(path, seed, edited.as_bytes());
+            let workspace = Workspace::create(&[
+                (manifest_name, manifest.as_bytes()),
+                (path, edited.as_bytes()),
+                ("ripr.toml", ripr_toml.as_bytes()),
+                ("fuzz.diff", &diff),
+            ])?;
+            let output = workspace
+                .command()
+                .output()
+                .map_err(|error| format!("spawn ripr failed: {error}"))?;
+            if !output.status.success() {
+                return Err(format!(
+                    "{path}: baseline refused: {}",
+                    String::from_utf8_lossy(&output.stderr)
+                ));
+            }
+            judge_output(output.status.code(), &output.stdout)?;
+            let report: serde_json::Value = serde_json::from_slice(&output.stdout)
+                .map_err(|error| format!("{path} seed {seed_index}: invalid JSON: {error}"))?;
+            if report["findings"]
+                .as_array()
+                .is_none_or(|rows| rows.is_empty())
+            {
+                return Err(format!(
+                    "{path} seed {seed_index}: baseline produced no findings"
+                ));
+            }
         }
     }
     Ok(())

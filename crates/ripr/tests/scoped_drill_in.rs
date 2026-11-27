@@ -109,14 +109,21 @@ fn scoped_check_prints_path_exclude_drill_ins_that_replay() -> Result<(), String
     let diff = diff.display().to_string();
     let cap = [("RIPR_MAX_DIFF_CHANGED_RUST_LINES", "5")];
 
-    let refused = run_ripr(
-        &["check", "--root", &root, "--diff", &diff, "--quiet"],
+    // #13641: unscoped, the cap leaves the over-limit `src/big.rs` out of a
+    // partial scope instead of refusing; the scoped drill-ins below replay
+    // the narrowed run.
+    let partial = run_ripr(
+        &[
+            "check", "--root", &root, "--diff", &diff, "--json", "--quiet",
+        ],
         &cap,
     )?;
-    let refused_err = String::from_utf8_lossy(&refused.stderr);
+    let partial_stdout = String::from_utf8_lossy(&partial.stdout);
     assert!(
-        !refused.status.success() && refused_err.contains("diff_scope_oversized"),
-        "unscoped check must trip the cap: {refused_err}"
+        partial.status.success()
+            && partial_stdout.contains("\"over_limit_files\": [\"src/big.rs\"]"),
+        "unscoped check must leave the over-limit file out: {partial_stdout}\n{}",
+        String::from_utf8_lossy(&partial.stderr)
     );
 
     let listed = run_ripr(
@@ -201,29 +208,43 @@ fn scoped_check_prints_path_exclude_drill_ins_that_replay() -> Result<(), String
         String::from_utf8_lossy(&listed_again.stderr)
     );
 
-    // Discriminating negative: drop `--exclude` from the printed argv and
-    // the same explain hits the cap the scoped check avoided.
-    let mut words = printed_words(&explain)?;
+    // #13641: dropping `--exclude` from the printed argv no longer trips the
+    // cap — the over-limit `src/big.rs` is left out of a partial scope — so
+    // the explain still resolves the `src/lib.rs` finding.
+    let words = printed_words(&explain)?;
     let mut stripped = Vec::new();
+    let mut retargeted = Vec::new();
     let mut index = 0usize;
     while index < words.len() {
         if words[index] == "--exclude" {
+            retargeted.push("--exclude".to_string());
+            retargeted.push("src/lib.rs".to_string());
             index += 2;
             continue;
         }
-        stripped.push(std::mem::take(&mut words[index]));
+        stripped.push(words[index].clone());
+        retargeted.push(words[index].clone());
         index += 1;
     }
     assert!(
-        stripped.len() < printed_words(&explain)?.len(),
+        stripped.len() < words.len(),
         "the printed explain must have contained --exclude: {explain}"
     );
     let unscoped_args: Vec<&str> = stripped.iter().skip(1).map(String::as_str).collect();
     let unscoped = run_ripr_in(Some(&decoy), &unscoped_args, &cap)?;
     let unscoped_err = String::from_utf8_lossy(&unscoped.stderr);
     assert!(
-        !unscoped.status.success() && unscoped_err.contains("diff_scope_oversized"),
-        "explain without --exclude must trip the cap: {unscoped_err}\nargs: {unscoped_args:?}"
+        unscoped.status.success() && !unscoped_err.contains("diff_scope_oversized"),
+        "explain without --exclude must degrade, not refuse: {unscoped_err}\nargs: {unscoped_args:?}"
+    );
+    // Discriminating negative: the printed scope is load-bearing — the same
+    // explain excluding `src/lib.rs` instead cannot find the finding.
+    let retargeted_args: Vec<&str> = retargeted.iter().skip(1).map(String::as_str).collect();
+    let retargeted_run = run_ripr_in(Some(&decoy), &retargeted_args, &cap)?;
+    let retargeted_err = String::from_utf8_lossy(&retargeted_run.stderr);
+    assert!(
+        !retargeted_run.status.success(),
+        "explain excluding the finding's file must not resolve it: {retargeted_err}\nargs: {retargeted_args:?}"
     );
 
     let _ = std::fs::remove_dir_all(&dir);

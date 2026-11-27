@@ -1,0 +1,181 @@
+{
+  "schema_version": "0.2",
+  "tool": "ripr",
+  "mode": "fast",
+  "root": "fixtures/ts_multi_value_field_change_sibling/input",
+  "config_path": "<cwd>/fixtures/ts_multi_value_field_change_sibling/input/ripr.toml",
+  "summary": {"changed_rust_files":0,"probes":1,"findings":1,"exposed":0,"weakly_exposed":1,"reachable_unrevealed":0,"no_static_path":0,"infection_unknown":0,"propagation_unknown":0,"static_unknown":0,"changed_files_by_language":[{"language":"rust","files":0},{"language":"typescript","files":1}]},
+  "analysis_outcome": {
+    "analysis_complete": true,
+    "outcome": {"schema_version":"0.1","kind":"complete_with_findings","identity":{"repository_identity":null,"root_identity":null,"config_identity":"fnv1a64:4fbb9720aa6abe91","base_revision":null,"input_identity":"sha256:1dc69ba6b73416bc3a8f922f2f17f5ddadc55a4d1f5f03bf528b22a5e9e0845e","snapshot_identity":null,"git_candidate_subject":null},"counts":{"changed_file_count":1,"changed_line_count":2,"candidate_line_count":1,"probe_count":1,"finding_count":1},"limitations":[],"claim_boundary":"Static analysis outcome only; no correctness, test-adequacy, runtime-execution, or merge-readiness claim."}
+  },
+  "findings": [
+    {
+      "id": "probe:src_config.ts:typescript_preview:10b44c74",
+      "canonical_gap_id": "gap:typescript:typescript_preview:10b44c74",
+      "classification": "weakly_exposed",
+      "severity": "warning",
+      "confidence": 0.40,
+      "confidence_basis": [
+        {"code": "preview_stages_not_modeled", "summary": "preview adapter: infection/propagation not modeled (TypeScript)"},
+        {"code": "syntax_first_no_type_resolution", "summary": "syntax-first, no type or import resolution"},
+        {"code": "observation_not_confirmed", "summary": "the assertion is not confirmed to observe the changed value"}
+      ],
+      "confidence_why_capped": "Why capped: preview adapter: infection/propagation not modeled (TypeScript); syntax-first, no type or import resolution; the assertion is not confirmed to observe the changed value. Preview score, not on the same scale as Rust confidence.",
+      "probe": {
+        "id": "probe:src_config.ts:typescript_preview:10b44c74",
+        "family": "field_construction",
+        "delta": "value",
+        "file": "src/config.ts",
+        "line": 8,
+        "expression": "  return { retries: 5, verbose: true, timeout: 30 };",
+        "owner": "typescript:src/config.ts::buildConfig"
+       },
+      "ripr": {
+        "reach": {"state":"yes","confidence":"low","summary":"1 related test(s) found for owner `buildConfig`"},
+        "infect": {"state":"unknown","confidence":"low","summary":"TypeScript preview adapter does not yet model infection."},
+        "propagate": {"state":"unknown","confidence":"low","summary":"TypeScript preview adapter does not yet model propagation."},
+        "observe": {"state":"weak","confidence":"low","summary":"Strongest extracted oracle kind: `exact_value` (rank 5)"},
+        "discriminate": {"state":"weak","confidence":"low","summary":"TypeScript preview adapter: strong oracle found but no assertion's observed_expression flows from the changed sub-expression; observation_unverified — discriminate unknown."}
+       },
+      "evidence_stages": [
+        {"stage":"reach","state":"yes","confidence":"low"},
+        {"stage":"infect","state":"unknown","confidence":"low"},
+        {"stage":"propagate","state":"unknown","confidence":"low"},
+        {"stage":"observe","state":"weak","confidence":"low","basis":[{"code":"observation_not_confirmed","summary":"the assertion is not confirmed to observe the changed value"}]},
+        {"stage":"discriminate","state":"weak","confidence":"low"}
+      ],
+      "evidence_path": ["reach yes: 1 related test(s) found for owner `buildConfig`", "infection unknown: TypeScript preview adapter does not yet model infection.", "propagation unknown: TypeScript preview adapter does not yet model propagation.", "observation weak: Strongest extracted oracle kind: `exact_value` (rank 5)", "discriminator weak: TypeScript preview adapter: strong oracle found but no assertion's observed_expression flows from the changed sub-expression; observation_unverified — discriminate unknown.", "local flow reaches constructed field: return { retries: 5, verbose: true, timeout: 30 }; (line 8)", "related test tests/config.test.ts:3 keeps the default timeout uses strong exact value oracle: expect(...).toBe(...)", "missing discriminator retries == 5: changed TypeScript field/object value at line 8 lacks a concrete preview discriminator"],
+      "flow_sinks": [
+        {"kind":"struct_field","text":"return { retries: 5, verbose: true, timeout: 30 };","line":8}
+      ],
+      "evidence": ["owner: buildConfig", "missing_discriminator: retries == 5", "typescript_oracle_observed: buildConfig().timeout", "typescript_oracle_expected: 30", "typescript_oracle_confidence: high", "typescript_oracle_evidence_ref: tests/config.test.ts:4", "gap_state: unknown", "actionability_category: incomplete_repair_packet", "why_not_actionable: TypeScript preview has owner, related-test, oracle, and probe evidence but lacks a complete repair packet contract", "repair_route: project canonical TypeScript repair packet fields only after verify, receipt, evidence refs, and edit boundaries are available", "missing_actionability_fields: canonical_gap_id, repair_kind, target_test_shape, related_test_or_observer, verify_command, receipt_command, must_not_change, allowed_edit_surface, raw_evidence_refs", "evidence_needed_to_promote: canonical gap identity, repair kind, target test shape, related observer, verify command, receipt command, raw evidence refs, and edit constraints", "raw_evidence_ref: file=src/config.ts;line=8;kind=typescript_preview_probe;source_id=probe:src_config.ts:typescript_preview:10b44c74;owner=buildConfig", "typescript_package_confidence: none", "typescript_package_limitation: typescript_package_root_unresolved", "typescript_package_limitation: typescript_test_runner_unresolved"],
+      "missing": ["propagation_unknown: changed value sinks to the owner return value or constructed object (`5`); all strong assertions observe an unrelated expression, not the changed sink; propagation unknown", "TypeScript preview actionability `unknown` / `incomplete_repair_packet`: TypeScript preview has owner, related-test, oracle, and probe evidence but lacks a complete repair packet contract. Repair route: project canonical TypeScript repair packet fields only after verify, receipt, evidence refs, and edit boundaries are available"],
+      "assertion_texts": {
+      },
+      "activation": {
+        "observed_values": [
+        ],
+        "missing_discriminators": [
+          {
+            "value": "retries == 5",
+            "reason": "changed TypeScript field/object value at line 8 lacks a concrete preview discriminator",
+            "flow_sink": {"kind":"struct_field","text":"return { retries: 5, verbose: true, timeout: 30 };","line":8}
+          }
+        ]
+      },
+      "observed_values": [
+      ],
+      "missing_discriminators": [
+        {
+          "value": "retries == 5",
+          "reason": "changed TypeScript field/object value at line 8 lacks a concrete preview discriminator",
+          "flow_sink": {"kind":"struct_field","text":"return { retries: 5, verbose: true, timeout: 30 };","line":8}
+        }
+      ],
+      "related_tests_total": 1,
+      "related_tests": [
+        {
+          "name": "keeps the default timeout",
+          "file": "tests/config.test.ts",
+          "line": 3,
+          "oracle_strength": "strong",
+          "oracle_kind": "exact_value",
+          "oracle": "expect(...).toBe(...)",
+          "relation_reason": "direct_owner_call",
+          "relation_confidence": "high",
+          "miss": "assertion_not_observing",
+          "why": "asserts, but not on the changed value"
+        }
+      ],
+      "typescript_preview_card": {
+        "authority_boundary": "preview_advisory_only",
+        "bun_cross_language_grip": null,
+        "card_version": "typescript_preview_card.v1",
+        "changed_behavior": "field_construction changed at src/config.ts:8: `return { retries: 5, verbose: true, timeout: 30 };`",
+        "language": "typescript",
+        "language_status": "preview",
+        "limits": [
+          "Syntax-first TypeScript/JavaScript preview evidence only.",
+          "No tsc, tsserver, package graph, Jest/Vitest runtime, mutation execution, generated tests, provider calls, source edits, gate authority, or badge authority.",
+          "This card is advisory and is not a repair packet."
+        ],
+        "missing_discriminator": "retries == 5",
+        "oracle_kind": "exact_value",
+        "oracle_strength": "strong",
+        "owner": "buildConfig",
+        "owner_kind": "function",
+        "probe_family": "field_construction",
+        "related_test": {
+          "file": "tests/config.test.ts",
+          "line": 3,
+          "name": "keeps the default timeout"
+        },
+        "repair_packet_ready": false,
+        "repair_route": "project canonical TypeScript repair packet fields only after verify, receipt, evidence refs, and edit boundaries are available",
+        "source": "check_typescript_preview",
+        "static_limits": [],
+        "suggested_assertion_shape": "Exact-value evidence is present; verify it targets the changed discriminator.",
+        "verify": {
+          "command": null
+        },
+        "why_not_actionable": "TypeScript preview has owner, related-test, oracle, and probe evidence but lacks a complete repair packet contract"
+      },
+      "preview_actionability": {
+        "actionability_category": "incomplete_repair_packet",
+        "authority_boundary": "preview_advisory_only",
+        "evidence_needed_to_promote": "canonical gap identity, repair kind, target test shape, related observer, verify command, receipt command, raw evidence refs, and edit constraints",
+        "gap_state": "unknown",
+        "missing_actionability_fields": [
+          "canonical_gap_id",
+          "repair_kind",
+          "target_test_shape",
+          "related_test_or_observer",
+          "verify_command",
+          "receipt_command",
+          "must_not_change",
+          "allowed_edit_surface",
+          "raw_evidence_refs"
+        ],
+        "missing_graph_legs": [],
+        "raw_evidence_refs": [
+          {
+            "file": "src/config.ts",
+            "kind": "typescript_preview_probe",
+            "leg": null,
+            "line": 8,
+            "owner": "buildConfig",
+            "raw": "file=src/config.ts;line=8;kind=typescript_preview_probe;source_id=probe:src_config.ts:typescript_preview:10b44c74;owner=buildConfig",
+            "sample": null,
+            "source_id": "probe:src_config.ts:typescript_preview:10b44c74"
+          }
+        ],
+        "repair_packet_ready": false,
+        "repair_route": "project canonical TypeScript repair packet fields only after verify, receipt, evidence refs, and edit boundaries are available",
+        "unlock_condition": null,
+        "why_not_actionable": "TypeScript preview has owner, related-test, oracle, and probe evidence but lacks a complete repair packet contract"
+      },
+      "stop_reasons": [],
+      "oracle_kind": "exact_value",
+      "oracle_strength": "strong",
+      "recommended_next_step": "TypeScript preview advisory: add or strengthen a focused assertion for the missing check `retries == 5`; no actionable repair packet is emitted until verify, receipt, and edit-boundary fields are available.",
+      "suggested_next_action": "TypeScript preview advisory: add or strengthen a focused assertion for the missing check `retries == 5`; no actionable repair packet is emitted until verify, receipt, and edit-boundary fields are available.",
+      "language": "typescript",
+      "language_status": "preview",
+      "owner_kind": "function",
+      "source_currentness": "candidate_current"
+    }
+  ],
+  "preview_languages": [
+    {
+      "language": "typescript",
+      "file_count": 1,
+      "sample_paths": ["src/config.ts"],
+      "enabled": true,
+      "analyzed": true,
+      "category": "preview_language_advisory",
+      "why": "preview adapter; advisory; may be incomplete; empty result is not Rust-grade clean"
+    }
+  ],
+  "source_subject": {"digest_algorithm":"sha256","files":[{"path":"src/config.ts","digest":"sha256:636b562570555ba5ba1513aa7db0c69563a5d6bd94cade6ce5004563b423fba6"}]}
+}

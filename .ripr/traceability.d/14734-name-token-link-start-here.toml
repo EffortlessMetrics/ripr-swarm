@@ -1,0 +1,9 @@
+# Registers the Start here related-test key test (#14734) under RIPR-SPEC-0122.
+[[extend]]
+id = "RIPR-SPEC-0122"
+tests = [
+  "crates/ripr/src/output/human/triage.rs::tests::start_here_does_not_rank_a_name_token_link_as_a_related_test",
+]
+code = [
+  "crates/ripr/src/output/human/triage.rs",
+]

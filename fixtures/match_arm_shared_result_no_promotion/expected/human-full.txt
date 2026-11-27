@@ -33,10 +33,10 @@ Static exposure
 Evidence
   - reach yes: Related tests appear to reach route: sibling_proof_arm_is_observed
   - infection weak: No related test call selects arm `"sensor" =>`; observed `kind` values: `"focused-test"`
-  - propagation yes: Changed behavior appears to influence match arm result: "sensor" =>
+  - propagation yes: Changed behavior appears to influence match arm result: "sensor-v2"
   - observation yes: A related test observes a value or effect near the changed behavior
   - discriminator weak: Discriminator unconfirmed: no assertion text references the changed expression
-  - local flow reaches match arm result: "sensor" => (line 3)
+  - local flow reaches match arm result: "sensor-v2" (line 3)
   - related test tests/route.rs:7 sibling_proof_arm_is_observed uses strong exact value oracle: assert_eq!(route("focused-test"), "sensor-v2"); misses: no test input selects arm `"sensor" =>`
   - source assertion argument value "sensor-v2" at line 8
   - source function argument value kind = "focused-test" at line 8

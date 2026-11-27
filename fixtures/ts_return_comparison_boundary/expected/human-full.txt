@@ -89,5 +89,4 @@ Drill in:
   ripr explain --root <cwd>/fixtures/ts_return_comparison_boundary/input --diff <cwd>/fixtures/ts_return_comparison_boundary/diff.patch --mode fast probe:src_pricing.ts:typescript_preview:060ff85c
   ripr context --root <cwd>/fixtures/ts_return_comparison_boundary/input --diff <cwd>/fixtures/ts_return_comparison_boundary/diff.patch --mode fast --at probe:src_pricing.ts:typescript_preview:060ff85c
 
-
 Note: 1 TypeScript file analyzed under preview support — preview evidence is advisory and may be incomplete. Treat its findings as advisory, not Rust-grade.

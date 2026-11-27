@@ -1,6 +1,6 @@
 # RIPR-SPEC-0395: Apple shared project facts and separate Swift and Objective-C evidence contracts
 
-Status: proposed
+Status: accepted
 
 Owner: language-adapter / apple epic
 

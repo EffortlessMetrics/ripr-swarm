@@ -400,7 +400,11 @@ pub(crate) fn object_each_assertions(
                 }
                 locals.push((local.name.to_string(), key.name.to_string()));
             }
-            if locals.is_empty() {
+            if locals.is_empty()
+                || super::table_rows::callback_writes_row(callback, |p| {
+                    locals.iter().any(|(name, _)| name == p)
+                })
+            {
                 return None;
             }
             destructured_case_assertions(callback_span, body_span, &locals, &rows, source, bindings)
@@ -768,7 +772,9 @@ pub(crate) fn container_read_is_direct(
     // Callee: the identifier run before `(`.
     let head = body[..open].trim_end();
     let name_start = head
-        .rfind(|c: char| !(c.is_ascii_alphanumeric() || c == '_' || c == '$'))
+        // A non-ASCII char continues the identifier (`größe`), so the char
+        // found here is ASCII and one byte wide (#14089).
+        .rfind(|c: char| !(c.is_ascii_alphanumeric() || c == '_' || c == '$' || !c.is_ascii()))
         .map_or(0, |at| at + 1);
     let name = &head[name_start..];
     if name.is_empty() {
@@ -838,5 +844,25 @@ mod tests {
         assert!(!direct("x.expect(f(t.input)).toEqual(1)", "t.input"));
         assert!(!direct("expect(f(g(t.input))).toEqual(1)", "t.input"));
         assert!(!direct("expect(f((t.input).pop())).toEqual(1)", "t.input"));
+    }
+
+    /// #14089: the callee scan stopped on a non-ASCII identifier char and
+    /// the slice began one byte later, inside it.
+    #[test]
+    fn container_read_under_a_non_ascii_callee_is_direct() {
+        for callee in ["größe", "prüfe", "owner"] {
+            let body = format!("expect({callee}(t.out)).toEqual(1)");
+            let read_start = body.find("t.out").unwrap_or(0);
+            assert!(read_start > 0, "{body}");
+            assert!(
+                container_read_is_direct(
+                    &body,
+                    read_start,
+                    read_start + "t.out".len(),
+                    Some(read_start - 1)
+                ),
+                "{body}"
+            );
+        }
     }
 }

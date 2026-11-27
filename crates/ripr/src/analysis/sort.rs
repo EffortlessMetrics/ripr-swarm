@@ -88,9 +88,9 @@ fn is_core_python_repair_family(family: &ProbeFamily) -> bool {
 mod tests {
     use super::*;
     use crate::domain::{
-        ActivationEvidence, Confidence, DeltaKind, FindingCanonicalGap, MissingDiscriminatorFact,
-        OwnerKind, Probe, ProbeFamily, ProbeId, RevealEvidence, RiprEvidence, SourceLocation,
-        StageEvidence, StageState, StaticLimitKind, SymbolId,
+        ActivationEvidence, Confidence, DeltaKind, DiscriminatorShape, FindingCanonicalGap,
+        MissingDiscriminatorFact, OwnerKind, Probe, ProbeFamily, ProbeId, RevealEvidence,
+        RiprEvidence, SourceLocation, StageEvidence, StageState, StaticLimitKind, SymbolId,
     };
 
     fn stage() -> StageEvidence {
@@ -104,6 +104,7 @@ mod tests {
             id: id.to_string(),
             canonical_gap: None,
             probe: Probe {
+                before_condition: None,
                 id: ProbeId(format!("probe-{id}")),
                 location: SourceLocation::new(file, line, 1),
                 owner: None,
@@ -180,6 +181,8 @@ mod tests {
                     value: "amount == threshold".to_string(),
                     reason: "predicate boundary equality is not asserted".to_string(),
                     flow_sink: None,
+                    shape: DiscriminatorShape::Boundary,
+                    drafted_boundary: None,
                 });
         }
         finding

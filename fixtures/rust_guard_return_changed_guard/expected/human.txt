@@ -1,0 +1,51 @@
+ripr static RIPR exposure analysis
+mode: fast
+root: fixtures/rust_guard_return_changed_guard/input
+
+Summary: 3 changed behaviors checked: 0 appear noticed by tests, 3 partly noticed, 0 reached but not noticed, 0 no test path. 3 found, 0 suppressed by your settings (1 base-side evidence, not candidate edit targets)
+
+Analysis outcome: findings below (analysis complete)
+  Counts: 1 changed file(s), 4 changed line(s), 2 candidate line(s), 3 changed behavior(s) checked, 3 finding(s)
+
+Start here:
+  State: a test gap to inspect or repair
+  Safe next action: follow the Next step below; this is static advisory evidence only
+  File: ./src/lib.rs:2
+  Static exposure: weak (severity: warning, confidence 0.92)
+  Why weak: a related test reaches this change, but no assertion tells the old and new behavior apart
+  Gap ID (for scripts): gap:rust:src/lib.rs:rate:predicate_boundary:predicate:t==200
+  Changed behavior: t > 200
+  Missing check: t == 200
+  Related test: tests/rate.rs:4 three_hundred_rates_sixty (no test input reaches `t == 200`)
+  Next step: Add boundary tests for below, equal, and above the changed threshold with exact assertions
+  Evidence: reach yes · infection weak · propagation yes · observation yes · assertion missing
+    Stages (static evidence): reach = test path to changed owner; infection = inputs can activate change;
+      propagation = changed effect reaches output; observation = related test/assertion evidence;
+      assertion = a test assertion tells intended from wrong behavior
+    States: yes = evidence found; weak = partial evidence; no = evidence not found; unknown/opaque = analysis limited;
+      missing = a needed test input or assertion is absent; not established = assertion unconfirmed; not applicable = stage unused
+    Summary terms: changed behavior = one change point ripr checked; appear noticed by tests = a test appears to notice the change;
+      partly noticed = tests appear to notice it only partly; reached but not noticed = tests reach it but nothing appears to notice;
+      no test path = no test path found; unclear = analysis limited, not a verdict;
+      found = listed for review; suppressed by your settings = hidden by your suppression policy;
+      base-side = evidence from the old code, not an edit target; candidate line = changed line ripr considers
+    - reach yes: Related tests appear to reach rate: three_hundred_rates_sixty
+    - infection weak: Related tests contain input values, but the equality-boundary check is missing
+    - 7 more detail line(s) in --format human-full
+
+Next: drill into the top finding:
+  (finding id, for explain/context)
+  ripr explain --root <cwd>/fixtures/rust_guard_return_changed_guard/input --diff <cwd>/fixtures/rust_guard_return_changed_guard/diff.patch --mode fast probe:src_lib.rs:predicate:b21d8bbc
+  ripr context --root <cwd>/fixtures/rust_guard_return_changed_guard/input --diff <cwd>/fixtures/rust_guard_return_changed_guard/diff.patch --mode fast --at probe:src_lib.rs:predicate:b21d8bbc
+  no repair start offered: ripr found 3 spots in this finding's file, but could not tie one to this finding's changed line, so it cannot pick one for you; `ripr pilot` lists them, or follow the Next step above
+Write a test for it:
+  ripr agent stub --root <cwd>/fixtures/rust_guard_return_changed_guard/input --at src/lib.rs:2 --kind predicate
+
+Hidden:
+  2 finding(s) omitted: 1 lower-priority, 1 base-side evidence (not candidate edit targets).
+    - ./src/lib.rs:2 (weak, base-side); kind: predicate; reason: Missing check value: t == 500
+    - ./src/lib.rs:3 (weak, lower-priority candidate); kind: return_value; reason: No assertion was tied to the changed value
+  Hidden classes:
+    weak = tests reach it but check it only loosely
+  Full evidence: rerun with --format human-full
+  Machine data: rerun with --format json

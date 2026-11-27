@@ -29,12 +29,18 @@ Linked PRs:
 
 - None yet
 
+> Update (#13673, brief schema `0.2`): the per-seam `verification.before_snapshot_command`,
+> `verification.after_snapshot_command` and `verification.verify_command` moved
+> to the brief-level `next.before_snapshot_command`, `next.after_snapshot_command`
+> and `next.verify_after_edit`. The root-spelling rule below applies unchanged
+> to those `next` fields.
+
 Support-tier impact:
 
 - No tier change under [SUPPORT_TIERS.md](../status/SUPPORT_TIERS.md). The agent
-  brief JSON (schema `0.1`) keeps every field. Only `next.inspect_packet`,
-  `next.verify_after_edit`, `verification.before_snapshot_command`,
-  `verification.after_snapshot_command`, and `verification.verify_command`
+  brief JSON (schema `0.2`) carries the commands under `next` only. Only
+  `next.inspect_packet`, `next.verify_after_edit`,
+  `next.before_snapshot_command`, and `next.after_snapshot_command`
   change for roots whose spelling `display_path` would rewrite.
   `verification.suggested_test_command` is a rootless advisory Cargo filter
   and is outside this rule.
@@ -59,7 +65,8 @@ literal backslash (e.g. `/tmp/team\repo`) got a pasted
 targets a different directory (`/tmp/team/repo`). Two renderers carried the
 pattern: the brief-level `next` block (`inspect_packet`,
 `verify_after_edit`) and each top seam's `verification` block
-(`before_snapshot_command`, `after_snapshot_command`, `verify_command`).
+(`before_snapshot_command`, `after_snapshot_command`, `verify_command`; moved
+to `next` in schema `0.2`, #13673).
 
 The parent brief/working-set contract remains
 [RIPR-SPEC-0010](RIPR-SPEC-0010-agent-working-set-brief.md); this leaf owns only
@@ -82,25 +89,19 @@ the five root-bearing fields named above.
 
 ## Required Evidence
 
-- A unit test renders the per-seam `verification` block for a plain string
-  Unix root containing a literal backslash (`/tmp/team\repo`) and pins
-  that `before_snapshot_command` and `verify_command` keep the backslash
-  in the `--root` argument; on Windows the same test pins stable `/`
-  separators.
 - Existing agent-brief rendering assertions (relative roots, loaded-config
   paths, redirect anchoring) stay green unchanged.
 
 - Two Unix tests render the actual brief JSON with a nonempty seam selection
-  and literal expected command strings. They separately pin both `next`
-  commands and all three per-seam verification commands, including preparation,
+  and literal expected command strings. They separately pin the `next`
+  inspect and verify commands and the `next` snapshot commands, including preparation,
   redirect targets, and workflow artifact filenames.
 
 ## Test Mapping
 
 - `crates/ripr/src/output/agent_brief.rs::tests::agent_brief_next_commands_preserve_literal_backslash_unix_root`
-- `crates/ripr/src/output/agent_brief.rs::tests::agent_brief_seam_verification_preserves_literal_backslash_unix_root`
+- `crates/ripr/src/output/agent_brief.rs::tests::agent_brief_next_snapshot_commands_preserve_literal_backslash_unix_root`
 
-- `crates/ripr/src/output/agent_brief.rs::tests::agent_brief_verification_preserves_a_literal_backslash_unix_root`
 - `crates/ripr/src/output/agent_brief.rs::tests::agent_brief_json_renders_ranked_seam_summary`
   (redirect-anchor pin, unchanged)
 - `crates/ripr/src/output/agent_brief.rs::tests::agent_brief_json_renders_loaded_config_and_empty_file_scope`
@@ -112,9 +113,9 @@ Rendered on a Unix host with root `/tmp/team\repo` (excerpt):
 
 ```json
 {
-  "verification": {
+  "next": {
     "before_snapshot_command": "mkdir -p '/tmp/team\\repo/target/ripr/workflow' && ripr check --root '/tmp/team\\repo' --mode draft --format repo-exposure-json > '/tmp/team\\repo/target/ripr/workflow/before.repo-exposure.json'",
-    "verify_command": "ripr agent verify --root '/tmp/team\\repo' --before target/ripr/workflow/before.repo-exposure.json --after target/ripr/workflow/after.repo-exposure.json --json"
+    "verify_after_edit": "ripr agent verify --root '/tmp/team\\repo' --before target/ripr/workflow/before.repo-exposure.json --after target/ripr/workflow/after.repo-exposure.json --json"
   }
 }
 ```
@@ -137,12 +138,13 @@ The same rendering before this spec rewrote the root to
 
 ## Implementation Mapping
 
-- `crates/ripr/src/output/agent_brief.rs` owns both renderers:
-  `render_agent_brief_json` (the brief-level `next` block) and
-  `verification_json` (each top seam's `before_snapshot_command`,
-  `after_snapshot_command`, and `verify_command`). Both now pass
-  `root_path_display(root)` to `bound_root`; the informational
-  `display_path` renderings elsewhere in the file are unchanged.
+- `crates/ripr/src/output/agent_brief.rs` owns the renderer:
+  `render_agent_brief_json` emits the brief-level `next` block
+  (`inspect_packet`, `before_snapshot_command`, `after_snapshot_command`,
+  `verify_after_edit`) from one `bound_root(root_path_display(root))`;
+  `verification_json` now carries only `suggested_test_command` (schema `0.2`).
+  The informational `display_path` renderings elsewhere in the file are
+  unchanged.
 
 ## Metrics
 

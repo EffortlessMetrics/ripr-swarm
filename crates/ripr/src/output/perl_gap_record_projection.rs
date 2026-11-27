@@ -233,6 +233,7 @@ pub(crate) fn perl_gap_record_for(finding: &Finding) -> Option<GapRecord> {
         safe_gate_predicate: None,
         authority_boundary: PERL_AUTHORITY_BOUNDARY.to_string(),
         typescript_package_root: None,
+        verify_cwd: None,
     })
 }
 
@@ -320,6 +321,7 @@ fn evidence_values(finding: &Finding, prefix: &str) -> Vec<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::domain::DiscriminatorShape;
     use crate::domain::{
         ActivationEvidence, Confidence, DeltaKind, EvidenceState, ExposureClass, Finding,
         FindingCanonicalGap, LanguageId, LanguageStatus, MissingDiscriminatorFact, OracleKind,
@@ -353,6 +355,7 @@ mod tests {
                 normalized_discriminator: "return_value".to_string(),
             }),
             probe: Probe {
+                before_condition: None,
                 id: ProbeId("probe:lib_My_App_pm:8:perl_return".to_string()),
                 location: SourceLocation::new("lib/My/App.pm", 8, 5),
                 owner: None,
@@ -423,7 +426,9 @@ mod tests {
                     value: "return_value".to_string(),
                     reason: "Related Perl test reaches the owner but lacks an exact return discriminator".to_string(),
                     flow_sink: None,
-                }],
+                                    shape: DiscriminatorShape::Other,
+                                    drafted_boundary: None,
+}],
             },
             stop_reasons: vec![],
             related_tests_matched_total: None,

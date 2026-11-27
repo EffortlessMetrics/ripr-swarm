@@ -19,12 +19,11 @@ The root call supplies the owner equality-boundary input. The exact
 `x == 101` activation row is present and the infection-stage summary no longer
 names a missing equality-boundary discriminator.
 
-Final classification remains `static_unknown` on the integrated main because
-the separate same-name path-qualifier false refusal (#10604) withholds final gaps
-and clears final missing-discriminator arrays. These tests use direct calls, not
-function values; that limitation is recorded as an inherited defect. Input
-evidence, rather than final classification or the cleared array, discriminates
-this re-export repair.
+Final classification is `weakly_exposed` on both candidate findings, with gap ids,
+because the same-name path-qualifier false refusal (#10604) no longer reads the
+leading `thr` of `thr::internal::thr(50)` as the owner passed as a function value.
+These tests use direct calls; the weak grade belongs to the relational `assert!`
+oracles, not to an unplaceable reach.
 
 ## Must Not
 

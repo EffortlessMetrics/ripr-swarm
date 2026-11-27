@@ -19,16 +19,24 @@ mod placement;
 mod publish_plan;
 mod render;
 mod scope;
+mod suppression;
 
 pub(crate) use scope::ReviewCommentsAnalysisScope;
 use scope::ReviewPlacement;
+pub(crate) use suppression::{
+    CheckOutputSuppressedFinding, ReviewCommentsSuppression, SUPPRESSED_BY_POLICY_REASON,
+    check_output_suppressed_findings,
+};
 
-pub(crate) use placement::{normalize_path_text, placement_for, placement_json};
+pub(crate) use placement::{
+    displaced_seam_location, displaced_seam_prefix, normalize_path_text, placement_for,
+    placement_json,
+};
 pub(crate) use render::display_paths;
 
 use publish_plan::{
-    card_is_actionable, changed_test_paths, gap_record_cap_suppressed_json, review_warnings_json,
-    suppressed_json,
+    card_is_actionable, changed_reaching_tests, changed_test_paths, gap_record_cap_suppressed_json,
+    review_warnings_json, suppressed_json, withheld_changed_gap_json,
 };
 use render::{
     analysis_scope_json, gap_record_comment_json, gap_record_dedupe_key,
@@ -54,6 +62,9 @@ pub(crate) struct ReviewCommentsRenderContext<'a> {
     pub(crate) head: &'a str,
     pub(crate) mode: &'a Mode,
     pub(crate) config: &'a RiprConfig,
+    /// Explicit `--suppression-policy` and/or `--check-output` suppressions
+    /// (#13895). `None` applies nothing.
+    pub(crate) suppression: Option<&'a ReviewCommentsSuppression>,
 }
 
 #[cfg(test)]
@@ -74,6 +85,7 @@ pub(crate) fn render_review_comments_json(
         head,
         mode,
         config,
+        suppression: None,
     };
     render_review_comments_json_with_scope(&context, working_set, selection, &analysis_scope, None)
 }
@@ -134,8 +146,33 @@ pub(crate) fn render_review_comments_json_with_scope(
         warnings.push(warning);
     }
 
+    // #13895: one suppression decision, from the shared policy matcher. A
+    // suppressed seam leaves the inline comment and summary slots and stays
+    // visible in `suppressed`, which `gate evaluate` reads as non-blocking.
+    // Suppression runs after the brief cap, so a suppressed seam still uses
+    // a cap slot (disclosed in SPEC-0007 and CONFIGURATION.md).
+    if let Some(policy) = context.suppression {
+        let seams = actionable
+            .iter()
+            .map(|selected| selected.seam)
+            .collect::<Vec<_>>();
+        let resolved = policy.resolve(context.root, &seams);
+        warnings.extend(resolved.warnings);
+        actionable.retain(|selected| {
+            let Some(message) = resolved.by_seam.get(selected.seam.seam.id().as_str()) else {
+                return true;
+            };
+            suppressed.push(suppressed_json(
+                selected,
+                SUPPRESSED_BY_POLICY_REASON,
+                message,
+            ));
+            false
+        });
+    }
+
     for selected in actionable.iter().take(DEFAULT_REVIEW_MAX_SUMMARY_ITEMS) {
-        let recommendation = review_recommendation_json(
+        let mut recommendation = review_recommendation_json(
             context.root,
             context.base,
             context.mode,
@@ -143,6 +180,14 @@ pub(crate) fn render_review_comments_json_with_scope(
             selected,
             causal_projection.as_ref(),
         );
+        // Per-card evidence that this PR changed a test reaching the owner.
+        // The gate reads this, never the PR-wide `unchanged_tests` flag, to
+        // keep a candidate advisory (#13893). Omitted when none qualifies;
+        // the gate treats a missing field as "no waiver".
+        let reaching = changed_reaching_tests(context.root, selected.seam, test_changes);
+        if !reaching.is_empty() {
+            recommendation["changed_reaching_tests"] = json!(reaching);
+        }
         if cross_language_test_target_unresolved(selected.seam) {
             let mut item = recommendation;
             item["placement"] = Value::Null;
@@ -196,6 +241,15 @@ pub(crate) fn render_review_comments_json_with_scope(
             ));
         }
     }
+    // Changed-scope gap seams withheld as static limitations are itemized,
+    // not dropped: `ripr check` can still list them, and the gate reads this
+    // lane, so each one is evaluated under its named reason (#13892).
+    suppressed.extend(
+        selection
+            .withheld_changed_gaps
+            .iter()
+            .map(withheld_changed_gap_json),
+    );
 
     let mut scope_json = analysis_scope_json(analysis_scope);
     // Seams dropped by the brief cap are absent from this document without
@@ -204,6 +258,11 @@ pub(crate) fn render_review_comments_json_with_scope(
     // from a producer that predates the disclosure.
     scope_json["cap_omitted_seams"] = json!(selection.omitted_by_cap);
     scope_json["omitted_by_policy"] = json!(selection.omitted_by_policy);
+    // #14082: the part of the policy omissions ripr could not judge. Emitted
+    // only when nonzero so documents with nothing withheld stay byte-stable.
+    if selection.omitted_static_limited > 0 {
+        scope_json["static_limited_omitted_seams"] = json!(selection.omitted_static_limited);
+    }
     let value = json!({
         "schema_version": REVIEW_COMMENTS_SCHEMA_VERSION,
         "tool": "ripr",
@@ -393,6 +452,7 @@ pub(crate) fn render_review_comments_markdown(
         head,
         mode,
         config,
+        suppression: None,
     };
     render_review_comments_markdown_with_scope(
         &context,
@@ -456,9 +516,10 @@ pub(crate) fn gap_ledger_analysis_scope_json(
     records: &[crate::output::gap_decision_ledger::GapRecord],
     coverage: Option<&Value>,
     refusal: &[String],
+    owner_opt_outs: Option<&Value>,
 ) -> Value {
-    if let Some(coverage) = coverage {
-        return json!({
+    let mut scope = if let Some(coverage) = coverage {
+        json!({
             "scope": "rust_workspace_complete",
             "run_status": "complete",
             "basis": "repo_exposure_complete_run",
@@ -466,13 +527,21 @@ pub(crate) fn gap_ledger_analysis_scope_json(
             "records_total": records.len(),
             "records_digest": coverage.get("records_digest").cloned().unwrap_or(Value::Null),
             "downstream_consumable": true,
-        });
-    }
-    let mut scope = analysis_scope_json(&ReviewCommentsAnalysisScope::gap_ledger_artifact(records));
-    // Why a disclosed workspace coverage was refused (additive, inert to
-    // consumers): the input classes that differ from the ledger's disclosure.
-    if !refusal.is_empty() {
-        scope["coverage_refused"] = json!(refusal);
+        })
+    } else {
+        let mut scope =
+            analysis_scope_json(&ReviewCommentsAnalysisScope::gap_ledger_artifact(records));
+        // Why a disclosed workspace coverage was refused (additive, inert to
+        // consumers): the input classes that differ from the ledger's disclosure.
+        if !refusal.is_empty() {
+            scope["coverage_refused"] = json!(refusal);
+        }
+        scope
+    };
+    // #14898: what the analyzed scope withheld by an owner opt-out, verbatim
+    // from the ledger. A baseline entry it names is withheld, not resolved.
+    if let Some(disclosure) = owner_opt_outs {
+        scope["owner_opt_outs"] = disclosure.clone();
     }
     scope
 }
@@ -521,6 +590,43 @@ mod tests {
             "{rendered}"
         );
         assert!(rendered.contains("  - state: `open`"), "{rendered}");
+    }
+
+    /// #15378: card commands carry the shared translator's PowerShell pair,
+    /// and a command PowerShell runs unchanged gets none.
+    #[test]
+    fn comments_markdown_pairs_commands_with_their_powershell_form() {
+        let redirecting = "ripr agent brief --root . --seam-id s1 --json > 'my dir/brief.json'";
+        let items = json!([{
+            "seam_id": "s1",
+            "reason": "r",
+            "gap_state": "open",
+            "llm_guidance": {
+                "command": redirecting,
+                "analysis_outcome_command": "ripr check --root . --format json"
+            }
+        }]);
+        let mut lines = Vec::new();
+        push_markdown_items(&mut lines, "Inline", Some(&items));
+        let rendered = lines.join("\n");
+        let pair =
+            crate::output::markdown::powershell_text_variant(redirecting).unwrap_or_default();
+        assert!(
+            !pair.is_empty(),
+            "a redirecting command needs a PowerShell form"
+        );
+        assert!(
+            rendered.contains(&format!("  - command (PowerShell): {}", code_span(&pair))),
+            "{rendered}"
+        );
+        assert!(
+            rendered.contains("  - analysis_outcome_command: `ripr check --root . --format json`"),
+            "{rendered}"
+        );
+        assert!(
+            !rendered.contains("analysis_outcome_command (PowerShell)"),
+            "{rendered}"
+        );
     }
 
     /// #4586: an absent path with Markdown-active characters must stay inside
@@ -609,7 +715,8 @@ mod tests {
         AgentBriefWhyNowReason,
     };
     use crate::domain::{
-        Confidence, MissingDiscriminatorFact, OracleKind, OracleStrength, StageEvidence, StageState,
+        Confidence, DiscriminatorShape, MissingDiscriminatorFact, OracleKind, OracleStrength,
+        StageEvidence, StageState,
     };
     use crate::repair_guidance::{
         AssertionBasis, AssertionGuidance, AssertionKind, GuidanceReason, GuidanceRecovery,
@@ -644,6 +751,7 @@ mod tests {
             evidence: TestGripEvidence {
                 seam_id,
                 related_tests: vec![std::sync::Arc::new(RelatedTestGrip {
+                    assertion_targets_non_function: None,
                     test_name: "above_threshold_gets_discount".to_string(),
                     file: PathBuf::from("tests/pricing.rs"),
                     line: 12,
@@ -670,6 +778,8 @@ mod tests {
                     value: "amount == discount_threshold".to_string(),
                     reason: "producer identified the equality boundary as missing".to_string(),
                     flow_sink: None,
+                    shape: DiscriminatorShape::Boundary,
+                    drafted_boundary: None,
                 }],
                 new_test_target: None,
                 statically_contradicted_related_tests: 0,
@@ -736,6 +846,7 @@ mod tests {
             evidence: TestGripEvidence {
                 seam_id,
                 related_tests: vec![std::sync::Arc::new(RelatedTestGrip {
+                    assertion_targets_non_function: None,
                     test_name: "blob copies resizable buffers".to_string(),
                     file: PathBuf::from("test/js/web/fetch/blob.test.ts"),
                     line: 41,
@@ -780,6 +891,7 @@ mod tests {
             evidence: TestGripEvidence {
                 seam_id,
                 related_tests: vec![std::sync::Arc::new(RelatedTestGrip {
+                    assertion_targets_non_function: None,
                     test_name: "markdown snapshots resizable ArrayBuffer input".to_string(),
                     file: PathBuf::from("test/js/bun/md/md-edge-cases.test.ts"),
                     line: 42,
@@ -814,6 +926,7 @@ mod tests {
                 .iter()
                 .map(|seam| AgentBriefSelectedSeam {
                     seam,
+                    arm_result: None,
                     why_now: AgentBriefWhyNow {
                         reason: AgentBriefWhyNowReason::ChangedLineIntersectsSeam,
                         confidence: AgentBriefWhyNowConfidence::High,
@@ -824,6 +937,8 @@ mod tests {
             warnings: Vec::new(),
             omitted_by_cap: 0,
             omitted_by_policy: 0,
+            withheld_changed_gaps: Vec::new(),
+            omitted_static_limited: 0,
         }
     }
 
@@ -974,6 +1089,7 @@ mod tests {
                 file: PathBuf::from(file),
                 owner,
                 provenance: NewTestProposalProvenance::ProducerOwned,
+                workspace_identity: String::new(),
             }),
             ..NewTestTargetAdmission::default()
         });
@@ -1068,6 +1184,7 @@ mod tests {
             head: "HEAD",
             mode: &Mode::Draft,
             config: &config,
+            suppression: None,
         };
         let rendered = render_review_comments_json_with_scope(
             &context,
@@ -1650,6 +1767,7 @@ mod tests {
             mode: crate::output::gate::GateMode::Acknowledgeable,
             acknowledgement_labels: Vec::new(),
             exception_policy: None,
+            acknowledgements: None,
         };
         let report = crate::output::gate::build_gate_decision_report(&input);
         let _ = fs::remove_dir_all(&root);
@@ -1806,6 +1924,7 @@ mod tests {
             hard_cap: 10,
             top_seams: vec![AgentBriefSelectedSeam {
                 seam: &seams[0],
+                arm_result: None,
                 why_now: AgentBriefWhyNow {
                     reason: AgentBriefWhyNowReason::RepoActionableFallback,
                     confidence: AgentBriefWhyNowConfidence::Low,
@@ -1815,6 +1934,8 @@ mod tests {
             warnings: Vec::new(),
             omitted_by_cap: 0,
             omitted_by_policy: 0,
+            withheld_changed_gaps: Vec::new(),
+            omitted_static_limited: 0,
         };
 
         let rendered = render_review_comments_json(
@@ -1861,6 +1982,150 @@ mod tests {
         assert_eq!(objects[1]["message"], "another note");
     }
 
+    fn changed_test_set(entries: &[(&str, &str)]) -> crate::analysis::DiffTestChanges {
+        crate::analysis::DiffTestChanges {
+            files: entries
+                .iter()
+                .map(|(file, _)| PathBuf::from(file))
+                .collect(),
+            unresolved: false,
+            functions: entries
+                .iter()
+                .map(|(file, name)| (PathBuf::from(file), (*name).to_string()))
+                .collect(),
+            ..Default::default()
+        }
+    }
+
+    fn card_changed_reaching_tests(
+        changes: crate::analysis::DiffTestChanges,
+        seam: ClassifiedSeam,
+    ) -> Result<Value, String> {
+        let working_set = AgentBriefResolvedWorkingSet::base(
+            "main",
+            vec![AgentBriefLine::new("src/pricing.rs", 88)],
+        )
+        .with_changed_tests(changes);
+        let report = render_value(&working_set, &[seam])?;
+        assert_eq!(report["summary"]["comments"], 1);
+        Ok(report["comments"][0]
+            .get("changed_reaching_tests")
+            .cloned()
+            .unwrap_or_else(|| json!([])))
+    }
+
+    /// #13893 positive: the PR changed the very test that calls the owner, so
+    /// the card names it for the gate's advisory waiver.
+    #[test]
+    fn changed_test_that_reaches_the_owner_is_named_on_the_card() -> Result<(), String> {
+        let named = card_changed_reaching_tests(
+            changed_test_set(&[("tests/pricing.rs", "above_threshold_gets_discount")]),
+            classified(88),
+        )?;
+        assert_eq!(
+            named,
+            json!(["tests/pricing.rs::above_threshold_gets_discount"])
+        );
+        Ok(())
+    }
+
+    /// #13893 negative: another test in the same test file changed, but it is
+    /// not a test that reaches this owner. File proximity grants nothing.
+    #[test]
+    fn changed_unrelated_test_in_the_same_file_is_not_named() -> Result<(), String> {
+        let named = card_changed_reaching_tests(
+            changed_test_set(&[("tests/pricing.rs", "discount_tiers")]),
+            classified(88),
+        )?;
+        assert_eq!(named, json!([]));
+        Ok(())
+    }
+
+    /// #13893 negative: the changed test is related only by proximity
+    /// (`same_test_file`), which never establishes reach, so it is not named
+    /// even though that exact function changed.
+    #[test]
+    fn changed_proximity_only_related_test_is_not_named() -> Result<(), String> {
+        let mut seam = classified(88);
+        for test in &mut seam.evidence.related_tests {
+            std::sync::Arc::make_mut(test).relation_reason = RelationReason::SameTestFile;
+        }
+        let named = card_changed_reaching_tests(
+            changed_test_set(&[("tests/pricing.rs", "above_threshold_gets_discount")]),
+            seam,
+        )?;
+        assert_eq!(named, json!([]));
+        Ok(())
+    }
+
+    /// #13893 negative (Devin on #13917): the reaching test's name is defined
+    /// twice in its file (two modules), and the diff touched the other one,
+    /// which starts on a different head line. A name match alone must not
+    /// waive the gap.
+    #[test]
+    fn changed_same_name_test_in_another_module_is_not_named() -> Result<(), String> {
+        let mut changes =
+            changed_test_set(&[("tests/pricing.rs", "above_threshold_gets_discount")]);
+        changes.ambiguous_names.insert((
+            PathBuf::from("tests/pricing.rs"),
+            "above_threshold_gets_discount".to_string(),
+        ));
+        changes.head_functions.insert((
+            PathBuf::from("tests/pricing.rs"),
+            "above_threshold_gets_discount".to_string(),
+            40,
+        ));
+        let named = card_changed_reaching_tests(changes, classified(88))?;
+        assert_eq!(named, json!([]));
+        Ok(())
+    }
+
+    /// #13893 positive control for an ambiguous name: the touched function
+    /// starts on the related test's own head line, so it is that test.
+    #[test]
+    fn changed_same_name_test_matching_the_head_line_is_named() -> Result<(), String> {
+        let seam = classified(88);
+        let line = seam
+            .evidence
+            .related_tests
+            .first()
+            .map(|test| test.line)
+            .ok_or("fixture seam has no related test")?;
+        let mut changes =
+            changed_test_set(&[("tests/pricing.rs", "above_threshold_gets_discount")]);
+        changes.ambiguous_names.insert((
+            PathBuf::from("tests/pricing.rs"),
+            "above_threshold_gets_discount".to_string(),
+        ));
+        changes.head_functions.insert((
+            PathBuf::from("tests/pricing.rs"),
+            "above_threshold_gets_discount".to_string(),
+            line,
+        ));
+        let named = card_changed_reaching_tests(changes, seam)?;
+        assert_eq!(
+            named,
+            json!(["tests/pricing.rs::above_threshold_gets_discount"])
+        );
+        Ok(())
+    }
+
+    /// #13893 negative: test edits whose functions could not be attributed
+    /// (file-level disclosure only) never grant the waiver.
+    #[test]
+    fn file_level_test_change_without_function_attribution_is_not_named() -> Result<(), String> {
+        let named = card_changed_reaching_tests(
+            crate::analysis::DiffTestChanges {
+                files: vec![PathBuf::from("tests/pricing.rs")],
+                unresolved: true,
+                ..Default::default()
+            },
+            classified(88),
+        )?;
+        assert_eq!(named, json!([]));
+        Ok(())
+    }
+
     #[test]
     fn resolved_production_edits_do_not_become_test_edits_from_filename() -> Result<(), String> {
         for path in ["src/unit_test.rs", "src/unit_tests.rs"] {
@@ -1874,6 +2139,7 @@ mod tests {
             .with_changed_tests(crate::analysis::DiffTestChanges {
                 files: Vec::new(),
                 unresolved: false,
+                ..Default::default()
             });
             let report = render_value(&working_set, &[classified(88)])?;
             assert_eq!(report["summary"]["unchanged_tests"], true, "{path}");
@@ -1893,6 +2159,7 @@ mod tests {
         .with_changed_tests(crate::analysis::DiffTestChanges {
             files: Vec::new(),
             unresolved: true,
+            ..Default::default()
         });
         let report = render_value(&working_set, &[classified(88)])?;
         assert_eq!(report["summary"]["unchanged_tests"], false);
@@ -2103,6 +2370,7 @@ mod tests {
                 head: "HEAD",
                 mode: &Mode::Draft,
                 config: &config,
+                suppression: None,
             };
             let markdown = render_review_comments_markdown_with_scope(
                 &context,
@@ -2143,6 +2411,44 @@ mod tests {
         assert_eq!(
             value["analysis_outcome"]["outcome"]["kind"],
             "complete_no_findings"
+        );
+        Ok(())
+    }
+
+    /// #13894: a complete outcome that carries only the requested-scope note
+    /// stays `advisory`; the note is projected, not turned into `incomplete`.
+    /// The negative control is `review_comments_projects_typed_outcome_without_
+    /// strengthening_incomplete_input`, whose partial outcomes stay incomplete.
+    #[test]
+    fn review_comments_keeps_complete_outcome_with_requested_scope_note_advisory()
+    -> Result<(), String> {
+        let note = AnalysisLimitation::new(
+            AnalysisLimitationKind::RequestedScopeExcluded,
+            AnalysisStage::DiffLoad,
+            AnalysisRecovery::new(AnalysisRecoveryKind::Retry, "rerun without --exclude")?,
+        );
+        let outcome = AnalysisOutcome::new(
+            AnalysisOutcomeKind::CompleteWithFindings,
+            Default::default(),
+            AnalysisOutcomeCounts {
+                changed_file_count: 1,
+                changed_line_count: 1,
+                candidate_line_count: 1,
+                probe_count: 1,
+                finding_count: 1,
+            },
+            vec![note],
+        )?;
+        let working_set = AgentBriefResolvedWorkingSet::base(
+            "main",
+            vec![AgentBriefLine::new("src/pricing.rs", 88)],
+        );
+        let value = render_value_with_outcome(&working_set, &[classified(88)], &outcome)?;
+        assert_eq!(value["status"], "advisory");
+        assert_eq!(value["analysis_outcome"]["analysis_complete"], true);
+        assert_eq!(
+            value["analysis_outcome"]["outcome"]["limitations"][0]["kind"],
+            "requested_scope_excluded"
         );
         Ok(())
     }
@@ -2619,6 +2925,51 @@ mod tests {
             &records,
         );
         assert!(markdown.contains("- `gap:missing-seam` @ "), "{markdown}");
+        Ok(())
+    }
+
+    /// #15302: a record whose verify command is relative to a nested project
+    /// keeps the raw command on the repair card, and the prompt and guidance
+    /// run it from that directory.
+    #[cfg(not(windows))]
+    #[test]
+    fn review_comments_gap_ledger_card_runs_a_nested_verify_command_from_its_directory()
+    -> Result<(), String> {
+        let mut record = eligible_gap_record_json("gap:nested", "dedupe:nested");
+        let object = record
+            .as_object_mut()
+            .ok_or("nested fixture should be an object")?;
+        object.insert(
+            "verification_commands".to_string(),
+            serde_json::json!(["python -m pytest tests/test_price.py::test_discount"]),
+        );
+        object.insert("verify_cwd".to_string(), serde_json::json!("py"));
+        let records_json = serde_json::json!({ "records": [record] }).to_string();
+        let records = crate::output::gap_decision_ledger::parse_gap_records_json(&records_json)?;
+        let rendered = render_gap_record_review_comments_json(
+            Path::new("."),
+            "main",
+            "HEAD",
+            &Mode::Draft,
+            "target/ripr/reports/gap-decision-ledger.json",
+            &records,
+        )?;
+        let value: Value =
+            serde_json::from_str(&rendered).map_err(|err| format!("parse card JSON: {err}"))?;
+        let card = &value["comments"][0];
+        let rooted = "(cd -- py && python -m pytest tests/test_price.py::test_discount)";
+        assert_eq!(
+            card["repair_card"]["verify_command"],
+            "python -m pytest tests/test_price.py::test_discount",
+            "{card}"
+        );
+        assert_eq!(card["llm_guidance"]["verify_command"], rooted, "{card}");
+        assert!(
+            card["llm_guidance"]["prompt"]
+                .as_str()
+                .is_some_and(|prompt| prompt.contains(rooted)),
+            "{card}"
+        );
         Ok(())
     }
 
@@ -3217,6 +3568,8 @@ mod tests {
             )],
             omitted_by_cap: 0,
             omitted_by_policy: 0,
+            withheld_changed_gaps: Vec::new(),
+            omitted_static_limited: 0,
         };
         assert_json_fixture(
             "configured-off",
@@ -3838,6 +4191,137 @@ mod tests {
             markdown.contains("canonical_gap_id: `null`"),
             "Markdown must name the missing domain identity explicitly: {markdown}"
         );
+        Ok(())
+    }
+
+    #[test]
+    fn working_set_card_withholds_an_unrelated_assertion_and_keeps_a_weaker_observer()
+    -> Result<(), String> {
+        let mut seam = classified(88);
+        let mut direct = seam
+            .evidence
+            .related_tests
+            .first()
+            .ok_or("missing fixture test")?
+            .as_ref()
+            .clone();
+        let mut unrelated = direct.clone();
+        unrelated.test_name = "unrelated_exact_value".to_string();
+        unrelated.relation_reason = RelationReason::SameTestFile;
+        direct.oracle_strength = OracleStrength::Weak;
+        let mut smoke = direct.clone();
+        smoke.oracle_kind = OracleKind::SmokeOnly;
+        smoke.oracle_strength = OracleStrength::Smoke;
+        let working_set = AgentBriefResolvedWorkingSet::base(
+            "main",
+            vec![AgentBriefLine::new("src/pricing.rs", 88)],
+        );
+        let mut cases = vec![
+            (
+                StageState::No,
+                StageState::Yes,
+                false,
+                vec![direct.clone()],
+                "unknown",
+                "none",
+            ),
+            (
+                StageState::Yes,
+                StageState::No,
+                false,
+                vec![direct.clone()],
+                "unknown",
+                "none",
+            ),
+            (
+                StageState::Yes,
+                StageState::Opaque,
+                false,
+                vec![direct.clone()],
+                "unknown",
+                "none",
+            ),
+            (
+                StageState::Unknown,
+                StageState::Yes,
+                false,
+                vec![direct.clone()],
+                "unknown",
+                "none",
+            ),
+            (
+                StageState::Weak,
+                StageState::Yes,
+                false,
+                vec![direct.clone()],
+                "unknown",
+                "none",
+            ),
+            (
+                StageState::Yes,
+                StageState::Weak,
+                false,
+                vec![smoke],
+                "smoke_only",
+                "smoke",
+            ),
+        ];
+        for reason in [
+            RelationReason::SameTestFile,
+            RelationReason::SameModule,
+            RelationReason::WeakTokenSubstring,
+            RelationReason::OwnerNamedTest,
+            RelationReason::ImportPathAffinity,
+            RelationReason::FixtureOwnerAffinity,
+            RelationReason::SeamCalleeCall,
+            RelationReason::AssertionTargetAffinity,
+        ] {
+            unrelated.relation_reason = reason;
+            cases.push((
+                StageState::Yes,
+                StageState::Yes,
+                false,
+                vec![unrelated.clone(), direct.clone()],
+                "exact_value",
+                "weak",
+            ));
+        }
+        direct.relation_reason = RelationReason::AssertionTargetAffinity;
+        cases.push((
+            StageState::Yes,
+            StageState::Yes,
+            true,
+            vec![direct],
+            "exact_value",
+            "weak",
+        ));
+        for (reach, observe, non_function_owner, rows, kind, strength) in cases {
+            seam.evidence.reach = stage(reach);
+            seam.evidence.observe = stage(observe);
+            seam.evidence.related_tests = rows
+                .into_iter()
+                .map(|mut row| {
+                    row.assertion_targets_non_function = (row.relation_reason
+                        == RelationReason::AssertionTargetAffinity)
+                        .then_some(non_function_owner);
+                    std::sync::Arc::new(row)
+                })
+                .collect();
+            let report = render_value(&working_set, std::slice::from_ref(&seam))?;
+            let card = all_cards(&report)
+                .into_iter()
+                .find(|row| row.get("seam").is_some())
+                .ok_or("missing working-set card")?;
+            if card["oracle_kind"] != kind
+                || card["oracle_strength"] != strength
+                || !card["suggested_test"]["near_test"].is_null()
+                || !card["suggested_test"]["related_test"].is_null()
+            {
+                return Err(format!(
+                    "unexpected oracle or existing test recommendation: {card}"
+                ));
+            }
+        }
         Ok(())
     }
 

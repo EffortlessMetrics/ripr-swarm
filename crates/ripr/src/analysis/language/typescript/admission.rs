@@ -297,7 +297,7 @@ impl TypeScriptAdmissionContext {
         }
         let mut scan = Scan::new(self, true);
         scan.test_registration(call);
-        if scan.assertion_like || self.runner_fails_without_assertions() {
+        if scan.assertion_like || self.runner_withholds_assertion_absence() {
             TypeScriptAssertionAdmission::Unresolved
         } else {
             TypeScriptAssertionAdmission::NoAssertionLike
@@ -306,12 +306,17 @@ impl TypeScriptAdmissionContext {
 
     /// AVA fails a test that makes no assertions (`failWithoutAssertions`,
     /// default true). The body may contain only production calls and still
-    /// fail, so the established absence is not honest (#6889).
-    fn runner_fails_without_assertions(&self) -> bool {
-        self.imports.iter().any(|import| {
-            let source = import.source.as_str();
-            source == "ava" || source.starts_with("ava/")
-        })
+    /// fail, so the established absence is not honest (#6889). Tap also has
+    /// completion/plan requirements outside our bounded oracle profile; a
+    /// pure production call with no end is not an established absence.
+    fn runner_withholds_assertion_absence(&self) -> bool {
+        self.imports
+            .iter()
+            .chain(&self.registration_imports)
+            .any(|import| {
+                let source = import.source.as_str();
+                source == "ava" || source.starts_with("ava/") || source == "tap"
+            })
     }
 
     /// Root admission for bare and awaited registrations. Reuse the
@@ -407,6 +412,18 @@ impl TypeScriptAdmissionContext {
             .is_some_and(|registration| registration.kind == expected)
     }
 
+    /// Whether `root` is bound, in a context from `registration_context`, by
+    /// a named `test` / `it` import from `vitest`: the only runner whose
+    /// whole-row `.for` factory the extractor reads (#10760).
+    pub(crate) fn root_is_vitest_test(&self, root: &str) -> bool {
+        self.imports.iter().any(|import| {
+            import.local == root
+                && import.source == "vitest"
+                && !import.namespace
+                && matches!(import.imported.as_deref(), Some("test" | "it"))
+        })
+    }
+
     /// Validated runner imports shared by registration disclosure (#10169).
     pub(super) fn runner_declaration_imports(&self) -> impl Iterator<Item = &TypeScriptImport> {
         self.registration_imports
@@ -415,7 +432,22 @@ impl TypeScriptAdmissionContext {
     }
 
     fn import_class(&self, import: &TypeScriptImport) -> ImportClass {
+        // node-tap's namespace is an assertion package, not a callable test
+        // registration. Only its named test export gains runner authority.
+        if import.source == "tap" && !import.namespace && import.imported.as_deref() == Some("test")
+        {
+            return ImportClass::Runner;
+        }
         classify_source(&import.source, &self.test_dir)
+    }
+
+    pub(super) fn binds_tap_test(&self, local: Option<&str>) -> bool {
+        self.imports.iter().any(|import| {
+            Some(import.local.as_str()) == local
+                && import.source == "tap"
+                && !import.namespace
+                && import.imported.as_deref() == Some("test")
+        })
     }
 }
 
@@ -1530,6 +1562,15 @@ impl<'c> Scan<'c> {
         let kind = match self.resolve(root.name.as_str()) {
             Name::Global => registration_kind(root.name.as_str())?,
             Name::Import(import) if self.context.import_class(import) == ImportClass::Runner => {
+                // tap.test has no Jest-style .only/.each registration API.
+                if import.source == "tap"
+                    && !matches!(
+                        call.callee.get_inner_expression(),
+                        Expression::Identifier(_)
+                    )
+                {
+                    return None;
+                }
                 match import.imported.as_deref() {
                     // `import test from 'ava'` / `'node:test'` / `'tape'`.
                     Some("default") | None => RegistrationKind::Test,

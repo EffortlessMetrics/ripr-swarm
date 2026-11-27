@@ -113,6 +113,10 @@ passes through untouched (#12420):
   back to the seam expression. A route can still have static target readiness
   without a finding witness; in that case the separate edit-cage admission
   below may supply a refusal as the blocker.
+- When the changed expression exceeds the inline JSON byte budget, the handoff
+  may point to `changed_expression` in the canonical packet. This requires the
+  selected seam's packet entry to contain the exact expression. Otherwise the
+  existing budget refusal applies (#15353).
 - The edit cage reuses the packet authority's exact derivation
   (`task_for(entry) == TASK_WRITE_TARGETED_TEST` and
   `recommended_test_for(entry)`): allowed files carry the recommended test
@@ -180,6 +184,14 @@ passes through untouched (#12420):
   next-action display binds the same way; the typed command args and the
   detail-reference routes stay portable and never enter card identity.
 
+- Printed right after a fresh `ripr repair` start, the human brief omits the
+  lines the start summary just printed in the same stdout: the continue
+  command, attempt id and packet file path (only when the summary printed
+  that attempt's id), plus the changed behavior and
+  assertion shape when the summary carries that exact text. A fact the
+  summary did not print, a held or non-started card, the resume path and
+  `ripr agent card` keep the full brief (#14002).
+
 `ripr agent packet` is unchanged and remains the compatibility path: same
 envelope, same schema, same bytes. Shared field names keep one meaning
 across the card, the packet, and the attempt manifest. The staged
@@ -243,6 +255,11 @@ live caller (`git_output`, `task_for`, `TASK_WRITE_TARGETED_TEST`).
    with an error that names the packet route; no identity is invented.
 
 ## Test Mapping
+
+- `oversized_card_expression_needs_the_exact_current_packet` challenges the
+  detail reference with escaped text, a sibling row and a stale packet.
+  `long_literal_gap_round_trips_through_explain_repair_and_receipt` checks
+  the human repair handoff and the exact source in its packet.
 
 - `crates/ripr/src/app/repair_card_handoff.rs` unit tests cover the pure
   assembly over producer-owned facts: the nine-family projection with the

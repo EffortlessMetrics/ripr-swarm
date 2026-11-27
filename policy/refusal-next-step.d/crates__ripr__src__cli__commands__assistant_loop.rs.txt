@@ -1,2 +1,0 @@
-crates/ripr/src/cli/commands/assistant_loop.rs|assistant-loop health requires at least one --proof path
-crates/ripr/src/cli/commands/assistant_loop.rs|assistant-loop proof requires at least one explicit artifact input

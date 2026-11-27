@@ -3768,7 +3768,7 @@
     "candidate": {
      "repository": "fixtures/blind_journey_installed_rust/repository",
      "base": "01821f774cb2cc2bc745b7506a3941312456fb4e",
-     "head": "7831d6f6e31fe47fad83d204f8644bd9618f2bb4",
+     "head": "7eaa951e85de8ede45441272f06fb99327440416",
      "tree": "36e9bee8d075276b344af3389b3ad76510b2f930",
      "root": "/srv/installed rust journey/tier-fixture-no-ignore",
      "package": "ripr",

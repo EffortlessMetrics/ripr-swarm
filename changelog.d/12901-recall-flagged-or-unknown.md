@@ -1,2 +1,0 @@
-<!-- section: Internal / CI -->
-- `cargo xtask mutation-spot-check` now reports recall of runtime-missed mutants as two labelled figures, the strict `ungripped_share_of_missed` and `flagged_or_unknown_share_of_missed` (ungripped, weakly_gripped, activation_unknown, opaque), with a `by_language` split (Rust established; Python and TypeScript `not_established` until a real-mutant corpus exists) and a recorded `language` per repo; `--rederive-summaries` refreshes the committed receipt offline (#12901).

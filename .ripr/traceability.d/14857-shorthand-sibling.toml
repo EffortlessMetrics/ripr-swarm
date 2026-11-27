@@ -1,0 +1,11 @@
+[[extend]]
+id = "RIPR-SPEC-0243"
+tests = [
+  "crates/ripr/src/analysis/language/typescript/tests/changed_field_tests.rs::shorthand_sibling_of_an_edited_literal_requires_the_explicit_field",
+  "crates/ripr/src/analysis/language/typescript/tests/changed_field_tests.rs::shorthand_sibling_requires_the_same_distinct_name_and_a_literal_edit",
+  "crates/ripr/src/analysis/language/typescript/tests/changed_field_tests.rs::shorthand_sibling_read_requires_a_direct_projection_from_the_owner",
+]
+code = [
+  "crates/ripr/src/analysis/language/typescript/probe_shape.rs",
+  "crates/ripr/src/analysis/language/typescript/classifier.rs",
+]

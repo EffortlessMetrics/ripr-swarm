@@ -51,3 +51,33 @@ class manager:
 
     def __exit__(self, *exc):
         return False
+
+
+def test_reversed_after_multiline_tuple_rebind():
+    r = numeric_range(0)
+    (x,
+     (r)) = 2, [1]
+    assert list(reversed(r)) == [1]
+
+
+def test_reversed_after_split_header_rebind():
+    r = numeric_range(0)
+    if (True and
+        True): (x, (r)) = 2, [1]
+    assert list(reversed(r)) == [1]
+
+
+def test_reversed_after_multiline_loop_rebind():
+    r = numeric_range(0)
+    for (x,
+         (r)) in [(2, [1])]:
+        pass
+    assert list(reversed(r)) == [1]
+
+
+def test_reversed_after_multiline_with_rebind():
+    r = numeric_range(0)
+    with (manager() as
+          (x, (r))):
+        pass
+    assert list(reversed(r)) == [1]

@@ -36,18 +36,24 @@ jobs:
       - uses: dtolnay/rust-toolchain@035fceb3c12fb0c6a9461b52775e16473133e591 # 1.95.0
 
       - run: npm ci
+      - run: sudo apt-get update && sudo apt-get install -y xvfb
+      # Source observations and one native host smoke precede RIPR/xtask builds.
+      - run: xvfb-run -a npm run setup:verify-editor
       - run: npm run compile
       - run: npm run package
-      - run: sudo apt-get update && sudo apt-get install -y xvfb
       - run: xvfb-run -a npm run test:e2e
       # Failure-only host logs. Size is capped by
       # editors/vscode/test/hostDiagnostics.ts (5 MiB total, 256 KiB per file).
+      # Setup smoke adds at most a 64-KiB failure tail and its small identity receipt.
       # Collection cannot change the original test exit status.
       - name: Upload VS Code test host diagnostics
         if: failure()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: vscode-test-host-diagnostics-${{ github.run_id }}-${{ github.run_attempt }}
-          path: target/ripr/vscode-test-host-diagnostics/
+          path: |
+            target/ripr/vscode-test-host-diagnostics/
+            target/ripr/setup-editor-host.log
+            target/ripr/setup-editor-host.json
           if-no-files-found: ignore
           retention-days: 5

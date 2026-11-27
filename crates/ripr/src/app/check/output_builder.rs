@@ -34,8 +34,12 @@ pub(super) fn check_output_from_analysis(
         // the force intent-to-add repair instead.
         ignored_working_tree_source_paths: analysis.ignored_source_paths,
         unlinked_python_tests: None,
+        // #13819: producer facts only; `app::check` decides which findings
+        // are withheld and adjusts the summary buckets.
+        owner_opt_outs: analysis.owner_opt_outs,
         suppression: None,
         partial_scope: analysis.partial_scope,
         analyzed_revisions: analysis.analyzed_revisions,
+        file_fact_cache: None,
     }
 }

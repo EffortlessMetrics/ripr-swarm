@@ -1,10 +1,11 @@
 //! The unnamed owner calls a test can make through language syntax (#9567):
 //! an operator, a loop or adaptor driving an iterator, the end of a scope that
-//! drops a value. One owner has at most one reading, since each reads a
-//! different trait's method.
+//! drops a value, or `str::parse` running `FromStr::from_str` (#5334). One
+//! owner has at most one reading, since each reads a different trait's method.
 
 use super::{
     FunctionSummary, RustIndex, TestSummary, drop_dispatch, iterator_dispatch, operator_dispatch,
+    parse_dispatch,
 };
 
 /// The syntax-run reading of an owner.
@@ -12,6 +13,7 @@ pub(super) enum ImplicitOwner<'a> {
     Operator(operator_dispatch::OperatorOwner<'a>),
     Iterator(iterator_dispatch::IteratorOwner<'a>),
     Drop(drop_dispatch::DropOwner<'a>),
+    Parse(parse_dispatch::ParseOwner<'a>),
 }
 
 /// Whether `owner` is shaped like a method any reading can attribute. A
@@ -21,6 +23,7 @@ pub(super) fn has_implicit_shape(owner: &FunctionSummary) -> bool {
     operator_dispatch::has_operator_shape(owner)
         || iterator_dispatch::has_iterator_shape(owner)
         || drop_dispatch::has_drop_shape(owner)
+        || parse_dispatch::has_parse_shape(owner)
 }
 
 /// The reading of `owner`, or `None` when no reading attributes it.
@@ -32,6 +35,7 @@ pub(super) fn implicit_owner<'a>(
         .map(ImplicitOwner::Operator)
         .or_else(|| iterator_dispatch::iterator_owner(owner, index).map(ImplicitOwner::Iterator))
         .or_else(|| drop_dispatch::drop_owner(owner, index).map(ImplicitOwner::Drop))
+        .or_else(|| parse_dispatch::parse_owner(owner, index).map(ImplicitOwner::Parse))
 }
 
 /// Whether `test` reaches the owner through the syntax its reading follows.
@@ -55,6 +59,9 @@ pub(super) fn test_reaches_owner(
         }
         ImplicitOwner::Drop(drop) => {
             drop_dispatch::test_drops_owner_value(test, owner, drop, test_source, index)
+        }
+        ImplicitOwner::Parse(parse) => {
+            parse_dispatch::test_parses_into_owner(test, owner, parse, test_source, index)
         }
     }
 }
@@ -187,5 +194,61 @@ mod tests {
         // An exit after the point does not refuse it.
         let after = "fn t() {\n    drop(g);\n    if c { return; }\n}";
         assert!(at_test_top_level(after, offset(after, "drop(g")));
+    }
+
+    #[test]
+    fn every_exit_macro_and_only_a_whole_exit_word_refuses() {
+        let offset = |text: &str, needle: &str| text.split(needle).next().map_or(0, str::len);
+        let top_level = |exit: &str| {
+            let body = format!("fn t() {{\n    {exit}\n    drop(g);\n}}");
+            at_test_top_level(&body, offset(&body, "drop(g"))
+        };
+        assert!(!top_level("if c { todo!(); }"));
+        assert!(!top_level("if c { unimplemented!(\"later\"); }"));
+        // Whitespace may separate the macro name from its `!`.
+        assert!(!top_level("if c { panic !(\"no\"); }"));
+        // An exit word without `!` names something else.
+        assert!(top_level("let hook = std::panic::take_hook();"));
+        assert!(top_level("let todo = 1; let unreachable = 2;"));
+        // `return` inside a longer name, on either side.
+        assert!(top_level("let no_return = 1;"));
+        assert!(top_level("let return_code = 1;"));
+    }
+
+    #[test]
+    fn the_fn_header_is_outside_the_body() {
+        let offset = |text: &str, needle: &str| text.split(needle).next().map_or(0, str::len);
+        // A `?` in a header bound is not an early exit.
+        let generic = "fn t<T: ?Sized>() {\n    drop(g);\n}";
+        assert!(at_test_top_level(generic, offset(generic, "drop(g")));
+        // A point in the header is not in the body.
+        assert!(!at_test_top_level(generic, 0));
+        // Only the word `fn` makes the first brace the body's own: after a
+        // name that merely starts with it, the brace opens a nested block.
+        let block = "fnmatch(a, b); drop(g); { inner(h); }";
+        assert!(at_test_top_level(block, offset(block, "drop(g")));
+        assert!(!at_test_top_level(block, offset(block, "inner(h")));
+    }
+
+    #[test]
+    fn a_statement_starts_after_the_last_separator() {
+        let offset = |text: &str, needle: &str| text.split(needle).next().map_or(0, str::len);
+        // A block that ends without `;` still ends its statement, so its
+        // `|` and its attribute do not reach the next one.
+        let after_match = "fn t() {\n    match x { A | B => (), _ => () }\n    drop(g);\n}";
+        assert!(at_test_top_level(
+            after_match,
+            offset(after_match, "drop(g")
+        ));
+        let after_block = "fn t() {\n    #[allow(unused)] { keep(k) }\n    drop(g);\n}";
+        assert!(at_test_top_level(
+            after_block,
+            offset(after_block, "drop(g")
+        ));
+        // Inside one statement, an earlier `|` or a leading attribute refuses.
+        let argument = "fn t() {\n    run(|| 1, drop(g));\n}";
+        assert!(!at_test_top_level(argument, offset(argument, "drop(g")));
+        let attributed = "fn t() {\n    #[cfg(any())] let n = drop(g);\n}";
+        assert!(!at_test_top_level(attributed, offset(attributed, "drop(g")));
     }
 }

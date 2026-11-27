@@ -12,18 +12,24 @@
 //!    fragment entry whose message now has a cue (or was deleted) also fails, so
 //!    fixing a message means deleting its line. This is a presence floor, not a
 //!    judgment that the cue is the right one; the live half and review own that.
+//!    The scan covers all production code in a file (each `#[cfg(test)]` item
+//!    is skipped, not everything after the first one) and reads a message from
+//!    inside its own call, so it cannot borrow a neighbour's cue (#14163).
 //! 2. **Live floor.** A table of real bad invocations of the built binary. Each
 //!    must exit with its documented code, print on stderr, and carry the cue.
 //!
 //! Blessing never adds: `RIPR_PRUNE_REFUSAL_BASELINE=1` rewrites fragments to
 //! drop entries that no longer offend, and nothing else.
 
+use ra_ap_syntax::{
+    AstNode, Edition, SourceFile,
+    ast::{self, HasAttrs, HasName},
+};
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
 const FRAGMENT_DIR: &str = "policy/refusal-next-step.d";
-const KEY_LEN: usize = 110;
 
 /// Words that mark a literal as describing a failure or refusal.
 const REASON_CUES: &[&str] = &[
@@ -217,46 +223,238 @@ fn has_reason_cue(text: &str) -> bool {
     REASON_CUES.iter().any(|cue| text.contains(cue))
 }
 
-/// String literals starting at `start`, stopping at the first `;` outside a
-/// string or after `window` bytes.
+/// Length in bytes of a `'x'` or `'\x'` char literal at `at`, or 0 when the
+/// quote there opens a lifetime instead.
+fn char_literal_len(bytes: &[u8], at: usize) -> usize {
+    if bytes.get(at) != Some(&b'\'') {
+        return 0;
+    }
+    if bytes.get(at + 1) == Some(&b'\\') {
+        // `'\n'`, `'\''`, `'\u{1f}'`: closes at the next quote after the escape.
+        let mut end = at + 3;
+        while end < bytes.len() && end < at + 12 {
+            if bytes[end] == b'\'' {
+                return end + 1 - at;
+            }
+            end += 1;
+        }
+        return 0;
+    }
+    // One char then the closing quote. Only a non-ASCII char is wider than a
+    // byte, so `<'a,'b>` is two lifetimes, not a char literal.
+    let widths = match bytes.get(at + 1) {
+        Some(first) if !first.is_ascii() => 2..=4,
+        _ => 1..=1,
+    };
+    for width in widths {
+        if bytes.get(at + 1 + width) == Some(&b'\'') {
+            return width + 2;
+        }
+    }
+    0
+}
+
+/// End (exclusive) of the string literal whose opening `"` is at `at`. `hashes`
+/// is `Some(n)` for a raw string `r#..#"` with `n` hashes.
+fn string_end(bytes: &[u8], at: usize, hashes: Option<usize>) -> usize {
+    let mut i = at + 1;
+    while i < bytes.len() {
+        match hashes {
+            None => {
+                if bytes[i] == b'\\' {
+                    i += 2;
+                    continue;
+                }
+                if bytes[i] == b'"' {
+                    return i + 1;
+                }
+            }
+            Some(count) => {
+                if bytes[i] == b'"'
+                    && bytes.len() >= i + 1 + count
+                    && bytes[i + 1..i + 1 + count].iter().all(|b| *b == b'#')
+                {
+                    return i + 1 + count;
+                }
+            }
+        }
+        i += 1;
+    }
+    bytes.len()
+}
+
+/// When a raw string opens at `at` (`r"`, `r#"`, `br##"`), its hash count and
+/// the offset of its opening quote.
+fn raw_string_open(bytes: &[u8], at: usize) -> Option<(usize, usize)> {
+    if bytes.get(at) != Some(&b'r') {
+        return None;
+    }
+    if at > 0
+        && (bytes[at - 1].is_ascii_alphanumeric() || bytes[at - 1] == b'_')
+        && bytes[at - 1] != b'b'
+    {
+        return None;
+    }
+    let mut i = at + 1;
+    while bytes.get(i) == Some(&b'#') {
+        i += 1;
+    }
+    (bytes.get(i) == Some(&b'"')).then_some((i - at - 1, i))
+}
+
+/// One step of a lexical walk over Rust source: what sits at `at`, and where
+/// the walk continues. Strings, chars and comments are skipped as units so a
+/// brace, paren or quote inside them is never counted as code.
+enum Lexeme {
+    /// A string literal; the range is its content without the quotes.
+    Str(usize, usize),
+    /// A comment or char literal.
+    Skip,
+    /// One byte of code.
+    Code(u8),
+}
+
+fn lex_at(bytes: &[u8], at: usize) -> (Lexeme, usize) {
+    let byte = bytes[at];
+    if byte == b'/' && bytes.get(at + 1) == Some(&b'/') {
+        let mut end = at;
+        while end < bytes.len() && bytes[end] != b'\n' {
+            end += 1;
+        }
+        return (Lexeme::Skip, end);
+    }
+    if byte == b'/' && bytes.get(at + 1) == Some(&b'*') {
+        // Rust block comments nest: `/* a /* b */ c */` is one comment.
+        let mut depth = 1usize;
+        let mut end = at + 2;
+        while end < bytes.len() && depth > 0 {
+            if bytes[end] == b'/' && bytes.get(end + 1) == Some(&b'*') {
+                depth += 1;
+                end += 2;
+            } else if bytes[end] == b'*' && bytes.get(end + 1) == Some(&b'/') {
+                depth -= 1;
+                end += 2;
+            } else {
+                end += 1;
+            }
+        }
+        return (Lexeme::Skip, end.min(bytes.len()));
+    }
+    if let Some((hashes, quote)) = raw_string_open(bytes, at) {
+        let end = string_end(bytes, quote, Some(hashes));
+        return (
+            Lexeme::Str(quote + 1, end.saturating_sub(1 + hashes).max(quote + 1)),
+            end,
+        );
+    }
+    if byte == b'"' {
+        let end = string_end(bytes, at, None);
+        return (Lexeme::Str(at + 1, end.saturating_sub(1).max(at + 1)), end);
+    }
+    let char_len = char_literal_len(bytes, at);
+    if char_len > 0 {
+        return (Lexeme::Skip, at + char_len);
+    }
+    (Lexeme::Code(byte), at + 1)
+}
+
+/// The string literals inside the call whose opening paren ends just before
+/// `start`, joined with spaces. The walk stops at the matching close paren, so
+/// a message in expression position (`Err("..".to_string())` as a match arm or
+/// tail expression) is judged on its own text and cannot borrow a cue from the
+/// next statement. `window` bounds a call that never closes.
 fn literals_from(source: &str, start: usize, window: usize) -> String {
     let bytes = source.as_bytes();
     let end = (start + window).min(bytes.len());
     let mut out = String::new();
+    let mut depth = 1usize;
     let mut at = start;
-    let mut in_string = false;
-    let mut current = String::new();
     while at < end {
-        let byte = bytes[at];
-        if in_string {
-            if byte == b'\\' && at + 1 < end {
-                current.push('\\');
-                current.push(bytes[at + 1] as char);
-                at += 2;
-                continue;
-            }
-            if byte == b'"' {
-                in_string = false;
+        let (lexeme, next) = lex_at(bytes, at);
+        match lexeme {
+            Lexeme::Str(from, to) => {
                 if !out.is_empty() {
                     out.push(' ');
                 }
-                out.push_str(&current);
-                current.clear();
-            } else {
-                // Keep UTF-8 intact: push the char starting here.
-                if let Some(ch) = source[at..].chars().next() {
-                    current.push(ch);
-                    at += ch.len_utf8();
-                    continue;
+                out.push_str(&String::from_utf8_lossy(&bytes[from..to.min(bytes.len())]));
+            }
+            Lexeme::Skip => {}
+            Lexeme::Code(b'(') => depth += 1,
+            Lexeme::Code(b')') => {
+                depth -= 1;
+                if depth == 0 {
+                    break;
                 }
             }
-        } else if byte == b'"' {
-            in_string = true;
-        } else if byte == b';' {
-            break;
+            Lexeme::Code(_) => {}
         }
-        at += 1;
+        at = next;
     }
+    out
+}
+
+/// For each byte of `source`, whether it is code (not inside a string, char
+/// literal or comment).
+fn code_positions(source: &str) -> Vec<bool> {
+    let bytes = source.as_bytes();
+    let mut in_code = vec![false; bytes.len()];
+    let mut at = 0;
+    while at < bytes.len() {
+        let (lexeme, next) = lex_at(bytes, at);
+        if matches!(lexeme, Lexeme::Code(_)) {
+            in_code[at] = true;
+        }
+        at = next;
+    }
+    in_code
+}
+
+const TEST_ATTRIBUTE: &str = "#[cfg(test)]";
+
+/// `#[cfg(test)]` compared by its tokens, so comments and spacing inside it
+/// do not hide a test-only item, and `cfg(not(test))` never matches.
+fn is_test_attr(attr: &ast::Attr) -> bool {
+    let tokens: String = attr
+        .syntax()
+        .descendants_with_tokens()
+        .filter_map(|element| element.into_token())
+        .filter(|token| !token.kind().is_trivia())
+        .map(|token| token.text().to_string())
+        .collect();
+    tokens == TEST_ATTRIBUTE
+}
+
+/// True when `node` or any enclosing item carries `#[cfg(test)]`, including
+/// a module declared inside a test-only function body.
+fn under_test_gate(node: &ra_ap_syntax::SyntaxNode) -> bool {
+    node.ancestors().any(|ancestor| {
+        ancestor
+            .children()
+            .filter_map(ast::Attr::cast)
+            .any(|attr| is_test_attr(&attr))
+    })
+}
+
+/// Cut at the syntax item's boundary. Braces in types and expressions within
+/// its signature do not terminate the item. Copy a space so adjacent tokens
+/// cannot become a new trigger at the cut.
+fn without_test_items(source: &str, tree: &ast::SourceFile) -> String {
+    let mut out = String::new();
+    let mut copied = 0;
+    for attr in tree.syntax().descendants().filter_map(ast::Attr::cast) {
+        if is_test_attr(&attr)
+            && let Some(item) = attr.syntax().parent()
+        {
+            let range = item.text_range();
+            let start = usize::from(range.start());
+            if copied <= start {
+                out.push_str(&source[copied..start]);
+                out.push(' ');
+                copied = usize::from(range.end());
+            }
+        }
+    }
+    out.push_str(&source[copied..]);
     out
 }
 
@@ -295,20 +493,27 @@ fn message_follows(trigger: &str, after: &str) -> bool {
 
 /// The `(file, key)` pairs whose message reads like an error but has no cue.
 fn offenders_in(relative: &str, source: &str) -> BTreeSet<String> {
-    let body = match source.find("#[cfg(test)]") {
-        Some(at) => &source[..at],
-        None => source,
-    };
+    let tree = SourceFile::parse(source, Edition::CURRENT).tree();
+    offenders_in_production(relative, &without_test_items(source, &tree))
+}
+
+fn offenders_in_production(relative: &str, body: &str) -> BTreeSet<String> {
+    let in_code = code_positions(body);
     let mut keys = BTreeSet::new();
     for trigger in TRIGGERS {
         let mut from = 0;
         while let Some(found) = body[from..].find(trigger) {
             let at = from + found;
             from = at + trigger.len();
+            // `strip_prefix("Err(")` and a comment naming `map_err(` are text
+            // about a trigger, not a trigger.
+            if !in_code[at] {
+                continue;
+            }
             if !message_follows(trigger, &body[from..]) {
                 continue;
             }
-            let text = literals_from(body, from, 600);
+            let text = literals_from(body, from, 2000);
             if text.chars().count() < 12 {
                 continue;
             }
@@ -316,19 +521,17 @@ fn offenders_in(relative: &str, source: &str) -> BTreeSet<String> {
             if !has_reason_cue(&lower) || has_action_cue(&lower) {
                 continue;
             }
-            let key: String = text
-                .chars()
-                .take(KEY_LEN)
-                .collect::<String>()
-                .trim_end()
-                .to_string();
-            keys.insert(format!("{relative}|{}", key.replace('\n', " ")));
+            keys.insert(format!("{relative}|{}", text.trim_end().replace('\n', " ")));
         }
     }
     keys
 }
 
-fn source_files(dir: &Path, out: &mut Vec<PathBuf>) -> Result<(), String> {
+/// Every `.rs` file under `dir`, paired with whether its text is scanned.
+/// Test-named files and `tests`/`testing` directories are not scanned, but
+/// they stay in the module graph: a production-looking file reached only
+/// through one of them is test-only too (#16361 review).
+fn source_files(dir: &Path, scan: bool, out: &mut Vec<(PathBuf, bool)>) -> Result<(), String> {
     let entries =
         std::fs::read_dir(dir).map_err(|error| format!("read {}: {error}", dir.display()))?;
     for entry in entries {
@@ -336,28 +539,165 @@ fn source_files(dir: &Path, out: &mut Vec<PathBuf>) -> Result<(), String> {
         let path = entry.path();
         let name = entry.file_name().to_string_lossy().to_string();
         if path.is_dir() {
-            if name == "tests" || name == "testing" {
-                continue;
-            }
-            source_files(&path, out)?;
-        } else if name.ends_with(".rs") && name != "tests.rs" && !name.ends_with("_tests.rs") {
-            out.push(path);
+            let scan = scan && name != "tests" && name != "testing";
+            source_files(&path, scan, out)?;
+        } else if name.ends_with(".rs") {
+            let scan = scan && name != "tests.rs" && !name.ends_with("_tests.rs");
+            out.push((path, scan));
         }
     }
     Ok(())
+}
+
+/// The directory that holds the files of `path`'s child modules:
+/// `a/mod.rs`, `lib.rs` and `main.rs` own their own directory, `a/b.rs`
+/// owns `a/b/`.
+fn child_module_dir(path: &Path) -> PathBuf {
+    let parent = path.parent().map(Path::to_path_buf).unwrap_or_default();
+    let stem = path
+        .file_stem()
+        .map(|stem| stem.to_string_lossy().to_string())
+        .unwrap_or_default();
+    if matches!(stem.as_str(), "mod" | "lib" | "main") {
+        parent
+    } else {
+        parent.join(stem)
+    }
+}
+
+/// Rust resolves a top-level literal #[path] beside the declaring file, even
+/// in foo.rs where a default child would instead live in foo/. Inside an
+/// inline module both forms start in that module's directory.
+fn module_target(
+    file: &Path,
+    loaded_by_path: bool,
+    module: &ast::Module,
+) -> Option<(PathBuf, bool)> {
+    let attr = module
+        .attrs()
+        .find(|attr| attr.simple_name().as_deref() == Some("path"));
+    let parent_module = module
+        .syntax()
+        .ancestors()
+        .skip(1)
+        .find_map(ast::Module::cast);
+    let dir = if let Some(parent) = parent_module {
+        module_target(file, loaded_by_path, &parent)?.0
+    } else if attr.is_some() || loaded_by_path {
+        file.parent()?.to_owned()
+    } else {
+        child_module_dir(file)
+    };
+
+    if let Some(attr) = attr {
+        let ast::Meta::KeyValueMeta(meta) = attr.meta()? else {
+            return None;
+        };
+        let ast::Expr::Literal(literal) = meta.expr()? else {
+            return None;
+        };
+        let ast::LiteralKind::String(string) = literal.kind() else {
+            return None;
+        };
+        // Compare actual paths, including explicit names containing "..".
+        let target = dir
+            .join(string.value().ok()?.as_ref())
+            .canonicalize()
+            .ok()?;
+        Some((target, true))
+    } else {
+        Some((
+            dir.join(module.name()?.text().trim_start_matches("r#")),
+            false,
+        ))
+    }
+}
+
+/// Rust can load the same file conventionally or through #[path]. Its
+/// default child directory depends on how the declaring file was loaded.
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
+struct ModuleFile {
+    path: PathBuf,
+    by_path: bool,
+}
+
+#[derive(Default)]
+struct ModuleChildren {
+    ordinary: Vec<ModuleFile>,
+    test: Vec<ModuleFile>,
+    test_dirs: Vec<PathBuf>,
+}
+
+fn module_children(file: &ModuleFile, tree: &ast::SourceFile) -> ModuleChildren {
+    let mut children = ModuleChildren::default();
+    for module in tree.syntax().descendants().filter_map(ast::Module::cast) {
+        if module.semicolon_token().is_none() {
+            continue;
+        }
+        let Some((target, explicit)) = module_target(&file.path, file.by_path, &module) else {
+            continue;
+        };
+        let test_only = under_test_gate(module.syntax());
+        let dest = if test_only {
+            &mut children.test
+        } else {
+            &mut children.ordinary
+        };
+        if explicit {
+            dest.push(ModuleFile {
+                path: target,
+                by_path: true,
+            });
+        } else {
+            if test_only {
+                children.test_dirs.push(target.clone());
+            }
+            for path in [target.with_extension("rs"), target.join("mod.rs")] {
+                dest.push(ModuleFile {
+                    path,
+                    by_path: false,
+                });
+            }
+        }
+    }
+    children
+}
+
+/// Walk physical module paths, keeping the loading mode until their children
+/// have been visited. A file may be imported in both modes.
+fn reachable_modules(
+    roots: &[ModuleFile],
+    modules: &BTreeMap<ModuleFile, ModuleChildren>,
+    with_tests: bool,
+) -> BTreeSet<ModuleFile> {
+    let mut seen = BTreeSet::new();
+    let mut todo = roots.to_vec();
+    while let Some(file) = todo.pop() {
+        if seen.insert(file.clone())
+            && let Some(children) = modules.get(&file)
+        {
+            todo.extend(children.ordinary.iter().cloned());
+            if with_tests {
+                todo.extend(children.test.iter().cloned());
+            }
+        }
+    }
+    seen
 }
 
 fn fragment_name(relative: &str) -> String {
     format!("{}.txt", relative.replace(['/', '\\'], "__"))
 }
 
-fn current_offenders() -> Result<BTreeMap<String, BTreeSet<String>>, String> {
-    let src = crate_dir().join("src");
-    let mut files = Vec::new();
-    source_files(&src, &mut files)?;
-    files.sort();
-    let mut by_file = BTreeMap::new();
-    for path in files {
+fn current_offenders(src: &Path) -> Result<BTreeMap<String, BTreeSet<String>>, String> {
+    let src = src
+        .canonicalize()
+        .map_err(|error| format!("resolve {}: {error}", src.display()))?;
+    let mut all_files = Vec::new();
+    source_files(&src, true, &mut all_files)?;
+    let mut modules = BTreeMap::new();
+    let mut found = Vec::new();
+    for (path, scan) in &all_files {
         let relative = format!(
             "crates/ripr/src/{}",
             path.strip_prefix(&src)
@@ -365,15 +705,104 @@ fn current_offenders() -> Result<BTreeMap<String, BTreeSet<String>>, String> {
                 .to_string_lossy()
                 .replace('\\', "/")
         );
+        // Lossy, so an invalid-UTF-8 fixture cannot abort the floor.
         let bytes =
-            std::fs::read(&path).map_err(|error| format!("read {}: {error}", path.display()))?;
-        let source = String::from_utf8_lossy(&bytes).to_string();
-        let keys = offenders_in(&relative, &source);
+            std::fs::read(path).map_err(|error| format!("read {}: {error}", path.display()))?;
+        let source = String::from_utf8_lossy(&bytes).into_owned();
+        let tree = SourceFile::parse(&source, Edition::CURRENT).tree();
+        for by_path in [false, true] {
+            let file = ModuleFile {
+                path: path.to_owned(),
+                by_path,
+            };
+            let children = module_children(&file, &tree);
+            modules.insert(file, children);
+        }
+        if !scan {
+            continue;
+        }
+        let keys = offenders_in_production(&relative, &without_test_items(&source, &tree));
         if !keys.is_empty() {
-            by_file.insert(relative, keys);
+            found.push((path, relative, keys));
         }
     }
-    Ok(by_file)
+    // Include standalone sources when identifying the declared module trees.
+    // Only scanned files can be standalone roots; an unscanned test file must
+    // not make the files it declares look like production. Its declarations
+    // count only once it is itself reached, so a dangling test file cannot
+    // hide a real root by naming it (#16361 review).
+    let scanned: BTreeSet<&PathBuf> = all_files
+        .iter()
+        .filter(|(_, scan)| *scan)
+        .map(|(path, _)| path)
+        .collect();
+    let named_by = |parents: &dyn Fn(&ModuleFile) -> bool| -> BTreeSet<PathBuf> {
+        modules
+            .iter()
+            .filter(|(file, _)| parents(file))
+            .flat_map(|(_, children)| {
+                children
+                    .test
+                    .iter()
+                    .chain(&children.ordinary)
+                    .map(|child| child.path.clone())
+            })
+            .collect()
+    };
+    let roots_for = |named: &BTreeSet<PathBuf>| -> Vec<ModuleFile> {
+        let mut roots: Vec<_> = scanned
+            .iter()
+            .filter(|file| !named.contains(**file))
+            .map(|path| ModuleFile {
+                path: (*path).clone(),
+                by_path: false,
+            })
+            .collect();
+        roots.extend(["lib.rs", "main.rs"].map(|name| ModuleFile {
+            path: src.join(name),
+            by_path: false,
+        }));
+        roots
+    };
+    // A standalone file is loaded conventionally, so only that mode's
+    // declarations count before the walk; a `#[path]` loading mode counts once
+    // the walk actually reaches it.
+    let standalone = |file: &ModuleFile| scanned.contains(&file.path) && !file.by_path;
+    let mut named = named_by(&standalone);
+    let mut roots = roots_for(&named);
+    loop {
+        let reached = reachable_modules(&roots, &modules, true);
+        // `named` only grows, so this reaches a fixed point.
+        let next = named_by(&|file| standalone(file) || reached.contains(file));
+        if next.is_subset(&named) {
+            break;
+        }
+        named.extend(next);
+        roots = roots_for(&named);
+    }
+    let all = reachable_modules(&roots, &modules, true);
+    // A conventionally declared test-only module owns its directory, including
+    // fixture files without a mod declaration. A literal #[path] owns just the
+    // file it names. Production declarations may still reach either location.
+    let test_dirs: BTreeSet<_> = all
+        .iter()
+        .filter_map(|file| modules.get(file))
+        .flat_map(|children| children.test_dirs.iter().map(PathBuf::as_path))
+        .collect();
+    let in_test_dir = |path: &Path| path.ancestors().any(|dir| test_dirs.contains(dir));
+    roots.retain(|root| !in_test_dir(&root.path));
+    let production: BTreeSet<_> = reachable_modules(&roots, &modules, false)
+        .into_iter()
+        .map(|file| file.path)
+        .collect();
+    let declared: BTreeSet<_> = all.into_iter().map(|file| file.path).collect();
+    Ok(found
+        .into_iter()
+        .filter(|(path, _, _)| {
+            production.contains(*path) || (!declared.contains(*path) && !in_test_dir(path))
+        })
+        .map(|(_, relative, keys)| (relative, keys))
+        .collect())
 }
 
 fn baseline() -> Result<BTreeMap<String, BTreeSet<String>>, String> {
@@ -408,7 +837,7 @@ fn baseline() -> Result<BTreeMap<String, BTreeSet<String>>, String> {
 
 #[test]
 fn error_messages_name_a_next_step_or_are_baselined() -> Result<(), String> {
-    let current = current_offenders()?;
+    let current = current_offenders(&crate_dir().join("src"))?;
     let accepted = baseline()?;
     let prune = std::env::var("RIPR_PRUNE_REFUSAL_BASELINE").is_ok_and(|value| value == "1");
 
@@ -517,6 +946,16 @@ const LIVE_CASES: &[Case] = &[
         reason: "unknown check argument",
     },
     Case {
+        args: &["check", "--staged"],
+        exit: 2,
+        reason: "`git diff --cached | ripr check --diff -`",
+    },
+    Case {
+        args: &["check", "--cached"],
+        exit: 2,
+        reason: "source is still read from the working tree",
+    },
+    Case {
         args: &["gate", "evaluate"],
         exit: 2,
         reason: "requires at least one",
@@ -585,6 +1024,18 @@ const LIVE_CASES: &[Case] = &[
         args: &["status", "--attempt", "nope"],
         exit: 2,
         reason: "must start with",
+    },
+    // An unresolvable pr-evidence revision names the flag that carried it. It
+    // used to print `bad base/head revision` with a Debug-formatted git argv.
+    Case {
+        args: &["pr-evidence", "--base", "no-such-ref-xyz", "--head", "HEAD"],
+        exit: 2,
+        reason: "pr-evidence --base `no-such-ref-xyz` does not resolve to a commit",
+    },
+    Case {
+        args: &["pr-evidence", "--base", "HEAD", "--head", "no-such-ref-xyz"],
+        exit: 2,
+        reason: "pr-evidence --head `no-such-ref-xyz` does not resolve to a commit",
     },
 ];
 
@@ -669,6 +1120,454 @@ fn live_refusals_name_a_next_step() -> Result<(), String> {
     } else {
         Err(failures.join("\n"))
     }
+}
+
+/// Keys reported for a synthetic source file, without the `file|` prefix.
+fn offender_messages(source: &str) -> Vec<String> {
+    offenders_in("x.rs", source)
+        .into_iter()
+        .map(|key| key.trim_start_matches("x.rs|").to_string())
+        .collect()
+}
+
+#[test]
+fn scan_distinguishes_uncued_messages_after_character_110() {
+    let prefix = format!("missing {}", "é".repeat(102));
+    assert_eq!(prefix.chars().count(), 110);
+    let first = format!("{prefix} alpha");
+    let second = format!("{prefix} beta");
+    let source = format!(r#"fn f() {{ Err("{first}"); Err("{second}"); }}"#);
+    let keys = offenders_in("x.rs", &source);
+    let accepted = offenders_in("x.rs", &format!(r#"fn f() {{ Err("{first}"); }}"#));
+    assert_eq!(keys.intersection(&accepted).count(), 1);
+    assert_eq!(
+        keys.difference(&accepted).collect::<Vec<_>>(),
+        vec![&format!("x.rs|{second}")]
+    );
+}
+
+#[test]
+fn scan_skips_the_body_after_a_braced_const_argument() {
+    let source = r#"
+#[cfg(test)]
+fn helper() -> Buf<{ 1 + 3 }> {
+    Err("test-only widget is missing")
+}
+fn live() { Err("production widget is missing"); }
+"#;
+    assert_eq!(offender_messages(source), ["production widget is missing"]);
+}
+
+fn scan_module_fixture(
+    files: &[(&str, &str)],
+) -> Result<BTreeSet<String>, Box<dyn std::error::Error>> {
+    let fixture = tempfile::tempdir()?;
+    let src = fixture.path().join("src");
+    for (name, body) in files {
+        let path = src.join(name);
+        std::fs::create_dir_all(path.parent().ok_or("missing fixture parent")?)?;
+        std::fs::write(path, body)?;
+    }
+    Ok(current_offenders(&src)?.into_values().flatten().collect())
+}
+
+#[test]
+fn scan_excludes_only_the_named_test_path() -> Result<(), Box<dyn std::error::Error>> {
+    let keys = scan_module_fixture(&[
+        (
+            "lib.rs",
+            r#"mod host; mod shared; mod moved; #[path = "relocated/entry.rs"] mod extra;"#,
+        ),
+        ("relocated/entry.rs", "mod rows;"),
+        (
+            "relocated/rows.rs",
+            r#"fn f() { Err("live relocated row is missing"); }"#,
+        ),
+        (
+            "host.rs",
+            r#"
+            #[cfg(test)] #[path = "support.rs"] mod moved;
+            #[cfg(test)] #[path = "relocated/rows.rs"] mod duplicate;
+            #[path = "shared.rs"] #[cfg(test)] mod alias;
+            mod nested { #[path = "alt/mod.rs"] #[cfg(test)] mod helpers; }
+        "#,
+        ),
+        (
+            "support.rs",
+            r#"fn f() { Err("support widget is missing"); }"#,
+        ),
+        (
+            "host/nested/alt/mod.rs",
+            r#"fn f() { Err("nested helper is missing"); }"#,
+        ),
+        (
+            "host/nested/alt/sibling.rs",
+            r#"fn f() { Err("other nested widget is missing"); }"#,
+        ),
+        (
+            "shared.rs",
+            r#"fn f() { Err("shared widget is missing"); }"#,
+        ),
+        ("moved.rs", r#"fn f() { Err("live widget is missing"); }"#),
+        (
+            "host/moved.rs",
+            r#"fn f() { Err("other widget is missing"); }"#,
+        ),
+    ])?;
+    assert_eq!(
+        keys,
+        BTreeSet::from([
+            "crates/ripr/src/host/moved.rs|other widget is missing".into(),
+            "crates/ripr/src/host/nested/alt/sibling.rs|other nested widget is missing".into(),
+            "crates/ripr/src/moved.rs|live widget is missing".into(),
+            "crates/ripr/src/shared.rs|shared widget is missing".into(),
+            "crates/ripr/src/relocated/rows.rs|live relocated row is missing".into(),
+        ])
+    );
+    Ok(())
+}
+
+#[test]
+fn scan_excludes_nested_test_rows_and_keeps_production_rows()
+-> Result<(), Box<dyn std::error::Error>> {
+    let keys = scan_module_fixture(&[
+        ("lib.rs", "mod rows; mod nested { #[cfg(test)] mod rows; }"),
+        (
+            "nested/rows/fixture.rs",
+            r#"fn f() { Err("test fixture row is missing"); }"#,
+        ),
+        ("rows.rs", r#"fn f() { Err("production row is missing"); }"#),
+        (
+            "nested/rows.rs",
+            r#"fn f() { Err("test row is missing"); }"#,
+        ),
+    ])?;
+    assert_eq!(
+        keys,
+        BTreeSet::from(["crates/ripr/src/rows.rs|production row is missing".into(),])
+    );
+    Ok(())
+}
+
+#[test]
+fn scan_follows_modules_declared_by_an_unscanned_test_file()
+-> Result<(), Box<dyn std::error::Error>> {
+    // A test-named file is not scanned, but the module it declares is reached
+    // only through a test-only path, so it is test-only too.
+    let test_only = scan_module_fixture(&[
+        (
+            "lib.rs",
+            r#"#[cfg(test)] #[path = "driver_tests.rs"] mod driver;"#,
+        ),
+        ("driver_tests.rs", "mod helper;"),
+        (
+            "helper.rs",
+            r#"fn f() { Err("fixture widget is missing"); }"#,
+        ),
+    ])?;
+    assert_eq!(test_only, BTreeSet::new());
+    // Control: a production declaration of the same file keeps it visible.
+    let shared = scan_module_fixture(&[
+        (
+            "lib.rs",
+            r#"mod helper; #[cfg(test)] #[path = "driver_tests.rs"] mod driver;"#,
+        ),
+        ("driver_tests.rs", "mod helper;"),
+        (
+            "helper.rs",
+            r#"fn f() { Err("fixture widget is missing"); }"#,
+        ),
+    ])?;
+    assert_eq!(
+        shared,
+        BTreeSet::from(["crates/ripr/src/helper.rs|fixture widget is missing".into()])
+    );
+    Ok(())
+}
+
+#[test]
+fn scan_keeps_a_root_named_only_by_an_unreached_test_file() -> Result<(), Box<dyn std::error::Error>>
+{
+    // An unreferenced test file names a real binary; that dangling edge must
+    // not demote the binary from root, or its test-only child looks
+    // undeclared and gets scanned.
+    let keys = scan_module_fixture(&[
+        ("lib.rs", ""),
+        ("driver_tests.rs", r#"#[path = "bin/tool.rs"] mod dormant;"#),
+        (
+            "bin/tool.rs",
+            r#"fn main() {} #[cfg(test)] #[path = "tool/probe.rs"] mod probe;"#,
+        ),
+        (
+            "bin/tool/probe.rs",
+            r#"fn f() -> Result<(), &'static str> { Err("fixture widget is missing") }"#,
+        ),
+    ])?;
+    assert_eq!(keys, BTreeSet::new());
+    Ok(())
+}
+
+#[test]
+fn scan_matches_cfg_test_by_tokens_not_spelling() {
+    let source = r#"
+#[cfg(/* tests only */ test)]
+fn helper() { Err("commented test widget is missing"); }
+#[cfg(not(test))]
+fn negated() { Err("negated widget is missing"); }
+fn live() { Err("production widget is missing"); }
+"#;
+    assert_eq!(
+        offender_messages(source),
+        ["negated widget is missing", "production widget is missing"]
+    );
+}
+
+#[test]
+fn scan_keeps_a_module_inside_a_test_only_function_out_of_production()
+-> Result<(), Box<dyn std::error::Error>> {
+    let fixture = r#"fn f() { Err("fixture widget is missing"); }"#;
+    let gated = scan_module_fixture(&[
+        (
+            "lib.rs",
+            r#"#[cfg(test)] fn setup() { #[path = "fixture.rs"] mod fixture; }"#,
+        ),
+        ("fixture.rs", fixture),
+    ])?;
+    assert_eq!(gated, BTreeSet::new());
+    // Control: the same declaration in an ordinary function is production.
+    let ordinary = scan_module_fixture(&[
+        (
+            "lib.rs",
+            r#"fn setup() { #[path = "fixture.rs"] mod fixture; }"#,
+        ),
+        ("fixture.rs", fixture),
+    ])?;
+    assert_eq!(
+        ordinary,
+        BTreeSet::from(["crates/ripr/src/fixture.rs|fixture widget is missing".into()])
+    );
+    Ok(())
+}
+
+#[test]
+fn scan_ignores_an_unused_path_loading_mode() -> Result<(), Box<dyn std::error::Error>> {
+    // `host.rs` is loaded conventionally, so its `mod entry;` is
+    // `host/entry.rs`. Its unused `#[path]` mode would name the standalone
+    // `src/entry.rs`, which must stay a root so its test module is excluded.
+    let keys = scan_module_fixture(&[
+        ("lib.rs", "mod host;"),
+        ("host.rs", "mod entry;"),
+        ("host/entry.rs", ""),
+        ("entry.rs", "#[cfg(test)] mod fixtures;"),
+        (
+            "entry/fixtures.rs",
+            r#"fn f() { Err("test fixture widget is missing"); }"#,
+        ),
+    ])?;
+    assert_eq!(keys, BTreeSet::new());
+    Ok(())
+}
+
+#[test]
+fn scan_survives_an_invalid_utf8_test_fixture() -> Result<(), Box<dyn std::error::Error>> {
+    let fixture = tempfile::tempdir()?;
+    let src = fixture.path().join("src");
+    std::fs::create_dir_all(src.join("tests"))?;
+    std::fs::write(
+        src.join("lib.rs"),
+        r#"fn f() { Err("production widget is missing"); }"#,
+    )?;
+    std::fs::write(src.join("tests/bad_utf8.rs"), [0xff, 0xfe, b'\n'])?;
+    let keys: BTreeSet<String> = current_offenders(&src)?.into_values().flatten().collect();
+    assert_eq!(
+        keys,
+        BTreeSet::from(["crates/ripr/src/lib.rs|production widget is missing".into()])
+    );
+    Ok(())
+}
+
+#[test]
+fn scan_sees_production_code_below_a_test_only_item() {
+    // #14163: the scan used to stop at the first `#[cfg(test)]`, so a
+    // test-only import near the top of a file hid every message below it.
+    let source = r#"
+#[cfg(test)]
+use crate::testing::helper;
+
+fn parse() -> Result<(), String> {
+    return Err("widget requires --size <n>".to_string());
+}
+
+#[cfg(test)]
+mod tests {
+    fn brace_in_text() -> Result<(), String> {
+        let _open = '{';
+        let _text = "}} not the end of the module {";
+        Err("test-only message is not found".to_string())
+    }
+}
+
+fn after_tests() -> Result<(), String> {
+    Err("gadget is not a directory".to_string())
+}
+"#;
+    assert_eq!(
+        offender_messages(source),
+        vec![
+            "gadget is not a directory".to_string(),
+            "widget requires --size <n>".to_string(),
+        ]
+    );
+}
+
+#[test]
+fn scan_hides_a_test_only_item_whose_signature_holds_a_semicolon() {
+    // A `;` inside `[u8; 4]` or a call's parens is not the end of the item,
+    // so the test-only body below it stays hidden from the production scan.
+    let source = r#"
+#[cfg(test)]
+fn helper(_bytes: [u8; 4]) -> Result<(), String> {
+    Err("test-only helper message is not found".to_string())
+}
+
+#[cfg(test)]
+const TABLE: [&str; 2] = [
+    "test-only table entry",
+    { let _x = 1; "test-only block entry" },
+];
+
+fn after() -> Result<(), String> {
+    Err("gadget is not a directory".to_string())
+}
+"#;
+    assert_eq!(
+        offender_messages(source),
+        vec!["gadget is not a directory".to_string()]
+    );
+}
+
+#[test]
+fn scan_treats_a_nested_block_comment_as_one_comment() {
+    // Rust block comments nest, so the inner `*/` does not end the outer one.
+    let source = r#"
+/* outer /* inner */
+fn retired() -> Result<(), String> {
+    Err("commented-out message is not found".to_string())
+}
+*/
+fn live() -> Result<(), String> {
+    Err("gadget is not a directory".to_string())
+}
+"#;
+    assert_eq!(
+        offender_messages(source),
+        vec!["gadget is not a directory".to_string()]
+    );
+}
+
+#[test]
+fn test_only_child_modules_names_out_of_line_test_modules() {
+    let source = r##"
+#[cfg(test)]
+mod rows;
+#[cfg(test)]
+#[doc(hidden)]
+pub(crate) mod helpers ;
+#[cfg(test)]
+mod inline_tests {}
+mod production;
+mod nested {
+    mod inner {
+        #[cfg(test)]
+        mod rows;
+    }
+    #[cfg(test)]
+    mod helpers;
+}
+// #[cfg(test)] mod commented;
+const NOTE: &str = "#[cfg(test)] mod quoted;";
+"##;
+    let tree = SourceFile::parse(source, Edition::CURRENT).tree();
+    let children = module_children(
+        &ModuleFile {
+            path: "src/lib.rs".into(),
+            by_path: false,
+        },
+        &tree,
+    );
+    let test_files: Vec<_> = children.test.into_iter().map(|file| file.path).collect();
+    assert_eq!(
+        test_files,
+        [
+            "src/rows.rs",
+            "src/rows/mod.rs",
+            "src/helpers.rs",
+            "src/helpers/mod.rs",
+            "src/nested/inner/rows.rs",
+            "src/nested/inner/rows/mod.rs",
+            "src/nested/helpers.rs",
+            "src/nested/helpers/mod.rs"
+        ]
+        .map(PathBuf::from)
+    );
+    assert_eq!(
+        child_module_dir(Path::new("src/a/b.rs")),
+        PathBuf::from("src/a/b")
+    );
+    assert_eq!(
+        child_module_dir(Path::new("src/a/mod.rs")),
+        PathBuf::from("src/a")
+    );
+    assert_eq!(
+        child_module_dir(Path::new("src/lib.rs")),
+        PathBuf::from("src")
+    );
+}
+
+#[test]
+fn scan_judges_an_expression_position_message_on_its_own_text() {
+    // #14163: reading on to the next `;` let a message with no next step
+    // borrow the cue of the statement after it.
+    let source = r#"
+fn pick(kind: u8) -> Result<u8, String> {
+    match kind {
+        0 => Err("first kind is not supported".to_string()),
+        1 => Err("second kind is not supported; pass `--kind 2`".to_string()),
+        other => Ok(other),
+    }
+}
+"#;
+    assert_eq!(
+        offender_messages(source),
+        vec!["first kind is not supported".to_string()]
+    );
+}
+
+#[test]
+fn scan_ignores_a_trigger_named_inside_a_string_or_comment() {
+    let source = r#"
+fn strip(text: &str) -> Option<&str> {
+    // map_err("this comment is not found by the scan")
+    text.strip_prefix("Err(").map(|missing_value_text| "")
+}
+"#;
+    assert_eq!(offender_messages(source), Vec::<String>::new());
+}
+
+#[test]
+fn scan_keeps_a_cued_message_and_a_lifetime_does_not_open_a_char() {
+    let source = r#"
+fn load<'a,'b>(left: &'a str, right: &'b str) -> Result<&'a str, String> {
+    if left == right {
+        return Err(format!("{left} is not a directory; pass `--root <dir>`"));
+    }
+    Err(format!("{right} is not readable and no route is named"))
+}
+"#;
+    assert_eq!(
+        offender_messages(source),
+        vec!["{right} is not readable and no route is named".to_string()]
+    );
 }
 
 #[test]

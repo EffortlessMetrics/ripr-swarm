@@ -56,5 +56,4 @@ Drill in:
   ripr explain --root <cwd>/fixtures/python_unreached_match_arm_control/input --diff <cwd>/fixtures/python_unreached_match_arm_control/diff.patch --mode fast probe:src_kind.py:python_preview:5f2246ab
   ripr context --root <cwd>/fixtures/python_unreached_match_arm_control/input --diff <cwd>/fixtures/python_unreached_match_arm_control/diff.patch --mode fast --at probe:src_kind.py:python_preview:5f2246ab
 
-
 Note: 1 Python file analyzed under preview support — preview evidence is advisory and may be incomplete. Treat its findings as advisory, not Rust-grade.

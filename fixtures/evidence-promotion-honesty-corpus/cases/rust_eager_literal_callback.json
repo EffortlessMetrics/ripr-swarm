@@ -1,0 +1,27 @@
+{
+  "id": "rust_eager_literal_callback",
+  "language": "rust",
+  "tier": "pure",
+  "source_report": "fixtures/evidence-promotion-honesty-corpus/reports/rust-repo-exposure-eager-literal-callback.json",
+  "report_subject": "fixtures/evidence-promotion-honesty-corpus/repo-exposure-subjects/eager-literal-callback",
+  "vector": "cloned_callback_does_not_make_a_noninvoking_helper_observe_the_owner",
+  "assertions": [
+    {
+      "type": "expected_repo_seam_grip",
+      "owner": "src/lib.rs::gate",
+      "expression": "n >= 10",
+      "grip_class": "strongly_gripped",
+      "reach": "yes"
+    },
+    {
+      "type": "expected_repo_seam_related_test",
+      "owner": "src/lib.rs::gate",
+      "expression": "n >= 10",
+      "test": "boundary",
+      "file": "src/lib.rs",
+      "line": 15,
+      "oracle_strength": "strong",
+      "relation_reason": "direct_owner_call"
+    }
+  ]
+}

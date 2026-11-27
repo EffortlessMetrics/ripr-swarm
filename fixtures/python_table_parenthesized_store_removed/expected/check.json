@@ -48,6 +48,13 @@
         "observe": {"state":"yes","confidence":"low","summary":"Strongest extracted Python oracle kind: `exact_value` (rank 5)"},
         "discriminate": {"state":"yes","confidence":"low","summary":"Related Python test uses an `exact_value` oracle; static evidence suggests the changed behavior is discriminated."}
        },
+      "evidence_stages": [
+        {"stage":"reach","state":"yes","confidence":"low"},
+        {"stage":"infect","state":"yes","confidence":"low"},
+        {"stage":"propagate","state":"weak","confidence":"low"},
+        {"stage":"observe","state":"yes","confidence":"low"},
+        {"stage":"discriminate","state":"yes","confidence":"low"}
+      ],
       "evidence_path": ["reach yes: 1 related Python test(s) found for owner `<module>`", "infection yes: Changed Python call or output effect can alter observable side effects: `PLAIN_TABLE = ({\"gold\": 10, \"silver\": 6})`", "propagation weak: Changed Python call/output behavior can propagate through side effects; runtime target resolution is not inferred.", "observation yes: Strongest extracted Python oracle kind: `exact_value` (rank 5)", "discriminator yes: Related Python test uses an `exact_value` oracle; static evidence suggests the changed behavior is discriminated.", "local flow reaches call effect: PLAIN_TABLE = ({\"gold\": 10, \"silver\": 6}) (line 1)", "related test tests/test_table.py:4 test_silver_price uses strong exact value oracle: assert price(\"silver\") == 5"],
       "flow_sinks": [
         {"kind":"call_effect","text":"PLAIN_TABLE = ({\"gold\": 10, \"silver\": 6})","line":1}

@@ -1,6 +1,7 @@
 use super::PythonOwner;
 use super::probe_shape::looks_like_call_expression;
 use super::related_tests::is_python_identifier_char;
+use super::sink_alignment::parse_dict_literal_fields;
 use super::static_limits::{
     contains_python_call_shape, is_simple_python_identifier, line_prefix_before,
     python_callee_start_has_boundary, python_prefix_hides_code,
@@ -11,30 +12,179 @@ pub(super) fn python_missing_discriminators(
     probe_family: &ProbeFamily,
     line: usize,
     line_text: &str,
+    old_line_text: Option<&str>,
     owner: &PythonOwner,
     flow_sink: Option<&FlowSinkFact>,
 ) -> Vec<MissingDiscriminatorFact> {
-    let Some(value) = python_missing_discriminator_value(probe_family, line_text, owner) else {
+    let Some(value) =
+        python_missing_discriminator_value(probe_family, line_text, old_line_text, owner)
+    else {
         return Vec::new();
     };
 
-    vec![MissingDiscriminatorFact {
+    vec![MissingDiscriminatorFact::equality_spelled(
         value,
-        reason: python_missing_discriminator_reason(probe_family, line),
-        flow_sink: flow_sink.cloned(),
-    }]
+        python_missing_discriminator_reason(probe_family, line),
+        flow_sink.cloned(),
+    )]
+}
+
+/// A changed entry of a multi-line `return {` literal (#15357): the entry is
+/// the changed value, so the missing check is an exact read of its key in the
+/// returned dict. A related test that reads a different key leaves it open.
+///
+/// Closed shape: the statement the line continues opens with a bare
+/// `return {`, the line sits at the literal's own depth (not inside a nested
+/// bracket), and it is exactly one `"key": value` entry with a plain quoted
+/// key and no comment. Anything else keeps the generic path. A non-literal
+/// value names the placeholder, never the computation itself.
+pub(super) fn python_multiline_return_dict_entry_discriminator(
+    line: usize,
+    line_text: &str,
+    span: Option<(usize, usize)>,
+    source: Option<&str>,
+    owner: &PythonOwner,
+    flow_sink: Option<&FlowSinkFact>,
+) -> Option<MissingDiscriminatorFact> {
+    let (open, close) = span?;
+    if line <= open || line >= close {
+        return None;
+    }
+    let lines: Vec<&str> = source?
+        .lines()
+        .skip(open.checked_sub(1)?)
+        .take(line - open)
+        .collect();
+    let rest = lines.first()?.trim().strip_prefix("return {")?.trim();
+    if !(rest.is_empty() || rest.starts_with('#')) {
+        return None;
+    }
+    let mut depth = 1usize;
+    for text in &lines[1..] {
+        depth = python_line_bracket_depth(text, depth)?;
+    }
+    if depth != 1 || line_text.contains('#') {
+        return None;
+    }
+    // The literal must be the whole returned value: a closing line such as
+    // `} | overrides` or `}[key]` returns something other than this entry.
+    if source?.lines().nth(close.checked_sub(1)?)?.trim() != "}" {
+        return None;
+    }
+    let segments: Vec<&str> = top_level_python_segments(line_text.trim())
+        .into_iter()
+        .filter(|segment| !segment.is_empty())
+        .collect();
+    let [segment] = segments.as_slice() else {
+        return None;
+    };
+    if !(segment.starts_with('"') || segment.starts_with('\'')) {
+        return None;
+    }
+    let (key, value) = python_dict_field_segment_parts(segment)?;
+    if key.contains(['"', '\'', '\\']) {
+        return None;
+    }
+    // The value must end on this line: without a trailing comma (or the
+    // closing brace next) it may continue, e.g. an implicitly concatenated
+    // string or a `+` on the next line, and the literal here is only a part.
+    if python_line_bracket_depth(line_text, 1)? != 1
+        || !(line_text.trim_end().ends_with(',') || line + 1 == close)
+        || line_text.contains(" for ")
+        || line_text.contains(" async for ")
+    {
+        return None;
+    }
+    // Every later entry must start with a plain quoted key distinct from this
+    // one. A comprehension clause, a `**spread`, a dynamic or escaped key, a
+    // comment, or a duplicate may override this entry, so it would then not
+    // be the returned value for its key.
+    let mut depth = 1usize;
+    for text in source?.lines().skip(line).take(close - line - 1) {
+        let trimmed = text.trim();
+        let next = python_line_bracket_depth(text, depth)?;
+        if depth == 1 && !trimmed.is_empty() {
+            // Every entry on the line, not only the first.
+            for segment in top_level_python_segments(trimmed)
+                .into_iter()
+                .filter(|segment| !segment.is_empty())
+            {
+                if !(segment.starts_with('"') || segment.starts_with('\'')) || segment.contains('#')
+                {
+                    return None;
+                }
+                let (later, _) = python_dict_field_segment_parts(segment)?;
+                if later.contains(['"', '\'', '\\']) || later == key {
+                    return None;
+                }
+            }
+        } else if depth > 1 && next == 1 {
+            // A line that closes a nested value may start the next entry after
+            // the bracket (`"x": 1}, "k": 5,`); only a bare close is read.
+            if !trimmed
+                .trim_end_matches(',')
+                .chars()
+                .all(|ch| matches!(ch, '}' | ']' | ')'))
+            {
+                return None;
+            }
+        }
+        depth = next;
+    }
+    let value = python_expected_value_or_placeholder(value);
+    let read = if owner.route_paths.is_empty() {
+        format!("result[\"{key}\"]")
+    } else {
+        format!("response.json()[\"{key}\"]")
+    };
+    Some(MissingDiscriminatorFact::equality_spelled(
+        format!("{read} == {value}"),
+        format!("changed Python returned-dict entry at line {line} needs an exact read of its key"),
+        flow_sink.cloned(),
+    ))
+}
+
+/// The bracket depth after one source line, starting at `depth`. `None` when
+/// the line does not scan cleanly (unterminated string, triple quote, a
+/// bracket closed below the start): the caller then refuses.
+fn python_line_bracket_depth(text: &str, mut depth: usize) -> Option<usize> {
+    let mut quote: Option<char> = None;
+    let mut escaped = false;
+    for ch in text.chars() {
+        if escaped {
+            escaped = false;
+            continue;
+        }
+        match (quote, ch) {
+            (Some(_), '\\') => escaped = true,
+            (Some(q), c) if c == q => quote = None,
+            (Some(_), _) => {}
+            (None, '"' | '\'') => quote = Some(ch),
+            (None, '#') => break,
+            (None, '(' | '[' | '{') => depth += 1,
+            (None, ')' | ']' | '}') => depth = depth.checked_sub(1)?,
+            (None, _) => {}
+        }
+    }
+    if quote.is_some() || text.contains("\"\"\"") || text.contains("'''") {
+        return None;
+    }
+    Some(depth)
 }
 
 fn python_missing_discriminator_value(
     probe_family: &ProbeFamily,
     line_text: &str,
+    old_line_text: Option<&str>,
     owner: &PythonOwner,
 ) -> Option<String> {
     match probe_family {
         ProbeFamily::Predicate => python_boundary_discriminator(line_text),
         ProbeFamily::ReturnValue => python_return_value_discriminator(line_text),
         ProbeFamily::ErrorPath => python_exception_discriminator(line_text),
-        ProbeFamily::FieldConstruction => python_field_value_discriminator(line_text, owner),
+        ProbeFamily::FieldConstruction => {
+            python_field_value_discriminator(line_text, old_line_text, owner)
+        }
         ProbeFamily::SideEffect | ProbeFamily::CallDeletion => {
             python_output_or_call_discriminator(line_text)
         }
@@ -121,14 +271,30 @@ fn python_exception_discriminator(line_text: &str) -> Option<String> {
     }
 }
 
-fn python_field_value_discriminator(line_text: &str, owner: &PythonOwner) -> Option<String> {
+fn python_field_value_discriminator(
+    line_text: &str,
+    old_line_text: Option<&str>,
+    owner: &PythonOwner,
+) -> Option<String> {
     let text = line_text.trim();
-    if let Some((field, value)) = python_return_dict_field_parts(text) {
-        let value = python_expected_value_or_placeholder(&value);
-        if !owner.route_paths.is_empty() {
-            return Some(format!("response.json()[\"{field}\"] == {value}"));
-        }
-        return Some(format!("{field} == {value}"));
+    if let Some(pick) = python_return_dict_discriminator_pick(text, old_line_text) {
+        let routed = !owner.route_paths.is_empty();
+        return Some(match pick {
+            PythonDictDiscriminatorPick::Entry { key, value } => {
+                let value = python_expected_value_or_placeholder(&value);
+                if routed {
+                    format!("response.json()[\"{key}\"] == {value}")
+                } else {
+                    format!("{key} == {value}")
+                }
+            }
+            PythonDictDiscriminatorPick::WholeDict if routed => {
+                format!("response.json() == {PYTHON_EXPECTED_VALUE_PLACEHOLDER}")
+            }
+            PythonDictDiscriminatorPick::WholeDict => {
+                format!("return value == {PYTHON_EXPECTED_VALUE_PLACEHOLDER}")
+            }
+        });
     }
     if let Some((_constructor, field, value)) = python_return_constructor_field_parts(text) {
         let value = python_expected_value_or_placeholder(&value);
@@ -151,6 +317,67 @@ fn python_field_value_discriminator(line_text: &str, owner: &PythonOwner) -> Opt
         "{lhs} == {}",
         python_expected_value_or_placeholder(rhs)
     ))
+}
+
+/// Which part of a changed `return {...}` dict the repair discriminator names.
+#[derive(Debug, PartialEq, Eq)]
+enum PythonDictDiscriminatorPick {
+    /// One entry: the single changed entry when the paired old line localizes
+    /// it, otherwise the unlocalized first-literal/first-entry pick.
+    Entry { key: String, value: String },
+    /// The paired old line shows the change is not inside one surviving entry
+    /// (several entries changed, or an entry was removed without one new key
+    /// replacing it). Naming any
+    /// single key could name an unchanged sibling, so the whole returned dict
+    /// is the discriminator (#13630).
+    WholeDict,
+}
+
+/// The discriminator pick for a `return {...}` changed line. With a paired old
+/// dict line, the changed entries are localized with the same dict-literal
+/// parser the sink alignment uses (`parse_dict_literal_fields`): exactly one
+/// changed new-side entry is named, including a renamed key (the new key
+/// replaces one removed old key), never the unchanged sibling the first-entry
+/// pick would choose; several changed entries, or a removal with no
+/// replacing entry, name the whole dict. Without a paired old dict line, or
+/// when no entry differs, the existing unlocalized pick stands.
+fn python_return_dict_discriminator_pick(
+    line_text: &str,
+    old_line_text: Option<&str>,
+) -> Option<PythonDictDiscriminatorPick> {
+    let (fallback_key, fallback_value) = python_return_dict_field_parts(line_text)?;
+    let fallback = PythonDictDiscriminatorPick::Entry {
+        key: fallback_key,
+        value: fallback_value,
+    };
+    let (Some(old), Some(new)) = (
+        old_line_text.and_then(parse_dict_literal_fields),
+        parse_dict_literal_fields(line_text),
+    ) else {
+        return Some(fallback);
+    };
+    let old_value = |key: &str| old.iter().find(|(k, _)| k == key).map(|(_, v)| v);
+    let changed: Vec<&(String, String)> = new
+        .iter()
+        .filter(|(key, value)| old_value(key) != Some(value))
+        .collect();
+    let removed = old
+        .iter()
+        .filter(|(key, _)| !new.iter().any(|(k, _)| k == key))
+        .count();
+    let pick = match (changed.as_slice(), removed) {
+        ([], 0) => fallback,
+        ([(key, value)], 0) => PythonDictDiscriminatorPick::Entry {
+            key: key.clone(),
+            value: value.clone(),
+        },
+        ([(key, value)], 1) if old_value(key).is_none() => PythonDictDiscriminatorPick::Entry {
+            key: key.clone(),
+            value: value.clone(),
+        },
+        _ => PythonDictDiscriminatorPick::WholeDict,
+    };
+    Some(pick)
 }
 
 pub(super) fn python_route_response_field_discriminator(
@@ -439,7 +666,13 @@ pub(super) fn python_output_or_call_discriminator(line_text: &str) -> Option<Str
     if let Some(exit_code) = python_exit_code_discriminator(text) {
         return Some(format!("exit_code == {exit_code}"));
     }
-    let literal = first_python_string_literal(text)?;
+    let literal = first_python_string_literal(text);
+    if literal.is_none()
+        && let Some(appended) = python_appended_value_discriminator(text)
+    {
+        return Some(appended);
+    }
+    let literal = literal?;
     if python_stdout_output_call(text) {
         Some(format!("stdout contains {literal}"))
     } else if python_stderr_output_call(text) {
@@ -451,6 +684,29 @@ pub(super) fn python_output_or_call_discriminator(line_text: &str) -> Option<Str
     } else {
         Some(format!("call includes {literal}"))
     }
+}
+
+/// The missing check for a changed `<receiver>.append(<value>)` effect with
+/// no string literal to name: the appended contents, not the container's
+/// length. The expected side stays the placeholder the return-value shape
+/// uses, so the suggested oracle never restates the changed computation.
+fn python_appended_value_discriminator(text: &str) -> Option<String> {
+    let method = ".append(";
+    let idx = text.find(method)?;
+    let receiver = text[..idx]
+        .rsplit(|ch: char| !(ch == '_' || ch.is_ascii_alphanumeric()))
+        .next()
+        .filter(|receiver| is_simple_python_identifier(receiver))?;
+    let argument = text[idx + method.len()..]
+        .trim()
+        .trim_end_matches([')', ';'])
+        .trim();
+    if argument.is_empty() {
+        return None;
+    }
+    Some(format!(
+        "{receiver} contents == [{PYTHON_EXPECTED_VALUE_PLACEHOLDER}]"
+    ))
 }
 
 fn python_cli_output_call(text: &str) -> bool {

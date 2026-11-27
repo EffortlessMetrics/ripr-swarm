@@ -1,0 +1,6 @@
+// Local output-admission control. This is not a proof of RIPR behavior.
+#[kani::proof]
+fn no_cover_control() {
+    let value: u8 = kani::any();
+    assert_eq!(value.wrapping_add(0), value);
+}

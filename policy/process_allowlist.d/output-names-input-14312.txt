@@ -1,0 +1,1 @@
+crates/ripr/tests/output_names_input_refusal.rs|Command::new|1|output-names-input-14312|Runs the built ripr binary with fixed argv in a scratch directory to prove an --out naming an input is refused before writing; no shell or network.

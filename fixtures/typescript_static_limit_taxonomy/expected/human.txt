@@ -3,7 +3,7 @@ mode: fast
 root: fixtures/typescript_static_limit_taxonomy/input
 config: <cwd>/fixtures/typescript_static_limit_taxonomy/input/ripr.toml
 
-Summary: 4 changed behaviors checked: 0 appear noticed by tests, 3 partly noticed, 0 reached but not noticed, 1 no test path. 4 found, 0 suppressed by your settings
+Summary: 4 changed behaviors checked: 0 appear noticed by tests, 3 partly noticed (3 through a test link ripr could not confirm), 0 reached but not noticed, 1 no test path. 4 found, 0 suppressed by your settings
 
 Changed file(s) by language: javascript = 2, typescript = 2
 
@@ -18,7 +18,7 @@ Start here:
   Language status: preview
   Static exposure: weak (severity: warning, confidence 0.40)
   Why capped: preview adapter: infection/propagation not modeled (TypeScript); syntax-first, no type or import resolution; no related test reaches the changed owner. Preview score, not on the same scale as Rust confidence.
-  Why weak: a related test reaches this change but does not observe the exact changed value
+  Why weak: test reach to this change is not established
   Changed behavior: actions[key]();
   Missing check (1 of 2): Only heuristic TypeScript test links were found for `dispatch`; verify the
     suggested test location or add a direct Jest/Vitest owner call with an exact-value assertion
@@ -57,6 +57,5 @@ Hidden:
     no path = no test path was found
   Full evidence: rerun with --format human-full
   Machine data: rerun with --format json
-
 
 Note: 4 TypeScript/JavaScript files analyzed under preview support — preview evidence is advisory and may be incomplete. Treat its findings as advisory, not Rust-grade.

@@ -35,17 +35,24 @@
         "expression": "Ok(build_response(id.trim(), method)?)"
        },
       "ripr": {
-        "reach": {"state":"yes","confidence":"medium","summary":"Related tests appear to reach expect_response: direct_owner_call_keeps_the_file_related, message_only_error_predicate_never_pins, shadowed_callee_never_credits_the_seam"},
+        "reach": {"state":"yes","confidence":"medium","summary":"Related tests appear to reach expect_response: direct_owner_call_keeps_the_file_related, message_only_error_predicate_never_pins, swallowed_error_arm_never_credits"},
         "infect": {"state":"yes","confidence":"medium","summary":"Reachable tests can plausibly activate this changed behavior"},
         "propagate": {"state":"yes","confidence":"high","summary":"Complete propagation witness reaches error variant: Ok(build_response(id.trim(), method)?)"},
         "observe": {"state":"no","confidence":"medium","summary":"No statically established oracle: assertion execution or macro binding is unestablished (rust_assertion_context_unestablished)"},
         "discriminate": {"state":"no","confidence":"medium","summary":"No statically established assertion can discriminate the changed behavior; execution or macro binding is unestablished (rust_assertion_context_unestablished)"}
        },
-      "evidence_path": ["reach yes: Related tests appear to reach expect_response: direct_owner_call_keeps_the_file_related, message_only_error_predicate_never_pins, shadowed_callee_never_credits_the_seam", "infection yes: Reachable tests can plausibly activate this changed behavior", "propagation yes: Complete propagation witness reaches error variant: Ok(build_response(id.trim(), method)?)", "observation no: No statically established oracle: assertion execution or macro binding is unestablished (rust_assertion_context_unestablished)", "discriminator no: No statically established assertion can discriminate the changed behavior; execution or macro binding is unestablished (rust_assertion_context_unestablished)", "local flow reaches error variant: Ok(build_response(id.trim(), method)?) (line 62)", "related test tests/protocol.rs:43 message_only_error_predicate_never_pins uses no oracle", "related test tests/protocol.rs:34 shadowed_callee_never_credits_the_seam uses no oracle", "related test tests/protocol.rs:55 swallowed_error_arm_never_credits uses no oracle", "related test tests/protocol.rs:25 variable_binding_scrutinee_keeps_existing_weaker_meaning uses no oracle", "related test tests/protocol.rs:4 direct_owner_call_keeps_the_file_related uses no oracle: expect_response(\"42|workspace/refresh\", \"42\").unwrap()", "source function argument value expected_id = \"42\" at line 5", "source function argument value raw = \"42|workspace/refresh\" at line 5", "source assertion argument value \"42\" at line 6", "source function argument value expected_id = \"42\" at line 26", "source function argument value raw = \"42|workspace/refresh\" at line 26", "source assertion argument value \"42\" at line 28", "source function argument value raw = \"42\" at line 36", "source assertion argument value \"42\" at line 37"],
+      "evidence_stages": [
+        {"stage":"reach","state":"yes","confidence":"medium"},
+        {"stage":"infect","state":"yes","confidence":"medium"},
+        {"stage":"propagate","state":"yes","confidence":"high"},
+        {"stage":"observe","state":"no","confidence":"medium"},
+        {"stage":"discriminate","state":"no","confidence":"medium"}
+      ],
+      "evidence_path": ["reach yes: Related tests appear to reach expect_response: direct_owner_call_keeps_the_file_related, message_only_error_predicate_never_pins, swallowed_error_arm_never_credits", "infection yes: Reachable tests can plausibly activate this changed behavior", "propagation yes: Complete propagation witness reaches error variant: Ok(build_response(id.trim(), method)?)", "observation no: No statically established oracle: assertion execution or macro binding is unestablished (rust_assertion_context_unestablished)", "discriminator no: No statically established assertion can discriminate the changed behavior; execution or macro binding is unestablished (rust_assertion_context_unestablished)", "local flow reaches error variant: Ok(build_response(id.trim(), method)?) (line 62)", "related test tests/protocol.rs:43 message_only_error_predicate_never_pins uses no oracle", "related test tests/protocol.rs:55 swallowed_error_arm_never_credits uses no oracle", "related test tests/protocol.rs:25 variable_binding_scrutinee_keeps_existing_weaker_meaning uses no oracle", "related test tests/protocol.rs:34 shadowed_callee_never_credits_the_seam uses no oracle", "related test tests/protocol.rs:4 direct_owner_call_keeps_the_file_related uses no oracle: expect_response(\"42|workspace/refresh\", \"42\").unwrap()", "source function argument value expected_id = \"42\" at line 5", "source function argument value raw = \"42|workspace/refresh\" at line 5", "source assertion argument value \"42\" at line 6", "source function argument value expected_id = \"42\" at line 26", "source function argument value raw = \"42|workspace/refresh\" at line 26", "source assertion argument value \"42\" at line 28", "source function argument value raw = \"42\" at line 36", "source assertion argument value \"42\" at line 37"],
       "flow_sinks": [
         {"kind":"error_variant","text":"Ok(build_response(id.trim(), method)?)","line":62}
       ],
-      "evidence": ["Complete propagation witness reaches error variant: Ok(build_response(id.trim(), method)?)", "No statically established assertion can discriminate the changed behavior; execution or macro binding is unestablished (rust_assertion_context_unestablished)", "No statically established oracle: assertion execution or macro binding is unestablished (rust_assertion_context_unestablished)", "Reachable tests can plausibly activate this changed behavior", "Related tests appear to reach expect_response: direct_owner_call_keeps_the_file_related, message_only_error_predicate_never_pins, shadowed_callee_never_credits_the_seam", "assertion not credited: `assert_eq!` in message_only_error_predicate_never_pins at tests/protocol.rs:45: the assertion is inside a `match` arm"],
+      "evidence": ["Complete propagation witness reaches error variant: Ok(build_response(id.trim(), method)?)", "No statically established assertion can discriminate the changed behavior; execution or macro binding is unestablished (rust_assertion_context_unestablished)", "No statically established oracle: assertion execution or macro binding is unestablished (rust_assertion_context_unestablished)", "Reachable tests can plausibly activate this changed behavior", "Related tests appear to reach expect_response: direct_owner_call_keeps_the_file_related, message_only_error_predicate_never_pins, swallowed_error_arm_never_credits", "assertion not credited: `assert_eq!` in message_only_error_predicate_never_pins at tests/protocol.rs:45: the assertion is inside a `match` arm"],
       "missing": ["No exact error variant discriminator was detected", "No statically established oracle: assertion execution or macro binding is unestablished (rust_assertion_context_unestablished)"],
       "assertion_texts": {
         "5": "let response = expect_response(\"42|workspace/refresh\", \"42\").unwrap();",
@@ -220,20 +227,8 @@
           "oracle": "",
           "relation_reason": "direct_owner_call",
           "relation_confidence": "high",
-          "miss": "assertion_not_credited",
-          "why": "assertion not credited: ripr could not establish that this assertion counts here"
-        },
-        {
-          "name": "shadowed_callee_never_credits_the_seam",
-          "file": "tests/protocol.rs",
-          "line": 34,
-          "oracle_strength": "none",
-          "oracle_kind": "unknown",
-          "oracle": "",
-          "relation_reason": "direct_owner_call",
-          "relation_confidence": "high",
-          "miss": "assertion_not_credited",
-          "why": "assertion not credited: ripr could not establish that this assertion counts here"
+          "miss": "assertion_inert",
+          "why": "assertion inert: this test's assertion has a shape that can keep it from running as a standard check here"
         },
         {
           "name": "swallowed_error_arm_never_credits",
@@ -244,8 +239,8 @@
           "oracle": "",
           "relation_reason": "direct_owner_call",
           "relation_confidence": "high",
-          "miss": "assertion_not_credited",
-          "why": "assertion not credited: ripr could not establish that this assertion counts here"
+          "miss": "assertion_inert",
+          "why": "assertion inert: this test's assertion has a shape that can keep it from running as a standard check here"
         },
         {
           "name": "variable_binding_scrutinee_keeps_existing_weaker_meaning",
@@ -256,8 +251,20 @@
           "oracle": "",
           "relation_reason": "direct_owner_call",
           "relation_confidence": "high",
-          "miss": "assertion_not_credited",
-          "why": "assertion not credited: ripr could not establish that this assertion counts here"
+          "miss": "assertion_inert",
+          "why": "assertion inert: this test's assertion has a shape that can keep it from running as a standard check here"
+        },
+        {
+          "name": "shadowed_callee_never_credits_the_seam",
+          "file": "tests/protocol.rs",
+          "line": 34,
+          "oracle_strength": "none",
+          "oracle_kind": "unknown",
+          "oracle": "",
+          "relation_reason": "weak_token_substring",
+          "relation_confidence": "low",
+          "miss": "assertion_inert",
+          "why": "assertion inert: this test's assertion has a shape that can keep it from running as a standard check here"
         },
         {
           "name": "direct_owner_call_keeps_the_file_related",
@@ -306,17 +313,24 @@
         "expression": "Ok(build_response(id.trim(), method)?)"
        },
       "ripr": {
-        "reach": {"state":"yes","confidence":"medium","summary":"Related tests appear to reach expect_response: direct_owner_call_keeps_the_file_related, message_only_error_predicate_never_pins, shadowed_callee_never_credits_the_seam"},
+        "reach": {"state":"yes","confidence":"medium","summary":"Related tests appear to reach expect_response: direct_owner_call_keeps_the_file_related, message_only_error_predicate_never_pins, swallowed_error_arm_never_credits"},
         "infect": {"state":"yes","confidence":"medium","summary":"Reachable tests can plausibly activate this changed behavior"},
         "propagate": {"state":"weak","confidence":"low","summary":"No complete owner-bound propagation witness found for returned value: Ok(build_response(id, method)?)"},
         "observe": {"state":"yes","confidence":"medium","summary":"A related test observes a value or effect near the changed behavior"},
         "discriminate": {"state":"weak","confidence":"medium","summary":"Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)"}
        },
-      "evidence_path": ["reach yes: Related tests appear to reach expect_response: direct_owner_call_keeps_the_file_related, message_only_error_predicate_never_pins, shadowed_callee_never_credits_the_seam", "infection yes: Reachable tests can plausibly activate this changed behavior", "propagation weak: No complete owner-bound propagation witness found for returned value: Ok(build_response(id, method)?)", "observation yes: A related test observes a value or effect near the changed behavior", "discriminator weak: Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)", "local flow reaches returned value: Ok(build_response(id, method)?) (line 62)", "related test tests/protocol.rs:4 direct_owner_call_keeps_the_file_related uses strong exact value oracle: assert_eq!(response.id, \"42\");", "related test tests/protocol.rs:43 message_only_error_predicate_never_pins uses no oracle", "related test tests/protocol.rs:34 shadowed_callee_never_credits_the_seam uses no oracle", "related test tests/protocol.rs:55 swallowed_error_arm_never_credits uses no oracle", "related test tests/protocol.rs:25 variable_binding_scrutinee_keeps_existing_weaker_meaning uses no oracle", "source function argument value expected_id = \"42\" at line 5", "source function argument value raw = \"42|workspace/refresh\" at line 5", "source assertion argument value \"42\" at line 6", "source function argument value expected_id = \"42\" at line 26", "source function argument value raw = \"42|workspace/refresh\" at line 26", "source assertion argument value \"42\" at line 28", "source function argument value raw = \"42\" at line 36", "source assertion argument value \"42\" at line 37"],
+      "evidence_stages": [
+        {"stage":"reach","state":"yes","confidence":"medium"},
+        {"stage":"infect","state":"yes","confidence":"medium"},
+        {"stage":"propagate","state":"weak","confidence":"low"},
+        {"stage":"observe","state":"yes","confidence":"medium"},
+        {"stage":"discriminate","state":"weak","confidence":"medium"}
+      ],
+      "evidence_path": ["reach yes: Related tests appear to reach expect_response: direct_owner_call_keeps_the_file_related, message_only_error_predicate_never_pins, swallowed_error_arm_never_credits", "infection yes: Reachable tests can plausibly activate this changed behavior", "propagation weak: No complete owner-bound propagation witness found for returned value: Ok(build_response(id, method)?)", "observation yes: A related test observes a value or effect near the changed behavior", "discriminator weak: Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)", "local flow reaches returned value: Ok(build_response(id, method)?) (line 62)", "related test tests/protocol.rs:4 direct_owner_call_keeps_the_file_related uses strong exact value oracle: assert_eq!(response.id, \"42\");", "related test tests/protocol.rs:43 message_only_error_predicate_never_pins uses no oracle", "related test tests/protocol.rs:55 swallowed_error_arm_never_credits uses no oracle", "related test tests/protocol.rs:25 variable_binding_scrutinee_keeps_existing_weaker_meaning uses no oracle", "related test tests/protocol.rs:34 shadowed_callee_never_credits_the_seam uses no oracle", "source function argument value expected_id = \"42\" at line 5", "source function argument value raw = \"42|workspace/refresh\" at line 5", "source assertion argument value \"42\" at line 6", "source function argument value expected_id = \"42\" at line 26", "source function argument value raw = \"42|workspace/refresh\" at line 26", "source assertion argument value \"42\" at line 28", "source function argument value raw = \"42\" at line 36", "source assertion argument value \"42\" at line 37"],
       "flow_sinks": [
         {"kind":"return_value","text":"Ok(build_response(id, method)?)","line":62}
       ],
-      "evidence": ["A related test observes a value or effect near the changed behavior", "Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)", "No complete owner-bound propagation witness found for returned value: Ok(build_response(id, method)?)", "Reachable tests can plausibly activate this changed behavior", "Related tests appear to reach expect_response: direct_owner_call_keeps_the_file_related, message_only_error_predicate_never_pins, shadowed_callee_never_credits_the_seam", "assertion not credited: `assert_eq!` in message_only_error_predicate_never_pins at tests/protocol.rs:45: the assertion is inside a `match` arm"],
+      "evidence": ["A related test observes a value or effect near the changed behavior", "Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)", "No complete owner-bound propagation witness found for returned value: Ok(build_response(id, method)?)", "Reachable tests can plausibly activate this changed behavior", "Related tests appear to reach expect_response: direct_owner_call_keeps_the_file_related, message_only_error_predicate_never_pins, swallowed_error_arm_never_credits", "assertion not credited: `assert_eq!` in message_only_error_predicate_never_pins at tests/protocol.rs:45: the assertion is inside a `match` arm"],
       "missing": ["No strong discriminator was detected"],
       "assertion_texts": {
         "5": "let response = expect_response(\"42|workspace/refresh\", \"42\").unwrap();",
@@ -503,20 +517,8 @@
           "oracle": "",
           "relation_reason": "direct_owner_call",
           "relation_confidence": "high",
-          "miss": "assertion_not_credited",
-          "why": "assertion not credited: ripr could not establish that this assertion counts here"
-        },
-        {
-          "name": "shadowed_callee_never_credits_the_seam",
-          "file": "tests/protocol.rs",
-          "line": 34,
-          "oracle_strength": "none",
-          "oracle_kind": "unknown",
-          "oracle": "",
-          "relation_reason": "direct_owner_call",
-          "relation_confidence": "high",
-          "miss": "assertion_not_credited",
-          "why": "assertion not credited: ripr could not establish that this assertion counts here"
+          "miss": "assertion_inert",
+          "why": "assertion inert: this test's assertion has a shape that can keep it from running as a standard check here"
         },
         {
           "name": "swallowed_error_arm_never_credits",
@@ -527,8 +529,8 @@
           "oracle": "",
           "relation_reason": "direct_owner_call",
           "relation_confidence": "high",
-          "miss": "assertion_not_credited",
-          "why": "assertion not credited: ripr could not establish that this assertion counts here"
+          "miss": "assertion_inert",
+          "why": "assertion inert: this test's assertion has a shape that can keep it from running as a standard check here"
         },
         {
           "name": "variable_binding_scrutinee_keeps_existing_weaker_meaning",
@@ -539,8 +541,20 @@
           "oracle": "",
           "relation_reason": "direct_owner_call",
           "relation_confidence": "high",
-          "miss": "assertion_not_credited",
-          "why": "assertion not credited: ripr could not establish that this assertion counts here"
+          "miss": "assertion_inert",
+          "why": "assertion inert: this test's assertion has a shape that can keep it from running as a standard check here"
+        },
+        {
+          "name": "shadowed_callee_never_credits_the_seam",
+          "file": "tests/protocol.rs",
+          "line": 34,
+          "oracle_strength": "none",
+          "oracle_kind": "unknown",
+          "oracle": "",
+          "relation_reason": "weak_token_substring",
+          "relation_confidence": "low",
+          "miss": "assertion_inert",
+          "why": "assertion inert: this test's assertion has a shape that can keep it from running as a standard check here"
         }
       ],
       "stop_reasons": [],

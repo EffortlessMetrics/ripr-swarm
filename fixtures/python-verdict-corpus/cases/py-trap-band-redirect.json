@@ -1,0 +1,44 @@
+{
+  "case_id": "py-trap-band-redirect",
+  "subject_id": "authored-py-pytest-band-traps",
+  "diff": "cases/py-trap-band-redirect.diff",
+  "anchor": {
+    "file": "band_traps/redirect.py",
+    "line": 3
+  },
+  "edit_kind": "behavior_change",
+  "behavior_family": "arithmetic_constant",
+  "test_shape": "pytest_approx_method_owner_dunder_redirect",
+  "hard_case": "False-credit trap: a class dunder written after the class answers the method lookup with a stand-in, so the edited method never runs.",
+  "truth": {
+    "state": "not_discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "python -m pytest -q -p no:cacheprovider",
+    "toolchain": "Python 3.13.18, pytest 9.2.0, x86_64-linux",
+    "mutants": [
+      {
+        "replacement": "return x * 3 + 5",
+        "mutated_line": null,
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "not equivalent: the method returns 35 instead of 30, but Rates.__getattribute__ hands the test a stand-in that returns 30"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "gap",
+    "acceptable_verdicts": [
+      "gap",
+      "limited"
+    ]
+  },
+  "reasoning": "Trap (RIPR-SPEC-0238 rule 21, #13723): the band would read 30 to 35 as leaving the band, but the assertion evaluates the stand-in, so the edit is never observed.",
+  "labeling_observation": {
+    "ripr_commit": "68119048",
+    "full_checkout_verdict": "limited",
+    "full_checkout_classifications": [
+      "static_unknown"
+    ],
+    "excerpt_parity": "matched"
+  }
+}

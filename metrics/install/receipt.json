@@ -1,122 +1,642 @@
 {
   "cells": [
     {
-      "channel": "cargo",
-      "install_seconds": 729.0,
+      "build": "prebuilt",
+      "channel": "archive",
+      "install_seconds": 1.0,
       "platform": "macos-15-intel",
+      "samples": [
+        {
+          "install_seconds": 1.0,
+          "run_id": "42481874498",
+          "status": "works",
+          "version": "ripr 0.10.0"
+        }
+      ],
       "status": "works",
+      "threshold_seconds": 300.0,
       "version": "ripr 0.10.0"
     },
     {
+      "build": "prebuilt",
+      "channel": "archive",
+      "install_seconds": 1.0,
+      "platform": "macos-latest",
+      "samples": [
+        {
+          "install_seconds": 1.0,
+          "run_id": "42481874498",
+          "status": "works",
+          "version": "ripr 0.10.0"
+        }
+      ],
+      "status": "works",
+      "threshold_seconds": 300.0,
+      "version": "ripr 0.10.0"
+    },
+    {
+      "build": "prebuilt",
+      "channel": "archive",
+      "install_seconds": 1.0,
+      "platform": "ubuntu-24.04-arm",
+      "samples": [
+        {
+          "install_seconds": 1.0,
+          "run_id": "42481874498",
+          "status": "works",
+          "version": "ripr 0.10.0"
+        }
+      ],
+      "status": "works",
+      "threshold_seconds": 300.0,
+      "version": "ripr 0.10.0"
+    },
+    {
+      "build": "prebuilt",
+      "channel": "archive",
+      "install_seconds": 0.0,
+      "platform": "ubuntu-latest",
+      "samples": [
+        {
+          "install_seconds": 0.0,
+          "run_id": "42481874498",
+          "status": "works",
+          "version": "ripr 0.10.0"
+        }
+      ],
+      "status": "works",
+      "threshold_seconds": 300.0,
+      "version": "ripr 0.10.0"
+    },
+    {
+      "build": "prebuilt",
+      "channel": "archive",
+      "install_seconds": 1.7,
+      "platform": "windows-latest",
+      "samples": [
+        {
+          "install_seconds": 1.7,
+          "run_id": "42481874498",
+          "status": "works",
+          "version": "ripr 0.10.0"
+        }
+      ],
+      "status": "works",
+      "threshold_seconds": 300.0,
+      "version": "ripr 0.10.0"
+    },
+    {
+      "build": "prebuilt",
+      "channel": "binstall",
+      "install_seconds": null,
+      "platform": "macos-15-intel",
+      "samples": [
+        {
+          "install_seconds": null,
+          "run_id": "42481871664",
+          "status": "known_gap",
+          "version": null
+        },
+        {
+          "install_seconds": null,
+          "run_id": "42481881516",
+          "status": "known_gap",
+          "version": null
+        }
+      ],
+      "status": "known_gap",
+      "threshold_seconds": 300.0,
+      "version": null
+    },
+    {
+      "build": "prebuilt",
+      "channel": "binstall",
+      "install_seconds": null,
+      "platform": "macos-latest",
+      "samples": [
+        {
+          "install_seconds": null,
+          "run_id": "42481871664",
+          "status": "known_gap",
+          "version": null
+        },
+        {
+          "install_seconds": null,
+          "run_id": "42481881516",
+          "status": "known_gap",
+          "version": null
+        }
+      ],
+      "status": "known_gap",
+      "threshold_seconds": 300.0,
+      "version": null
+    },
+    {
+      "build": "prebuilt",
+      "channel": "binstall",
+      "install_seconds": null,
+      "platform": "ubuntu-24.04-arm",
+      "samples": [
+        {
+          "install_seconds": null,
+          "run_id": "42481871664",
+          "status": "known_gap",
+          "version": null
+        },
+        {
+          "install_seconds": null,
+          "run_id": "42481881516",
+          "status": "known_gap",
+          "version": null
+        }
+      ],
+      "status": "known_gap",
+      "threshold_seconds": 300.0,
+      "version": null
+    },
+    {
+      "build": "prebuilt",
+      "channel": "binstall",
+      "install_seconds": null,
+      "platform": "ubuntu-latest",
+      "samples": [
+        {
+          "install_seconds": null,
+          "run_id": "42481871664",
+          "status": "known_gap",
+          "version": null
+        },
+        {
+          "install_seconds": null,
+          "run_id": "42481881516",
+          "status": "known_gap",
+          "version": null
+        }
+      ],
+      "status": "known_gap",
+      "threshold_seconds": 300.0,
+      "version": null
+    },
+    {
+      "build": "prebuilt",
+      "channel": "binstall",
+      "install_seconds": null,
+      "platform": "windows-latest",
+      "samples": [
+        {
+          "install_seconds": null,
+          "run_id": "42481871664",
+          "status": "known_gap",
+          "version": null
+        },
+        {
+          "install_seconds": null,
+          "run_id": "42481881516",
+          "status": "known_gap",
+          "version": null
+        }
+      ],
+      "status": "known_gap",
+      "threshold_seconds": 300.0,
+      "version": null
+    },
+    {
+      "build": "source",
+      "channel": "cargo",
+      "install_seconds": 334.0,
+      "platform": "macos-15-intel",
+      "samples": [
+        {
+          "install_seconds": 729.0,
+          "run_id": "41902877159",
+          "status": "works",
+          "version": "ripr 0.10.0"
+        },
+        {
+          "install_seconds": 307.0,
+          "run_id": "42481871664",
+          "status": "works",
+          "version": "ripr 0.10.0"
+        },
+        {
+          "install_seconds": 334.0,
+          "run_id": "42481881516",
+          "status": "works",
+          "version": "ripr 0.10.0"
+        }
+      ],
+      "status": "works",
+      "threshold_seconds": 900.0,
+      "version": "ripr 0.10.0"
+    },
+    {
+      "build": "source",
       "channel": "cargo",
       "install_seconds": 182.0,
       "platform": "macos-latest",
+      "samples": [
+        {
+          "install_seconds": 182.0,
+          "run_id": "41902877159",
+          "status": "works",
+          "version": "ripr 0.10.0"
+        },
+        {
+          "install_seconds": 112.0,
+          "run_id": "42481871664",
+          "status": "works",
+          "version": "ripr 0.10.0"
+        },
+        {
+          "install_seconds": 185.0,
+          "run_id": "42481881516",
+          "status": "works",
+          "version": "ripr 0.10.0"
+        }
+      ],
       "status": "works",
+      "threshold_seconds": 900.0,
       "version": "ripr 0.10.0"
     },
     {
+      "build": "source",
       "channel": "cargo",
-      "install_seconds": 91.0,
+      "install_seconds": 93.0,
       "platform": "ubuntu-24.04-arm",
+      "samples": [
+        {
+          "install_seconds": 91.0,
+          "run_id": "41902877159",
+          "status": "works",
+          "version": "ripr 0.10.0"
+        },
+        {
+          "install_seconds": 93.0,
+          "run_id": "42481871664",
+          "status": "works",
+          "version": "ripr 0.10.0"
+        },
+        {
+          "install_seconds": 94.0,
+          "run_id": "42481881516",
+          "status": "works",
+          "version": "ripr 0.10.0"
+        }
+      ],
       "status": "works",
+      "threshold_seconds": 900.0,
       "version": "ripr 0.10.0"
     },
     {
+      "build": "source",
       "channel": "cargo",
       "install_seconds": 101.0,
       "platform": "ubuntu-latest",
+      "samples": [
+        {
+          "install_seconds": 101.0,
+          "run_id": "41902877159",
+          "status": "works",
+          "version": "ripr 0.10.0"
+        },
+        {
+          "install_seconds": 98.0,
+          "run_id": "42481871664",
+          "status": "works",
+          "version": "ripr 0.10.0"
+        },
+        {
+          "install_seconds": 120.0,
+          "run_id": "42481881516",
+          "status": "works",
+          "version": "ripr 0.10.0"
+        }
+      ],
       "status": "works",
+      "threshold_seconds": 900.0,
       "version": "ripr 0.10.0"
     },
     {
+      "build": "source",
       "channel": "cargo",
       "install_seconds": 243.0,
       "platform": "windows-latest",
+      "samples": [
+        {
+          "install_seconds": 243.0,
+          "run_id": "41902877159",
+          "status": "works",
+          "version": "ripr 0.10.0"
+        },
+        {
+          "install_seconds": 254.0,
+          "run_id": "42481871664",
+          "status": "works",
+          "version": "ripr 0.10.0"
+        },
+        {
+          "install_seconds": 150.0,
+          "run_id": "42481881516",
+          "status": "works",
+          "version": "ripr 0.10.0"
+        }
+      ],
       "status": "works",
+      "threshold_seconds": 900.0,
       "version": "ripr 0.10.0"
     },
     {
+      "build": "prebuilt",
       "channel": "npm",
       "install_seconds": null,
       "platform": "macos-15-intel",
+      "samples": [
+        {
+          "install_seconds": null,
+          "run_id": "41902877159",
+          "status": "known_gap",
+          "version": null
+        },
+        {
+          "install_seconds": null,
+          "run_id": "42481871664",
+          "status": "known_gap",
+          "version": null
+        },
+        {
+          "install_seconds": null,
+          "run_id": "42481881516",
+          "status": "known_gap",
+          "version": null
+        }
+      ],
       "status": "known_gap",
+      "threshold_seconds": 300.0,
       "version": null
     },
     {
+      "build": "prebuilt",
       "channel": "npm",
       "install_seconds": null,
       "platform": "macos-latest",
+      "samples": [
+        {
+          "install_seconds": null,
+          "run_id": "41902877159",
+          "status": "known_gap",
+          "version": null
+        },
+        {
+          "install_seconds": null,
+          "run_id": "42481871664",
+          "status": "known_gap",
+          "version": null
+        },
+        {
+          "install_seconds": null,
+          "run_id": "42481881516",
+          "status": "known_gap",
+          "version": null
+        }
+      ],
       "status": "known_gap",
+      "threshold_seconds": 300.0,
       "version": null
     },
     {
+      "build": "prebuilt",
       "channel": "npm",
       "install_seconds": null,
       "platform": "ubuntu-24.04-arm",
+      "samples": [
+        {
+          "install_seconds": null,
+          "run_id": "41902877159",
+          "status": "known_gap",
+          "version": null
+        },
+        {
+          "install_seconds": null,
+          "run_id": "42481871664",
+          "status": "known_gap",
+          "version": null
+        },
+        {
+          "install_seconds": null,
+          "run_id": "42481881516",
+          "status": "known_gap",
+          "version": null
+        }
+      ],
       "status": "known_gap",
+      "threshold_seconds": 300.0,
       "version": null
     },
     {
+      "build": "prebuilt",
       "channel": "npm",
       "install_seconds": 3.0,
       "platform": "ubuntu-latest",
+      "samples": [
+        {
+          "install_seconds": 3.0,
+          "run_id": "41902877159",
+          "status": "works",
+          "version": "ripr 0.11.0-alpha.2"
+        },
+        {
+          "install_seconds": 4.0,
+          "run_id": "42481871664",
+          "status": "works",
+          "version": "ripr 0.11.0-alpha.2"
+        },
+        {
+          "install_seconds": 2.0,
+          "run_id": "42481881516",
+          "status": "works",
+          "version": "ripr 0.11.0-alpha.2"
+        }
+      ],
       "status": "works",
+      "threshold_seconds": 300.0,
       "version": "ripr 0.11.0-alpha.2"
     },
     {
+      "build": "prebuilt",
       "channel": "npm",
       "install_seconds": null,
       "platform": "windows-latest",
+      "samples": [
+        {
+          "install_seconds": null,
+          "run_id": "41902877159",
+          "status": "known_gap",
+          "version": null
+        },
+        {
+          "install_seconds": null,
+          "run_id": "42481871664",
+          "status": "known_gap",
+          "version": null
+        },
+        {
+          "install_seconds": null,
+          "run_id": "42481881516",
+          "status": "known_gap",
+          "version": null
+        }
+      ],
       "status": "known_gap",
+      "threshold_seconds": 300.0,
       "version": null
     },
     {
+      "build": "prebuilt",
       "channel": "pypi",
       "install_seconds": null,
       "platform": "macos-15-intel",
+      "samples": [
+        {
+          "install_seconds": null,
+          "run_id": "41902877159",
+          "status": "known_gap",
+          "version": null
+        },
+        {
+          "install_seconds": null,
+          "run_id": "42481871664",
+          "status": "known_gap",
+          "version": null
+        },
+        {
+          "install_seconds": null,
+          "run_id": "42481881516",
+          "status": "known_gap",
+          "version": null
+        }
+      ],
       "status": "known_gap",
+      "threshold_seconds": 300.0,
       "version": null
     },
     {
+      "build": "prebuilt",
       "channel": "pypi",
       "install_seconds": null,
       "platform": "macos-latest",
+      "samples": [
+        {
+          "install_seconds": null,
+          "run_id": "41902877159",
+          "status": "known_gap",
+          "version": null
+        },
+        {
+          "install_seconds": null,
+          "run_id": "42481871664",
+          "status": "known_gap",
+          "version": null
+        },
+        {
+          "install_seconds": null,
+          "run_id": "42481881516",
+          "status": "known_gap",
+          "version": null
+        }
+      ],
       "status": "known_gap",
+      "threshold_seconds": 300.0,
       "version": null
     },
     {
+      "build": "prebuilt",
       "channel": "pypi",
       "install_seconds": null,
       "platform": "ubuntu-24.04-arm",
+      "samples": [
+        {
+          "install_seconds": null,
+          "run_id": "41902877159",
+          "status": "known_gap",
+          "version": null
+        },
+        {
+          "install_seconds": null,
+          "run_id": "42481871664",
+          "status": "known_gap",
+          "version": null
+        },
+        {
+          "install_seconds": null,
+          "run_id": "42481881516",
+          "status": "known_gap",
+          "version": null
+        }
+      ],
       "status": "known_gap",
+      "threshold_seconds": 300.0,
       "version": null
     },
     {
+      "build": "prebuilt",
       "channel": "pypi",
       "install_seconds": 4.0,
       "platform": "ubuntu-latest",
+      "samples": [
+        {
+          "install_seconds": 4.0,
+          "run_id": "41902877159",
+          "status": "works",
+          "version": "ripr 0.11.0-alpha.1"
+        },
+        {
+          "install_seconds": 4.0,
+          "run_id": "42481871664",
+          "status": "works",
+          "version": "ripr 0.11.0-alpha.1"
+        },
+        {
+          "install_seconds": 4.0,
+          "run_id": "42481881516",
+          "status": "works",
+          "version": "ripr 0.11.0-alpha.1"
+        }
+      ],
       "status": "works",
+      "threshold_seconds": 300.0,
       "version": "ripr 0.11.0-alpha.1"
     },
     {
+      "build": "prebuilt",
       "channel": "pypi",
       "install_seconds": null,
       "platform": "windows-latest",
+      "samples": [
+        {
+          "install_seconds": null,
+          "run_id": "41902877159",
+          "status": "known_gap",
+          "version": null
+        },
+        {
+          "install_seconds": null,
+          "run_id": "42481871664",
+          "status": "known_gap",
+          "version": null
+        },
+        {
+          "install_seconds": null,
+          "run_id": "42481881516",
+          "status": "known_gap",
+          "version": null
+        }
+      ],
       "status": "known_gap",
+      "threshold_seconds": 300.0,
       "version": null
     }
   ],
   "channel_dispositions": [
-    {
-      "channel": "archive",
-      "reason": "Install seconds and first-run walk per platform come from first-run-archive.yml (weekly and on demand), whose report artifact records them; five platforms were green on 2026-11-04 (run 41882613579).",
-      "status": "tested_elsewhere"
-    },
-    {
-      "channel": "binstall",
-      "reason": "cargo binstall ripr falls back to a source build until a release carries binstall metadata and archives (0.11.0); verify with a real cargo binstall after publication.",
-      "status": "not_tested"
-    },
     {
       "channel": "vscode_extension",
       "reason": "Marketplace and Open VSX install needs a desktop VS Code host; no hosted check installs the listed extension and starts the server.",
@@ -135,7 +655,11 @@
   ],
   "r0_install": {
     "reasons": [
-      "cargo on macos-15-intel took 729 s, over 300 s",
+      "binstall on macos-15-intel is an unavailable platform",
+      "binstall on macos-latest is an unavailable platform",
+      "binstall on ubuntu-24.04-arm is an unavailable platform",
+      "binstall on ubuntu-latest is an unavailable platform",
+      "binstall on windows-latest is an unavailable platform",
       "npm on macos-15-intel is an unavailable platform",
       "npm on macos-latest is an unavailable platform",
       "npm on ubuntu-24.04-arm is an unavailable platform",
@@ -144,13 +668,21 @@
       "pypi on macos-latest is an unavailable platform",
       "pypi on ubuntu-24.04-arm is an unavailable platform",
       "pypi on windows-latest is an unavailable platform",
-      "channel binstall is not tested",
       "channel vscode_extension is not tested",
       "channel ci_init is not tested"
     ],
-    "status": "not_met"
+    "status": "not_established"
   },
-  "schema_version": "ripr-install-receipt-v1",
-  "source_run_id": "41902877159",
-  "threshold_seconds": 300.0
+  "schema_version": "ripr-install-receipt-v2",
+  "source_run_ids": [
+    "41902877159",
+    "42481871664",
+    "42481874498",
+    "42481881516"
+  ],
+  "thresholds": {
+    "prebuilt_seconds": 300.0,
+    "source_build_min_samples": 3,
+    "source_build_seconds": 900.0
+  }
 }

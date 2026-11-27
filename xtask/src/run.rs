@@ -8,14 +8,14 @@ use std::sync::mpsc;
 use std::thread;
 use std::time::{Duration, Instant};
 
+mod cargo_output;
 mod command_diagnostic;
 #[cfg(all(test, target_os = "linux"))]
 mod test_session;
+pub(crate) use cargo_output::private_cargo_output_dir;
 pub(crate) use command_diagnostic::{
     CommandDiagnostic, DISCLOSURE as COMMAND_DIAGNOSTIC_DISCLOSURE,
 };
-#[cfg(all(test, target_os = "linux"))]
-pub(crate) use test_session::enter_test_session;
 
 /// Grace period for draining stdout/stderr pipes after a process-group kill.
 ///
@@ -199,7 +199,7 @@ pub(crate) fn run_with_envs(
     args: &[&str],
     envs: &[(&str, &str)],
 ) -> Result<ExitStatus, String> {
-    run_with_envs_recorded(program, args, envs, None)
+    run_with_envs_recorded(program, args, envs, None, args)
 }
 
 pub(crate) fn run_diagnostic(
@@ -207,7 +207,20 @@ pub(crate) fn run_diagnostic(
     args: &[&str],
     diagnostics: &mut Vec<CommandDiagnostic>,
 ) -> Result<ExitStatus, String> {
-    run_with_envs_recorded(program, args, &[], Some(diagnostics))
+    run_with_envs_recorded(program, args, &[], Some(diagnostics), args)
+}
+
+/// [`run_diagnostic`] that may run more arguments than it reports. `args` is
+/// what runs; `reported` is what the echo, the diagnostic and a failure name,
+/// so a caller whose arguments list hundreds of paths passes a summary.
+pub(crate) fn run_summary(
+    program: &str,
+    args: &[&str],
+    envs: &[(&str, &str)],
+    diagnostics: Option<&mut Vec<CommandDiagnostic>>,
+    reported: &[&str],
+) -> Result<ExitStatus, String> {
+    run_with_envs_recorded(program, args, envs, diagnostics, reported)
 }
 
 fn run_with_envs_recorded(
@@ -215,6 +228,7 @@ fn run_with_envs_recorded(
     args: &[&str],
     envs: &[(&str, &str)],
     diagnostics: Option<&mut Vec<CommandDiagnostic>>,
+    reported: &[&str],
 ) -> Result<ExitStatus, String> {
     let env_text = envs
         .iter()
@@ -226,7 +240,7 @@ fn run_with_envs_recorded(
     } else {
         format!("{env_text} ")
     };
-    eprintln!("$ {env_prefix}{} {}", program, args.join(" "));
+    eprintln!("$ {env_prefix}{} {}", program, reported.join(" "));
     let started = Instant::now();
     let mut command = Command::new(program);
     command.args(args);
@@ -237,7 +251,7 @@ fn run_with_envs_recorded(
     if let Some(diagnostics) = diagnostics {
         diagnostics.push(CommandDiagnostic::inherited(
             program,
-            args,
+            reported,
             &native,
             started.elapsed(),
         ));
@@ -246,7 +260,10 @@ fn run_with_envs_recorded(
     if status.success() {
         Ok(status)
     } else {
-        Err(format!("{program} {} failed with {status}", args.join(" ")))
+        Err(format!(
+            "{program} {} failed with {status}",
+            reported.join(" ")
+        ))
     }
 }
 
@@ -1002,6 +1019,28 @@ pub(crate) fn capture_bytes_in_dir_with_env_budget(
         program,
         args,
         (cwd, None),
+        envs,
+        env_remove,
+        (budget.timeout, Some(budget)),
+        error_context,
+    )
+}
+
+/// `capture_bytes_in_dir_with_env_budget` that also writes `input` to the
+/// child's stdin (an MCP stdio session with a configured environment).
+pub(crate) fn capture_bytes_in_dir_with_input_env_budget(
+    program: &Path,
+    args: &[String],
+    source: (&Path, Option<&[u8]>),
+    envs: (&[(&str, &str)], &[&str]),
+    budget: ByteCaptureBudget,
+    error_context: &str,
+) -> Result<TimedBytesOutput, String> {
+    let (envs, env_remove) = envs;
+    capture_bytes_with_input(
+        program,
+        args,
+        source,
         envs,
         env_remove,
         (budget.timeout, Some(budget)),

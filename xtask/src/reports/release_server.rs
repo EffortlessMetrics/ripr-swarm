@@ -1,7 +1,9 @@
 mod npm_native;
+mod packages;
 mod payload;
 mod producer;
 mod qualification;
+mod wheel_native;
 
 use std::fs;
 use std::io::Read;
@@ -12,6 +14,10 @@ use sha2::{Digest, Sha256};
 use crate::{command_success_owned, run_owned};
 
 pub(crate) fn release_server_archive(args: &[String]) -> Result<(), String> {
+    if let Some(artifacts) = optional_release_arg(args, "packages-from") {
+        let out_dir = required_release_arg(args, "out-dir", "PACKAGES_OUT_DIR")?;
+        return packages::produce_family(Path::new(&artifacts), Path::new(&out_dir));
+    }
     if let Some(payload_dir) = optional_release_arg(args, "npm-payload-dir") {
         let identity = required_release_arg(args, "payload-identity", "PAYLOAD_IDENTITY")?;
         let producer = required_release_arg(args, "producer-receipt", "PRODUCER_RECEIPT")?;
@@ -19,6 +25,21 @@ pub(crate) fn release_server_archive(args: &[String]) -> Result<(), String> {
         let archive = required_release_arg(args, "qualified-archive", "QUALIFIED_ARCHIVE")?;
         let out_dir = required_release_arg(args, "out-dir", "NPM_NATIVE_OUT_DIR")?;
         return npm_native::produce(
+            Path::new(&payload_dir),
+            Path::new(&identity),
+            Path::new(&producer),
+            Path::new(&build_identity),
+            Path::new(&archive),
+            Path::new(&out_dir),
+        );
+    }
+    if let Some(payload_dir) = optional_release_arg(args, "wheel-payload-dir") {
+        let identity = required_release_arg(args, "payload-identity", "PAYLOAD_IDENTITY")?;
+        let producer = required_release_arg(args, "producer-receipt", "PRODUCER_RECEIPT")?;
+        let build_identity = required_release_arg(args, "build-identity", "BUILD_IDENTITY")?;
+        let archive = required_release_arg(args, "qualified-archive", "QUALIFIED_ARCHIVE")?;
+        let out_dir = required_release_arg(args, "out-dir", "WHEEL_NATIVE_OUT_DIR")?;
+        return wheel_native::produce(
             Path::new(&payload_dir),
             Path::new(&identity),
             Path::new(&producer),
@@ -108,6 +129,17 @@ pub(crate) fn release_server_archive(args: &[String]) -> Result<(), String> {
             ));
         }
     }
+
+    let archive_size_bytes = payload::check_archive_file_size_budget(&asset_path)?;
+    let size_summary = staged.identity.size_summary()?;
+    eprintln!(
+        "server archive size: {archive_size_bytes} bytes (budget {} bytes)",
+        payload::MAX_ARCHIVE_SIZE_BYTES
+    );
+    eprintln!(
+        "payload total size: {} bytes; executable size: {} bytes",
+        size_summary.total_bytes, size_summary.executable_bytes
+    );
 
     let sha = sha256_file(&asset_path)?;
     fs::write(
@@ -474,6 +506,8 @@ pub(crate) fn create_zip_archive(package_dir: &Path, asset_path: &Path) -> Resul
     let mut writer = zip::ZipWriter::new(file);
     let options = zip::write::SimpleFileOptions::default()
         .compression_method(zip::CompressionMethod::Deflated)
+        // Same bytes on every build host: the crate would record DOS attributes on Windows.
+        .system(zip::System::Unix)
         .unix_permissions(0o644);
 
     let entries = fs::read_dir(package_dir)
@@ -497,12 +531,9 @@ pub(crate) fn create_zip_archive(package_dir: &Path, asset_path: &Path) -> Resul
             .and_then(|name| name.to_str())
             .ok_or_else(|| format!("invalid file name in {}", path.display()))?
             .to_string();
-        let entry_options = if file_name.ends_with(".exe") {
-            options.unix_permissions(0o755)
-        } else if metadata.permissions().readonly() {
-            options
-        } else if !file_name.contains('.') {
-            // Best-effort executable bit for Unix-style binaries (ripr) without an extension.
+        // Only the server executable is runnable; licenses and the notice stay
+        // 0644 so an extraction on Linux/macOS does not mark them executable.
+        let entry_options = if file_name.ends_with(".exe") || file_name == "ripr" {
             options.unix_permissions(0o755)
         } else {
             options

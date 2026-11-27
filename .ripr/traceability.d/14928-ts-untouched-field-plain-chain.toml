@@ -1,0 +1,14 @@
+# Registers the untouched-field plain-chain guard proofs (#14928) under RIPR-SPEC-0243.
+[[extend]]
+id = "RIPR-SPEC-0243"
+tests = [
+  "crates/ripr/src/analysis/language/typescript/tests.rs::ts_fieldconstruction_multi_value_change_untouched_field_through_plain_chain_downgrades",
+  "crates/ripr/src/analysis/language/typescript/tests.rs::ts_fieldconstruction_multi_value_change_plain_chain_changed_or_compound_stays_exposed",
+  "crates/ripr/src/analysis/language/typescript/tests.rs::ts_chain_is_plain_projection_accepts_chains_and_rejects_compounds",
+]
+code = [
+  "crates/ripr/src/analysis/language/typescript/classifier.rs::ts_chain_is_plain_projection",
+]
+fixtures = [
+  "fixtures/ts_multi_value_field_change_nonnull_negation",
+]

@@ -92,5 +92,4 @@ Drill in:
   ripr explain --root <cwd>/fixtures/typescript_then_function_scoped_var_shadow/input --diff <cwd>/fixtures/typescript_then_function_scoped_var_shadow/diff.patch --mode fast probe:src_total.ts:typescript_preview:44386250
   ripr context --root <cwd>/fixtures/typescript_then_function_scoped_var_shadow/input --diff <cwd>/fixtures/typescript_then_function_scoped_var_shadow/diff.patch --mode fast --at probe:src_total.ts:typescript_preview:44386250
 
-
 Note: 1 TypeScript file analyzed under preview support — preview evidence is advisory and may be incomplete. Treat its findings as advisory, not Rust-grade.

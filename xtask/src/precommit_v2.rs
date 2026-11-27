@@ -7,6 +7,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
+use crate::policy::CoverageEnumeration;
 use crate::run::{COMMAND_DIAGNOSTIC_DISCLOSURE, CommandDiagnostic};
 use crate::run::{ProcessErrorKind, capture_output_without_timeout, capture_process_output};
 
@@ -57,18 +58,18 @@ impl PrecommitError {
 }
 
 #[derive(Debug, Clone, Serialize)]
-struct ChangedPath {
-    kind: String,
-    path: String,
-    old_path: Option<String>,
-    origins: Vec<String>,
+pub(crate) struct ChangedPath {
+    pub(crate) kind: String,
+    pub(crate) path: String,
+    pub(crate) old_path: Option<String>,
+    pub(crate) origins: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
-struct ChangeSet {
-    changes: Vec<ChangedPath>,
-    complete: bool,
-    limitations: Vec<String>,
+pub(crate) struct ChangeSet {
+    pub(crate) changes: Vec<ChangedPath>,
+    pub(crate) complete: bool,
+    pub(crate) limitations: Vec<String>,
 }
 
 impl ChangeSet {
@@ -93,11 +94,11 @@ impl ChangeSet {
 }
 
 #[derive(Debug, Clone, Serialize)]
-struct ImpactPlan {
-    impacted_packages: Vec<String>,
-    workspace_clippy: bool,
-    workspace_widening_reason: Option<String>,
-    skipped_reason: Option<String>,
+pub(crate) struct ImpactPlan {
+    pub(crate) impacted_packages: Vec<String>,
+    pub(crate) workspace_clippy: bool,
+    pub(crate) workspace_widening_reason: Option<String>,
+    pub(crate) skipped_reason: Option<String>,
 }
 
 impl ImpactPlan {
@@ -164,11 +165,11 @@ struct CargoTarget {
 }
 
 #[derive(Debug, Clone)]
-struct PackageRoot {
-    name: String,
-    relative_root: String,
-    dependencies: Vec<String>,
-    proc_macro: bool,
+pub(crate) struct PackageRoot {
+    pub(crate) name: String,
+    pub(crate) relative_root: String,
+    pub(crate) dependencies: Vec<String>,
+    pub(crate) proc_macro: bool,
 }
 
 pub(super) fn run() -> Result<(), String> {
@@ -184,14 +185,21 @@ fn run_composition(ci_policy: bool) -> Result<(), String> {
     run_composition_in(
         root,
         ci_policy,
-        &mut |ci_policy| {
+        &mut |ci_policy, coverage| {
             if ci_policy {
-                crate::precommit_policy(true)
+                crate::precommit_policy(true, coverage)
             } else {
-                crate::precommit()
+                crate::precommit(coverage)
             }
         },
-        &mut run_status,
+        &mut |program, args| {
+            // Hosted `ci-policy` keeps Cargo's own job count (#13705).
+            if ci_policy {
+                run_status(program, args)
+            } else {
+                run_status_with_envs(program, args, crate::cargo_job_cap::local_precommit_envs())
+            }
+        },
     )
 }
 
@@ -204,7 +212,7 @@ type StatusRunner<'a> =
 fn run_composition_in(
     root: PathBuf,
     ci_policy: bool,
-    policy: &mut dyn FnMut(bool) -> Result<(), String>,
+    policy: &mut dyn FnMut(bool, CoverageEnumeration) -> Result<(), String>,
     status: &mut StatusRunner<'_>,
 ) -> Result<(), String> {
     let mut report = PrecommitReport {
@@ -315,7 +323,13 @@ fn run_composition_in(
     };
     report.impact_plan = build_impact_plan(&report.change_set, &package_roots);
 
-    let policy_result = policy(ci_policy);
+    let coverage = coverage_enumeration(ci_policy, &report.change_set, &report.impact_plan);
+    if coverage == CoverageEnumeration::SkipUnaffectedChangeSet {
+        report
+            .skipped
+            .push(COVERAGE_ENUMERATION_SKIPPED.to_string());
+    }
+    let policy_result = policy(ci_policy, coverage);
     // #8793: a file-policy instrument failure (cargo lock wait or timeout)
     // alone is infrastructure state, not a source failure. The outer checks
     // still run; the failure is recorded now so any later report keeps it, and
@@ -368,6 +382,9 @@ fn run_composition_in(
     }
 
     if ci_policy {
+        report.skipped.push(
+            "formatting is outside ci-policy; CI must run its explicit cargo fmt --check obligation".to_string(),
+        );
         report.skipped.push(
             "local selected Clippy is outside ci-policy; CI must run its explicit cargo clippy --workspace --all-targets -- -D warnings obligation".to_string(),
         );
@@ -790,7 +807,21 @@ fn cargo_metadata_args(root: &Path) -> Vec<String> {
     ]
 }
 
-fn build_impact_plan(change_set: &ChangeSet, roots: &[PackageRoot]) -> ImpactPlan {
+pub(crate) fn build_impact_plan(change_set: &ChangeSet, roots: &[PackageRoot]) -> ImpactPlan {
+    // Fail closed (#14644 D): an incomplete inventory cannot establish that a
+    // narrower package set covers the change, so widen rather than claim
+    // an impacted pass. `run_composition` already rejects incomplete sets
+    // before this point; this keeps the planner itself safe for reuse.
+    if !change_set.complete {
+        return ImpactPlan {
+            impacted_packages: Vec::new(),
+            workspace_clippy: true,
+            workspace_widening_reason: Some(
+                "incomplete change set: cannot establish impacted scope".to_string(),
+            ),
+            skipped_reason: None,
+        };
+    }
     let paths = change_set.paths();
     if let Some(reason) = workspace_widening_reason(&paths) {
         return ImpactPlan {
@@ -815,6 +846,20 @@ fn build_impact_plan(change_set: &ChangeSet, roots: &[PackageRoot]) -> ImpactPla
             {
                 widen_dependents.insert(owner.name.clone());
             }
+        } else if !roots.is_empty() {
+            // Fail closed (#14644 D): with a known package graph, a
+            // Rust-relevant path with no owner cannot be established as covered
+            // by any impacted set. The empty-roots case keeps its pinned
+            // explicit skip (#8233); `check-fast` refuses that skip when
+            // a Rust surface changed (see `check_fast_gates`).
+            return ImpactPlan {
+                impacted_packages: Vec::new(),
+                workspace_clippy: true,
+                workspace_widening_reason: Some(format!(
+                    "unknown package owner for Rust path: {path}"
+                )),
+                skipped_reason: None,
+            };
         }
     }
     for package in widen_dependents {
@@ -830,6 +875,119 @@ fn build_impact_plan(change_set: &ChangeSet, roots: &[PackageRoot]) -> ImpactPla
         workspace_clippy: false,
         workspace_widening_reason: None,
         skipped_reason,
+    }
+}
+
+/// Impact plan for `check-fast`'s committed file inventory (#14644 D).
+/// The selector has already failed closed on any Git error, so its
+/// inventory is complete; the planner's own incomplete/unknown fallbacks
+/// above still widen rather than claim a narrower pass.
+pub(crate) fn impact_plan_for_files(files: &[String], roots: &[PackageRoot]) -> ImpactPlan {
+    let change_set = ChangeSet {
+        changes: files
+            .iter()
+            .map(|path| ChangedPath {
+                kind: "modified".to_string(),
+                path: path.clone(),
+                old_path: None,
+                origins: vec!["committed".to_string()],
+            })
+            .collect(),
+        complete: true,
+        limitations: Vec::new(),
+    };
+    build_impact_plan(&change_set, roots)
+}
+
+/// Load package roots and plan for `check-fast`; any metadata failure is
+/// returned as a plain error so the caller fails closed instead of
+/// falling back to (or claiming) a narrower selection.
+pub(crate) fn check_fast_impact_plan(root: &Path, files: &[String]) -> Result<ImpactPlan, String> {
+    // `package_roots_from_metadata` strips canonical package parents from
+    // this root, so a relative (`.`) or `..`-carrying root must be
+    // canonicalized first; `precommit` already passes a canonical root,
+    // while `check-fast` passes `.` (#14644 D).
+    let root = fs::canonicalize(root)
+        .map_err(|error| format!("canonicalize repository root `{}`: {error}", root.display()))?;
+    let roots = load_package_roots(&root).map_err(|error| error.message)?;
+    Ok(impact_plan_for_files(files, &roots))
+}
+
+/// One Clippy invocation per element: the workspace invocation when the
+/// plan widened, otherwise one `-p` invocation per impacted package.
+/// An empty plan yields no invocation (the caller discloses the skip).
+pub(crate) fn clippy_invocations(root: &Path, plan: &ImpactPlan) -> Vec<Vec<String>> {
+    if plan.workspace_clippy {
+        vec![workspace_clippy_args(root)]
+    } else if plan.impacted_packages.is_empty() {
+        Vec::new()
+    } else {
+        plan.impacted_packages
+            .iter()
+            .map(|package| package_clippy_args(root, package))
+            .collect()
+    }
+}
+
+/// Human-readable disclosure of what the plan will and will not establish.
+pub(crate) fn impact_plan_disclosure(plan: &ImpactPlan) -> String {
+    if plan.workspace_clippy {
+        format!(
+            "Impact plan: workspace Clippy ({})",
+            plan.workspace_widening_reason
+                .as_deref()
+                .unwrap_or("workspace-wide surface changed")
+        )
+    } else if plan.impacted_packages.is_empty() {
+        format!(
+            "Impact plan: no impacted package; {}",
+            plan.skipped_reason
+                .as_deref()
+                .unwrap_or("Clippy skipped: no impacted package.")
+        )
+    } else {
+        format!(
+            "Impact plan: Clippy scoped to impacted package(s): {} (reverse dependents included; not a full-workspace pass)",
+            plan.impacted_packages.join(", ")
+        )
+    }
+}
+
+/// Skipped-row text for a local run that built no `covered_by` test binary.
+const COVERAGE_ENUMERATION_SKIPPED: &str = "check-file-policy did not build or list test-valued covered_by selectors: no Rust source, manifest, workspace-wide Rust control file or policy/ path changed. Hosted qualification enumerates them.";
+
+/// Whether this run must build test binaries to enumerate the test-valued
+/// `covered_by` selectors (#13705).
+///
+/// A selector's listing depends on Rust sources, manifests, the workspace-wide
+/// Rust control files and the policy declarations. When the complete local
+/// change set touches none of them, the listing equals the merge base's, which
+/// hosted qualification already enumerated, so the build is skipped. This is
+/// the same premise that skips local Clippy. Any other local run enumerates,
+/// resolving library unit-test selectors in source where it can, because the
+/// `ripr` library test build does not fit a 15 GB container. Every `ci-policy`
+/// run enumerates in full: hosted qualification never skips or substitutes.
+fn coverage_enumeration(
+    ci_policy: bool,
+    change_set: &ChangeSet,
+    plan: &ImpactPlan,
+) -> CoverageEnumeration {
+    let rust_or_policy_changed = change_set
+        .paths()
+        .iter()
+        .any(|path| is_rust_relevant(path) || path_is_under(path, "policy"));
+    if ci_policy {
+        CoverageEnumeration::Enumerate
+    } else if !change_set.complete
+        || plan.workspace_clippy
+        || !plan.impacted_packages.is_empty()
+        || rust_or_policy_changed
+    {
+        // Local runs do not build a library test target for a selector that
+        // resolves in source; hosted qualification lists it.
+        CoverageEnumeration::EnumerateResolvingLibrarySelectorsInSource
+    } else {
+        CoverageEnumeration::SkipUnaffectedChangeSet
     }
 }
 
@@ -858,7 +1016,7 @@ fn reverse_dependents(package: &str, roots: &[PackageRoot]) -> BTreeSet<String> 
     }
 }
 
-fn workspace_widening_reason(paths: &[String]) -> Option<String> {
+pub(crate) fn workspace_widening_reason(paths: &[String]) -> Option<String> {
     paths.iter().find_map(|path| {
         if matches!(
             path.as_str(),
@@ -867,7 +1025,9 @@ fn workspace_widening_reason(paths: &[String]) -> Option<String> {
                 | "rust-toolchain"
                 | "rust-toolchain.toml"
                 | "clippy.toml"
+                | ".clippy.toml"
                 | "rustfmt.toml"
+                | ".rustfmt.toml"
         ) {
             Some(format!(
                 "workspace-wide Rust control surface changed: {path}"
@@ -896,7 +1056,7 @@ fn is_rust_relevant(path: &str) -> bool {
     path.ends_with(".rs") || path.ends_with("Cargo.toml") || path.ends_with("build.rs")
 }
 
-fn package_clippy_args(root: &Path, package: &str) -> Vec<String> {
+pub(crate) fn package_clippy_args(root: &Path, package: &str) -> Vec<String> {
     vec![
         "clippy".to_string(),
         "--manifest-path".to_string(),
@@ -910,7 +1070,7 @@ fn package_clippy_args(root: &Path, package: &str) -> Vec<String> {
     ]
 }
 
-fn workspace_clippy_args(root: &Path) -> Vec<String> {
+pub(crate) fn workspace_clippy_args(root: &Path) -> Vec<String> {
     vec![
         "clippy".to_string(),
         "--manifest-path".to_string(),
@@ -991,8 +1151,16 @@ fn cargo_bytes(args: &[String], context: &str) -> Result<Vec<u8>, PrecommitError
 }
 
 fn run_status(program: &str, args: &[String]) -> Result<CommandDiagnostic, PrecommitError> {
+    run_status_with_envs(program, args, &[])
+}
+
+fn run_status_with_envs(
+    program: &str,
+    args: &[String],
+    envs: &[(&str, &str)],
+) -> Result<CommandDiagnostic, PrecommitError> {
     // Same no-cap shared-runner path as `cargo_bytes` (#4150).
-    let captured = capture_output_without_timeout(program, args, &[], "precommit command");
+    let captured = capture_output_without_timeout(program, args, envs, "precommit command");
     let diagnostic = CommandDiagnostic::captured(program, args, &captured);
     let output = captured.map_err(|error| {
         PrecommitError::new(
@@ -1666,6 +1834,336 @@ mod tests {
         )
     }
 
+    fn contract_roots() -> Vec<PackageRoot> {
+        vec![
+            PackageRoot {
+                name: "ripr".to_string(),
+                relative_root: "crates/ripr".to_string(),
+                dependencies: vec!["ripr-contract".to_string()],
+                proc_macro: false,
+            },
+            PackageRoot {
+                name: "ripr-contract".to_string(),
+                relative_root: "crates/ripr-contract".to_string(),
+                dependencies: Vec::new(),
+                proc_macro: false,
+            },
+        ]
+    }
+
+    #[test]
+    fn contract_edit_pulls_reverse_dependent_ripr() -> Result<(), String> {
+        let roots = contract_roots();
+        for path in [
+            "crates/ripr-contract/src/lib.rs",
+            "crates/ripr-contract/Cargo.toml",
+        ] {
+            let plan = build_impact_plan(&single_path_change_set(path, None, true), &roots);
+            require(
+                plan.impacted_packages == vec!["ripr".to_string(), "ripr-contract".to_string()],
+                format!("{path} did not pull reverse-dependent ripr: {plan:?}"),
+            )?;
+            require(
+                !plan.workspace_clippy,
+                format!("{path} widened to workspace"),
+            )?;
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn shared_surfaces_widen_to_workspace() -> Result<(), String> {
+        let roots = contract_roots();
+        for path in [
+            "Cargo.lock",
+            "Cargo.toml",
+            "rust-toolchain.toml",
+            "rust-toolchain",
+            "clippy.toml",
+            ".clippy.toml",
+        ] {
+            let plan = build_impact_plan(&single_path_change_set(path, None, true), &roots);
+            require(
+                plan.workspace_clippy && plan.workspace_widening_reason.is_some(),
+                format!("{path} did not widen to workspace: {plan:?}"),
+            )?;
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn unknown_owner_and_incomplete_diff_widen_to_workspace() -> Result<(), String> {
+        let roots = contract_roots();
+        let unknown = build_impact_plan(
+            &single_path_change_set("crates/unknown/src/lib.rs", None, true),
+            &roots,
+        );
+        require(
+            unknown.workspace_clippy && unknown.workspace_widening_reason.is_some(),
+            format!("unknown owner claimed an impacted pass: {unknown:?}"),
+        )?;
+        let incomplete = build_impact_plan(
+            &single_path_change_set("crates/ripr-contract/src/lib.rs", None, false),
+            &roots,
+        );
+        require(
+            incomplete.workspace_clippy && incomplete.workspace_widening_reason.is_some(),
+            format!("incomplete diff claimed an impacted pass: {incomplete:?}"),
+        )?;
+        Ok(())
+    }
+
+    #[test]
+    fn empty_plan_skips_with_stated_reason() -> Result<(), String> {
+        let plan = build_impact_plan(&single_path_change_set("docs/guide.md", None, true), &[]);
+        require(
+            plan.impacted_packages.is_empty()
+                && !plan.workspace_clippy
+                && plan
+                    .skipped_reason
+                    .as_deref()
+                    .is_some_and(|reason| !reason.trim().is_empty()),
+            format!("empty plan lacked a stated skip reason: {plan:?}"),
+        )
+    }
+
+    #[test]
+    fn check_fast_files_plan_maps_to_per_package_or_workspace_clippy() -> Result<(), String> {
+        let roots = contract_roots();
+        let root = Path::new(".");
+        let scoped =
+            impact_plan_for_files(&["crates/ripr-contract/src/lib.rs".to_string()], &roots);
+        let invocations = clippy_invocations(root, &scoped);
+        require(
+            invocations.len() == 2,
+            format!("scoped invocations: {invocations:?}"),
+        )?;
+        require(
+            invocations.iter().any(|args| {
+                args.windows(2)
+                    .any(|pair| pair[0] == "-p" && pair[1] == "ripr")
+            }) && invocations.iter().any(|args| {
+                args.windows(2)
+                    .any(|pair| pair[0] == "-p" && pair[1] == "ripr-contract")
+            }),
+            format!("reverse dependent missing from Clippy args: {invocations:?}"),
+        )?;
+        for shared in [
+            "Cargo.lock",
+            "rust-toolchain.toml",
+            "clippy.toml",
+            ".clippy.toml",
+        ] {
+            let widened = impact_plan_for_files(&[shared.to_string()], &roots);
+            let invocations = clippy_invocations(root, &widened);
+            require(
+                invocations.len() == 1 && invocations[0].iter().any(|arg| arg == "--workspace"),
+                format!("shared surface {shared} did not map to workspace Clippy: {invocations:?}"),
+            )?;
+        }
+        let empty = impact_plan_for_files(&["docs/guide.md".to_string()], &roots);
+        require(
+            clippy_invocations(root, &empty).is_empty()
+                && impact_plan_disclosure(&empty).contains("no impacted package"),
+            format!("empty plan was not an explicit skip: {empty:?}"),
+        )
+    }
+
+    #[test]
+    fn check_fast_impact_plan_accepts_noncanonical_root() -> Result<(), String> {
+        let _cwd_guard = crate::acquire_test_cwd_read_guard();
+        // Regression (#14644 D): `check-fast` passes `.` as its root, while
+        // package-root loading strips canonical parents from it.
+        let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("..");
+        let plan = check_fast_impact_plan(&root, &["crates/ripr-contract/src/lib.rs".to_string()])?;
+        require(
+            plan.impacted_packages
+                == vec![
+                    "ripr".to_string(),
+                    "ripr-contract".to_string(),
+                    "xtask".to_string(),
+                ],
+            format!("noncanonical root plan changed: {plan:?}"),
+        )
+    }
+
+    fn single_path_change_set(path: &str, old_path: Option<&str>, complete: bool) -> ChangeSet {
+        ChangeSet {
+            changes: vec![ChangedPath {
+                kind: "modified".to_string(),
+                path: path.to_string(),
+                old_path: old_path.map(str::to_string),
+                origins: vec!["unstaged".to_string()],
+            }],
+            complete,
+            limitations: Vec::new(),
+        }
+    }
+
+    /// #13705: the test-binary builds behind `covered_by` enumeration are
+    /// skipped only for a complete local change set that cannot change any
+    /// listing. Every other shape, and every `ci-policy` run, enumerates.
+    #[test]
+    fn coverage_enumeration_is_skipped_only_for_an_unaffected_local_change_set()
+    -> Result<(), String> {
+        let roots = [PackageRoot {
+            name: "a".to_string(),
+            relative_root: "crates/a".to_string(),
+            dependencies: Vec::new(),
+            proc_macro: false,
+        }];
+        let decide = |ci_policy: bool, change_set: &ChangeSet| {
+            coverage_enumeration(
+                ci_policy,
+                change_set,
+                &build_impact_plan(change_set, &roots),
+            )
+        };
+        for path in [
+            "docs/guide.md",
+            ".github/workflows/ci.yml",
+            "editors/vscode/src/extension.ts",
+            "crates/a/tests/fixtures/input.json",
+        ] {
+            let change_set = single_path_change_set(path, None, true);
+            require(
+                decide(false, &change_set) == CoverageEnumeration::SkipUnaffectedChangeSet,
+                format!("{path} alone must not build covered_by test binaries"),
+            )?;
+            require(
+                decide(true, &change_set) == CoverageEnumeration::Enumerate,
+                format!("ci-policy must enumerate even for {path}"),
+            )?;
+            require(
+                decide(false, &single_path_change_set(path, None, false))
+                    == CoverageEnumeration::EnumerateResolvingLibrarySelectorsInSource,
+                format!("an incomplete change set must enumerate even for {path}"),
+            )?;
+        }
+        for path in [
+            "crates/a/src/lib.rs",
+            "crates/a/Cargo.toml",
+            "crates/a/build.rs",
+            "scratch/outside_any_package.rs",
+            "Cargo.lock",
+            "rust-toolchain.toml",
+            ".cargo/config.toml",
+            "policy/non-rust-allowlist.toml",
+            "policy/clippy-exceptions.toml",
+        ] {
+            require(
+                decide(false, &single_path_change_set(path, None, true))
+                    == CoverageEnumeration::EnumerateResolvingLibrarySelectorsInSource,
+                format!("{path} can change a covered_by listing and must enumerate"),
+            )?;
+            require(
+                decide(true, &single_path_change_set(path, None, true))
+                    == CoverageEnumeration::Enumerate,
+                format!("ci-policy must list in full for {path}"),
+            )?;
+        }
+        // A rename away from a Rust or policy path still removes that input.
+        for old_path in ["crates/a/src/gone.rs", "policy/non-rust-allowlist.toml"] {
+            require(
+                decide(
+                    false,
+                    &single_path_change_set("docs/moved.md", Some(old_path), true),
+                ) == CoverageEnumeration::EnumerateResolvingLibrarySelectorsInSource,
+                format!("a rename from {old_path} must enumerate"),
+            )?;
+        }
+        // The decision does not rest on the impact plan alone.
+        require(
+            coverage_enumeration(
+                false,
+                &single_path_change_set("docs/guide.md", None, true),
+                &ImpactPlan {
+                    impacted_packages: vec!["a".to_string()],
+                    ..ImpactPlan::empty()
+                },
+            ) == CoverageEnumeration::EnumerateResolvingLibrarySelectorsInSource
+                && coverage_enumeration(
+                    false,
+                    &single_path_change_set("docs/guide.md", None, true),
+                    &ImpactPlan {
+                        workspace_clippy: true,
+                        ..ImpactPlan::empty()
+                    },
+                ) == CoverageEnumeration::EnumerateResolvingLibrarySelectorsInSource,
+            "an impacted package or workspace widening must enumerate",
+        )
+    }
+
+    /// The composition hands the decision to the policy leg and discloses a
+    /// skipped enumeration in the published report; a Rust change does neither.
+    #[test]
+    fn composition_passes_the_coverage_decision_to_policy_and_discloses_a_skip()
+    -> Result<(), String> {
+        for (changed, contents, expected) in [
+            (
+                "docs/guide.md",
+                "changed\n",
+                CoverageEnumeration::SkipUnaffectedChangeSet,
+            ),
+            (
+                "crates/a/src/lib.rs",
+                "pub fn a_changed() {}\n",
+                CoverageEnumeration::EnumerateResolvingLibrarySelectorsInSource,
+            ),
+        ] {
+            let fixture = TestRepo::new()?;
+            fixture.write(
+                "Cargo.toml",
+                "[workspace]\nmembers = [\"crates/a\"]\nresolver = \"2\"\n",
+            )?;
+            fixture.write(
+                "crates/a/Cargo.toml",
+                "[package]\nname = \"a\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+            )?;
+            fixture.write("crates/a/src/lib.rs", "pub fn a() {}\n")?;
+            fixture.write("docs/guide.md", "base\n")?;
+            fixture.git(&["add", "."])?;
+            fixture.git(&["commit", "-q", "-m", "base"])?;
+            fixture.write(changed, contents)?;
+            let root = fs::canonicalize(&fixture.path).map_err(|error| error.to_string())?;
+            let mut observed = Vec::new();
+            run_composition_in(
+                root,
+                false,
+                &mut |_, coverage| {
+                    observed.push(coverage);
+                    Ok(())
+                },
+                &mut |program, args| {
+                    if program == "cargo" && args.first().map(String::as_str) == Some("clippy") {
+                        // Stand in for Clippy without compiling the fixture.
+                        return run_status("git", &["--version".to_string()]);
+                    }
+                    run_status(program, args)
+                },
+            )?;
+            require(
+                observed == [expected],
+                format!("{changed}: policy received {observed:?}, expected {expected:?}"),
+            )?;
+            let report: serde_json::Value = serde_json::from_slice(
+                &fs::read(fixture.path.join(REPORT_JSON)).map_err(|error| error.to_string())?,
+            )
+            .map_err(|error| error.to_string())?;
+            let disclosed = report
+                .get("skipped")
+                .and_then(serde_json::Value::as_array)
+                .ok_or("skipped obligations missing")?
+                .iter()
+                .any(|item| item.as_str() == Some(COVERAGE_ENUMERATION_SKIPPED));
+            require(
+                disclosed == (expected == CoverageEnumeration::SkipUnaffectedChangeSet),
+                format!("{changed}: wrong skipped-enumeration disclosure: {report}"),
+            )?;
+        }
+        Ok(())
+    }
+
     #[test]
     fn merge_base_falls_back_to_local_main_and_fails_closed_without_one() -> Result<(), String> {
         {
@@ -2059,14 +2557,25 @@ mod tests {
         fixture: &TestRepo,
         policy_result: Result<(), String>,
     ) -> Result<Driven, String> {
+        drive_composition_with_mode(fixture, policy_result, false)
+    }
+
+    fn drive_composition_with_mode(
+        fixture: &TestRepo,
+        policy_result: Result<(), String>,
+        ci_policy: bool,
+    ) -> Result<Driven, String> {
         let mut calls = Vec::new();
         // Temp dirs may sit behind a symlink (macOS /var -> /private/var) and
         // package roots are canonicalized before prefix stripping.
         let root = fs::canonicalize(&fixture.path).map_err(|error| error.to_string())?;
         let result = run_composition_in(
             root,
-            false,
-            &mut |_| policy_result.clone(),
+            ci_policy,
+            &mut |observed_mode, _coverage| {
+                require(observed_mode == ci_policy, "policy received the wrong mode")?;
+                policy_result.clone()
+            },
             &mut |program, args| {
                 calls.push(format!("{program} {}", args.join(" ")));
                 if program == "cargo" {
@@ -2076,11 +2585,55 @@ mod tests {
                 run_status(program, args)
             },
         );
+        let report_path = if ci_policy {
+            "target/ripr/reports/ci-policy.json"
+        } else {
+            REPORT_JSON
+        };
         let report = serde_json::from_slice(
-            &fs::read(fixture.path.join(REPORT_JSON)).map_err(|error| error.to_string())?,
+            &fs::read(fixture.path.join(report_path)).map_err(|error| error.to_string())?,
         )
         .map_err(|error| error.to_string())?;
         Ok((result, calls, report))
+    }
+
+    #[test]
+    fn composition_discloses_external_formatting_only_for_ci_policy() -> Result<(), String> {
+        for ci_policy in [false, true] {
+            let fixture = composition_fixture()?;
+            let (result, calls, report) = drive_composition_with_mode(&fixture, Ok(()), ci_policy)?;
+            result?;
+            let expected_composition = if ci_policy {
+                "ci_policy"
+            } else {
+                "local_precommit"
+            };
+            require(
+                report
+                    .get("composition")
+                    .and_then(serde_json::Value::as_str)
+                    == Some(expected_composition),
+                format!("wrong composition identity: {report}"),
+            )?;
+            let skipped = report
+                .get("skipped")
+                .and_then(serde_json::Value::as_array)
+                .ok_or("skipped obligations missing")?;
+            for obligation in [
+                "formatting is outside ci-policy; CI must run its explicit cargo fmt --check obligation",
+                "local selected Clippy is outside ci-policy; CI must run its explicit cargo clippy --workspace --all-targets -- -D warnings obligation",
+            ] {
+                require(
+                    skipped.iter().any(|item| item.as_str() == Some(obligation)) == ci_policy,
+                    format!("wrong external obligation for {expected_composition}: {skipped:?}"),
+                )?;
+            }
+            require(
+                calls.iter().any(|call| call.starts_with("cargo clippy")) != ci_policy,
+                format!("wrong selected Clippy execution for {expected_composition}: {calls:?}"),
+            )?;
+        }
+        Ok(())
     }
 
     #[test]

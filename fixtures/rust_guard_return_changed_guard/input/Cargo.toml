@@ -1,0 +1,8 @@
+[package]
+name = "guard_return_changed_guard_fixture"
+version = "0.1.0"
+edition = "2024"
+
+[lib]
+name = "guard_return_changed_guard_fixture"
+path = "src/lib.rs"

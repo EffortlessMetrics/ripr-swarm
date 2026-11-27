@@ -33,10 +33,10 @@ Static exposure
 Evidence
   - reach yes: Related tests appear to reach delay: cold_delay
   - infection yes: Reachable tests can plausibly activate this changed behavior
-  - propagation yes: Changed behavior appears to influence match arm result: Mode::Warm =>
+  - propagation yes: Changed behavior appears to influence match arm result: 2 + 3
   - observation yes: A related test observes a value or effect near the changed behavior
   - discriminator weak: Discriminator unconfirmed: no assertion text references the changed expression
-  - local flow reaches match arm result: Mode::Warm => (line 9)
+  - local flow reaches match arm result: 2 + 3 (line 9)
   - related test src/heaters.rs:19 cold_delay uses strong exact value oracle: assert_eq!(delay(Mode::Cold), 50); unconfirmed: ripr could not confirm that this assertion observes the changed behavior
   - source assertion argument value 50 at line 20
   - source enum variant value Mode::Cold at line 20
@@ -45,7 +45,7 @@ Weakness
   - No strong discriminator was detected
 
 Next step
-  Strengthen the related assertion so it discriminates the changed behavior
+  The related test `cold_delay` already asserts an exact value; the gap is not the assertion shape. Check whether the value that test asserts comes from the changed arm. If it does, the assertion may already notice this change, which ripr could not confirm from the source. If an input selects the arm but its result is replaced before the assertion, assert that result where it is still observable or test the arm separately. If no related input selects the arm, add one and assert the exact value the arm produces
 Drill in:
   (finding id, for explain/context)
   ripr explain --root <cwd>/fixtures/same_name_sibling_file_test/input --diff <cwd>/fixtures/same_name_sibling_file_test/diff.patch --mode fast probe:src_heaters.rs:match_arm:fad9d7d9

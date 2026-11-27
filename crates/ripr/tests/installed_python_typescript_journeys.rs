@@ -10,9 +10,10 @@
 //! points where the delegated repair loop ends in a named terminal reason, so a
 //! change in either direction is a visible decision.
 //!
-//! Project verification (pytest, vitest) is not executed here: it needs the
-//! user's interpreter or `npm install`, and static movement is a separate
-//! axis from project verification.
+//! Default tests do not execute project verification. The explicitly ignored
+//! real-pytest control requires an activated environment supplied by its caller;
+//! it records workspace-built proof, not installed-candidate qualification.
+//! Static movement remains separate from project verification.
 
 #![cfg(any(feature = "lang-python", feature = "lang-typescript"))]
 
@@ -22,6 +23,14 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 #[path = "common/mod.rs"]
 mod common;
+
+#[cfg(all(unix, feature = "lang-python"))]
+#[expect(
+    dead_code,
+    reason = "policy:4518-real-pytest: reuse the bounded boundary-journey helper; this target uses a subset"
+)]
+#[path = "common/boundary_gap.rs"]
+mod boundary_gap;
 
 use common::fixture_git::{fixture_git_ok, fixture_git_output};
 
@@ -927,6 +936,163 @@ fn python_receipt_route_consumes_the_bound_verify_and_refuses_forgery() -> Resul
     decoy_untouched(&decoy)
 }
 
+/// #4518: stale and mismatched-attempt controls for the Python receipt route.
+/// A verify document is bound to the committed test state it was produced
+/// from. After a further test commit it is refused as not canonical with the
+/// recovery (`rerun agent verify`), and a malformed or unknown attempt id is
+/// refused with its reason (a well-formed id with no recorded manifest is
+/// named as a missing manifest); no refusal writes a receipt or changes the
+/// workflow directory. A positive control
+/// over the same verify, attempt and `--out` shape issues a receipt first.
+#[cfg(feature = "lang-python")]
+#[test]
+fn python_receipt_route_refuses_stale_verify_and_wrong_attempt_writing_nothing()
+-> Result<(), String> {
+    let (_guard, root, decoy) =
+        materialize("blind_journey_installed_python", "head", "pystale", None)?;
+    let root_arg = root.to_string_lossy().into_owned();
+    let (ok, check) = ripr(&decoy, &["check", "--root", &root_arg, "--base", "HEAD~1"])?;
+    expect_exit(ok, true, "check")?;
+    let (gap, base) = gap_start_tokens(&check)
+        .ok_or_else(|| format!("check printed no gap-bound start:\n{check}"))?;
+    let (ok, before) = ripr(
+        &decoy,
+        &[
+            "agent", "repair", "--gap-id", &gap, "--base", &base, "--root", &root_arg, "--phase",
+            "before",
+        ],
+    )?;
+    expect_exit(ok, true, "agent repair --phase before")?;
+    let test_file = root.join("tests").join("test_pricing.py");
+    let mut tests =
+        std::fs::read_to_string(&test_file).map_err(|error| format!("read test file: {error}"))?;
+    tests.push_str(
+        "\n\ndef test_exact_boundary_gets_discount():\n    assert bulk_discount_rate(20) == 0.15\n",
+    );
+    std::fs::write(&test_file, &tests).map_err(|error| format!("write test file: {error}"))?;
+    fixture_git_ok(&root, &["add", "tests/test_pricing.py"])?;
+    fixture_git_ok(&root, &["commit", "-q", "-m", "boundary test"])?;
+    let continue_command = before
+        .lines()
+        .find_map(|line| line.trim().strip_prefix("Next, after the test edit: "))
+        .ok_or_else(|| format!("before printed no continue command:\n{before}"))?;
+    let attempt = continue_command
+        .split_whitespace()
+        .skip_while(|token| *token != "--attempt")
+        .nth(1)
+        .ok_or_else(|| format!("continue command names no attempt: {continue_command}"))?
+        .to_string();
+    let (ok, after) = ripr(
+        &decoy,
+        &["continue", "--root", &root_arg, "--attempt", &attempt],
+    )?;
+    expect_exit(ok, true, "continue")?;
+    need(&after, "closed: weakly_exposed -> exposed", "closure")?;
+
+    let workflow = root.join("target/ripr/workflow");
+    let verify_path = workflow.join("agent-verify.json");
+    if !verify_path.is_file() {
+        return Err("continue produced no agent-verify.json".to_string());
+    }
+    let receipt_for = |attempt: &str, label: &str| -> Result<std::process::Output, String> {
+        let out = workflow.join(format!("{label}.receipt.json"));
+        ripr_output(
+            &decoy,
+            &[
+                "agent",
+                "receipt",
+                "--root",
+                &root_arg,
+                "--verify-json",
+                &verify_path.to_string_lossy(),
+                "--seam-id",
+                &gap,
+                "--attempt",
+                attempt,
+                "--json",
+                "--out",
+                &out.to_string_lossy(),
+            ],
+        )
+    };
+    let written = |label: &str| workflow.join(format!("{label}.receipt.json")).exists();
+
+    // Positive control: the current verify and attempt issue a receipt.
+    let issued = receipt_for(&attempt, "control")?;
+    let (_, issued_err) = text_of(&issued);
+    expect_exit(
+        issued.status.success(),
+        true,
+        &format!("receipt over the current verify: {issued_err}"),
+    )?;
+    if !written("control") {
+        return Err("positive control wrote no receipt at the --out target".to_string());
+    }
+
+    // Wrong attempt: a malformed id is refused with the id shape named, and
+    // a well-formed id that names no recorded attempt is refused too.
+    let snapshot = || -> Result<(Vec<String>, Vec<u8>), String> {
+        let mut names = std::fs::read_dir(&workflow)
+            .map_err(|error| format!("list workflow dir: {error}"))?
+            .map(|entry| {
+                entry
+                    .map(|entry| entry.file_name().to_string_lossy().into_owned())
+                    .map_err(|error| format!("workflow entry: {error}"))
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        names.sort();
+        let control = std::fs::read(workflow.join("control.receipt.json"))
+            .map_err(|error| format!("read control receipt: {error}"))?;
+        Ok((names, control))
+    };
+    let before_refusals = snapshot()?;
+    let malformed = receipt_for("attempt-bogus", "malformed")?;
+    let (_, malformed_err) = text_of(&malformed);
+    expect_exit(malformed.status.success(), false, "malformed attempt id")?;
+    need(
+        &malformed_err,
+        "repair attempt ID must start with `repair-attempt-`",
+        "malformed attempt id is named",
+    )?;
+    let unknown = receipt_for("repair-attempt-000000000000000000000000", "unknown")?;
+    let (_, unknown_err) = text_of(&unknown);
+    expect_exit(unknown.status.success(), false, "unknown attempt id")?;
+    need(
+        &unknown_err,
+        "repair attempt manifest not found",
+        "unknown attempt id is named as a missing manifest",
+    )?;
+    for label in ["malformed", "unknown"] {
+        if written(label) {
+            return Err(format!("a receipt was written for the {label} attempt"));
+        }
+    }
+
+    // Stale: a further committed test change after the verify was produced.
+    tests.push_str(
+        "\n\ndef test_unrelated_later_edit():\n    assert bulk_discount_rate(25) == 0.15\n",
+    );
+    std::fs::write(&test_file, &tests).map_err(|error| format!("write test file: {error}"))?;
+    fixture_git_ok(&root, &["add", "tests/test_pricing.py"])?;
+    fixture_git_ok(&root, &["commit", "-q", "-m", "later test edit"])?;
+    let stale = receipt_for(&attempt, "stale")?;
+    let (_, stale_err) = text_of(&stale);
+    expect_exit(stale.status.success(), false, "receipt over a stale verify")?;
+    need(&stale_err, "not_canonical", "stale verify refusal is typed")?;
+    need(
+        &stale_err,
+        "rerun agent verify",
+        "stale verify refusal names the recovery",
+    )?;
+    if written("stale") {
+        return Err("a receipt was written over the stale verify".to_string());
+    }
+    if snapshot()? != before_refusals {
+        return Err("a refusal changed the workflow directory or the control receipt".to_string());
+    }
+    decoy_untouched(&decoy)
+}
+
 /// Splits a POSIX shell command into words. Supports exactly what `ripr`
 /// prints: whitespace-separated words, single-quoted spans, and the `\'`
 /// escape used between spans to embed a single quote (`'a'\''b'` is `a'b`).
@@ -1239,6 +1405,189 @@ fn python_status_after_pilot_names_the_gap_bound_start() -> Result<(), String> {
         return Err(format!("status kept the no-start claim:\n{status}"));
     }
     decoy_untouched(&decoy)
+}
+
+/// #15902: an installed dependency tree that `.gitignore` does not cover is
+/// not unanalyzed source. `ripr check` keeps offering the repair start and
+/// stops advising `git add -N` for files no adapter would read. An untracked
+/// hand-written source file is the control and still withholds the start.
+/// When the unignored tree is too large for the edit cage to snapshot, the
+/// before phase names that cause and the ignore fix, and following that fix
+/// yields a scorable baseline; a small tree gets no such line. An untracked
+/// test under `docs/` stays disclosed, because the workspace walk reads it.
+#[cfg(feature = "lang-typescript")]
+#[test]
+fn typescript_unignored_dependency_tree_keeps_the_start_and_names_an_oversized_capture()
+-> Result<(), String> {
+    let write = |path: &Path, text: &str| -> Result<(), String> {
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent).map_err(|error| format!("mkdir: {error}"))?;
+        }
+        std::fs::write(path, text).map_err(|error| format!("write {}: {error}", path.display()))
+    };
+    let (_guard, root, decoy) =
+        materialize("blind_journey_installed_typescript", "head", "tsnm", None)?;
+    let root_arg = root.to_string_lossy().into_owned();
+    write(
+        &root.join("node_modules/dep/index.ts"),
+        "export const one = 1;\n",
+    )?;
+    write(
+        &root.join("node_modules/dep/lib/util.js"),
+        "exports.two = 2;\n",
+    )?;
+    let (ok, check) = ripr(&decoy, &["check", "--root", &root_arg, "--base", "HEAD~1"])?;
+    expect_exit(ok, true, "check with an unignored dependency tree")?;
+    let (gap, base) = gap_start_tokens(&check).ok_or_else(|| {
+        format!("an unignored dependency tree withheld the repair start:\n{check}")
+    })?;
+    if check.contains("git add -N") || check.contains("untracked:") {
+        return Err(format!(
+            "check named dependency files as unanalyzed source:\n{check}"
+        ));
+    }
+
+    // Small tree: the start is scorable and no oversized-capture line prints.
+    let (ok, start) = ripr(
+        &decoy,
+        &[
+            "agent", "repair", "--gap-id", &gap, "--base", &base, "--root", &root_arg, "--phase",
+            "before",
+        ],
+    )?;
+    expect_exit(ok, true, "start beside a small unignored dependency tree")?;
+    if start.contains("likely cause of the ambiguous baseline") || start.contains("ambiguous: true")
+    {
+        return Err(format!(
+            "a small dependency tree read as oversized:\n{start}"
+        ));
+    }
+
+    // Control: an untracked hand-written source file is still unanalyzed
+    // working-tree source, so the start stays withheld and the note stays.
+    let (_control_guard, control_root, control_decoy) = materialize(
+        "blind_journey_installed_typescript",
+        "head",
+        "tsnm-src",
+        None,
+    )?;
+    let control_arg = control_root.to_string_lossy().into_owned();
+    write(
+        &control_root.join("src/extra.ts"),
+        "export const extra = 1;\n",
+    )?;
+    let (ok, control) = ripr(
+        &control_decoy,
+        &["check", "--root", &control_arg, "--base", "HEAD~1"],
+    )?;
+    expect_exit(ok, true, "check with an untracked source file")?;
+    if gap_start_tokens(&control).is_some() || !control.contains("src/extra.ts") {
+        return Err(format!(
+            "an untracked source file no longer withholds the start or lost its note:\n{control}"
+        ));
+    }
+
+    // Control: an untracked test under `docs/` is skipped as changed scope
+    // but still indexed as test evidence, so it stays disclosed and the
+    // start stays withheld.
+    let (_docs_guard, docs_root, docs_decoy) = materialize(
+        "blind_journey_installed_typescript",
+        "head",
+        "tsnm-docs",
+        None,
+    )?;
+    let docs_arg = docs_root.to_string_lossy().into_owned();
+    write(
+        &docs_root.join("docs/pricing.test.ts"),
+        "import { test, expect } from \"vitest\";\ntest(\"one\", () => { expect(1).toBe(1); });\n",
+    )?;
+    let (ok, docs) = ripr(
+        &docs_decoy,
+        &["check", "--root", &docs_arg, "--base", "HEAD~1"],
+    )?;
+    expect_exit(ok, true, "check with an untracked docs test")?;
+    if gap_start_tokens(&docs).is_some() || !docs.contains("docs/pricing.test.ts") {
+        return Err(format!(
+            "an untracked docs test no longer withholds the start or lost its note:\n{docs}"
+        ));
+    }
+
+    // Oversized: one untracked file past the per-file capture budget (sparse,
+    // so the test writes no real data) makes the baseline ambiguous, and the
+    // before phase names the directory and the fix.
+    let (_big_guard, big_root, big_decoy) = materialize(
+        "blind_journey_installed_typescript",
+        "head",
+        "tsnm-big",
+        None,
+    )?;
+    let big_arg = big_root.to_string_lossy().into_owned();
+    let native = big_root.join("node_modules/dep/native.node");
+    write(&native, "")?;
+    std::fs::OpenOptions::new()
+        .write(true)
+        .open(&native)
+        .and_then(|file| file.set_len(16 * 1024 * 1024 + 1))
+        .map_err(|error| format!("grow {}: {error}", native.display()))?;
+    let (ok, big) = ripr(
+        &big_decoy,
+        &[
+            "agent", "repair", "--gap-id", &gap, "--base", &base, "--root", &big_arg, "--phase",
+            "before",
+        ],
+    )?;
+    expect_exit(
+        ok,
+        true,
+        "start beside an oversized unignored dependency tree",
+    )?;
+    for needle in [
+        "ambiguous: true",
+        "likely cause of the ambiguous baseline",
+        "`node_modules/`",
+        ".git/info/exclude",
+    ] {
+        need(&big, needle, "oversized unignored dependency tree")?;
+    }
+    if big.contains("or commit") && big.contains("those files") {
+        return Err(format!(
+            "the start advised committing files the snapshot would still refuse:\n{big}"
+        ));
+    }
+
+    // Follow the printed recovery in a fresh copy: with the directory in
+    // .git/info/exclude the same start gets a scorable baseline.
+    let (_fixed_guard, fixed_root, fixed_decoy) = materialize(
+        "blind_journey_installed_typescript",
+        "head",
+        "tsnm-fixed",
+        None,
+    )?;
+    let fixed_arg = fixed_root.to_string_lossy().into_owned();
+    let fixed_native = fixed_root.join("node_modules/dep/native.node");
+    write(&fixed_native, "")?;
+    std::fs::OpenOptions::new()
+        .write(true)
+        .open(&fixed_native)
+        .and_then(|file| file.set_len(16 * 1024 * 1024 + 1))
+        .map_err(|error| format!("grow {}: {error}", fixed_native.display()))?;
+    write(&fixed_root.join(".git/info/exclude"), "node_modules/\n")?;
+    let (ok, fixed) = ripr(
+        &fixed_decoy,
+        &[
+            "agent", "repair", "--gap-id", &gap, "--base", &base, "--root", &fixed_arg, "--phase",
+            "before",
+        ],
+    )?;
+    expect_exit(ok, true, "start after the printed recovery")?;
+    if fixed.contains("ambiguous: true") || fixed.contains("likely cause of the ambiguous baseline")
+    {
+        return Err(format!(
+            "the printed recovery did not yield a scorable baseline:\n{fixed}"
+        ));
+    }
+    decoy_untouched(&decoy)?;
+    decoy_untouched(&big_decoy)
 }
 
 /// #11136: a TypeScript finding whose test sits under a condition static
@@ -2162,7 +2511,7 @@ fn typescript_excluded_by_config_is_not_a_clean_result() -> Result<(), String> {
     need(&out, "analysis incomplete", "incomplete analysis")?;
     need(
         &out,
-        "enabled = [\"typescript\"]",
+        "enabled = [\"rust\", \"typescript\"]",
         "names the enabling config",
     )?;
     Ok(())
@@ -3515,6 +3864,62 @@ fn gap_currentness_survives_only_proven_workflow_projection_cleanup() -> Result<
     }
     std::fs::write(&after, bytes).map_err(|error| error.to_string())?;
     std::fs::write(&manifest_path, original_manifest).map_err(|error| error.to_string())?;
+    Ok(())
+}
+
+/// #15060: the derived module-tree scan bundle, written between the start and
+/// the finish (as any check does), is not bound. The missing-projection
+/// reconstruction must leave it out too, or a cleaned-up workflow directory
+/// reads stale. A later rewrite of the bundle keeps the attempt current.
+#[cfg(feature = "lang-typescript")]
+#[test]
+fn gap_projection_cleanup_ignores_the_derived_scan_bundle() -> Result<(), String> {
+    const BUNDLE: &str = "target/ripr/cache/repo-module-tree-scans/0.1/scans.json";
+    let attempt = GapAttempt::start("gap-projection-cleanup-bundle")?;
+    let bundle = attempt.root.join(BUNDLE);
+    let parent = bundle.parent().ok_or("bundle has no parent")?;
+    std::fs::create_dir_all(parent).map_err(|error| error.to_string())?;
+    std::fs::write(&bundle, b"{\"derived\":1}").map_err(|error| error.to_string())?;
+    attempt.commit_closing_test()?;
+    let output = attempt.after(true)?;
+    expect_exit(output.status.success(), true, "finish gap attempt")?;
+    let manifest = attempt.manifest_for_only_attempt()?;
+    if manifest["after"]["verdict"]["changed_paths"]
+        .as_array()
+        .is_none_or(|paths| paths.iter().any(|path| path == BUNDLE))
+    {
+        return Err(format!("the finish bound the derived bundle: {manifest}"));
+    }
+    let current = || -> Result<bool, String> {
+        let (ok, status) = ripr(
+            &attempt.decoy,
+            &["agent", "status", "--root", &attempt.root_arg, "--json"],
+        )?;
+        expect_exit(ok, true, "status")?;
+        let document: serde_json::Value =
+            serde_json::from_str(&status).map_err(|error| error.to_string())?;
+        Ok(document["repair_attempts"]
+            .as_array()
+            .and_then(|rows| {
+                rows.iter()
+                    .find(|row| row["attempt_id"].as_str() == Some(attempt.attempt_id.as_str()))
+            })
+            .is_some_and(|row| row["head_current"] == true))
+    };
+    if !current()? {
+        return Err("newly finished attempt was not current".to_string());
+    }
+    std::fs::write(&bundle, b"{\"derived\":2}").map_err(|error| error.to_string())?;
+    let workflow = attempt.root.join("target/ripr/workflow");
+    let saved = attempt.root.join("target/ripr/workflow-saved-for-test");
+    std::fs::rename(&workflow, &saved).map_err(|error| error.to_string())?;
+    let absent_current = current();
+    std::fs::rename(&saved, &workflow).map_err(|error| error.to_string())?;
+    if !absent_current? || !current()? {
+        return Err(
+            "the derived bundle made the projection cleanup or a rewrite read stale".to_string(),
+        );
+    }
     Ok(())
 }
 
@@ -4990,6 +5395,299 @@ fn python_printed_module_verify_succeeds_while_bare_pytest_fails_in_flat_layout(
     decoy_untouched(&decoy)
 }
 
+#[cfg(all(unix, feature = "lang-python"))]
+fn run_python_runtime(
+    cwd: &Path,
+    script: &str,
+    evidence: Option<&boundary_gap::CommandEvidence>,
+    budget: std::time::Duration,
+) -> Result<std::process::Output, String> {
+    use std::ffi::OsStr;
+    // Keep environment cleanup in this child only. The literal emitted action
+    // remains unchanged after the newline; no environment is activated here.
+    let script = format!(
+        "unset -f python pytest\nunset PYTHONPATH PYTHONHOME PYTEST_ADDOPTS PYTEST_PLUGINS\n{script}"
+    );
+    boundary_gap::run_program_recorded(
+        "bash",
+        Some(cwd),
+        &["--noprofile", "--norc", "-c", &script],
+        &[
+            (
+                OsStr::new("PYTEST_DISABLE_PLUGIN_AUTOLOAD"),
+                OsStr::new("1"),
+            ),
+            (OsStr::new("PYTHONDONTWRITEBYTECODE"), OsStr::new("1")),
+            (OsStr::new("BASH_ENV"), OsStr::new("")),
+        ],
+        evidence,
+        budget,
+    )
+}
+
+#[cfg(all(unix, feature = "lang-python"))]
+fn require_same_python_console_directory(identity: &serde_json::Value) -> Result<(), String> {
+    let directory = |key: &str| -> Result<PathBuf, String> {
+        let value = identity[key]
+            .as_str()
+            .filter(|value| !value.is_empty())
+            .ok_or_else(|| format!("runtime identity lacks {key}: {identity}"))?;
+        Path::new(value)
+            .parent()
+            .ok_or_else(|| format!("runtime {key} has no parent directory"))?
+            .canonicalize()
+            .map_err(|error| format!("resolve runtime {key} directory: {error}"))
+    };
+    if directory("executable")? != directory("console_script")? {
+        return Err(format!(
+            "python and bare pytest must resolve from the same isolated environment directory: {identity}"
+        ));
+    }
+    Ok(())
+}
+
+#[cfg(all(unix, feature = "lang-python"))]
+#[test]
+fn python_runtime_refuses_console_from_another_environment() -> Result<(), String> {
+    let guard = temp_dir("py-runtime-identity")?;
+    let selected = guard.0.join("selected/bin");
+    let foreign = guard.0.join("foreign/bin");
+    std::fs::create_dir_all(&selected).map_err(|error| error.to_string())?;
+    std::fs::create_dir_all(&foreign).map_err(|error| error.to_string())?;
+    let mut identity = serde_json::json!({
+        "executable": selected.join("python"),
+        "console_script": selected.join("pytest"),
+    });
+    require_same_python_console_directory(&identity)?;
+    identity["console_script"] = serde_json::json!(foreign.join("pytest"));
+    match require_same_python_console_directory(&identity) {
+        Err(error) if error.contains("same isolated environment directory") => Ok(()),
+        result => Err(format!(
+            "foreign console directory was not refused: {result:?}"
+        )),
+    }
+}
+
+#[cfg(all(target_os = "linux", feature = "lang-python"))]
+#[test]
+fn python_runtime_deadline_reaps_primary_and_stops_descendant() -> Result<(), String> {
+    use std::time::{Duration, Instant};
+    let guard = temp_dir("py-runtime-deadline")?;
+    let evidence_root = guard.0.join("evidence");
+    let evidence = boundary_gap::CommandEvidence::create(&evidence_root)?;
+    let started = Instant::now();
+    let result = run_python_runtime(
+        &guard.0,
+        "trap '' TERM\n/bin/sleep 5 &\ndescendant=$!\ntest -r /proc/$descendant/stat || exit 78\nprintf '%s\\n' \"$descendant\" > descendant.pid\nwait",
+        Some(&evidence),
+        Duration::from_secs(1),
+    );
+    let elapsed = started.elapsed();
+    let terminal: serde_json::Value = serde_json::from_slice(
+        &std::fs::read(evidence_root.join("command-000/result.json"))
+            .map_err(|error| format!("missing settled process record: {error}"))?,
+    )
+    .map_err(|error| error.to_string())?;
+    let descendant = std::fs::read_to_string(guard.0.join("descendant.pid"))
+        .map_err(|error| format!("hang control never spawned its descendant: {error}"))?
+        .trim()
+        .parse::<u32>()
+        .map_err(|error| error.to_string())?;
+    let stopped = || -> Result<bool, String> {
+        match std::fs::read_to_string(format!("/proc/{descendant}/stat")) {
+            Ok(stat) => {
+                let state = stat
+                    .rsplit_once(')')
+                    .and_then(|(_, tail)| tail.split_whitespace().next());
+                Ok(matches!(state, Some("Z" | "X")))
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(true),
+            Err(error) => Err(format!("inspect owned descendant: {error}")),
+        }
+    };
+    let stopped_at_return = stopped()?;
+    // A broken primary-only owner must fail, but the five-second self-rescue
+    // still settles the fixture descendant before its directory is removed.
+    let rescue = Instant::now() + Duration::from_secs(6);
+    while !stopped()? && Instant::now() < rescue {
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    if !stopped()? || !stopped_at_return {
+        return Err("shared runtime owner left a live descendant at return".to_string());
+    }
+    let primary = terminal["primary_pid"]
+        .as_u64()
+        .ok_or("missing primary PID")?;
+    if std::path::Path::new(&format!("/proc/{primary}")).exists()
+        || !terminal["cleanup_error"].is_null()
+        || terminal["harness_stop"] != "deadline"
+        || elapsed >= Duration::from_secs(10)
+    {
+        return Err(format!(
+            "runtime deadline did not settle ownership: {terminal}; elapsed={elapsed:?}"
+        ));
+    }
+    match result {
+        Err(error) if error.contains("harness deadline") => Ok(()),
+        other => Err(format!(
+            "hang control did not reach the deadline refusal: {other:?}"
+        )),
+    }
+}
+
+/// Opt-in real-runtime counterpart to the deterministic routing controls.
+/// The caller supplies Python and pytest on PATH; this test never installs a
+/// dependency, edits sys.path, or treats a missing runtime as a passing skip.
+#[cfg(all(unix, feature = "lang-python"))]
+#[test]
+#[ignore = "requires Python with real pytest and its console script on PATH; see the Python fixture SPEC"]
+fn python_real_pytest_replays_printed_verify_and_discriminates_boundary() -> Result<(), String> {
+    let (_guard, root, decoy) =
+        materialize("blind_journey_installed_python", "head", "py-real", None)?;
+    let root_arg = root.to_str().ok_or("non-UTF8 root")?;
+    let run = |cwd: &Path, script: &str| {
+        run_python_runtime(cwd, script, None, std::time::Duration::from_secs(30))
+    };
+    let metadata = run(
+        &decoy,
+        "python -c 'import json,sys,pytest,shutil; console=shutil.which(\"pytest\"); print(json.dumps(dict(executable=sys.executable, prefix=sys.prefix, pytest=pytest.__version__, pytest_file=pytest.__file__, console_script=console, console_shebang=open(console).readline(4096).rstrip() if console else None)))'",
+    )?;
+    if !metadata.status.success() {
+        return Err(format!(
+            "real pytest prerequisite failed: {}",
+            String::from_utf8_lossy(&metadata.stderr)
+        ));
+    }
+    eprintln!(
+        "real pytest identity: {}",
+        String::from_utf8_lossy(&metadata.stdout)
+    );
+    let identity: serde_json::Value = serde_json::from_slice(&metadata.stdout)
+        .map_err(|error| format!("real pytest identity: {error}"))?;
+    if identity["executable"].as_str().is_none_or(str::is_empty)
+        || identity["pytest_file"].as_str().is_none_or(str::is_empty)
+    {
+        return Err(format!("missing real Python/pytest identity: {identity}"));
+    }
+    require_same_python_console_directory(&identity)?;
+    let console_version = run(&decoy, "pytest --version")?;
+    expect_exit(
+        console_version.status.success(),
+        true,
+        "bare pytest prerequisite",
+    )?;
+    if String::from_utf8_lossy(&console_version.stdout).trim()
+        != format!(
+            "pytest {}",
+            identity["pytest"]
+                .as_str()
+                .ok_or("missing pytest version")?
+        )
+    {
+        return Err(format!(
+            "console and module pytest versions differ: {console_version:?}"
+        ));
+    }
+    let checked = boundary_gap::run_program_recorded(
+        env!("CARGO_BIN_EXE_ripr"),
+        Some(&decoy),
+        &["check", "--root", root_arg, "--base", "HEAD~1"],
+        &[],
+        None,
+        std::time::Duration::from_secs(30),
+    )?;
+    expect_exit(checked.status.success(), true, "real-runtime fixture check")?;
+    let mut check = String::from_utf8_lossy(&checked.stdout).into_owned();
+    check.push_str(&String::from_utf8_lossy(&checked.stderr));
+    let action = check
+        .lines()
+        .find_map(|line| line.trim().strip_prefix("Verify command (Bash): "))
+        .and_then(|line| line.strip_suffix(" (high)"))
+        .ok_or_else(|| format!("check printed no verify action:\n{check}"))?;
+    need(action, "python -m pytest ", "printed module-form route")?;
+    let printed = run(&decoy, action)?;
+    expect_exit(
+        printed.status.success(),
+        true,
+        "literal printed verification",
+    )?;
+    need(
+        &String::from_utf8_lossy(&printed.stdout),
+        "1 passed",
+        "nonzero printed selector",
+    )?;
+    let bare = action.replacen("python -m pytest ", "pytest ", 1);
+    let rejected = run(&decoy, &bare)?;
+    if rejected.status.code() != Some(4) {
+        return Err(format!(
+            "bare focused selector must refuse collection: {rejected:?}"
+        ));
+    }
+    let mut rejection = String::from_utf8_lossy(&rejected.stdout).into_owned();
+    rejection.push_str(&String::from_utf8_lossy(&rejected.stderr));
+    need(
+        &rejection,
+        "ModuleNotFoundError",
+        "real bare-console failure",
+    )?;
+    need(
+        &rejection,
+        "pricing",
+        "bare-console missing fixture package",
+    )?;
+
+    let test_file = root.join("tests/test_pricing.py");
+    let mut tests = std::fs::read_to_string(&test_file).map_err(|error| error.to_string())?;
+    tests.push_str(
+        "\n\ndef test_at_boundary_gets_discount():\n    assert bulk_discount_rate(20) == 0.15\n",
+    );
+    std::fs::write(&test_file, tests).map_err(|error| error.to_string())?;
+    let focused = "python -m pytest -q -p no:cacheprovider tests/test_pricing.py::test_at_boundary_gets_discount";
+    let passed = run(&root, focused)?;
+    expect_exit(passed.status.success(), true, "real equality assertion")?;
+    need(
+        &String::from_utf8_lossy(&passed.stdout),
+        "1 passed",
+        "nonzero equality selector",
+    )?;
+
+    // This deliberately wrong source is an oracle control in a disposable
+    // fixture, never an admitted repair edit or a static movement claim.
+    let source = root.join("pricing/core.py");
+    let original = std::fs::read_to_string(&source).map_err(|error| error.to_string())?;
+    if original.matches("units >= 20").count() != 1 {
+        return Err("fixture no longer holds exactly one inclusive boundary".to_string());
+    }
+    std::fs::write(&source, original.replacen("units >= 20", "units > 20", 1))
+        .map_err(|error| error.to_string())?;
+    let wrong = run(&root, focused);
+    // Restore before inspecting the result, including subprocess setup errors.
+    std::fs::write(&source, original).map_err(|error| error.to_string())?;
+    let wrong = wrong?;
+    if wrong.status.code() != Some(1) {
+        return Err(format!(
+            "exclusive boundary must fail the assertion: {wrong:?}"
+        ));
+    }
+    need(
+        &String::from_utf8_lossy(&wrong.stdout),
+        "AssertionError",
+        "equality oracle rejects wrong source",
+    )?;
+    let restored = run(&root, focused)?;
+    expect_exit(
+        restored.status.success(),
+        true,
+        "restored inclusive boundary",
+    )?;
+    need(
+        &String::from_utf8_lossy(&restored.stdout),
+        "1 passed",
+        "restoration reruns the subject",
+    )?;
+    decoy_untouched(&decoy)
+}
+
 /// Execute the actual printed action from a decoy directory using a local
 /// argv/cwd-checking python stand-in. The real pytest run is separate proof.
 #[cfg(all(unix, feature = "lang-python"))]
@@ -5504,6 +6202,158 @@ fn negated_typeof_guard_credits_only_as_the_first_body_statement() -> Result<(),
                 "{label}: expected exposed={exposed} (else weak), got:\n{check}\nso far: {outcomes:?}"
             ));
         }
+    }
+    Ok(())
+}
+
+/// A committed TypeScript edit, plus an optional dirty declaration at the same
+/// line. Both formats see precisely the same base and head through the real CLI.
+#[cfg(feature = "lang-typescript")]
+fn committed_typescript_edit(
+    before: &str,
+    after: &str,
+    dirty: &str,
+) -> Result<(String, serde_json::Value), String> {
+    let guard = temp_dir("ts-change-digest")?;
+    let root = &guard.0;
+    fixture_git_ok(root, &["init", "-q"])?;
+    fixture_git_ok(root, &["config", "user.name", "fixture"])?;
+    fixture_git_ok(root, &["config", "user.email", "fixture@example.invalid"])?;
+    let write =
+        |path: &str, body: &str| std::fs::write(root.join(path), body).map_err(|e| e.to_string());
+    write("package.json", r#"{"devDependencies":{"vitest":"1.0.0"}}"#)?;
+    write("ripr.toml", "[languages]\nenabled = [\"typescript\"]\n")?;
+    write(
+        "week.test.ts",
+        "import { expect, test } from 'vitest';\nimport { startOfWeek } from './week';\ntest('ordinary input', () => { expect(startOfWeek(1)).toBe(1); });\n",
+    )?;
+    write("week.ts", before)?;
+    fixture_git_ok(root, &["add", "."])?;
+    fixture_git_ok(root, &["commit", "-qm", "base"])?;
+    write("week.ts", after)?;
+    fixture_git_ok(root, &["commit", "-qam", "head"])?;
+    write("week.ts", dirty)?;
+    let check = |format: &str| -> Result<String, String> {
+        let output = ripr_output(
+            root,
+            &[
+                "check",
+                "--root",
+                ".",
+                "--base",
+                "HEAD~1",
+                "--committed",
+                "--format",
+                format,
+            ],
+        )?;
+        if !output.status.success() {
+            return Err(format!(
+                "check {format}: {}",
+                String::from_utf8_lossy(&output.stderr)
+            ));
+        }
+        String::from_utf8(output.stdout).map_err(|e| e.to_string())
+    };
+    Ok((
+        check("human")?,
+        serde_json::from_str(&check("json")?).map_err(|e| e.to_string())?,
+    ))
+}
+
+#[cfg(feature = "lang-typescript")]
+#[test]
+fn changed_default_digest_names_the_committed_binding() -> Result<(), String> {
+    for (source, changed_line, id) in [
+        (
+            "export function startOfWeek(input?: number) {\n  const weekStartsOn =\n    input ??\n    0;\n  return weekStartsOn;\n}\n",
+            "    1;",
+            "probe:week.ts:typescript_preview:a269513e",
+        ),
+        (
+            "export function startOfWeek(\n  weekStartsOn =\n    0,\n) {\n  return weekStartsOn;\n}\n",
+            "    1,",
+            "probe:week.ts:typescript_preview:f9916062",
+        ),
+    ] {
+        let after = source.replace('0', "1");
+        let (human, data) = committed_typescript_edit(
+            source,
+            &after,
+            &after.replace("weekStartsOn", "dirtyBinding"),
+        )?;
+        let findings = data["findings"].as_array().ok_or("missing findings")?;
+        assert_eq!(findings.len(), 1, "{data}");
+        assert_eq!(findings[0]["id"], id);
+        assert_eq!(findings[0]["probe"]["expression"], changed_line);
+        assert_eq!(findings[0]["related_tests"][0]["name"], "ordinary input");
+        assert_eq!(
+            findings[0]["probe"]["owner"],
+            "typescript:week.ts::startOfWeek"
+        );
+        assert!(
+            human
+                .lines()
+                .any(|line| line == "  Changed behavior: weekStartsOn = 1 (default was 0)"),
+            "{human}"
+        );
+        assert!(!human.contains("dirtyBinding"), "{human}");
+    }
+    Ok(())
+}
+
+#[cfg(feature = "lang-typescript")]
+#[test]
+fn unrelated_numeric_tail_keeps_its_own_text() -> Result<(), String> {
+    let before = "export function startOfWeek(input: number) {\n  const nearby = input ?? 4;\n  return nearby +\n    0;\n}\n";
+    let after = before.replace("0;", "1;");
+    let (human, _) = committed_typescript_edit(before, &after, &after)?;
+    assert!(
+        human.lines().any(|line| line == "  Changed behavior: 1;"),
+        "{human}"
+    );
+    Ok(())
+}
+
+#[cfg(feature = "lang-typescript")]
+#[test]
+fn newly_introduced_fallback_does_not_claim_a_previous_default() -> Result<(), String> {
+    let before = "export function startOfWeek(input: number) {\n  const weekStartsOn = input +\n    0;\n  return weekStartsOn;\n}\n";
+    let after = before.replace("input +", "input ??").replace("0;", "1;");
+    let (_, data) = committed_typescript_edit(before, &after, &after)?;
+    let findings = data["findings"].as_array().ok_or("missing findings")?;
+    let tail = findings
+        .iter()
+        .find(|f| f["probe"]["line"] == 3)
+        .ok_or("missing literal line")?;
+    let evidence = tail["evidence"].as_array().ok_or("missing evidence")?;
+    assert!(
+        evidence
+            .iter()
+            .any(|e| e == "typescript_default_context: weekStartsOn = 1 (default)"),
+        "{tail}"
+    );
+    assert!(!tail.to_string().contains("default was 0"), "{tail}");
+    Ok(())
+}
+
+#[cfg(feature = "lang-typescript")]
+#[test]
+fn ternary_advice_asks_whether_the_boundary_is_observable() -> Result<(), String> {
+    // At zero the sign flips in both edits. Only the first use masks it.
+    for result in ["amount === 0 ? 0 : sign", "sign"] {
+        let before = format!(
+            "export function startOfWeek(amount: number) {{\n  const sign = amount < 0 ? -1 : 1;\n  return {result};\n}}\n"
+        );
+        let after = before.replace("< 0", "<= 0");
+        let (_, data) = committed_typescript_edit(&before, &after, &after)?;
+        let findings = data["findings"].as_array().ok_or("missing findings")?;
+        assert_eq!(findings.len(), 1, "{data}");
+        let advice = findings[0]["recommended_next_step"]
+            .as_str()
+            .ok_or("missing next step")?;
+        assert!(advice.contains("may be behavior-preserving"), "{advice}");
+        assert!(advice.contains("assert that difference"), "{advice}");
     }
     Ok(())
 }

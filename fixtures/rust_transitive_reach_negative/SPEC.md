@@ -26,6 +26,13 @@ ripr check --root fixtures/rust_transitive_reach_negative/input --diff fixtures/
 This confirms the limitation only fires when a candidate path exists, not on every
 `no_static_path` finding.
 
+The expected static class per finding (machine-checked against
+`expected/check.json` by `check-fixture-contracts`, #12928):
+
+```expected-classes
+probe:src_lib.rs:predicate:908b0e30 -> no_static_path
+```
+
 ## Must Not
 
 - Emit `static_limit_kind` when no candidate transitive path exists.

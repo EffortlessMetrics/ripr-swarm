@@ -128,8 +128,8 @@ pub(in crate::analysis) fn const_reader_returns<'a>(
     for owner in &readers {
         let mut returns = facts.data().probe_shapes.iter().filter(|shape| {
             shape.kind == ProbeShapeKind::ReturnValue
-                && owner.start_line <= shape.start_line
-                && shape.end_line <= owner.end_line
+                && owner.start_line <= shape.start_line()
+                && shape.end_line() <= owner.end_line
         });
         // The reader's whole body is one returned expression: no branch,
         // binding, closure or async block can stand between the constant and
@@ -158,7 +158,7 @@ pub(in crate::analysis) fn const_reader_returns<'a>(
                 name,
                 &reader.name,
                 declaration_line,
-                shape.start_line,
+                shape.start_line(),
             ) =>
         {
             found
@@ -735,7 +735,7 @@ pub(in crate::analysis) fn function_reads(body: &str, name: &str) -> bool {
 
 /// A local, loop variable, pattern binding or parameter spelled like the
 /// constant. Every check is whole-word, so `let LIMIT_X` does not shadow.
-fn shadows(masked: &str, name: &str) -> bool {
+pub(super) fn shadows(masked: &str, name: &str) -> bool {
     let bytes = masked.as_bytes();
     let mut start = 0;
     while let Some(found) = masked[start..].find(name) {
@@ -796,7 +796,7 @@ fn is_assigned(masked: &str, end: usize) -> bool {
     }
 }
 
-fn is_ident_byte(byte: u8) -> bool {
+pub(super) fn is_ident_byte(byte: u8) -> bool {
     byte.is_ascii_alphanumeric() || byte == b'_'
 }
 
@@ -818,8 +818,10 @@ fn code_reads(masked: &str, name: &str) -> bool {
         }
         if let Some(path) = before.strip_suffix("::") {
             let segment_start = path
-                .rfind(|c: char| !(c.is_alphanumeric() || c == '_'))
-                .map_or(0, |i| i + 1);
+                .char_indices()
+                .rev()
+                .find(|&(_, c)| !(c == '_' || unicode_ident::is_xid_continue(c)))
+                .map_or(0, |(i, c)| i + c.len_utf8());
             if !matches!(&path[segment_start..], "Self" | "self") {
                 continue;
             }
@@ -968,7 +970,7 @@ fn literal_captures(literal: &str, name: &str) -> bool {
 
 /// How many times `source` declares `name` as a `const` or `static` item (or
 /// a const generic parameter, which shares the spelling).
-fn declaration_count(masked_source: &str, name: &str) -> usize {
+pub(super) fn declaration_count(masked_source: &str, name: &str) -> usize {
     let mut count = 0;
     for keyword in ["const", "static"] {
         let mut start = 0;
@@ -1294,5 +1296,17 @@ mod tests {
             2
         );
         assert_eq!(declaration_count("const _: u32 = 3;", "LIMIT"), 0);
+    }
+
+    /// #14089: a char-predicate scan found a multibyte char and the next
+    /// slice started one byte later, inside it.
+    #[test]
+    fn a_path_qualifier_ending_in_a_multibyte_non_identifier_char_is_another_path() {
+        // `क्` ends in U+094D, a virama: it continues an identifier but is not
+        // alphanumeric, and is three bytes wide.
+        assert!(!super::code_reads("let x = क्::LIMIT;", "LIMIT"));
+        // A mark inside the qualifier keeps it whole: `क्Self` is not `Self`.
+        assert!(!super::code_reads("let x = क्Self::LIMIT;", "LIMIT"));
+        assert!(super::code_reads("let x = Self::LIMIT;", "LIMIT"));
     }
 }

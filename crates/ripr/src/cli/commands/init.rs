@@ -1,7 +1,7 @@
 use super::init_agents;
 use crate::cli::commands_options::{InitCi, InitOptions};
 use crate::cli::help;
-use crate::cli::parse::expect_value;
+use crate::cli::parse::reconcile_root;
 use crate::cli::suggest::{unknown_argument, unknown_value};
 use crate::config::{CONFIG_FILE_NAME, generated_init_config_for_root};
 use crate::output;
@@ -43,7 +43,14 @@ pub(in crate::cli) fn init(args: &[String]) -> Result<(), String> {
     // #5252 item 7: `init` into a non-repo wrote branch-based configuration
     // with no hint that no branch exists there. Advisory like the root
     // warning, in both dry-run and real runs.
-    if let Some(warning) = non_git_root_warning(&options.root) {
+    let work_tree = output::doctor::work_tree_probe(&options.root);
+    // #15297: a bare repository has no checked-out source to configure, and
+    // `git init` there is a no-op. Refuse before anything is written (a
+    // dry run reports the same refusal) and name the repair.
+    if matches!(work_tree, Some(output::doctor::WorkTreeProbe::Bare)) {
+        return Err(bare_root_refusal(&options.root));
+    }
+    if let Some(warning) = non_git_root_warning_for_probe(&options.root, work_tree) {
         eprintln!("{warning}");
     }
     // #5208: an unreleased generator cannot pin itself — that version does
@@ -62,7 +69,7 @@ pub(in crate::cli) fn init(args: &[String]) -> Result<(), String> {
             };
             let note = match ci {
                 InitCi::Github => format!(
-                    "ripr: note: this build of ripr ({generator}) is a development version, so the generated workflow installs ripr {pinned}, the latest published release. That release lacks commands this workflow runs (`ripr reports ci-packet`, `ripr pr-comments summary`), so its CI run fails until {generator} is published: hold off committing the workflow, or use it only to review the template. Once {generator} is published, {follow_up}"
+                    "ripr: note: this build of ripr ({generator}) is a development version, so the generated workflow installs ripr {pinned}, the latest published release. That release lacks what this workflow uses (its `ripr-check` action's `install-only` input, `ripr reports ci-packet`, `ripr pr-comments summary`), so its CI run fails until {generator} is published: hold off committing the workflow, or use it only to review the template. Once {generator} is published, {follow_up}"
                 ),
                 InitCi::Gitlab => format!(
                     "ripr: note: this build of ripr ({generator}) is a development version, so the generated pipeline installs ripr {pinned}, the latest published release. Once {generator} is published, {follow_up}"
@@ -136,14 +143,24 @@ fn check_ignores_init_config_warning(root: &Path) -> Option<String> {
 /// Java repository got a workflow and "run `ripr check`" with no hint that
 /// every change would be reported as not analyzed.
 fn unanalyzed_root_warning(root: &Path) -> Option<String> {
-    if !crate::analysis::workspace_rust_files(root).is_empty()
+    if crate::analysis::workspace_has_rust_source(root)
         || !crate::analysis::workspace_preview_language_files(root).is_empty()
     {
         return None;
     }
     let unanalyzed = crate::analysis::workspace_unanalyzed_source_languages(root);
     if unanalyzed.is_empty() {
-        return None;
+        // A root with no manifest and no source at all (a brand-new
+        // repository, or the parent of the real project) got `enabled =
+        // ["rust"]` and "run `ripr check`" in silence, and `ripr doctor` then
+        // failed on the missing Cargo.toml. The shared verdict `pilot` and
+        // `status` use decides; a bare Cargo.toml stays quiet.
+        return crate::analysis::root_has_no_inspectable_workspace(root).then(|| {
+            format!(
+                "ripr: warning: the root `{}` has no Cargo.toml and no source file ripr reads yet, so `ripr check` has nothing to analyze here. If the project lives in a subdirectory, run init there with `--root <dir>`. The generated configuration enables only the languages detected now; after adding source in another language, rerun init for this root with `--force`.",
+                output::path::human_path(root)
+            )
+        });
     }
     let found = unanalyzed
         .iter()
@@ -198,8 +215,19 @@ fn detected_preview_language_warning(root: &Path, plan: &[InitTarget]) -> Option
 /// outside a repository, and a probe that never answered says Git could
 /// not confirm the state. Advisory either way: the configuration is
 /// written regardless.
+#[cfg(test)]
 fn non_git_root_warning(root: &Path) -> Option<String> {
     non_git_root_warning_for_probe(root, output::doctor::work_tree_probe(root))
+}
+
+/// The refusal for `init` at a bare repository (#15297). The work-tree route
+/// has one owner, bound to the repository and aware of an empty repository.
+fn bare_root_refusal(root: &Path) -> String {
+    format!(
+        "ripr init: the root `{}` is a bare Git repository with no work tree, so there is no source to configure and nothing was written. {}, then run `ripr init --root <path>`.",
+        output::path::human_path(root),
+        crate::work_tree_route::bare_root_work_tree_route_or_plain(root)
+    )
 }
 
 /// The warning dispatch, split from the probe call so every wording branch
@@ -214,6 +242,10 @@ fn non_git_root_warning_for_probe(
         Some(WorkTreeProbe::Inside) => None,
         Some(WorkTreeProbe::Outside) => Some(format!(
             "ripr: warning: the root `{shown}` is not inside a Git work tree. The generated configuration analyzes branches against their default branch, so `ripr check` has no branch to compare until this directory is inside a repository."
+        )),
+        Some(WorkTreeProbe::Bare) => Some(bare_root_refusal(root)),
+        Some(WorkTreeProbe::GitMissing) => Some(format!(
+            "ripr: warning: Git was not found on PATH, so ripr cannot confirm the root `{shown}` is inside a work tree. Install Git: the generated configuration analyzes branches against their default branch, which `ripr check` reads through Git."
         )),
         Some(WorkTreeProbe::Refused(repair)) => Some(format!(
             "ripr: warning: Git could not confirm the root `{shown}` is inside a work tree ({repair}). The generated configuration analyzes branches against their default branch, so confirm the directory is inside a repository or `ripr check` has no branch to compare."
@@ -258,6 +290,38 @@ pub(super) struct InitTarget {
     pub(super) body: String,
 }
 
+/// The CI file only runs from the repository root: GitHub reads workflows from
+/// `<toplevel>/.github/workflows` and GitLab reads `<toplevel>/.gitlab-ci.yml`,
+/// and the generated commands analyze `--root .` from the checkout root with
+/// repo-root `target/ripr` paths. A `--root` below the Git top level would
+/// plan a file that never runs (or, moved, analyzes the wrong directory), so
+/// refuse instead of writing it. A root outside Git has no top level to
+/// compare and keeps its advisory warning.
+fn ci_subdirectory_root_refusal(root: &Path, ci: &InitCi) -> Result<(), String> {
+    let Ok(canonical) = std::fs::canonicalize(root) else {
+        return Ok(());
+    };
+    let Some(toplevel) =
+        crate::git::discovered_work_tree_toplevel(&canonical, std::time::Duration::from_secs(5))
+    else {
+        return Ok(());
+    };
+    if toplevel == canonical {
+        return Ok(());
+    }
+    let provider = ci.as_str();
+    let (reads, file) = match ci {
+        InitCi::Github => ("GitHub Actions", ".github/workflows/ripr.yml"),
+        InitCi::Gitlab => ("GitLab CI", ".gitlab-ci.yml"),
+    };
+    let shown_root = output::path::human_path(root);
+    let shown_top = output::path::human_path(&toplevel);
+    let top_arg = crate::agent::loop_commands::shell_arg(&shown_top);
+    Err(format!(
+        "init --ci {provider} cannot use the root `{shown_root}`: it is inside the repository at `{shown_top}`, {reads} reads `{file}` only from the repository root, and the generated workflow analyzes the checkout root, not a subdirectory. Run `ripr init --ci {provider} --root {top_arg}` at the repository root (or drop --ci to write only `ripr.toml` here)"
+    ))
+}
+
 /// Resolve what the run would do, or fail with the reason it cannot run.
 ///
 /// This is the single authority for `ripr init` preconditions: both
@@ -269,6 +333,9 @@ fn init_plan(options: &InitOptions) -> Result<Vec<InitTarget>, String> {
             "init root {} is not a directory; pass the directory that contains the workspace (for a Cargo.toml path, its parent directory)",
             options.root.display()
         ));
+    }
+    if let Some(ci) = options.ci.as_ref() {
+        ci_subdirectory_root_refusal(&options.root, ci)?;
     }
     let config_path = options.root.join(CONFIG_FILE_NAME);
     let workflow_path = options
@@ -298,6 +365,17 @@ fn init_plan(options: &InitOptions) -> Result<Vec<InitTarget>, String> {
         .chain(agent_paths.iter())
     {
         ensure_creatable_parent(path)?;
+    }
+
+    // A directory squatting on a target can never be overwritten, so
+    // "rerun --force" would only fail later with an atomic-write message.
+    for path in std::iter::once(&config_path).chain(workflow_path.as_ref()) {
+        if std::fs::symlink_metadata(path).is_ok_and(|meta| meta.is_dir()) {
+            return Err(format!(
+                "{} is a directory, not a file; move or remove it, then rerun init",
+                output::path::human_path(path)
+            ));
+        }
     }
 
     // `--ci` and `--mcp` add files; they keep an existing ripr.toml rather
@@ -354,8 +432,25 @@ fn init_plan(options: &InitOptions) -> Result<Vec<InitTarget>, String> {
     if let Some(path) = cursor_mcp_path {
         targets.push(plan_mcp_target(path, options.force)?);
     }
+    // The instructions promise analysis only for languages `ripr check` will
+    // run: the config this run writes, else the one it keeps. A config that
+    // cannot be read enables nothing here (fail closed: no preview promise).
+    let enabled_languages = match targets[0].action {
+        InitAction::LeaveUnchanged => crate::config::load_for_root(&options.root)
+            .map(|config| config.languages().enabled().to_vec())
+            .unwrap_or_default(),
+        _ => crate::config::parse_config_diagnostic(&targets[0].body)
+            .map(|config| config.languages().enabled().to_vec())
+            .unwrap_or_default(),
+    };
+    let agent_languages = init_agents::AgentLanguages::detect(&options.root, &enabled_languages);
     for (agent, path) in options.agents.iter().zip(agent_paths) {
-        targets.push(init_agents::plan_agent_target(*agent, path, options.force)?);
+        targets.push(init_agents::plan_agent_target(
+            *agent,
+            path,
+            options.force,
+            agent_languages,
+        )?);
     }
     Ok(targets)
 }
@@ -367,7 +462,16 @@ const MCP_CONFIG_FILE_NAME: &str = ".mcp.json";
 const MCP_SERVER_NAME: &str = "ripr";
 
 fn ripr_mcp_server_entry() -> serde_json::Value {
-    serde_json::json!({ "command": "ripr", "args": ["mcp", "--stdio"] })
+    // #13050: `tools/list` rides every session start and about two thirds of it
+    // was `outputSchema` documents a coding agent never reads. Slim is the
+    // server default since #13803; the explicit value keeps an older ripr
+    // binary slim too (docs/interop/mcp.md). Results still carry
+    // `structuredContent`; set the value to `full` to get the schemas back.
+    serde_json::json!({
+        "command": "ripr",
+        "args": ["mcp", "--stdio"],
+        "env": { "RIPR_MCP_TOOLS_LIST": "slim" }
+    })
 }
 
 /// Plan the `.mcp.json` write: create it, add the `ripr` server beside the
@@ -668,10 +772,8 @@ fn apply_init_plan(plan: &[InitTarget], root: &Path) -> Result<(), String> {
         };
         let doctor = format!("ripr doctor{root_flag}");
         let check = format!("ripr check{root_flag}");
-        let inside_git = matches!(
-            output::doctor::work_tree_probe(root),
-            Some(output::doctor::WorkTreeProbe::Inside)
-        );
+        let work_tree = output::doctor::work_tree_probe(root);
+        let inside_git = matches!(work_tree, Some(output::doctor::WorkTreeProbe::Inside));
         if plan.iter().any(|target| {
             target
                 .path
@@ -679,8 +781,18 @@ fn apply_init_plan(plan: &[InitTarget], root: &Path) -> Result<(), String> {
                 .is_some_and(|name| name == MCP_CONFIG_FILE_NAME)
         }) {
             println!();
+            // Offer the Cursor route only when this run does not already
+            // plan `.cursor/mcp.json` (for example `--agents all`).
+            let cursor_planned = plan
+                .iter()
+                .any(|target| target.path.ends_with(".cursor/mcp.json"));
+            let cursor_hint = if cursor_planned {
+                ""
+            } else {
+                " For Cursor add `--agents cursor --mcp`, which also writes `.cursor/mcp.json`."
+            };
             println!(
-                "Claude Code reads `{MCP_CONFIG_FILE_NAME}` and asks you to approve the project server before its tools appear. For Codex run `codex mcp add {MCP_SERVER_NAME} -- ripr mcp --stdio`. For Cursor add `--agents cursor`, which also writes `.cursor/mcp.json`."
+                "Claude Code reads `{MCP_CONFIG_FILE_NAME}` and asks you to approve the project server before its tools appear. For Codex run `codex mcp add {MCP_SERVER_NAME} -- ripr mcp --stdio`.{cursor_hint}"
             );
         }
         if plan.iter().any(|target| {
@@ -688,7 +800,21 @@ fn apply_init_plan(plan: &[InitTarget], root: &Path) -> Result<(), String> {
                 && target.action != InitAction::LeaveUnchanged
         }) {
             println!();
-            println!("{}", init_agents::FOLLOW_UP);
+            let mcp_planned = plan.iter().any(|target| {
+                target
+                    .path
+                    .file_name()
+                    .is_some_and(|name| name == MCP_CONFIG_FILE_NAME)
+                    && target.action != InitAction::LeaveUnchanged
+            });
+            println!(
+                "{}",
+                if mcp_planned {
+                    init_agents::FOLLOW_UP_WITH_MCP
+                } else {
+                    init_agents::FOLLOW_UP
+                }
+            );
         }
         if let Some((workflow, ci)) = plan.iter().find_map(|target| {
             [InitCi::Github, InitCi::Gitlab]
@@ -708,19 +834,41 @@ fn apply_init_plan(plan: &[InitTarget], root: &Path) -> Result<(), String> {
             }
         }
         println!();
-        if inside_git {
-            println!(
-                "Next: run `{doctor}` to verify your setup, then `{check}` to analyze your branch against its default branch."
-            );
+        let next = if inside_git {
+            // Only an established unborn HEAD changes the advice; an
+            // unanswered or damaged-ref probe keeps the ordinary route and
+            // leaves the diagnosis to `ripr doctor`.
+            match crate::analysis::probe_head_ref_state(
+                root,
+                Some(output::doctor::DOCTOR_TOOL_TIMEOUT),
+            ) {
+                crate::analysis::HeadRefState::Unborn => InitNextStep::NoCommits,
+                // `check` and `doctor` share one default-base search, so a
+                // repository whose default branch is neither `main` nor
+                // `master` (and has no `origin/HEAD`) is told here, not
+                // promised a comparison `check` will refuse.
+                crate::analysis::HeadRefState::Resolved
+                    if crate::analysis::default_base_unresolved_message(
+                        root,
+                        Some(output::doctor::DOCTOR_TOOL_TIMEOUT),
+                    )
+                    .is_some() =>
+                {
+                    InitNextStep::NoDefaultBase
+                }
+                _ => InitNextStep::Ready,
+            }
+        } else if matches!(work_tree, Some(output::doctor::WorkTreeProbe::GitMissing)) {
+            InitNextStep::GitMissing
         } else {
-            println!(
-                "Next: run `{doctor}` to verify your setup. `ripr check` needs a Git repository, so run `git init` or choose a root inside one first."
-            );
-        }
-        let commands: &[&String] = if inside_git {
-            &[&doctor, &check]
-        } else {
-            &[&doctor]
+            InitNextStep::NoGit
+        };
+        println!("{}", init_next_step_line(next, &doctor, &check));
+        let commands: &[&String] = match next {
+            InitNextStep::Ready | InitNextStep::NoCommits => &[&doctor, &check],
+            InitNextStep::NoGit | InitNextStep::NoDefaultBase | InitNextStep::GitMissing => {
+                &[&doctor]
+            }
         };
         for command in commands.iter().copied() {
             if let Some(powershell) = output::markdown::powershell_text_variant(command) {
@@ -729,6 +877,53 @@ fn apply_init_plan(plan: &[InitTarget], root: &Path) -> Result<(), String> {
         }
     }
     Ok(())
+}
+
+/// What `init` can truthfully recommend after writing files. `ripr check`
+/// only runs once the root is inside a repository that has a commit.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum InitNextStep {
+    /// Inside a work tree whose `HEAD` resolves (or could not be diagnosed).
+    Ready,
+    /// Inside a work tree with an unborn `HEAD`: the state right after
+    /// `git init`, where `ripr check` has no base and exits 2.
+    NoCommits,
+    /// Inside a work tree whose `HEAD` resolves but where a bare `ripr check`
+    /// finds no default base (default branch not `main`/`master`, no
+    /// `origin/HEAD`; a shallow CI checkout): it exits 2 until one is named.
+    NoDefaultBase,
+    /// Not established as inside a work tree.
+    NoGit,
+    /// `git` is not on `PATH`, so `git init` cannot run either (#15297).
+    GitMissing,
+}
+
+/// The closing `Next:` line. Split from the probes so every state's wording
+/// pins without arranging a repository.
+fn init_next_step_line(next: InitNextStep, doctor: &str, check: &str) -> String {
+    // `git init` acts on the caller's directory, so a configured `--root`
+    // binds it too (#15297). `check` carries the already shell-quoted root.
+    let git_init = check.strip_prefix("ripr check --root ").map_or_else(
+        || "git init".to_string(),
+        |root| format!("git -C {root} init"),
+    );
+    match next {
+        InitNextStep::Ready => format!(
+            "Next: run `{doctor}` to verify your setup, then `{check}` to analyze your branch against its default branch."
+        ),
+        InitNextStep::NoCommits => format!(
+            "Next: run `{doctor}` to verify your setup. This repository has no commits yet, so `ripr check` has no base to compare: commit once, then edit a tracked source file and run `{check}`."
+        ),
+        InitNextStep::NoDefaultBase => format!(
+            "Next: run `{doctor}` to verify your setup. `ripr check` cannot find a default branch to compare against here (no origin/HEAD, origin/main, origin/master, main or master): run `git remote set-head origin --auto` if `origin` has a default branch (offline: `git remote set-head origin <branch>`), or run `{check} --base <ref>`."
+        ),
+        InitNextStep::NoGit => format!(
+            "Next: run `{doctor}` to verify your setup. `ripr check` needs a Git repository, so run `{git_init}` or choose a root inside one first."
+        ),
+        InitNextStep::GitMissing => format!(
+            "Next: run `{doctor}` to verify your setup. Git was not found on PATH, so `ripr check` cannot run: install Git (then `{git_init}` if the root is not a repository), or analyze a saved patch with `{check} --diff PATH`."
+        ),
+    }
 }
 
 fn write_init_target(target: &InitTarget) -> Result<(), String> {
@@ -817,21 +1012,41 @@ pub(super) fn parse_init_options(args: &[String]) -> Result<InitOptions, String>
         mcp: false,
         agents: Vec::new(),
     };
+    let mut root_explicit = false;
     let mut i = 0usize;
     while i < args.len() {
         match args[i].as_str() {
             "--root" => {
                 i += 1;
-                options.root = PathBuf::from(expect_value(args, i, "--root")?);
+                let reconciled = reconcile_root(
+                    &options.root,
+                    root_explicit,
+                    init_flag_value(args, i, "--root")?,
+                    "init",
+                )?;
+                options.root = reconciled;
+                root_explicit = true;
             }
             "--ci" => {
                 i += 1;
-                options.ci = Some(parse_init_ci(expect_value(args, i, "--ci")?)?);
+                let provider = init_flag_value(args, i, "--ci")?;
+                if options.ci.is_some() {
+                    // `init` generates one CI provider per run, so a repeat
+                    // would silently drop the first (#15259).
+                    return Err(crate::cli::usage_refusal::conflicting_flags(
+                        "--ci",
+                        "init --ci takes one provider per run; pass --ci github or --ci gitlab, then rerun init for the other",
+                    ));
+                }
+                options.ci = Some(parse_init_ci(provider)?);
             }
             "--mcp" => options.mcp = true,
             "--agents" => {
                 i += 1;
-                init_agents::parse_agents(expect_value(args, i, "--agents")?, &mut options.agents)?;
+                init_agents::parse_agents(
+                    init_flag_value(args, i, "--agents")?,
+                    &mut options.agents,
+                )?;
             }
             "--dry-run" => options.dry_run = true,
             "--force" => options.force = true,
@@ -840,6 +1055,15 @@ pub(super) fn parse_init_options(args: &[String]) -> Result<InitOptions, String>
         i += 1;
     }
     Ok(options)
+}
+
+/// A following flag is a missing value, not an unknown provider/target
+/// (`init --ci --root X`).
+fn init_flag_value<'a>(args: &'a [String], idx: usize, flag: &str) -> Result<&'a str, String> {
+    match args.get(idx) {
+        Some(value) if !value.starts_with("--") => Ok(value.as_str()),
+        _ => Err(crate::cli::parse::missing_value(flag)),
+    }
 }
 
 fn parse_init_ci(value: &str) -> Result<InitCi, String> {
@@ -1002,9 +1226,8 @@ mod tests {
 
     /// W5: an unpinned install takes whatever release is latest, so CI
     /// could run an older ripr that lacks the commands this workflow calls,
-    /// or change behavior silently on a later release. Both install routes,
-    /// the prebuilt release download and the `cargo install` fallback, pin
-    /// an exact version; the fallback keeps `--locked`. #5208: released
+    /// or change behavior silently on a later release. The action tag and
+    /// its `version` input pin one exact version (#5409). #5208: released
     /// generators pin themselves; unreleased generators pin the latest
     /// release (their own version would neither download nor install),
     /// with a stderr warning at the `init` call site.
@@ -1012,27 +1235,38 @@ mod tests {
     fn generated_workflow_pins_a_resolvable_ripr_version() {
         let workflow = generated_github_actions_workflow();
         let version = workflow_install_version(env!("CARGO_PKG_VERSION"));
-        let download = format!("          version={version}\n");
-        assert!(workflow.contains(&download), "missing {download}");
-        let pinned = format!("cargo install ripr --version {version} --locked");
+        let pinned = format!(
+            "        uses: EffortlessMetrics/ripr/.github/actions/ripr-check@v{version}\n        with:\n          version: {version}\n"
+        );
         assert!(workflow.contains(&pinned), "missing {pinned}");
-        let installs: Vec<&str> = workflow
-            .lines()
-            .filter(|line| line.contains("cargo install ripr"))
-            .filter(|line| !line.trim_start().starts_with('#'))
-            .collect();
-        assert_eq!(installs, [format!("            {pinned}")]);
+        assert!(
+            !workflow.contains("cargo install"),
+            "a second install route"
+        );
     }
 
-    /// The install downloads the release archive for the runner and refuses
-    /// a mismatched checksum instead of falling back to a compile; only a
-    /// runner with no archive, or a failed download, takes `cargo install`.
+    /// #5409: the workflow installs through the release's `ripr-check`
+    /// action, whose `Install ripr` step downloads the release archive for
+    /// the runner and refuses a mismatched checksum instead of falling back
+    /// to a compile; only a runner with no archive, or a failed download,
+    /// takes `cargo install`. The generated step carries none of that shell.
     #[test]
     fn generated_workflow_installs_the_checksummed_release_binary() {
         let workflow = generated_github_actions_workflow();
-        let install = workflow
+        let step = workflow
             .split("\n\n")
             .find(|block| block.contains("      - name: Install ripr\n"))
+            .unwrap_or_default();
+        assert!(step.contains("        id: install\n"), "{step}");
+        assert!(step.contains("          install-only: true"), "{step}");
+        assert!(
+            !step.contains("run:"),
+            "the generated install step runs no shell: {step}"
+        );
+        let action = include_str!("../../../../../.github/actions/ripr-check/action.yml");
+        let install = action
+            .split_once("    - name: Install ripr\n")
+            .and_then(|(_, rest)| rest.split("    - name: Run ripr check").next())
             .unwrap_or_default();
         for needle in [
             "Linux-X64) target=x86_64-unknown-linux-gnu ;;",
@@ -1044,7 +1278,10 @@ mod tests {
             r#"if [ -z "$expected" ] || [ "$expected" != "$actual" ]; then"#,
             r#"echo "$RUNNER_TEMP/ripr-bin" >> "$GITHUB_PATH""#,
         ] {
-            assert!(install.contains(needle), "install step missing {needle}");
+            assert!(
+                install.contains(needle),
+                "action install step missing {needle}"
+            );
         }
         // The mismatch branch exits before the `else` that compiles.
         let mismatch = install.find("does not match its published SHA-256");
@@ -1242,6 +1479,45 @@ mod tests {
         Ok(())
     }
 
+    /// A root with nothing ripr can read (a brand-new repository holding only
+    /// a README) is told so; a bare Cargo.toml, Rust source or Python source
+    /// each keep init quiet, and a Go-only root keeps its own wording.
+    #[test]
+    fn unanalyzed_root_warning_names_a_root_with_no_source() -> Result<(), String> {
+        let root = temp_root("no-source")?;
+        std::fs::write(root.join("README.md"), "demo\n")
+            .map_err(|err| format!("write README: {err}"))?;
+        let warning = unanalyzed_root_warning(&root).unwrap_or_default();
+        assert!(
+            warning.contains("has no Cargo.toml and no source file ripr reads yet"),
+            "{warning}"
+        );
+        assert!(warning.contains("with `--root <dir>`"), "{warning}");
+        // No pasteable `ripr init --force`: without the selected root it
+        // would overwrite the configuration of whatever directory it runs in.
+        assert!(!warning.contains("ripr init --force"), "{warning}");
+        // A marker-only root gets its language enabled, so the warning makes
+        // no claim about which languages the configuration enables.
+        assert!(!warning.contains("Rust"), "{warning}");
+
+        std::fs::write(root.join("main.go"), "package main\n")
+            .map_err(|err| format!("write main.go: {err}"))?;
+        let go = unanalyzed_root_warning(&root).unwrap_or_default();
+        assert!(go.contains("Go (1 file(s))"), "{go}");
+        assert!(!go.contains("no source file ripr reads yet"), "{go}");
+        std::fs::remove_file(root.join("main.go")).map_err(|err| format!("rm: {err}"))?;
+
+        std::fs::write(root.join("app.py"), "def f():\n    return 1\n")
+            .map_err(|err| format!("write app.py: {err}"))?;
+        assert_eq!(unanalyzed_root_warning(&root), None);
+        std::fs::remove_file(root.join("app.py")).map_err(|err| format!("rm: {err}"))?;
+
+        write_package_manifest(&root.join("Cargo.toml"), "bare")?;
+        assert_eq!(unanalyzed_root_warning(&root), None);
+        std::fs::remove_dir_all(&root).map_err(|err| format!("cleanup: {err}"))?;
+        Ok(())
+    }
+
     /// `ripr init` into a project with Python or TypeScript markers used to
     /// pin `enabled = ["rust"]` and turn off the preview analysis that
     /// no-config detection would have run (#9604, then a warning instead of a
@@ -1270,6 +1546,59 @@ mod tests {
         Ok(())
     }
 
+    /// No packaging markers or conventional source directories may mask the
+    /// flat-layout signal. Parse the generated file rather than its spelling.
+    #[test]
+    fn generated_config_handles_flat_python_layout() -> Result<(), String> {
+        for mixed in [false, true] {
+            let root = temp_root(if mixed {
+                "flat-python-rust"
+            } else {
+                "flat-python"
+            })?;
+            write(&root.join("shop.py"), "def price():\n    return 1\n")?;
+            write(
+                &root.join("test_shop.py"),
+                "from shop import price\ndef test_price():\n    assert price() == 1\n",
+            )?;
+            if mixed {
+                write(
+                    &root.join("Cargo.toml"),
+                    "[package]\nname = \"shop\"\nversion = \"0.1.0\"\n",
+                )?;
+            }
+            assert!(!root.join("src").exists());
+            assert!(!root.join("tests").exists());
+            assert!(!root.join("pyproject.toml").exists());
+            assert!(
+                crate::config::language_detection::detect_languages(&root)
+                    .contains(&LanguageId::Python)
+            );
+            let body = generated_init_config_for_root(&root);
+            let parsed = crate::config::parse_config_diagnostic(&body)
+                .map_err(|err| format!("generated config must parse: {err:?}"))?;
+            let expected = if cfg!(feature = "lang-python") {
+                vec![LanguageId::Rust, LanguageId::Python]
+            } else {
+                vec![LanguageId::Rust]
+            };
+            assert_eq!(parsed.languages().enabled(), expected);
+            let plan = vec![InitTarget {
+                path: root.join(CONFIG_FILE_NAME),
+                action: InitAction::Create,
+                body,
+            }];
+            let warning = detected_preview_language_warning(&root, &plan);
+            if cfg!(feature = "lang-python") {
+                assert_eq!(warning, None);
+            } else {
+                assert!(warning.is_some_and(|text| text.contains("`lang-python` Cargo feature")));
+            }
+            std::fs::remove_dir_all(&root).map_err(|err| format!("cleanup: {err}"))?;
+        }
+        Ok(())
+    }
+
     /// TypeScript markers select the adapter only in `lang-typescript`
     /// builds; the inert probe elsewhere leaves the pin alone.
     #[cfg(feature = "lang-typescript")]
@@ -1287,6 +1616,90 @@ mod tests {
         assert_eq!(
             parsed.languages().enabled(),
             [LanguageId::Rust, LanguageId::TypeScript]
+        );
+        std::fs::remove_dir_all(&root).map_err(|err| format!("cleanup: {err}"))?;
+        Ok(())
+    }
+
+    /// #13788: TypeScript source directly under a child directory such as
+    /// `web/` is what `ripr doctor` detects, so the explicit config `init`
+    /// writes enables it, in a Python-led repo and beside a Rust crate alike.
+    #[cfg(feature = "lang-typescript")]
+    #[test]
+    fn generated_config_enables_typescript_source_under_a_child_directory() -> Result<(), String> {
+        for (label, rust) in [("ts-under-web-pyts", false), ("ts-under-web-mixed", true)] {
+            let root = temp_root(label)?;
+            write_nested(&root.join("pyproject.toml"), "[project]\nname = \"shop\"\n")?;
+            write_nested(&root.join("package.json"), "{}\n")?;
+            write_nested(&root.join("web/pricing.ts"), "export const p = 1;\n")?;
+            write_nested(
+                &root.join("web/pricing.test.ts"),
+                "test(\"p\", () => {});\n",
+            )?;
+            if rust {
+                write_nested(&root.join("Cargo.toml"), "[package]\nname = \"m\"\n")?;
+            }
+            // Premise: marker-based no-config detection misses this layout.
+            assert!(!crate::config::detect_typescript_project(&root), "{label}");
+            let body = generated_init_config_for_root(&root);
+            let parsed = crate::config::parse_config_diagnostic(&body)
+                .map_err(|err| format!("generated config must parse: {err:?}"))?;
+            assert!(
+                parsed
+                    .languages()
+                    .enabled()
+                    .contains(&LanguageId::TypeScript),
+                "{label}: {body}"
+            );
+            // `init --agents` reads the same written list, so the agent file
+            // promises TypeScript instead of naming it as not analyzed.
+            let agents =
+                super::init_agents::AgentLanguages::detect(&root, parsed.languages().enabled());
+            assert!(
+                agents.typescript && !agents.typescript_not_enabled,
+                "{label}: {agents:?}"
+            );
+            std::fs::remove_dir_all(&root).map_err(|err| format!("cleanup: {err}"))?;
+        }
+        Ok(())
+    }
+
+    /// The child-directory rule needs real, analyzable TypeScript source one
+    /// level down. A manifest alone, declarations, excluded, hidden or docs
+    /// trees, deeper nesting, and a Rust crate's `test/` fixtures leave the pin alone.
+    #[cfg(feature = "lang-typescript")]
+    #[test]
+    fn generated_config_keeps_typescript_off_without_child_directory_source() -> Result<(), String>
+    {
+        let cases: [(&str, &[&str]); 7] = [
+            ("ts-manifest-only", &["package.json"]),
+            ("ts-declarations-only", &["package.json", "web/types.d.ts"]),
+            ("ts-node-modules", &["package.json", "node_modules/x.ts"]),
+            ("ts-hidden", &["package.json", ".storybook/x.ts"]),
+            ("ts-docs-site", &["package.json", "docs/site.ts"]),
+            ("ts-two-deep", &["package.json", "web/app/x.ts"]),
+            ("ts-rust-fixture", &["Cargo.toml", "test/fixture.ts"]),
+        ];
+        for (label, files) in cases {
+            let root = temp_root(label)?;
+            for file in files {
+                write_nested(&root.join(file), "{}\n")?;
+            }
+            let body = generated_init_config_for_root(&root);
+            assert!(body.contains("\nenabled = [\"rust\"]\n"), "{label}: {body}");
+            std::fs::remove_dir_all(&root).map_err(|err| format!("cleanup: {err}"))?;
+        }
+        // `Test/` beside a Cargo.toml follows the host path case rule: it is
+        // the Rust fixture directory on a case-insensitive host only.
+        let root = temp_root("ts-rust-fixture-cap")?;
+        write_nested(&root.join("Cargo.toml"), "{}\n")?;
+        write_nested(&root.join("Test/fixture.ts"), "{}\n")?;
+        let body = generated_init_config_for_root(&root);
+        let pinned = body.contains("\nenabled = [\"rust\"]\n");
+        assert_eq!(
+            pinned,
+            crate::output::path::host_paths_case_insensitive(),
+            "Test/ beside Cargo.toml: {body}"
         );
         std::fs::remove_dir_all(&root).map_err(|err| format!("cleanup: {err}"))?;
         Ok(())
@@ -1399,6 +1812,93 @@ mod tests {
         Ok(())
     }
 
+    /// A brand-new `git init` repository has no commit, so `ripr check` exits
+    /// 2 there; the closing line must name the commit-first step instead of
+    /// sending the user straight into that failure. The other two states
+    /// keep their wording.
+    #[test]
+    fn next_step_line_names_commit_first_only_for_a_repository_without_commits() {
+        let ready = init_next_step_line(InitNextStep::Ready, "ripr doctor", "ripr check");
+        assert!(
+            ready.contains("then `ripr check` to analyze your branch"),
+            "{ready}"
+        );
+        assert!(!ready.contains("no commits yet"), "{ready}");
+
+        let unborn = init_next_step_line(
+            InitNextStep::NoCommits,
+            "ripr doctor --root /r",
+            "ripr check --root /r",
+        );
+        assert!(unborn.contains("run `ripr doctor --root /r`"), "{unborn}");
+        assert!(unborn.contains("no commits yet"), "{unborn}");
+        let commit = unborn.find("commit once");
+        let check = unborn.find("run `ripr check --root /r`");
+        assert!(
+            matches!((commit, check), (Some(commit), Some(check)) if commit < check),
+            "the commit must come before the runnable check: {unborn}"
+        );
+        assert!(!unborn.contains("git init"), "{unborn}");
+
+        let no_git = init_next_step_line(InitNextStep::NoGit, "ripr doctor", "ripr check");
+        assert!(no_git.contains("run `git init`"), "{no_git}");
+        assert!(!no_git.contains("no commits yet"), "{no_git}");
+        // A configured root binds `git init` to it, not the caller's directory.
+        let bound = init_next_step_line(
+            InitNextStep::NoGit,
+            "ripr doctor --root 'my repo'",
+            "ripr check --root 'my repo'",
+        );
+        assert!(bound.contains("run `git -C 'my repo' init`"), "{bound}");
+
+        // #15297: with Git missing, `git init` cannot run either; the
+        // advice is to install Git, and a saved patch still works.
+        let missing = init_next_step_line(
+            InitNextStep::GitMissing,
+            "ripr doctor --root repo",
+            "ripr check --root repo",
+        );
+        assert!(missing.contains("install Git"), "{missing}");
+        // The saved-patch route is bound to the configured root.
+        assert!(
+            missing.contains("`ripr check --root repo --diff PATH`"),
+            "{missing}"
+        );
+        assert!(!missing.contains("run `git init` or"), "{missing}");
+        assert!(missing.contains("`git -C repo init`"), "{missing}");
+    }
+
+    #[test]
+    fn bare_root_refusal_names_a_work_tree_not_git_init() {
+        // A root Git cannot read (it does not exist) names both routes and
+        // claims neither state; the bound and empty-aware wording is pinned in
+        // `output::doctor` and in `tests/non_git_root_routes.rs`.
+        let refusal = bare_root_refusal(Path::new("repo.git"));
+        assert!(refusal.contains("bare Git repository"), "{refusal}");
+        assert!(refusal.contains("--git-dir="), "{refusal}");
+        assert!(refusal.contains("worktree add"), "{refusal}");
+        assert!(refusal.contains("git clone"), "{refusal}");
+        // It offers a clone if the repository is empty; it does not say so.
+        assert!(
+            !refusal.contains("This bare repository has no commits yet"),
+            "{refusal}"
+        );
+        assert!(refusal.contains("nothing was written"), "{refusal}");
+        assert!(!refusal.contains("run `git init`"), "{refusal}");
+    }
+
+    /// A repository whose default branch is not `main`/`master` (and has no
+    /// `origin/HEAD`) makes `ripr check` exit 2, so the closing line must not
+    /// promise a default-branch comparison; it names the durable fix and the
+    /// per-run `--base`.
+    #[test]
+    fn next_step_line_does_not_promise_a_default_branch_check_that_will_refuse() {
+        let line = init_next_step_line(InitNextStep::NoDefaultBase, "ripr doctor", "ripr check");
+        assert!(!line.contains("against its default branch"), "{line}");
+        assert!(line.contains("git remote set-head origin --auto"), "{line}");
+        assert!(line.contains("`ripr check --base <ref>`"), "{line}");
+    }
+
     #[test]
     fn non_git_root_warning_names_only_the_established_outside() {
         use output::doctor::WorkTreeProbe;
@@ -1457,6 +1957,14 @@ mod tests {
         std::fs::write(path, text).map_err(|err| format!("write {} failed: {err}", path.display()))
     }
 
+    fn write_nested(path: &Path, text: &str) -> Result<(), String> {
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent)
+                .map_err(|err| format!("create {} failed: {err}", parent.display()))?;
+        }
+        write(path, text)
+    }
+
     fn mcp_options(root: &Path, force: bool) -> InitOptions {
         InitOptions {
             mcp: true,
@@ -1475,7 +1983,8 @@ mod tests {
         serde_json::from_str(body).map_err(|err| format!("body is not JSON: {err}\n{body}"))
     }
 
-    const RIPR_ENTRY: &str = r#"{"command":"ripr","args":["mcp","--stdio"]}"#;
+    const RIPR_ENTRY: &str =
+        r#"{"command":"ripr","args":["mcp","--stdio"],"env":{"RIPR_MCP_TOOLS_LIST":"slim"}}"#;
 
     #[test]
     fn mcp_plan_creates_project_config_and_keeps_an_existing_ripr_toml() -> Result<(), String> {
@@ -1616,6 +2125,7 @@ mod tests {
     #[test]
     fn plan_adds_the_workflow_target_for_ci_github() -> Result<(), String> {
         let root = temp_root("ci")?;
+        git_init_fixture(&root)?;
         let mut opts = options(&root);
         opts.ci = Some(InitCi::Github);
         let plan = init_plan(&opts)?;
@@ -1632,6 +2142,7 @@ mod tests {
     #[test]
     fn plan_adds_gitlab_ci_for_ci_gitlab() -> Result<(), String> {
         let root = temp_root("ci-gitlab")?;
+        git_init_fixture(&root)?;
         let mut opts = options(&root);
         opts.ci = Some(InitCi::Gitlab);
         let plan = init_plan(&opts)?;
@@ -1739,6 +2250,7 @@ mod tests {
     #[test]
     fn plan_leaves_an_existing_config_alone_when_ci_still_has_work() -> Result<(), String> {
         let root = temp_root("leave")?;
+        git_init_fixture(&root)?;
         write(&root.join(CONFIG_FILE_NAME), "[analysis]\n")?;
         let mut opts = options(&root);
         opts.ci = Some(InitCi::Github);
@@ -1756,6 +2268,7 @@ mod tests {
     #[test]
     fn plan_ci_force_refreshes_the_workflow_and_keeps_the_config() -> Result<(), String> {
         let root = temp_root("ci-force")?;
+        git_init_fixture(&root)?;
         write(
             &root.join(CONFIG_FILE_NAME),
             "[lsp]\nseam_diagnostics = false\n",
@@ -1779,7 +2292,7 @@ mod tests {
         assert_eq!(config, "[lsp]\nseam_diagnostics = false\n");
         let written = std::fs::read_to_string(&workflow)
             .map_err(|err| format!("read workflow failed: {err}"))?;
-        assert!(written.contains("--version"), "{written}");
+        assert!(written.contains("ripr-check@v"), "{written}");
 
         let _ = std::fs::remove_dir_all(&root);
         Ok(())
@@ -1788,6 +2301,7 @@ mod tests {
     #[test]
     fn plan_rejects_an_existing_workflow_without_force() -> Result<(), String> {
         let root = temp_root("wf-exists")?;
+        git_init_fixture(&root)?;
         let workflow = root.join(".github/workflows/ripr.yml");
         if let Some(parent) = workflow.parent() {
             std::fs::create_dir_all(parent)
@@ -1836,6 +2350,7 @@ mod tests {
     #[test]
     fn plan_rejects_a_workflow_parent_that_is_a_file() -> Result<(), String> {
         let root = temp_root("parent-file")?;
+        git_init_fixture(&root)?;
         write(&root.join(".github"), "not a directory\n")?;
         let mut opts = options(&root);
         opts.ci = Some(InitCi::Github);

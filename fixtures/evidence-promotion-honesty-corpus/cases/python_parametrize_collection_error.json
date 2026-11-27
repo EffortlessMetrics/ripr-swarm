@@ -11,7 +11,7 @@
     },
     {
       "type": "expected_class",
-      "class": "static_unknown"
+      "class": "weakly_exposed"
     },
     {
       "type": "must_not_promote"

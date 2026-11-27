@@ -10,8 +10,8 @@ use super::bool_operands::{
 };
 use super::pattern_admission::{LocalDecls, pattern_assertion_classification_in};
 use super::patterns::{
-    PatternPolarity, contains_negated_pattern, deciding_disjunction_conjunct_rest,
-    err_constructor_feeds_value_adapter, has_deciding_disjunction, has_top_level_exact_equality,
+    PatternPolarity, asserted_outcome_independent_of_owner, contains_negated_pattern,
+    deciding_disjunction_conjunct_rest, has_deciding_disjunction, has_top_level_exact_equality,
     inequality_has_struct_literal_operand, is_broad_error_assertion,
     is_clear_exact_custom_assertion_helper, is_comparison_shaped_custom_assertion,
     is_custom_assertion_helper, is_duplicative_comparison, is_duplicative_equality_assertion,
@@ -62,6 +62,216 @@ pub(crate) fn classify_assertion_with(line: &str, decls: &LocalDecls) -> OracleC
 #[cfg(test)]
 pub(crate) fn classify_assertion_in(line: &str, decl_source: &str) -> OracleClassification {
     classify_assertion_with(line, &LocalDecls::from_source(decl_source))
+}
+
+/// #14810: an assertion compared with a local the test body binds only to an
+/// unfilled placeholder macro (`let expected: i32 = todo!(..)`) pins no
+/// expected value, so it earns no strong credit. `ripr agent stub --write`
+/// writes exactly this shape, and crediting it tells an agent that wrote the
+/// stub that the gap is closed. A strong, medium or weak reading is lowered.
+/// #14882: a weak `relational_check` is lowered too, because the owner
+/// return pin raises `assert!(price(100) == expected)` or the terminal guard
+/// `if price(100) != expected { return Err(..) }` to strong relative to the
+/// probe. A smoke or none reading claims no comparison and keeps its kind.
+pub(crate) fn without_unfilled_expected(
+    classification: OracleClassification,
+    assertion: &str,
+    placeholders: &std::collections::BTreeSet<String>,
+) -> OracleClassification {
+    if !matches!(
+        classification.strength,
+        OracleStrength::Strong | OracleStrength::Medium | OracleStrength::Weak
+    ) {
+        return classification;
+    }
+    // #14810 round 3: match against the assertion's semantic operands, not
+    // the whole text, and mask what is not a read. The diagnostic message is
+    // not a read; a string literal, a comment and an escaped `{{expected}}`
+    // are not reads; a `format!("{expected}")` interpolation is. Unknown
+    // helpers keep the whole-text fallback.
+    if !assertion_reads_placeholder(assertion, placeholders) {
+        return classification;
+    }
+    OracleClassification {
+        kind: OracleKind::Unknown,
+        strength: OracleStrength::Unknown,
+    }
+}
+
+/// True when the assertion's semantic operands read one of `placeholders`.
+/// This is the one read test for the #14810 lowering and for the disclosure
+/// note that explains it (#14883), so a word in the diagnostic message, a
+/// string literal or a comment cannot earn the note without the lowering.
+pub(crate) fn assertion_reads_placeholder(
+    assertion: &str,
+    placeholders: &std::collections::BTreeSet<String>,
+) -> bool {
+    if placeholders.is_empty() && !super::placeholder_scope::mentions_placeholder(assertion) {
+        return false;
+    }
+    let Some(operand_text) = assertion_oracle_text(assertion) else {
+        // Unknown helpers retain their whole-expression read, including the
+        // receiver of a method such as `expected.assert_eq(actual)`.
+        return text_reads_placeholder(assertion, placeholders);
+    };
+    let introduces_scope = operand_text.contains('|')
+        || operand_text
+            .split(|ch: char| ch != '_' && !ch.is_alphanumeric())
+            .any(|word| matches!(word, "let" | "match" | "for"));
+    if introduces_scope
+        && let Some(open) = operand_text.find('(')
+        && let Some(operands) = super::arguments::delimited_contents_at(&operand_text, open)
+        && let Some(read) = super::placeholder_scope::scoped_operand_read(&operands, placeholders)
+    {
+        return read;
+    }
+    text_reads_placeholder(&operand_text, placeholders)
+}
+
+pub(super) fn text_reads_placeholder(
+    operand_text: &str,
+    placeholders: &std::collections::BTreeSet<String>,
+) -> bool {
+    let masked = mask_assertion_reads(operand_text);
+    placeholders
+        .iter()
+        .any(|name| reads_local_name(&masked, name))
+}
+
+/// [`without_unfilled_expected`] for a caller that holds the kind and strength
+/// as separate fields (the line-scanned oracle path, #14810 round 3).
+pub(crate) fn without_unfilled_expected_parts(
+    kind: OracleKind,
+    strength: OracleStrength,
+    assertion: &str,
+    placeholders: &std::collections::BTreeSet<String>,
+) -> (OracleKind, OracleStrength) {
+    let classification = without_unfilled_expected(
+        OracleClassification { kind, strength },
+        assertion,
+        placeholders,
+    );
+    (classification.kind, classification.strength)
+}
+
+/// Whether `masked` reads `name` as a local: a whole identifier that is not a
+/// member or path segment. `fixture.expected` and `Self::expected` name a
+/// field and an item, not the local `expected`; `expected.field` and
+/// `&expected` read it (#14882 review).
+fn reads_local_name(masked: &str, name: &str) -> bool {
+    let is_ident = |ch: char| ch == '_' || ch.is_alphanumeric();
+    let mut start = 0;
+    while let Some(offset) = masked[start..].find(name) {
+        let at = start + offset;
+        let end = at + name.len();
+        start = end;
+        let before = masked[..at].chars().next_back();
+        let after = masked[end..].chars().next();
+        if before.is_some_and(is_ident) || after.is_some_and(is_ident) {
+            continue;
+        }
+        let prefix = masked[..at].trim_end();
+        let member = prefix.ends_with('.') && !prefix.ends_with("..");
+        if member || prefix.ends_with("::") {
+            continue;
+        }
+        return true;
+    }
+    false
+}
+
+/// Is the next literal in the template slot of a standard formatting macro?
+fn opens_format_string(prefix: &str, raw: bool) -> bool {
+    let prefix = prefix.trim_end();
+    let (before, destination) = if let Some(head) = prefix.strip_suffix(',') {
+        let mut depth = 0usize;
+        let open = head.rfind(|ch| match ch {
+            ')' | ']' | '}' => {
+                depth += 1;
+                false
+            }
+            '(' | '[' | '{' if depth > 0 => {
+                depth -= 1;
+                false
+            }
+            '(' | '[' | '{' | ',' => depth == 0,
+            _ => false,
+        });
+        let Some(open) = open else { return false };
+        if head.as_bytes()[open] == b',' {
+            return false;
+        }
+        (&head[..open], true)
+    } else if let Some(head) = prefix.strip_suffix(['(', '[', '{']) {
+        (head, false)
+    } else {
+        return false;
+    };
+    let Some(path) = before.trim_end().strip_suffix('!') else {
+        return false;
+    };
+    let name = path
+        .trim_end()
+        .rsplit(|ch: char| !(ch == '_' || ch.is_alphanumeric()))
+        .next();
+    // An unresolved macro can be an imported formatting alias. Preserve the
+    // previous conservative read for quoted templates. Raw literals require
+    // a recognized formatting slot before braces count as captures.
+    if !raw && !destination {
+        return true;
+    }
+    if destination {
+        matches!(name, Some("write" | "writeln"))
+    } else {
+        matches!(
+            name,
+            Some(
+                "format"
+                    | "format_args"
+                    | "print"
+                    | "println"
+                    | "eprint"
+                    | "eprintln"
+                    | "panic"
+                    | "unreachable"
+                    | "todo"
+                    | "unimplemented"
+            )
+        )
+    }
+}
+
+fn mask_assertion_reads(text: &str) -> String {
+    let (masked, spans) = super::super::mask::mask_with_string_spans(text);
+    let mut reads = masked.clone();
+    for (open, close, raw) in spans {
+        let prefix = if raw {
+            text[..open]
+                .trim_end_matches('#')
+                .strip_suffix('r')
+                .unwrap_or(&text[..open])
+                .len()
+        } else {
+            open
+        };
+        if !opens_format_string(&masked[..prefix], raw) {
+            continue;
+        }
+        let mut content = &text[open + 1..close];
+        while let Some((_, after)) = content.split_once('{') {
+            if let Some(rest) = after.strip_prefix('{') {
+                content = rest;
+                continue;
+            }
+            let Some((field, rest)) = after.split_once('}') else {
+                break;
+            };
+            reads.push(' ');
+            reads.push_str(field);
+            content = rest;
+        }
+    }
+    reads
 }
 
 fn classify_assertion_against(line: &str, decls: &LocalDecls) -> OracleClassification {
@@ -309,11 +519,13 @@ fn classify_whole_condition(
     if let Some(classification) = classify_fallible_assertion(line) {
         return classification;
     }
-    // #12610: an `Err(..)` the test hands to a value-supplying adapter (`or`,
-    // `ok_or`, `map_err`, ..) is the test's own value, so equality with it
-    // passes whatever the owner returns. It pins no variant (#12359) and no
-    // value either, so no other kind may read it as exact.
-    if err_constructor_feeds_value_adapter(line) {
+    // #12359 / #12610: an `Err(..)` the test hands to a value-supplying
+    // adapter (`or`, `ok_or`, ..), or an error read taken through an adapter
+    // that replaces the owner's error (`.map_err(|_| E::V).unwrap_err()`), is
+    // the test's own value, so equality with it passes whatever error the
+    // owner returns. It pins no variant and no value, so no kind may read it
+    // as exact, on any seam.
+    if asserted_outcome_independent_of_owner(line) {
         return RELATION;
     }
     // RIPR-SPEC-0231 rule 1 (#7558): a boolean assertion decided by an `||`
@@ -564,6 +776,47 @@ mod tests {
             r#"assert_matches!(parse("x"), Err(ParseError::Empty));"#,
         ] {
             require_classification(line, OracleKind::ExactErrorVariant, OracleStrength::Strong)?;
+        }
+        Ok(())
+    }
+
+    /// #12610: an error read through an adapter that replaces the owner's
+    /// error compares the test's own value, so it pins nothing exact. Ported
+    /// with the `.or(Err(..))` cases from the #12691 candidate.
+    #[test]
+    fn an_error_read_through_a_replacing_adapter_pins_no_value() -> Result<(), String> {
+        for line in [
+            r#"assert_eq!(parse_remapped(1).map_err(|_| Fault::Odd).unwrap_err(), Fault::Odd);"#,
+            r#"assert_eq!((parse_remapped(1).map_err(|_| Fault::Odd).unwrap_err()), Fault::Odd);"#,
+            r#"assert_eq!(Fault::Odd, parse_remapped(1).map_err(|_| Fault::Odd).unwrap_err());"#,
+            r#"assert_eq!(parse_remapped(1).map_err(|_| Fault::Odd).expect_err("odd"), Fault::Odd);"#,
+            r#"assert_eq!(Result::unwrap_err(parse_remapped(1).map_err(|_| Fault::Odd)), Fault::Odd);"#,
+            r#"assert_eq!(Result::expect_err(parse_remapped(1).map_err(|_| Fault::Odd), "odd"), Fault::Odd);"#,
+            r#"assert_eq!(Result::<u8, Fault>::unwrap_err(parse_remapped(1).map_err(|_| Fault::Odd)), Fault::Odd);"#,
+            r#"assert_eq!(parse("1").or(Err(Fault::Odd)), Err(Fault::Odd));"#,
+            r#"assert_eq!(parse_masked(1).or(Err(Fault::Odd)).unwrap_err(), Fault::Odd);"#,
+        ] {
+            require_classification(line, OracleKind::RelationalCheck, OracleStrength::Weak)?;
+        }
+        // Controls: the owner's own error, read directly or through `map`,
+        // which leaves the error untouched, keeps an exact kind.
+        for line in [
+            r#"assert_eq!(parse("1").unwrap_err(), Fault::Odd);"#,
+            r#"assert_eq!(parse("1").map(|v| v + 1).unwrap_err(), Fault::Odd);"#,
+            r#"assert_eq!(Result::unwrap_err(parse("1")), Fault::Odd);"#,
+            // A diagnostic argument only prints on failure; it cannot replace
+            // the compared error.
+            r#"assert_eq!(parse("1").unwrap_err(), Fault::Odd, "{:?}", other().or(Err(Fault::Even)));"#,
+            r#"assert_eq!(parse("1").unwrap_err(), Fault::Odd, "{:?}", other().map_err(|_| Fault::Even).unwrap_err());"#,
+        ] {
+            let actual = classify_assertion(line);
+            if actual.kind == OracleKind::RelationalCheck
+                || actual.strength != OracleStrength::Strong
+            {
+                return Err(format!(
+                    "{line}: expected a strong exact kind, got {actual:?}"
+                ));
+            }
         }
         Ok(())
     }

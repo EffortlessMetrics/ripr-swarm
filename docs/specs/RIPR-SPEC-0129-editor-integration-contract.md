@@ -41,6 +41,12 @@ Consumes:
   `textDocument/didSave` (saved content is the analysis input; the options
   form's `save` member requests save notifications and `includeText: false`
   avoids resending the whole document on each save)
+- incremental change positions resolved as LSP 3.17 defines them: a
+  character past the line end is the line end (#7316) and a line past the
+  last line is the end of the document (#15430), so a client appending below
+  the last line keeps its document; reversed ranges and positions inside a
+  multi-unit character are refused and quarantine the document until a full
+  resync
 - `MethodNotFound` (`-32601`, method named in `data`) for any unhandled
   request whose method starts with `$/`; unhandled `$/` notifications stay
   silent (LSP 3.17 "$ Notifications and Requests", #4456)
@@ -94,8 +100,11 @@ fix-instruction summaries, and no retrieval references — those belong to
 `codeAction/resolve` (#1751). Disabled reasons are a closed vocabulary in
 `lsp/action_contract.rs`; only reasons with a real producer are emitted —
 today `analysis_not_current`, `stale_snapshot`, `client_capability_missing`,
-`verification_route_unavailable`, `receipt_route_unavailable`, and
-`preview_or_static_limitation` — while the reserved members
+`verification_route_unavailable`, `receipt_route_unavailable`,
+`preview_or_static_limitation`, `repair_route_not_ready`,
+`uncommitted_production_change`, `seam_evidence_deferred`, and
+`seam_inventory_not_enabled` — while the
+reserved members
 (`stale_document`, `workspace_root_blocked`, `fix_site_unavailable`,
 `exact_replacement_unavailable`, `ambiguous_fix_site`,
 `outside_allowed_edit_surface`, `configuration_invalid`) stay unemittable
@@ -139,6 +148,19 @@ relay plus an explicit tree-kill fallback. The real
 packaged proof stages the worktree-built server through the release archive
 shape, extracts it, verifies digest identity, and probes that extracted member;
 an arbitrary `RIPR_TEST_SERVER_PATH` is not packaged-identity evidence.
+
+A managed server download is inspected before anything is extracted. After
+the SHA-256 check, the tar archive is listed and the zip central directory is
+read; extraction is refused for absolute, drive-qualified, UNC, `..` or NUL
+member paths, symlink, hard-link, reparse-point or other non-file/directory
+members, and more than 1000 members. Zip members are additionally refused for
+empty names, any `:` (alternate data streams), trailing dot/space segments and
+reserved Windows device names, and zip archives for ZIP64, multi-disk, split
+entry counts, malformed directories, or an end record whose comment does not
+end the file (#13640, #13904). The containment
+walk after extraction remains a second check, not the first. Checksum and
+inspection detect corruption and unsafe shape; they are not provenance
+(#1879).
 
 ### Layer 3 — Headless `riprAgent`
 
@@ -277,6 +299,10 @@ This presentation must preserve the snapshot's diagnostics and result IDs.
 - `tests/lsp_lifecycle.rs::initialize_advertises_incremental_sync_with_save_notifications`
   verifies over the real wire that the document-sync advertisement requests
   incremental changes and `didSave` without resending the document (#1746).
+- `lsp/state.rs::tests::incremental_line_past_end_clamps_to_document_end`
+  verifies that a line past the last line resolves to the document end in
+  every negotiated encoding, while reversed and mid-surrogate ranges stay
+  refused (#15430).
 - `tests/lsp_lifecycle.rs::dollar_request_is_answered_method_not_found`
   verifies over the real wire that a `$/` request gets `-32601` naming the
   method, while the same `$/` notification gets no response.
@@ -304,7 +330,21 @@ This presentation must preserve the snapshot's diagnostics and result IDs.
   under `context.only`, and the named suppression reasons (`stale_snapshot`,
   `analysis_not_current`,
   `verification_route_unavailable`, `receipt_route_unavailable`,
-  `preview_or_static_limitation`).
+  `preview_or_static_limitation`, `repair_route_not_ready`,
+  `uncommitted_production_change`, `seam_evidence_deferred`,
+  `seam_inventory_not_enabled`).
+  `tests.rs::snapshot_without_spot_inventory_lists_an_inert_start_naming_the_blocker`
+  pins the deferred-seam start and the settings-blocked
+  (`seam_inventory_not_enabled`) start, their legacy omission, and their
+  absence on a full snapshot whose configuration builds spots, on an
+  `exposed` finding, and beside a gap record.
+  `tests.rs::seam_not_yet_repairable_names_route_not_ready_not_a_language_boundary`
+  pins the truthful reason, and the repair-start tests build their seam
+  diagnostics with the production producer (no injected fix-instruction).
+  `tests.rs::repair_start_is_inert_with_the_commit_step_while_production_is_uncommitted`
+  and `lsp_lifecycle.rs::real_seam_diagnostic_names_the_commit_step_on_an_uncommitted_change`
+  pin the inert start, its commit step, the hover order, the CLI refusal it
+  mirrors, and re-enabling after a commit without a refresh (#13636).
 - `tests.rs::retained_code_actions_disclose_health_on_the_public_handler`
   verifies inert action identity/diagnostic preservation across shared health
   states, kind filtering, active refresh recovery and fail-closed resolve.
@@ -467,7 +507,53 @@ client supports:
   `stale_snapshot` (stale gap diagnostic),
   `verification_route_unavailable` / `receipt_route_unavailable` (gap
   record without a safe verify/receipt command), and
-  `preview_or_static_limitation` (cross-language unresolved target). The
+  `preview_or_static_limitation` (a static limitation; the human text names a
+  language boundary only for a cross-language unresolved target, #13797), and
+  `repair_route_not_ready` (a same-language seam that fails the
+  repair-packet flip only because ripr has no complete repair route yet,
+  meaning a test target plus the exact discriminator it must check, or an
+  actionable gap with no fix site, #13716). A seam-addressed
+  action reads its readiness from the seam's own producer-owned
+  repair-packet flip, the same gate the seam hover and
+  `repair_start_command_for` use, so a seam past the flip is offered the
+  repair start without any injected fix-instruction. When that start's own
+  dirty-premise preflight (`app::repair_attempt::seam_start_dirty_premise`,
+  the check `ripr check` uses) names uncommitted tracked source files, the start
+  is listed inert as `uncommitted_production_change` and its human reason
+  carries the shared commit step
+  (`git -C <root> --literal-pathspecs commit -m "<message>" -- <files>`);
+  the seam hover names the same commit before the start line (#13636). The
+  preflight runs per request (memoized for one second per root), not from
+  the snapshot, so a commit re-enables the start without a refresh; an
+  unreadable premise keeps the legacy enabled start. When no enabled start
+  exists, the VS Code "Start Current Repair" command asks the server for code
+  actions directly (because `vscode.executeCodeActionProvider` drops
+  `CodeAction.disabled`) and shows the inert start's reason before falling
+  back to any other action, or instead of the refresh hint. When the
+  committed snapshot came from an interactive refresh that deferred the full
+  spot inventory (`seams_deferred`), a candidate-current gap-class finding
+  diagnostic has no seam-bound start: a disabled-capable client sees "Start
+  repair" inert as `seam_evidence_deferred`, whose reason names "ripr: Refresh
+  Full Analysis" (wire `ripr.refresh`) without promising a start after it.
+  It is listed only when a full refresh under the snapshot's configuration
+  builds the spot inventory (`seam_inventory_on_full_refresh`: full
+  diagnostic profile, spot diagnostics on, Rust enabled). When it does not
+  (the default actionable profile, or spot diagnostics off), deferred or
+  not, the same finding instead lists the start inert as
+  `seam_inventory_not_enabled`, whose reason names the setting
+  (`ripr.diagnosticProfile` = `full` and `ripr.seamDiagnostics` on in the
+  editor; the `ripr.toml` `[lsp]` keys apply only where no editor setting
+  overrides them, and Rust must be enabled) and then the full refresh. An
+  `exposed`, base-side, preview, non-Rust or static-limited finding, a full snapshot whose configuration builds spots, a request that
+  also carries a gap record (which has its own repair-packet actions) and a
+  legacy client get no inert start. While analysis is queued or running,
+  either retained start reads `analysis_not_current` (a running refresh may
+  be the one a setting change started). With no gap or seam diagnostic near the selection, "Start
+  Current Repair" asks the server about the nearest finding diagnostic and
+  shows that reason before saying no repair gap is available (#13636).
+  `ripr agent repair`
+  still re-checks start-time facts (dirty premise, proposal identity, held
+  inline target, ignored build directory) and refuses with nothing started. The
   backend health gate also returns retained diagnostic-addressed actions
   inert as `analysis_not_current` when the root is valid and the client
   supports disabled actions (#7458). It names queued/running as a wait state

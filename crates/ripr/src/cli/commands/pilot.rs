@@ -4,7 +4,7 @@ use crate::app::{self, CheckInput, Mode, OutputFormat};
 use crate::cli::commands_numeric::{parse_positive_u64, parse_positive_usize};
 use crate::cli::commands_options::{PilotOptions, PilotStdoutFormat};
 use crate::cli::help;
-use crate::cli::parse::{expect_value, parse_mode};
+use crate::cli::parse::{expect_path_value, expect_value, parse_mode, reconcile_root};
 use crate::cli::progress::{CliProgressSink, ProgressPolicy};
 use crate::cli::suggest::{unknown_argument, unknown_value};
 use crate::config::{CheckInputExplicit, RiprConfig, apply_to_check_input, load_for_root};
@@ -47,6 +47,10 @@ const PILOT_RETRY_TIMEOUT_MS: u64 = 240_000;
 /// rather than misreporting.
 /// Diff-bound generated-source selection also withholds identity whenever its
 /// source/evidence inputs differ from ordinary repo exposure.
+#[allow(
+    clippy::too_many_arguments,
+    reason = "the failed-evidence limitations travel beside the sibling disclosures this writer already takes; bundling them would hide which authority supplies each"
+)]
 fn write_pilot_repo_exposure_json(
     path: &Path,
     input: &CheckInput,
@@ -55,6 +59,7 @@ fn write_pilot_repo_exposure_json(
     generated_skip: Option<&output::repo_exposure::GeneratedRustSkip>,
     context: Option<&crate::agent::artifact::RepoExposureArtifactContext>,
     byte_bound: Option<&output::repo_exposure::RepoExposureByteBound>,
+    evidence_limitations: &[crate::analysis_outcome::AnalysisLimitation],
 ) -> Result<(), String> {
     let ts_guidance = output::render::detect_ts_full_repo_guidance_pub(&input.root, classified);
     let python_guidance =
@@ -70,6 +75,7 @@ fn write_pilot_repo_exposure_json(
                 python_guidance.as_ref(),
                 generated_skip,
                 byte_bound,
+                evidence_limitations,
             ),
         );
     };
@@ -82,6 +88,8 @@ fn write_pilot_repo_exposure_json(
             ts_guidance.as_ref(),
             python_guidance.as_ref(),
             generated_skip,
+            evidence_limitations,
+            crate::analysis::owner_opt_out::RepoOwnerOptOuts::default(),
             context,
             &mut writer,
         ) {
@@ -174,7 +182,8 @@ pub(in crate::cli) fn pilot(args: &[String]) -> Result<(), String> {
     let analysis_started = Instant::now();
     let mut timings = PilotTimings::start();
     let analysis_result = if rust_enabled {
-        run_pilot_analysis_with_timeout(
+        run_pilot_inventory_with_deadline(
+            progress.as_deref(),
             options.timeout_ms,
             extension_ms,
             || {
@@ -192,7 +201,7 @@ pub(in crate::cli) fn pilot(args: &[String]) -> Result<(), String> {
                     // The loaded change selects both the generated-source view
                     // and later change-first ranking, inside the same deadline.
                     let load_started = Instant::now();
-                    let change = load_pilot_current_change(&input, git_timeout);
+                    let change = load_pilot_current_change(&input, &cfg, git_timeout);
                     let load_ms = elapsed_ms(load_started);
                     let inventory_started = Instant::now();
                     // #10727: the inventory already reports its phases through
@@ -227,7 +236,7 @@ pub(in crate::cli) fn pilot(args: &[String]) -> Result<(), String> {
         )?
     } else {
         let load_started = Instant::now();
-        let change = load_pilot_current_change(&input, git_timeout);
+        let change = load_pilot_current_change(&input, &config, git_timeout);
         PilotAnalysisResult::Complete((
             analysis::ClassifiedSeamsReport {
                 classified: Vec::new(),
@@ -238,6 +247,7 @@ pub(in crate::cli) fn pilot(args: &[String]) -> Result<(), String> {
                 skipped_generated: Vec::new(),
                 naming_only_skips: Vec::new(),
                 declined_rust_files: Vec::new(),
+                evidence_limitations: Vec::new(),
             },
             change,
             PilotStageTimes {
@@ -277,6 +287,7 @@ pub(in crate::cli) fn pilot(args: &[String]) -> Result<(), String> {
                 current_change: None,
                 seam_limit: None,
                 repo_exposure_byte_bound: None,
+                inventory_evidence_limitations: &[],
             },
         )?;
         return Ok(());
@@ -302,7 +313,10 @@ pub(in crate::cli) fn pilot(args: &[String]) -> Result<(), String> {
         timings.record_inventory_phases(&inventory_phases);
     }
     let rust_files = analysis::workspace_rust_files(&input.root);
-    let rust_excluded = (!rust_enabled && !rust_files.is_empty()).then_some(rust_files.len());
+    // An unreadable-only tree is still Rust source (#13624): it must not read
+    // as "no Rust files". Its readable count is 0 and renders as unknown.
+    let rust_excluded = (!rust_enabled && analysis::workspace_has_rust_source(&input.root))
+        .then_some(rust_files.len());
 
     // Apply the pilot artifact seam budget.  The inventory may already have
     // been capped by the repo-exposure seam limit; we then further cap the
@@ -315,6 +329,7 @@ pub(in crate::cli) fn pilot(args: &[String]) -> Result<(), String> {
     let diff_bound_corpus = report.diff_bound_corpus;
     let mut inventory_limit_info = report.limit_info;
     let declined_rust_files = report.declined_rust_files.clone();
+    let inventory_evidence_limitations = report.evidence_limitations;
     let generated_skip = output::repo_exposure::GeneratedRustSkip::from_parts(
         report.skipped_generated,
         report.naming_only_skips,
@@ -399,7 +414,23 @@ pub(in crate::cli) fn pilot(args: &[String]) -> Result<(), String> {
     };
     let current_change = current_change
         .with_absent_file_limitations(absent_file_limitations)
+        .with_evidence_limitations(folded.evidence_limitations)
         .with_seams_counted(&classified, folded.caveat_limit);
+    // #15278: a changed spot the inventory reads as gripped may still hold a
+    // gap `ripr check` reports for the changed lines. Check runs only when
+    // such a spot exists, inside what is left of pilot's deadline.
+    let check_reads_open = crate::app::task_first::count_gripped_seams_check_reads_open(
+        &classified,
+        |entry| current_change.touches(entry),
+        || {
+            check_findings_within_deadline(
+                &input.root,
+                &config,
+                spent_timeout_ms.saturating_sub(elapsed_ms(analysis_started)),
+            )
+        },
+    );
+    let current_change = current_change.with_check_reads_open(check_reads_open);
     let budget_started = Instant::now();
     let mut pilot_budget_info = analysis::apply_pilot_seam_budget(&mut classified, |entry| {
         current_change.keeps_past_budget(entry)
@@ -479,6 +510,7 @@ pub(in crate::cli) fn pilot(args: &[String]) -> Result<(), String> {
         &input.root,
         !classified.is_empty(),
         config.languages().enabled(),
+        config.source_text().is_none(),
         &analysis::workspace_preview_language_files(&input.root),
     )
     .with_unanalyzed(
@@ -487,6 +519,7 @@ pub(in crate::cli) fn pilot(args: &[String]) -> Result<(), String> {
     )
     .with_rust_exclusion(rust_excluded)
     .with_declined_rust_files(declined_rust_files.clone());
+    let language_routes = withhold_check_routes_without_work_tree(language_routes, &input.root);
     timings.record("language_scan", scan_started, None);
     let context = output::pilot::PilotSummaryContext {
         root: &input.root,
@@ -501,6 +534,7 @@ pub(in crate::cli) fn pilot(args: &[String]) -> Result<(), String> {
         current_change: Some(&current_change),
         seam_limit: summary_limit.as_ref(),
         repo_exposure_byte_bound: repo_exposure_byte_bound.as_ref(),
+        inventory_evidence_limitations: &inventory_evidence_limitations,
     };
 
     let ts_guidance = output::render::detect_ts_full_repo_guidance_pub(&input.root, &classified);
@@ -534,6 +568,7 @@ pub(in crate::cli) fn pilot(args: &[String]) -> Result<(), String> {
         generated_skip.as_ref(),
         snapshot_context.as_ref(),
         repo_exposure_byte_bound.as_ref(),
+        &inventory_evidence_limitations,
     )?;
     write_pilot_file(
         &artifacts.repo_exposure_md,
@@ -543,19 +578,21 @@ pub(in crate::cli) fn pilot(args: &[String]) -> Result<(), String> {
             ts_guidance.as_ref(),
             python_guidance.as_ref(),
             generated_skip.as_ref(),
+            &inventory_evidence_limitations,
         ),
     )?;
     let packet_bound = analysis::pilot_packet_budget()?
         .map(|(max, source)| output::agent_seam_packets::PacketBound { max, source });
     write_pilot_file(
         &artifacts.agent_seam_packets_json,
-        output::agent_seam_packets::render_agent_seam_packets_json_for_root(
+        output::agent_seam_packets::render_agent_seam_packets_json_for_root_with_limitations(
             &classified,
             repo_exposure_limit,
             causal_projection.as_ref(),
             &crate::agent::loop_commands::bound_root(&options.root.to_string_lossy()),
             &declined_rust_files,
             packet_bound,
+            &inventory_evidence_limitations,
         ),
     )?;
 
@@ -767,6 +804,36 @@ fn name_diff_only_files(
     }
 }
 
+/// The default `ripr check` findings for the #15278 follow-up, under the
+/// `remaining_ms` left of pilot's deadline. A late or failed check yields
+/// `None`, which pilot reports as unconfirmed rather than as agreement. The
+/// miss is reported on stderr even under `--quiet`.
+fn check_findings_within_deadline(
+    root: &Path,
+    config: &RiprConfig,
+    remaining_ms: u64,
+) -> Option<Vec<crate::domain::Finding>> {
+    let missed = || {
+        eprintln!(
+            "ripr pilot: could not run `ripr check` on the current change within its deadline"
+        );
+        None
+    };
+    if remaining_ms == 0 {
+        return missed();
+    }
+    let (root, config) = (root.to_path_buf(), config.clone());
+    match run_pilot_analysis_with_timeout(
+        remaining_ms,
+        None,
+        || {},
+        move || crate::app::task_first::default_check_findings(&root, &config),
+    ) {
+        Ok(PilotAnalysisResult::Complete(findings)) => Some(findings),
+        Ok(PilotAnalysisResult::TimedOut) | Err(_) => missed(),
+    }
+}
+
 fn elapsed_ms(started: Instant) -> u64 {
     u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX)
 }
@@ -785,6 +852,35 @@ fn pilot_progress_sink(quiet: bool, machine_format: bool) -> Option<Arc<CliProgr
         std::io::stderr().is_terminal(),
         ProgressPolicy::STANDARD,
     )))
+}
+
+/// Run the main pilot analysis under its deadline, and close its progress
+/// run when the deadline wins (#5444).
+///
+/// The controller owns the timed-out run's terminal. The detached worker
+/// reaches its own `cancelled` only when it hits a cancellation checkpoint
+/// inside `PILOT_CANCEL_GRACE`, so leaving the line to it made the same
+/// timeout print it on some runs and not others. Exactly one
+/// `cancelled [repo]` line now ends the run, and a worker that wakes later
+/// cannot add to it.
+fn run_pilot_inventory_with_deadline<T, F>(
+    progress: Option<&CliProgressSink>,
+    timeout_ms: u64,
+    extension_ms: Option<u64>,
+    on_extend: impl FnOnce(),
+    runner: F,
+) -> Result<PilotAnalysisResult<T>, String>
+where
+    T: Send + 'static,
+    F: FnOnce() -> Result<T, String> + Send + 'static,
+{
+    let result = run_pilot_analysis_with_timeout(timeout_ms, extension_ms, on_extend, runner)?;
+    if matches!(result, PilotAnalysisResult::TimedOut)
+        && let Some(sink) = progress
+    {
+        sink.abandon_with_scope(crate::app::AnalysisProgressScope::Repo);
+    }
+    Ok(result)
 }
 
 /// Run the pilot repo inventory through the shared app-layer
@@ -820,13 +916,16 @@ fn run_pilot_inventory(
 /// tracked changes, else `<base>...HEAD`. Plain `ripr check` reads committed
 /// history only, so a working-tree change is recorded as such and pilot's
 /// printed `ripr check` command carries `--worktree` to analyze the same
-/// diff. Keep this the one place pilot picks its diff. Pilot ranks seams on
+/// diff. With no `--base` on a clean checkout of the comparison base, the
+/// change is the last commit, as bare `ripr check` reads it (#16082). Keep
+/// this the one place pilot picks its diff. Pilot ranks seams on
 /// the changed lines first and says whether its top recommendation is part
 /// of the change. A load failure (not a Git work tree, no resolvable default
 /// base, a git error) never fails pilot: it is recorded as `unavailable` and
 /// the ranking stays repo-wide.
 fn load_pilot_current_change(
     input: &CheckInput,
+    config: &RiprConfig,
     git_timeout: Option<std::time::Duration>,
 ) -> output::pilot::PilotCurrentChange {
     let mut from_working_tree = false;
@@ -861,12 +960,53 @@ fn load_pilot_current_change(
                     None,
                     git_timeout,
                 )
+                .map(|mut loaded| {
+                    // #16082: on a clean checkout of the comparison base, a
+                    // bare `ripr check` analyzes the last commit; pilot's
+                    // change and its printed check command follow it.
+                    if input.base.is_none()
+                        && let Some(text) = app::diff_source::last_commit_fallback_diff(
+                            &input.root,
+                            &loaded.text,
+                            loaded.effective_base.as_deref(),
+                            config,
+                            git_timeout,
+                        )
+                    {
+                        loaded.text = text;
+                        loaded.effective_base =
+                            Some(app::diff_source::LAST_COMMIT_BASE.to_string());
+                    }
+                    loaded
+                })
             }
             .map_err(|err| current_change_unavailable_reason(&err, "git diff failed"))
         })
         .map(|loaded| (loaded.text, loaded.effective_base));
     output::pilot::PilotCurrentChange::from_diff_load(&input.root, loaded)
         .with_working_tree(from_working_tree)
+}
+
+/// `ripr check` refuses a root that is not a Git work tree (and a bare
+/// repository, or any root when Git is missing), so pilot must not print it as the follow-up there (#15297).
+/// Probed only when a route would otherwise print a check command.
+fn withhold_check_routes_without_work_tree(
+    routes: output::pilot::PilotLanguageRoutes,
+    root: &std::path::Path,
+) -> output::pilot::PilotLanguageRoutes {
+    use output::doctor::WorkTreeProbe;
+    use output::pilot::CheckBlocker;
+    if !routes.routes.iter().any(|route| route.command.is_some()) {
+        return routes;
+    }
+    match output::doctor::work_tree_probe(root) {
+        Some(WorkTreeProbe::Outside) => routes.with_check_blocker(root, CheckBlocker::NotWorkTree),
+        Some(WorkTreeProbe::Bare) => routes.with_check_blocker(root, CheckBlocker::BareRepository),
+        Some(WorkTreeProbe::GitMissing) => {
+            routes.with_check_blocker(root, CheckBlocker::GitMissing)
+        }
+        _ => routes,
+    }
 }
 
 /// A few fixed words for why the current change could not be loaded, shown
@@ -935,12 +1075,18 @@ fn parse_pilot_options(args: &[String]) -> Result<PilotOptions, String> {
         match args[i].as_str() {
             "--root" => {
                 i += 1;
-                options.root = PathBuf::from(expect_value(args, i, "--root")?);
+                let reconciled = reconcile_root(
+                    &options.root,
+                    options.root_explicit,
+                    expect_value(args, i, "--root")?,
+                    "pilot",
+                )?;
+                options.root = reconciled;
                 options.root_explicit = true;
             }
             "--out" => {
                 i += 1;
-                options.out_dir = PathBuf::from(expect_value(args, i, "--out")?);
+                options.out_dir = PathBuf::from(expect_path_value(args, i, "--out")?);
                 out_explicit = true;
             }
             "--mode" => {
@@ -1005,14 +1151,28 @@ const DEFAULT_PILOT_OUT_DIR: &str = "target/ripr/pilot";
 /// #9922: a root with no `Cargo.toml` and no source file in any language ripr
 /// reads is not a workspace; `ripr pilot` there used to print "RIPR pilot
 /// complete" with no recommendation and write `target/ripr/` into the folder.
-/// Returns the refusal message, or `None` when the root has something to inspect.
+/// Returns the refusal message, or `None` when the root has something to
+/// inspect. #15297: a bare repository never holds source, because it has no
+/// work tree, so its refusal names the repository and the route to a work
+/// tree rather than another `--root`.
 fn pilot_root_without_workspace(root: &Path) -> Option<String> {
-    analysis::root_has_no_inspectable_workspace(root).then(|| {
-        format!(
-            "pilot root {} has no Cargo.toml and no source files to inspect; pass --root <dir> for the directory that contains your workspace (nothing was written)",
-            root.display()
-        )
-    })
+    if !analysis::root_has_no_inspectable_workspace(root) {
+        return None;
+    }
+    if matches!(
+        output::doctor::work_tree_probe(root),
+        Some(output::doctor::WorkTreeProbe::Bare)
+    ) {
+        return Some(format!(
+            "pilot root {} is a bare Git repository with no work tree, so there is no source to inspect and nothing was written. {}, then run `ripr pilot --root <path>`",
+            root.display(),
+            crate::work_tree_route::bare_root_work_tree_route_or_plain(root)
+        ));
+    }
+    Some(format!(
+        "pilot root {} has no Cargo.toml and no source files to inspect; pass --root <dir> for the directory that contains your workspace (nothing was written)",
+        root.display()
+    ))
 }
 
 /// The default packet directory sits under `--root`, where the cache already
@@ -1112,12 +1272,10 @@ where
         }
     }
     cancellation_token.cancel(crate::analysis::cancellation::AnalysisAbortKind::DeadlineExceeded);
-    // #5019: the detached worker owns its progress run's terminal
-    // (`cancelled`), and the caller exits soon after this return.
-    // Give the worker a bounded window to reach a cancellation
-    // checkpoint and finish, so the terminal is not lost to process
-    // exit. A worker stuck past the window cannot be forced (it is
-    // a detached thread): a known, bounded limitation.
+    // #5019: give the worker a bounded window to reach a cancellation
+    // checkpoint and finish. A worker stuck past the window cannot be
+    // forced (it is a detached thread); the caller closes the progress
+    // run itself (#5444), so its `cancelled` line does not depend on it.
     let _ignored = rx.recv_timeout(PILOT_CANCEL_GRACE);
     Ok(PilotAnalysisResult::TimedOut)
 }
@@ -1292,7 +1450,8 @@ mod tests {
             ..CheckInput::default()
         };
         let config = load_for_root(&root)?;
-        let change = load_pilot_current_change(&input, Some(std::time::Duration::from_secs(30)));
+        let change =
+            load_pilot_current_change(&input, &config, Some(std::time::Duration::from_secs(30)));
         assert!(
             change.is_working_tree(),
             "fixture must be read as a working-tree change: {change:?}"
@@ -1328,7 +1487,8 @@ mod tests {
             ..CheckInput::default()
         };
         let config = load_for_root(&root)?;
-        let change = load_pilot_current_change(&input, Some(std::time::Duration::from_secs(30)));
+        let change =
+            load_pilot_current_change(&input, &config, Some(std::time::Duration::from_secs(30)));
         assert!(
             matches!(change, output::pilot::PilotCurrentChange::NoChange { .. }),
             "restoring the base must leave an empty working-tree diff: {change:?}"
@@ -1392,6 +1552,38 @@ mod tests {
             );
         }
         let _ = std::fs::remove_dir_all(&base);
+        Ok(())
+    }
+
+    /// #15297: a real bare repository holds no source file, because it has no
+    /// work tree. Pilot refuses it as bare, with the route to a work tree the
+    /// way doctor and init do, instead of asking for another `--root`.
+    #[test]
+    fn pilot_refuses_a_bare_repository_without_source_as_bare() -> Result<(), String> {
+        let bare = crate::cli::commands::tests::unique_command_test_dir("pilot-bare-no-source");
+        std::fs::create_dir_all(&bare).map_err(|error| error.to_string())?;
+        crate::git::run_git_output_with_deadline(
+            &bare,
+            &["init", "--bare", "-q", "."],
+            Some(std::time::Duration::from_secs(30)),
+        )
+        .map_err(|error| format!("git init --bare: {error}"))?;
+        let message = pilot_root_without_workspace(&bare)
+            .ok_or_else(|| "a bare repository must be refused".to_string())?;
+        assert!(message.contains("bare Git repository"), "{message}");
+        assert!(message.contains("nothing was written"), "{message}");
+        // An empty bare repository has nothing to check out: its route is a clone.
+        assert!(message.contains("has no commits yet"), "{message}");
+        assert!(message.contains("git clone"), "{message}");
+        assert!(!message.contains("worktree add"), "{message}");
+        assert!(message.contains("ripr pilot --root <path>"), "{message}");
+        assert!(!message.contains("pass --root <dir>"), "{message}");
+
+        let refused = pilot(&args(&["--root", &bare.to_string_lossy()]))
+            .err()
+            .unwrap_or_default();
+        assert!(refused.contains("bare Git repository"), "{refused}");
+        assert!(!bare.join("target").exists(), "refusal must write nothing");
         Ok(())
     }
 
@@ -1695,6 +1887,7 @@ mod tests {
                     skipped_generated: Vec::new(),
                     naming_only_skips: Vec::new(),
                     declined_rust_files: Vec::new(),
+                    evidence_limitations: Vec::new(),
                 })
             },
         );
@@ -1824,6 +2017,62 @@ mod tests {
         assert!(!extended.get());
     }
 
+    /// #5444: a worker stuck past the cancel grace (no checkpoint reached)
+    /// used to leave the run without its `cancelled` line. The controller now
+    /// closes it, and the worker's later events add nothing.
+    #[test]
+    fn a_worker_stuck_past_the_grace_still_ends_with_one_cancelled_line() {
+        use crate::app::{
+            AnalysisProgressEvent, AnalysisProgressScope, AnalysisProgressSink,
+            AnalysisProgressStage,
+        };
+        let event = |stage| AnalysisProgressEvent {
+            stage,
+            scope: AnalysisProgressScope::Repo,
+            completed_units: None,
+            total_units: None,
+            elapsed_ms: 0,
+        };
+        let buffer = ProgressBuffer::new();
+        let sink = std::sync::Arc::new(CliProgressSink::with_writer(
+            Box::new(buffer.clone()),
+            false,
+            ProgressPolicy::STANDARD,
+        ));
+        sink.hold_success_terminal();
+        let worker_sink = std::sync::Arc::clone(&sink);
+        let (release_tx, release_rx) = mpsc::channel::<()>();
+        let (done_tx, done_rx) = mpsc::channel();
+        let result = run_pilot_inventory_with_deadline::<(), _>(
+            Some(&*sink),
+            20,
+            None,
+            || {},
+            move || {
+                worker_sink.emit(event(AnalysisProgressStage::Analyzing));
+                // Never reaches a checkpoint: only the test releases it, after
+                // the controller has given up.
+                let _ignored = release_rx.recv();
+                worker_sink.emit(event(AnalysisProgressStage::Cancelled));
+                worker_sink.emit(event(AnalysisProgressStage::Completed));
+                let _ignored = done_tx.send(());
+                Ok(())
+            },
+        );
+        // The worker is still blocked, so the only possible source of the
+        // terminal is the controller path pilot itself runs.
+        assert!(matches!(result, Ok(PilotAnalysisResult::TimedOut)));
+        let closed = buffer.text();
+        assert_eq!(
+            closed.matches("ripr progress: cancelled [repo]").count(),
+            1,
+            "{closed}"
+        );
+        let _ignored = release_tx.send(());
+        assert_eq!(done_rx.recv_timeout(Duration::from_secs(5)), Ok(()));
+        assert_eq!(buffer.text(), closed, "a late worker must add nothing");
+    }
+
     #[derive(Clone)]
     struct ProgressBuffer(std::sync::Arc<std::sync::Mutex<Vec<u8>>>);
 
@@ -1865,7 +2114,12 @@ mod tests {
         let sink = std::sync::Arc::new(CliProgressSink::with_writer(
             Box::new(buffer.clone()),
             false,
-            ProgressPolicy::STANDARD,
+            ProgressPolicy {
+                // Stage and heartbeat projection only: the #15351 non-TTY
+                // quiet window is pinned in `cli::progress` tests.
+                non_tty_hold: Duration::ZERO,
+                ..ProgressPolicy::STANDARD
+            },
         ));
         let (done_tx, done_rx) = mpsc::channel();
         let result = run_pilot_analysis_with_timeout(
@@ -2145,6 +2399,7 @@ mod tests {
                 current_change: None,
                 seam_limit: None,
                 repo_exposure_byte_bound: None,
+                inventory_evidence_limitations: &[],
             },
         )?;
 
@@ -2247,7 +2502,16 @@ mod tests {
             Err(error) => error,
             Ok(()) => return Err("file occupying --out must fail".to_string()),
         };
-        assert!(error.contains(&format!("create {out} failed:")), "{error}");
+        // The product renders the path through `human_path` (forward slashes
+        // and no verbatim prefix on Windows).
+        let shown = crate::output::path::human_path(&env.target);
+        assert!(
+            error.contains(&format!(
+                "--out {shown} is an existing file, but --out names the directory"
+            )),
+            "a file occupying the output directory names the flag and the fix: {error}"
+        );
+        assert!(!error.contains("os error"), "{error}");
         assert!(
             !error.contains("write elsewhere"),
             "a file occupying --out is not a not-writable tree: {error}"
@@ -2283,5 +2547,132 @@ mod tests {
                 .map(|result| result.map(|report| report.classified.len())),
             Some(Err("the inventory used pilot's whole deadline".to_string()))
         );
+    }
+
+    #[test]
+    fn pilot_cli_gap_normalize_parent_components_resolves_or_refuses() {
+        // Accepted: lexical `.`/`..` resolution inside the root.
+        assert_eq!(
+            normalize_parent_components(Path::new("target/./ripr/pilot")),
+            Some(PathBuf::from("target/ripr/pilot"))
+        );
+        assert_eq!(
+            normalize_parent_components(Path::new("target/ripr/../reports")),
+            Some(PathBuf::from("target/reports"))
+        );
+        assert_eq!(
+            normalize_parent_components(Path::new("a/..")),
+            Some(PathBuf::new())
+        );
+        // Refused: a `..` that climbs above the root cannot be anchored.
+        assert_eq!(normalize_parent_components(Path::new("../outside")), None);
+        assert_eq!(normalize_parent_components(Path::new("a/../../b")), None);
+    }
+
+    #[test]
+    fn pilot_cli_gap_unavailable_reason_maps_typed_causes() {
+        let fallback = "fallback reason";
+        let missing = CoreError::message(crate::git::GIT_NOT_FOUND_ON_PATH_MESSAGE);
+        assert_eq!(
+            current_change_unavailable_reason(&missing, fallback),
+            "git is not on PATH"
+        );
+        let timeout = CoreError::git_invocation_timeout("git diff", 10, true);
+        assert_eq!(
+            current_change_unavailable_reason(&timeout, fallback),
+            "git timed out"
+        );
+        let not_repo = CoreError::message("/tmp/x is not inside a Git work tree");
+        assert_eq!(
+            current_change_unavailable_reason(&not_repo, fallback),
+            "not a Git work tree"
+        );
+        // Anything else yields the caller's fixed fallback, never the raw
+        // message (paths and git stderr belong to `ripr check`).
+        let other = CoreError::message("fatal: bad object /secret/path");
+        assert_eq!(
+            current_change_unavailable_reason(&other, fallback),
+            fallback
+        );
+    }
+
+    #[test]
+    fn pilot_cli_gap_value_flags_reject_non_numeric_and_unknown_mode() {
+        assert_eq!(
+            parse_pilot_options(&args(&["--max-seams", "many"])),
+            Err("--max-seams requires a positive integer; pass a whole number of 1 or more, got \"many\"".to_string())
+        );
+        assert_eq!(
+            parse_pilot_options(&args(&["--max-seams", "-3"])),
+            Err("--max-seams requires a positive integer; pass a whole number of 1 or more, got \"-3\"".to_string())
+        );
+        assert_eq!(
+            parse_pilot_options(&args(&["--timeout-ms", "soon"])),
+            Err("--timeout-ms requires a positive integer; pass a whole number of 1 or more, got \"soon\"".to_string())
+        );
+        let error = match parse_pilot_options(&args(&["--mode", "bogus"])) {
+            Ok(_) => String::new(),
+            Err(error) => error,
+        };
+        assert!(
+            error.contains("bogus"),
+            "unknown --mode must be refused and echo the value: {error:?}"
+        );
+    }
+
+    #[test]
+    fn pilot_cli_gap_repeated_root_conflicts_but_identical_repeat_is_accepted() -> Result<(), String>
+    {
+        assert_eq!(
+            parse_pilot_options(&args(&["--root", "a", "--root", "b"])),
+            Err("pilot takes --root once (got 'a' and 'b')".to_string())
+        );
+        let same = parse_pilot_options(&args(&["--root", "a", "--root", "a"]))?;
+        assert_eq!(same.root, Path::new("a"));
+        assert!(same.root_explicit);
+        Ok(())
+    }
+
+    #[test]
+    fn pilot_cli_gap_flag_edges_quiet_mode_and_defaults() -> Result<(), String> {
+        // `--quiet` is a bare switch: it must not consume the next token.
+        let quiet_then_root = parse_pilot_options(&args(&["--quiet", "--root", "r"]))?;
+        assert!(quiet_then_root.quiet);
+        assert_eq!(quiet_then_root.root, Path::new("r"));
+        // Defaults: nothing typed means nothing explicit.
+        let defaults = parse_pilot_options(&args(&[]))?;
+        assert!(!defaults.quiet);
+        assert!(!defaults.root_explicit);
+        assert!(!defaults.out_explicit);
+        assert!(!defaults.explicit.mode);
+        assert_eq!(defaults.max_seams, 5);
+        assert_eq!(defaults.timeout_ms, DEFAULT_PILOT_TIMEOUT_MS);
+        assert!(!defaults.timeout_explicit);
+        // A typed `--mode` marks the mode explicit so config cannot override it.
+        let moded = parse_pilot_options(&args(&["--mode", "ready"]))?;
+        assert_eq!(moded.mode, Mode::Ready);
+        assert!(moded.explicit.mode);
+        // A later occurrence of a value flag wins.
+        let last = parse_pilot_options(&args(&["--max-seams", "2", "--max-seams", "9"]))?;
+        assert_eq!(last.max_seams, 9);
+        // `--out` is explicit even when it names the default location.
+        let out = parse_pilot_options(&args(&["--root", "r", "--out", "target/ripr/pilot"]))?;
+        assert!(out.out_explicit);
+        assert_eq!(out.out_dir, Path::new("target/ripr/pilot"));
+        Ok(())
+    }
+
+    #[test]
+    fn pilot_cli_gap_timings_path_sits_beside_the_summary() {
+        let artifacts = packet_dir_artifacts(Path::new("some/packet"));
+        assert_eq!(
+            pilot_timings_path(&artifacts),
+            artifacts
+                .pilot_summary_json
+                .parent()
+                .map(|dir| dir.join("pilot-timings.json"))
+                .unwrap_or_default()
+        );
+        assert!(pilot_timings_path(&artifacts).ends_with("pilot-timings.json"));
     }
 }

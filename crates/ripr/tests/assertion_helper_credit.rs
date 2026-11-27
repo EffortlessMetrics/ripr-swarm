@@ -700,3 +700,176 @@ fn integration_helper_path_qualified_owner_does_not_expose() -> Result<(), Strin
     );
     Ok(())
 }
+
+fn callback_findings(helper: &str, calls: &str) -> Result<Vec<Finding>, String> {
+    let repo = TempRepo::create(&tests_module(helper, calls))?;
+    let output = check_workspace(CheckInput {
+        root: repo.root.clone(),
+        base: None,
+        diff_file: Some(repo.root.join("diff.patch")),
+        mode: Mode::Draft,
+        format: OutputFormat::Json,
+        include_unchanged_tests: true,
+        ..CheckInput::default()
+    })?;
+    assert_eq!(
+        output.findings.len(),
+        2,
+        "premise: both changed gate probes"
+    );
+    for family in [ProbeFamily::Predicate, ProbeFamily::ReturnValue] {
+        assert_eq!(
+            output
+                .findings
+                .iter()
+                .filter(|finding| finding.probe.family == family)
+                .count(),
+            1,
+            "premise: exactly one {family:?} finding"
+        );
+    }
+    for finding in &output.findings {
+        assert_eq!(finding.probe.location.line, 2, "{finding:?}");
+        assert_eq!(finding.source_currentness.as_str(), "candidate_current");
+        assert_eq!(finding.related_tests.len(), 1, "{finding:?}");
+        assert_eq!(finding.related_tests[0].name, "boundary", "{finding:?}");
+    }
+    Ok(output.findings)
+}
+
+#[test]
+fn cloned_unused_callbacks_have_no_public_observation_or_oracle() -> Result<(), String> {
+    let helper = "    fn run_test(want: bool, _f: impl FnOnce() -> bool) {\n        assert_eq!(want, true);\n    }\n";
+    for calls in [
+        "        run_test(true, || gate(10));\n",
+        "        let c = || gate(10);\n        run_test(true, c.clone());\n",
+        "        let c = || gate(10);\n        let d = c.clone();\n        run_test(true, d);\n",
+    ] {
+        for finding in callback_findings(helper, calls)? {
+            assert_eq!(
+                finding.class,
+                ExposureClass::ReachableUnrevealed,
+                "{calls}: {finding:?}"
+            );
+            assert_eq!(
+                state(&finding.ripr.reveal.observe.state),
+                "No",
+                "{finding:?}"
+            );
+            let test = &finding.related_tests[0];
+            assert_eq!(test.oracle.as_deref(), None, "{finding:?}");
+            assert_eq!(state(&test.oracle_strength), "None", "{finding:?}");
+            assert_eq!(state(&test.oracle_kind), "Unknown", "{finding:?}");
+        }
+    }
+    Ok(())
+}
+
+#[test]
+fn invoked_literal_and_ordinary_value_clones_keep_public_oracles() -> Result<(), String> {
+    let callback = "    fn run_test(want: bool, f: impl FnOnce() -> bool) {\n        let got = f();\n        assert_eq!(got, want);\n    }\n";
+    let value = "    fn run_test(want: bool, got: bool) {\n        assert_eq!(got, want);\n    }\n";
+    for (helper, calls) in [
+        (callback, "        run_test(true, || gate(10));\n"),
+        (value, "        run_test(true, gate(10).clone());\n"),
+        (
+            value,
+            "        let got = gate(10);\n        run_test(true, got.clone());\n",
+        ),
+        (
+            value,
+            "        let got = gate(10);\n        let cloned = got.clone();\n        run_test(true, cloned);\n",
+        ),
+    ] {
+        for finding in callback_findings(helper, calls)? {
+            assert_eq!(
+                state(&finding.ripr.reveal.observe.state),
+                "Yes",
+                "{finding:?}"
+            );
+            let test = &finding.related_tests[0];
+            assert_eq!(test.oracle.as_deref(), Some("assert_eq!(got, want);"));
+            assert_eq!(state(&test.oracle_strength), "Strong", "{finding:?}");
+            assert_eq!(state(&test.oracle_kind), "ExactValue", "{finding:?}");
+        }
+    }
+    Ok(())
+}
+
+#[test]
+fn cloned_callbacks_keep_repo_audit_oracles_on_repeated_analysis() -> Result<(), String> {
+    let unused = "    fn run_test(want: bool, _f: impl FnOnce() -> bool) {\n        assert_eq!(want, true);\n    }\n";
+    let eager = "    fn run_test(want: bool, f: impl FnOnce() -> bool) {\n        let got = f();\n        assert_eq!(got, want);\n    }\n";
+    let value = "    fn run_test(want: bool, got: bool) {\n        assert_eq!(got, want);\n    }\n";
+    for (helper, calls, credited) in [
+        (unused, "        run_test(true, || gate(10));\n", false),
+        (
+            unused,
+            "        let c = || gate(10);\n        run_test(true, c.clone());\n",
+            false,
+        ),
+        (
+            unused,
+            "        let c = || gate(10);\n        let d = c.clone();\n        run_test(true, d);\n",
+            false,
+        ),
+        (eager, "        run_test(true, || gate(10));\n", true),
+        (value, "        run_test(true, gate(10).clone());\n", true),
+    ] {
+        let repo = TempRepo::create(&tests_module(helper, calls))?;
+        // The same workspace is analyzed twice, allowing the normal cache path
+        // to reuse its first result. Both passes must obey the oracle contract.
+        for pass in ["first", "repeat"] {
+            let output = check_workspace(CheckInput {
+                root: repo.root.clone(),
+                mode: Mode::Draft,
+                format: OutputFormat::RepoExposureJson,
+                ..CheckInput::default()
+            })?;
+            let rendered = ripr::render_check(&output, &OutputFormat::RepoExposureJson)?;
+            let report: serde_json::Value =
+                serde_json::from_str(&rendered).map_err(|error| error.to_string())?;
+            let seams = report["seams"].as_array().ok_or("premise: seam array")?;
+            assert_eq!(seams.len(), 2, "{pass}: {calls}: {report}");
+            for kind in ["predicate_boundary", "return_value"] {
+                assert_eq!(
+                    seams.iter().filter(|seam| seam["kind"] == kind).count(),
+                    1,
+                    "premise: exactly one {kind} seam: {report}"
+                );
+            }
+            for seam in seams {
+                assert_eq!(seam["owner"], "src/lib.rs::gate", "{report}");
+                assert_eq!(seam["expression"], "input >= 10", "{report}");
+                assert_eq!(
+                    seam["grip_class"],
+                    if credited {
+                        "strongly_gripped"
+                    } else {
+                        "reachable_unrevealed"
+                    },
+                    "{pass}: {calls}: {report}"
+                );
+                assert_eq!(
+                    seam["evidence"]["observe"],
+                    if credited { "yes" } else { "no" }
+                );
+                let tests = seam["related_tests"]
+                    .as_array()
+                    .ok_or("premise: related tests")?;
+                assert_eq!(tests.len(), 1, "{report}");
+                assert_eq!(tests[0]["name"], "boundary", "{report}");
+                assert_eq!(tests[0]["file"], "src/lib.rs", "{report}");
+                assert_eq!(
+                    tests[0]["oracle_strength"],
+                    if credited { "strong" } else { "none" }
+                );
+                assert_eq!(
+                    tests[0]["oracle_kind"],
+                    if credited { "exact_value" } else { "unknown" }
+                );
+            }
+        }
+    }
+    Ok(())
+}

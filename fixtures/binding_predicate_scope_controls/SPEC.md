@@ -24,6 +24,17 @@ generic `static_unknown` probe family at its own line (classified
 `no_static_path`, because no test reaches the owner), and no
 `binding_predicate_relation` evidence appears anywhere in the output.
 
+The expected static class per finding (machine-checked against
+`expected/check.json` by `check-fixture-contracts`, #12928):
+
+```expected-classes
+probe:src_lib.rs:static_unknown:c075f160 -> no_static_path
+probe:src_lib.rs:static_unknown:14b67539 -> no_static_path
+probe:src_lib.rs:static_unknown:61eb9e44 -> no_static_path
+probe:src_lib.rs:static_unknown:36cb5bcb -> no_static_path
+probe:src_lib.rs:static_unknown:b52439fa -> no_static_path
+```
+
 ## Must Not
 
 - Relate a binding across functions, through a shadow, through a

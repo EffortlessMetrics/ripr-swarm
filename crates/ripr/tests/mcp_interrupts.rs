@@ -1,4 +1,4 @@
-//! Real stdio cancellation controls for #9895/#9979. This binary has one
+//! Real stdio cancellation controls for #9895/#9979 and the idle-signal exit of #14102. This binary has one
 //! Linux test so its subreaper owns only this fixture's descendants. Signals
 //! use pinned pidfds; no cleanup signals a remembered numeric PID.
 #![cfg(all(target_os = "linux", feature = "lang-rust"))]
@@ -13,7 +13,6 @@ use std::collections::BTreeSet;
 use std::fs::{File, OpenOptions};
 use std::io::{Read, Seek, SeekFrom, Write};
 use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
-use std::os::unix::process::ExitStatusExt;
 use std::path::{Path, PathBuf};
 use std::process::{Child, ChildStdin, Command, ExitStatus, Stdio};
 use std::time::{Duration, Instant};
@@ -475,14 +474,40 @@ impl Session {
         Ok(())
     }
 
-    fn close_eof(&mut self) -> Result<(), String> {
-        self.stdin = None;
-        let status = bounded_wait(&mut self.process.child, REAP_BUDGET)?
-            .ok_or("server did not settle on stdin EOF")?;
-        if !status.success() {
-            return Err(format!("server EOF exit was {status}"));
+    /// #14102: a signal delivered while no request is admitted ends the
+    /// session cleanly. Stdin stays open throughout, so the exit cannot be
+    /// the transport's EOF path, and the signal must add no output.
+    fn require_idle_signal_exit(&mut self, signal: Signal) -> Result<(), String> {
+        if self.stdin.is_none() {
+            return Err("idle signal control requires an open stdin".into());
         }
+        let stderr_before = std::fs::metadata(&self.stderr)
+            .map_err(|error| error.to_string())?
+            .len();
+        self.process.pinned.signal(signal)?;
+        let status = bounded_wait(&mut self.process.child, REAP_BUDGET)?
+            .ok_or("idle signal did not end the server while stdin stayed open")?;
         self.process.pinned.reaped = true;
+        if !status.success() {
+            return Err(format!("idle signal exit was {status}"));
+        }
+        let stdout_len = self
+            .output
+            .metadata()
+            .map_err(|error| error.to_string())?
+            .len();
+        if stdout_len != self.read_bytes || !self.pending.is_empty() {
+            return Err(format!(
+                "idle signal exit wrote unrequested output: {} bytes beyond the consumed replies",
+                stdout_len.saturating_sub(self.read_bytes) + self.pending.len() as u64
+            ));
+        }
+        let stderr_after = std::fs::metadata(&self.stderr)
+            .map_err(|error| error.to_string())?
+            .len();
+        if stderr_after != stderr_before {
+            return Err("idle signal exit wrote to stderr".into());
+        }
         Ok(())
     }
 }
@@ -904,18 +929,12 @@ impl Harness {
         successful_snapshot(&completed_document(session.receive("early-primary")?)?)?;
         tree.require_product_settlement()?;
         std::fs::remove_file(self.control.join("mode")).map_err(|error| error.to_string())?;
-        let previous = successful_snapshot(&session.refresh("before-idle", json!({}))?)?;
-        session.process.pinned.signal(Signal::TERM)?;
-        session.ping("idle-signal-observed")?;
-        cancelled_snapshot(&session.refresh("consume-idle", json!({}))?, &previous)?;
-        successful_snapshot(&session.refresh("after-idle", json!({}))?)?;
-        // A configuration refusal is also a terminal attempt. Its original
-        // diagnostic wins, but it must consume the pending idle signal so
-        // fixing the configuration restores this same session immediately.
+        let previous = successful_snapshot(&session.refresh("before-config", json!({}))?)?;
+        // A configuration refusal is also a terminal attempt: its typed
+        // diagnostic and the last-good snapshot survive, and fixing the
+        // configuration restores this same session immediately.
         std::fs::write(self.root.join("repo/ripr.toml"), "invalid = [\n")
             .map_err(|error| error.to_string())?;
-        session.process.pinned.signal(Signal::INT)?;
-        session.ping("config-idle-observed")?;
         let invalid = session.refresh("invalid-config", json!({}))?;
         if invalid["attempt"]["state"] != "failed"
             || invalid["attempt"]["failure"]["code"] != "config_invalid"
@@ -937,33 +956,27 @@ impl Harness {
             .ok_or("sentinel missing")?
             .pinned
             .require_live()?;
-        session.close_eof()?;
-        Self::trace_children(&mut self.trace, "after-close-eof");
+        // #14102: with no attempt in flight nothing else consumes a signal,
+        // so it stops the server itself. The settled refreshes above prove the
+        // signals they consumed did not; this one ends the session cleanly
+        // while stdin stays open, and no later refresh inherits it.
+        session.require_idle_signal_exit(Signal::TERM)?;
+        Self::trace_children(&mut self.trace, "after-idle-terminate");
 
-        // Repeated native escape is exercised only with no refresh children.
-        // First-signal survival has an actual same-session ping acknowledgment.
-        let repeated_logs = self.root.join("repeated");
-        std::fs::create_dir(&repeated_logs).map_err(|error| error.to_string())?;
-        self.stderr_paths.push(repeated_logs.join("stderr.log"));
+        // The Ctrl-C a person presses after starting the server by hand:
+        // a first idle SIGINT, before any refresh, is also a clean exit.
+        let interrupted_logs = self.root.join("interrupted");
+        std::fs::create_dir(&interrupted_logs).map_err(|error| error.to_string())?;
+        self.stderr_paths.push(interrupted_logs.join("stderr.log"));
         self.session = Some(Session::spawn(
             &self.root.join("repo"),
             &self.control,
-            &repeated_logs,
+            &interrupted_logs,
         )?);
-        let session = self.session.as_mut().ok_or("repeat session missing")?;
-        session.process.pinned.signal(Signal::INT)?;
-        session.ping("first-signal-session-live")?;
-        Self::trace_children(&mut self.trace, "after-escape-ping");
-        session.process.pinned.signal(Signal::TERM)?;
-        let status = bounded_wait(&mut session.process.child, REAP_BUDGET)?
-            .ok_or("repeated signal did not terminate the server")?;
-        if status.signal() != Some(Signal::TERM.as_raw()) {
-            return Err(format!(
-                "repeated signal lost native SIGTERM status: {status}"
-            ));
-        }
-        session.process.pinned.reaped = true;
-        Self::trace_children(&mut self.trace, "after-escape");
+        let session = self.session.as_mut().ok_or("interrupt session missing")?;
+        session.ping("before-idle-interrupt")?;
+        session.require_idle_signal_exit(Signal::INT)?;
+        Self::trace_children(&mut self.trace, "after-idle-interrupt");
         self.sentinel
             .as_ref()
             .ok_or("sentinel missing")?

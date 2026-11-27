@@ -159,6 +159,12 @@ should precede blocking CI promotion.
 
 ### Local Rust gate selection roots
 
+Public `check-fast`, `ci-fast`, `precommit` and `shape` calls require the
+RIPR workspace root. They resolve the caller's Cargo workspace, verify its
+`ripr` and `xtask` members and compare canonical directories. From a member or
+documentation directory they report both paths before formatting, sorting
+allowlists or writing gate reports. The caller's working directory stays intact.
+
 The existing local fast gate is discoverable through `cargo xtask help --all`,
 `cargo xtask help check-fast`, and the command catalog. Detailed help names its
 committed-diff selection, live-worktree execution, local reports, compilation
@@ -232,6 +238,29 @@ Other applicable spec/document gates remain necessary. The precommit gate
 table, required hosted policy, advisory source-of-truth workflow and support
 claims are unchanged.
 
+### Release-note CLI inputs to the scoped docs gate
+
+The revision-bound docs gate compares committed release-note command paths and
+flags using the public guide contract's parser. Changed lines containing a ripr command prefix
+and their shell continuations also require the candidate CLI contract, including
+bare commands and bracketed examples outside the flag parser. Surrounding prose
+can change without widening this check. A changed-list invocation lacks the two
+committed inputs and widens for release notes. The protected docs gate runs the
+full precommit table and its Markdown tests.
+
+### Gemini context pointer parity
+
+The root `GEMINI.md` is a regular file containing only the relative import
+`@./AGENTS.md`, terminated by LF or CRLF. `check-agent-skills` requires that
+pointer, refuses a workspace `.gemini/settings.json` or `.gemini/skills` path,
+and retains the existing validation of the shared `.agents/skills` inventory.
+The policy preflight receipt binds the exact pointer bytes and the presence of
+the competing paths. An empty competing skill directory changes that identity,
+as does switching the otherwise valid pointer between LF and CRLF.
+
+This is a checkout-level structural check. Gemini CLI activation and behavior
+require their own runtime evidence under [#14255](https://github.com/EffortlessMetrics/ripr-swarm/issues/14255).
+
 ## Non-Goals
 
 - No runtime analyzer behavior.
@@ -304,12 +333,19 @@ Focused tests for `cargo xtask check-goals` source-of-truth coverage include:
 - `rejects_unknown_referenced_artifact`;
 - `rejects_unsupported_policy_field`.
 
+The subprocess test
+`xtask/tests/workspace_gate_root.rs::public_gates_refuse_nested_calls_before_touching_the_workspace`
+checks the four public dispatch arms against a second workspace and a foreign
+workspace with the same directory layout.
+
 Local routing controls in `xtask/tests/support_tier_fast_route.rs` and
 `xtask/src/check_fast_strict.rs` include:
 
 - `committed_spec_declarations_reach_actual_check_fast_dispatch`: actual leaf
-  and aggregate execution, invalid/canonical declarations, current failure and
-  success receipts, and zero-path no-op;
+  and aggregate execution in a small independent Git/Cargo repository, extended
+  and inline malformed declarations, canonical `None.`, current selector-bound
+  failure and success receipts, path/root isolation, and zero-path no-op. The
+  same test retains one real-repository support-tier leaf check;
 - `selected_support_tier_inputs_require_leaf_receipt`: every applicable input
   family requires a support-tier entry in the bounded `Ran` section;
 - `support_tier_near_matches_keep_noop_applicability`: unrelated paths and empty
@@ -341,6 +377,8 @@ This spec coordinates these accepted source-of-truth surfaces:
 - `cargo xtask check-doc-artifacts`;
 - support-tier claim map in `docs/status/SUPPORT_TIERS.md`;
 - `cargo xtask check-support-tiers`;
+- public maintenance gate root validation in `xtask/src/workspace_gate.rs::from_root`,
+  called by `xtask/src/dispatch.rs::execute`;
 - local applicability and execution in `xtask/src/main.rs::check_fast_gates` and
   `::categorize_changed_files`, with strict dispatch receipt validation in
   `xtask/src/check_fast_strict.rs::validate_fast_report`;

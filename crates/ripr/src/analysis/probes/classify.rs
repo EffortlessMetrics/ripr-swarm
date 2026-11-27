@@ -2,7 +2,9 @@ use super::super::rust_index::{ProbeShapeFact, ProbeShapeKind, RustIndex};
 use super::family::family_for_probe_shape;
 use crate::analysis::extract::mask_comments_and_strings;
 use crate::analysis::facts::FileData;
-use crate::analysis::syntax::{RaRustSyntaxAdapter, RustSyntaxAdapter, parse_clean_source_file};
+use crate::analysis::syntax::{
+    RaRustSyntaxAdapter, RustSyntaxAdapter, parse_clean_source_file, rust_nesting_refusal,
+};
 use crate::domain::ProbeFamily;
 use ra_ap_syntax::{AstNode, ast};
 use std::collections::{BTreeMap, HashMap, HashSet};
@@ -146,6 +148,24 @@ pub(super) fn removed_type_bounds(
     }
 }
 
+/// What an unsafe boundary is for a changed line. It decides the precedence
+/// between the boundary's `static_unknown` finding and a classified probe on
+/// the same line and owner (#15348), a rule stated here and applied once, in
+/// `probes/diff.rs`.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(super) enum UnsafeBoundary {
+    /// The edit lies in the body, past an opening brace the removed line
+    /// carries unchanged. The boundary is context for the edit: a classified
+    /// probe that carries the edit replaces its finding, and the finding
+    /// stays when no probe does.
+    Enclosing,
+    /// The line carries the opening brace, and the tokens up to it differ from
+    /// the removed line's or there is no removed line: the qualifier, the
+    /// signature or the brace changed. The boundary is that edit, so its
+    /// finding stays beside any classified probe.
+    EditedOpener,
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct ParserProbeShape<'a> {
     pub(crate) family: ProbeFamily,
@@ -153,7 +173,12 @@ pub(crate) struct ParserProbeShape<'a> {
     pub(crate) start_byte: usize,
     pub(crate) text: &'a str,
     pub(crate) standalone_call: bool,
-    pub(crate) unsafe_boundary: bool,
+    pub(super) unsafe_boundary: Option<UnsafeBoundary>,
+    /// #14333: an unsafe boundary opened on a line before the changed line.
+    /// Its label (`unsafe fn inline_len`) names the enclosing obligation, not
+    /// the edit, so the probe built from it carries the changed line as its
+    /// `after` text while the label stays the expression and identity.
+    pub(crate) unsafe_interior: bool,
 }
 
 pub(crate) fn parser_probe_shapes_for_changed_line<'a>(
@@ -189,7 +214,7 @@ pub(crate) fn parser_probe_shapes_for_changed_line_against<'a>(
     let ranker = ChangedLineRank::build(
         changed_text,
         facts.probe_shapes.iter().filter_map(|shape| {
-            (shape.start_line <= line && line <= shape.end_line).then_some(shape.text.as_str())
+            (shape.start_line() <= line && line <= shape.end_line()).then_some(shape.text.as_str())
         }),
     );
     // The unchanged test counts token runs of every overlapping shape in the
@@ -200,7 +225,7 @@ pub(crate) fn parser_probe_shapes_for_changed_line_against<'a>(
         let needles = facts
             .probe_shapes
             .iter()
-            .filter(|shape| shape.start_line <= line && line <= shape.end_line)
+            .filter(|shape| shape.start_line() <= line && line <= shape.end_line())
             .map(|shape| {
                 (
                     shape.text.trim(),
@@ -233,17 +258,34 @@ pub(crate) fn parser_probe_shapes_for_changed_line_against<'a>(
             })
     };
     let mut selected = Vec::<(ParserProbeShape<'a>, Option<(u8, bool, usize)>)>::new();
+    // #14192: parsed at most once per changed line, and only when a
+    // multi-line returned-value shape spans it.
+    let mut parsed: Option<Option<ra_ap_syntax::Parse<ast::SourceFile>>> = None;
     for shape in &facts.probe_shapes {
-        if shape.start_line > line || line > shape.end_line {
+        if shape.start_line() > line || line > shape.end_line() {
             continue;
         }
         let family = family_for_probe_shape(shape.kind);
-        let unsafe_boundary = shape.kind == ProbeShapeKind::UnsafeBoundary;
-        if unsafe_boundary && !unsafe_boundary_owns_changed_line(facts, shape, line) {
+        if matches!(family, ProbeFamily::ReturnValue | ProbeFamily::ErrorPath)
+            && shape.start_line() < line
+            && line < shape.end_line()
+            && parsed
+                .get_or_insert_with(|| last_file_parse(&facts.source))
+                .as_ref()
+                .is_some_and(|parse| line_is_nested_statement(&facts.source, parse, shape, line))
+        {
             continue;
         }
+        let unsafe_boundary = if shape.kind == ProbeShapeKind::UnsafeBoundary {
+            let Some(boundary) = unsafe_boundary_for_line(facts, shape, line, removed_text) else {
+                continue;
+            };
+            Some(boundary)
+        } else {
+            None
+        };
         let candidate_key = selection_key(&family, shape.text.as_str());
-        if !unsafe_boundary && candidate_key.is_none() {
+        if unsafe_boundary.is_none() && candidate_key.is_none() {
             continue;
         }
         let candidate = ParserProbeShape {
@@ -252,23 +294,25 @@ pub(crate) fn parser_probe_shapes_for_changed_line_against<'a>(
             // source text. Project them at the changed line so diff synthesis
             // emits one explicit canonical probe while `start_byte` keeps the
             // stable boundary identity used for deduplication.
-            start_line: if unsafe_boundary {
+            start_line: if unsafe_boundary.is_some() {
                 line
             } else {
-                shape.start_line
+                shape.start_line()
             },
-            start_byte: shape.start_byte,
+            start_byte: shape.start_byte(),
             text: shape.text.as_str(),
             // Resolved for the winners only: it scans the line prefix, which
             // is linear in the line per shape (#9895).
             standalone_call: true,
             unsafe_boundary,
+            unsafe_interior: unsafe_boundary.is_some() && shape.start_line() < line,
         };
         if let Some(position) = selected
             .iter()
             .position(|(current, _)| current.family == candidate.family)
         {
-            if candidate.unsafe_boundary && selected[position].0.unsafe_boundary {
+            if candidate.unsafe_boundary.is_some() && selected[position].0.unsafe_boundary.is_some()
+            {
                 if candidate.start_byte > selected[position].0.start_byte {
                     selected[position] = (candidate, candidate_key);
                 }
@@ -287,7 +331,9 @@ pub(crate) fn parser_probe_shapes_for_changed_line_against<'a>(
     for (shape, _) in &mut selected {
         shape.standalone_call = parser_call_shape_is_standalone(facts, shape);
     }
-    if selected.iter().all(|(shape, _)| shape.unsafe_boundary)
+    if selected
+        .iter()
+        .all(|(shape, _)| shape.unsafe_boundary.is_some())
         && let Some(declaration) = declarations::declaration_shape(facts, line, changed_text)
     {
         // Keep the enclosing unsafe obligation as well as the exact declaration.
@@ -304,68 +350,234 @@ pub(crate) fn parser_probe_shapes_for_changed_line_against<'a>(
     selected.into_iter().map(|(shape, _)| shape).collect()
 }
 
+thread_local! {
+    /// #14192: the last whole-file parse [`line_is_nested_statement`] read.
+    /// A diff visits one file's changed lines in a row, and a large file is
+    /// past the shared memo's size cap, so one entry keyed by the full text
+    /// saves a parse per changed line.
+    static LAST_FILE_PARSE: std::cell::RefCell<Option<(String, Option<ra_ap_syntax::Parse<ast::SourceFile>>)>> =
+        const { std::cell::RefCell::new(None) };
+}
+
+fn last_file_parse(source: &str) -> Option<ra_ap_syntax::Parse<ast::SourceFile>> {
+    LAST_FILE_PARSE.with(|last| {
+        let mut last = last.borrow_mut();
+        if let Some((text, parse)) = last.as_ref()
+            && text == source
+        {
+            return parse.clone();
+        }
+        let parse = parse_clean_source_file(source);
+        *last = Some((source.to_string(), parse.clone()));
+        parse
+    })
+}
+
+/// #14192: whether the changed `line` lies wholly inside a statement (`let`,
+/// expression statement or item) of a block nested in the returned
+/// expression `shape` spans: `let doubled = item * 2;` inside
+/// `with(|| { .. })`, `Box::pin(async move { .. })` or an `async { .. }` tail.
+/// Such a line is a statement of its own block, not part of the returned
+/// value, so the outer `return_value` / `error_path` shape does not apply to
+/// it; a `return` on it keeps its own narrower shape. A nested block's tail
+/// expression, a method-chain link and an argument line are not statements
+/// and keep the outer shape. Any shape or line the parse cannot place keeps
+/// today's selection.
+fn line_is_nested_statement(
+    source: &str,
+    parse: &ra_ap_syntax::Parse<ast::SourceFile>,
+    shape: &ProbeShapeFact,
+    line: usize,
+) -> bool {
+    let Some(line_range) = source_line_byte_range(source, line) else {
+        return false;
+    };
+    let Some(text) = source.get(line_range.clone()) else {
+        return false;
+    };
+    let leading = text.len() - text.trim_start().len();
+    let trailing = text.len() - text.trim_end().len();
+    if text.trim().is_empty() {
+        return false;
+    }
+    let (Ok(content_start), Ok(content_end)) = (
+        u32::try_from(line_range.start + leading),
+        u32::try_from(line_range.end - trailing),
+    ) else {
+        return false;
+    };
+    let shape_range = ra_ap_syntax::TextRange::new(shape.start_byte.into(), shape.end_byte.into());
+    let content = ra_ap_syntax::TextRange::new(content_start.into(), content_end.into());
+    if shape_range.is_empty() || !shape_range.contains_range(content) {
+        return false;
+    }
+    let root = parse.tree();
+    if shape_range.end() > root.syntax().text_range().end() {
+        return false;
+    }
+    let ra_ap_syntax::NodeOrToken::Node(outer) = root.syntax().covering_element(shape_range) else {
+        return false;
+    };
+    if outer.text_range() != shape_range {
+        return false;
+    }
+    // A trailing `// comment` sits outside the statement's range, so the line
+    // content ends at its last non-trivia token (#14917 review).
+    let mut content_end = content.end();
+    while content_end > content.start() {
+        let Some(token) = root
+            .syntax()
+            .token_at_offset(content_end)
+            .left_biased()
+            .filter(|token| token.kind().is_trivia())
+        else {
+            break;
+        };
+        content_end = token.text_range().start().max(content.start());
+    }
+    let content = ra_ap_syntax::TextRange::new(content.start(), content_end);
+    if content.is_empty() {
+        return false;
+    }
+    let start = match root.syntax().covering_element(content) {
+        ra_ap_syntax::NodeOrToken::Node(node) => node,
+        ra_ap_syntax::NodeOrToken::Token(token) => match token.parent() {
+            Some(parent) => parent,
+            None => return false,
+        },
+    };
+    // The innermost statement of a block that holds the whole line, walking up
+    // from the line rather than down the whole shape (#14917 review).
+    let Some(statement) = start.ancestors().find(|node| {
+        ast::Stmt::can_cast(node.kind())
+            && node
+                .parent()
+                .is_some_and(|parent| ast::StmtList::can_cast(parent.kind()))
+            && node.text_range().contains_range(content)
+    }) else {
+        return false;
+    };
+    if !shape_range.contains_range(statement.text_range()) || statement == outer {
+        return false;
+    }
+    // Only a closure or `async` body between the statement and the shape runs
+    // as its own unit; a statement of a plain, `if`, `match` or `loop` block
+    // still runs in the owner's own body and feeds its value (#14917 review).
+    statement
+        .ancestors()
+        .skip(1)
+        .take_while(|node| outer.text_range().contains_range(node.text_range()))
+        .any(|node| {
+            ast::ClosureExpr::can_cast(node.kind())
+                || ast::BlockExpr::cast(node).is_some_and(|block| block.async_token().is_some())
+        })
+}
+
 /// A line-only diff cannot identify which bytes changed when code outside an
 /// unsafe boundary shares its opening or closing line. Re-resolve the exact
 /// AST range and fail closed on those ambiguous edge lines; interior lines and
 /// edge lines wholly owned by the boundary remain eligible.
-fn unsafe_boundary_owns_changed_line(
+///
+/// For an eligible line, also say which of the two jobs the boundary does:
+/// `Enclosing` when the edit lies past the body's opening brace, which the
+/// removed line must carry unchanged when the brace shares the line, and
+/// `EditedOpener` otherwise. The precedence that follows is on
+/// [`UnsafeBoundary`].
+fn unsafe_boundary_for_line(
     facts: &FileData,
     shape: &ProbeShapeFact,
     line: usize,
-) -> bool {
-    let Some(boundary) = unsafe_boundary_syntax_range(facts, shape) else {
-        return false;
-    };
-    let Some(line_range) = source_line_byte_range(&facts.source, line) else {
-        return false;
-    };
+    removed: Option<&str>,
+) -> Option<UnsafeBoundary> {
+    let (boundary, body) = unsafe_boundary_syntax(facts, shape)?;
+    let line_range = source_line_byte_range(&facts.source, line)?;
     let boundary_start = u32::from(boundary.start()) as usize;
     let boundary_end = u32::from(boundary.end()) as usize;
     if boundary_start >= line_range.end || boundary_end <= line_range.start {
-        return false;
+        return None;
     }
 
-    if line == shape.start_line {
+    if line == shape.start_line() {
         let prefix_end = boundary_start.max(line_range.start).min(line_range.end);
-        let Some(prefix) = facts.source.get(line_range.start..prefix_end) else {
-            return false;
-        };
+        let prefix = facts.source.get(line_range.start..prefix_end)?;
         if !boundary_edge_is_empty(prefix) {
-            return false;
+            return None;
         }
     }
-    if line == shape.end_line {
+    if line == shape.end_line() {
         let suffix_start = boundary_end.max(line_range.start).min(line_range.end);
-        let Some(suffix) = facts.source.get(suffix_start..line_range.end) else {
-            return false;
-        };
+        let suffix = facts.source.get(suffix_start..line_range.end)?;
         if !boundary_edge_is_empty(suffix) {
-            return false;
+            return None;
         }
     }
-    true
+    // A body edit can share its line with the opening brace. Only call the
+    // opener unchanged if the removed line preserves the prefix through it.
+    let opening_brace = body
+        .and_then(|block| block.stmt_list())
+        .and_then(|statements| statements.syntax().first_token())
+        .filter(|token| token.text() == "{");
+    let in_body = opening_brace.is_some_and(|brace| {
+        let start = usize::from(brace.text_range().end());
+        line_range.start >= start
+            || (start <= line_range.end
+                && facts
+                    .source
+                    .get(line_range.start..start)
+                    .zip(removed)
+                    .is_some_and(|(prefix, old)| unchanged_unsafe_opener(prefix, old)))
+    });
+    Some(if in_body {
+        UnsafeBoundary::Enclosing
+    } else {
+        UnsafeBoundary::EditedOpener
+    })
 }
 
-fn unsafe_boundary_syntax_range(
+/// Compare through the body's opening brace, preserving token boundaries and
+/// literal contents while allowing whitespace and comments to change.
+fn unchanged_unsafe_opener(prefix: &str, old: &str) -> bool {
+    if old.trim_start().starts_with(prefix.trim_start()) {
+        return true;
+    }
+    if rust_nesting_refusal(old).is_some() || rust_nesting_refusal(prefix).is_some() {
+        return false;
+    }
+    fn tokens(text: &str) -> impl Iterator<Item = ra_ap_syntax::SyntaxToken> {
+        ast::SourceFile::parse(text, ra_ap_syntax::Edition::CURRENT)
+            .syntax_node()
+            .descendants_with_tokens()
+            .filter_map(|element| element.into_token())
+            .filter(|token| !token.kind().is_trivia())
+    }
+    let mut previous = tokens(old);
+    tokens(prefix).all(|expected| {
+        previous.next().is_some_and(|actual| {
+            expected.kind() == actual.kind() && expected.text() == actual.text()
+        })
+    })
+}
+
+fn unsafe_boundary_syntax(
     facts: &FileData,
     shape: &ProbeShapeFact,
-) -> Option<ra_ap_syntax::TextRange> {
+) -> Option<(ra_ap_syntax::TextRange, Option<ast::BlockExpr>)> {
     let parse = parse_clean_source_file(&facts.source)?;
     let root = parse.tree();
     for function in root.syntax().descendants().filter_map(ast::Fn::cast) {
         let Some(token) = function.unsafe_token() else {
             continue;
         };
-        if u32::from(token.text_range().start()) as usize == shape.start_byte {
-            return Some(function.syntax().text_range());
+        if u32::from(token.text_range().start()) == shape.start_byte {
+            return Some((function.syntax().text_range(), function.body()));
         }
     }
     for block in root.syntax().descendants().filter_map(ast::BlockExpr::cast) {
         let Some(token) = block.unsafe_token() else {
             continue;
         };
-        if u32::from(token.text_range().start()) as usize == shape.start_byte {
-            return Some(block.syntax().text_range());
+        if u32::from(token.text_range().start()) == shape.start_byte {
+            return Some((block.syntax().text_range(), Some(block)));
         }
     }
     None
@@ -461,6 +673,99 @@ fn is_token_run(haystack: &str, masked: &[u8], start: usize, needle: &str) -> bo
     let open_end = needle.chars().next_back().is_none_or(|ch| !is_word(ch))
         || after.is_none_or(|ch| !is_word(ch));
     open_start && open_end
+}
+
+/// How often `needle` occurs in `haystack` as a code token run that no
+/// neighbouring operand syntax extends (#14722): `total > limit` is not
+/// found in `subtotal > limit`, `total > limit.max`, `total > limit[0]`,
+/// `total > limit + 1` or `x.total > limit`, but is found in
+/// `let over = total > limit;`. A shape the diff producer cannot cut is
+/// unchanged only when the old line holds it at least this often.
+pub(super) fn operand_bounded_token_run_count(haystack: &str, needle: &str) -> usize {
+    if needle.is_empty() {
+        return 0;
+    }
+    let masked = mask_comments_and_strings(haystack);
+    haystack
+        .match_indices(needle)
+        .filter(|(start, _)| {
+            // Neighbours are read on the masked line, so a comment beside
+            // the comparison (`a > b // note`) is not read as an operator.
+            let next = masked
+                .get(start + needle.len()..)
+                .unwrap_or_default()
+                .trim_start();
+            let previous = masked.get(..*start).unwrap_or_default().trim_end();
+            is_token_run(haystack, masked.as_bytes(), *start, needle)
+                && !extends_rightward(next)
+                && !extends_leftward(previous)
+        })
+        .count()
+}
+
+/// Whether `next` (the text after a match, leading space trimmed) continues
+/// the right operand: a member, call, index, `?`, an arithmetic or bit
+/// operator (`|` and `&` but not `||`/`&&`, which end the operand), a shift,
+/// a macro `!`, a path, or an `as` cast.
+fn extends_rightward(next: &str) -> bool {
+    let doubled = |op: &str| next.starts_with(op);
+    if next.starts_with([
+        '.', '(', '[', '?', '+', '-', '*', '/', '%', ':', '^', '<', '>', '!',
+    ]) {
+        return true;
+    }
+    if (next.starts_with('|') && !doubled("||")) || (next.starts_with('&') && !doubled("&&")) {
+        return true;
+    }
+    next.strip_prefix("as")
+        .is_some_and(|rest| !rest.starts_with(|ch: char| ch.is_alphanumeric() || ch == '_'))
+}
+
+/// Whether `previous` (the text before a match, trailing space trimmed)
+/// continues the left operand: a member or path, an arithmetic or bit
+/// operator (`|` and `&` but not `||`/`&&`), a unary `!`, or a shift.
+/// A struct field `:`, a match arrow `=>`, a return arrow `->`, a range
+/// `..` and closure parameters `|x|` end the operand instead.
+fn extends_leftward(previous: &str) -> bool {
+    if previous.ends_with("..") {
+        return false;
+    }
+    if previous.ends_with(['.', '+', '-', '*', '/', '%', '!', '^']) {
+        return true;
+    }
+    let single = |op: char, doubled: &str| previous.ends_with(op) && !previous.ends_with(doubled);
+    (single('|', "||") && !closes_closure_parameters(previous))
+        || single('&', "&&")
+        || previous.ends_with("::")
+        || previous.ends_with(">>")
+        || previous.ends_with("<<")
+}
+
+/// Whether `previous` ends with a closure parameter list (`|x|`,
+/// `move |a, b: u8|`, `|x: &Vec<u8>|`) rather than a bit-or operand: the
+/// opening `|` follows an expression start (`(`, `,`, `=`, `=>`, `{`, `;`,
+/// `[`, the line start, `move`, `return` or another closure's parameters),
+/// not a left operand as in `m | n | a > b`. A binary `|` always has a left
+/// operand, so the parameter text itself needs no check.
+fn closes_closure_parameters(previous: &str) -> bool {
+    let Some(head) = previous.strip_suffix('|') else {
+        return false;
+    };
+    let Some(open) = head.rfind('|') else {
+        return false;
+    };
+    let before = head.get(..open).unwrap_or_default().trim_end();
+    let ends_with_word = |word: &str| {
+        before
+            .strip_suffix(word)
+            .is_some_and(|rest| !rest.ends_with(|ch: char| ch.is_alphanumeric() || ch == '_'))
+    };
+    before.is_empty()
+        || before.ends_with(['(', ',', '=', '{', ';', '['])
+        || before.ends_with("=>")
+        || ends_with_word("move")
+        || ends_with_word("return")
+        || closes_closure_parameters(before)
 }
 
 /// A record field must be a whole syntactic unit, not the head or tail of a
@@ -749,6 +1054,35 @@ pub fn should_ignore_changed_line(text: &str) -> bool {
         || text.starts_with("mod ")
         || text.starts_with("#")
         || is_visible_module_declaration(text)
+        || is_plain_extern_crate(text)
+}
+
+/// A private, plain `extern crate name;` only links a crate, the same way a
+/// private `use` imports one, so it holds no behavior for a test to notice
+/// (#14403). A visibility-qualified form (`pub extern crate foo;`) re-exports
+/// the crate under the declaring module's path, like a visible `use`, and the
+/// renaming form (`extern crate core as std;`, `extern crate self as name;`)
+/// changes what a name means for the rest of the crate; both stay probed, as
+/// does any line with trailing code.
+fn is_plain_extern_crate(text: &str) -> bool {
+    let Some(body) = text.strip_suffix(';') else {
+        return false;
+    };
+    body.strip_prefix("extern")
+        .filter(|tail| tail.starts_with(char::is_whitespace))
+        .map(str::trim_start)
+        .and_then(|tail| tail.strip_prefix("crate"))
+        .filter(|tail| tail.starts_with(char::is_whitespace))
+        .map(str::trim)
+        .is_some_and(|name| {
+            let name = name.strip_prefix("r#").unwrap_or(name);
+            name != "self"
+                && name
+                    .chars()
+                    .next()
+                    .is_some_and(|c| c.is_ascii_alphabetic() || c == '_')
+                && name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
+        })
 }
 
 /// A visibility-qualified out-of-line `mod name;` declaration
@@ -854,6 +1188,65 @@ pub(crate) fn is_item_header(text: &str) -> bool {
                 && !generics_hold_expression(rest)
         })
     })
+}
+
+/// A one-line `type` item, whether a trait's associated type (`type Eq: CmpEq;`,
+/// `type Item;`), an impl's binding (`type Eq = __m128i;`) or a type alias
+/// (`pub type Map<K> = BTreeMap<K, u8>;`), declares a type and runs nothing
+/// (#14429). Its `name: Bound` only looks like a constructed field `name:
+/// value`, so it reads as one `static_unknown`, like an item header, and a
+/// changed type stays visible. The line must hold the whole item, ending in
+/// `;`. A type that holds an expression (a block, a macro, or any array
+/// length) keeps its ordinary families.
+pub(crate) fn is_type_item_declaration(text: &str) -> bool {
+    let masked = mask_comments_and_strings(text);
+    let text = masked.trim();
+    let declared = super::diff::strip_visibility(text);
+    let declared = declared
+        .strip_prefix("default")
+        .filter(|rest| rest.starts_with(char::is_whitespace))
+        .map_or(declared, str::trim_start);
+    let Some(rest) = declared
+        .strip_prefix("type")
+        .filter(|rest| rest.starts_with(char::is_whitespace))
+        .map(str::trim_start)
+    else {
+        return false;
+    };
+    let name_len = rest
+        .find(|c: char| !(c.is_ascii_alphanumeric() || c == '_'))
+        .unwrap_or(rest.len());
+    let name = rest.get(..name_len).unwrap_or_default();
+    let starts_like_identifier = name
+        .chars()
+        .next()
+        .is_some_and(|c| c.is_ascii_alphabetic() || c == '_');
+    let Some(body) = rest.strip_suffix(';') else {
+        return false;
+    };
+    // A `;` outside brackets joins a second statement (`type A = u8; f();`);
+    // one inside an array type (`[u8; 4]`) is part of the type.
+    let mut depth = 0usize;
+    let second_statement = body.chars().any(|c| match c {
+        '[' | '(' | '<' => {
+            depth += 1;
+            false
+        }
+        ']' | ')' | '>' => {
+            depth = depth.saturating_sub(1);
+            false
+        }
+        ';' => depth == 0,
+        _ => false,
+    });
+    // An array length is a const expression evaluated in the type
+    // (`[T; 4]`), so the item keeps its ordinary families, as the inline
+    // bound owner rule requires.
+    let has_array_length = array_length_texts(body).next().is_some();
+    starts_like_identifier
+        && !second_statement
+        && !has_array_length
+        && !generics_hold_expression(body)
 }
 
 /// A const-generic default (`<const N: usize = { capacity() }>`) or an array
@@ -1128,6 +1521,158 @@ mod tests {
         assert!(!is_visible_module_declaration("pub use a::b;"));
     }
 
+    /// #14429: a one-line `type` item declares a type; its bound only looks
+    /// like a constructed field. Expressions in the type and trailing code
+    /// keep their ordinary families.
+    #[test]
+    fn type_items_read_as_declarations_not_fields() {
+        use crate::analysis::probes::lexical::classify_changed_line;
+        for declaration in [
+            "type Eq: CmpEq;",
+            "type Mask: MoveMask;",
+            "type Item;",
+            "type Eq = __m128i;",
+            "pub type Map<K> = BTreeMap<K, u8>;",
+            "default type Output = Self;",
+            "type Error: std::error::Error + Send + Sync + 'static;",
+            "type F = fn(u8) -> u8;",
+        ] {
+            assert!(is_type_item_declaration(declaration), "`{declaration}`");
+            assert_eq!(
+                classify_changed_line(declaration),
+                vec![ProbeFamily::StaticUnknown],
+                "`{declaration}`"
+            );
+        }
+        for kept in [
+            "type Buf = [u8; cap()];",
+            "pub(crate) type Buf = [u8; 4];",
+            "type Packet<T: Clone> = [T; 4];",
+            "type A = u8; f();",
+            "type Out = { 1 };",
+            "type M = mac!(u8);",
+            "type Eq: CmpEq",
+            "type = u8;",
+            "type 1x = u8;",
+            "typed: u8,",
+            "type_: Kind,",
+            "let ty = Type::new();",
+        ] {
+            assert!(!is_type_item_declaration(kept), "`{kept}`");
+        }
+    }
+
+    /// #14429 producer level: a changed trait associated type yields no
+    /// field-construction probe, while a changed struct-literal field still
+    /// does (negative control).
+    #[test]
+    fn diff_producer_reads_associated_type_as_declaration() -> Result<(), String> {
+        use crate::analysis::diff::{ChangedFile, ChangedLine};
+        use crate::analysis::syntax::{RaRustSyntaxAdapter, RustSyntaxAdapter};
+        let source = "pub trait Vector {\n    type Eq: CmpEq;\n}\npub struct S {\n    pub a: u8,\n}\npub fn make() -> S {\n    S {\n        a: 1,\n    }\n}\n";
+        let path = PathBuf::from("src/lib.rs");
+        let facts = RaRustSyntaxAdapter.summarize_file(&path, source)?;
+        let index = RustIndex::from_owned(crate::analysis::facts::OwnedRustIndex {
+            files: BTreeMap::from([(path.clone(), facts)]),
+            ..Default::default()
+        });
+        let families_for = |line: usize| {
+            let text = source.lines().nth(line - 1).unwrap_or_default().to_string();
+            let changed = ChangedFile {
+                path: path.clone(),
+                added_lines: vec![ChangedLine {
+                    line,
+                    new_side_line: line,
+                    text,
+                }],
+                removed_lines: Vec::new(),
+            };
+            super::super::diff::probes_for_file(std::path::Path::new("."), &changed, &index)
+                .into_iter()
+                .map(|probe| probe.family)
+                .collect::<Vec<_>>()
+        };
+        let associated = families_for(2);
+        assert!(
+            !associated.contains(&ProbeFamily::FieldConstruction),
+            "`type Eq: CmpEq;` must not read as a constructed field: {associated:?}"
+        );
+        let field = families_for(9);
+        assert!(
+            field.contains(&ProbeFamily::FieldConstruction),
+            "the struct-literal field `a: 1,` must stay field_construction: {field:?}"
+        );
+        Ok(())
+    }
+
+    /// #14403: a private plain `extern crate name;` links a crate and has no
+    /// behavior; a re-export (`pub extern crate x;`), a renaming
+    /// `extern crate a as b;` and any trailing code stay probed.
+    #[test]
+    fn plain_extern_crate_is_ignored_but_a_rename_is_not() {
+        for ignored in [
+            "extern crate alloc;",
+            "extern  crate  std ;",
+            "extern crate r#async;",
+        ] {
+            assert!(should_ignore_changed_line(ignored), "`{ignored}`");
+        }
+        for kept in [
+            "pub extern crate core;",
+            "pub(crate) extern crate serde_json;",
+            "extern crate core as std;",
+            "pub extern crate other as u32;",
+            "extern crate self as my_crate;",
+            "extern crate self;",
+            "extern crate alloc; fn go() {}",
+            "extern crate alloc",
+            "extern crate;",
+            "extern \"C\" fn go();",
+            "externcrate alloc;",
+            "extern cratex alloc;",
+            "extern crate 1alloc;",
+        ] {
+            assert!(!should_ignore_changed_line(kept), "`{kept}`");
+        }
+    }
+
+    /// Producer level: an added `extern crate alloc;` yields no probe, while a
+    /// renaming `extern crate core as std;` still yields one.
+    #[test]
+    fn diff_producer_ignores_plain_extern_crate_but_probes_a_rename() -> Result<(), String> {
+        use crate::analysis::diff::{ChangedFile, ChangedLine};
+        use crate::analysis::syntax::{RaRustSyntaxAdapter, RustSyntaxAdapter};
+        let source = "extern crate alloc;\nextern crate core as std;\n";
+        let path = PathBuf::from("src/lib.rs");
+        let facts = RaRustSyntaxAdapter.summarize_file(&path, source)?;
+        let index = RustIndex::from_owned(crate::analysis::facts::OwnedRustIndex {
+            files: BTreeMap::from([(path.clone(), facts)]),
+            ..Default::default()
+        });
+        let probes_for = |line: usize| {
+            let text = source.lines().nth(line - 1).unwrap_or_default().to_string();
+            let changed = ChangedFile {
+                path: path.clone(),
+                added_lines: vec![ChangedLine {
+                    line,
+                    new_side_line: line,
+                    text,
+                }],
+                removed_lines: Vec::new(),
+            };
+            super::super::diff::probes_for_file(std::path::Path::new("."), &changed, &index)
+        };
+        assert!(
+            probes_for(1).is_empty(),
+            "`extern crate alloc;` must yield no probe"
+        );
+        assert!(
+            !probes_for(2).is_empty(),
+            "a renaming `extern crate core as std;` must still be probed"
+        );
+        Ok(())
+    }
+
     /// Producer level: an added `pub mod new;` yields no probe, while a
     /// retargeted `pub(crate) use` re-export still yields one.
     #[test]
@@ -1298,8 +1843,12 @@ mod tests {
                         ProbeShapeFact {
                             start_line: 1,
                             end_line: 5,
-                            start_byte: function_start,
-                            end_byte: function_start + 18,
+                            start_byte: crate::analysis::facts::probe_shape_position(
+                                function_start,
+                            ),
+                            end_byte: crate::analysis::facts::probe_shape_position(
+                                function_start + 18,
+                            ),
                             kind: ProbeShapeKind::UnsafeBoundary,
                             text: "unsafe fn read_raw".into(),
                             value_consumed: false,
@@ -1308,8 +1857,10 @@ mod tests {
                         ProbeShapeFact {
                             start_line: 2,
                             end_line: 4,
-                            start_byte: block_start,
-                            end_byte: block_start + 12,
+                            start_byte: crate::analysis::facts::probe_shape_position(block_start),
+                            end_byte: crate::analysis::facts::probe_shape_position(
+                                block_start + 12,
+                            ),
                             kind: ProbeShapeKind::UnsafeBoundary,
                             text: "unsafe block".into(),
                             value_consumed: false,
@@ -1318,8 +1869,12 @@ mod tests {
                         ProbeShapeFact {
                             start_line: 3,
                             end_line: 3,
-                            start_byte: predicate_start,
-                            end_byte: predicate_start + 13,
+                            start_byte: crate::analysis::facts::probe_shape_position(
+                                predicate_start,
+                            ),
+                            end_byte: crate::analysis::facts::probe_shape_position(
+                                predicate_start + 13,
+                            ),
                             kind: ProbeShapeKind::Predicate,
                             text: "value < limit".into(),
                             value_consumed: false,
@@ -1346,7 +1901,7 @@ mod tests {
         assert_eq!(unsafe_shape.start_line, 3);
         assert_eq!(unsafe_shape.start_byte, block_start);
         assert_eq!(unsafe_shape.text, "unsafe block");
-        assert!(unsafe_shape.unsafe_boundary);
+        assert!(unsafe_shape.unsafe_boundary.is_some());
         Ok(())
     }
 
@@ -1366,8 +1921,8 @@ mod tests {
                     probe_shapes: vec![ProbeShapeFact {
                         start_line: 1,
                         end_line: 1,
-                        start_byte: block_start,
-                        end_byte: block_start + 12,
+                        start_byte: crate::analysis::facts::probe_shape_position(block_start),
+                        end_byte: crate::analysis::facts::probe_shape_position(block_start + 12),
                         kind: ProbeShapeKind::UnsafeBoundary,
                         text: "unsafe block".into(),
                         value_consumed: false,
@@ -1405,8 +1960,8 @@ mod tests {
                     probe_shapes: vec![ProbeShapeFact {
                         start_line: 2,
                         end_line: 2,
-                        start_byte: block_start,
-                        end_byte: block_start + 12,
+                        start_byte: crate::analysis::facts::probe_shape_position(block_start),
+                        end_byte: crate::analysis::facts::probe_shape_position(block_start + 12),
                         kind: ProbeShapeKind::UnsafeBoundary,
                         text: "unsafe block".into(),
                         value_consumed: false,
@@ -1445,8 +2000,8 @@ mod tests {
                         ProbeShapeFact {
                             start_line: 2,
                             end_line: 2,
-                            start_byte: first,
-                            end_byte: first + 6,
+                            start_byte: crate::analysis::facts::probe_shape_position(first),
+                            end_byte: crate::analysis::facts::probe_shape_position(first + 6),
                             kind: ProbeShapeKind::CallDeletion,
                             text: "read()".into(),
                             value_consumed: false,
@@ -1455,8 +2010,8 @@ mod tests {
                         ProbeShapeFact {
                             start_line: 3,
                             end_line: 3,
-                            start_byte: second,
-                            end_byte: second + 6,
+                            start_byte: crate::analysis::facts::probe_shape_position(second),
+                            end_byte: crate::analysis::facts::probe_shape_position(second + 6),
                             kind: ProbeShapeKind::CallDeletion,
                             text: "read()".into(),
                             value_consumed: false,
@@ -1552,8 +2107,8 @@ mod tests {
         ProbeShapeFact {
             start_line: 1,
             end_line: 1,
-            start_byte,
-            end_byte,
+            start_byte: crate::analysis::facts::probe_shape_position(start_byte),
+            end_byte: crate::analysis::facts::probe_shape_position(end_byte),
             kind,
             text,
             value_consumed: false,
@@ -1575,7 +2130,7 @@ mod tests {
         inner.push_str("_=>0}");
         shapes.push(shape_fact(ProbeShapeKind::MatchArm, tail_start, "_=>0"));
         let prefix = "Id { a: 1, b: 2, x: ";
-        let shift = prefix.len();
+        let shift = crate::analysis::facts::probe_shape_position(prefix.len());
         for shape in &mut shapes {
             shape.start_byte = shape.start_byte.saturating_add(shift);
             shape.end_byte = shape.end_byte.saturating_add(shift);
@@ -1894,11 +2449,12 @@ mod tests {
                 let key = Some((category, unchanged, distance));
                 let candidate = ParserProbeShape {
                     family,
-                    start_line: shape.start_line,
-                    start_byte: shape.start_byte,
+                    start_line: shape.start_line(),
+                    start_byte: shape.start_byte(),
                     text: shape.text.as_str(),
                     standalone_call: true,
-                    unsafe_boundary: false,
+                    unsafe_boundary: None,
+                    unsafe_interior: false,
                 };
                 if let Some(position) = expected
                     .iter()
@@ -2024,5 +2580,83 @@ mod tests {
             ));
         }
         Ok(())
+    }
+
+    /// #14722 review: an operator that continues an operand hides the
+    /// comparison, and one that ends it (`&&`, `||`, a field `:`, `=>`,
+    /// `->`, a range, closure parameters, a comment) does not.
+    #[test]
+    fn operand_bounded_count_reads_operand_boundaries() {
+        let count = |haystack: &str| operand_bounded_token_run_count(haystack, "a > b");
+        for extended in [
+            "(a > b as u8, c)",
+            "(a > b | m, c)",
+            "(a > b & m, c)",
+            "(a > b ^ m, c)",
+            "(a > b << 1, c)",
+            "(a > b >> 1, c)",
+            "(a > b!(x), c)",
+            "(a > b::C, c)",
+            "(m | a > b, c)",
+            "(m & a > b, c)",
+            "(m >> a > b, c)",
+            "(m::a > b, c)",
+            "(!a > b, c)",
+            "(a > b.c, c)",
+            "(a > b(c), c)",
+            "(a > b[0], c)",
+            "(a > b?, c)",
+            "(a > b + 1, c)",
+            "(a > b - 1, c)",
+            "(a > b * 2, c)",
+            "(a > b / 2, c)",
+            "(a > b % 2, c)",
+            "(a > b < c, c)",
+            "(m.a > b, c)",
+            "(m + a > b, c)",
+            "(m - a > b, c)",
+            "(m * a > b, c)",
+            "(m / a > b, c)",
+            "(m % a > b, c)",
+            "(m ^ a > b, c)",
+            "(m << a > b, c)",
+            "(m | n | a > b, c)",
+            "(f(x) | a > b, c)",
+            "(m, n | k | a > b)",
+            "x = m | n | a > b;",
+            "{ m | n | a > b }",
+            "(remove |x| a > b, c)",
+            "(x || y | a > b, c)",
+        ] {
+            assert_eq!(count(extended), 0, "{extended}");
+        }
+        for bounded in [
+            "(x && a > b, c)",
+            "(x || a > b, c)",
+            "(a > b && x, c)",
+            "(a > b || x, c)",
+            "(S { ok: a > b }, c)",
+            "x => a > b,",
+            "fn f() -> bool { a > b }",
+            "(a > b assert, c)",
+            "(v.any(|x| a > b), c)",
+            "(move |x, y: u8| a > b, c)",
+            "let f = |x| a > b;",
+            "|x| a > b",
+            "(c, |x| a > b)",
+            "{ |x| a > b }",
+            "(v.any(|x: &Vec<u8>| a > b), c)",
+            "(v.any(|[x, _]: [u8; 2]| a > b), c)",
+            "(v.any(|x: &'a T| a > b), c)",
+            "x => |x| a > b,",
+            "return |x| a > b;",
+            "(|x| |y| a > b, c)",
+            "(x && a > b, c) // note",
+            "x && a > b // a / b",
+            "(/* why */ a > b, c)",
+            "(..a > b, c)",
+        ] {
+            assert_eq!(count(bounded), 1, "{bounded}");
+        }
     }
 }

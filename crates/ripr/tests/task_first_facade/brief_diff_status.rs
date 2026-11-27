@@ -246,7 +246,7 @@ fn document(output: &Output) -> Result<Value, String> {
 fn assert_refusal(output: &Output, reason: &str) -> Result<(), String> {
     assert_exit(output, 2, reason);
     let value = document(output)?;
-    assert_eq!(value["schema_version"], "0.1");
+    assert_eq!(value["schema_version"], "0.2");
     assert_eq!(
         value["analysis_scope"]["run_status"],
         "diff_input_unsupported"
@@ -293,6 +293,19 @@ fn brief_empty_and_ordinary_patches_keep_successful_selection() -> Result<(), St
         value["top_seams"][0]["why_now"]["reason"],
         "repo_actionable_fallback"
     );
+    // #15361 review: the fallback's value is the source's existing one, so
+    // the note may not call it changed code.
+    let fallback_basis = value["value_basis"]
+        .as_str()
+        .ok_or("a brief that names a seam states the value basis")?;
+    assert!(
+        !fallback_basis.contains("changed code, so assert what it does now"),
+        "a fallback value is not changed code: {fallback_basis}"
+    );
+    assert!(
+        fallback_basis.contains("current source behavior"),
+        "the fallback note calls its value the current source's behavior: {fallback_basis}"
+    );
 
     weaken_boundary_predicate(&boundary.root)?;
     let patch = run_git(&boundary.root, &["diff", "HEAD", "--", "src/lib.rs"])?;
@@ -307,6 +320,18 @@ fn brief_empty_and_ordinary_patches_keep_successful_selection() -> Result<(), St
     assert_eq!(
         value["top_seams"][0]["why_now"]["reason"],
         "changed_line_intersects_seam"
+    );
+    // A changed line reaches the seam, so its value is the changed code's.
+    let direct_basis = value["value_basis"]
+        .as_str()
+        .ok_or("a brief that names a seam states the value basis")?;
+    assert!(
+        direct_basis.contains("changed code, so assert what it does now"),
+        "a value a changed line reaches is changed code: {direct_basis}"
+    );
+    assert!(
+        !direct_basis.contains("current source behavior"),
+        "the direct note is the changed-code note: {direct_basis}"
     );
     Ok(())
 }

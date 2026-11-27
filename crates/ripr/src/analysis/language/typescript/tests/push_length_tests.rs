@@ -229,6 +229,16 @@ fn jest_extension_binds_the_actual_registration() -> Result<(), String> {
         (
             "import { test, expect } from '@jest/globals';",
             "test.only",
+            true,
+        ),
+        (
+            "import { test, expect } from '@jest/globals';\ntest.only = fake;",
+            "test.only",
+            false,
+        ),
+        (
+            "import { test, expect } from '@jest/globals';\nimport { test as run } from 'vitest';",
+            "run.only",
             false,
         ),
         ("import { test, expect } from 'vitest';", "test.only", true),

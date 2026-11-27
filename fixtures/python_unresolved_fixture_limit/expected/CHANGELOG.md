@@ -697,3 +697,50 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — python_unresolved_fixture_limit (33)
+
+Reason:
+RIPR-SPEC-0423: additive evidence_stages rows and agent stages= line; human rendering unchanged
+
+Command:
+`cargo xtask goldens bless python_unresolved_fixture_limit --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+
+## Pending — python_unresolved_fixture_limit (34)
+
+Reason:
+RIPR-SPEC-0423: additive evidence_stages rows and agent stages= line; no test attribution; human rendering unchanged
+
+Command:
+`cargo xtask goldens bless python_unresolved_fixture_limit --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+
+## Pending — python_unresolved_fixture_limit (35)
+
+Reason:
+RIPR-SPEC-0122: one blank line, not two, separates the More block from a trailing Note (#14318)
+
+Command:
+`cargo xtask goldens bless python_unresolved_fixture_limit --reason "..."`
+
+Updated:
+- `expected/human.txt`
+
+## Pending — python_unresolved_fixture_limit (36)
+
+Reason:
+RIPR-SPEC-0238: explain the unresolved fixture input and expected value in plain language (#14846)
+
+Command:
+`cargo xtask goldens bless python_unresolved_fixture_limit --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

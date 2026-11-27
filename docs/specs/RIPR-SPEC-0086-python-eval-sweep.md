@@ -327,11 +327,16 @@ validates and publishes.
   `partial` (an attempt without reported completeness), `tempfail`, `stale`.
   Exactly the five run statuses count toward `repos_run`; a failed or partial
   row retains its available evidence and can never count as complete.
-  Post-materialization infrastructure failures — cache-dir creation, analysis
-  spawn, raw-evidence retention — are contained the same way: each becomes a
-  typed `tempfail` row over the verified facts with its cause named in the
-  managed execution receipt, so the route ALWAYS produces the full eight-row
-  candidate denominator instead of aborting.
+  Post-materialization infrastructure failures without retained first-pass
+  evidence — cache-dir creation, analysis spawn, first-pass raw retention —
+  become a typed `tempfail` row over the verified facts with the cause named in
+  the managed execution receipt. If retaining either repeat stream fails, the
+  already-retained first-pass row and its run evidence remain selected, with
+  comparison evidence withdrawn and the retention failure named. This prevents
+  a repeat write failure from improving the gate by dropping an analyzed row.
+  Binary identity is still re-verified before attributing retained evidence;
+  drift keeps the existing `tempfail` disposition. The route ALWAYS produces
+  the full eight-row candidate denominator instead of aborting.
 - **Raw-output admission (#13132).** Captured stdout must be genuine UTF-8 and
   duplicate-key-free JSON. The document must be an object with a `findings`
   array of objects whose classifications belong to the producer's exposure
@@ -349,13 +354,13 @@ validates and publishes.
   `partial`, including an empty rendered prefix. Malformed output becomes a
   `crashed` analysis attempt, preserving the subject denominator and exact
   captured first-pass bytes for the existing raw-retention/digest path.
-  Retention of raw output from non-complete repeats remains a separate
-  obligation tracked by #13140. Timeout and nonzero-exit precedence remain
-  unchanged. The first-pass refusal reaches
-  the execution receipt's analysis limitations; a rejected repeat's reason
-  reaches its stability limitation. Neither can yield a stable comparison or
-  a passing summary. This consumed-field check does not replace the full
-  product output schema or change historical schema-0.2 receipt validation.
+  Non-complete repeat output follows the diagnostic retention law below
+  (#13140). Timeout and nonzero-exit precedence remain unchanged. The first-pass
+  refusal reaches the execution receipt's analysis limitations; a rejected
+  repeat's reason reaches its stability limitation. Neither can yield a stable
+  comparison or a passing summary. This consumed-field check does not replace
+  the full product output schema or change historical schema-0.2 receipt
+  validation.
 - **Per-subject retention.** Each candidate row carries: the repository
   identity restating the accepted pin (`url`/`sha`; manifest-carried
   `tree_digest`/`snapshot`/`provenance`/`retention_class` are copied through,
@@ -379,11 +384,31 @@ validates and publishes.
   never enters the repeat phase and never claims stability (equal failure
   gap sets of two crashed passes are not `stable`). It records the gap-ID
   comparison in the row's `repeat` block (stable, or a typed
-  `unstable_gap_ids` mismatch list). The repeat pass's raw stdout AND stderr
-  are retained under `<out>/raw/`, and the retained second-pass stderr is
-  digested in the row's `repeat.repeat_stderr`. Raw-output identity across
-  passes is compared too; drift with stable gap identity is a typed
-  execution-receipt note, never folded into the gap verdict.
+  `unstable_gap_ids` mismatch list). Every captured repeat retains exact stdout
+  AND stderr under `<out>/raw/`, including timeout, failed-exit, partial,
+  unsupported, parse-failed, and malformed output. A complete repeat keeps the
+  existing comparison shape: the retained second-pass stderr is digested in
+  `repeat.repeat_stderr`, and the candidate `evidence` digest binds the compared
+  stdout. Raw-output identity across complete passes is compared too; drift
+  with stable gap identity is a typed execution-receipt note, never folded into
+  the gap verdict.
+
+  A non-complete captured repeat has no candidate-row `repeat` block and earns
+  no stability credit. Only after both streams are written, the managed
+  execution receipt adds `subjects[].stability.retained_output`, carrying the
+  repeat status and each stream's out-relative `path` and `sha256`. The existing
+  candidate comparison digest preimage stays unchanged. This is diagnostic
+  retention in the managed candidate, not an additional accepted-receipt or
+  promotion binding: those consumers read the candidate row receipt.
+
+  `stability.performed` records a repeat-route attempt, not proof of a completed
+  capture or comparison. A non-complete first pass never attempts the repeat.
+  A capture error carries its limitation without invented output; the child may
+  have failed before or after spawning. A repeat retention failure preserves
+  the first-pass row, runtime and distributions, omits retained-repeat digest
+  claims and every comparison, and retains the original repeat diagnostic
+  alongside the infrastructure limitation. Missing stability therefore remains
+  unavailable even among otherwise stable selected subjects.
 - **Determinism.** Equivalent managed reruns over the same inputs produce
   identical identities, digests, and rows; wall-clock telemetry is the only
   run-varying field and is declared as such in the execution receipt, which
@@ -815,6 +840,25 @@ receipt rows derive repos_run = 8 but the summary claims 7
 - `eval_sweep_refresh::python_eval_sweep_refresh::bounded_documents_never_yield_a_passing_summary_gate`
   -> both current and legacy findings-bound disclosures remain partial through
   raw admission, including an empty rendered prefix; the complete control passes.
+- `eval_sweep_refresh::python_eval_sweep_refresh::repeat_retention::non_complete_repeats_retain_exact_bytes_without_comparison_credit`
+  -> actual staged/published stdout and stderr retention over adverse captured
+  repeats, including a raw-admission rejection whose named diagnosis survives,
+  with unavailable comparison and a mixed-population review gate.
+- `eval_sweep_refresh::python_eval_sweep_refresh::repeat_retention::repeat_digests_track_each_stream_without_comparison_credit`
+  -> each retained stream independently changes its execution-receipt digest,
+  without entering the candidate comparison identity.
+- `eval_sweep_refresh::python_eval_sweep_refresh::repeat_retention::complete_repeats_preserve_existing_comparison_and_digest_shapes`
+  -> stable and unstable complete repeats retain the prior row, execution
+  comparison, and evidence-digest shapes.
+- `eval_sweep_refresh::python_eval_sweep_refresh::repeat_retention::unstarted_and_failed_capture_routes_never_invent_repeat_output`
+  -> first-pass refusal and a real capture error remain distinct attempts,
+  without fabricated pass-2 files or identities.
+- `eval_sweep_refresh::python_eval_sweep_refresh::repeat_retention::repeat_write_failures_keep_the_run_and_cannot_improve_a_mixed_gate`
+  -> either stream's actual write failure preserves the full analyzed
+  population and review gate, including failure after stdout was retained.
+- `eval_sweep_refresh::python_eval_sweep_refresh::repeat_retention::repeat_retention_failure_still_rechecks_binary_identity`
+  -> the repeat write-failure path cannot attribute evidence after the supplied
+  binary changes.
 - `eval_sweep_refresh::python_eval_sweep_refresh::binary_swap_between_subjects_is_detected`
   -> the per-subject post-run identity re-verification names a swapped
   (rebuilt) binary's drift and fails closed on an unreadable binary.
@@ -886,6 +930,7 @@ receipt rows derive repos_run = 8 but the summary claims 7
 | Command logic (arg parse, manifest load, run orchestration, classify, metrics, render) | `xtask/src/reports/eval_sweep.rs` |
 | Accepted-manifest and retained-receipt validator (`eval-sweep check`) | `xtask/src/reports/eval_sweep_check.rs` |
 | Managed candidate refresh (`eval-sweep refresh`) | `xtask/src/reports/eval_sweep_refresh.rs` |
+| Captured repeat retention and subject finalization | `xtask/src/reports/eval_sweep_refresh/retention.rs` |
 | Accepted-receipt publication + currentness gate (`eval-sweep report`) | `xtask/src/reports/eval_sweep_report.rs` |
 | Subcommand registration | `xtask/src/command.rs`, `xtask/src/dispatch.rs`, `xtask/src/reports/mod.rs` |
 | Subprocess helpers (build, clone, `ripr check`) | `xtask/src/run.rs` (`run`, `run_with_envs`, `capture_output_with_timeout`) |

@@ -1,7 +1,9 @@
 //! Owner extraction for the TypeScript preview adapter.
 
 use super::*;
-use oxc_ast::ast::{AssignmentOperator, AssignmentTarget, PropertyKind, StaticMemberExpression};
+use oxc_ast::ast::{
+    Argument, AssignmentOperator, AssignmentTarget, PropertyKind, StaticMemberExpression,
+};
 
 #[cfg_attr(
     not(test),
@@ -20,7 +22,7 @@ pub(crate) fn extract_owners(file: &Path, source: &str) -> Vec<TypeScriptOwner> 
         if !ret.errors.is_empty() {
             return Vec::new();
         }
-        owners_from_program(&ret.program, file, source)
+        owners_from_program(&ret.program, file, source).0
     }) else {
         return Vec::new();
     };
@@ -31,27 +33,65 @@ pub(crate) fn extract_owners(file: &Path, source: &str) -> Vec<TypeScriptOwner> 
 /// [`extract_owners`], so the combined per-file facts cache can derive
 /// owners, export facts, and phase-2 facts from ONE parse. Builds its own
 /// line index from `source`; behavior is identical to the dedicated
-/// extraction.
+/// extraction. The second value is the module's outbound imported-binding
+/// calls (#13592), derived from the same module graph as the entries.
+/// The export slot of a bare `module.exports = <function>` owner; no
+/// property name can spell it.
+const WHOLE_MODULE_SLOT: &str = "\0module.exports";
+
 pub(crate) fn owners_from_program(
     program: &oxc_ast::ast::Program<'_>,
     file: &Path,
     source: &str,
-) -> Vec<TypeScriptOwner> {
+) -> (Vec<TypeScriptOwner>, Vec<OutboundImportCall>) {
     let imports = extract_imports_from_statements(&program.body);
     // One line index per source; every owner line below is a binary
     // search against it rather than a rescan from byte 0.
     let source = &SourceText::new(source);
-    // `(owner, is a CommonJS assignment export)`, in source order.
+    // `(owner, CommonJS export slot it is assigned to, assignment)`, in
+    // source order. An assignment is `(statement index, value position)`:
+    // every member of one inline `exports.Cart = class ...` is the one value
+    // `(index, 0)`, while each entry of `module.exports = { f, f }` is its own
+    // value, so a duplicated object key still reads as two assignments.
     let mut owners = Vec::new();
-    for stmt in &program.body {
+    let replaced = super::overwritten_methods::top_level_replaced_members(&program.body);
+    for (index, stmt) in program.body.iter().enumerate() {
+        let named_class = commonjs_named_class_export(stmt).map(|(property, _)| property);
         let commonjs = matches!(stmt, Statement::ExpressionStatement(_));
+        let declared_class = super::overwritten_methods::declared_class_name(stmt);
         owners.extend(
             owners_from_statement(stmt, file, source, &imports)
                 .into_iter()
-                .map(|owner| (owner, commonjs)),
+                .map(|mut owner| {
+                    mark_replaced_by_assignment(&mut owner, declared_class, &replaced);
+                    owner
+                })
+                .enumerate()
+                // Members of an inline `module.exports = class ...` are not
+                // export names: two accessors or overloads sharing a name
+                // must not read as a reassigned export. Members of an inline
+                // `exports.Cart = class ...` share the one slot `Cart`.
+                .map(|(position, owner)| {
+                    let slot = match named_class {
+                        Some(property) => Some(property.to_string()),
+                        // A bare `module.exports = function NAME` is the
+                        // whole-module slot, never the property `NAME`: a
+                        // property written on it (`module.exports.NAME = ...`)
+                        // leaves it live. `\0` keeps it apart from any
+                        // property name; `bare_default_count` handles a
+                        // repeated whole-module assignment.
+                        None if commonjs && owner.exported_as_default => {
+                            Some(WHOLE_MODULE_SLOT.to_string())
+                        }
+                        None if commonjs && !owner.class_default_export => Some(owner.name.clone()),
+                        None => None,
+                    };
+                    let value = if named_class.is_some() { 0 } else { position };
+                    (owner, slot, (index, value))
+                }),
         );
     }
-    let mut owners = without_reassigned_commonjs_exports(owners);
+    let mut owners = without_reassigned_commonjs_exports(&program.body, owners);
     mark_default_exported_bindings(&program.body, &mut owners);
     mark_commonjs_default_binding(program, &mut owners);
     mark_default_object_members(&program.body, &mut owners);
@@ -61,18 +101,54 @@ pub(crate) fn owners_from_program(
     // #7812: keep the original owner when `export default ident`
     // snapshots the binding before that reassignment.
     owners = without_reassigned_esm_bindings(&program.body, owners);
-    let entries = module_entries_by_owner(&program.body, source);
+    let (entries, outbound, value_names) = module_entries_and_outbound(
+        &program.body,
+        source,
+        &extract_imports_for_test_file(&program.body),
+    );
     for owner in &mut owners {
+        // A `ModuleFunction` owner is a non-callable `const` initializer. A
+        // followable read-only value node (#13592 B2) keeps its reader
+        // entries as they are; any other (a call-built constant) reads every
+        // entry as a closure entry.
         if owner.class_name.is_none()
-            && owner.owner_kind != OwnerKind::ModuleFunction
             && let Some(owner_entries) = entries.get(&owner.name)
         {
-            owner.module_entries = owner_entries.clone();
+            owner.module_entries = if owner.owner_kind == OwnerKind::ModuleFunction
+                && !value_names.contains(&owner.name)
+            {
+                // A call-built constant runs its callbacks when the value is
+                // invoked, which the graph does not model (#13592): even a
+                // bare call of it (`Rule(s)`) reaches its initializer's code
+                // only as a closure does, so every entry reads as one.
+                owner_entries
+                    .iter()
+                    .map(|entry| TypeScriptModuleEntry {
+                        closure: true,
+                        ..entry.clone()
+                    })
+                    .collect()
+            } else {
+                owner_entries.clone()
+            };
         }
     }
     let instance_fields = class_instance_field_names(program);
     let repeated_names = repeated_class_names(program);
     assign_class_entries(&mut owners, &instance_fields, &repeated_names);
+    // A method of a module-private class an exported entry constructs
+    // (`Class.method` graph node, #15928) also carries those entries.
+    for owner in &mut owners {
+        if owner.owner_kind == OwnerKind::Method
+            && owner.method_kind == TypeScriptMethodKind::Ordinary
+            && let Some(class_name) = owner.class_name.as_ref()
+            && !repeated_names.contains(class_name)
+            && let Some(owner_entries) = entries.get(&format!("{class_name}.{}", owner.name))
+        {
+            owner.module_entries.extend(owner_entries.iter().cloned());
+            owner.module_entries.sort();
+        }
+    }
     assign_instance_factories(
         program,
         source,
@@ -82,7 +158,7 @@ pub(crate) fn owners_from_program(
     );
     assign_decorated_entries(program, source, &mut owners);
     reshare_owner_imports(&mut owners);
-    owners
+    (owners, outbound)
 }
 
 pub(crate) fn owners_from_statement(
@@ -162,6 +238,18 @@ fn owners_from_commonjs_export(
         _ => false,
     };
     if named_export_object {
+        // `exports.Cart = class { ... }` / `module.exports.Cart = class ...`:
+        // the class is reachable only as the export property `Cart`, the
+        // inline twin of `class Cart {}` followed by `exports.Cart = Cart;`.
+        // A class expression's own name binds only inside its body, so the
+        // members carry the property name (RIPR-SPEC-0243 rule 27).
+        if let Expression::ClassExpression(class) = assign.right.get_inner_expression() {
+            let mut owners = owners_from_class(class, file, source, imports);
+            for owner in &mut owners {
+                owner.class_name = Some(property.to_string());
+            }
+            return owners;
+        }
         return commonjs_function_owner(
             &assign.right,
             property,
@@ -215,6 +303,20 @@ fn owners_from_commonjs_export(
             vec![owner]
         })
         .unwrap_or_default(),
+        // `module.exports = class Cart { ... }`: the class itself is the
+        // whole export, the inline twin of `class Cart {}` followed by
+        // `module.exports = Cart;` (#15092). Its members carry both markers;
+        // the file-level gate in `mark_commonjs_default_binding` clears them
+        // when the export is not provably this class.
+        Expression::ClassExpression(class) => {
+            let mut owners = owners_from_class(class, file, source, imports);
+            name_anonymous_default_class(class, &mut owners);
+            for owner in &mut owners {
+                owner.class_default_export = true;
+                owner.commonjs_default_export = true;
+            }
+            owners
+        }
         Expression::ObjectExpression(object) => object
             .properties
             .iter()
@@ -247,7 +349,8 @@ fn owners_from_commonjs_export(
 /// walk does not model; crediting the dead one would report an exposure for
 /// code no test reaches. Fail-closed: no owner for a reassigned export.
 fn without_reassigned_commonjs_exports(
-    owners: Vec<(TypeScriptOwner, bool)>,
+    body: &[Statement<'_>],
+    owners: Vec<(TypeScriptOwner, Option<String>, (usize, usize))>,
 ) -> Vec<TypeScriptOwner> {
     // #7507: every bare `module.exports = <fn>` assigns the SAME default
     // slot, whatever the function id names it. Two such assignments mean the
@@ -256,41 +359,137 @@ fn without_reassigned_commonjs_exports(
     // `exported_as_default`; more than one of them fails closed together.
     let bare_default_count = owners
         .iter()
-        .filter(|(owner, commonjs)| *commonjs && owner.exported_as_default)
+        .filter(|(owner, slot, _)| slot.is_some() && owner.exported_as_default)
         .count();
-    // Name multiplicity in one pass over borrowed names: a large CommonJS
-    // module otherwise pays an O(owners x names) scan (#10017), and cloning
-    // every CommonJS owner name into a counting map allocates one string per
-    // export (#10087). Only the rare duplicated names are kept, as owned
-    // strings, so the counting map's borrow of `owners` ends before the
-    // consuming filter below.
-    let duplicated: std::collections::HashSet<String> = {
-        let mut commonjs_name_counts: std::collections::HashMap<&str, usize> =
-            std::collections::HashMap::new();
-        for (owner, commonjs) in &owners {
-            if *commonjs {
-                *commonjs_name_counts.entry(owner.name.as_str()).or_insert(0) += 1;
+    // Two owner assignments of one slot fail closed together (#4638): which
+    // one a test reaches is left unmodeled. The members of one inline
+    // `exports.Cart = class` share one assignment, so they count once; each
+    // entry of `module.exports = { f, f }` is its own. Every other top-level
+    // `exports.NAME = ...` / `module.exports.NAME = ...` statement (another
+    // value, a class with no method) replaces an owner only when it comes
+    // AFTER the owner's statement: an earlier one, such as the
+    // `exports.total = void 0;` that compiled TypeScript and Babel hoist above
+    // the real definition, is overwritten by it. Only slots an owner uses are
+    // tracked; borrowing them keeps a large CommonJS module from cloning one
+    // string per export (#10017, #10087).
+    let mut slot_assignments: std::collections::HashMap<
+        &str,
+        std::collections::BTreeSet<(usize, usize)>,
+    > = std::collections::HashMap::new();
+    for (_, slot, assignment) in &owners {
+        if let Some(slot) = slot.as_deref() {
+            slot_assignments
+                .entry(slot)
+                .or_default()
+                .insert(*assignment);
+        }
+    }
+    let duplicated: std::collections::HashSet<String> = slot_assignments
+        .iter()
+        .filter(|(_, assignments)| assignments.len() > 1)
+        .map(|(slot, _)| (*slot).to_string())
+        .collect();
+    // The last top-level statement writing each named slot an owner uses. A
+    // bare `module.exports = function total` is the default slot, not the
+    // property `total`: a later `exports.total = 1` writes a property and
+    // leaves that function live, so only named-export owners consult this.
+    let mut last_named_write: std::collections::HashMap<String, usize> =
+        std::collections::HashMap::new();
+    if owners
+        .iter()
+        .any(|(owner, slot, _)| slot.is_some() && !owner.exported_as_default)
+    {
+        for (index, stmt) in body.iter().enumerate() {
+            if let Some(property) = commonjs_named_export_property(stmt)
+                && slot_assignments.contains_key(property)
+            {
+                last_named_write.insert(property.to_string(), index);
             }
         }
-        commonjs_name_counts
-            .into_iter()
-            .filter(|(_, count)| *count > 1)
-            .map(|(name, _)| name.to_string())
-            .collect()
-    };
+    }
     owners
         .into_iter()
-        .filter(|(owner, commonjs)| {
-            if !*commonjs {
+        .filter(|(owner, slot, (statement, _))| {
+            let Some(slot) = slot else {
                 return true;
+            };
+            if owner.exported_as_default {
+                return bare_default_count <= 1;
             }
-            if owner.exported_as_default && bare_default_count > 1 {
-                return false;
-            }
-            !duplicated.contains(&owner.name)
+            !duplicated.contains(slot)
+                && last_named_write
+                    .get(slot)
+                    .is_none_or(|last| *last <= *statement)
         })
-        .map(|(owner, _)| owner)
+        .map(|(owner, _, _)| owner)
         .collect()
+}
+
+/// The property `NAME` and the assignment of a top-level `exports.NAME = ...`
+/// or `module.exports.NAME = ...` plain assignment statement, whatever its
+/// value.
+fn commonjs_named_export_assignment<'a>(
+    stmt: &'a Statement<'a>,
+) -> Option<(&'a str, &'a oxc_ast::ast::AssignmentExpression<'a>)> {
+    let Statement::ExpressionStatement(expression) = stmt else {
+        return None;
+    };
+    let Expression::AssignmentExpression(assign) = &expression.expression else {
+        return None;
+    };
+    if assign.operator != AssignmentOperator::Assign {
+        return None;
+    }
+    let AssignmentTarget::StaticMemberExpression(target) = &assign.left else {
+        return None;
+    };
+    let named_export_object = match &target.object {
+        Expression::Identifier(object) => object.name == "exports",
+        Expression::StaticMemberExpression(object) => is_module_exports(object),
+        _ => false,
+    };
+    named_export_object.then(|| (target.property.name.as_str(), &**assign))
+}
+
+/// The property `NAME` of a top-level `exports.NAME = ...` or
+/// `module.exports.NAME = ...` plain assignment statement, whatever its value.
+fn commonjs_named_export_property<'a>(stmt: &'a Statement<'a>) -> Option<&'a str> {
+    commonjs_named_export_assignment(stmt).map(|(property, _)| property)
+}
+
+/// The property and class of a top-level `exports.NAME = class ...` or
+/// `module.exports.NAME = class ...` statement.
+pub(crate) fn commonjs_named_class_export<'a>(
+    stmt: &'a Statement<'a>,
+) -> Option<(&'a str, &'a Class<'a>)> {
+    let (property, assign) = commonjs_named_export_assignment(stmt)?;
+    match assign.right.get_inner_expression() {
+        Expression::ClassExpression(class) => Some((property, class)),
+        _ => None,
+    }
+}
+
+/// The class of a top-level `module.exports = class ...` statement.
+pub(crate) fn commonjs_whole_class_export<'a>(stmt: &'a Statement<'a>) -> Option<&'a Class<'a>> {
+    let Statement::ExpressionStatement(expression) = stmt else {
+        return None;
+    };
+    let Expression::AssignmentExpression(assign) = &expression.expression else {
+        return None;
+    };
+    if assign.operator != AssignmentOperator::Assign {
+        return None;
+    }
+    let AssignmentTarget::StaticMemberExpression(target) = &assign.left else {
+        return None;
+    };
+    if !is_module_exports(target) {
+        return None;
+    }
+    match &assign.right {
+        Expression::ClassExpression(class) => Some(class),
+        _ => None,
+    }
 }
 
 /// Drop every ESM owner whose binding is reassigned after its declaration
@@ -321,7 +520,11 @@ fn without_reassigned_esm_bindings(
             // A class method shares only the binding name with a reassigned
             // top-level binding; its receiver keeps it live, so the
             // name-only drop must not take it.
-            owner.class_name.is_some() || !reassigned.contains(owner.name.as_str())
+            // A member of an inline `module.exports = class ...` whose class
+            // name was cleared (#16252) is still a class method.
+            owner.class_name.is_some()
+                || matches!(owner.owner_kind, OwnerKind::Method | OwnerKind::ClassMethod)
+                || !reassigned.contains(owner.name.as_str())
         })
         .collect()
 }
@@ -569,7 +772,9 @@ fn mark_default_exported_bindings<'a>(body: &'a [Statement<'a>], owners: &mut [T
                 }
             }
             Statement::ExportNamedDeclaration(export)
-                if export.declaration.is_none() && export.source.is_none() =>
+                if export.declaration.is_none()
+                    && export.source.is_none()
+                    && export.export_kind != ImportOrExportKind::Type =>
             {
                 for specifier in &export.specifiers {
                     if specifier.export_kind == ImportOrExportKind::Type {
@@ -596,6 +801,82 @@ fn mark_default_exported_bindings<'a>(body: &'a [Statement<'a>], owners: &mut [T
             owner.exported_as_default = true;
         }
     }
+    // A class declared first and exported as `default` by a separate
+    // statement (`class Cart {}` ... `export default Cart;`) is the module's
+    // default export like `export default class Cart {}`, so its methods
+    // carry the same `class_default_export` marker.
+    let default_classes = default_exported_class_declarations(body, &default_locals);
+    if default_classes.is_empty() {
+        return;
+    }
+    for owner in owners.iter_mut() {
+        if owner
+            .class_name
+            .as_deref()
+            .is_some_and(|class_name| default_classes.contains(class_name))
+        {
+            owner.class_default_export = true;
+        }
+    }
+}
+
+/// The names in `default_locals` that are one top-level `class Name {}`
+/// declaration reachable only as the module's default export.
+///
+/// Fail-closed identity gates: exactly one file-level declaration binds the
+/// name and it is a class declaration; the file never writes the name (a
+/// class binding is mutable, and `export { Name as default }` is live); and
+/// no named export carries the class too (`export { Name }`, `export { Name
+/// as Other }`), because the marker makes a named import of the class stop
+/// relating. A class with both exports keeps its named-import reading.
+fn default_exported_class_declarations<'a>(
+    body: &'a [Statement<'a>],
+    default_locals: &std::collections::HashSet<String>,
+) -> std::collections::HashSet<&'a str> {
+    let mut classes: std::collections::HashSet<&'a str> = body
+        .iter()
+        .filter_map(|stmt| match stmt {
+            Statement::ClassDeclaration(class) if !class.declare => {
+                class.id.as_ref().map(|id| id.name.as_str())
+            }
+            _ => None,
+        })
+        .filter(|name| default_locals.contains(*name))
+        .collect();
+    if classes.is_empty() {
+        return classes;
+    }
+    let mut declared = Vec::new();
+    super::tests_extract::collect_registration_scope_names(body, &mut declared, false);
+    classes.retain(|name| {
+        declared
+            .iter()
+            .filter(|other| other.as_str() == *name)
+            .count()
+            == 1
+    });
+    for stmt in body {
+        let Statement::ExportNamedDeclaration(export) = stmt else {
+            continue;
+        };
+        if export.source.is_some() || export.export_kind == ImportOrExportKind::Type {
+            continue;
+        }
+        for specifier in &export.specifiers {
+            if specifier.export_kind != ImportOrExportKind::Type
+                && module_export_name_text(&specifier.exported).as_deref() != Some("default")
+                && let Some(local) = module_export_name_text(&specifier.local)
+            {
+                classes.remove(local.as_str());
+            }
+        }
+    }
+    if classes.is_empty() {
+        return classes;
+    }
+    let written = identifier_writes(body);
+    classes.retain(|name| !written.contains(*name));
+    classes
 }
 
 /// Mark a top-level function declaration as the module's CommonJS default
@@ -685,11 +966,24 @@ fn mark_commonjs_default_binding(
         // Only the inline owners this pass flagged lose their default
         // export; every other file (ESM, no `module.exports`) fails the gate.
         for owner in owners.iter_mut().filter(|o| o.commonjs_default_export) {
+            super::commonjs_default_class::unmark_inline_class_member(owner);
             owner.commonjs_default_export = false;
             owner.exported_as_default = false;
         }
         return;
     };
+    super::commonjs_default_class::keep_inline_class_whole_export(&code, &division_code, owners);
+    if let Some(class_name) = target
+        && super::commonjs_default_class::mark_whole_export_class(
+            program,
+            class_name,
+            &code,
+            &division_code,
+            owners,
+        )
+    {
+        return;
+    }
     let Some(name) = declared else {
         return;
     };
@@ -894,6 +1188,14 @@ fn mark_default_object_members(body: &[Statement<'_>], owners: &mut [TypeScriptO
         .flat_map(|declarator| declarator.id.get_binding_identifiers())
         .map(|identifier| identifier.name.as_str())
         .collect();
+    // A member called as `local.sibling()` can replace another member before
+    // the test calls it (`this.merge = stub`, or through `require`, `exports`
+    // or a self-import), which no test-file fact can see. Each marked owner
+    // carries the siblings that might do so; a test that calls any of them
+    // gets no rule-5 credit for the owner (#13694 review).
+    let Some(unsafe_names) = unsafe_top_level_names(body, &members) else {
+        return;
+    };
     for owner in owners.iter_mut() {
         let callable = match owner.owner_kind {
             OwnerKind::Function => true,
@@ -902,8 +1204,250 @@ fn mark_default_object_members(body: &[Statement<'_>], owners: &mut [TypeScriptO
         };
         if owner.class_name.is_none() && callable && members.contains(owner.name.as_str()) {
             owner.default_object_member = true;
+            let mut siblings: Vec<String> = Vec::new();
+            for name in &members {
+                if *name != owner.name.as_str() && unsafe_names.contains(*name) {
+                    siblings.push((*name).to_string());
+                }
+            }
+            siblings.sort();
+            owner.default_object_unsafe_siblings = siblings;
         }
     }
+}
+
+/// Top-level names (functions, classes, variables) whose declaration could
+/// reach and replace a member of the module's anonymous default object.
+/// A declaration is unsafe when it contains `this`, `import(...)`,
+/// `import.meta`, a reference to `require`, `module`, `exports`,
+/// `globalThis`, `global`, `window`, `self`, `eval`, `Function`,
+/// `arguments`, `define`, `process`, `__filename` or `__dirname`, a reference to
+/// a binding imported from a
+/// module (possibly the module itself; any source), or a reference to another
+/// unsafe top-level name (fixpoint). References are matched by name, so a
+/// shadowing local only over-approximates. A member that is not a top-level
+/// declaration of this module (an import, whose body this pass cannot see)
+/// and a name that is assigned anywhere in the module (`extend = function ()
+/// { this.merge = stub }`) are unsafe too. `None` when a top-level name is
+/// declared more than once, since the object could then hold either.
+fn unsafe_top_level_names(
+    body: &[Statement<'_>],
+    members: &std::collections::HashSet<&str>,
+) -> Option<std::collections::HashSet<String>> {
+    use oxc_ast::ast::{
+        Declaration, IdentifierReference, ImportDeclarationSpecifier, ImportExpression,
+        MetaProperty, ThisExpression,
+    };
+    use oxc_ast_visit::Visit;
+    use std::collections::{HashMap, HashSet};
+    const ESCAPES: &[&str] = &[
+        "require",
+        "module",
+        "exports",
+        "globalThis",
+        "global",
+        "window",
+        "self",
+        "eval",
+        "Function",
+        "arguments",
+        "define",
+        "process",
+        "__filename",
+        "__dirname",
+    ];
+    #[derive(Default)]
+    struct Scan {
+        escapes: bool,
+        references: HashSet<String>,
+    }
+    impl<'a> Visit<'a> for Scan {
+        fn visit_this_expression(&mut self, _expression: &ThisExpression) {
+            self.escapes = true;
+        }
+        fn visit_import_expression(&mut self, _expression: &ImportExpression<'a>) {
+            self.escapes = true;
+        }
+        fn visit_meta_property(&mut self, _property: &MetaProperty<'a>) {
+            self.escapes = true;
+        }
+        fn visit_identifier_reference(&mut self, identifier: &IdentifierReference<'a>) {
+            if ESCAPES.contains(&identifier.name.as_str()) {
+                self.escapes = true;
+            }
+            self.references.insert(identifier.name.as_str().to_string());
+        }
+    }
+    #[derive(Default)]
+    struct HoistedVar {
+        found: bool,
+    }
+    impl<'a> Visit<'a> for HoistedVar {
+        fn visit_variable_declaration(
+            &mut self,
+            declaration: &oxc_ast::ast::VariableDeclaration<'a>,
+        ) {
+            if declaration.kind == oxc_ast::ast::VariableDeclarationKind::Var {
+                self.found = true;
+            }
+            oxc_ast_visit::walk::walk_variable_declaration(self, declaration);
+        }
+    }
+    #[derive(Default)]
+    struct Assigned {
+        names: HashSet<String>,
+    }
+    impl<'a> Visit<'a> for Assigned {
+        fn visit_simple_assignment_target(
+            &mut self,
+            target: &oxc_ast::ast::SimpleAssignmentTarget<'a>,
+        ) {
+            if let oxc_ast::ast::SimpleAssignmentTarget::AssignmentTargetIdentifier(identifier) =
+                target
+            {
+                self.names.insert(identifier.name.as_str().to_string());
+            }
+            oxc_ast_visit::walk::walk_simple_assignment_target(self, target);
+        }
+        // `({ extend } = ...)` reaches the identifier without passing
+        // through a simple assignment target (#13694 review).
+        fn visit_assignment_target_property_identifier(
+            &mut self,
+            property: &oxc_ast::ast::AssignmentTargetPropertyIdentifier<'a>,
+        ) {
+            self.names.insert(property.binding.name.to_string());
+            oxc_ast_visit::walk::walk_assignment_target_property_identifier(self, property);
+        }
+    }
+    let mut assigned = Assigned::default();
+    for stmt in body {
+        assigned.visit_statement(stmt);
+    }
+    let mut imported: HashSet<String> = HashSet::new();
+    let mut declared: HashMap<String, Scan> = HashMap::new();
+    let mut seen: HashSet<String> = HashSet::new();
+    for stmt in body {
+        let declaration = match stmt {
+            Statement::ImportDeclaration(import) => {
+                // Any import is opaque here, package or relative: a member
+                // bound to one (`const extend = extendImpl`) could write
+                // through `this` (#13694 review).
+                {
+                    for specifier in import.specifiers.iter().flatten() {
+                        let local = match specifier {
+                            ImportDeclarationSpecifier::ImportSpecifier(s) => &s.local,
+                            ImportDeclarationSpecifier::ImportDefaultSpecifier(s) => &s.local,
+                            ImportDeclarationSpecifier::ImportNamespaceSpecifier(s) => &s.local,
+                        };
+                        imported.insert(local.name.as_str().to_string());
+                    }
+                }
+                continue;
+            }
+            // `import x = require(...)` and namespaces bind names this scan
+            // does not model, so fail closed (#13694 review).
+            Statement::TSImportEqualsDeclaration(_) | Statement::TSModuleDeclaration(_) => {
+                return None;
+            }
+            Statement::FunctionDeclaration(_)
+            | Statement::ClassDeclaration(_)
+            | Statement::VariableDeclaration(_) => stmt.as_declaration(),
+            Statement::ExportNamedDeclaration(export) => export.declaration.as_ref(),
+            _ => {
+                // Any other top-level statement runs at load time: one that
+                // escapes, or hoists a `var` out of a block, could hand a
+                // sibling a route to the object the scan cannot follow.
+                let mut scan = Scan::default();
+                scan.visit_statement(stmt);
+                let mut hoisted = HoistedVar::default();
+                hoisted.visit_statement(stmt);
+                if scan.escapes || hoisted.found {
+                    return None;
+                }
+                continue;
+            }
+        };
+        let Some(declaration) = declaration else {
+            continue;
+        };
+        match declaration {
+            Declaration::TSImportEqualsDeclaration(_) | Declaration::TSModuleDeclaration(_) => {
+                return None;
+            }
+            // A bodiless overload or ambient signature is not a binding of
+            // its own; the implementation declaration carries the name.
+            Declaration::FunctionDeclaration(func) if func.body.is_none() => continue,
+            _ => {}
+        }
+        let names: Vec<String> = match declaration {
+            Declaration::FunctionDeclaration(func) => func
+                .id
+                .iter()
+                .map(|id| id.name.as_str().to_string())
+                .collect(),
+            Declaration::ClassDeclaration(class) => class
+                .id
+                .iter()
+                .map(|id| id.name.as_str().to_string())
+                .collect(),
+            Declaration::VariableDeclaration(decl) => decl
+                .declarations
+                .iter()
+                .flat_map(|declarator| declarator.id.get_binding_identifiers())
+                .map(|id| id.name.as_str().to_string())
+                .collect(),
+            _ => Vec::new(),
+        };
+        let mut scan = Scan::default();
+        scan.visit_declaration(declaration);
+        for name in names {
+            if !seen.insert(name.clone()) {
+                return None;
+            }
+            declared.insert(
+                name,
+                Scan {
+                    escapes: scan.escapes,
+                    references: scan.references.clone(),
+                },
+            );
+        }
+    }
+    let mut unsafe_names: HashSet<String> = declared
+        .iter()
+        .filter(|(_, scan)| {
+            scan.escapes
+                || scan
+                    .references
+                    .iter()
+                    .any(|reference| imported.contains(reference))
+        })
+        .map(|(name, _)| name.clone())
+        .collect();
+    unsafe_names.extend(assigned.names);
+    unsafe_names.extend(
+        members
+            .iter()
+            .filter(|member| !declared.contains_key(**member))
+            .map(|member| (*member).to_string()),
+    );
+    loop {
+        let before = unsafe_names.len();
+        for (name, scan) in &declared {
+            if !unsafe_names.contains(name)
+                && scan
+                    .references
+                    .iter()
+                    .any(|reference| reference != name && unsafe_names.contains(reference))
+            {
+                unsafe_names.insert(name.clone());
+            }
+        }
+        if unsafe_names.len() == before {
+            break;
+        }
+    }
+    Some(unsafe_names)
 }
 
 /// `module.exports` as a static member expression on the bare `module`
@@ -1021,7 +1565,9 @@ pub(crate) fn owners_from_default_export(
             )]
         }
         ExportDefaultDeclarationKind::ClassDeclaration(class) => {
-            owners_from_class(class, file, source, imports)
+            let mut owners = owners_from_class(class, file, source, imports);
+            name_anonymous_default_class(class, &mut owners);
+            owners
         }
         ExportDefaultDeclarationKind::ArrowFunctionExpression(arrow) => vec![owner_from_arrow(
             file,
@@ -1110,8 +1656,10 @@ pub(crate) fn owner_from_variable_declarator(
             method_kind: TypeScriptMethodKind::Ordinary,
             class_default_export: false,
             default_object_member: false,
+            default_object_unsafe_siblings: Vec::new(),
             commonjs_default_export: false,
             commonjs_whole_function: false,
+            constructor_callback: initializer_is_call_with_function_argument(init),
             module_entries: Vec::new(),
             // Non-function initializers carry no resolvable signature facts:
             // no fixed positional signature the boundary witness could
@@ -1121,6 +1669,65 @@ pub(crate) fn owner_from_variable_declarator(
             source_text: None,
         }),
     }
+}
+
+/// Member names whose function argument is invoked eagerly (or scheduled
+/// promptly) while the module loads, so a change inside it is not per-use.
+const EAGER_CALLBACK_METHODS: &[&str] = &[
+    "map",
+    "filter",
+    "reduce",
+    "reduceRight",
+    "forEach",
+    "some",
+    "every",
+    "find",
+    "findIndex",
+    "findLast",
+    "findLastIndex",
+    "flatMap",
+    "sort",
+    "toSorted",
+    "then",
+    "catch",
+    "finally",
+    "from",
+    "fromEntries",
+    "groupBy",
+    "resolve",
+    "all",
+    "race",
+    "allSettled",
+    "any",
+    "each",
+    "times",
+    "replace",
+    "replaceAll",
+    "parse",
+];
+
+/// Whether a declarator initializer is directly a call that receives a
+/// function-valued argument (`factory("Name", (inst, def) => { ... })`). Closed
+/// syntactic shape (#13588): wrapped, parenthesized or non-call initializers
+/// stay the plain module-initializer reading.
+fn initializer_is_call_with_function_argument(init: &Expression<'_>) -> bool {
+    let Expression::CallExpression(call) = init else {
+        return false;
+    };
+    // Demotion: a callee whose callback runs eagerly at module load (or whose
+    // timing is not a plain identifier or named member) keeps the old reading.
+    match &call.callee {
+        Expression::Identifier(_) => {}
+        Expression::StaticMemberExpression(member)
+            if !EAGER_CALLBACK_METHODS.contains(&member.property.name.as_str()) => {}
+        _ => return false,
+    }
+    call.arguments.iter().any(|arg| {
+        matches!(
+            arg,
+            Argument::ArrowFunctionExpression(_) | Argument::FunctionExpression(_)
+        )
+    })
 }
 
 /// Parameter facts for the owner signature (issue #4102): `(Some(n), names)`
@@ -1166,8 +1773,10 @@ pub(crate) fn owner_from_function(
         method_kind: TypeScriptMethodKind::Ordinary,
         class_default_export: false,
         default_object_member: false,
+        default_object_unsafe_siblings: Vec::new(),
         commonjs_default_export: false,
         commonjs_whole_function: false,
+        constructor_callback: false,
         module_entries: Vec::new(),
         params,
         arity,
@@ -1198,12 +1807,58 @@ pub(crate) fn owner_from_arrow(
         method_kind: TypeScriptMethodKind::Ordinary,
         class_default_export: false,
         default_object_member: false,
+        default_object_unsafe_siblings: Vec::new(),
         commonjs_default_export: false,
         commonjs_whole_function: false,
+        constructor_callback: false,
         module_entries: Vec::new(),
         params,
         arity,
         source_text: Some(source[arrow.span.start as usize..arrow.span.end as usize].to_string()),
+    }
+}
+
+/// Marks an ordinary method [`TypeScriptMethodKind::ReplacedByAssignment`]
+/// when a top-level `Class.prototype.NAME = ...` (instance) or
+/// `Class.NAME = ...` (static) statement of the file replaces it (#16314,
+/// RIPR-SPEC-0243 rule 29). `declared_class` is the class name the owner's
+/// own statement declares in module scope: an owner of an inline
+/// `exports.Cart = class {}` has none, so a same-named declaration or local
+/// never marks it.
+fn mark_replaced_by_assignment(
+    owner: &mut TypeScriptOwner,
+    declared_class: Option<&str>,
+    replaced: &std::collections::BTreeSet<(String, String, bool)>,
+) {
+    let is_static = match owner.owner_kind {
+        OwnerKind::Method => false,
+        OwnerKind::ClassMethod => true,
+        _ => return,
+    };
+    if owner.method_kind == TypeScriptMethodKind::Ordinary
+        && let Some(class_name) = declared_class
+        && owner.class_name.as_deref() == Some(class_name)
+        && replaced.contains(&(class_name.to_string(), owner.name.clone(), is_static))
+    {
+        owner.method_kind = TypeScriptMethodKind::ReplacedByAssignment;
+    }
+}
+
+/// The class name an anonymous default-exported class carries: an ES
+/// `export default class {}` is named `default` at runtime, and an inline
+/// `module.exports = class {}` is the module's whole export under any local
+/// name. Its members get that name so the class-method relation, which needs
+/// one, can credit a default import or a whole-module `require` (#16349).
+/// `default` is a reserved word, so no same-file `new default()` or
+/// `default.member()` can match it; a named class keeps its own name.
+fn name_anonymous_default_class(class: &Class<'_>, owners: &mut [TypeScriptOwner]) {
+    if class.id.is_some() {
+        return;
+    }
+    for owner in owners {
+        if owner.class_name.is_none() {
+            owner.class_name = Some("default".to_string());
+        }
     }
 }
 
@@ -1219,9 +1874,12 @@ pub(crate) fn owners_from_class(
         .id
         .as_ref()
         .map(|identifier| identifier.name.as_str().to_string());
+    let overwritten = super::overwritten_methods::overwritten_method_starts(class);
+    let shadowed = super::overwritten_methods::field_shadowed_method_starts(class);
+    let replaced = super::overwritten_methods::constructor_replaced_method_starts(class);
     for element in &class.body.body {
         if let ClassElement::MethodDefinition(method) = element
-            && let Some(owner) = owner_from_method(
+            && let Some(mut owner) = owner_from_method(
                 method,
                 file,
                 source,
@@ -1230,6 +1888,13 @@ pub(crate) fn owners_from_class(
                 imports,
             )
         {
+            if overwritten.contains(&method.span.start) {
+                owner.method_kind = TypeScriptMethodKind::Overwritten;
+            } else if shadowed.contains(&method.span.start) {
+                owner.method_kind = TypeScriptMethodKind::FieldShadowed;
+            } else if replaced.contains(&method.span.start) {
+                owner.method_kind = TypeScriptMethodKind::ReplacedInConstructor;
+            }
             owners.push(owner);
         }
     }
@@ -1268,8 +1933,10 @@ pub(crate) fn owner_from_method(
         },
         class_default_export: false,
         default_object_member: false,
+        default_object_unsafe_siblings: Vec::new(),
         commonjs_default_export: false,
         commonjs_whole_function: false,
+        constructor_callback: false,
         module_entries: Vec::new(),
         params,
         arity,
@@ -1287,7 +1954,7 @@ pub(crate) fn binding_identifier_name<'a>(pattern: &'a BindingPattern<'a>) -> Op
 /// A class method's owner name: a plain identifier, or a `#private` name kept
 /// with its `#` so it can never collide with a public member of the same name
 /// and cannot match a test's `receiver.name(` needle (#10440).
-fn method_key_name(method: &MethodDefinition<'_>) -> Option<String> {
+pub(super) fn method_key_name(method: &MethodDefinition<'_>) -> Option<String> {
     if method.computed {
         return None;
     }
@@ -1439,6 +2106,9 @@ fn extract_imports_from_statements_inner(
     // Names the file assigns to anywhere (computed on the first mutable
     // `require()` binding).
     let mut written_names: Option<std::collections::HashSet<String>> = None;
+    // Names a non-`require()` file-level declaration re-declares (computed on
+    // the first mutable `require()` binding).
+    let mut redeclared_names: Option<std::collections::HashSet<String>> = None;
     // `const lib = require('./y')` namespace bindings, so a member picked off
     // `lib` later reads as that module's member (#10447).
     let mut namespaces: std::collections::HashMap<String, String> =
@@ -1557,11 +2227,24 @@ fn extract_imports_from_statements_inner(
                 // hold the module's export, so it is not an import (#10401). A
                 // `const` cannot be reassigned.
                 let mutable = var_decl.kind != oxc_ast::ast::VariableDeclarationKind::Const;
+                // A `var` binding that a file-level declaration other than a
+                // `require()` re-declares (`var { Cart } = require('./cart');
+                // var Cart = class {}`, or a hoisted `function Cart() {}`)
+                // holds whichever value was written last, which this scan does
+                // not order, so it is not an import (#14088). Two `require()`
+                // bindings of one name stay recorded, both of them: the
+                // admission scan reads the package one, and a relation that
+                // needs one module tells them apart by the record.
                 let mut written = |name: &str| {
                     mutable
-                        && written_names
-                            .get_or_insert_with(|| identifier_writes(statements))
+                        && (redeclared_names
+                            .get_or_insert_with(|| {
+                                names_redeclared_beside_require(statements, &top_level_names)
+                            })
                             .contains(name)
+                            || written_names
+                                .get_or_insert_with(|| identifier_writes(statements))
+                                .contains(name))
                 };
                 // One member of a literal require: `const f = require('./y').f`
                 // picks the named export `f` out of the module (#9188). It is
@@ -1660,6 +2343,76 @@ fn extract_imports_from_statements_inner(
     out
 }
 
+/// The names declared at file level more often than program-level
+/// `require("<literal>")` declarators bind them: some other declaration (a
+/// second `var`, a function, a function a sloppy block hoists, a `require()`
+/// pattern the extractor does not read) binds the name too. `top_level_names`
+/// lists every file-level declaration, once each.
+fn names_redeclared_beside_require(
+    statements: &[Statement<'_>],
+    top_level_names: &[String],
+) -> std::collections::HashSet<String> {
+    let mut declared: std::collections::HashMap<&str, usize> = std::collections::HashMap::new();
+    for name in top_level_names {
+        *declared.entry(name.as_str()).or_insert(0) += 1;
+    }
+    if declared.values().all(|count| *count < 2) {
+        return std::collections::HashSet::new();
+    }
+    let mut required: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
+    let no_namespaces = std::collections::HashMap::new();
+    for stmt in statements {
+        let Statement::VariableDeclaration(declaration) = stmt else {
+            continue;
+        };
+        for declarator in &declaration.declarations {
+            let Some(init) = &declarator.init else {
+                continue;
+            };
+            // Count exactly the locals the extractor records for this
+            // declarator. A local it does not record (a nested pattern, a
+            // rest element, an array pattern) is another declaration of the
+            // name, so it must not balance one out (#14154 review).
+            let mut count = |name: &str| *required.entry(name.to_string()).or_insert(0) += 1;
+            if require_member_source(init, &no_namespaces).is_some() {
+                if let Some(name) = binding_identifier_name(&declarator.id) {
+                    count(name);
+                }
+                continue;
+            }
+            if require_string_literal_source(init).is_none() {
+                continue;
+            }
+            if let Some(name) = binding_identifier_name(&declarator.id) {
+                count(name);
+                continue;
+            }
+            let BindingPattern::ObjectPattern(object) = &declarator.id else {
+                continue;
+            };
+            for property in &object.properties {
+                if object_binding_key_name(property).is_none() {
+                    continue;
+                }
+                match &property.value {
+                    BindingPattern::BindingIdentifier(id) => count(id.name.as_str()),
+                    BindingPattern::AssignmentPattern(with_default) => {
+                        if let Some(name) = binding_identifier_name(&with_default.left) {
+                            count(name);
+                        }
+                    }
+                    _ => {}
+                }
+            }
+        }
+    }
+    declared
+        .into_iter()
+        .filter(|(name, count)| *count > 1 && *count > required.get(*name).copied().unwrap_or(0))
+        .map(|(name, _)| name.to_string())
+        .collect()
+}
+
 /// Extract the string literal source from a `require('...')` call expression.
 ///
 /// Returns `Some(source)` only for the simple form `require("./literal")`.
@@ -1686,7 +2439,7 @@ pub(crate) fn require_string_literal_source(expr: &Expression<'_>) -> Option<Str
 /// literal spelling `require("<literal>")["member"]`), for `const f =
 /// require("./y").f` (#9188). `None` for any other initializer, so a call on
 /// the member, a computed key and a dynamic `require` argument stay unread.
-fn require_member_source(
+pub(super) fn require_member_source(
     expr: &Expression<'_>,
     namespaces: &std::collections::HashMap<String, String>,
 ) -> Option<(String, String)> {
@@ -1905,6 +2658,8 @@ pub(crate) struct PhaseTwoFacts {
     /// each covered line carries exactly one shape. Lines with no fact
     /// keep the classifier's line-text fallback.
     pub(crate) probe_shapes: Vec<ProbeShapeFact>,
+    /// Bindings with a numeric initializer or nullish fallback on a later line.
+    pub(crate) default_bindings: std::collections::BTreeMap<usize, String>,
 }
 
 impl PhaseTwoFacts {
@@ -2013,7 +2768,7 @@ pub(crate) fn phase_two_facts_from_program(
     }
     collect_enum_members(&program.body, source, &text, &mut facts.enum_members);
     collect_ambient_ranges(&program.body, &text, &mut facts.ambient_ranges);
-    facts.probe_shapes = collect_probe_shapes(program, &text);
+    facts.probe_shapes = collect_probe_shapes(program, &text, &mut facts.default_bindings);
     facts
 }
 
@@ -2037,6 +2792,12 @@ fn collect_private_member_boundaries(
                 ExportDefaultDeclarationKind::ClassDeclaration(class) => Some(class.as_ref()),
                 _ => None,
             },
+            // The CommonJS class expressions whose members are owners:
+            // `exports.Cart = class ...` / `module.exports.Cart = class ...`
+            // (#16275) and `module.exports = class ...` (#16252).
+            Statement::ExpressionStatement(_) => commonjs_named_class_export(statement)
+                .map(|(_, class)| class)
+                .or_else(|| commonjs_whole_class_export(statement)),
             _ => None,
         };
         if let Some(class) = class {
@@ -2148,15 +2909,29 @@ pub(crate) fn inside_private_member_boundary(ranges: &[(usize, usize)], line: us
 fn collect_probe_shapes(
     program: &oxc_ast::ast::Program<'_>,
     source: &SourceText<'_>,
+    default_bindings: &mut std::collections::BTreeMap<usize, String>,
 ) -> Vec<ProbeShapeFact> {
-    struct Collector<'s> {
+    struct Collector<'s, 'facts> {
+        default_bindings: &'facts mut std::collections::BTreeMap<usize, String>,
         source: &'s SourceText<'s>,
         candidates: Vec<(u8, usize, usize, usize, TypeScriptProbeShape)>,
         concise_arrow_depth: usize,
         keep_concise_arrow_body: bool,
         top_start: usize,
     }
-    impl Collector<'_> {
+    impl Collector<'_, '_> {
+        fn record_default(&mut self, binding: &BindingPattern<'_>, init: &Expression<'_>) {
+            let Some(name) = binding_identifier_name(binding) else {
+                return;
+            };
+            if let Expression::NumericLiteral(literal) = init {
+                let line = self.source.line_for_offset(literal.span.start as usize);
+                if line > self.source.line_for_offset(binding.span().start as usize) {
+                    self.default_bindings.insert(line, name.to_owned());
+                }
+            }
+        }
+
         fn push(&mut self, span: oxc_span::Span, shape: TypeScriptProbeShape) {
             self.candidates.push((
                 1,
@@ -2224,7 +2999,7 @@ fn collect_probe_shapes(
             _ => TypeScriptProbeShape::new(ProbeFamily::ReturnValue, DeltaKind::Value),
         }
     }
-    impl<'a> oxc_ast_visit::Visit<'a> for Collector<'_> {
+    impl<'a> oxc_ast_visit::Visit<'a> for Collector<'_, '_> {
         fn visit_program(&mut self, it: &oxc_ast::ast::Program<'a>) {
             for statement in &it.body {
                 self.top_start = oxc_span::GetSpan::span(statement).start as usize;
@@ -2376,7 +3151,19 @@ fn collect_probe_shapes(
             );
             oxc_ast_visit::walk::walk_assignment_expression(self, it);
         }
+        fn visit_formal_parameter(&mut self, it: &oxc_ast::ast::FormalParameter<'a>) {
+            if let Some(init) = &it.initializer {
+                self.record_default(&it.pattern, init);
+            }
+            oxc_ast_visit::walk::walk_formal_parameter(self, it);
+        }
+
         fn visit_variable_declarator(&mut self, it: &oxc_ast::ast::VariableDeclarator<'a>) {
+            if let Some(Expression::LogicalExpression(init)) = &it.init
+                && init.operator.as_str() == "??"
+            {
+                self.record_default(&it.id, &init.right);
+            }
             // An object property needs no own candidate: a returned object
             // already carries FieldConstruction from its return node, and
             // a standalone property line keeps the line-text field shape.
@@ -2404,6 +3191,7 @@ fn collect_probe_shapes(
     }
     let mut collector = Collector {
         source,
+        default_bindings,
         candidates: Vec::new(),
         concise_arrow_depth: 0,
         keep_concise_arrow_body: false,
@@ -2690,31 +3478,31 @@ fn collect_ambient_ranges(
     }
 }
 
+/// The binding that owns a member chain, including optional and TS-wrapped accesses.
+pub(super) fn member_root_name<'a>(mut expr: &'a Expression<'_>) -> Option<&'a str> {
+    loop {
+        match expr.get_inner_expression() {
+            Expression::Identifier(id) => return Some(id.name.as_str()),
+            Expression::StaticMemberExpression(member) => expr = &member.object,
+            Expression::ComputedMemberExpression(member) => expr = &member.object,
+            Expression::ChainExpression(chain) => match &chain.expression {
+                oxc_ast::ast::ChainElement::StaticMemberExpression(member) => expr = &member.object,
+                oxc_ast::ast::ChainElement::ComputedMemberExpression(member) => {
+                    expr = &member.object
+                }
+                _ => return None,
+            },
+            _ => return None,
+        }
+    }
+}
+
 /// Every identifier whose members the statements may replace: the root of a
 /// member assignment target (`lib.f = v`, `lib.a.b = v`, `lib[k] = v`), of a
 /// `delete lib.f`, or any use of the bare namespace beyond a member read
 /// (`Object.assign(lib, ...)`, `Object.defineProperty(lib, ...)`).
 fn member_mutations(statements: &[Statement<'_>]) -> std::collections::HashSet<String> {
     use oxc_ast::ast::Expression;
-    fn root(mut expr: &Expression<'_>) -> Option<String> {
-        loop {
-            match expr.get_inner_expression() {
-                Expression::Identifier(id) => return Some(id.name.to_string()),
-                Expression::StaticMemberExpression(member) => expr = &member.object,
-                Expression::ComputedMemberExpression(member) => expr = &member.object,
-                Expression::ChainExpression(chain) => match &chain.expression {
-                    oxc_ast::ast::ChainElement::StaticMemberExpression(member) => {
-                        expr = &member.object
-                    }
-                    oxc_ast::ast::ChainElement::ComputedMemberExpression(member) => {
-                        expr = &member.object
-                    }
-                    _ => return None,
-                },
-                _ => return None,
-            }
-        }
-    }
     // A namespace used any way but as the object of a member read or a
     // destructuring initializer (`const again = lib`, `f(lib)`, `{ lib }`)
     // escapes, and what it reaches can replace members.
@@ -2731,23 +3519,29 @@ fn member_mutations(statements: &[Statement<'_>]) -> std::collections::HashSet<S
         ) {
             match target {
                 oxc_ast::ast::SimpleAssignmentTarget::StaticMemberExpression(member) => {
-                    self.mutated.extend(root(&member.object));
+                    self.mutated
+                        .extend(member_root_name(&member.object).map(str::to_owned));
                 }
                 oxc_ast::ast::SimpleAssignmentTarget::ComputedMemberExpression(member) => {
-                    self.mutated.extend(root(&member.object));
+                    self.mutated
+                        .extend(member_root_name(&member.object).map(str::to_owned));
                 }
                 // `(lib.f as any) = stub`: the member read underneath is a write.
                 oxc_ast::ast::SimpleAssignmentTarget::TSAsExpression(wrapped) => {
-                    self.mutated.extend(root(&wrapped.expression));
+                    self.mutated
+                        .extend(member_root_name(&wrapped.expression).map(str::to_owned));
                 }
                 oxc_ast::ast::SimpleAssignmentTarget::TSSatisfiesExpression(wrapped) => {
-                    self.mutated.extend(root(&wrapped.expression));
+                    self.mutated
+                        .extend(member_root_name(&wrapped.expression).map(str::to_owned));
                 }
                 oxc_ast::ast::SimpleAssignmentTarget::TSNonNullExpression(wrapped) => {
-                    self.mutated.extend(root(&wrapped.expression));
+                    self.mutated
+                        .extend(member_root_name(&wrapped.expression).map(str::to_owned));
                 }
                 oxc_ast::ast::SimpleAssignmentTarget::TSTypeAssertion(wrapped) => {
-                    self.mutated.extend(root(&wrapped.expression));
+                    self.mutated
+                        .extend(member_root_name(&wrapped.expression).map(str::to_owned));
                 }
                 _ => {}
             }
@@ -2756,7 +3550,8 @@ fn member_mutations(statements: &[Statement<'_>]) -> std::collections::HashSet<S
 
         fn visit_unary_expression(&mut self, unary: &oxc_ast::ast::UnaryExpression<'a>) {
             if unary.operator == oxc_ast::ast::UnaryOperator::Delete {
-                self.mutated.extend(root(&unary.argument));
+                self.mutated
+                    .extend(member_root_name(&unary.argument).map(str::to_owned));
             }
             oxc_ast_visit::walk::walk_unary_expression(self, unary);
         }
@@ -2769,7 +3564,8 @@ fn member_mutations(statements: &[Statement<'_>]) -> std::collections::HashSet<S
                 call.callee.get_inner_expression(),
                 Expression::StaticMemberExpression(_) | Expression::ComputedMemberExpression(_)
             ) {
-                self.mutated.extend(root(&call.callee));
+                self.mutated
+                    .extend(member_root_name(&call.callee).map(str::to_owned));
             }
             oxc_ast_visit::walk::walk_call_expression(self, call);
         }
@@ -2784,7 +3580,8 @@ fn member_mutations(statements: &[Statement<'_>]) -> std::collections::HashSet<S
                 tagged.tag.get_inner_expression(),
                 Expression::StaticMemberExpression(_) | Expression::ComputedMemberExpression(_)
             ) {
-                self.mutated.extend(root(&tagged.tag));
+                self.mutated
+                    .extend(member_root_name(&tagged.tag).map(str::to_owned));
             }
             oxc_ast_visit::walk::walk_tagged_template_expression(self, tagged);
         }
@@ -2843,7 +3640,7 @@ fn member_mutations(statements: &[Statement<'_>]) -> std::collections::HashSet<S
 /// assignment targets, `++`/`--`, `for (x of ...)` heads, and an identifier
 /// under a TypeScript wrapper (`(x as T) = v`). Member writes (`x.p = v`) do
 /// not rebind `x` and are not counted.
-fn identifier_writes(statements: &[Statement<'_>]) -> std::collections::HashSet<String> {
+pub(super) fn identifier_writes(statements: &[Statement<'_>]) -> std::collections::HashSet<String> {
     #[derive(Default)]
     struct Writes {
         names: std::collections::HashSet<String>,

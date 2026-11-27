@@ -4,8 +4,9 @@ use crate::app::feedback::{
     ExportFeedbackOptions, RecordFeedbackOptions, RecordStatus, export_feedback_join,
     record_feedback, record_result_json,
 };
+use crate::cli::commands_context::ensure_command_root;
 use crate::cli::help;
-use crate::cli::parse::expect_value;
+use crate::cli::parse::{expect_value, reconcile_root};
 use crate::cli::suggest::{unknown_argument, unknown_value};
 use crate::domain::{
     ActorKind, FeedbackJudgment, FeedbackPayload, FeedbackReason, ResultIdentity, ReviewStatus,
@@ -38,6 +39,9 @@ fn run_record(args: &[String]) -> Result<(), String> {
         return Ok(());
     }
     let (options, json) = parse_record_options(args)?;
+    // #14222: a mistyped `--root` is refused by the shared validator instead of
+    // being created as a new directory tree.
+    ensure_command_root(&options.root, "feedback record")?;
     // Feedback records land under `target/ripr/feedback`, never the cache, so
     // an explicit `RIPR_CACHE_DIR` must not waive the link check (#11477).
     crate::atomic_file::ensure_report_output_contained(&options.root)?;
@@ -64,6 +68,9 @@ fn run_export(args: &[String]) -> Result<(), String> {
         return Ok(());
     }
     let (options, json, out) = parse_export_options(args)?;
+    // #14222: a mistyped `--root` is refused by the shared validator instead of
+    // being created as a new directory tree.
+    ensure_command_root(&options.root, "feedback export")?;
     // Feedback records land under `target/ripr/feedback`, never the cache, so
     // an explicit `RIPR_CACHE_DIR` must not waive the link check (#11477).
     crate::atomic_file::ensure_report_output_contained(&options.root)?;
@@ -100,6 +107,7 @@ pub(in crate::cli) fn parse_record_options(
     let mut note: Option<String> = None;
     let mut idempotency_key: Option<String> = None;
     let mut root = PathBuf::from(".");
+    let mut root_explicit = false;
     let mut json = false;
     let mut i = 0usize;
     while i < args.len() {
@@ -139,7 +147,10 @@ pub(in crate::cli) fn parse_record_options(
             }
             "--reason" => {
                 i += 1;
-                reason = Some(FeedbackReason::parse(expect_value(args, i, "--reason")?)?);
+                reason = Some(
+                    FeedbackReason::parse(expect_value(args, i, "--reason")?)
+                        .map_err(|err| format!("feedback record --reason: {err}"))?,
+                );
             }
             "--judgment" => {
                 i += 1;
@@ -159,7 +170,14 @@ pub(in crate::cli) fn parse_record_options(
             }
             "--root" => {
                 i += 1;
-                root = PathBuf::from(expect_value(args, i, "--root")?);
+                let reconciled = reconcile_root(
+                    &root,
+                    root_explicit,
+                    expect_value(args, i, "--root")?,
+                    "feedback record",
+                )?;
+                root = reconciled;
+                root_explicit = true;
             }
             "--json" => json = true,
             "--file" | "--line" => {
@@ -173,10 +191,16 @@ pub(in crate::cli) fn parse_record_options(
         i += 1;
     }
     let snapshot_id = snapshot_id.ok_or_else(|| {
-        "feedback record requires --snapshot; file and line are not a result identity".to_string()
+        crate::cli::usage_refusal::missing_required(
+            "--snapshot",
+            "feedback record requires --snapshot; file and line are not a result identity",
+        )
     })?;
     let reason = reason.ok_or_else(|| {
-        "feedback record requires --reason; add `--reason` to the command".to_string()
+        crate::cli::usage_refusal::missing_required(
+            "--reason",
+            "feedback record requires --reason; add `--reason` to the command",
+        )
     })?;
     let payload = FeedbackPayload {
         identity: ResultIdentity {
@@ -209,6 +233,7 @@ pub(in crate::cli) fn parse_export_options(
     args: &[String],
 ) -> Result<(ExportFeedbackOptions, bool, Option<PathBuf>), String> {
     let mut root = PathBuf::from(".");
+    let mut root_explicit = false;
     let mut route_quality = None;
     let mut out = None;
     let mut json = false;
@@ -217,7 +242,14 @@ pub(in crate::cli) fn parse_export_options(
         match args[i].as_str() {
             "--root" => {
                 i += 1;
-                root = PathBuf::from(expect_value(args, i, "--root")?);
+                let reconciled = reconcile_root(
+                    &root,
+                    root_explicit,
+                    expect_value(args, i, "--root")?,
+                    "feedback export",
+                )?;
+                root = reconciled;
+                root_explicit = true;
             }
             "--route-quality" => {
                 i += 1;
@@ -300,10 +332,20 @@ Options:
   --actor KIND          Who recorded this: human, agent, or unknown. Default unknown.
   --review STATUS       unreviewed (default), reviewed_accepted, or reviewed_rejected.
   --review-actor KIND   Required when --review is not unreviewed.
-  --reason CODE         Closed taxonomy (useful_actionable, useful_limitation,
-                        wrong_target, wrong_discriminator, false_actionable,
-                        unclear_explanation, too_slow, intentional_defensive_code,
-                        other, ...). `other` requires --note and --judgment.
+  --reason CODE         Closed taxonomy of 25 codes:
+                        useful_actionable, useful_limitation,
+                        correct_target, correct_discriminator,
+                        clear_explanation, wrong_target,
+                        wrong_discriminator, false_actionable,
+                        duplicate_item, already_covered,
+                        incorrect_causal_attribution, stale_result,
+                        missing_context, ambiguous_target,
+                        unclear_explanation, verify_command_failed,
+                        receipt_command_failed, route_too_broad,
+                        too_slow, too_noisy, unsupported_workflow,
+                        intentional_defensive_code,
+                        intentional_low_grip, manual_review_preferred,
+                        other. `other` requires --note and --judgment.
   --judgment CLASS      Required for --reason other. Must match the reason class
                         otherwise.
   --note TEXT           Optional bounded note (1024 bytes). Fail-closed on known

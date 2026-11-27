@@ -16,10 +16,50 @@ fn script() -> Result<PathBuf, String> {
 }
 
 fn check_reviews(reviews: &serde_json::Value, head: &str) -> Result<Output, String> {
-    let mut child = Command::new("python3")
-        .arg("-I")
+    check_review_bytes(reviews.to_string().as_bytes(), head, false)
+}
+
+fn check_review_bytes(bytes: &[u8], head: &str, legacy_stdin: bool) -> Result<Output, String> {
+    check_review_bytes_with_pull(bytes, head, legacy_stdin, None)
+}
+
+/// #4984: reviews on stdin plus the pull request object read from `pull`.
+fn check_reviews_with_pull(
+    reviews: &serde_json::Value,
+    pull: &serde_json::Value,
+    head: &str,
+    tag: &str,
+) -> Result<Output, String> {
+    let path = std::env::temp_dir().join(format!(
+        "review-disposition-pull-{}-{tag}.json",
+        std::process::id()
+    ));
+    std::fs::write(&path, pull.to_string()).map_err(|e| format!("write pull: {e}"))?;
+    let output =
+        check_review_bytes_with_pull(reviews.to_string().as_bytes(), head, false, Some(&path));
+    let _ = std::fs::remove_file(&path);
+    output
+}
+
+fn check_review_bytes_with_pull(
+    bytes: &[u8],
+    head: &str,
+    legacy_stdin: bool,
+    pull: Option<&std::path::Path>,
+) -> Result<Output, String> {
+    let mut command = Command::new("python3");
+    command.arg("-I");
+    if legacy_stdin {
+        // Force the Windows legacy decoding boundary even on UTF-8 hosts.
+        command.args(["-c", "import runpy,sys; sys.stdin.reconfigure(encoding='cp1252'); path=sys.argv.pop(1); runpy.run_path(path, run_name='__main__')"]);
+    }
+    command
         .arg(script()?)
-        .args(["--check-reviews", "-", "--head", head])
+        .args(["--check-reviews", "-", "--head", head]);
+    if let Some(pull) = pull {
+        child_args_pull(&mut command, pull);
+    }
+    let mut child = command
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -29,11 +69,37 @@ fn check_reviews(reviews: &serde_json::Value, head: &str) -> Result<Output, Stri
         .stdin
         .take()
         .ok_or("stdin not piped")?
-        .write_all(reviews.to_string().as_bytes())
+        .write_all(bytes)
         .map_err(|e| format!("write reviews: {e}"))?;
     child
         .wait_with_output()
         .map_err(|e| format!("wait for verifier: {e}"))
+}
+
+#[test]
+fn utf8_review_input_ignores_legacy_stdin_encoding() -> Result<(), String> {
+    let head = "a".repeat(40);
+    let reviews = serde_json::json!([review(
+        "author",
+        "COMMENTED",
+        &head,
+        "2026-10-15T01:00:01Z",
+        "REVIEW_READY \u{2014} head 7c50f64fa93c3e40533240fbe4fd0e9ac7398eab"
+    )]);
+    expect_outcome(
+        &check_review_bytes(reviews.to_string().as_bytes(), &head, true)?,
+        true,
+        "UTF-8 review through legacy text stdin",
+    )?;
+    expect_outcome(
+        &check_review_bytes(b"[\"\xff\"]", &head, true)?,
+        false,
+        "malformed UTF-8 review",
+    )
+}
+
+fn child_args_pull(command: &mut Command, pull: &std::path::Path) {
+    command.arg("--check-pull").arg(pull);
 }
 
 /// Admit means exit 0; refuse means exit 1 with the refusal line and no crash.
@@ -65,6 +131,187 @@ fn review(login: &str, state: &str, head: &str, at: &str, body: &str) -> serde_j
         "submitted_at": at,
         "body": body,
     })
+}
+
+#[test]
+fn issue_14578_positive_carriers_cannot_bypass_unresolved_negatives() -> Result<(), String> {
+    let head = "a".repeat(40);
+    let other = "b".repeat(40);
+    let make = |login, state, subject: &str, second, body| {
+        let mut value = review(
+            login,
+            state,
+            subject,
+            &format!("2026-11-13T12:00:{second:02}Z"),
+            body,
+        );
+        value["id"] = serde_json::json!(second);
+        value
+    };
+    let approved = make("a", "APPROVED", &head, 1, "");
+    let negative = make("a", "COMMENTED", &head, 2, "REPAIR_REQUIRED");
+    let reply = make("a", "COMMENTED", &head, 3, "");
+    let chatter = make("a", "COMMENTED", &head, 4, "Thanks, will look.");
+    let other_ready = make("b", "COMMENTED", &head, 5, "SOURCE_REVIEW_READY");
+    let ready = make("a", "COMMENTED", &head, 6, "SOURCE_REVIEW_READY");
+    let reapproved = make("a", "APPROVED", &head, 6, "");
+    let other_negative = make("b", "COMMENTED", &head, 2, "REPAIR_REQUIRED");
+    let mut untrusted = reapproved.clone();
+    untrusted["author_association"] = serde_json::json!("CONTRIBUTOR");
+    let mut untrusted_negative = other_negative.clone();
+    untrusted_negative["author_association"] = serde_json::json!("NONE");
+    let mut no_time = negative.clone();
+    no_time["submitted_at"] = serde_json::Value::Null;
+    let cases = [
+        ("native approval alone", vec![approved.clone()], true),
+        (
+            "untrusted objection adds no authority",
+            vec![approved.clone(), untrusted_negative],
+            true,
+        ),
+        (
+            "same reviewer retracts approval",
+            vec![approved.clone(), negative.clone()],
+            false,
+        ),
+        (
+            "another reviewer objects",
+            vec![approved.clone(), other_negative.clone()],
+            false,
+        ),
+        (
+            "empty reply does not clear objection",
+            vec![negative.clone(), reply.clone(), other_ready.clone()],
+            false,
+        ),
+        (
+            "neutral prose does not clear objection",
+            vec![negative.clone(), chatter.clone(), other_ready.clone()],
+            false,
+        ),
+        (
+            "same reviewer explicitly ready",
+            vec![negative.clone(), reply.clone(), ready.clone()],
+            true,
+        ),
+        (
+            "same reviewer explicitly approves",
+            vec![negative.clone(), reply.clone(), reapproved.clone()],
+            true,
+        ),
+        (
+            "reapproval cannot clear another reviewer",
+            vec![negative.clone(), reapproved.clone(), other_negative.clone()],
+            false,
+        ),
+        (
+            "old-head reapproval cannot clear objection",
+            vec![
+                negative.clone(),
+                make("a", "APPROVED", &other, 6, ""),
+                other_ready.clone(),
+            ],
+            false,
+        ),
+        (
+            "untrusted reapproval cannot clear objection",
+            vec![negative.clone(), untrusted, other_ready.clone()],
+            false,
+        ),
+        (
+            "dismissal is not reapproval",
+            vec![
+                negative.clone(),
+                reapproved.clone(),
+                make("a", "DISMISSED", &head, 7, ""),
+                other_ready.clone(),
+            ],
+            false,
+        ),
+        (
+            "changes requested remains independent",
+            vec![make("a", "CHANGES_REQUESTED", &head, 1, ""), ready.clone()],
+            false,
+        ),
+        (
+            "native dismissal resolves native request",
+            vec![
+                make("a", "CHANGES_REQUESTED", &head, 1, ""),
+                make("a", "DISMISSED", &head, 2, ""),
+                other_ready.clone(),
+            ],
+            true,
+        ),
+        (
+            "native reapproval resolves native request",
+            vec![
+                make("a", "CHANGES_REQUESTED", &head, 1, ""),
+                reapproved.clone(),
+            ],
+            true,
+        ),
+        (
+            "old-head comment does not veto current head",
+            vec![
+                make("a", "COMMENTED", &other, 2, "REPAIR_REQUIRED"),
+                other_ready.clone(),
+            ],
+            true,
+        ),
+        (
+            "missing timestamp refuses",
+            vec![approved.clone(), no_time],
+            false,
+        ),
+    ];
+    let pull = pull_object(
+        "MEMBER",
+        "o/r",
+        &head,
+        &format!("Source review: REVIEW_READY {head}"),
+    );
+    for (index, (name, rows, admit)) in cases.into_iter().enumerate() {
+        // Pagination/order must not decide precedence. All outcomes exercise the
+        // production CLI, both with and without the description carrier.
+        for reversed in [false, true] {
+            let mut ordered = rows.clone();
+            if reversed {
+                ordered.reverse();
+            }
+            let reviews = serde_json::json!(ordered);
+            expect_outcome(&check_reviews(&reviews, &head)?, admit, name)?;
+            expect_outcome(
+                &check_reviews_with_pull(
+                    &reviews,
+                    &pull,
+                    &head,
+                    &format!("14578-{index}-{reversed}"),
+                )?,
+                admit,
+                name,
+            )?;
+        }
+    }
+    // Equal timestamp reviews are ordered by native ID, not page/input order.
+    let mut tied_negative = negative.clone();
+    tied_negative["submitted_at"] = approved["submitted_at"].clone();
+    let mut tied_approval = reapproved.clone();
+    tied_approval["submitted_at"] = approved["submitted_at"].clone();
+    for rows in [
+        vec![approved.clone(), tied_negative.clone()],
+        vec![tied_negative.clone(), approved],
+    ] {
+        expect_outcome(
+            &check_reviews(&serde_json::json!(rows), &head)?,
+            false,
+            "higher-ID negative wins tie",
+        )?;
+    }
+    expect_outcome(
+        &check_reviews(&serde_json::json!([tied_approval, tied_negative]), &head)?,
+        true,
+        "higher-ID reapproval wins tie",
+    )
 }
 
 #[test]
@@ -235,6 +482,1031 @@ fn issue_8157_narrative_false_positive_controls() -> Result<(), String> {
     Ok(())
 }
 
+/// #14355: a negated change/repair phrase is resolved work, not a blocker.
+/// The witness is the #14117 body; the controls are the genuine blocker forms.
+#[test]
+fn issue_14355_negated_change_phrase_is_not_a_blocker() -> Result<(), String> {
+    let head = "a".repeat(40);
+    let at = "2026-11-11T11:00:28Z";
+    let cases: [(&str, bool); 67] = [
+        // The strip-exercising control: this admits only because the strip ran.
+        ("REVIEW_READY\nResolved with no code change needed.", true),
+        (
+            "REVIEW_READY\nThree Devin threads resolved, no code changes needed.",
+            true,
+        ),
+        // Control that does not exercise the strip: no "needed"/"required".
+        ("REVIEW_READY\nResolved without a code change.", true),
+        // A comma resets the clause, so a benign cue earlier in the sentence
+        // does not suppress the strip.
+        (
+            "REVIEW_READY\nThe Devin thread was a false positive, no code change needed.",
+            true,
+        ),
+        (
+            "REVIEW_READY\nThe finding is not applicable, no changes needed.",
+            true,
+        ),
+        (
+            "REVIEW_READY\nGemini isn't available, no changes needed.",
+            true,
+        ),
+        // A hyphenated build/ci idiom is not a blocker.
+        (
+            "REVIEW_READY\nHosted CI fail-closed on this change; no code change needed.",
+            true,
+        ),
+        (
+            "REVIEW_READY\nBuild fail-fast behaviour verified; no changes needed.",
+            true,
+        ),
+        ("REVIEW_READY\nCode change needed.", false),
+        ("REVIEW_READY\nA change is needed.", false),
+        ("REVIEW_READY\nChanges required.", false),
+        ("REVIEW_READY\nRepairs required.", false),
+        (
+            "REVIEW_READY\nNo code change needed, but repairs required.",
+            false,
+        ),
+        // The real #14117 line 6: mid-line phrase followed by other sentences.
+        (
+            "REVIEW_READY\n- Review input: three Devin threads, each answered in the PR \
+             conversation and resolved with no code change needed. Gemini had no findings. \
+             CodeRabbit was rate limited and ub-review was cancelled, so neither supplied a \
+             review; the owning session's inline source review stands in for them.",
+            true,
+        ),
+        (
+            "REVIEW_READY\nNo code change needed. All threads resolved.",
+            true,
+        ),
+        (
+            "REVIEW_READY\nNo code change needed. Gemini had no findings.",
+            true,
+        ),
+        (
+            "REVIEW_READY\nNo changes are needed. The build is red.",
+            false,
+        ),
+        ("REVIEW_READY\nNo code change needed. Tests fail.", false),
+        (
+            "REVIEW_READY\nNo code change needed. Repairs required.",
+            false,
+        ),
+        (
+            "REVIEW_READY\nNo changes are needed. The build fails.",
+            false,
+        ),
+        (
+            "REVIEW_READY\nNo changes are needed. The build is broken.",
+            false,
+        ),
+        (
+            "REVIEW_READY\nNo changes are needed. The build is failing.",
+            false,
+        ),
+        (
+            "REVIEW_READY\nNo code change needed. A fix is needed.",
+            false,
+        ),
+        // A refutation after the phrase, in the same sentence, refuses.
+        ("REVIEW_READY\nNo changes are needed. That is false.", false),
+        ("REVIEW_READY\nNo changes are needed; that is false.", false),
+        (
+            "REVIEW_READY\nNo changes are needed. That is not true.",
+            false,
+        ),
+        ("REVIEW_READY\nNo changes are needed. I deny it.", false),
+        ("REVIEW_READY\nNo changes are needed. That is a lie.", false),
+        ("REVIEW_READY\nNo changes are needed. Incorrect.", false),
+        ("REVIEW_READY\nNo changes are needed. Wrong.", false),
+        ("REVIEW_READY\nNo code change needed. Not so.", false),
+        ("REVIEW_READY\nNo changes are needed. Not true.", false),
+        (
+            "REVIEW_READY\nNo changes are needed. That isn't true.",
+            false,
+        ),
+        (
+            "REVIEW_READY\nNo changes are needed. This isn't correct.",
+            false,
+        ),
+        (
+            "REVIEW_READY\nNo changes are needed. That claim is false.",
+            false,
+        ),
+        (
+            "REVIEW_READY\nNo changes are needed. The above is false.",
+            false,
+        ),
+        (
+            "REVIEW_READY\nNo changes are needed. That assertion is false.",
+            false,
+        ),
+        (
+            "REVIEW_READY\nNo changes are needed. This claim is false.",
+            false,
+        ),
+        (
+            "REVIEW_READY\nNo changes are needed. The statement is false.",
+            false,
+        ),
+        (
+            "REVIEW_READY\nNo changes are needed. The claim is false.",
+            false,
+        ),
+        (
+            "REVIEW_READY\nNo changes are needed. The assertion is false.",
+            false,
+        ),
+        (
+            "REVIEW_READY\nNo changes are needed. The finding is false.",
+            false,
+        ),
+        (
+            "REVIEW_READY\nNo changes are needed. The report is false.",
+            false,
+        ),
+        (
+            "REVIEW_READY\nNo changes are needed. This statement is untrue.",
+            false,
+        ),
+        ("REVIEW_READY\nNo changes are needed. All green.", true),
+        // Ordinary prose with a cue word is not a refutation.
+        (
+            "REVIEW_READY\nNo changes are needed. Nothing is wrong.",
+            true,
+        ),
+        (
+            "REVIEW_READY\nNo changes are needed. No incorrect claims.",
+            true,
+        ),
+        (
+            "REVIEW_READY\nNo code change needed. The wrong file was not touched.",
+            true,
+        ),
+        (
+            "REVIEW_READY\nNo changes are needed. All good, false alarm earlier.",
+            true,
+        ),
+        // An unlisted refutation ahead of the phrase is not resolved work.
+        (
+            "REVIEW_READY\nIt's not accurate that no changes are needed.",
+            false,
+        ),
+        (
+            "REVIEW_READY\nIt's not correct that no changes are needed.",
+            false,
+        ),
+        (
+            "REVIEW_READY\nIt would be wrong to claim no changes are needed.",
+            false,
+        ),
+        (
+            "REVIEW_READY\nI disagree that no changes are needed.",
+            false,
+        ),
+        (
+            "REVIEW_READY\nI don't believe no changes are needed.",
+            false,
+        ),
+        ("REVIEW_READY\nI doubt no changes are needed.", false),
+        // Graphite thread examples.
+        (
+            "REVIEW_READY\nNo code change needed. The Devin thread was a false positive.",
+            true,
+        ),
+        (
+            "REVIEW_READY\nNo code change needed. Gemini isn't available.",
+            true,
+        ),
+        // A refuted phrase is not resolved work.
+        (
+            "REVIEW_READY\nIt is not true that no changes are needed.",
+            false,
+        ),
+        ("REVIEW_READY\nIt is false that no change is needed.", false),
+        ("REVIEW_READY\nNo changes are needed is false.", false),
+        ("REVIEW_READY\nNo code change needed is not correct.", false),
+        (
+            "REVIEW_READY\nNo changes are needed -- the build is red.",
+            false,
+        ),
+        (
+            "REVIEW_READY\nThere is no truth to the claim that no changes are needed.",
+            false,
+        ),
+        (
+            "REVIEW_READY\nIt is a lie that no changes are needed.",
+            false,
+        ),
+        (
+            "REVIEW_READY\nIt is wrong to say that no changes are needed.",
+            false,
+        ),
+        (
+            "REVIEW_READY\nNobody could say that no changes are needed.",
+            false,
+        ),
+        ("REVIEW_READY\nno findings, code change needed", false),
+    ];
+    for (body, admit) in cases {
+        let reviews = serde_json::json!([review("author", "COMMENTED", &head, at, body)]);
+        expect_outcome(&check_reviews(&reviews, &head)?, admit, body)?;
+    }
+    Ok(())
+}
+
+/// #15980: a negated blocker phrase reports a resolved finding, not a blocker.
+/// The witness is the #15525 body; the controls are the genuine blocker forms.
+#[test]
+fn issue_15980_negated_blocker_phrase_is_not_a_blocker() -> Result<(), String> {
+    let head = "a".repeat(40);
+    let at = "2026-11-21T21:52:20Z";
+    let cases: [(&str, bool); 200] = [
+        // The strip-exercising witness: this admits only because the strip ran.
+        (
+            "SOURCE_REVIEW_READY\nNo source blocker found. The old hosted result predates \
+             current main; the current head is clean.",
+            true,
+        ),
+        ("SOURCE_REVIEW_READY\nno blockers found.", true),
+        ("SOURCE_REVIEW_READY\nNo source blockers remain.", true),
+        ("SOURCE_REVIEW_READY\nNO   SOURCE   BLOCKERS   REMAIN", true),
+        // #15980 review: the remainder scan now covers "still wrong", so a
+        // stripped phrase followed by a live defect refuses. This row used to
+        // admit because NEGATION's vocabulary did not cover the form.
+        (
+            "SOURCE_REVIEW_READY\nNo source blocker found. The fixture is still wrong.",
+            false,
+        ),
+        // Un-negated control: a genuine blocker refuses.
+        ("SOURCE_REVIEW_READY\nBlocker found.", false),
+        // A later blocker sentence keeps its own refusal.
+        (
+            "SOURCE_REVIEW_READY\nNo source blocker found. The build is red.",
+            false,
+        ),
+        // A same-line continuation after a comma is not a sentence end.
+        (
+            "SOURCE_REVIEW_READY\nNo source blocker found, but the fixture is still wrong.",
+            false,
+        ),
+        // A later refutation of the negated phrase refuses.
+        (
+            "SOURCE_REVIEW_READY\nNo source blocker found. That is false.",
+            false,
+        ),
+        (
+            "SOURCE_REVIEW_READY\nNo source blockers remain. That is not true.",
+            false,
+        ),
+        // A refutation ahead of the phrase refuses.
+        (
+            "SOURCE_REVIEW_READY\nIt is not true that no source blockers remain.",
+            false,
+        ),
+        // #15980 review: Markdown emphasis is formatting, not content. A
+        // refutation wrapped in single `*` or `_` must refuse exactly like the
+        // plain form; bold is already stripped by normalize_body and is the
+        // control that keeps the plain path covered.
+        (
+            "SOURCE_REVIEW_READY\nNo source blocker found. *That is false.*",
+            false,
+        ),
+        (
+            "SOURCE_REVIEW_READY\nNo source blocker found. _That is false._",
+            false,
+        ),
+        (
+            "SOURCE_REVIEW_READY\nNo source blocker found. **That is false.**",
+            false,
+        ),
+        // #15980 review: the same tolerance covers a `>` quote, `~~` strike and
+        // `-` bullet before the cue. A bulleted continuation that is not a cue
+        // still fails the match, so this does not make bullets refutations.
+        (
+            "SOURCE_REVIEW_READY\nNo source blocker found. > That is false.",
+            false,
+        ),
+        (
+            "SOURCE_REVIEW_READY\nNo source blocker found. ~~That is false.~~",
+            false,
+        ),
+        (
+            "SOURCE_REVIEW_READY\nNo source blocker found. - That is false.",
+            false,
+        ),
+        // Reverse-risk controls: the tolerance must not hide a real blocker
+        // behind the same markers. NEGATION still catches the phrase itself.
+        ("SOURCE_REVIEW_READY\n*Blocker found.*", false),
+        ("SOURCE_REVIEW_READY\n> Blocker found.", false),
+        // Filler widening: the 5 words the PR's set omits.
+        ("SOURCE_REVIEW_READY\nNo new source blocker found.", true),
+        (
+            "SOURCE_REVIEW_READY\nNo new source blocker found; all three previous threads were resolved at readback.",
+            true,
+        ),
+        ("SOURCE_REVIEW_READY\nNo other blocker found.", true),
+        ("SOURCE_REVIEW_READY\nNo additional blocker found.", true),
+        ("SOURCE_REVIEW_READY\nNo known blocker found.", true),
+        ("SOURCE_REVIEW_READY\nNo outstanding blocker found.", true),
+        // Quotation guard: a quoted phrase is not a claim.
+        (
+            "SOURCE_REVIEW_READY\nThe earlier review said 'No blocker found.' That is false.",
+            false,
+        ),
+        (
+            "SOURCE_REVIEW_READY\nThe earlier review said 'No blocker found.'",
+            false,
+        ),
+        (
+            "SOURCE_REVIEW_READY\n> No blocker found.\n> That is false.",
+            false,
+        ),
+        // The interaction: the widened filler must not open a new quoted fail-open.
+        (
+            "SOURCE_REVIEW_READY\nThe earlier review said 'No new source blocker found.' That is false.",
+            false,
+        ),
+        // Reverse risk: the widened filler must not hide a real blocker.
+        (
+            "SOURCE_REVIEW_READY\nNo new blocker found. The build is red.",
+            false,
+        ),
+        // Same-line state token after a stripped phrase: the PR head admits this, main refuses.
+        (
+            "SOURCE_REVIEW_READY\nNo blocker found. REPAIR_REQUIRED.",
+            false,
+        ),
+        (
+            "SOURCE_REVIEW_READY\nNo change is needed. REPAIR_REQUIRED.",
+            false,
+        ),
+        // The widened filler must not strip a phrase whose remainder reports a
+        // live defect in a form NEGATION did not cover before.
+        (
+            "SOURCE_REVIEW_READY\nNo new blocker found. The build still fails.",
+            false,
+        ),
+        (
+            "SOURCE_REVIEW_READY\nNo new blocker found. The test is still failing.",
+            false,
+        ),
+        (
+            "SOURCE_REVIEW_READY\nNo new blocker found. The fixture is still wrong.",
+            false,
+        ),
+        (
+            "SOURCE_REVIEW_READY\nNo new blocker found. The owner is still misattributed.",
+            false,
+        ),
+        (
+            "SOURCE_REVIEW_READY\nNo new blocker found. The golden still disagrees.",
+            false,
+        ),
+        // The bare BLOCK and INCOMPLETE tokens are scoped to the same-line
+        // guard and stay case-sensitive, so ordinary prose still admits.
+        ("SOURCE_REVIEW_READY\nThe block layout is unchanged.", true),
+        ("SOURCE_REVIEW_READY\n```\nblock\n```", true),
+        ("SOURCE_REVIEW_READY\nNo blocker found. BLOCK.", false),
+        ("SOURCE_REVIEW_READY\nNo blocker found. INCOMPLETE.", false),
+        // A bare BLOCK/INCOMPLETE line is a disposition, whatever the markup.
+        ("SOURCE_REVIEW_READY\nBLOCK", false),
+        ("SOURCE_REVIEW_READY\nBLOCK.", false),
+        ("SOURCE_REVIEW_READY\n**BLOCK**", false),
+        ("SOURCE_REVIEW_READY\n> BLOCK", false),
+        ("SOURCE_REVIEW_READY\n- BLOCK", false),
+        ("SOURCE_REVIEW_READY\nINCOMPLETE.", false),
+        ("SOURCE_REVIEW_READY\n**INCOMPLETE**", false),
+        ("SOURCE_REVIEW_READY\nBLOCK\nNo blocker found.", false),
+        ("SOURCE_REVIEW_READY\nINCOMPLETE\nNo blocker found.", false),
+        // A fenced uppercase token is a disposition; a fenced lowercase "block"
+        // is ordinary prose and still admits.
+        ("SOURCE_REVIEW_READY\n```\nBLOCK\n```", false),
+        ("SOURCE_REVIEW_READY\n```\nINCOMPLETE\n```", false),
+        ("SOURCE_REVIEW_READY\n```\nBLOCK: no\n```", false),
+        // The property form: a live defect in the remainder keeps the phrase.
+        (
+            "SOURCE_REVIEW_READY\nNo new blocker found. The build is still red.",
+            false,
+        ),
+        (
+            "SOURCE_REVIEW_READY\nNo source blocker found. The build is still red.",
+            false,
+        ),
+        (
+            "SOURCE_REVIEW_READY\nNo blocker found. The CI is still broken.",
+            false,
+        ),
+        (
+            "SOURCE_REVIEW_READY\nNo blocker found. The build remains red.",
+            false,
+        ),
+        (
+            "SOURCE_REVIEW_READY\nNo blocker found. The build continues to be red.",
+            false,
+        ),
+        (
+            "SOURCE_REVIEW_READY\nNo blocker found. The suite is still incomplete.",
+            false,
+        ),
+        (
+            "SOURCE_REVIEW_READY\nNo blocker found. The gap is still reported.",
+            false,
+        ),
+        (
+            "SOURCE_REVIEW_READY\nNo blocker found. The owner is still unreadable.",
+            false,
+        ),
+        // Deliberate trade: the widened vocabulary also refuses these ordinary
+        // prose forms, which admit on main.
+        (
+            "SOURCE_REVIEW_READY\nThe earlier bot claim is still wrong.",
+            false,
+        ),
+        (
+            "SOURCE_REVIEW_READY\nThe Devin thread is still wrong about the receiver.",
+            false,
+        ),
+        (
+            "SOURCE_REVIEW_READY\nNo code change needed. The BLOCK was cleared.",
+            false,
+        ),
+        // Subject-agnostic remainder predicate: any subject plus a defect.
+        (
+            "SOURCE_REVIEW_READY\nNo blocker found. The suite is incomplete.",
+            false,
+        ),
+        (
+            "SOURCE_REVIEW_READY\nNo blocker found. The suite is unreadable.",
+            false,
+        ),
+        (
+            "SOURCE_REVIEW_READY\nNo blocker found. The gap is reported.",
+            false,
+        ),
+        (
+            "SOURCE_REVIEW_READY\nNo blocker found. The suite is broken.",
+            false,
+        ),
+        (
+            "SOURCE_REVIEW_READY\nNo blocker found. The lane is red.",
+            false,
+        ),
+        (
+            "SOURCE_REVIEW_READY\nNo blocker found. The lane is failing.",
+            false,
+        ),
+        (
+            "SOURCE_REVIEW_READY\nNo blocker found. The lane fails.",
+            false,
+        ),
+        (
+            "SOURCE_REVIEW_READY\nNo blocker found. The run is broken.",
+            false,
+        ),
+        (
+            "SOURCE_REVIEW_READY\nNo blocker found. The run is red.",
+            false,
+        ),
+        (
+            "SOURCE_REVIEW_READY\nNo blocker found. The check is failing.",
+            false,
+        ),
+        (
+            "SOURCE_REVIEW_READY\nNo blocker found. The check fails.",
+            false,
+        ),
+        (
+            "SOURCE_REVIEW_READY\nNo blocker found. The job is broken.",
+            false,
+        ),
+        (
+            "SOURCE_REVIEW_READY\nNo blocker found. The job is red.",
+            false,
+        ),
+        (
+            "SOURCE_REVIEW_READY\nNo blocker found. The job fails.",
+            false,
+        ),
+        (
+            "SOURCE_REVIEW_READY\nNo blocker found. The test is failing.",
+            false,
+        ),
+        (
+            "SOURCE_REVIEW_READY\nNo blocker found. The tests are failing.",
+            false,
+        ),
+        (
+            "SOURCE_REVIEW_READY\nNo blocker found. The tests are red.",
+            false,
+        ),
+        (
+            "SOURCE_REVIEW_READY\nNo blocker found. The build is incomplete.",
+            false,
+        ),
+        (
+            "SOURCE_REVIEW_READY\nNo blocker found. The build is unreadable.",
+            false,
+        ),
+        (
+            "SOURCE_REVIEW_READY\nNo blocker found. The build is reported.",
+            false,
+        ),
+        (
+            "SOURCE_REVIEW_READY\nNo blocker found. The CI is incomplete.",
+            false,
+        ),
+        (
+            "SOURCE_REVIEW_READY\nNo blocker found. The CI is unreadable.",
+            false,
+        ),
+        (
+            "SOURCE_REVIEW_READY\nNo blocker found. The CI is reported.",
+            false,
+        ),
+        (
+            "SOURCE_REVIEW_READY\nNo blocker found. The evidence is incomplete.",
+            false,
+        ),
+        (
+            "SOURCE_REVIEW_READY\nNo blocker found. The evidence is unreadable.",
+            false,
+        ),
+        (
+            "SOURCE_REVIEW_READY\nNo blocker found. The evidence is missing.",
+            false,
+        ),
+        (
+            "SOURCE_REVIEW_READY\nNo blocker found. The evidence is absent.",
+            false,
+        ),
+        (
+            "SOURCE_REVIEW_READY\nNo blocker found. The lane is stuck.",
+            false,
+        ),
+        (
+            "SOURCE_REVIEW_READY\nNo blocker found. The lane is stalled.",
+            false,
+        ),
+        (
+            "SOURCE_REVIEW_READY\nNo blocker found. The lane is hung.",
+            false,
+        ),
+        (
+            "SOURCE_REVIEW_READY\nNo blocker found. The lane is dead.",
+            false,
+        ),
+        (
+            "SOURCE_REVIEW_READY\nNo blocker found. The lane is down.",
+            false,
+        ),
+        (
+            "SOURCE_REVIEW_READY\nNo blocker found. The lane is unavailable.",
+            false,
+        ),
+        (
+            "SOURCE_REVIEW_READY\nNo blocker found. The lane is unreachable.",
+            false,
+        ),
+        (
+            "SOURCE_REVIEW_READY\nNo blocker found. The lane is missing.",
+            false,
+        ),
+        (
+            "SOURCE_REVIEW_READY\nNo blocker found. The lane is absent.",
+            false,
+        ),
+        (
+            "SOURCE_REVIEW_READY\nNo blocker found. The lane is empty.",
+            false,
+        ),
+        (
+            "SOURCE_REVIEW_READY\nNo blocker found. The lane is stale.",
+            false,
+        ),
+        (
+            "SOURCE_REVIEW_READY\nNo blocker found. The lane is outdated.",
+            false,
+        ),
+        (
+            "SOURCE_REVIEW_READY\nNo blocker found. The lane is revoked.",
+            false,
+        ),
+        (
+            "SOURCE_REVIEW_READY\nNo blocker found. The lane is rejected.",
+            false,
+        ),
+        (
+            "SOURCE_REVIEW_READY\nNo blocker found. The lane is nacked.",
+            false,
+        ),
+        (
+            "SOURCE_REVIEW_READY\nNo blocker found. The lane is not green.",
+            false,
+        ),
+        (
+            "SOURCE_REVIEW_READY\nNo blocker found. The lane is not passing.",
+            false,
+        ),
+        (
+            "SOURCE_REVIEW_READY\nNo blocker found. The lane is not complete.",
+            false,
+        ),
+        (
+            "SOURCE_REVIEW_READY\nNo blocker found. The lane is not done.",
+            false,
+        ),
+        (
+            "SOURCE_REVIEW_READY\nNo blocker found. The lane is not finished.",
+            false,
+        ),
+        (
+            "SOURCE_REVIEW_READY\nNo blocker found. The lane is not merged.",
+            false,
+        ),
+        // Must-admit controls for the subject-agnostic predicate.
+        (
+            "SOURCE_REVIEW_READY\nNo source blocker found. The old hosted result predates current main; the hosted lane has not run on this head.",
+            true,
+        ),
+        (
+            "SOURCE_REVIEW_READY\nNo blocker found. The block layout is unchanged.",
+            true,
+        ),
+        (
+            "SOURCE_REVIEW_READY\nNo blocker found. The build is green.",
+            true,
+        ),
+        (
+            "SOURCE_REVIEW_READY\nNo blocker found. All checks pass.",
+            true,
+        ),
+        (
+            "SOURCE_REVIEW_READY\nNo blocker found. The tests pass.",
+            true,
+        ),
+        (
+            "SOURCE_REVIEW_READY\nNo blocker found. The suite is complete.",
+            true,
+        ),
+        (
+            "SOURCE_REVIEW_READY\nNo blocker found. No changes needed.",
+            true,
+        ),
+        ("SOURCE_REVIEW_READY\nNo source blocker found.", true),
+        ("SOURCE_REVIEW_READY\nNo code change needed.", true),
+        // Broader defect vocabulary: adjectives and verbs.
+        (
+            "SOURCE_REVIEW_READY\nNo blocker found. The suite crashes.",
+            false,
+        ),
+        (
+            "SOURCE_REVIEW_READY\nNo blocker found. The suite is crashing.",
+            false,
+        ),
+        (
+            "SOURCE_REVIEW_READY\nNo blocker found. The suite is not working.",
+            false,
+        ),
+        (
+            "SOURCE_REVIEW_READY\nNo blocker found. The suite is not yet green.",
+            false,
+        ),
+        (
+            "SOURCE_REVIEW_READY\nNo blocker found. The suite is still not green.",
+            false,
+        ),
+        (
+            "SOURCE_REVIEW_READY\nNo blocker found. The suite is corrupt.",
+            false,
+        ),
+        (
+            "SOURCE_REVIEW_READY\nNo blocker found. The suite is invalid.",
+            false,
+        ),
+        (
+            "SOURCE_REVIEW_READY\nNo blocker found. The suite is misconfigured.",
+            false,
+        ),
+        // Homograph exceptions: these are benign in context.
+        (
+            "SOURCE_REVIEW_READY\nNo blocker found. The lane is down to the last check.",
+            true,
+        ),
+        (
+            "SOURCE_REVIEW_READY\nNo blocker found. The build is down to one job.",
+            true,
+        ),
+        (
+            "SOURCE_REVIEW_READY\nNo blocker found. The queue is empty.",
+            true,
+        ),
+        (
+            "SOURCE_REVIEW_READY\nNo blocker found. The backlog is empty.",
+            true,
+        ),
+        (
+            "SOURCE_REVIEW_READY\nNo blocker found. The queue is empty and the lane is green.",
+            true,
+        ),
+        (
+            "SOURCE_REVIEW_READY\nNo blocker found. The result is reported in the run log.",
+            true,
+        ),
+        // The same words stay defects for the other subjects.
+        (
+            "SOURCE_REVIEW_READY\nNo blocker found. The evidence is empty.",
+            false,
+        ),
+        (
+            "SOURCE_REVIEW_READY\nNo blocker found. The diff is empty.",
+            false,
+        ),
+        (
+            "SOURCE_REVIEW_READY\nNo blocker found. The gap is still reported.",
+            false,
+        ),
+        // Auxiliary negation: has/have/had/did/do/does/is/are/was/were + not.
+        (
+            "SOURCE_REVIEW_READY\nNo blocker found. The build is not fully green.",
+            false,
+        ),
+        (
+            "SOURCE_REVIEW_READY\nNo blocker found. The build has not been green.",
+            false,
+        ),
+        (
+            "SOURCE_REVIEW_READY\nNo blocker found. The build has not passed.",
+            false,
+        ),
+        (
+            "SOURCE_REVIEW_READY\nNo blocker found. The build did not pass.",
+            false,
+        ),
+        (
+            "SOURCE_REVIEW_READY\nNo blocker found. The build didn't pass.",
+            false,
+        ),
+        (
+            "SOURCE_REVIEW_READY\nNo blocker found. The tests have not run.",
+            false,
+        ),
+        (
+            "SOURCE_REVIEW_READY\nNo blocker found. The lane has not finished.",
+            false,
+        ),
+        (
+            "SOURCE_REVIEW_READY\nNo blocker found. The build is not yet green.",
+            false,
+        ),
+        (
+            "SOURCE_REVIEW_READY\nNo blocker found. The build is not yet passing.",
+            false,
+        ),
+        (
+            "SOURCE_REVIEW_READY\nNo blocker found. The build is not yet done.",
+            false,
+        ),
+        // "has not been <participle>" for the defect vocabulary.
+        (
+            "SOURCE_REVIEW_READY\nNo blocker found. The build has not been tested.",
+            false,
+        ),
+        (
+            "SOURCE_REVIEW_READY\nNo blocker found. The build has not been verified.",
+            false,
+        ),
+        (
+            "SOURCE_REVIEW_READY\nNo blocker found. The build has not been reviewed.",
+            false,
+        ),
+        (
+            "SOURCE_REVIEW_READY\nNo blocker found. The build has not been qualified.",
+            false,
+        ),
+        (
+            "SOURCE_REVIEW_READY\nNo blocker found. The build has not been checked.",
+            false,
+        ),
+        (
+            "SOURCE_REVIEW_READY\nNo blocker found. The build has not been validated.",
+            false,
+        ),
+        (
+            "SOURCE_REVIEW_READY\nNo blocker found. The build has not been confirmed.",
+            false,
+        ),
+        (
+            "SOURCE_REVIEW_READY\nNo blocker found. The build has not been deployed.",
+            false,
+        ),
+        (
+            "SOURCE_REVIEW_READY\nNo blocker found. The build has not been released.",
+            false,
+        ),
+        (
+            "SOURCE_REVIEW_READY\nNo blocker found. The build has not been shipped.",
+            false,
+        ),
+        (
+            "SOURCE_REVIEW_READY\nNo blocker found. The build has not been landed.",
+            false,
+        ),
+        (
+            "SOURCE_REVIEW_READY\nNo blocker found. The build has not been completed.",
+            false,
+        ),
+        (
+            "SOURCE_REVIEW_READY\nNo blocker found. The build has not been finished.",
+            false,
+        ),
+        (
+            "SOURCE_REVIEW_READY\nNo blocker found. The build has not been ready.",
+            false,
+        ),
+        (
+            "SOURCE_REVIEW_READY\nNo blocker found. The build has not been working.",
+            false,
+        ),
+        (
+            "SOURCE_REVIEW_READY\nNo blocker found. The build has not been functional.",
+            false,
+        ),
+        (
+            "SOURCE_REVIEW_READY\nNo blocker found. The build has not been operational.",
+            false,
+        ),
+        (
+            "SOURCE_REVIEW_READY\nNo blocker found. The build has not been available.",
+            false,
+        ),
+        (
+            "SOURCE_REVIEW_READY\nNo blocker found. The build has not been reachable.",
+            false,
+        ),
+        (
+            "SOURCE_REVIEW_READY\nNo blocker found. The build has not been responsive.",
+            false,
+        ),
+        (
+            "SOURCE_REVIEW_READY\nNo blocker found. The build has not been stable.",
+            false,
+        ),
+        (
+            "SOURCE_REVIEW_READY\nNo blocker found. The build has not been healthy.",
+            false,
+        ),
+        (
+            "SOURCE_REVIEW_READY\nNo blocker found. The build has not been correct.",
+            false,
+        ),
+        (
+            "SOURCE_REVIEW_READY\nNo blocker found. The build has not been valid.",
+            false,
+        ),
+        (
+            "SOURCE_REVIEW_READY\nNo blocker found. The build has not been sound.",
+            false,
+        ),
+        (
+            "SOURCE_REVIEW_READY\nNo blocker found. The build has not been solid.",
+            false,
+        ),
+        (
+            "SOURCE_REVIEW_READY\nNo blocker found. The build has not been clean.",
+            false,
+        ),
+        (
+            "SOURCE_REVIEW_READY\nNo blocker found. The build has not been covered.",
+            false,
+        ),
+        (
+            "SOURCE_REVIEW_READY\nNo blocker found. The build has not been documented.",
+            false,
+        ),
+        (
+            "SOURCE_REVIEW_READY\nNo blocker found. The build has not been recorded.",
+            false,
+        ),
+        (
+            "SOURCE_REVIEW_READY\nNo blocker found. The build has not been noted.",
+            false,
+        ),
+        (
+            "SOURCE_REVIEW_READY\nNo blocker found. The build has not been described.",
+            false,
+        ),
+        (
+            "SOURCE_REVIEW_READY\nNo blocker found. The build has not been explained.",
+            false,
+        ),
+        (
+            "SOURCE_REVIEW_READY\nNo blocker found. The build has not been linked.",
+            false,
+        ),
+        (
+            "SOURCE_REVIEW_READY\nNo blocker found. The build has not been attached.",
+            false,
+        ),
+        (
+            "SOURCE_REVIEW_READY\nNo blocker found. The build has not been included.",
+            false,
+        ),
+        // The #15525 benign negations still admit.
+        (
+            "SOURCE_REVIEW_READY\nNo source blocker found. The old hosted result is not native composed-tree proof.",
+            true,
+        ),
+        (
+            "SOURCE_REVIEW_READY\nNo source blocker found. I did not rerun the hosted lane.",
+            true,
+        ),
+        // "still fails" is subject-anchored, so narration admits.
+        (
+            "SOURCE_REVIEW_READY\na wrongly gated control still fails",
+            true,
+        ),
+        (
+            "SOURCE_REVIEW_READY\nA `>` redirect's CRLF therefore still fails",
+            true,
+        ),
+        (
+            "SOURCE_REVIEW_READY\na UTF-16 redirect still fails it on CRLF",
+            true,
+        ),
+        (
+            "SOURCE_REVIEW_READY\nscalar roles still fail (existing tests)",
+            true,
+        ),
+        (
+            "SOURCE_REVIEW_READY\nwhich is still an error and still fail-closed",
+            true,
+        ),
+        (
+            "SOURCE_REVIEW_READY\nIt still fails when no string value carries the missing root",
+            true,
+        ),
+        // Standalone defect lines: the subject-anchored still-fails form now
+        // covers probe/fixture/golden/mutant/assertion.
+        ("SOURCE_REVIEW_READY\nThe probe still fails.", false),
+        ("SOURCE_REVIEW_READY\nThe fixture still fails.", false),
+        ("SOURCE_REVIEW_READY\nThe golden still fails.", false),
+        ("SOURCE_REVIEW_READY\nThe mutant still fails.", false),
+        ("SOURCE_REVIEW_READY\nThe assertion still fails.", false),
+        // Benign combined shapes: the homograph narrowings cover these too.
+        (
+            "SOURCE_REVIEW_READY\nNo blocker found. The result is reported in the summary.",
+            true,
+        ),
+        (
+            "SOURCE_REVIEW_READY\nNo blocker found. The cache is empty.",
+            true,
+        ),
+        (
+            "SOURCE_REVIEW_READY\nNo blocker found. The lane is down for maintenance.",
+            true,
+        ),
+    ];
+    for (body, admit) in cases {
+        let reviews = serde_json::json!([review("author", "COMMENTED", &head, at, body)]);
+        expect_outcome(&check_reviews(&reviews, &head)?, admit, body)?;
+    }
+    // #15980 review: the verdict carrier strips the resolved negated phrases
+    // before its alternative scan, so "no source blocking findings found" is
+    // not read as "blocking"; a real alternative, a later blocker sentence and
+    // an italicized refutation still refuse.
+    let verdict_cases: [(String, bool); 4] = [
+        (
+            format!(
+                "SOURCE_REVIEW_READY\nVERDICT: APPROVE {head} - no source blocking findings found"
+            ),
+            true,
+        ),
+        (
+            format!("SOURCE_REVIEW_READY\nVERDICT: APPROVE {head} - blocking findings found"),
+            false,
+        ),
+        (
+            format!(
+                "SOURCE_REVIEW_READY\nVERDICT: APPROVE {head} - no source blocking findings found. The build is red."
+            ),
+            false,
+        ),
+        (
+            format!(
+                "SOURCE_REVIEW_READY\nVERDICT: APPROVE {head} - no source blocking findings found. *That is false.*"
+            ),
+            false,
+        ),
+    ];
+    for (body, admit) in verdict_cases {
+        let reviews = serde_json::json!([review("author", "COMMENTED", &head, at, &body)]);
+        expect_outcome(&check_reviews(&reviews, &head)?, admit, &body)?;
+    }
+    Ok(())
+}
+
 /// Full, untrimmed bodies of real review-of-record comments: every `ready-*`
 /// body must admit and every `refuse-*` body (REVIEW_INCOMPLETE shapes) must refuse.
 #[test]
@@ -266,9 +1538,9 @@ fn full_real_review_bodies_admit_or_refuse_as_recorded() -> Result<(), String> {
         )]);
         expect_outcome(&check_reviews(&reviews, &head)?, admit, &name)?;
     }
-    if ready != 11 || refused != 7 {
+    if ready != 13 || refused != 8 {
         return Err(format!(
-            "expected 11 ready and 7 refuse fixtures, saw {ready}/{refused}"
+            "expected 13 ready and 8 refuse fixtures, saw {ready}/{refused}"
         ));
     }
     Ok(())
@@ -375,6 +1647,74 @@ fn wrong_head_changes_requested_and_identity_controls() -> Result<(), String> {
 }
 
 #[test]
+fn clearing_comment_binds_the_admitted_head_and_trust() -> Result<(), String> {
+    let head = "a".repeat(40);
+    let other = "b".repeat(40);
+    let mut negative = review(
+        "a",
+        "COMMENTED",
+        &head,
+        "2026-10-15T01:00:01Z",
+        "REPAIR_REQUIRED",
+    );
+    negative["id"] = serde_json::json!(1);
+    let mut wrong_head_ready = review(
+        "a",
+        "COMMENTED",
+        &other,
+        "2026-10-15T01:00:02Z",
+        "SOURCE_REVIEW_READY",
+    );
+    wrong_head_ready["id"] = serde_json::json!(2);
+    let mut untrusted_ready = review(
+        "a",
+        "COMMENTED",
+        &head,
+        "2026-10-15T01:00:02Z",
+        "SOURCE_REVIEW_READY",
+    );
+    untrusted_ready["id"] = serde_json::json!(2);
+    untrusted_ready["author_association"] = serde_json::json!("NONE");
+    let mut trusted_ready = review(
+        "a",
+        "COMMENTED",
+        &head,
+        "2026-10-15T01:00:02Z",
+        "SOURCE_REVIEW_READY",
+    );
+    trusted_ready["id"] = serde_json::json!(2);
+    let mut later_marker = review(
+        "b",
+        "COMMENTED",
+        &head,
+        "2026-10-15T01:00:03Z",
+        "SOURCE_REVIEW_READY",
+    );
+    later_marker["id"] = serde_json::json!(3);
+    let controls = [
+        (
+            "clearing comment on an earlier head",
+            serde_json::json!([negative.clone(), wrong_head_ready, later_marker.clone()]),
+            false,
+        ),
+        (
+            "clearing comment from an untrusted association",
+            serde_json::json!([negative.clone(), untrusted_ready, later_marker.clone()]),
+            false,
+        ),
+        (
+            "clearing comment on the admitted head",
+            serde_json::json!([negative, trusted_ready, later_marker]),
+            true,
+        ),
+    ];
+    for (name, reviews, expected) in controls {
+        expect_outcome(&check_reviews(&reviews, &head)?, expected, name)?;
+    }
+    Ok(())
+}
+
+#[test]
 fn malformed_review_pages_refuse_instead_of_crashing() -> Result<(), String> {
     let head = "a".repeat(40);
     for page in [
@@ -426,7 +1766,1184 @@ fn live_read_merges_pages_and_fails_closed_on_gh_error() -> Result<(), String> {
     // An API error after a valid page must not admit.
     let failing = format!("#!/bin/sh\nprintf '%s\\n' '{page2}'\nexit 1\n");
     let output = run(failing);
-    let result = output.and_then(|o| expect_outcome(&o, false, "gh failure after a valid page"));
+    let result = output
+        .and_then(|o| expect_outcome(&o, false, "gh failure after a valid page"))
+        .and_then(|()| {
+            // #4984: with no review at all, the live read of the pull request
+            // description supplies the exact-head attestation.
+            let pull = pull_object(
+                "MEMBER",
+                "o/r",
+                &head,
+                &format!("Source review: REVIEW_READY {head}"),
+            );
+            let described = format!(
+                "#!/bin/sh\ncase \"$*\" in *reviews*) printf '[]\\n' ;; *) printf '%s\\n' '{pull}' ;; esac\n"
+            );
+            expect_outcome(&run(described)?, true, "live description attestation")
+        })
+        .and_then(|()| {
+            // A failed description read leaves only the (empty) reviews: refuse.
+            let unreadable =
+                "#!/bin/sh\ncase \"$*\" in *reviews*) printf '[]\\n' ;; *) exit 1 ;; esac\n"
+                    .to_string();
+            expect_outcome(&run(unreadable)?, false, "description read failure")
+        });
     let _ = std::fs::remove_dir_all(&dir);
     result
+}
+
+fn pull_object(
+    association: &str,
+    head_repo: &str,
+    head_sha: &str,
+    body: &str,
+) -> serde_json::Value {
+    serde_json::json!({
+        "author_association": association,
+        "head": {"sha": head_sha, "repo": {"full_name": head_repo}},
+        "base": {"repo": {"full_name": "o/r"}},
+        "body": body,
+    })
+}
+
+/// #4984: the pull request description may carry the exact-head attestation when
+/// review writes are throttled. It is a carrier only; every review refusal stands.
+#[test]
+fn pull_description_carrier_binds_the_exact_head_and_adds_no_authority() -> Result<(), String> {
+    let head = "a".repeat(40);
+    let other = "b".repeat(40);
+    let line = format!("Source review: REVIEW_READY {head}");
+    let none = serde_json::json!([]);
+    let negative = serde_json::json!([review(
+        "r",
+        "COMMENTED",
+        &head,
+        "2026-10-15T01:00:01Z",
+        "REPAIR_REQUIRED"
+    )]);
+    let changes = serde_json::json!([review(
+        "r",
+        "CHANGES_REQUESTED",
+        &head,
+        "2026-10-15T01:00:01Z",
+        ""
+    )]);
+    let empty_reply =
+        serde_json::json!([review("r", "COMMENTED", &head, "2026-10-15T01:00:01Z", "")]);
+    let stale_ready = serde_json::json!([review(
+        "r",
+        "COMMENTED",
+        &other,
+        "2026-10-15T01:00:01Z",
+        "REVIEW_READY"
+    )]);
+    let embedded = format!("## Summary\n\n- one change\n\n{line}\n\n## Proof\n");
+    let abbreviated = format!("Source review: REVIEW_READY {}", &head[..12]);
+    let other_head = format!("Source review: REVIEW_READY {other}");
+    let fenced = format!("```\n{line}\n```");
+    let commented = format!("<!-- {line} -->");
+    let contradicted = format!("{line}\nSource review: REVIEW_INCOMPLETE");
+    let hedged = format!("{line} pending CI");
+    let quoted = format!("> {line}");
+    let cases: [(&str, &serde_json::Value, serde_json::Value, bool); 17] = [
+        (
+            "exact line",
+            &none,
+            pull_object("MEMBER", "o/r", &head, &line),
+            true,
+        ),
+        (
+            "line inside a filled template",
+            &none,
+            pull_object("OWNER", "o/r", &head, &embedded),
+            true,
+        ),
+        (
+            "empty reply review does not hide it",
+            &empty_reply,
+            pull_object("COLLABORATOR", "o/r", &head, &line),
+            true,
+        ),
+        (
+            "unfilled template",
+            &none,
+            pull_object("MEMBER", "o/r", &head, "Source review:"),
+            false,
+        ),
+        (
+            "no line",
+            &none,
+            pull_object("MEMBER", "o/r", &head, "## Summary"),
+            false,
+        ),
+        (
+            "abbreviated sha",
+            &none,
+            pull_object("MEMBER", "o/r", &head, &abbreviated),
+            false,
+        ),
+        (
+            "line names another head",
+            &none,
+            pull_object("MEMBER", "o/r", &head, &other_head),
+            false,
+        ),
+        (
+            "live head moved",
+            &none,
+            pull_object("MEMBER", "o/r", &other, &line),
+            false,
+        ),
+        (
+            "fenced example",
+            &none,
+            pull_object("MEMBER", "o/r", &head, &fenced),
+            false,
+        ),
+        (
+            "html comment",
+            &none,
+            pull_object("MEMBER", "o/r", &head, &commented),
+            false,
+        ),
+        (
+            "contradicting second line",
+            &none,
+            pull_object("MEMBER", "o/r", &head, &contradicted),
+            false,
+        ),
+        (
+            "hedged value",
+            &none,
+            pull_object("MEMBER", "o/r", &head, &hedged),
+            false,
+        ),
+        (
+            "quoted line",
+            &none,
+            pull_object("MEMBER", "o/r", &head, &quoted),
+            false,
+        ),
+        (
+            "untrusted author",
+            &none,
+            pull_object("CONTRIBUTOR", "o/r", &head, &line),
+            false,
+        ),
+        (
+            "fork head",
+            &none,
+            pull_object("MEMBER", "fork/r", &head, &line),
+            false,
+        ),
+        (
+            "trusted negative review still refuses",
+            &negative,
+            pull_object("MEMBER", "o/r", &head, &line),
+            false,
+        ),
+        (
+            "changes requested still refuses",
+            &changes,
+            pull_object("MEMBER", "o/r", &head, &line),
+            false,
+        ),
+    ];
+    for (index, (name, reviews, pull, admit)) in cases.iter().enumerate() {
+        expect_outcome(
+            &check_reviews_with_pull(reviews, pull, &head, &index.to_string())?,
+            *admit,
+            name,
+        )?;
+    }
+    // #11566: a competing field inside the description itself refuses whatever list
+    // markup leads it, with no reviews at all; prose and a clean line still admit.
+    for (index, (name, extra, admit)) in [
+        (
+            "numbered competing field",
+            "1. disposition: REPAIR_REQUIRED",
+            false,
+        ),
+        (
+            "paren-numbered competing field",
+            "1) disposition: REPAIR_REQUIRED",
+            false,
+        ),
+        (
+            "task-list competing field",
+            "- [ ] disposition: REPAIR_REQUIRED",
+            false,
+        ),
+        (
+            "bulleted competing field",
+            "- disposition: REPAIR_REQUIRED",
+            false,
+        ),
+        ("final field", "Final disposition: REPAIR_REQUIRED", false),
+        (
+            "current field",
+            "Current disposition: REVIEW_INCOMPLETE",
+            false,
+        ),
+        ("table field", "| Disposition | REPAIR_REQUIRED |", false),
+        (
+            "first-cell state",
+            "| REPAIR_REQUIRED | fix oracle |",
+            false,
+        ),
+        ("sole-cell state", "| REPAIR_REQUIRED |", false),
+        ("ordinary table", "| fmt | pass |", true),
+        (
+            "numbered prose",
+            "1. Recorded the earlier disposition in the issue.",
+            true,
+        ),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        expect_outcome(
+            &check_reviews_with_pull(
+                &none,
+                &pull_object("OWNER", "o/r", &head, &format!("{line}\n{extra}")),
+                &head,
+                &format!("list-{index}"),
+            )?,
+            admit,
+            name,
+        )?;
+    }
+    // An older-head ready review plus an unfilled description admits nothing.
+    expect_outcome(
+        &check_reviews_with_pull(
+            &stale_ready,
+            &pull_object("MEMBER", "o/r", &head, "Source review:"),
+            &head,
+            "stale",
+        )?,
+        false,
+        "older-head review with unfilled description",
+    )?;
+    // Without the pull object the same reviews keep the review-only outcome.
+    expect_outcome(
+        &check_reviews(&none, &head)?,
+        false,
+        "no reviews and no pull object",
+    )?;
+    // A pull object that is not an object refuses instead of crashing.
+    expect_outcome(
+        &check_reviews_with_pull(&none, &serde_json::json!([1]), &head, "malformed")?,
+        false,
+        "malformed pull object",
+    )?;
+    // A competing state field in the description makes it ambiguous, quoted, listed,
+    // emphasised or fenced; the template's prose use of the word stays inert.
+    let competing = [
+        (format!("{line}\ndisposition: REPAIR_REQUIRED"), false),
+        (
+            format!("{line}\n- **Disposition:** REVIEW_INCOMPLETE"),
+            false,
+        ),
+        (format!("{line}\n> disposition: REVIEW_READY"), false),
+        (
+            format!("{line}\n```\ndisposition: REPAIR_REQUIRED\n```"),
+            false,
+        ),
+        (
+            format!("{line}\nLosing candidate disposition (when decided): none"),
+            true,
+        ),
+    ];
+    for (index, (body, admit)) in competing.iter().enumerate() {
+        expect_outcome(
+            &check_reviews_with_pull(
+                &none,
+                &pull_object("MEMBER", "o/r", &head, body),
+                &head,
+                &format!("competing-{index}"),
+            )?,
+            *admit,
+            body,
+        )?;
+    }
+    // A reviewer's negative statement outlives their own later neutral reply (a thread
+    // reply creates one); only their own later ready statement replaces it, and a
+    // negative statement on an earlier head never applied to this head.
+    let at = |second: u8| format!("2026-10-15T01:00:0{second}Z");
+    let negative_then_reply = serde_json::json!([
+        review("r", "COMMENTED", &head, &at(1), "REPAIR_REQUIRED"),
+        review("r", "COMMENTED", &head, &at(2), ""),
+    ]);
+    let negative_then_ready = serde_json::json!([
+        review("r", "COMMENTED", &head, &at(1), "REPAIR_REQUIRED"),
+        review("r", "COMMENTED", &head, &at(2), ""),
+        review("r", "COMMENTED", &head, &at(3), "REVIEW_READY"),
+        review("r", "COMMENTED", &head, &at(4), ""),
+    ]);
+    let earlier_head_negative = serde_json::json!([
+        review("r", "COMMENTED", &other, &at(1), "REPAIR_REQUIRED"),
+        review("r", "COMMENTED", &head, &at(2), ""),
+    ]);
+    let ready_pull = pull_object("MEMBER", "o/r", &head, &line);
+    for (name, reviews, admit) in [
+        ("negative then neutral reply", &negative_then_reply, false),
+        ("negative, reply, ready, reply", &negative_then_ready, true),
+        ("negative on an earlier head", &earlier_head_negative, true),
+    ] {
+        expect_outcome(
+            &check_reviews_with_pull(reviews, &ready_pull, &head, name)?,
+            admit,
+            name,
+        )?;
+    }
+    expect_outcome(
+        &check_reviews(&negative_then_reply, &head)?,
+        false,
+        "negative then neutral reply without a description line",
+    )
+}
+
+#[test]
+fn verdict_fields_use_a_closed_positive_grammar() -> Result<(), String> {
+    let head = "1cc13d3de7941b83f2488853e120fbdfd3d9cee5";
+    let fixture = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("tests/fixtures/review_verdicts/refuse-pr13896-5892179853.md");
+    let recorded = std::fs::read_to_string(&fixture).map_err(|e| format!("{fixture:?}: {e}"))?;
+    let cases = [
+        (recorded.as_str(), false),
+        (
+            "SOURCE_REVIEW_READY\nVERDICT: BLOCK 1cc13d3de7941b83f2488853e120fbdfd3d9cee5",
+            false,
+        ),
+        ("SOURCE_REVIEW_READY\nVERDICT: ABSTAIN", false),
+        ("SOURCE_REVIEW_READY\nVERDICT: MAYBE", false),
+        ("SOURCE_REVIEW_READY\nVERDICT: APPROVE / BLOCK", false),
+        ("SOURCE_REVIEW_READY\nVERDICT: APPROVE", true),
+        (
+            "SOURCE_REVIEW_READY\nVERDICT: APPROVE 1cc13d3de7941b83f2488853e120fbdfd3d9cee5",
+            true,
+        ),
+        ("SOURCE_REVIEW_READY", true),
+        ("REVIEW_READY\nREPAIR_REQUIRED", false),
+    ];
+    for (body, admit) in cases {
+        let reviews = serde_json::json!([review(
+            "reviewer",
+            "COMMENTED",
+            head,
+            "2026-11-13T15:00:00Z",
+            body,
+        )]);
+        expect_outcome(&check_reviews(&reviews, head)?, admit, body)?;
+    }
+    Ok(())
+}
+
+#[test]
+fn table_verdict_rows_use_the_same_closed_grammar() -> Result<(), String> {
+    let head = "1cc13d3de7941b83f2488853e120fbdfd3d9cee5";
+    let exact_block = "SOURCE_REVIEW_READY\n| Field | Value |\n| --- | --- |\n| Verdict | BLOCK |";
+    let controls = [
+        (exact_block, false),
+        ("SOURCE_REVIEW_READY\n| Verdict | ABSTAIN |", false),
+        ("SOURCE_REVIEW_READY\n| Verdict | MAYBE |", false),
+        ("SOURCE_REVIEW_READY\n| Verdict |  |", false),
+        ("SOURCE_REVIEW_READY\n| Verdict | APPROVE / BLOCK |", false),
+        (
+            "SOURCE_REVIEW_READY\n| Verdict | APPROVE 1cc13d3de7941b83f2488853e120fbdfd3d9cee5 |",
+            true,
+        ),
+        // #14592: a GFM row may omit the trailing pipe, so losing it must not change
+        // the disposition, and an extra non-empty value cell is ambiguous.
+        ("SOURCE_REVIEW_READY\n| Verdict | BLOCK", false),
+        ("SOURCE_REVIEW_READY\n| Verdict | ABSTAIN", false),
+        (
+            "SOURCE_REVIEW_READY\n| Verdict | APPROVE 1cc13d3de7941b83f2488853e120fbdfd3d9cee5",
+            true,
+        ),
+        (
+            "SOURCE_REVIEW_READY\n| Verdict | APPROVE 1cc13d3de7941b83f2488853e120fbdfd3d9cee5 | BLOCK |",
+            false,
+        ),
+        (
+            "SOURCE_REVIEW_READY\n| Verdict | APPROVE 1cc13d3de7941b83f2488853e120fbdfd3d9cee5 | BLOCK",
+            false,
+        ),
+        ("SOURCE_REVIEW_READY\n| Verdict | BLOCK | approve |", false),
+        // An unrecognised value is a real verdict, not a column label.
+        (
+            "SOURCE_REVIEW_READY\n| Verdict | Needs work |\n| --- | --- |",
+            false,
+        ),
+        (
+            "SOURCE_REVIEW_READY\n| Verdict | Denied |\n| --- | --- |",
+            false,
+        ),
+        (
+            "SOURCE_REVIEW_READY\n| Verdict | Unsafe |\n| --- | --- |",
+            false,
+        ),
+        (
+            "SOURCE_REVIEW_READY\n| Verdict | NO |\n| --- | --- |",
+            false,
+        ),
+        (
+            "SOURCE_REVIEW_READY\n| Verdict | Result |\n| --- | --- |",
+            true,
+        ),
+        // GFM permits an omitted leading pipe, so the same row without it must
+        // keep the same disposition.
+        ("SOURCE_REVIEW_READY\nVerdict | BLOCK", false),
+        ("SOURCE_REVIEW_READY\nVerdict | REPAIR_REQUIRED", false),
+        ("SOURCE_REVIEW_READY\nVerdict | CHANGES_REQUESTED", false),
+        ("SOURCE_REVIEW_READY\nVerdict | Value\n--- | ---", true),
+    ];
+    for (body, admit) in controls {
+        let reviews = serde_json::json!([review(
+            "reviewer",
+            "COMMENTED",
+            head,
+            "2026-11-14T07:51:00Z",
+            body,
+        )]);
+        expect_outcome(&check_reviews(&reviews, head)?, admit, body)?;
+    }
+
+    let described = pull_object(
+        "MEMBER",
+        "o/r",
+        head,
+        &format!("Source review: REVIEW_READY {head}\n| Verdict | BLOCK |"),
+    );
+    expect_outcome(
+        &check_reviews_with_pull(&serde_json::json!([]), &described, head, "table-verdict")?,
+        false,
+        "table verdict is a competing PR-description field",
+    )?;
+    // #14592: the same competing row without the optional trailing pipe.
+    let described_no_pipe = pull_object(
+        "MEMBER",
+        "o/r",
+        head,
+        &format!("Source review: REVIEW_READY {head}\n| Verdict | BLOCK"),
+    );
+    expect_outcome(
+        &check_reviews_with_pull(
+            &serde_json::json!([]),
+            &described_no_pipe,
+            head,
+            "table-verdict-no-pipe",
+        )?,
+        false,
+        "table verdict without a trailing pipe is a competing PR-description field",
+    )?;
+    // GFM also permits an omitted leading pipe.
+    let described_no_leading = pull_object(
+        "MEMBER",
+        "o/r",
+        head,
+        &format!("Source review: REVIEW_READY {head}\nVerdict | BLOCK"),
+    );
+    expect_outcome(
+        &check_reviews_with_pull(
+            &serde_json::json!([]),
+            &described_no_leading,
+            head,
+            "table-verdict-no-leading-pipe",
+        )?,
+        false,
+        "table verdict without a leading pipe is a competing PR-description field",
+    )
+}
+/// #14592: the review convention's verdict line. A ready marker followed by
+/// `VERDICT: BLOCK <sha>` refuses through the real CLI, whether the body is the
+/// full recorded review of #13896 or the two-line minimum; `VERDICT: APPROVE`
+/// after the same marker still admits.
+///
+/// #14603 supersedes #14592's approving-prose allowance: on a verdict line the
+/// whole value must be APPROVE with an optional head annotation to attest, so
+/// "approve, no block remains" and "no blocking findings" no longer carry a
+/// positive disposition. An APPROVE-led value that is not exactly that form is
+/// neutral rather than a refusal, so the house marker review's explanation cannot
+/// veto the marker; a value that also names a blocking word still refuses.
+#[test]
+fn a_blocking_verdict_line_after_a_ready_marker_refuses() -> Result<(), String> {
+    let head = "a".repeat(40);
+    let at = "2026-10-15T01:00:01Z";
+    let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("tests/fixtures/review_verdicts/refuse-pr13896-5892179853.md");
+    let recorded =
+        std::fs::read_to_string(&path).map_err(|e| format!("{}: {e}", path.display()))?;
+    if !recorded.starts_with("SOURCE_REVIEW_READY\nVERDICT: BLOCK ") {
+        return Err("fixture setup: recorded body lost its marker and verdict lines".into());
+    }
+    let cases = [
+        (
+            recorded.as_str(),
+            false,
+            "recorded #13896 review 5892179853",
+        ),
+        (
+            "SOURCE_REVIEW_READY\nVERDICT: BLOCK 1cc13d3d",
+            false,
+            "bare BLOCK",
+        ),
+        (
+            "SOURCE_REVIEW_READY\nVERDICT: BLOCKED 1cc13d3d",
+            false,
+            "bare BLOCKED",
+        ),
+        (
+            "REVIEW_READY\n\n**Verdict:** block",
+            false,
+            "emphasised verdict",
+        ),
+        (
+            "SOURCE_REVIEW_READY\nVERDICT: APPROVE / BLOCK",
+            false,
+            "compound verdict",
+        ),
+        (
+            "SOURCE_REVIEW_READY\nVERDICT: BLOCKING",
+            false,
+            "BLOCKING verdict",
+        ),
+        (
+            "SOURCE_REVIEW_READY\n1. Verdict: BLOCK",
+            false,
+            "numbered-list verdict",
+        ),
+        (
+            "SOURCE_REVIEW_READY\n_Verdict:_ BLOCK",
+            false,
+            "underscore-emphasis verdict",
+        ),
+        (
+            "SOURCE_REVIEW_READY\nVERDICT: approve, no block remains.",
+            true,
+            "approving prose is neutral, not a refusal",
+        ),
+        (
+            "SOURCE_REVIEW_READY\nVERDICT: no block remains. That is false.",
+            false,
+            "refuted negated block",
+        ),
+        (
+            "SOURCE_REVIEW_READY\nVERDICT: no; BLOCK",
+            false,
+            "negator in a separate clause",
+        ),
+        (
+            "SOURCE_REVIEW_READY\nVERDICT: approve, no  blocking findings.",
+            true,
+            "approving prose with extra spacing is neutral",
+        ),
+        (
+            "SOURCE_REVIEW_READY\nVERDICT: APPROVE 1cc13d3d — no blocking findings on this head.",
+            true,
+            "the house marker review's verdict line is neutral",
+        ),
+        (
+            "SOURCE_REVIEW_READY\nVERDICT: APPROVE - tests fail.",
+            false,
+            "an APPROVE-led value that names a blocker still refuses",
+        ),
+        (
+            "REVIEW_READY\n> VERDICT: APPROVE 1cc13d3d — no blocking findings on this head.",
+            true,
+            "a quoted approving verdict line is not a negative",
+        ),
+        (
+            "SOURCE_REVIEW_READY\n| Verdict | Notes |\n| --- | --- |\n| APPROVE |",
+            true,
+            "a Verdict header row names a column, not a disposition",
+        ),
+        (
+            "SOURCE_REVIEW_READY\nThe earlier verdict: BLOCK was cleared.",
+            true,
+            "recalled verdict in prose",
+        ),
+        (
+            "SOURCE_REVIEW_READY\nVERDICT: APPROVE 1cc13d3d",
+            true,
+            "approve verdict",
+        ),
+        (
+            "REVIEW_READY\nVerdict: no blocking findings on this head.",
+            false,
+            "approving prose is not a whole verdict value",
+        ),
+    ];
+    for (body, admit, what) in cases {
+        let reviews = serde_json::json!([review("author", "COMMENTED", &head, at, body)]);
+        expect_outcome(&check_reviews(&reviews, &head)?, admit, what)?;
+    }
+    Ok(())
+}
+
+#[test]
+fn a_labelled_field_whose_value_is_a_state_token_refuses() -> Result<(), String> {
+    let head = "a".repeat(40);
+    let at = "2026-10-15T01:00:01Z";
+    let cases = [
+        (
+            "SOURCE_REVIEW_READY\nVERDICT: REPAIR_REQUIRED 1cc13d3d",
+            false,
+            "verdict field REPAIR_REQUIRED",
+        ),
+        (
+            "SOURCE_REVIEW_READY\nVERDICT: CHANGES_REQUESTED 1cc13d3d",
+            false,
+            "verdict field CHANGES_REQUESTED",
+        ),
+        (
+            "REVIEW_READY\nStatus: REPAIR_REQUIRED",
+            false,
+            "status field REPAIR_REQUIRED",
+        ),
+        (
+            "REVIEW_READY\n- **Verdict:** `CHANGES_REQUESTED`",
+            false,
+            "emphasised verdict field",
+        ),
+        (
+            "SOURCE_REVIEW_READY\nVERDICT: APPROVE 1cc13d3d",
+            true,
+            "approve control",
+        ),
+        (
+            "SOURCE_REVIEW_READY\nStatus (round 2): REPAIR_REQUIRED",
+            false,
+            "punctuated status label",
+        ),
+        (
+            "SOURCE_REVIEW_READY\nStatus -> REPAIR_REQUIRED",
+            false,
+            "arrow separator",
+        ),
+        (
+            "REVIEW_READY\n- **Status:** REVIEW_READY",
+            true,
+            "positive value under a label",
+        ),
+    ];
+    for (body, admit, what) in cases {
+        let reviews = serde_json::json!([review("author", "COMMENTED", &head, at, body)]);
+        expect_outcome(&check_reviews(&reviews, &head)?, admit, what)?;
+    }
+    Ok(())
+}
+
+/// #8157: a standalone automated VERDICT review states a disposition instead
+/// of superseding an earlier marker from the same login as neutral chatter
+/// (observed on #14652 and #13898). Only an exact column-zero first line
+/// counts: `VERDICT: APPROVE <full head>` attests, `VERDICT: BLOCK` /
+/// `VERDICT: BLOCKED <sha>` refuses, and every other VERDICT prose is neutral.
+#[test]
+fn verdict_first_line_carries_or_refuses_the_attestation() -> Result<(), String> {
+    let head = "a".repeat(40);
+    let other = "b".repeat(40);
+    let dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/review_bodies");
+    let approve_body = std::fs::read_to_string(dir.join("ready-verdict-approve-pr14652.md"))
+        .map_err(|e| format!("approve fixture: {e}"))?;
+    let block_body = std::fs::read_to_string(dir.join("refuse-verdict-block-pr14652.md"))
+        .map_err(|e| format!("block fixture: {e}"))?;
+    if !approve_body.starts_with(&format!("VERDICT: APPROVE {head}"))
+        || !block_body.starts_with(&format!("VERDICT: BLOCK {head}"))
+    {
+        return Err("fixture setup: verdict fixtures lost their first lines".into());
+    }
+    let at = |second: u8| format!("2026-10-15T03:00:0{second}Z");
+    let mut untrusted_approve = review("author", "COMMENTED", &head, &at(1), &approve_body);
+    untrusted_approve["author_association"] = serde_json::json!("NONE");
+    let mut untrusted_block = review("other", "COMMENTED", &head, &at(2), &block_body);
+    untrusted_block["author_association"] = serde_json::json!("NONE");
+    untrusted_block["id"] = serde_json::json!(2);
+    let mut other_block = review("other", "COMMENTED", &head, &at(2), &block_body);
+    other_block["id"] = serde_json::json!(2);
+    let cases: [(&str, serde_json::Value, bool); 13] = [
+        (
+            "marker then verdict approve, same login",
+            serde_json::json!([
+                review("author", "COMMENTED", &head, &at(1), "SOURCE_REVIEW_READY"),
+                review("author", "COMMENTED", &head, &at(2), &approve_body),
+            ]),
+            true,
+        ),
+        (
+            "marker then verdict block, same login",
+            serde_json::json!([
+                review("author", "COMMENTED", &head, &at(1), "SOURCE_REVIEW_READY"),
+                review("author", "COMMENTED", &head, &at(2), &block_body),
+            ]),
+            false,
+        ),
+        (
+            "verdict approve then marker, same login",
+            serde_json::json!([
+                review("author", "COMMENTED", &head, &at(1), &approve_body),
+                review("author", "COMMENTED", &head, &at(2), "SOURCE_REVIEW_READY"),
+            ]),
+            true,
+        ),
+        (
+            "standalone verdict approve",
+            serde_json::json!([review("author", "COMMENTED", &head, &at(1), &approve_body)]),
+            true,
+        ),
+        (
+            "standalone verdict block",
+            serde_json::json!([review("author", "COMMENTED", &head, &at(1), &block_body)]),
+            false,
+        ),
+        (
+            "verdict block from another trusted reviewer",
+            serde_json::json!([
+                review("author", "COMMENTED", &head, &at(1), "SOURCE_REVIEW_READY"),
+                other_block,
+            ]),
+            false,
+        ),
+        (
+            "verdict approve naming another head",
+            serde_json::json!([review(
+                "author",
+                "COMMENTED",
+                &head,
+                &at(1),
+                &format!("VERDICT: APPROVE {other}")
+            )]),
+            false,
+        ),
+        (
+            "verdict approve posted on another head",
+            serde_json::json!([review("author", "COMMENTED", &other, &at(1), &approve_body)]),
+            false,
+        ),
+        (
+            "untrusted verdict approve",
+            serde_json::json!([untrusted_approve]),
+            false,
+        ),
+        (
+            "untrusted verdict block adds no veto",
+            serde_json::json!([
+                review("author", "COMMENTED", &head, &at(1), "SOURCE_REVIEW_READY"),
+                untrusted_block,
+            ]),
+            true,
+        ),
+        (
+            "observed verdict approve tail after marker, same login",
+            serde_json::json!([
+                review("author", "COMMENTED", &head, &at(1), "SOURCE_REVIEW_READY"),
+                review(
+                    "author",
+                    "COMMENTED",
+                    &head,
+                    &at(2),
+                    &format!("VERDICT: APPROVE {head} \u{2014} no blocking findings on this head.")
+                ),
+            ]),
+            true,
+        ),
+        (
+            "observed verdict block tail after marker, same login",
+            serde_json::json!([
+                review("author", "COMMENTED", &head, &at(1), "SOURCE_REVIEW_READY"),
+                review(
+                    "author",
+                    "COMMENTED",
+                    &head,
+                    &at(2),
+                    &format!("VERDICT: BLOCK {head} \u{2014} one finding remains open")
+                ),
+            ]),
+            false,
+        ),
+        (
+            "abbreviated verdict approve attests nothing",
+            serde_json::json!([review(
+                "author",
+                "COMMENTED",
+                &head,
+                &at(1),
+                "VERDICT: APPROVE aaaaaaaaaaaa"
+            )]),
+            false,
+        ),
+    ];
+    for (name, reviews, admit) in cases {
+        expect_outcome(&check_reviews(&reviews, &head)?, admit, name)?;
+    }
+    Ok(())
+}
+
+/// #14728: a later neutral, empty or prose review from the same login does not
+/// erase that login's marker, and a mis-formatted positive marker is neutral
+/// rather than a veto.
+#[test]
+fn issue_14728_stated_marker_selection_and_neutral_tail() -> Result<(), String> {
+    let head = "a".repeat(40);
+    let at = |second: u8| format!("2026-10-15T04:00:0{second}Z");
+    let sha = "1cc13d3de7941b83f2488853e120fbdfd3d9cee5";
+    let cases: Vec<(&str, serde_json::Value, bool)> = vec![
+        (
+            "marker then neutral reply, same login",
+            serde_json::json!([
+                review("author", "COMMENTED", &head, &at(1), "REVIEW_READY"),
+                review("author", "COMMENTED", &head, &at(2), "Thanks, will look."),
+            ]),
+            true,
+        ),
+        (
+            "marker then empty body, same login",
+            serde_json::json!([
+                review("author", "COMMENTED", &head, &at(1), "REVIEW_READY"),
+                review("author", "COMMENTED", &head, &at(2), ""),
+            ]),
+            true,
+        ),
+        (
+            "marker then prose follow-up, same login",
+            serde_json::json!([
+                review("author", "COMMENTED", &head, &at(1), "REVIEW_READY"),
+                review(
+                    "author",
+                    "COMMENTED",
+                    &head,
+                    &at(2),
+                    &format!("Exact-head review (head {head})")
+                ),
+            ]),
+            true,
+        ),
+        (
+            "marker then stated negative, same login",
+            serde_json::json!([
+                review("author", "COMMENTED", &head, &at(1), "REVIEW_READY"),
+                review("author", "COMMENTED", &head, &at(2), "REPAIR_REQUIRED"),
+            ]),
+            false,
+        ),
+        (
+            "marker then plain-English blocker, same login",
+            serde_json::json!([
+                review("author", "COMMENTED", &head, &at(1), "REVIEW_READY"),
+                review("author", "COMMENTED", &head, &at(2), "do not merge"),
+            ]),
+            false,
+        ),
+        (
+            "marker then prose blocker, same login",
+            serde_json::json!([
+                review("author", "COMMENTED", &head, &at(1), "REVIEW_READY"),
+                review("author", "COMMENTED", &head, &at(2), "The build is red."),
+            ]),
+            false,
+        ),
+        (
+            "marker then unknown objection, same login",
+            serde_json::json!([
+                review("author", "COMMENTED", &head, &at(1), "REVIEW_READY"),
+                review(
+                    "author",
+                    "COMMENTED",
+                    &head,
+                    &at(2),
+                    "I don't think this is right."
+                ),
+            ]),
+            false,
+        ),
+        (
+            "marker then recognised chatter, same login",
+            serde_json::json!([
+                review("author", "COMMENTED", &head, &at(1), "REVIEW_READY"),
+                review(
+                    "author",
+                    "COMMENTED",
+                    &head,
+                    &at(2),
+                    "No code change needed."
+                ),
+            ]),
+            true,
+        ),
+        (
+            "marker then a mis-formatted marker, same login",
+            serde_json::json!([
+                review("author", "COMMENTED", &head, &at(1), "REVIEW_READY"),
+                review(
+                    "author",
+                    "COMMENTED",
+                    &head,
+                    &at(2),
+                    &format!("REVIEW_READY {head}")
+                ),
+            ]),
+            true,
+        ),
+        (
+            "marker then plain prose, same login",
+            serde_json::json!([
+                review("author", "COMMENTED", &head, &at(1), "REVIEW_READY"),
+                review("author", "COMMENTED", &head, &at(2), "LGTM"),
+            ]),
+            false,
+        ),
+        (
+            "a blocker statement vetoes another login's later ready",
+            serde_json::json!([
+                review("author", "COMMENTED", &head, &at(1), "REPAIR_REQUIRED"),
+                review("author", "COMMENTED", &head, &at(2), "The build is red."),
+                review("other", "COMMENTED", &head, &at(3), "SOURCE_REVIEW_READY"),
+            ]),
+            false,
+        ),
+        (
+            "a blocker alone does not veto another login's marker",
+            serde_json::json!([
+                review("author", "COMMENTED", &head, &at(1), "The build is red."),
+                review("other", "COMMENTED", &head, &at(2), "SOURCE_REVIEW_READY"),
+            ]),
+            true,
+        ),
+        (
+            "marker then hedged approve, same login",
+            serde_json::json!([
+                review("author", "COMMENTED", &head, &at(1), "REVIEW_READY"),
+                review(
+                    "author",
+                    "COMMENTED",
+                    &head,
+                    &at(2),
+                    &format!("VERDICT: APPROVE {head} \u{2014} pending the fix")
+                ),
+            ]),
+            false,
+        ),
+        (
+            "marker then deferred approve, same login",
+            serde_json::json!([
+                review("author", "COMMENTED", &head, &at(1), "REVIEW_READY"),
+                review(
+                    "author",
+                    "COMMENTED",
+                    &head,
+                    &at(2),
+                    &format!("VERDICT: APPROVE {head} \u{2014} after the rebase")
+                ),
+            ]),
+            false,
+        ),
+        (
+            "an emoji tail is negative and vetoes another login",
+            serde_json::json!([
+                review(
+                    "author",
+                    "COMMENTED",
+                    &head,
+                    &at(1),
+                    &format!("REVIEW_READY {head} \u{274c}")
+                ),
+                review("other", "COMMENTED", &head, &at(2), "SOURCE_REVIEW_READY"),
+            ]),
+            false,
+        ),
+        (
+            "mis-formatted positive marker alone attests nothing",
+            serde_json::json!([review(
+                "author",
+                "COMMENTED",
+                &head,
+                &at(1),
+                &format!("REVIEW_READY {sha}")
+            )]),
+            false,
+        ),
+        (
+            "mis-formatted positive marker does not veto another login's marker",
+            serde_json::json!([
+                review("author", "COMMENTED", &head, &at(1), "REVIEW_READY"),
+                review(
+                    "other",
+                    "COMMENTED",
+                    &head,
+                    &at(2),
+                    &format!("REVIEW_READY {sha}")
+                ),
+            ]),
+            true,
+        ),
+        (
+            "a contradicting tail still refuses",
+            serde_json::json!([review(
+                "author",
+                "COMMENTED",
+                &head,
+                &at(1),
+                "REVIEW_READY: no"
+            )]),
+            false,
+        ),
+    ];
+    for (name, reviews, admit) in cases {
+        expect_outcome(&check_reviews(&reviews, &head)?, admit, name)?;
+    }
+    Ok(())
+}
+
+/// #14929: a refusal names the evidence that refused it. A carrier refused by its
+/// own later narration line, or a later body that superseded an attesting review
+/// at an unchanged head, must not read like "no review at this head". The detail
+/// lines explain the decision; the admit/refuse outcome is unchanged.
+#[test]
+fn issue_14929_refusal_names_the_refusing_review_and_line() -> Result<(), String> {
+    let head = "a".repeat(40);
+    let other = "b".repeat(40);
+    let verdict = format!("VERDICT: APPROVE {head} \u{2014} no blocking findings on this head.");
+    let detail_lines = |output: &Output| -> Vec<String> {
+        String::from_utf8_lossy(&output.stderr)
+            .lines()
+            .filter(|line| line.starts_with("::error::source review refusal detail: "))
+            .map(str::to_string)
+            .collect()
+    };
+
+    // A neutral residual admits under both carriers and prints no detail.
+    let residual = "- Residual: the hosted lane on this head has not run.";
+    for (name, body) in [
+        (
+            "marker with residual",
+            format!("SOURCE_REVIEW_READY\n\n{residual}"),
+        ),
+        ("verdict with residual", format!("{verdict}\n\n{residual}")),
+    ] {
+        let reviews = serde_json::json!([review(
+            "author",
+            "COMMENTED",
+            &head,
+            "2026-10-15T01:00:01Z",
+            &body
+        )]);
+        let output = check_reviews(&reviews, &head)?;
+        expect_outcome(&output, true, name)?;
+        if !detail_lines(&output).is_empty() {
+            return Err(format!("{name}: an admitted head printed refusal details"));
+        }
+    }
+
+    // A retraction word used as narration refuses under both carriers, and the
+    // detail names the matched phrase and the line it sits on.
+    let narration = "- The final commit message still states the withdrawn timing attribution.";
+    for (name, body) in [
+        (
+            "marker with retraction word",
+            format!("SOURCE_REVIEW_READY\n\n{narration}"),
+        ),
+        (
+            "verdict with retraction word",
+            format!("{verdict}\n\n{narration}"),
+        ),
+    ] {
+        let reviews = serde_json::json!([review(
+            "author",
+            "COMMENTED",
+            &head,
+            "2026-10-15T01:00:01Z",
+            &body
+        )]);
+        let output = check_reviews(&reviews, &head)?;
+        expect_outcome(&output, false, name)?;
+        let details = detail_lines(&output);
+        let named = details.iter().any(|line| {
+            line.contains("author's review at 2026-10-15T01:00:01Z")
+                && line.contains("phrase 'withdrawn'")
+                && line.contains("timing attribution")
+        });
+        if !named {
+            return Err(format!(
+                "{name}: detail did not name the refusing line: {details:?}"
+            ));
+        }
+    }
+
+    // A short-SHA verdict posted after an attesting marker at the same head
+    // supersedes it; the detail says so and names the earlier review.
+    let reviews = serde_json::json!([
+        review(
+            "author",
+            "COMMENTED",
+            &head,
+            "2026-10-15T01:00:01Z",
+            "SOURCE_REVIEW_READY"
+        ),
+        review(
+            "author",
+            "COMMENTED",
+            &head,
+            "2026-10-15T01:00:02Z",
+            &format!(
+                "VERDICT: APPROVE {} \u{2014} no blocking findings on this head.",
+                &head[..10]
+            )
+        ),
+    ]);
+    let output = check_reviews(&reviews, &head)?;
+    expect_outcome(&output, false, "short-SHA verdict superseding a marker")?;
+    let details = detail_lines(&output);
+    if details.len() != 1
+        || !details[0].contains("short SHA")
+        || !details[0]
+            .contains("supersedes the same login's attesting review at 2026-10-15T01:00:01Z")
+    {
+        return Err(format!(
+            "short-SHA supersession detail missing: {details:?}"
+        ));
+    }
+
+    // With no review at the head, the detail says that instead.
+    let reviews = serde_json::json!([review(
+        "author",
+        "COMMENTED",
+        &other,
+        "2026-10-15T01:00:01Z",
+        "SOURCE_REVIEW_READY"
+    )]);
+    let output = check_reviews(&reviews, &head)?;
+    expect_outcome(&output, false, "review only at another commit")?;
+    let details = detail_lines(&output);
+    if details
+        != [format!(
+            "::error::source review refusal detail: no trusted review on head {head} carries an attestation; 1 trusted review(s) target other commits"
+        )]
+    {
+        return Err(format!("missing-review detail wrong: {details:?}"));
+    }
+
+    // Review fields are untrusted log text: a login or timestamp carrying a line
+    // break cannot start a workflow command of its own.
+    let mut forged = review(
+        "u\r\n::warning::EVIL",
+        "COMMENTED",
+        &head,
+        "2026-10-15T01:00:01Z\n::error::PWN",
+        "x\n\nThe earlier REVIEW_READY is withdrawn.",
+    );
+    forged["id"] = serde_json::json!(7);
+    let output = check_reviews(&serde_json::json!([forged]), &head)?;
+    expect_outcome(&output, false, "forged login and timestamp")?;
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    if stderr
+        .lines()
+        .any(|line| line.starts_with("::warning::EVIL") || line.starts_with("::error::PWN"))
+        || detail_lines(&output).is_empty()
+    {
+        return Err(format!(
+            "review fields reached the log as commands: {stderr}"
+        ));
+    }
+    Ok(())
 }

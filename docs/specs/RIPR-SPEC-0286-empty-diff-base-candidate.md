@@ -35,7 +35,12 @@ branches, following that advice could refuse with
 ## Behavior
 
 The shared probe `another_base_candidate` names a branch only when the
-advised run would itself be analyzed:
+advised run would itself be analyzed in full scope. Since #13641 a diff over
+the changed-line guards is no longer refused — it degrades into a
+`limited_partial_scope` partition — so the guards below are now a
+deliberately conservative "would analyze completely" screen rather than a
+"would not be refused" one; the advice still never names a base whose run
+would be partial or refused:
 
 - the branch shares history with HEAD (merge-base differs), is not an
   alias at HEAD, is not a descendant, and its root-scoped three-dot diff
@@ -56,7 +61,7 @@ advised run would itself be analyzed:
   (#10821);
 - the diff's changed-file count stays within the parser guard
   (`RIPR_MAX_DIFF_INDEX_FILES`);
-- submodule state is compared with `--ignore-submodules=none`, matching
+- submodule state is compared with `--ignore-submodules=dirty`, matching
   the analysis loader.
 
 Among eligible branches, a Rust-bearing diff ranks before a non-Rust

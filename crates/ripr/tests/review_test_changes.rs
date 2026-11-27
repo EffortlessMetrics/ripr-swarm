@@ -170,8 +170,12 @@ fn review_comments_discloses_removed_and_inline_test_edits()
         let report: Value = serde_json::from_slice(&std::fs::read(output)?)?;
         assert_resolved_test_attribution(&report)?;
         let comments = report["comments"].as_array().ok_or("missing comments")?;
-        if comments.len() != 1 {
-            return Err(format!("fixture must reach one unresolved recommendation: inline={inline}, edit={edit}: {report}").into());
+        // #14392 makes the else-branch value its own `return_value` seam. The
+        // fixture's calls all take the `points >= 10` branch, so #14496 grades
+        // that seam weak and it is retained as a second, non-actionable card
+        // after the predicate gap.
+        if comments.len() != 2 {
+            return Err(format!("fixture must reach the predicate gap and the branch-local return gap: inline={inline}, edit={edit}: {report}").into());
         }
         let card = comments.first().ok_or("missing recommendation")?;
         let near_test = if edit == "whole_test_delete" {
@@ -196,6 +200,17 @@ fn review_comments_discloses_removed_and_inline_test_edits()
                 "inline={inline}, edit={edit}: unchanged_tests={}, expected={unchanged}",
                 report["summary"]["unchanged_tests"]
             ));
+        }
+        let branch_local = comments.get(1).ok_or("missing branch-local card")?;
+        if branch_local["kind"] != "return_value"
+            || branch_local["gap_state"] != "unknown"
+            || branch_local["seam"]["expression"] != "10"
+            || branch_local["seam"]["line"] != 5
+        {
+            return Err(format!(
+                "the unreached else-branch value must be the retained second card: inline={inline}, edit={edit}: {report}"
+            )
+            .into());
         }
     }
     if !failures.is_empty() {
@@ -250,7 +265,10 @@ fn review_comments_preserves_unchanged_tests_for_test_named_production()
             report["summary"]["comments"], 0,
             "legacy placement is unchanged"
         );
-        assert_eq!(report["summary"]["summary_only"], 1, "{report}");
+        // #14392 makes the else-branch value its own `return_value` seam; the
+        // calls never take that branch, so #14496 grades it weak and it is
+        // retained beside the predicate gap.
+        assert_eq!(report["summary"]["summary_only"], 2, "{report}");
         let cards = report["summary_only"]
             .as_array()
             .ok_or("missing summary_only")?;
@@ -258,6 +276,11 @@ fn review_comments_preserves_unchanged_tests_for_test_named_production()
         assert_eq!(card["kind"], "predicate_boundary");
         assert_eq!(card["grip_class"], "weakly_gripped");
         assert_eq!(card["suggested_test"]["near_test"], "above_threshold");
+        let branch_local = cards.get(1).ok_or("missing branch-local card")?;
+        assert_eq!(branch_local["kind"], "return_value", "{report}");
+        assert_eq!(branch_local["gap_state"], "unknown", "{report}");
+        assert_eq!(branch_local["seam"]["expression"], "10", "{report}");
+        assert_eq!(branch_local["seam"]["line"], 5, "{report}");
         if report["summary"]["unchanged_tests"] != true {
             failures.push(format!(
                 "inline={inline}: expected unchanged tests: {report}"
@@ -329,7 +352,14 @@ fn review_comments_marks_whole_file_deletions_unresolved() -> Result<(), Box<dyn
             "the deletion count cannot establish a confirmed test change: {report}"
         );
         let comments = report["comments"].as_array().ok_or("missing comments")?;
-        assert_eq!(comments.len(), 1, "retain the recommendation: {report}");
+        // #14392 makes the else-branch value its own `return_value` seam; the
+        // calls never take that branch, so #14496 grades it weak and it is
+        // retained behind the predicate gap.
+        assert_eq!(
+            comments.len(),
+            2,
+            "retain the recommendation and the branch-local gap: {report}"
+        );
         let card = comments.first().ok_or("missing retained recommendation")?;
         assert_eq!(card["kind"], "predicate_boundary");
         assert_eq!(card["grip_class"], "weakly_gripped");
@@ -344,6 +374,11 @@ fn review_comments_marks_whole_file_deletions_unresolved() -> Result<(), Box<dyn
         assert_eq!(card["placement"]["path"], "src/lib.rs");
         assert_eq!(card["placement"]["side"], "RIGHT");
         assert_eq!(card["placement"]["line"], 2);
+        let branch_local = comments.get(1).ok_or("missing branch-local card")?;
+        assert_eq!(branch_local["kind"], "return_value", "{report}");
+        assert_eq!(branch_local["gap_state"], "unknown", "{report}");
+        assert_eq!(branch_local["seam"]["expression"], "10", "{report}");
+        assert_eq!(branch_local["seam"]["line"], 5, "{report}");
         assert_eq!(report["summary"]["suppressed"], 0);
         assert_eq!(report["status"], "advisory");
         assert_eq!(report["analysis_scope"]["downstream_consumable"], true);

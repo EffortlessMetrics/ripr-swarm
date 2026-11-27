@@ -1,0 +1,27 @@
+{
+  "id": "rust_repo_exposure_bool_local_compared_with_true_not_promoted",
+  "language": "rust",
+  "tier": "pure",
+  "source_report": "fixtures/evidence-promotion-honesty-corpus/reports/rust-repo-exposure-bool-local-compared-with-true.json",
+  "report_subject": "fixtures/evidence-promotion-honesty-corpus/repo-exposure-subjects/bool-local-compared-with-true",
+  "vector": "bool_local_compared_with_true_follows_its_initializer_not_equality",
+  "assertions": [
+    {
+      "type": "expected_repo_seam_grip",
+      "owner": "src/lib.rs::discount",
+      "expression": "amount >= 100",
+      "grip_class": "weakly_gripped",
+      "reach": "yes"
+    },
+    {
+      "type": "expected_repo_seam_related_test",
+      "owner": "src/lib.rs::discount",
+      "expression": "amount >= 100",
+      "test": "stores_a_relational_check",
+      "file": "src/lib.rs",
+      "line": 10,
+      "oracle_strength": "weak",
+      "relation_reason": "direct_owner_call"
+    }
+  ]
+}

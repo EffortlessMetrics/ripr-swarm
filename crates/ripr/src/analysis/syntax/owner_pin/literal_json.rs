@@ -67,23 +67,48 @@ pub(super) fn literal_json_tokens(tokens: &[ra_ap_syntax::SyntaxToken]) -> bool 
     false
 }
 
-/// `use` items in `file`, collected once. Escape-gating asks visibility per
-/// macro call; walking every descendant of a 20k-line test file for each call
-/// made dogfood `ripr check` hang through the 3600s PR-evidence ceiling.
+/// The `use` items in `file` that can make `json!` visible, collected once.
+/// Escape-gating asks visibility per macro call; walking every descendant of
+/// a 20k-line test file for each call made dogfood `ripr check` hang through
+/// the 3600s PR-evidence ceiling. Whether an item is a canonical import does
+/// not depend on the call, so it is decided here rather than once per
+/// (macro call, `use` item): that product was 5% of a `check` run's
+/// allocations on this repository (#13703).
 pub(super) fn literal_json_uses(file: &ast::SourceFile) -> Vec<ast::Use> {
     #[cfg(test)]
     USE_SCAN_COUNT.with(|count| count.set(count.get() + 1));
     file.syntax()
         .descendants()
         .filter_map(ast::Use::cast)
+        .filter(is_canonical_json_import)
         .collect()
+}
+
+/// An attribute-free `use` whose tree holds an unrenamed, ungrouped
+/// `<drop-in crate>::json` leaf.
+fn is_canonical_json_import(import: &ast::Use) -> bool {
+    #[cfg(test)]
+    CANONICAL_IMPORT_CHECKS.with(|count| count.set(count.get() + 1));
+    import.attrs().next().is_none()
+        && import.use_tree().is_some_and(|tree| {
+            tree.syntax()
+                .descendants()
+                .filter_map(ast::UseTree::cast)
+                .any(|item| {
+                    item.rename().is_none()
+                        && item.use_tree_list().is_none()
+                        && is_drop_in_assertion(&item, "json")
+                })
+        })
 }
 
 /// Only an unchanged canonical import in this call's lexical ancestry. Binding
 /// competitors and registry identity remain the classifier's shared authority.
+/// `uses` is any list of the file's `use` items; [`literal_json_uses`] hands
+/// back the canonical ones, so the scope walk runs only for those.
 pub(super) fn literal_json_import_visible_among(uses: &[ast::Use], call: &SyntaxNode) -> bool {
     uses.iter().any(|import| {
-        import.attrs().next().is_none()
+        is_canonical_json_import(import)
             && import
                 .syntax()
                 .ancestors()
@@ -94,16 +119,6 @@ pub(super) fn literal_json_import_visible_among(uses: &[ast::Use], call: &Syntax
                         || ast::SourceFile::can_cast(node.kind())
                 })
                 .is_some_and(|scope| call.ancestors().any(|node| node == scope))
-            && import.use_tree().is_some_and(|tree| {
-                tree.syntax()
-                    .descendants()
-                    .filter_map(ast::UseTree::cast)
-                    .any(|item| {
-                        item.rename().is_none()
-                            && item.use_tree_list().is_none()
-                            && is_drop_in_assertion(&item, "json")
-                    })
-            })
     })
 }
 
@@ -120,6 +135,12 @@ pub(super) fn literal_json_import_visible(call: &SyntaxNode) -> bool {
 #[cfg(test)]
 thread_local! {
     static USE_SCAN_COUNT: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    static CANONICAL_IMPORT_CHECKS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+#[cfg(test)]
+fn take_canonical_import_checks() -> usize {
+    CANONICAL_IMPORT_CHECKS.with(|count| count.replace(0))
 }
 
 #[cfg(test)]
@@ -150,7 +171,8 @@ pub(super) fn json_namespace_rebound(node: &SyntaxNode) -> bool {
 mod tests {
     use super::super::owner_pin_assertions;
     use super::{
-        literal_json_import_visible, literal_json_import_visible_among, take_use_scan_count,
+        literal_json_import_visible, literal_json_import_visible_among,
+        take_canonical_import_checks, take_use_scan_count,
     };
     use crate::analysis::syntax::parse_clean_source_file;
     use ra_ap_syntax::AstNode;
@@ -172,6 +194,66 @@ mod tests {
             1,
             "import visibility must scan the file's use items once, not once per macro"
         );
+    }
+
+    /// #13703: whether a `use` is a canonical json import is decided once
+    /// per item when the file's uses are collected, not once per (macro
+    /// call, item), and the answers match asking every item for every call.
+    #[test]
+    fn canonical_json_imports_are_decided_once_per_use_not_per_macro() -> Result<(), String> {
+        let mut src = String::new();
+        for i in 0..30 {
+            src.push_str(&format!("use std::collections::BTreeMap as M{i};\n"));
+        }
+        src.push_str("#[cfg(test)]\nuse serde_json::json;\n");
+        src.push_str("mod inner {\n    use serde_json::json;\n    fn g() { json!(null); }\n}\n");
+        src.push_str(
+            "mod renamed {\n    use serde_json::json as j;\n    fn h() { json!(1); }\n}\n",
+        );
+        src.push_str("#[test]\nfn checks() {\n");
+        for _ in 0..40 {
+            src.push_str("    assert_eq!(1, 1);\n");
+        }
+        src.push_str("}\n");
+        let _ = take_canonical_import_checks();
+        let assertions = owner_pin_assertions(&src, &["assert_eq", "json"]);
+        assert!(assertions.parsed, "synthetic file must parse");
+        let checks = take_canonical_import_checks();
+        // 33 `use` items are each asked once at collection; only the one
+        // canonical import is asked again per macro call (42 calls), where
+        // asking every item for every call would be 33 * 42.
+        assert!(
+            (33..=33 + 2 * 42).contains(&checks),
+            "{checks} canonical-import checks for 33 uses and 42 macro calls"
+        );
+
+        let parse = parse_clean_source_file(&src).ok_or_else(|| "parse".to_string())?;
+        let file = parse.tree();
+        let every_use: Vec<_> = file
+            .syntax()
+            .descendants()
+            .filter_map(ra_ap_syntax::ast::Use::cast)
+            .collect();
+        let canonical = super::literal_json_uses(&file);
+        assert_eq!(every_use.len(), 33);
+        assert_eq!(canonical.len(), 1, "attributed and renamed imports are out");
+        let calls: Vec<_> = file
+            .syntax()
+            .descendants()
+            .filter_map(ra_ap_syntax::ast::MacroCall::cast)
+            .collect();
+        let visible: Vec<bool> = calls
+            .iter()
+            .map(|call| literal_json_import_visible_among(&canonical, call.syntax()))
+            .collect();
+        let unfiltered: Vec<bool> = calls
+            .iter()
+            .map(|call| literal_json_import_visible_among(&every_use, call.syntax()))
+            .collect();
+        assert_eq!(visible, unfiltered);
+        assert_eq!(visible.iter().filter(|seen| **seen).count(), 1);
+        assert!(visible[0], "only the call beside the plain import sees it");
+        Ok(())
     }
 
     #[test]

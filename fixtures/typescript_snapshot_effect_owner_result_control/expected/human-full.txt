@@ -87,5 +87,4 @@ Drill in:
   ripr explain --root <cwd>/fixtures/typescript_snapshot_effect_owner_result_control/input --diff <cwd>/fixtures/typescript_snapshot_effect_owner_result_control/diff.patch --mode fast probe:src_lib.ts:typescript_preview:1066bfb8
   ripr context --root <cwd>/fixtures/typescript_snapshot_effect_owner_result_control/input --diff <cwd>/fixtures/typescript_snapshot_effect_owner_result_control/diff.patch --mode fast --at probe:src_lib.ts:typescript_preview:1066bfb8
 
-
 Note: 1 TypeScript file analyzed under preview support — preview evidence is advisory and may be incomplete. Treat its findings as advisory, not Rust-grade.

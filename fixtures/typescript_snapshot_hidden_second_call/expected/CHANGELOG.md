@@ -233,3 +233,64 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — typescript_snapshot_hidden_second_call (19)
+
+Reason:
+RIPR-SPEC-0258: clarify weak snapshot evidence and its limitation
+
+Command:
+`cargo xtask goldens bless typescript_snapshot_hidden_second_call --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
+
+## Pending — typescript_snapshot_hidden_second_call (20)
+
+Reason:
+RIPR-SPEC-0423: additive evidence_stages rows and agent stages= line; human rendering unchanged
+
+Command:
+`cargo xtask goldens bless typescript_snapshot_hidden_second_call --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
+
+## Pending — typescript_snapshot_hidden_second_call (21)
+
+Reason:
+RIPR-SPEC-0423: additive evidence_stages rows and agent stages= line; no test attribution; human rendering unchanged
+
+Command:
+`cargo xtask goldens bless typescript_snapshot_hidden_second_call --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
+
+## Pending — typescript_snapshot_hidden_second_call (22)
+
+Reason:
+RIPR-SPEC-0122: one blank line, not two, separates the More block from a trailing Note (#14318)
+
+Command:
+`cargo xtask goldens bless typescript_snapshot_hidden_second_call --reason "..."`
+
+Updated:
+- `expected/human.txt`
+
+## Pending — typescript_snapshot_hidden_second_call (23)
+
+Reason:
+human-full: one blank line, not two, separates the last finding from a trailing Note (#14318)
+
+Command:
+`cargo xtask goldens bless typescript_snapshot_hidden_second_call --reason "..."`
+
+Updated:
+- `expected/human-full.txt`

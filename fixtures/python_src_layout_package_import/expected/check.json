@@ -49,6 +49,13 @@
         "observe": {"state":"yes","confidence":"low","summary":"Strongest extracted Python oracle kind: `exact_value` (rank 5)"},
         "discriminate": {"state":"weak","confidence":"low","summary":"Related Python test uses an `exact_value` oracle, but static evidence does not establish discrimination of the changed behavior."}
        },
+      "evidence_stages": [
+        {"stage":"reach","state":"yes","confidence":"low"},
+        {"stage":"infect","state":"weak","confidence":"low"},
+        {"stage":"propagate","state":"weak","confidence":"low"},
+        {"stage":"observe","state":"yes","confidence":"low"},
+        {"stage":"discriminate","state":"weak","confidence":"low"}
+      ],
       "evidence_path": ["reach yes: 1 related Python test(s) found for owner `bulk_discount`", "infection weak: Related tests reach the changed predicate, but no strong related test call places an input at the changed boundary.", "propagation weak: Changed Python control flow can propagate by selecting a different branch; preview evidence does not prove the concrete downstream sink.", "observation yes: Strongest extracted Python oracle kind: `exact_value` (rank 5)", "discriminator weak: Related Python test uses an `exact_value` oracle, but static evidence does not establish discrimination of the changed behavior.", "local flow reaches unknown sink: if quantity > 100: (line 2)", "related test tests/test_discounts.py:4 test_bulk_discount_large_order uses strong exact value oracle: assert bulk_discount(101) == 0.15", "source function argument value quantity = 101 at line 5", "missing discriminator quantity == 100: No strong related test call places quantity equal to 100; observed quantity values: 101"],
       "flow_sinks": [
         {"kind":"unknown","text":"if quantity > 100:","line":2}
@@ -192,6 +199,13 @@
         "observe": {"state":"no","confidence":"low","summary":"Strongest extracted Python oracle kind: `unknown` (rank 0)"},
         "discriminate": {"state":"no","confidence":"low","summary":"Python preview adapter found no strong discriminator; typed repair guidance is unavailable for this shape."}
        },
+      "evidence_stages": [
+        {"stage":"reach","state":"no","confidence":"low","basis":[{"code":"no_related_test","summary":"no related test reaches the changed owner"}]},
+        {"stage":"infect","state":"yes","confidence":"low"},
+        {"stage":"propagate","state":"weak","confidence":"low"},
+        {"stage":"observe","state":"no","confidence":"low"},
+        {"stage":"discriminate","state":"no","confidence":"low"}
+      ],
       "evidence_path": ["reach no: 0 related Python test(s) found for owner `bulk_discount`", "infection yes: Changed Python predicate can alter branch selection: `if quantity > 50:`", "propagation weak: Changed Python control flow can propagate by selecting a different branch; preview evidence does not prove the concrete downstream sink.", "observation no: Strongest extracted Python oracle kind: `unknown` (rank 0)", "discriminator no: Python preview adapter found no strong discriminator; typed repair guidance is unavailable for this shape.", "local flow reaches unknown sink: if quantity > 50: (line 2)"],
       "flow_sinks": [
         {"kind":"unknown","text":"if quantity > 50:","line":2}

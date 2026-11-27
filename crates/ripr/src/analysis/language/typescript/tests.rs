@@ -1,5 +1,7 @@
 //! Tests for the TypeScript preview adapter.
 
+mod classification_property_tests;
+
 use super::*;
 use std::path::{Path, PathBuf};
 
@@ -23,8 +25,10 @@ pub(super) fn test_owner(name: &str, file: &str) -> TypeScriptOwner {
         exported_as_default: false,
         class_default_export: false,
         default_object_member: false,
+        default_object_unsafe_siblings: Vec::new(),
         commonjs_default_export: false,
         commonjs_whole_function: false,
+        constructor_callback: false,
         module_entries: Vec::new(),
         arity: None,
         params: Vec::new(),
@@ -36,6 +40,9 @@ pub(super) fn test_owner(name: &str, file: &str) -> TypeScriptOwner {
 
 #[test]
 fn node_expected_failure_test_cannot_donate_classifier_oracle_credit() -> Result<(), String> {
+    let mut owner = test_owner("applyDiscount", "src/lib.ts");
+    owner.params = vec!["amount".into(), "threshold".into()];
+    owner.arity = Some(2);
     let qualified = r#"
 import assert from "node:assert/strict";
 import { test } from "node:test";
@@ -68,7 +75,7 @@ test("qualified", { expectFailure: true }, () => {
                 Path::new("src/lib.ts"),
                 2,
                 "    if (amount >= threshold) {",
-                &[test_owner("applyDiscount", "src/lib.ts")],
+                std::slice::from_ref(&owner),
                 &tests,
                 None,
                 &ReExportIndex::empty(),
@@ -135,8 +142,11 @@ pub(super) fn weak_direct_test_for(owner_name: &str) -> TypeScriptTest {
         scope_bindings: Default::default(),
         identity_helpers_in_file: Default::default(),
         default_member_only_locals_in_file: Default::default(),
+        barrel_namespace_members_in_file: Default::default(),
         written_locals_in_file: Default::default(),
         member_replacements_in_file: Default::default(),
+        function_replacements_in_file: Default::default(),
+        dynamic_load_specifiers_in_file: Default::default(),
         mock_factories_in_file: Default::default(),
         mock_spread_sources_in_file: Default::default(),
         assertion_admission: TypeScriptAssertionAdmission::Unresolved,
@@ -207,8 +217,11 @@ fn mock_interaction_test_for(owner_name: &str) -> TypeScriptTest {
         scope_bindings: Default::default(),
         identity_helpers_in_file: Default::default(),
         default_member_only_locals_in_file: Default::default(),
+        barrel_namespace_members_in_file: Default::default(),
         written_locals_in_file: Default::default(),
         member_replacements_in_file: Default::default(),
+        function_replacements_in_file: Default::default(),
+        dynamic_load_specifiers_in_file: Default::default(),
         mock_factories_in_file: Default::default(),
         mock_spread_sources_in_file: Default::default(),
         assertion_admission: TypeScriptAssertionAdmission::Unresolved,
@@ -265,8 +278,11 @@ pub(super) fn direct_test_with_assertion(
         scope_bindings: Default::default(),
         identity_helpers_in_file: Default::default(),
         default_member_only_locals_in_file: Default::default(),
+        barrel_namespace_members_in_file: Default::default(),
         written_locals_in_file: Default::default(),
         member_replacements_in_file: Default::default(),
+        function_replacements_in_file: Default::default(),
+        dynamic_load_specifiers_in_file: Default::default(),
         mock_factories_in_file: Default::default(),
         mock_spread_sources_in_file: Default::default(),
         assertion_admission: TypeScriptAssertionAdmission::Unresolved,
@@ -317,8 +333,11 @@ fn heuristic_name_test_for(owner_name: &str) -> TypeScriptTest {
         scope_bindings: Default::default(),
         identity_helpers_in_file: Default::default(),
         default_member_only_locals_in_file: Default::default(),
+        barrel_namespace_members_in_file: Default::default(),
         written_locals_in_file: Default::default(),
         member_replacements_in_file: Default::default(),
+        function_replacements_in_file: Default::default(),
+        dynamic_load_specifiers_in_file: Default::default(),
         mock_factories_in_file: Default::default(),
         mock_spread_sources_in_file: Default::default(),
         assertion_admission: TypeScriptAssertionAdmission::Unresolved,
@@ -1859,8 +1878,10 @@ fn find_related_tests_matches_by_call_name() {
         exported_as_default: false,
         class_default_export: false,
         default_object_member: false,
+        default_object_unsafe_siblings: Vec::new(),
         commonjs_default_export: false,
         commonjs_whole_function: false,
+        constructor_callback: false,
         module_entries: Vec::new(),
         arity: None,
         params: Vec::new(),
@@ -1884,8 +1905,11 @@ fn find_related_tests_matches_by_call_name() {
             scope_bindings: Default::default(),
             identity_helpers_in_file: Default::default(),
             default_member_only_locals_in_file: Default::default(),
+            barrel_namespace_members_in_file: Default::default(),
             written_locals_in_file: Default::default(),
             member_replacements_in_file: Default::default(),
+            function_replacements_in_file: Default::default(),
+            dynamic_load_specifiers_in_file: Default::default(),
             mock_factories_in_file: Default::default(),
             mock_spread_sources_in_file: Default::default(),
             assertion_admission: TypeScriptAssertionAdmission::Unresolved,
@@ -1909,8 +1933,11 @@ fn find_related_tests_matches_by_call_name() {
             scope_bindings: Default::default(),
             identity_helpers_in_file: Default::default(),
             default_member_only_locals_in_file: Default::default(),
+            barrel_namespace_members_in_file: Default::default(),
             written_locals_in_file: Default::default(),
             member_replacements_in_file: Default::default(),
+            function_replacements_in_file: Default::default(),
+            dynamic_load_specifiers_in_file: Default::default(),
             mock_factories_in_file: Default::default(),
             mock_spread_sources_in_file: Default::default(),
             assertion_admission: TypeScriptAssertionAdmission::Unresolved,
@@ -1938,8 +1965,10 @@ fn find_related_tests_ignores_object_method_calls_for_function_owners() {
         exported_as_default: false,
         class_default_export: false,
         default_object_member: false,
+        default_object_unsafe_siblings: Vec::new(),
         commonjs_default_export: false,
         commonjs_whole_function: false,
+        constructor_callback: false,
         module_entries: Vec::new(),
         arity: None,
         params: Vec::new(),
@@ -1961,8 +1990,11 @@ fn find_related_tests_ignores_object_method_calls_for_function_owners() {
         scope_bindings: Default::default(),
         identity_helpers_in_file: Default::default(),
         default_member_only_locals_in_file: Default::default(),
+        barrel_namespace_members_in_file: Default::default(),
         written_locals_in_file: Default::default(),
         member_replacements_in_file: Default::default(),
+        function_replacements_in_file: Default::default(),
+        dynamic_load_specifiers_in_file: Default::default(),
         mock_factories_in_file: Default::default(),
         mock_spread_sources_in_file: Default::default(),
         assertion_admission: TypeScriptAssertionAdmission::Unresolved,
@@ -1990,8 +2022,10 @@ fn find_related_tests_matches_bounded_method_receiver_calls() {
         exported_as_default: false,
         class_default_export: false,
         default_object_member: false,
+        default_object_unsafe_siblings: Vec::new(),
         commonjs_default_export: false,
         commonjs_whole_function: false,
+        constructor_callback: false,
         module_entries: Vec::new(),
         arity: None,
         params: Vec::new(),
@@ -2044,8 +2078,10 @@ fn find_related_tests_keeps_factory_receiver_calls_unrelated_for_method_owners()
         exported_as_default: false,
         class_default_export: false,
         default_object_member: false,
+        default_object_unsafe_siblings: Vec::new(),
         commonjs_default_export: false,
         commonjs_whole_function: false,
+        constructor_callback: false,
         module_entries: Vec::new(),
         arity: None,
         params: Vec::new(),
@@ -2082,8 +2118,10 @@ fn find_related_tests_keeps_dynamic_method_receiver_calls_unrelated() {
         exported_as_default: false,
         class_default_export: false,
         default_object_member: false,
+        default_object_unsafe_siblings: Vec::new(),
         commonjs_default_export: false,
         commonjs_whole_function: false,
+        constructor_callback: false,
         module_entries: Vec::new(),
         arity: None,
         params: Vec::new(),
@@ -2121,8 +2159,10 @@ fn find_related_tests_relates_inline_and_one_line_constructed_receivers() {
         exported_as_default: false,
         class_default_export: false,
         default_object_member: false,
+        default_object_unsafe_siblings: Vec::new(),
         commonjs_default_export: false,
         commonjs_whole_function: false,
+        constructor_callback: false,
         module_entries: Vec::new(),
         arity: None,
         params: Vec::new(),
@@ -2179,8 +2219,10 @@ fn find_related_tests_keeps_mocked_method_receiver_calls_unrelated() {
         exported_as_default: false,
         class_default_export: false,
         default_object_member: false,
+        default_object_unsafe_siblings: Vec::new(),
         commonjs_default_export: false,
         commonjs_whole_function: false,
+        constructor_callback: false,
         module_entries: Vec::new(),
         arity: None,
         params: Vec::new(),
@@ -2223,8 +2265,10 @@ fn find_related_tests_keeps_mocked_function_owner_call_at_proximity() {
         exported_as_default: false,
         class_default_export: false,
         default_object_member: false,
+        default_object_unsafe_siblings: Vec::new(),
         commonjs_default_export: false,
         commonjs_whole_function: false,
+        constructor_callback: false,
         module_entries: Vec::new(),
         arity: None,
         params: Vec::new(),
@@ -2284,8 +2328,10 @@ fn find_related_tests_keeps_mocked_arrow_function_owner_call_at_proximity() {
         exported_as_default: false,
         class_default_export: false,
         default_object_member: false,
+        default_object_unsafe_siblings: Vec::new(),
         commonjs_default_export: false,
         commonjs_whole_function: false,
+        constructor_callback: false,
         module_entries: Vec::new(),
         arity: None,
         params: Vec::new(),
@@ -2350,8 +2396,10 @@ fn find_related_tests_keeps_mocked_namespace_import_owner_call_at_proximity() {
         exported_as_default: false,
         class_default_export: false,
         default_object_member: false,
+        default_object_unsafe_siblings: Vec::new(),
         commonjs_default_export: false,
         commonjs_whole_function: false,
+        constructor_callback: false,
         module_entries: Vec::new(),
         arity: None,
         params: Vec::new(),
@@ -2409,8 +2457,10 @@ fn find_related_tests_credits_unmocked_function_owner_call() {
         exported_as_default: false,
         class_default_export: false,
         default_object_member: false,
+        default_object_unsafe_siblings: Vec::new(),
         commonjs_default_export: false,
         commonjs_whole_function: false,
+        constructor_callback: false,
         module_entries: Vec::new(),
         arity: None,
         params: Vec::new(),
@@ -2460,8 +2510,10 @@ fn classify_change_stays_weakly_exposed_when_test_mocks_owner_module() -> Result
         exported_as_default: false,
         class_default_export: false,
         default_object_member: false,
+        default_object_unsafe_siblings: Vec::new(),
         commonjs_default_export: false,
         commonjs_whole_function: false,
+        constructor_callback: false,
         module_entries: Vec::new(),
         arity: None,
         params: Vec::new(),
@@ -2531,8 +2583,10 @@ fn find_related_tests_matches_bounded_class_method_calls() {
         exported_as_default: false,
         class_default_export: false,
         default_object_member: false,
+        default_object_unsafe_siblings: Vec::new(),
         commonjs_default_export: false,
         commonjs_whole_function: false,
+        constructor_callback: false,
         module_entries: Vec::new(),
         arity: None,
         params: Vec::new(),
@@ -2584,8 +2638,10 @@ fn find_related_tests_keeps_shadowed_class_method_calls_unrelated() {
         exported_as_default: false,
         class_default_export: false,
         default_object_member: false,
+        default_object_unsafe_siblings: Vec::new(),
         commonjs_default_export: false,
         commonjs_whole_function: false,
+        constructor_callback: false,
         module_entries: Vec::new(),
         arity: None,
         params: Vec::new(),
@@ -2622,8 +2678,10 @@ fn find_related_tests_matches_same_file_class_method_calls() {
         exported_as_default: false,
         class_default_export: false,
         default_object_member: false,
+        default_object_unsafe_siblings: Vec::new(),
         commonjs_default_export: false,
         commonjs_whole_function: false,
+        constructor_callback: false,
         module_entries: Vec::new(),
         arity: None,
         params: Vec::new(),
@@ -2674,8 +2732,10 @@ fn find_related_tests_keeps_namespace_class_method_calls_unrelated() {
         exported_as_default: false,
         class_default_export: false,
         default_object_member: false,
+        default_object_unsafe_siblings: Vec::new(),
         commonjs_default_export: false,
         commonjs_whole_function: false,
+        constructor_callback: false,
         module_entries: Vec::new(),
         arity: None,
         params: Vec::new(),
@@ -2711,8 +2771,10 @@ fn find_related_tests_keeps_mocked_class_method_calls_unrelated() {
         exported_as_default: false,
         class_default_export: false,
         default_object_member: false,
+        default_object_unsafe_siblings: Vec::new(),
         commonjs_default_export: false,
         commonjs_whole_function: false,
+        constructor_callback: false,
         module_entries: Vec::new(),
         arity: None,
         params: Vec::new(),
@@ -2750,8 +2812,10 @@ fn find_related_tests_requires_class_name_for_class_method_calls() {
         exported_as_default: false,
         class_default_export: false,
         default_object_member: false,
+        default_object_unsafe_siblings: Vec::new(),
         commonjs_default_export: false,
         commonjs_whole_function: false,
+        constructor_callback: false,
         module_entries: Vec::new(),
         arity: None,
         params: Vec::new(),
@@ -2787,8 +2851,10 @@ fn find_related_tests_matches_module_initializer_named_import_observer() {
         exported_as_default: false,
         class_default_export: false,
         default_object_member: false,
+        default_object_unsafe_siblings: Vec::new(),
         commonjs_default_export: false,
         commonjs_whole_function: false,
+        constructor_callback: false,
         module_entries: Vec::new(),
         arity: None,
         params: Vec::new(),
@@ -2840,8 +2906,10 @@ fn find_related_tests_matches_module_initializer_namespace_observer() {
         exported_as_default: false,
         class_default_export: false,
         default_object_member: false,
+        default_object_unsafe_siblings: Vec::new(),
         commonjs_default_export: false,
         commonjs_whole_function: false,
+        constructor_callback: false,
         module_entries: Vec::new(),
         arity: None,
         params: Vec::new(),
@@ -2878,8 +2946,10 @@ fn module_value_owner(name: &str) -> TypeScriptOwner {
         exported_as_default: false,
         class_default_export: false,
         default_object_member: false,
+        default_object_unsafe_siblings: Vec::new(),
         commonjs_default_export: false,
         commonjs_whole_function: false,
+        constructor_callback: false,
         module_entries: Vec::new(),
         arity: None,
         params: Vec::new(),
@@ -3315,8 +3385,10 @@ fn find_related_tests_matches_named_import_alias_calls() {
         exported_as_default: false,
         class_default_export: false,
         default_object_member: false,
+        default_object_unsafe_siblings: Vec::new(),
         commonjs_default_export: false,
         commonjs_whole_function: false,
+        constructor_callback: false,
         module_entries: Vec::new(),
         arity: None,
         params: Vec::new(),
@@ -3380,8 +3452,10 @@ fn find_related_tests_alias_wrong_name_not_credited() {
         exported_as_default: false,
         class_default_export: false,
         default_object_member: false,
+        default_object_unsafe_siblings: Vec::new(),
         commonjs_default_export: false,
         commonjs_whole_function: false,
+        constructor_callback: false,
         module_entries: Vec::new(),
         arity: None,
         params: Vec::new(),
@@ -3432,8 +3506,10 @@ fn find_related_tests_alias_shadowed_local_not_credited_high() {
         exported_as_default: false,
         class_default_export: false,
         default_object_member: false,
+        default_object_unsafe_siblings: Vec::new(),
         commonjs_default_export: false,
         commonjs_whole_function: false,
+        constructor_callback: false,
         module_entries: Vec::new(),
         arity: None,
         params: Vec::new(),
@@ -3484,8 +3560,10 @@ fn find_related_tests_non_alias_import_still_direct_owner_call() {
         exported_as_default: false,
         class_default_export: false,
         default_object_member: false,
+        default_object_unsafe_siblings: Vec::new(),
         commonjs_default_export: false,
         commonjs_whole_function: false,
+        constructor_callback: false,
         module_entries: Vec::new(),
         arity: None,
         params: Vec::new(),
@@ -3544,8 +3622,10 @@ fn find_related_tests_namespace_import_unchanged_imported_owner_call() {
         exported_as_default: false,
         class_default_export: false,
         default_object_member: false,
+        default_object_unsafe_siblings: Vec::new(),
         commonjs_default_export: false,
         commonjs_whole_function: false,
+        constructor_callback: false,
         module_entries: Vec::new(),
         arity: None,
         params: Vec::new(),
@@ -3604,8 +3684,10 @@ fn find_related_tests_matches_namespace_import_member_calls() {
         exported_as_default: false,
         class_default_export: false,
         default_object_member: false,
+        default_object_unsafe_siblings: Vec::new(),
         commonjs_default_export: false,
         commonjs_whole_function: false,
+        constructor_callback: false,
         module_entries: Vec::new(),
         arity: None,
         params: Vec::new(),
@@ -3642,8 +3724,10 @@ fn find_related_tests_ignores_unrelated_and_type_only_import_aliases() {
         exported_as_default: false,
         class_default_export: false,
         default_object_member: false,
+        default_object_unsafe_siblings: Vec::new(),
         commonjs_default_export: false,
         commonjs_whole_function: false,
+        constructor_callback: false,
         module_entries: Vec::new(),
         arity: None,
         params: Vec::new(),
@@ -3689,8 +3773,10 @@ fn find_related_tests_ignores_call_shaped_string_mentions() {
         exported_as_default: false,
         class_default_export: false,
         default_object_member: false,
+        default_object_unsafe_siblings: Vec::new(),
         commonjs_default_export: false,
         commonjs_whole_function: false,
+        constructor_callback: false,
         module_entries: Vec::new(),
         arity: None,
         params: Vec::new(),
@@ -3712,8 +3798,11 @@ fn find_related_tests_ignores_call_shaped_string_mentions() {
         scope_bindings: Default::default(),
         identity_helpers_in_file: Default::default(),
         default_member_only_locals_in_file: Default::default(),
+        barrel_namespace_members_in_file: Default::default(),
         written_locals_in_file: Default::default(),
         member_replacements_in_file: Default::default(),
+        function_replacements_in_file: Default::default(),
+        dynamic_load_specifiers_in_file: Default::default(),
         mock_factories_in_file: Default::default(),
         mock_spread_sources_in_file: Default::default(),
         assertion_admission: TypeScriptAssertionAdmission::Unresolved,
@@ -3741,8 +3830,10 @@ fn find_related_tests_ignores_call_shaped_comment_mentions() {
         exported_as_default: false,
         class_default_export: false,
         default_object_member: false,
+        default_object_unsafe_siblings: Vec::new(),
         commonjs_default_export: false,
         commonjs_whole_function: false,
+        constructor_callback: false,
         module_entries: Vec::new(),
         arity: None,
         params: Vec::new(),
@@ -3765,8 +3856,11 @@ fn find_related_tests_ignores_call_shaped_comment_mentions() {
             scope_bindings: Default::default(),
             identity_helpers_in_file: Default::default(),
             default_member_only_locals_in_file: Default::default(),
+            barrel_namespace_members_in_file: Default::default(),
             written_locals_in_file: Default::default(),
             member_replacements_in_file: Default::default(),
+            function_replacements_in_file: Default::default(),
+            dynamic_load_specifiers_in_file: Default::default(),
             mock_factories_in_file: Default::default(),
             mock_spread_sources_in_file: Default::default(),
             assertion_admission: TypeScriptAssertionAdmission::Unresolved,
@@ -3789,8 +3883,11 @@ fn find_related_tests_ignores_call_shaped_comment_mentions() {
             scope_bindings: Default::default(),
             identity_helpers_in_file: Default::default(),
             default_member_only_locals_in_file: Default::default(),
+            barrel_namespace_members_in_file: Default::default(),
             written_locals_in_file: Default::default(),
             member_replacements_in_file: Default::default(),
+            function_replacements_in_file: Default::default(),
+            dynamic_load_specifiers_in_file: Default::default(),
             mock_factories_in_file: Default::default(),
             mock_spread_sources_in_file: Default::default(),
             assertion_admission: TypeScriptAssertionAdmission::Unresolved,
@@ -3819,8 +3916,10 @@ fn related_test_candidates_use_name_and_proximity_links_as_uncertain_relations()
         exported_as_default: false,
         class_default_export: false,
         default_object_member: false,
+        default_object_unsafe_siblings: Vec::new(),
         commonjs_default_export: false,
         commonjs_whole_function: false,
+        constructor_callback: false,
         module_entries: Vec::new(),
         arity: None,
         params: Vec::new(),
@@ -3907,8 +4006,10 @@ fn related_test_name_proximity_ignores_partial_tokens() {
         exported_as_default: false,
         class_default_export: false,
         default_object_member: false,
+        default_object_unsafe_siblings: Vec::new(),
         commonjs_default_export: false,
         commonjs_whole_function: false,
+        constructor_callback: false,
         module_entries: Vec::new(),
         arity: None,
         params: Vec::new(),
@@ -3951,8 +4052,10 @@ fn classify_change_uses_heuristic_links_as_weak_uncertain_proximity() -> Result<
         exported_as_default: false,
         class_default_export: false,
         default_object_member: false,
+        default_object_unsafe_siblings: Vec::new(),
         commonjs_default_export: false,
         commonjs_whole_function: false,
+        constructor_callback: false,
         module_entries: Vec::new(),
         arity: None,
         params: Vec::new(),
@@ -4011,8 +4114,10 @@ fn classify_change_returns_weakly_exposed_when_related_test_exists() -> Result<(
         exported_as_default: false,
         class_default_export: false,
         default_object_member: false,
+        default_object_unsafe_siblings: Vec::new(),
         commonjs_default_export: false,
         commonjs_whole_function: false,
+        constructor_callback: false,
         module_entries: Vec::new(),
         arity: None,
         params: Vec::new(),
@@ -4034,8 +4139,11 @@ fn classify_change_returns_weakly_exposed_when_related_test_exists() -> Result<(
         scope_bindings: Default::default(),
         identity_helpers_in_file: Default::default(),
         default_member_only_locals_in_file: Default::default(),
+        barrel_namespace_members_in_file: Default::default(),
         written_locals_in_file: Default::default(),
         member_replacements_in_file: Default::default(),
+        function_replacements_in_file: Default::default(),
+        dynamic_load_specifiers_in_file: Default::default(),
         mock_factories_in_file: Default::default(),
         mock_spread_sources_in_file: Default::default(),
         assertion_admission: TypeScriptAssertionAdmission::Unresolved,
@@ -4137,7 +4245,9 @@ fn typescript_preview_weak_oracle_guidance_names_snapshot_exact_value_shape() ->
     assert_evidence_contains(&finding, "gap_state: unknown");
     assert!(
         finding.missing.iter().any(|line| {
-            line.contains("snapshot evidence") && line.contains("add an exact-value assertion")
+            line.contains("snapshot evidence")
+                && line.contains("weak preview evidence")
+                && line.contains("add an exact-value assertion for the changed behavior")
         }),
         "expected snapshot exact-value guidance, got {:?}",
         finding.missing
@@ -4411,8 +4521,10 @@ fn classify_change_labels_javascript_sources_separately() -> Result<(), String> 
         exported_as_default: false,
         class_default_export: false,
         default_object_member: false,
+        default_object_unsafe_siblings: Vec::new(),
         commonjs_default_export: false,
         commonjs_whole_function: false,
+        constructor_callback: false,
         module_entries: Vec::new(),
         arity: None,
         params: Vec::new(),
@@ -4434,8 +4546,11 @@ fn classify_change_labels_javascript_sources_separately() -> Result<(), String> 
         scope_bindings: Default::default(),
         identity_helpers_in_file: Default::default(),
         default_member_only_locals_in_file: Default::default(),
+        barrel_namespace_members_in_file: Default::default(),
         written_locals_in_file: Default::default(),
         member_replacements_in_file: Default::default(),
+        function_replacements_in_file: Default::default(),
+        dynamic_load_specifiers_in_file: Default::default(),
         mock_factories_in_file: Default::default(),
         mock_spread_sources_in_file: Default::default(),
         assertion_admission: TypeScriptAssertionAdmission::Unresolved,
@@ -4476,8 +4591,10 @@ fn classify_change_matches_owner_file_before_line_range() -> Result<(), String> 
             exported_as_default: false,
             class_default_export: false,
             default_object_member: false,
+            default_object_unsafe_siblings: Vec::new(),
             commonjs_default_export: false,
             commonjs_whole_function: false,
+            constructor_callback: false,
             module_entries: Vec::new(),
             arity: None,
             params: Vec::new(),
@@ -4496,8 +4613,10 @@ fn classify_change_matches_owner_file_before_line_range() -> Result<(), String> 
             exported_as_default: false,
             class_default_export: false,
             default_object_member: false,
+            default_object_unsafe_siblings: Vec::new(),
             commonjs_default_export: false,
             commonjs_whole_function: false,
+            constructor_callback: false,
             module_entries: Vec::new(),
             arity: None,
             params: Vec::new(),
@@ -4521,8 +4640,11 @@ fn classify_change_matches_owner_file_before_line_range() -> Result<(), String> 
             scope_bindings: Default::default(),
             identity_helpers_in_file: Default::default(),
             default_member_only_locals_in_file: Default::default(),
+            barrel_namespace_members_in_file: Default::default(),
             written_locals_in_file: Default::default(),
             member_replacements_in_file: Default::default(),
+            function_replacements_in_file: Default::default(),
+            dynamic_load_specifiers_in_file: Default::default(),
             mock_factories_in_file: Default::default(),
             mock_spread_sources_in_file: Default::default(),
             assertion_admission: TypeScriptAssertionAdmission::Unresolved,
@@ -4545,8 +4667,11 @@ fn classify_change_matches_owner_file_before_line_range() -> Result<(), String> 
             scope_bindings: Default::default(),
             identity_helpers_in_file: Default::default(),
             default_member_only_locals_in_file: Default::default(),
+            barrel_namespace_members_in_file: Default::default(),
             written_locals_in_file: Default::default(),
             member_replacements_in_file: Default::default(),
+            function_replacements_in_file: Default::default(),
+            dynamic_load_specifiers_in_file: Default::default(),
             mock_factories_in_file: Default::default(),
             mock_spread_sources_in_file: Default::default(),
             assertion_admission: TypeScriptAssertionAdmission::Unresolved,
@@ -5337,11 +5462,13 @@ fn classify_change_returns_exposed_when_related_test_has_strong_oracle() -> Resu
         exported_as_default: false,
         class_default_export: false,
         default_object_member: false,
+        default_object_unsafe_siblings: Vec::new(),
         commonjs_default_export: false,
         commonjs_whole_function: false,
+        constructor_callback: false,
         module_entries: Vec::new(),
-        arity: None,
-        params: Vec::new(),
+        arity: Some(2),
+        params: vec!["amount".into(), "threshold".into()],
         source_text: None,
         imports: Default::default(),
         method_kind: TypeScriptMethodKind::Ordinary,
@@ -5379,8 +5506,11 @@ fn classify_change_returns_exposed_when_related_test_has_strong_oracle() -> Resu
         scope_bindings: Default::default(),
         identity_helpers_in_file: Default::default(),
         default_member_only_locals_in_file: Default::default(),
+        barrel_namespace_members_in_file: Default::default(),
         written_locals_in_file: Default::default(),
         member_replacements_in_file: Default::default(),
+        function_replacements_in_file: Default::default(),
+        dynamic_load_specifiers_in_file: Default::default(),
         mock_factories_in_file: Default::default(),
         mock_spread_sources_in_file: Default::default(),
         assertion_admission: TypeScriptAssertionAdmission::Unresolved,
@@ -5436,11 +5566,13 @@ fn classify_change_exposed_t_assertion_uses_execution_context_label() -> Result<
         exported_as_default: false,
         class_default_export: false,
         default_object_member: false,
+        default_object_unsafe_siblings: Vec::new(),
         commonjs_default_export: false,
         commonjs_whole_function: false,
+        constructor_callback: false,
         module_entries: Vec::new(),
-        arity: None,
-        params: Vec::new(),
+        arity: Some(2),
+        params: vec!["amount".into(), "threshold".into()],
         source_text: None,
         imports: Default::default(),
         method_kind: TypeScriptMethodKind::Ordinary,
@@ -5477,8 +5609,11 @@ fn classify_change_exposed_t_assertion_uses_execution_context_label() -> Result<
         scope_bindings: Default::default(),
         identity_helpers_in_file: Default::default(),
         default_member_only_locals_in_file: Default::default(),
+        barrel_namespace_members_in_file: Default::default(),
         written_locals_in_file: Default::default(),
         member_replacements_in_file: Default::default(),
+        function_replacements_in_file: Default::default(),
+        dynamic_load_specifiers_in_file: Default::default(),
         mock_factories_in_file: Default::default(),
         mock_spread_sources_in_file: Default::default(),
         assertion_admission: TypeScriptAssertionAdmission::Unresolved,
@@ -5531,8 +5666,10 @@ fn classify_change_returns_no_static_path_when_no_related_test() -> Result<(), S
         exported_as_default: false,
         class_default_export: false,
         default_object_member: false,
+        default_object_unsafe_siblings: Vec::new(),
         commonjs_default_export: false,
         commonjs_whole_function: false,
+        constructor_callback: false,
         module_entries: Vec::new(),
         arity: None,
         params: Vec::new(),
@@ -5573,8 +5710,10 @@ fn classify_change_returns_none_when_line_is_outside_any_owner() {
         exported_as_default: false,
         class_default_export: false,
         default_object_member: false,
+        default_object_unsafe_siblings: Vec::new(),
         commonjs_default_export: false,
         commonjs_whole_function: false,
+        constructor_callback: false,
         module_entries: Vec::new(),
         arity: None,
         params: Vec::new(),
@@ -7355,7 +7494,14 @@ fn classify_change_uses_call_effect_wording_for_console_log_without_literal() ->
 fn classify_change_omits_probe_facts_for_ambiguous_const_expression() -> Result<(), String> {
     let finding = classify_weak_direct_line("    const total = applyDiscount(amount, threshold);")?;
 
-    assert_eq!(finding.probe.family, ProbeFamily::Predicate);
+    // #14381: analysis keeps the ambiguous fallback; only the presented
+    // family and delta read as a value for a plain value declaration.
+    assert!(
+        !classify_probe_shape_detail("    const total = applyDiscount(amount, threshold);")
+            .specific
+    );
+    assert_eq!(finding.probe.family, ProbeFamily::ReturnValue);
+    assert_eq!(finding.probe.delta, DeltaKind::Value);
     assert!(finding.probe.expected_sinks.is_empty());
     assert!(finding.probe.required_oracles.is_empty());
     assert!(finding.flow_sinks.is_empty());
@@ -7367,6 +7513,114 @@ fn classify_change_omits_probe_facts_for_ambiguous_const_expression() -> Result<
             .any(|entry| entry == "probe_fact: ambiguous_fallback")
     );
     Ok(())
+}
+
+/// #14381: an unrecognised declaration whose initializer tests a condition
+/// keeps the conservative predicate presentation.
+#[test]
+fn classify_change_keeps_predicate_for_ambiguous_conditional_declaration() -> Result<(), String> {
+    let line = "    const ready = !pending;";
+    assert!(!classify_probe_shape_detail(line).specific);
+    let finding = classify_weak_direct_line(line)?;
+
+    assert_eq!(finding.probe.family, ProbeFamily::Predicate);
+    assert_eq!(finding.probe.delta, DeltaKind::Control);
+    assert!(
+        finding
+            .evidence
+            .iter()
+            .any(|entry| entry == "probe_fact: ambiguous_fallback")
+    );
+    Ok(())
+}
+
+/// #14381: the closed recognizer for a plain single-name value declaration.
+#[test]
+fn plain_value_declaration_recognizer_is_closed() {
+    for line in [
+        "    const desc = Object.getOwnPropertyDescriptor(raw, key);",
+        "  let total: number = base - bonus;",
+        "var label = `name: ok`;",
+        "  const cache: Map<string, number> = new Map();",
+        "  const first = items[0]?.name;",
+        "  const text = \"a > b\";",
+        "  const $el = query('#root');",
+        "  const quoted = 'it\\'s > x';",
+        "  const spaced =\tbase\t-\tbonus;",
+        "  export const desc = Object.getOwnPropertyDescriptor(raw, key);",
+        "  const total = sum(items.map(price));",
+    ] {
+        assert!(
+            is_typescript_plain_value_declaration(line),
+            "`{line}` is a plain value declaration"
+        );
+    }
+    for line in [
+        "  const ok = a > b;",
+        "  const same = a === b;",
+        "  const ready = !pending;",
+        "  const pick = flag ? a : b;",
+        "  const both = a && b;",
+        "  const either = a || b;",
+        "  const fallback = value ?? 0;",
+        "  const f = (x) => x + 1;",
+        "  const v = await load();",
+        "  const has = key in obj;",
+        "  const isDate = value instanceof Date;",
+        "  const kind = typeof value;",
+        "  const { a, b } = obj;",
+        "  const [head] = list;",
+        "  const shape = {",
+        "  const value = compute(a,",
+        "  const x = 1; const y = 2;",
+        "  total = base - bonus;",
+        "  if (x) {",
+        "  const handler = function () {};",
+        "  const g = a = b;",
+        "  const message = isError",
+        "  const $el = query('#root')",
+        "  const x = compute(a); // a > b",
+        "  const re = /'/;",
+        "  const label = `${ready ? 'yes' : 'no'}`;",
+        "  const shown = `${count} items`;",
+        "  const present = key\tin\tobj;",
+        "  const kind = typeof\tvalue;",
+        "  const sum = a /* note */ + b;",
+        "  const kind = typeof(value);",
+        "  const has = key in(obj);",
+        "  const has = (key)in obj;",
+        "  const v = await(load());",
+        "  export const ok = a > b;",
+        "  export default value;",
+    ] {
+        assert!(
+            !is_typescript_plain_value_declaration(line),
+            "`{line}` must keep the conservative predicate presentation"
+        );
+    }
+}
+
+/// #14381: a recognised (specific) shape is presented unchanged, and only the
+/// ambiguous predicate fallback is re-presented.
+#[test]
+fn presented_shape_rewrites_only_the_ambiguous_fallback() {
+    let declaration = "    const desc = Object.getOwnPropertyDescriptor(raw, key);";
+    assert_eq!(
+        presented_typescript_shape(&TypeScriptProbeShape::ambiguous_fallback(), declaration),
+        (ProbeFamily::ReturnValue, DeltaKind::Value)
+    );
+    let specific = TypeScriptProbeShape::new(ProbeFamily::Predicate, DeltaKind::Control);
+    assert_eq!(
+        presented_typescript_shape(&specific, declaration),
+        (ProbeFamily::Predicate, DeltaKind::Control)
+    );
+    assert_eq!(
+        presented_typescript_shape(
+            &TypeScriptProbeShape::ambiguous_fallback(),
+            "  const ok = a > b;"
+        ),
+        (ProbeFamily::Predicate, DeltaKind::Control)
+    );
 }
 
 #[test]
@@ -7603,8 +7857,10 @@ fn collect_related_mock_paths_dedups_across_tests_in_same_file() {
         exported_as_default: false,
         class_default_export: false,
         default_object_member: false,
+        default_object_unsafe_siblings: Vec::new(),
         commonjs_default_export: false,
         commonjs_whole_function: false,
+        constructor_callback: false,
         module_entries: Vec::new(),
         arity: None,
         params: Vec::new(),
@@ -7627,8 +7883,11 @@ fn collect_related_mock_paths_dedups_across_tests_in_same_file() {
             scope_bindings: Default::default(),
             identity_helpers_in_file: Default::default(),
             default_member_only_locals_in_file: Default::default(),
+            barrel_namespace_members_in_file: Default::default(),
             written_locals_in_file: Default::default(),
             member_replacements_in_file: Default::default(),
+            function_replacements_in_file: Default::default(),
+            dynamic_load_specifiers_in_file: Default::default(),
             mock_factories_in_file: Default::default(),
             mock_spread_sources_in_file: Default::default(),
             assertion_admission: TypeScriptAssertionAdmission::Unresolved,
@@ -7657,8 +7916,11 @@ fn collect_related_mock_paths_dedups_across_tests_in_same_file() {
             scope_bindings: Default::default(),
             identity_helpers_in_file: Default::default(),
             default_member_only_locals_in_file: Default::default(),
+            barrel_namespace_members_in_file: Default::default(),
             written_locals_in_file: Default::default(),
             member_replacements_in_file: Default::default(),
+            function_replacements_in_file: Default::default(),
+            dynamic_load_specifiers_in_file: Default::default(),
             mock_factories_in_file: Default::default(),
             mock_spread_sources_in_file: Default::default(),
             assertion_admission: TypeScriptAssertionAdmission::Unresolved,
@@ -7730,6 +7992,84 @@ fn collect_related_mock_paths_dedups_across_tests_in_same_file() {
     assert_eq!(rooted.mock_paths, paths);
 }
 
+/// #10925: one owner's line context enumerates the relation index exactly once
+/// and feeds the same candidate slice to both named-limitation scans. The
+/// outputs equal the standalone (self-enumerating) scans, and both limitations
+/// fire so the equality is not vacuous.
+#[test]
+fn owner_line_context_enumerates_relation_index_once_for_named_limitations() -> Result<(), String> {
+    let root = ts_unique_tempdir("named-lim-single-enum")?;
+    ts_write_file(&root.join("packages/a/package.json"), r#"{"name":"a"}"#)?;
+    ts_write_file(&root.join("packages/b/package.json"), r#"{"name":"b"}"#)?;
+    let owner = test_owner("applyDiscount", "packages/a/src/pricing.ts");
+    let mut spied = weak_direct_test_for("applyDiscount");
+    spied.file = PathBuf::from("packages/a/tests/pricing.test.ts");
+    spied.body_text = "const spy = vi.spyOn(pricing, 'applyDiscount').mockReturnValue(42);\n\
+                       expect(applyDiscount(100)).toBe(42);"
+        .to_string();
+    let mut foreign = weak_direct_test_for("applyDiscount");
+    foreign.file = PathBuf::from("packages/b/tests/pricing.test.ts");
+    foreign.body_text = "expect(applyDiscount(100)).toBe(1);".to_string();
+    foreign.imports_in_file = Default::default();
+    let tests = vec![spied, foreign];
+
+    let index = RelationIndex::empty();
+    let enumerations = || relation_index::RELATION_INDEX_ENUMERATIONS.with(|count| count.get());
+    // The related-candidate scan enumerates the index itself; measure it alone
+    // so the named-limitation share is the remainder.
+    let before = enumerations();
+    let _ = related_test_candidates(
+        &owner,
+        &tests,
+        Some(root.as_path()),
+        &ReExportIndex::empty(),
+        None,
+        &index,
+    );
+    let related_only = enumerations() - before;
+    let before = enumerations();
+    let context = owner_line_context(
+        &owner,
+        &tests,
+        Some(root.as_path()),
+        &ReExportIndex::empty(),
+        &index,
+        None,
+    );
+    assert_eq!(
+        enumerations() - before - related_only,
+        1,
+        "both named-limitation scans must share one relation-index enumeration"
+    );
+
+    // Independent reference: the self-enumerating scans over the same inputs.
+    let reference_ownership = named_limitations_for_unresolved_ownership(
+        &owner,
+        &tests,
+        &index,
+        root.as_path(),
+        &context.related_candidates,
+    );
+    let all: Vec<&TypeScriptTest> = tests.iter().collect();
+    let reference_spy = named_limitations_for_spy_fabrication_from_candidates(&owner, &all);
+    assert_eq!(context.named_limitations_from_ownership.len(), 1);
+    assert_eq!(context.named_limitations_from_spy.len(), 1);
+    assert_eq!(
+        context.named_limitations_from_ownership[0].sample_source,
+        "packages/b/tests/pricing.test.ts:1"
+    );
+    assert_eq!(
+        context.named_limitations_from_spy[0].sample_source,
+        "packages/a/tests/pricing.test.ts:1"
+    );
+    assert_eq!(
+        context.named_limitations_from_ownership,
+        reference_ownership
+    );
+    assert_eq!(context.named_limitations_from_spy, reference_spy);
+    Ok(())
+}
+
 /// Independent reference for the mock-path projection: the original
 /// collector loop, inlined (candidate order, `mocks_in_file` order, dedup with
 /// `iter().any`, push in order).
@@ -7758,8 +8098,10 @@ fn mock_paths_projection_matches_reference_loop_in_order() {
         exported_as_default: false,
         class_default_export: false,
         default_object_member: false,
+        default_object_unsafe_siblings: Vec::new(),
         commonjs_default_export: false,
         commonjs_whole_function: false,
+        constructor_callback: false,
         module_entries: Vec::new(),
         arity: None,
         params: Vec::new(),
@@ -7785,8 +8127,11 @@ fn mock_paths_projection_matches_reference_loop_in_order() {
         scope_bindings: Default::default(),
         identity_helpers_in_file: Default::default(),
         default_member_only_locals_in_file: Default::default(),
+        barrel_namespace_members_in_file: Default::default(),
         written_locals_in_file: Default::default(),
         member_replacements_in_file: Default::default(),
+        function_replacements_in_file: Default::default(),
+        dynamic_load_specifiers_in_file: Default::default(),
         mock_factories_in_file: Default::default(),
         mock_spread_sources_in_file: Default::default(),
         assertion_admission: TypeScriptAssertionAdmission::Unresolved,
@@ -7883,8 +8228,10 @@ fn collect_related_mock_paths_ignores_unrelated_tests() {
         exported_as_default: false,
         class_default_export: false,
         default_object_member: false,
+        default_object_unsafe_siblings: Vec::new(),
         commonjs_default_export: false,
         commonjs_whole_function: false,
+        constructor_callback: false,
         module_entries: Vec::new(),
         arity: None,
         params: Vec::new(),
@@ -7906,8 +8253,11 @@ fn collect_related_mock_paths_ignores_unrelated_tests() {
         scope_bindings: Default::default(),
         identity_helpers_in_file: Default::default(),
         default_member_only_locals_in_file: Default::default(),
+        barrel_namespace_members_in_file: Default::default(),
         written_locals_in_file: Default::default(),
         member_replacements_in_file: Default::default(),
+        function_replacements_in_file: Default::default(),
+        dynamic_load_specifiers_in_file: Default::default(),
         mock_factories_in_file: Default::default(),
         mock_spread_sources_in_file: Default::default(),
         assertion_admission: TypeScriptAssertionAdmission::Unresolved,
@@ -7940,8 +8290,10 @@ fn collect_related_mock_paths_ignores_object_method_mentions() {
         exported_as_default: false,
         class_default_export: false,
         default_object_member: false,
+        default_object_unsafe_siblings: Vec::new(),
         commonjs_default_export: false,
         commonjs_whole_function: false,
+        constructor_callback: false,
         module_entries: Vec::new(),
         arity: None,
         params: Vec::new(),
@@ -7963,8 +8315,11 @@ fn collect_related_mock_paths_ignores_object_method_mentions() {
         scope_bindings: Default::default(),
         identity_helpers_in_file: Default::default(),
         default_member_only_locals_in_file: Default::default(),
+        barrel_namespace_members_in_file: Default::default(),
         written_locals_in_file: Default::default(),
         member_replacements_in_file: Default::default(),
+        function_replacements_in_file: Default::default(),
+        dynamic_load_specifiers_in_file: Default::default(),
         mock_factories_in_file: Default::default(),
         mock_spread_sources_in_file: Default::default(),
         assertion_admission: TypeScriptAssertionAdmission::Unresolved,
@@ -7998,8 +8353,10 @@ fn classify_change_surfaces_mocked_module_static_limit_in_missing_and_evidence()
         exported_as_default: false,
         class_default_export: false,
         default_object_member: false,
+        default_object_unsafe_siblings: Vec::new(),
         commonjs_default_export: false,
         commonjs_whole_function: false,
+        constructor_callback: false,
         module_entries: Vec::new(),
         arity: None,
         params: Vec::new(),
@@ -8021,8 +8378,11 @@ fn classify_change_surfaces_mocked_module_static_limit_in_missing_and_evidence()
         scope_bindings: Default::default(),
         identity_helpers_in_file: Default::default(),
         default_member_only_locals_in_file: Default::default(),
+        barrel_namespace_members_in_file: Default::default(),
         written_locals_in_file: Default::default(),
         member_replacements_in_file: Default::default(),
+        function_replacements_in_file: Default::default(),
+        dynamic_load_specifiers_in_file: Default::default(),
         mock_factories_in_file: Default::default(),
         mock_spread_sources_in_file: Default::default(),
         assertion_admission: TypeScriptAssertionAdmission::Unresolved,
@@ -8095,8 +8455,10 @@ fn classify_change_cross_package_mock_does_not_surface_mocked_module_limit() -> 
         exported_as_default: false,
         class_default_export: false,
         default_object_member: false,
+        default_object_unsafe_siblings: Vec::new(),
         commonjs_default_export: false,
         commonjs_whole_function: false,
+        constructor_callback: false,
         module_entries: Vec::new(),
         imports: Default::default(),
         params: Vec::new(),
@@ -8120,8 +8482,11 @@ fn classify_change_cross_package_mock_does_not_surface_mocked_module_limit() -> 
         scope_bindings: Default::default(),
         identity_helpers_in_file: Default::default(),
         default_member_only_locals_in_file: Default::default(),
+        barrel_namespace_members_in_file: Default::default(),
         written_locals_in_file: Default::default(),
         member_replacements_in_file: Default::default(),
+        function_replacements_in_file: Default::default(),
+        dynamic_load_specifiers_in_file: Default::default(),
         mock_factories_in_file: Default::default(),
         mock_spread_sources_in_file: Default::default(),
         assertion_admission: TypeScriptAssertionAdmission::Unresolved,
@@ -8171,8 +8536,10 @@ fn classify_change_cross_package_mock_does_not_surface_mocked_module_limit() -> 
         exported_as_default: false,
         class_default_export: false,
         default_object_member: false,
+        default_object_unsafe_siblings: Vec::new(),
         commonjs_default_export: false,
         commonjs_whole_function: false,
+        constructor_callback: false,
         module_entries: Vec::new(),
         imports: Default::default(),
         params: Vec::new(),
@@ -8226,8 +8593,10 @@ fn named_limitation_mock_only_observer_emitted_for_mocked_module_static_limit() 
         exported_as_default: false,
         class_default_export: false,
         default_object_member: false,
+        default_object_unsafe_siblings: Vec::new(),
         commonjs_default_export: false,
         commonjs_whole_function: false,
+        constructor_callback: false,
         module_entries: Vec::new(),
         arity: None,
         params: Vec::new(),
@@ -8266,8 +8635,11 @@ fn named_limitation_mock_only_observer_emitted_for_mocked_module_static_limit() 
         scope_bindings: Default::default(),
         identity_helpers_in_file: Default::default(),
         default_member_only_locals_in_file: Default::default(),
+        barrel_namespace_members_in_file: Default::default(),
         written_locals_in_file: Default::default(),
         member_replacements_in_file: Default::default(),
+        function_replacements_in_file: Default::default(),
+        dynamic_load_specifiers_in_file: Default::default(),
         mock_factories_in_file: Default::default(),
         mock_spread_sources_in_file: Default::default(),
         assertion_admission: TypeScriptAssertionAdmission::Unresolved,
@@ -8332,8 +8704,10 @@ fn named_limitation_import_graph_unresolved_emitted_for_missing_import_graph() -
         exported_as_default: false,
         class_default_export: false,
         default_object_member: false,
+        default_object_unsafe_siblings: Vec::new(),
         commonjs_default_export: false,
         commonjs_whole_function: false,
+        constructor_callback: false,
         module_entries: Vec::new(),
         arity: None,
         params: Vec::new(),
@@ -8378,8 +8752,11 @@ fn named_limitation_import_graph_unresolved_emitted_for_missing_import_graph() -
         scope_bindings: Default::default(),
         identity_helpers_in_file: Default::default(),
         default_member_only_locals_in_file: Default::default(),
+        barrel_namespace_members_in_file: Default::default(),
         written_locals_in_file: Default::default(),
         member_replacements_in_file: Default::default(),
+        function_replacements_in_file: Default::default(),
+        dynamic_load_specifiers_in_file: Default::default(),
         mock_factories_in_file: Default::default(),
         mock_spread_sources_in_file: Default::default(),
         assertion_admission: TypeScriptAssertionAdmission::Unresolved,
@@ -8462,6 +8839,10 @@ test("renders summary snapshot", () => {
     assert_evidence_contains(
         &finding,
         "typescript_limitation_repair_route: typescript_snapshot_discriminator_unresolved → analysis/typescript-snapshot-oracle-hardening",
+    );
+    assert_evidence_contains(
+        &finding,
+        "the available snapshot evidence does not establish an expected value for the changed behavior",
     );
     // static_limit_kind is unset (snapshot is not a static_limit, it is oracle-based)
     assert_eq!(finding.static_limit_kind, None);
@@ -8643,8 +9024,11 @@ fn named_limitation_oracle_based_not_emitted_for_heuristic_only_relation() -> Re
         scope_bindings: Default::default(),
         identity_helpers_in_file: Default::default(),
         default_member_only_locals_in_file: Default::default(),
+        barrel_namespace_members_in_file: Default::default(),
         written_locals_in_file: Default::default(),
         member_replacements_in_file: Default::default(),
+        function_replacements_in_file: Default::default(),
+        dynamic_load_specifiers_in_file: Default::default(),
         mock_factories_in_file: Default::default(),
         mock_spread_sources_in_file: Default::default(),
         assertion_admission: TypeScriptAssertionAdmission::Unresolved,
@@ -9289,8 +9673,11 @@ fn named_limitation_dynamic_assertion_emitted_for_dynamic_matcher_arg() -> Resul
         scope_bindings: Default::default(),
         identity_helpers_in_file: Default::default(),
         default_member_only_locals_in_file: Default::default(),
+        barrel_namespace_members_in_file: Default::default(),
         written_locals_in_file: Default::default(),
         member_replacements_in_file: Default::default(),
+        function_replacements_in_file: Default::default(),
+        dynamic_load_specifiers_in_file: Default::default(),
         mock_factories_in_file: Default::default(),
         mock_spread_sources_in_file: Default::default(),
         assertion_admission: TypeScriptAssertionAdmission::Unresolved,
@@ -9378,8 +9765,11 @@ fn named_limitation_dynamic_assertion_not_emitted_for_other_family_assertion() -
         scope_bindings: Default::default(),
         identity_helpers_in_file: Default::default(),
         default_member_only_locals_in_file: Default::default(),
+        barrel_namespace_members_in_file: Default::default(),
         written_locals_in_file: Default::default(),
         member_replacements_in_file: Default::default(),
+        function_replacements_in_file: Default::default(),
+        dynamic_load_specifiers_in_file: Default::default(),
         mock_factories_in_file: Default::default(),
         mock_spread_sources_in_file: Default::default(),
         assertion_admission: TypeScriptAssertionAdmission::Unresolved,
@@ -9451,8 +9841,11 @@ fn named_limitation_dynamic_assertion_emitted_for_error_family_assertion_on_erro
         scope_bindings: Default::default(),
         identity_helpers_in_file: Default::default(),
         default_member_only_locals_in_file: Default::default(),
+        barrel_namespace_members_in_file: Default::default(),
         written_locals_in_file: Default::default(),
         member_replacements_in_file: Default::default(),
+        function_replacements_in_file: Default::default(),
+        dynamic_load_specifiers_in_file: Default::default(),
         mock_factories_in_file: Default::default(),
         mock_spread_sources_in_file: Default::default(),
         assertion_admission: TypeScriptAssertionAdmission::Unresolved,
@@ -9521,8 +9914,11 @@ fn named_limitation_table_case_emitted_for_table_dynamic_matcher_arg() -> Result
         scope_bindings: Default::default(),
         identity_helpers_in_file: Default::default(),
         default_member_only_locals_in_file: Default::default(),
+        barrel_namespace_members_in_file: Default::default(),
         written_locals_in_file: Default::default(),
         member_replacements_in_file: Default::default(),
+        function_replacements_in_file: Default::default(),
+        dynamic_load_specifiers_in_file: Default::default(),
         mock_factories_in_file: Default::default(),
         mock_spread_sources_in_file: Default::default(),
         assertion_admission: TypeScriptAssertionAdmission::Unresolved,
@@ -9607,8 +10003,11 @@ fn named_limitation_dynamic_assertion_not_emitted_for_heuristic_only_relation() 
         scope_bindings: Default::default(),
         identity_helpers_in_file: Default::default(),
         default_member_only_locals_in_file: Default::default(),
+        barrel_namespace_members_in_file: Default::default(),
         written_locals_in_file: Default::default(),
         member_replacements_in_file: Default::default(),
+        function_replacements_in_file: Default::default(),
+        dynamic_load_specifiers_in_file: Default::default(),
         mock_factories_in_file: Default::default(),
         mock_spread_sources_in_file: Default::default(),
         assertion_admission: TypeScriptAssertionAdmission::Unresolved,
@@ -9774,8 +10173,10 @@ fn package_local_filter_selects_same_package_test() {
         exported_as_default: false,
         class_default_export: false,
         default_object_member: false,
+        default_object_unsafe_siblings: Vec::new(),
         commonjs_default_export: false,
         commonjs_whole_function: false,
+        constructor_callback: false,
         module_entries: Vec::new(),
         arity: None,
         params: Vec::new(),
@@ -9797,8 +10198,11 @@ fn package_local_filter_selects_same_package_test() {
         scope_bindings: Default::default(),
         identity_helpers_in_file: Default::default(),
         default_member_only_locals_in_file: Default::default(),
+        barrel_namespace_members_in_file: Default::default(),
         written_locals_in_file: Default::default(),
         member_replacements_in_file: Default::default(),
+        function_replacements_in_file: Default::default(),
+        dynamic_load_specifiers_in_file: Default::default(),
         mock_factories_in_file: Default::default(),
         mock_spread_sources_in_file: Default::default(),
         assertion_admission: TypeScriptAssertionAdmission::Unresolved,
@@ -9871,8 +10275,10 @@ fn package_local_filter_rejects_cross_package_test() {
         exported_as_default: false,
         class_default_export: false,
         default_object_member: false,
+        default_object_unsafe_siblings: Vec::new(),
         commonjs_default_export: false,
         commonjs_whole_function: false,
+        constructor_callback: false,
         module_entries: Vec::new(),
         arity: None,
         params: Vec::new(),
@@ -9894,8 +10300,11 @@ fn package_local_filter_rejects_cross_package_test() {
         scope_bindings: Default::default(),
         identity_helpers_in_file: Default::default(),
         default_member_only_locals_in_file: Default::default(),
+        barrel_namespace_members_in_file: Default::default(),
         written_locals_in_file: Default::default(),
         member_replacements_in_file: Default::default(),
+        function_replacements_in_file: Default::default(),
+        dynamic_load_specifiers_in_file: Default::default(),
         mock_factories_in_file: Default::default(),
         mock_spread_sources_in_file: Default::default(),
         assertion_admission: TypeScriptAssertionAdmission::Unresolved,
@@ -9947,8 +10356,11 @@ fn package_local_filter_admits_cross_package_test_importing_owner_file() -> Resu
         scope_bindings: Default::default(),
         identity_helpers_in_file: Default::default(),
         default_member_only_locals_in_file: Default::default(),
+        barrel_namespace_members_in_file: Default::default(),
         written_locals_in_file: Default::default(),
         member_replacements_in_file: Default::default(),
+        function_replacements_in_file: Default::default(),
+        dynamic_load_specifiers_in_file: Default::default(),
         mock_factories_in_file: Default::default(),
         mock_spread_sources_in_file: Default::default(),
         assertion_admission: TypeScriptAssertionAdmission::Unresolved,
@@ -10021,8 +10433,11 @@ fn cross_package_constructor_requires_owner_class_import() -> Result<(), String>
         scope_bindings: Default::default(),
         identity_helpers_in_file: Default::default(),
         default_member_only_locals_in_file: Default::default(),
+        barrel_namespace_members_in_file: Default::default(),
         written_locals_in_file: Default::default(),
         member_replacements_in_file: Default::default(),
+        function_replacements_in_file: Default::default(),
+        dynamic_load_specifiers_in_file: Default::default(),
         mock_factories_in_file: Default::default(),
         mock_spread_sources_in_file: Default::default(),
         assertion_admission: TypeScriptAssertionAdmission::Unresolved,
@@ -10213,8 +10628,10 @@ fn named_limitation_target_unresolved_emitted_for_cross_package_reference() -> R
         exported_as_default: false,
         class_default_export: false,
         default_object_member: false,
+        default_object_unsafe_siblings: Vec::new(),
         commonjs_default_export: false,
         commonjs_whole_function: false,
+        constructor_callback: false,
         module_entries: Vec::new(),
         arity: None,
         params: Vec::new(),
@@ -10255,8 +10672,11 @@ fn named_limitation_target_unresolved_emitted_for_cross_package_reference() -> R
         scope_bindings: Default::default(),
         identity_helpers_in_file: Default::default(),
         default_member_only_locals_in_file: Default::default(),
+        barrel_namespace_members_in_file: Default::default(),
         written_locals_in_file: Default::default(),
         member_replacements_in_file: Default::default(),
+        function_replacements_in_file: Default::default(),
+        dynamic_load_specifiers_in_file: Default::default(),
         mock_factories_in_file: Default::default(),
         mock_spread_sources_in_file: Default::default(),
         assertion_admission: TypeScriptAssertionAdmission::Unresolved,
@@ -10280,8 +10700,11 @@ fn named_limitation_target_unresolved_emitted_for_cross_package_reference() -> R
         scope_bindings: Default::default(),
         identity_helpers_in_file: Default::default(),
         default_member_only_locals_in_file: Default::default(),
+        barrel_namespace_members_in_file: Default::default(),
         written_locals_in_file: Default::default(),
         member_replacements_in_file: Default::default(),
+        function_replacements_in_file: Default::default(),
+        dynamic_load_specifiers_in_file: Default::default(),
         mock_factories_in_file: Default::default(),
         mock_spread_sources_in_file: Default::default(),
         assertion_admission: TypeScriptAssertionAdmission::Unresolved,
@@ -10363,8 +10786,11 @@ fn unresolved_ownership_import_branch_with_relative_paths() -> Result<(), String
         scope_bindings: Default::default(),
         identity_helpers_in_file: Default::default(),
         default_member_only_locals_in_file: Default::default(),
+        barrel_namespace_members_in_file: Default::default(),
         written_locals_in_file: Default::default(),
         member_replacements_in_file: Default::default(),
+        function_replacements_in_file: Default::default(),
+        dynamic_load_specifiers_in_file: Default::default(),
         mock_factories_in_file: Default::default(),
         mock_spread_sources_in_file: Default::default(),
         assertion_admission: TypeScriptAssertionAdmission::Unresolved,
@@ -10505,8 +10931,11 @@ fn named_limitation_target_unresolved_not_emitted_for_same_package() -> Result<(
         scope_bindings: Default::default(),
         identity_helpers_in_file: Default::default(),
         default_member_only_locals_in_file: Default::default(),
+        barrel_namespace_members_in_file: Default::default(),
         written_locals_in_file: Default::default(),
         member_replacements_in_file: Default::default(),
+        function_replacements_in_file: Default::default(),
+        dynamic_load_specifiers_in_file: Default::default(),
         mock_factories_in_file: Default::default(),
         mock_spread_sources_in_file: Default::default(),
         assertion_admission: TypeScriptAssertionAdmission::Unresolved,
@@ -10556,8 +10985,10 @@ fn ts_swallowed_console_log_exposed_downgrade() -> Result<(), String> {
         exported_as_default: false,
         class_default_export: false,
         default_object_member: false,
+        default_object_unsafe_siblings: Vec::new(),
         commonjs_default_export: false,
         commonjs_whole_function: false,
+        constructor_callback: false,
         module_entries: Vec::new(),
         arity: None,
         params: Vec::new(),
@@ -10620,8 +11051,11 @@ fn ts_swallowed_console_log_exposed_downgrade() -> Result<(), String> {
         scope_bindings: Default::default(),
         identity_helpers_in_file: Default::default(),
         default_member_only_locals_in_file: Default::default(),
+        barrel_namespace_members_in_file: Default::default(),
         written_locals_in_file: Default::default(),
         member_replacements_in_file: Default::default(),
+        function_replacements_in_file: Default::default(),
+        dynamic_load_specifiers_in_file: Default::default(),
         mock_factories_in_file: Default::default(),
         mock_spread_sources_in_file: Default::default(),
         assertion_admission: TypeScriptAssertionAdmission::Unresolved,
@@ -10692,8 +11126,10 @@ fn ts_returnvalue_genuinely_observed_control() -> Result<(), String> {
         exported_as_default: false,
         class_default_export: false,
         default_object_member: false,
+        default_object_unsafe_siblings: Vec::new(),
         commonjs_default_export: false,
         commonjs_whole_function: false,
+        constructor_callback: false,
         module_entries: Vec::new(),
         arity: None,
         params: Vec::new(),
@@ -10733,8 +11169,11 @@ fn ts_returnvalue_genuinely_observed_control() -> Result<(), String> {
         scope_bindings: Default::default(),
         identity_helpers_in_file: Default::default(),
         default_member_only_locals_in_file: Default::default(),
+        barrel_namespace_members_in_file: Default::default(),
         written_locals_in_file: Default::default(),
         member_replacements_in_file: Default::default(),
+        function_replacements_in_file: Default::default(),
+        dynamic_load_specifiers_in_file: Default::default(),
         mock_factories_in_file: Default::default(),
         mock_spread_sources_in_file: Default::default(),
         assertion_admission: TypeScriptAssertionAdmission::Unresolved,
@@ -10797,8 +11236,10 @@ fn ts_returnvalue_unrelated_strong_assertion_downgrades() -> Result<(), String> 
         exported_as_default: false,
         class_default_export: false,
         default_object_member: false,
+        default_object_unsafe_siblings: Vec::new(),
         commonjs_default_export: false,
         commonjs_whole_function: false,
+        constructor_callback: false,
         module_entries: Vec::new(),
         imports: Default::default(),
         params: Vec::new(),
@@ -10839,8 +11280,11 @@ fn ts_returnvalue_unrelated_strong_assertion_downgrades() -> Result<(), String> 
         scope_bindings: Default::default(),
         identity_helpers_in_file: Default::default(),
         default_member_only_locals_in_file: Default::default(),
+        barrel_namespace_members_in_file: Default::default(),
         written_locals_in_file: Default::default(),
         member_replacements_in_file: Default::default(),
+        function_replacements_in_file: Default::default(),
+        dynamic_load_specifiers_in_file: Default::default(),
         mock_factories_in_file: Default::default(),
         mock_spread_sources_in_file: Default::default(),
         assertion_admission: TypeScriptAssertionAdmission::Unresolved,
@@ -10904,8 +11348,10 @@ fn ts_returnvalue_owner_call_observation_stays_exposed() -> Result<(), String> {
         exported_as_default: false,
         class_default_export: false,
         default_object_member: false,
+        default_object_unsafe_siblings: Vec::new(),
         commonjs_default_export: false,
         commonjs_whole_function: false,
+        constructor_callback: false,
         module_entries: Vec::new(),
         imports: Default::default(),
         params: Vec::new(),
@@ -10945,8 +11391,11 @@ fn ts_returnvalue_owner_call_observation_stays_exposed() -> Result<(), String> {
         scope_bindings: Default::default(),
         identity_helpers_in_file: Default::default(),
         default_member_only_locals_in_file: Default::default(),
+        barrel_namespace_members_in_file: Default::default(),
         written_locals_in_file: Default::default(),
         member_replacements_in_file: Default::default(),
+        function_replacements_in_file: Default::default(),
+        dynamic_load_specifiers_in_file: Default::default(),
         mock_factories_in_file: Default::default(),
         mock_spread_sources_in_file: Default::default(),
         assertion_admission: TypeScriptAssertionAdmission::Unresolved,
@@ -11007,8 +11456,10 @@ fn ts_returnvalue_owner_aliased_local_observation_stays_exposed() -> Result<(), 
         exported_as_default: false,
         class_default_export: false,
         default_object_member: false,
+        default_object_unsafe_siblings: Vec::new(),
         commonjs_default_export: false,
         commonjs_whole_function: false,
+        constructor_callback: false,
         module_entries: Vec::new(),
         imports: Default::default(),
         params: Vec::new(),
@@ -11049,8 +11500,11 @@ fn ts_returnvalue_owner_aliased_local_observation_stays_exposed() -> Result<(), 
         scope_bindings: Default::default(),
         identity_helpers_in_file: Default::default(),
         default_member_only_locals_in_file: Default::default(),
+        barrel_namespace_members_in_file: Default::default(),
         written_locals_in_file: Default::default(),
         member_replacements_in_file: Default::default(),
+        function_replacements_in_file: Default::default(),
+        dynamic_load_specifiers_in_file: Default::default(),
         mock_factories_in_file: Default::default(),
         mock_spread_sources_in_file: Default::default(),
         assertion_admission: TypeScriptAssertionAdmission::Unresolved,
@@ -11110,8 +11564,10 @@ fn ts_returnvalue_unrelated_aliased_local_observation_downgrades() -> Result<(),
         exported_as_default: false,
         class_default_export: false,
         default_object_member: false,
+        default_object_unsafe_siblings: Vec::new(),
         commonjs_default_export: false,
         commonjs_whole_function: false,
+        constructor_callback: false,
         module_entries: Vec::new(),
         imports: Default::default(),
         params: Vec::new(),
@@ -11153,8 +11609,11 @@ fn ts_returnvalue_unrelated_aliased_local_observation_downgrades() -> Result<(),
         scope_bindings: Default::default(),
         identity_helpers_in_file: Default::default(),
         default_member_only_locals_in_file: Default::default(),
+        barrel_namespace_members_in_file: Default::default(),
         written_locals_in_file: Default::default(),
         member_replacements_in_file: Default::default(),
+        function_replacements_in_file: Default::default(),
+        dynamic_load_specifiers_in_file: Default::default(),
         mock_factories_in_file: Default::default(),
         mock_spread_sources_in_file: Default::default(),
         assertion_admission: TypeScriptAssertionAdmission::Unresolved,
@@ -11216,8 +11675,10 @@ fn ts_sibling_assertion_non_owner_prevents_downgrade() -> Result<(), String> {
         exported_as_default: false,
         class_default_export: false,
         default_object_member: false,
+        default_object_unsafe_siblings: Vec::new(),
         commonjs_default_export: false,
         commonjs_whole_function: false,
+        constructor_callback: false,
         module_entries: Vec::new(),
         arity: None,
         params: Vec::new(),
@@ -11278,8 +11739,11 @@ fn ts_sibling_assertion_non_owner_prevents_downgrade() -> Result<(), String> {
         scope_bindings: Default::default(),
         identity_helpers_in_file: Default::default(),
         default_member_only_locals_in_file: Default::default(),
+        barrel_namespace_members_in_file: Default::default(),
         written_locals_in_file: Default::default(),
         member_replacements_in_file: Default::default(),
+        function_replacements_in_file: Default::default(),
+        dynamic_load_specifiers_in_file: Default::default(),
         mock_factories_in_file: Default::default(),
         mock_spread_sources_in_file: Default::default(),
         assertion_admission: TypeScriptAssertionAdmission::Unresolved,
@@ -11342,7 +11806,9 @@ fn ts_sideeffect_imported_callee_observation_stays_exposed() -> Result<(), Strin
         class_default_export: false,
         commonjs_default_export: false,
         commonjs_whole_function: false,
+        constructor_callback: false,
         default_object_member: false,
+        default_object_unsafe_siblings: Vec::new(),
         module_entries: Vec::new(),
         arity: None,
         params: Vec::new(),
@@ -11383,8 +11849,11 @@ fn ts_sideeffect_imported_callee_observation_stays_exposed() -> Result<(), Strin
         scope_bindings: Default::default(),
         identity_helpers_in_file: Default::default(),
         default_member_only_locals_in_file: Default::default(),
+        barrel_namespace_members_in_file: Default::default(),
         written_locals_in_file: Default::default(),
         member_replacements_in_file: Default::default(),
+        function_replacements_in_file: Default::default(),
+        dynamic_load_specifiers_in_file: Default::default(),
         mock_factories_in_file: Default::default(),
         mock_spread_sources_in_file: Default::default(),
         assertion_admission: TypeScriptAssertionAdmission::Unresolved,
@@ -11455,7 +11924,9 @@ fn ts_sideeffect_compound_foreign_and_channel_observation_stays_exposed() -> Res
         class_default_export: false,
         commonjs_default_export: false,
         commonjs_whole_function: false,
+        constructor_callback: false,
         default_object_member: false,
+        default_object_unsafe_siblings: Vec::new(),
         module_entries: Vec::new(),
         arity: None,
         params: Vec::new(),
@@ -11496,8 +11967,11 @@ fn ts_sideeffect_compound_foreign_and_channel_observation_stays_exposed() -> Res
         scope_bindings: Default::default(),
         identity_helpers_in_file: Default::default(),
         default_member_only_locals_in_file: Default::default(),
+        barrel_namespace_members_in_file: Default::default(),
         written_locals_in_file: Default::default(),
         member_replacements_in_file: Default::default(),
+        function_replacements_in_file: Default::default(),
+        dynamic_load_specifiers_in_file: Default::default(),
         mock_factories_in_file: Default::default(),
         mock_spread_sources_in_file: Default::default(),
         assertion_admission: TypeScriptAssertionAdmission::Unresolved,
@@ -11562,7 +12036,9 @@ fn ts_sideeffect_unrelated_strong_assertion_downgrades() -> Result<(), String> {
         class_default_export: false,
         commonjs_default_export: false,
         commonjs_whole_function: false,
+        constructor_callback: false,
         default_object_member: false,
+        default_object_unsafe_siblings: Vec::new(),
         module_entries: Vec::new(),
         arity: None,
         params: Vec::new(),
@@ -11603,8 +12079,11 @@ fn ts_sideeffect_unrelated_strong_assertion_downgrades() -> Result<(), String> {
         scope_bindings: Default::default(),
         identity_helpers_in_file: Default::default(),
         default_member_only_locals_in_file: Default::default(),
+        barrel_namespace_members_in_file: Default::default(),
         written_locals_in_file: Default::default(),
         member_replacements_in_file: Default::default(),
+        function_replacements_in_file: Default::default(),
+        dynamic_load_specifiers_in_file: Default::default(),
         mock_factories_in_file: Default::default(),
         mock_spread_sources_in_file: Default::default(),
         assertion_admission: TypeScriptAssertionAdmission::Unresolved,
@@ -11669,8 +12148,10 @@ fn ts_field_construction_observed_control() -> Result<(), String> {
         exported_as_default: false,
         class_default_export: false,
         default_object_member: false,
+        default_object_unsafe_siblings: Vec::new(),
         commonjs_default_export: false,
         commonjs_whole_function: false,
+        constructor_callback: false,
         module_entries: Vec::new(),
         arity: None,
         params: Vec::new(),
@@ -11710,8 +12191,11 @@ fn ts_field_construction_observed_control() -> Result<(), String> {
         scope_bindings: Default::default(),
         identity_helpers_in_file: Default::default(),
         default_member_only_locals_in_file: Default::default(),
+        barrel_namespace_members_in_file: Default::default(),
         written_locals_in_file: Default::default(),
         member_replacements_in_file: Default::default(),
+        function_replacements_in_file: Default::default(),
+        dynamic_load_specifiers_in_file: Default::default(),
         mock_factories_in_file: Default::default(),
         mock_spread_sources_in_file: Default::default(),
         assertion_admission: TypeScriptAssertionAdmission::Unresolved,
@@ -11774,8 +12258,10 @@ fn ts_fieldconstruction_unrelated_strong_assertion_downgrades() -> Result<(), St
         exported_as_default: false,
         class_default_export: false,
         default_object_member: false,
+        default_object_unsafe_siblings: Vec::new(),
         commonjs_default_export: false,
         commonjs_whole_function: false,
+        constructor_callback: false,
         module_entries: Vec::new(),
         imports: Default::default(),
         params: Vec::new(),
@@ -11815,8 +12301,11 @@ fn ts_fieldconstruction_unrelated_strong_assertion_downgrades() -> Result<(), St
         scope_bindings: Default::default(),
         identity_helpers_in_file: Default::default(),
         default_member_only_locals_in_file: Default::default(),
+        barrel_namespace_members_in_file: Default::default(),
         written_locals_in_file: Default::default(),
         member_replacements_in_file: Default::default(),
+        function_replacements_in_file: Default::default(),
+        dynamic_load_specifiers_in_file: Default::default(),
         mock_factories_in_file: Default::default(),
         mock_spread_sources_in_file: Default::default(),
         assertion_admission: TypeScriptAssertionAdmission::Unresolved,
@@ -11859,6 +12348,1203 @@ fn ts_fieldconstruction_unrelated_strong_assertion_downgrades() -> Result<(), St
     assert!(
         all_text.contains("propagation_unknown"),
         "expected propagation_unknown in missing, got: {all_text:?}"
+    );
+    Ok(())
+}
+
+/// #14814: a FieldConstruction change read through a SIBLING field of the
+/// returned literal is not observed. `f()` builds `{ retries, verbose }` and
+/// the edit moves `retries`; a test asserting `f().verbose` reads a different
+/// field, so it cannot witness the changed one. The owner-call blanket credit
+/// promoted it to `exposed` only because the expression names `f`. It must
+/// downgrade to `weakly_exposed` / `propagation_unknown`, matching the Rust
+/// `one_hop_field_projection_sibling` precedent.
+#[test]
+fn ts_fieldconstruction_sibling_field_read_downgrades() -> Result<(), String> {
+    let owner_src = "export interface C { retries: number; verbose: boolean }\nexport function f(): C {\n  return { retries: 3, verbose: false };\n}\n";
+    let test_src = "import { f } from \"./owner\";\ntest(\"verbose flag\", () => { expect(f().verbose).toBe(false); });\n";
+
+    let owners = extract_owners(Path::new("owner.ts"), owner_src);
+    let tests = extract_tests(Path::new("owner.test.ts"), test_src);
+    assert_eq!(owners.len(), 1, "expected one owner from live extractor");
+    assert_eq!(tests.len(), 1, "expected one test from live extractor");
+
+    let finding = classify_change_with_alias_state(
+        Path::new("owner.ts"),
+        3,
+        "  return { retries: 5, verbose: false };",
+        Some("  return { retries: 3, verbose: false };"),
+        &owners,
+        &tests,
+        None,
+        &ReExportIndex::empty(),
+        None,
+        None,
+    )
+    .ok_or_else(|| "expected a finding".to_string())?;
+
+    assert!(
+        matches!(finding.class, ExposureClass::WeaklyExposed),
+        "sibling-field read must not read as exposed, got {:?}",
+        finding.class
+    );
+    assert!(
+        !matches!(finding.ripr.reveal.discriminate.state, StageState::Yes),
+        "discriminate must not be Yes for a sibling-field read, got {:?}",
+        finding.ripr.reveal.discriminate.state
+    );
+    let all_text: String = finding.missing.join("\n");
+    assert!(
+        all_text.contains("propagation_unknown"),
+        "expected propagation_unknown in missing, got: {all_text:?}"
+    );
+    Ok(())
+}
+
+/// #14856: the alias form of #14814. `const cfg = buildConfig()` puts the
+/// owner call in a local, so the assertion `cfg.verbose` never names the
+/// owner call; a read of the sibling field through that alias still cannot
+/// witness the `retries` change and must downgrade to `weakly_exposed`.
+#[test]
+fn ts_fieldconstruction_alias_sibling_field_read_downgrades() -> Result<(), String> {
+    let owner_src = "export interface C { retries: number; verbose: boolean }\nexport function buildConfig(): C {\n  return { retries: 3, verbose: false };\n}\n";
+    let test_src = "import { buildConfig } from \"./owner\";\ntest(\"verbose flag\", () => { const cfg = buildConfig(); expect(cfg.verbose).toBe(false); });\n";
+
+    let owners = extract_owners(Path::new("owner.ts"), owner_src);
+    let tests = extract_tests(Path::new("owner.test.ts"), test_src);
+    let finding = classify_change_with_alias_state(
+        Path::new("owner.ts"),
+        3,
+        "  return { retries: 5, verbose: false };",
+        Some("  return { retries: 3, verbose: false };"),
+        &owners,
+        &tests,
+        None,
+        &ReExportIndex::empty(),
+        None,
+        None,
+    )
+    .ok_or_else(|| "expected a finding".to_string())?;
+
+    assert!(
+        matches!(finding.class, ExposureClass::WeaklyExposed),
+        "an alias sibling-field read must not read as exposed, got {:?}",
+        finding.class
+    );
+    // The downgrade must be affirmative, like the direct form: the row
+    // asserts, but not on the changed value, not merely unconfirmed.
+    assert_eq!(
+        finding.related_tests.first().map(|row| row.miss),
+        Some(Some(crate::domain::RelatedTestMiss::AssertionNotObserving)),
+        "an alias sibling-field read must be affirmatively not observing, rows: {:?}",
+        finding.related_tests
+    );
+    Ok(())
+}
+
+/// #14856 control: the changed field through the same alias stays
+/// `exposed`. A fix that downgrades both is over-broad.
+#[test]
+fn ts_fieldconstruction_alias_changed_field_read_stays_exposed() -> Result<(), String> {
+    let owner_src = "export interface C { retries: number; verbose: boolean }\nexport function buildConfig(): C {\n  return { retries: 3, verbose: false };\n}\n";
+    let test_src = "import { buildConfig } from \"./owner\";\ntest(\"retries\", () => { const cfg = buildConfig(); expect(cfg.retries).toBe(5); });\n";
+
+    let owners = extract_owners(Path::new("owner.ts"), owner_src);
+    let tests = extract_tests(Path::new("owner.test.ts"), test_src);
+    let finding = classify_change_with_alias_state(
+        Path::new("owner.ts"),
+        3,
+        "  return { retries: 5, verbose: false };",
+        Some("  return { retries: 3, verbose: false };"),
+        &owners,
+        &tests,
+        None,
+        &ReExportIndex::empty(),
+        None,
+        None,
+    )
+    .ok_or_else(|| "expected a finding".to_string())?;
+
+    assert!(
+        matches!(finding.class, ExposureClass::Exposed),
+        "the changed field read through an alias must stay exposed, got {:?}",
+        finding.class
+    );
+    Ok(())
+}
+
+/// #14856: the bracket and optional-chain forms of the alias sibling read
+/// downgrade affirmatively too, like the dotted form.
+#[test]
+fn ts_fieldconstruction_alias_bracket_and_optional_sibling_reads_downgrade() -> Result<(), String> {
+    for test_src in [
+        "import { buildConfig } from \"./owner\";\ntest(\"verbose flag\", () => { const cfg = buildConfig(); expect(cfg[\"verbose\"]).toBe(false); });\n",
+        "import { buildConfig } from \"./owner\";\ntest(\"verbose flag\", () => { const cfg = buildConfig(); expect(cfg?.verbose).toBe(false); });\n",
+    ] {
+        let owner_src = "export interface C { retries: number; verbose: boolean }\nexport function buildConfig(): C {\n  return { retries: 3, verbose: false };\n}\n";
+        let owners = extract_owners(Path::new("owner.ts"), owner_src);
+        let tests = extract_tests(Path::new("owner.test.ts"), test_src);
+        let finding = classify_change_with_alias_state(
+            Path::new("owner.ts"),
+            3,
+            "  return { retries: 5, verbose: false };",
+            Some("  return { retries: 3, verbose: false };"),
+            &owners,
+            &tests,
+            None,
+            &ReExportIndex::empty(),
+            None,
+            None,
+        )
+        .ok_or_else(|| "expected a finding".to_string())?;
+        assert!(
+            matches!(finding.class, ExposureClass::WeaklyExposed),
+            "an alias bracket/optional sibling read must not read as exposed, got {:?} for {test_src:?}",
+            finding.class
+        );
+        assert_eq!(
+            finding.related_tests.first().map(|row| row.miss),
+            Some(Some(crate::domain::RelatedTestMiss::AssertionNotObserving)),
+            "an alias bracket/optional sibling read must be affirmatively not observing for {test_src:?}"
+        );
+    }
+    Ok(())
+}
+
+/// #14856 should-stay controls: a whole-object assertion on the alias pins
+/// every field and stays `exposed`; a sibling read on a FOREIGN local stays
+/// unexposed without the alias guard needing to claim it.
+#[test]
+fn ts_fieldconstruction_alias_whole_object_and_foreign_local_stay() -> Result<(), String> {
+    let owner_src = "export interface C { retries: number; verbose: boolean }\nexport function buildConfig(): C {\n  return { retries: 3, verbose: false };\n}\n";
+    let whole_src = "import { buildConfig } from \"./owner\";\ntest(\"whole\", () => { const cfg = buildConfig(); expect(cfg).toEqual({ retries: 5, verbose: false }); });\n";
+    let owners = extract_owners(Path::new("owner.ts"), owner_src);
+    let tests = extract_tests(Path::new("owner.test.ts"), whole_src);
+    let finding = classify_change_with_alias_state(
+        Path::new("owner.ts"),
+        3,
+        "  return { retries: 5, verbose: false };",
+        Some("  return { retries: 3, verbose: false };"),
+        &owners,
+        &tests,
+        None,
+        &ReExportIndex::empty(),
+        None,
+        None,
+    )
+    .ok_or_else(|| "expected a finding".to_string())?;
+    assert!(
+        matches!(finding.class, ExposureClass::Exposed),
+        "a whole-object assertion on the alias must stay exposed, got {:?}",
+        finding.class
+    );
+
+    let foreign_src = "import { buildConfig } from \"./owner\";\ntest(\"foreign\", () => { buildConfig(); const other = { retries: 3, verbose: false }; expect(other.verbose).toBe(false); });\n";
+    let owners = extract_owners(Path::new("owner.ts"), owner_src);
+    let tests = extract_tests(Path::new("owner.test.ts"), foreign_src);
+    let finding = classify_change_with_alias_state(
+        Path::new("owner.ts"),
+        3,
+        "  return { retries: 5, verbose: false };",
+        Some("  return { retries: 3, verbose: false };"),
+        &owners,
+        &tests,
+        None,
+        &ReExportIndex::empty(),
+        None,
+        None,
+    )
+    .ok_or_else(|| "expected a finding".to_string())?;
+    assert!(
+        !matches!(finding.class, ExposureClass::Exposed),
+        "a foreign local read must not read as exposed, got {:?}",
+        finding.class
+    );
+    Ok(())
+}
+
+/// #15875 review: a local bound to a PROJECTION of the owner result
+/// (`const retries = buildConfig(5).retries`) holds the changed field
+/// itself, not the whole result. A read inside it (`retries.limit`)
+/// observes the change and must stay `exposed`; the sibling guard must
+/// not treat the projected alias as a whole-result alias.
+#[test]
+fn ts_fieldconstruction_projected_alias_read_stays_exposed() -> Result<(), String> {
+    let owner_src = "export function buildConfig(limit: number) {\n  return { retries: { limit: 3 }, verbose: false };\n}\n";
+    let test_src = "import { buildConfig } from \"./owner\";\ntest(\"retries limit\", () => { const retries = buildConfig(5).retries; expect(retries.limit).toBe(5); });\n";
+
+    let owners = extract_owners(Path::new("owner.ts"), owner_src);
+    let tests = extract_tests(Path::new("owner.test.ts"), test_src);
+    let finding = classify_change_with_alias_state(
+        Path::new("owner.ts"),
+        2,
+        "  return { retries: { limit: limit }, verbose: false };",
+        Some("  return { retries: { limit: 3 }, verbose: false };"),
+        &owners,
+        &tests,
+        None,
+        &ReExportIndex::empty(),
+        None,
+        None,
+    )
+    .ok_or_else(|| "expected a finding".to_string())?;
+
+    assert!(
+        matches!(finding.class, ExposureClass::Exposed),
+        "a read inside a projected alias of the changed field must stay exposed, got {:?}",
+        finding.class
+    );
+    Ok(())
+}
+
+/// #15875 review: the changed field can select the asserted value from
+/// inside a computed index (`cfg.items[cfg.selectedIndex]`). The alias
+/// member check must see `selectedIndex` inside the brackets; the
+/// sibling guard must not downgrade the assertion.
+#[test]
+fn ts_fieldconstruction_alias_index_read_stays_exposed() -> Result<(), String> {
+    let owner_src = "export function buildConfig(selectedIndex: number) {\n  return { selectedIndex: 0, items: [{ label: \"first\" }, { label: \"second\" }] };\n}\n";
+    let test_src = "import { buildConfig } from \"./owner\";\ntest(\"selected label\", () => { const cfg = buildConfig(1); expect(cfg.items[cfg.selectedIndex].label).toBe(\"second\"); });\n";
+
+    let owners = extract_owners(Path::new("owner.ts"), owner_src);
+    let tests = extract_tests(Path::new("owner.test.ts"), test_src);
+    let finding = classify_change_with_alias_state(
+        Path::new("owner.ts"),
+        2,
+        "  return { selectedIndex: selectedIndex, items: [{ label: \"first\" }, { label: \"second\" }] };",
+        Some("  return { selectedIndex: 0, items: [{ label: \"first\" }, { label: \"second\" }] };"),
+        &owners,
+        &tests,
+        None,
+        &ReExportIndex::empty(),
+        None,
+        None,
+    )
+    .ok_or_else(|| "expected a finding".to_string())?;
+
+    assert!(
+        matches!(finding.class, ExposureClass::Exposed),
+        "a changed field read inside a computed index must stay exposed, got {:?}",
+        finding.class
+    );
+    Ok(())
+}
+
+/// #14857: a change that moves TWO values of the returned literal cannot be
+/// reduced to one changed field, so #14814's single-field guard is skipped.
+/// A test that reads a THIRD, untouched field still cannot witness the
+/// change: it must read `weakly_exposed`, not `exposed`.
+#[test]
+fn ts_fieldconstruction_multi_value_change_untouched_field_downgrades() -> Result<(), String> {
+    let owner_src = "export interface C { retries: number; verbose: boolean; timeout: number }\nexport function f(): C {\n  return { retries: 3, verbose: false, timeout: 30 };\n}\n";
+    let test_src = "import { f } from \"./owner\";\ntest(\"timeout\", () => { expect(f().timeout).toBe(30); });\n";
+
+    let owners = extract_owners(Path::new("owner.ts"), owner_src);
+    let tests = extract_tests(Path::new("owner.test.ts"), test_src);
+    let finding = classify_change_with_alias_state(
+        Path::new("owner.ts"),
+        3,
+        "  return { retries: 5, verbose: true, timeout: 30 };",
+        Some("  return { retries: 3, verbose: false, timeout: 30 };"),
+        &owners,
+        &tests,
+        None,
+        &ReExportIndex::empty(),
+        None,
+        None,
+    )
+    .ok_or_else(|| "expected a finding".to_string())?;
+
+    assert!(
+        matches!(finding.class, ExposureClass::WeaklyExposed),
+        "a read of an untouched field must not read as exposed when two values moved, got {:?}",
+        finding.class
+    );
+    assert!(
+        !matches!(finding.ripr.reveal.discriminate.state, StageState::Yes),
+        "discriminate must not be Yes for an untouched-field read, got {:?}",
+        finding.ripr.reveal.discriminate.state
+    );
+    Ok(())
+}
+
+/// #14857 control A: the same two-value change, but the assertion names
+/// EITHER changed field. That read pins a value the edit moved, so it stays
+/// `exposed`. A fix that downgrades this too is over-broad.
+#[test]
+fn ts_fieldconstruction_multi_value_change_named_read_stays_exposed() -> Result<(), String> {
+    for (field, expected) in [("retries", "5"), ("verbose", "true")] {
+        let owner_src = "export interface C { retries: number; verbose: boolean; timeout: number }\nexport function f(): C {\n  return { retries: 3, verbose: false, timeout: 30 };\n}\n";
+        let test_src = format!(
+            "import {{ f }} from \"./owner\";\ntest(\"{field}\", () => {{ expect(f().{field}).toBe({expected}); }});\n"
+        );
+
+        let owners = extract_owners(Path::new("owner.ts"), owner_src);
+        let tests = extract_tests(Path::new("owner.test.ts"), &test_src);
+        let finding = classify_change_with_alias_state(
+            Path::new("owner.ts"),
+            3,
+            "  return { retries: 5, verbose: true, timeout: 30 };",
+            Some("  return { retries: 3, verbose: false, timeout: 30 };"),
+            &owners,
+            &tests,
+            None,
+            &ReExportIndex::empty(),
+            None,
+            None,
+        )
+        .ok_or_else(|| "expected a finding".to_string())?;
+
+        assert!(
+            matches!(finding.class, ExposureClass::Exposed),
+            "a read of the changed field `{field}` must stay exposed, got {:?}",
+            finding.class
+        );
+    }
+    Ok(())
+}
+
+/// #14857 round 1 (Devin): a whole-object assertion whose subject is a
+/// nullish fallback (`f() ?? defaults.config`) receives the whole object
+/// `f()` returns, so it notices both changed values and stays `exposed`.
+/// The trailing `.config` belongs to the fallback, not to `f()`; treating it
+/// as an untouched field of the owner would be an over-correction.
+#[test]
+fn ts_fieldconstruction_multi_value_change_nullish_fallback_whole_object_stays_exposed()
+-> Result<(), String> {
+    let owner_src = "export interface C { retries: number; verbose: boolean; timeout: number }\nexport function f(): C {\n  return { retries: 3, verbose: false, timeout: 30 };\n}\n";
+    let test_src = "import { f } from \"./owner\";\nconst defaults = { config: { retries: 3, verbose: false, timeout: 30 } };\ntest(\"whole\", () => { expect(f() ?? defaults.config).toEqual({ retries: 3, verbose: false, timeout: 30 }); });\n";
+
+    let owners = extract_owners(Path::new("owner.ts"), owner_src);
+    let tests = extract_tests(Path::new("owner.test.ts"), test_src);
+    let finding = classify_change_with_alias_state(
+        Path::new("owner.ts"),
+        3,
+        "  return { retries: 5, verbose: true, timeout: 30 };",
+        Some("  return { retries: 3, verbose: false, timeout: 30 };"),
+        &owners,
+        &tests,
+        None,
+        &ReExportIndex::empty(),
+        None,
+        None,
+    )
+    .ok_or_else(|| "expected a finding".to_string())?;
+
+    assert!(
+        matches!(finding.class, ExposureClass::Exposed),
+        "a whole-object assertion through a nullish fallback must stay exposed, got {:?}",
+        finding.class
+    );
+    Ok(())
+}
+
+/// #14928: classify the #14857 two-value change (`retries` and `verbose`
+/// move) against a test whose single assertion is `expect(<subject>)…`.
+fn ts_multi_value_change_class_for_subject(
+    subject: &str,
+    matcher: &str,
+) -> Result<ExposureClass, String> {
+    let owner_src = "export interface C { retries: number; verbose: boolean; timeout: number; enabled: boolean }\nexport function f(): C {\n  return { retries: 3, verbose: false, timeout: 30, enabled: true };\n}\n";
+    let test_src = format!(
+        "import {{ f }} from \"./owner\";\nconst defaults = {{ config: {{ retries: 3, verbose: false, timeout: 30, enabled: true }} }};\nconst limit = 4;\ntest(\"subject\", () => {{ expect({subject}).{matcher}; }});\n"
+    );
+    let owners = extract_owners(Path::new("owner.ts"), owner_src);
+    let tests = extract_tests(Path::new("owner.test.ts"), &test_src);
+    assert_eq!(owners.len(), 1, "expected one owner from live extractor");
+    assert_eq!(tests.len(), 1, "expected one test from live extractor");
+    let finding = classify_change_with_alias_state(
+        Path::new("owner.ts"),
+        3,
+        "  return { retries: 5, verbose: true, timeout: 30, enabled: true };",
+        Some("  return { retries: 3, verbose: false, timeout: 30, enabled: true };"),
+        &owners,
+        &tests,
+        None,
+        &ReExportIndex::empty(),
+        None,
+        None,
+    )
+    .ok_or_else(|| format!("expected a finding for `{subject}`"))?;
+    Ok(finding.class)
+}
+
+/// #14928: the untouched-field guard must apply to every base that is a
+/// plain projection of the owner's result. A postfix non-null assertion and a
+/// prefix negation each still read a field the edit never touched, so neither
+/// may inherit the blanket owner-call credit. A generic call
+/// (`f<string>().timeout`) is covered by the grammar test below: the owner-call
+/// reader does not yet resolve `f<T>(...)`, so end to end it already reads
+/// `weakly_exposed` and cannot discriminate here.
+#[test]
+fn ts_fieldconstruction_multi_value_change_untouched_field_through_plain_chain_downgrades()
+-> Result<(), String> {
+    for (subject, matcher) in [
+        ("f()!.timeout", "toBe(30)"),
+        ("!f().enabled", "toBe(false)"),
+        ("!f()?.enabled", "toBe(false)"),
+        // Review of #15607: bases the earlier operator check already guarded
+        // stay guarded under the grammar.
+        ("void f().timeout", "toBeUndefined()"),
+        ("~f().timeout", "toBe(-31)"),
+        ("delete f().timeout", "toBe(true)"),
+        ("[f()][0].timeout", "toBe(30)"),
+        ("[f()][0]?.timeout", "toBe(30)"),
+    ] {
+        let class = ts_multi_value_change_class_for_subject(subject, matcher)?;
+        assert!(
+            matches!(class, ExposureClass::WeaklyExposed),
+            "`{subject}` reads an untouched field and must be weakly_exposed, got {class:?}"
+        );
+    }
+    Ok(())
+}
+
+/// #14928 controls: the same plain-chain shapes that read EITHER changed
+/// field, or receive the whole object, keep `exposed`; a compound base
+/// (`??`, a comparison, a ternary) is not a projection and keeps its credit.
+#[test]
+fn ts_fieldconstruction_multi_value_change_plain_chain_changed_or_compound_stays_exposed()
+-> Result<(), String> {
+    for (subject, matcher) in [
+        ("f()!.verbose", "toBe(true)"),
+        ("!f().verbose", "toBe(false)"),
+        (
+            "f() ?? defaults.config",
+            "toEqual({ retries: 5, verbose: true, timeout: 30, enabled: true })",
+        ),
+        (
+            "f()! ?? defaults.config",
+            "toEqual({ retries: 5, verbose: true, timeout: 30, enabled: true })",
+        ),
+        // A comparison and a ternary over an UNTOUCHED field: the base is
+        // compound, so the guard does not apply.
+        ("limit < f().timeout", "toBe(true)"),
+        ("cond ? f().timeout : 0", "toBe(30)"),
+        ("limit < f() > (bounds).minimum", "toBe(true)"),
+    ] {
+        let class = ts_multi_value_change_class_for_subject(subject, matcher)?;
+        assert!(
+            matches!(class, ExposureClass::Exposed),
+            "`{subject}` must stay exposed, got {class:?}"
+        );
+    }
+    Ok(())
+}
+
+/// #14928: the plain-chain grammar itself, independent of the classifier.
+#[test]
+fn ts_chain_is_plain_projection_accepts_chains_and_rejects_compounds() {
+    use super::classifier::ts_chain_is_plain_projection as plain;
+    for base in [
+        "f()",
+        "a.f()",
+        "this.g()",
+        "f()?",
+        "f()!",
+        "!f()",
+        "!!f()",
+        "f<string>()",
+        "f<Map<string, number[]>>()",
+        "f<() => void>()",
+        "f<A | B>()",
+        "f()?.g<T>()",
+        "f?.()",
+        "f()[0]",
+        "(f())",
+        "new F()",
+        "await f()",
+        // Admitted by the original operator check, kept by the union.
+        "void f()",
+        "~f()",
+        "delete f()",
+        "typeof f()",
+        "[f()][0]",
+        "this.#impl()",
+    ] {
+        assert!(plain(base), "`{base}` is a plain chain");
+    }
+    for base in [
+        "f() ?? defaults",
+        "f() || fallback",
+        "cond ? f() : g()",
+        "a, f()",
+        "x = f()",
+        "a < b",
+        "a < b > c",
+        "f<string>",
+        "f() > 0",
+        "f()! != g()",
+        "f() !== g()",
+        "a + f()",
+        "a ! b",
+        // Devin review: a call inside a would-be type-argument list is a
+        // chained comparison, not a generic call.
+        "limit < f() > (bounds)",
+        "a < g(x) > (y)",
+    ] {
+        assert!(!plain(base), "`{base}` is not a plain chain");
+    }
+    // An empty base holds no operator, so the original reading (kept by the
+    // union) guards it, as it did before #14928: the fail-closed direction.
+    assert!(plain(""), "an empty base stays guarded");
+}
+
+/// #14814 control: the changed field itself, read off the owner's result,
+/// still confirms. `expect(f().retries)` observes `retries`, so the finding
+/// stays `exposed`. A fix that suppressed this too would over-apply.
+#[test]
+fn ts_fieldconstruction_changed_field_read_stays_exposed() -> Result<(), String> {
+    let owner_src = "export interface C { retries: number; verbose: boolean }\nexport function f(): C {\n  return { retries: 3, verbose: false };\n}\n";
+    let test_src = "import { f } from \"./owner\";\ntest(\"retries\", () => { expect(f().retries).toBe(5); });\n";
+
+    let owners = extract_owners(Path::new("owner.ts"), owner_src);
+    let tests = extract_tests(Path::new("owner.test.ts"), test_src);
+    let finding = classify_change_with_alias_state(
+        Path::new("owner.ts"),
+        3,
+        "  return { retries: 5, verbose: false };",
+        Some("  return { retries: 3, verbose: false };"),
+        &owners,
+        &tests,
+        None,
+        &ReExportIndex::empty(),
+        None,
+        None,
+    )
+    .ok_or_else(|| "expected a finding".to_string())?;
+
+    assert!(
+        matches!(finding.class, ExposureClass::Exposed),
+        "the changed field read by name must stay exposed, got {:?}",
+        finding.class
+    );
+    Ok(())
+}
+
+/// #15285: `??` -> `||` differs only for a falsy non-nullish operand
+/// (`""`, `0`, `false`). A test that only supplies `"-"` passes on both
+/// versions, so it must read `weakly_exposed`, not `exposed`.
+#[test]
+fn ts_input_class_nullish_to_or_without_falsy_input_downgrades() -> Result<(), String> {
+    let owner_src = "export function joinWords(words: string[], delimiter?: string): string {\n  return words.join(delimiter ?? \" \");\n}\n";
+    let test_src = "import { joinWords } from \"./owner\";\ntest(\"dash\", () => { expect(joinWords([\"a\", \"b\"], \"-\")).toBe(\"a-b\"); });\n";
+    let owners = extract_owners(Path::new("owner.ts"), owner_src);
+    let tests = extract_tests(Path::new("owner.test.ts"), test_src);
+    let finding = classify_change_with_alias_state(
+        Path::new("owner.ts"),
+        2,
+        "  return words.join(delimiter || \" \");",
+        Some("  return words.join(delimiter ?? \" \");"),
+        &owners,
+        &tests,
+        None,
+        &ReExportIndex::empty(),
+        None,
+        None,
+    )
+    .ok_or_else(|| "expected a finding".to_string())?;
+    assert!(
+        matches!(finding.class, ExposureClass::WeaklyExposed),
+        "?? -> || with no falsy input must read weakly_exposed, got {:?}",
+        finding.class
+    );
+    Ok(())
+}
+
+/// #15285 control: a test supplying the falsy class (`""`) discriminates
+/// `??` from `||`, so it stays `exposed`.
+#[test]
+fn ts_input_class_nullish_to_or_with_falsy_input_stays_exposed() -> Result<(), String> {
+    let owner_src = "export function joinWords(words: string[], delimiter?: string): string {\n  return words.join(delimiter ?? \" \");\n}\n";
+    let test_src = "import { joinWords } from \"./owner\";\ntest(\"empty\", () => { expect(joinWords([\"a\", \"b\"], \"\")).toBe(\"ab\"); });\n";
+    let owners = extract_owners(Path::new("owner.ts"), owner_src);
+    let tests = extract_tests(Path::new("owner.test.ts"), test_src);
+    let finding = classify_change_with_alias_state(
+        Path::new("owner.ts"),
+        2,
+        "  return words.join(delimiter || \" \");",
+        Some("  return words.join(delimiter ?? \" \");"),
+        &owners,
+        &tests,
+        None,
+        &ReExportIndex::empty(),
+        None,
+        None,
+    )
+    .ok_or_else(|| "expected a finding".to_string())?;
+    assert!(
+        matches!(finding.class, ExposureClass::Exposed),
+        "?? -> || with an empty-string input must stay exposed, got {:?}",
+        finding.class
+    );
+    Ok(())
+}
+
+/// #15285: dropping `.trim()` differs only for whitespace-padded input.
+/// A test with only unpadded input must read `weakly_exposed`.
+#[test]
+fn ts_input_class_dropped_trim_without_padded_input_downgrades() -> Result<(), String> {
+    let owner_src =
+        "export function slugify(text: string): string {\n  return text.trim().toLowerCase();\n}\n";
+    let test_src = "import { slugify } from \"./owner\";\ntest(\"plain\", () => { expect(slugify(\"Hello World\")).toBe(\"hello world\"); });\n";
+    let owners = extract_owners(Path::new("owner.ts"), owner_src);
+    let tests = extract_tests(Path::new("owner.test.ts"), test_src);
+    let finding = classify_change_with_alias_state(
+        Path::new("owner.ts"),
+        2,
+        "  return text.toLowerCase();",
+        Some("  return text.trim().toLowerCase();"),
+        &owners,
+        &tests,
+        None,
+        &ReExportIndex::empty(),
+        None,
+        None,
+    )
+    .ok_or_else(|| "expected a finding".to_string())?;
+    assert!(
+        matches!(finding.class, ExposureClass::WeaklyExposed),
+        "dropped .trim() with no padded input must read weakly_exposed, got {:?}",
+        finding.class
+    );
+    Ok(())
+}
+
+/// #15285 control: a padded input discriminates a dropped `.trim()`.
+#[test]
+fn ts_input_class_dropped_trim_with_padded_input_stays_exposed() -> Result<(), String> {
+    let owner_src =
+        "export function slugify(text: string): string {\n  return text.trim().toLowerCase();\n}\n";
+    let test_src = "import { slugify } from \"./owner\";\ntest(\"padded\", () => { expect(slugify(\"  Hello World  \")).toBe(\"hello world\"); });\n";
+    let owners = extract_owners(Path::new("owner.ts"), owner_src);
+    let tests = extract_tests(Path::new("owner.test.ts"), test_src);
+    let finding = classify_change_with_alias_state(
+        Path::new("owner.ts"),
+        2,
+        "  return text.toLowerCase();",
+        Some("  return text.trim().toLowerCase();"),
+        &owners,
+        &tests,
+        None,
+        &ReExportIndex::empty(),
+        None,
+        None,
+    )
+    .ok_or_else(|| "expected a finding".to_string())?;
+    assert!(
+        matches!(finding.class, ExposureClass::Exposed),
+        "dropped .trim() with a padded input must stay exposed, got {:?}",
+        finding.class
+    );
+    Ok(())
+}
+
+/// #15285 control (method owner): a padded argument supplied through an
+/// instance receiver (`new TokenValidator(...)` then
+/// `validator.validate(" abc ")`) witnesses the added `.trim()`, so the
+/// finding stays `exposed`. Mirrors
+/// `typescript_same_method_owner_identity_positive`, which must never lose
+/// `exposed`.
+#[test]
+fn ts_input_class_trim_on_method_with_padded_instance_input_stays_exposed() -> Result<(), String> {
+    let owner_src = "export class TokenValidator {\n  private valid: Set<string>;\n  constructor(valid: string[]) { this.valid = new Set(valid); }\n  validate(token: string): boolean {\n    return this.valid.has(token.trim());\n  }\n}\n";
+    let test_src = "import { TokenValidator } from \"./owner\";\ntest(\"padded\", () => { const validator = new TokenValidator([\"abc\"]); expect(validator.validate(\" abc \")).toBe(true); });\n";
+    let owners = extract_owners(Path::new("owner.ts"), owner_src);
+    let tests = extract_tests(Path::new("owner.test.ts"), test_src);
+    let finding = classify_change_with_alias_state(
+        Path::new("owner.ts"),
+        5,
+        "    return this.valid.has(token.trim());",
+        Some("    return this.valid.has(token);"),
+        &owners,
+        &tests,
+        None,
+        &ReExportIndex::empty(),
+        None,
+        None,
+    )
+    .ok_or_else(|| "expected a finding".to_string())?;
+    assert!(
+        matches!(finding.class, ExposureClass::Exposed),
+        "padded instance input must stay exposed, got {:?}",
+        finding.class
+    );
+    Ok(())
+}
+
+/// #15285 (method owner): the same method change with only an unpadded
+/// instance input must read `weakly_exposed`.
+#[test]
+fn ts_input_class_trim_on_method_without_padded_input_downgrades() -> Result<(), String> {
+    let owner_src = "export class TokenValidator {\n  private valid: Set<string>;\n  constructor(valid: string[]) { this.valid = new Set(valid); }\n  validate(token: string): boolean {\n    return this.valid.has(token.trim());\n  }\n}\n";
+    let test_src = "import { TokenValidator } from \"./owner\";\ntest(\"plain\", () => { const validator = new TokenValidator([\"abc\"]); expect(validator.validate(\"abc\")).toBe(true); });\n";
+    let owners = extract_owners(Path::new("owner.ts"), owner_src);
+    let tests = extract_tests(Path::new("owner.test.ts"), test_src);
+    let finding = classify_change_with_alias_state(
+        Path::new("owner.ts"),
+        5,
+        "    return this.valid.has(token.trim());",
+        Some("    return this.valid.has(token);"),
+        &owners,
+        &tests,
+        None,
+        &ReExportIndex::empty(),
+        None,
+        None,
+    )
+    .ok_or_else(|| "expected a finding".to_string())?;
+    assert!(
+        matches!(finding.class, ExposureClass::WeaklyExposed),
+        "unpadded instance input must read weakly_exposed, got {:?}",
+        finding.class
+    );
+    Ok(())
+}
+
+/// #15285: a changed destructured default differs only when the field is
+/// omitted. A test that always supplies the field cannot discriminate it,
+/// so it must not read `exposed`. (On this shape the changed line is not
+/// itself a return sink, so the pre-existing observation guard already
+/// caps it; the input-class guard keeps that cap if credit ever reaches
+/// the `Exposed` branch.)
+#[test]
+fn ts_input_class_later_trim_edit_without_padded_input_downgrades() -> Result<(), String> {
+    // An unchanged `.trim()` earlier in the line must not hide the edited
+    // one: `a.trim() + text.trim()` -> `a.trim() + text` differs only for
+    // padded `text`.
+    let owner_src = "export function label(a: string, text: string): string {\n  return a.trim() + text.trim();\n}\n";
+    let test_src = "import { label } from \"./owner\";\ntest(\"plain\", () => { expect(label(\"x\", \"Hello\")).toBe(\"xHello\"); });\n";
+    let owners = extract_owners(Path::new("owner.ts"), owner_src);
+    let tests = extract_tests(Path::new("owner.test.ts"), test_src);
+    let finding = classify_change_with_alias_state(
+        Path::new("owner.ts"),
+        2,
+        "  return a.trim() + text;",
+        Some("  return a.trim() + text.trim();"),
+        &owners,
+        &tests,
+        None,
+        &ReExportIndex::empty(),
+        None,
+        None,
+    )
+    .ok_or_else(|| "expected a finding".to_string())?;
+    assert!(
+        matches!(finding.class, ExposureClass::WeaklyExposed),
+        "later .trim() edit with no padded input must read weakly_exposed, got {:?}",
+        finding.class
+    );
+    Ok(())
+}
+
+#[test]
+fn ts_input_class_optional_trim_with_null_input_stays_exposed() -> Result<(), String> {
+    // `text?.trim()` -> `text` also differs for `null` (old `undefined`,
+    // new `null`), so a null-supplying test discriminates it.
+    let owner_src = "export function show(text?: string | null): string {\n  return text?.trim() ?? \"none\";\n}\n";
+    let test_src = "import { show } from \"./owner\";\ntest(\"null\", () => { expect(show(null)).toBe(\"none\"); });\n";
+    let owners = extract_owners(Path::new("owner.ts"), owner_src);
+    let tests = extract_tests(Path::new("owner.test.ts"), test_src);
+    let finding = classify_change_with_alias_state(
+        Path::new("owner.ts"),
+        2,
+        "  return text ?? \"none\";",
+        Some("  return text?.trim() ?? \"none\";"),
+        &owners,
+        &tests,
+        None,
+        &ReExportIndex::empty(),
+        None,
+        None,
+    )
+    .ok_or_else(|| "expected a finding".to_string())?;
+    assert!(
+        matches!(finding.class, ExposureClass::Exposed),
+        "?.trim() removal with a null input must stay exposed, got {:?}",
+        finding.class
+    );
+    Ok(())
+}
+
+#[test]
+fn ts_input_class_trim_with_escaped_padding_stays_exposed() -> Result<(), String> {
+    // Padding written as an escape (`\t`) discriminates a dropped `.trim()`.
+    let owner_src =
+        "export function slugify(text: string): string {\n  return text.trim().toLowerCase();\n}\n";
+    let test_src = "import { slugify } from \"./owner\";\ntest(\"tab\", () => { expect(slugify(\"\\tHello\")).toBe(\"hello\"); });\n";
+    let owners = extract_owners(Path::new("owner.ts"), owner_src);
+    let tests = extract_tests(Path::new("owner.test.ts"), test_src);
+    let finding = classify_change_with_alias_state(
+        Path::new("owner.ts"),
+        2,
+        "  return text.toLowerCase();",
+        Some("  return text.trim().toLowerCase();"),
+        &owners,
+        &tests,
+        None,
+        &ReExportIndex::empty(),
+        None,
+        None,
+    )
+    .ok_or_else(|| "expected a finding".to_string())?;
+    assert!(
+        matches!(finding.class, ExposureClass::Exposed),
+        "escaped padding must stay exposed, got {:?}",
+        finding.class
+    );
+    Ok(())
+}
+
+#[test]
+fn ts_input_class_trim_with_unicode_escape_padding_stays_exposed() -> Result<(), String> {
+    // Padding written as a unicode escape in the source literal
+    // (`"\\u0020Hello"`) discriminates a dropped `.trim()`.
+    let owner_src =
+        "export function slugify(text: string): string {\n  return text.trim().toLowerCase();\n}\n";
+    let test_src = "import { slugify } from \"./owner\";\ntest(\"u\", () => { expect(slugify(\"\\u0020Hello\")).toBe(\"hello\"); });\n";
+    let owners = extract_owners(Path::new("owner.ts"), owner_src);
+    let tests = extract_tests(Path::new("owner.test.ts"), test_src);
+    let finding = classify_change_with_alias_state(
+        Path::new("owner.ts"),
+        2,
+        "  return text.toLowerCase();",
+        Some("  return text.trim().toLowerCase();"),
+        &owners,
+        &tests,
+        None,
+        &ReExportIndex::empty(),
+        None,
+        None,
+    )
+    .ok_or_else(|| "expected a finding".to_string())?;
+    assert!(
+        matches!(finding.class, ExposureClass::Exposed),
+        "unicode-escaped padding must stay exposed, got {:?}",
+        finding.class
+    );
+    Ok(())
+}
+
+#[test]
+fn ts_input_class_trim_with_escaped_backslash_not_padded_downgrades() -> Result<(), String> {
+    // A literal backslash followed by `t` (`"\\\\tHello"` in source) is
+    // not padding: the escaped backslash consumes the pair, so no test
+    // supplies the whitespace class and the finding downgrades.
+    let owner_src =
+        "export function slugify(text: string): string {\n  return text.trim().toLowerCase();\n}\n";
+    let test_src = "import { slugify } from \"./owner\";\ntest(\"bs\", () => { expect(slugify(\"\\\\tHello\")).toBe(\"\\\\thello\"); });\n";
+    let owners = extract_owners(Path::new("owner.ts"), owner_src);
+    let tests = extract_tests(Path::new("owner.test.ts"), test_src);
+    let finding = classify_change_with_alias_state(
+        Path::new("owner.ts"),
+        2,
+        "  return text.toLowerCase();",
+        Some("  return text.trim().toLowerCase();"),
+        &owners,
+        &tests,
+        None,
+        &ReExportIndex::empty(),
+        None,
+        None,
+    )
+    .ok_or_else(|| "expected a finding".to_string())?;
+    assert!(
+        matches!(finding.class, ExposureClass::WeaklyExposed),
+        "escaped backslash must not count as padding, got {:?}",
+        finding.class
+    );
+    Ok(())
+}
+
+#[test]
+fn ts_input_class_destructured_default_with_supplied_field_not_exposed() -> Result<(), String> {
+    let owner_src = "export function greet(options: { name: string; punct?: string }): string {\n  const { name, punct = \"!\" } = options;\n  return name + punct;\n}\n";
+    let test_src = "import { greet } from \"./owner\";\ntest(\"supplied\", () => { expect(greet({ name: \"a\", punct: \"!\" })).toBe(\"a!\"); });\n";
+    let owners = extract_owners(Path::new("owner.ts"), owner_src);
+    let tests = extract_tests(Path::new("owner.test.ts"), test_src);
+    let finding = classify_change_with_alias_state(
+        Path::new("owner.ts"),
+        2,
+        "  const { name, punct = \"?\" } = options;",
+        Some("  const { name, punct = \"!\" } = options;"),
+        &owners,
+        &tests,
+        None,
+        &ReExportIndex::empty(),
+        None,
+        None,
+    )
+    .ok_or_else(|| "expected a finding".to_string())?;
+    assert!(
+        !matches!(finding.class, ExposureClass::Exposed),
+        "destructured default with the field always supplied must not read exposed, got {:?}",
+        finding.class
+    );
+    Ok(())
+}
+
+/// #14814 control: a whole-object assertion pins every field, the changed one
+/// included, and keeps its verdict. Recorded on base as `exposed`; this test
+/// pins that it does not move.
+#[test]
+fn ts_fieldconstruction_whole_object_assertion_is_unchanged() -> Result<(), String> {
+    let owner_src = "export interface C { retries: number; verbose: boolean }\nexport function f(): C {\n  return { retries: 3, verbose: false };\n}\n";
+    let test_src = "import { f } from \"./owner\";\ntest(\"whole config\", () => { expect(f()).toEqual({ retries: 5, verbose: false }); });\n";
+
+    let owners = extract_owners(Path::new("owner.ts"), owner_src);
+    let tests = extract_tests(Path::new("owner.test.ts"), test_src);
+    let finding = classify_change_with_alias_state(
+        Path::new("owner.ts"),
+        3,
+        "  return { retries: 5, verbose: false };",
+        Some("  return { retries: 3, verbose: false };"),
+        &owners,
+        &tests,
+        None,
+        &ReExportIndex::empty(),
+        None,
+        None,
+    )
+    .ok_or_else(|| "expected a finding".to_string())?;
+
+    assert!(
+        matches!(finding.class, ExposureClass::Exposed),
+        "a whole-object assertion pins the changed field, got {:?}",
+        finding.class
+    );
+    Ok(())
+}
+
+/// #14814 F3 control: the read path passes THROUGH the changed field.
+/// `f().retries.n` has `retries` on the path from the owner call to the
+/// outermost segment, so it projects the changed field and keeps `exposed`.
+/// A guard that keys only on the outermost segment hides a genuine exposure.
+#[test]
+fn ts_fieldconstruction_read_through_changed_field_stays_exposed() -> Result<(), String> {
+    let owner_src = "export interface C { retries: { n: number }; verbose: boolean }\nexport function f(): C {\n  return { retries: 3, verbose: false };\n}\n";
+    let test_src = "import { f } from \"./owner\";\ntest(\"retries\", () => { expect(f().retries.n).toBe(5); });\n";
+
+    let owners = extract_owners(Path::new("owner.ts"), owner_src);
+    let tests = extract_tests(Path::new("owner.test.ts"), test_src);
+    let finding = classify_change_with_alias_state(
+        Path::new("owner.ts"),
+        3,
+        "  return { retries: { n: 5 }, verbose: false };",
+        Some("  return { retries: 3, verbose: false };"),
+        &owners,
+        &tests,
+        None,
+        &ReExportIndex::empty(),
+        None,
+        None,
+    )
+    .ok_or_else(|| "expected a finding".to_string())?;
+
+    assert!(
+        matches!(finding.class, ExposureClass::Exposed),
+        "a read through the changed field must stay exposed, got {:?}",
+        finding.class
+    );
+    Ok(())
+}
+
+/// #14814 F1: `f()["verbose"]` is a field read too. A bracket string-literal
+/// read of a sibling field cannot witness the change, so it downgrades exactly
+/// like the dotted form.
+#[test]
+fn ts_fieldconstruction_bracket_sibling_field_read_downgrades() -> Result<(), String> {
+    let owner_src = "export interface C { retries: number; verbose: boolean }\nexport function f(): C {\n  return { retries: 3, verbose: false };\n}\n";
+    let test_src = "import { f } from \"./owner\";\ntest(\"verbose flag\", () => { expect(f()[\"verbose\"]).toBe(false); });\n";
+
+    let owners = extract_owners(Path::new("owner.ts"), owner_src);
+    let tests = extract_tests(Path::new("owner.test.ts"), test_src);
+    let finding = classify_change_with_alias_state(
+        Path::new("owner.ts"),
+        3,
+        "  return { retries: 5, verbose: false };",
+        Some("  return { retries: 3, verbose: false };"),
+        &owners,
+        &tests,
+        None,
+        &ReExportIndex::empty(),
+        None,
+        None,
+    )
+    .ok_or_else(|| "expected a finding".to_string())?;
+
+    assert!(
+        matches!(finding.class, ExposureClass::WeaklyExposed),
+        "a bracket sibling-field read must not read as exposed, got {:?}",
+        finding.class
+    );
+    Ok(())
+}
+
+/// #14814 must-not-move: a computed key (`f()[k]`) and an index (`f()[0]`) are
+/// not field reads, so the sibling guard must not touch them. Both keep the
+/// base verdict, `exposed`. Only a bare-identifier bracket key is rewritten.
+#[test]
+fn ts_fieldconstruction_computed_and_index_reads_stay_exposed() -> Result<(), String> {
+    let owner_src = "export interface C { retries: number; verbose: boolean }\nexport function f(): C {\n  return { retries: 3, verbose: false };\n}\n";
+    for test_src in [
+        "import { f } from \"./owner\";\ntest(\"computed\", () => { const k = \"retries\"; expect(f()[k]).toBe(5); });\n",
+        "import { f } from \"./owner\";\ntest(\"index\", () => { expect(f()[0]).toBe(5); });\n",
+    ] {
+        let owners = extract_owners(Path::new("owner.ts"), owner_src);
+        let tests = extract_tests(Path::new("owner.test.ts"), test_src);
+        let finding = classify_change_with_alias_state(
+            Path::new("owner.ts"),
+            3,
+            "  return { retries: 5, verbose: false };",
+            Some("  return { retries: 3, verbose: false };"),
+            &owners,
+            &tests,
+            None,
+            &ReExportIndex::empty(),
+            None,
+            None,
+        )
+        .ok_or_else(|| "expected a finding".to_string())?;
+
+        assert!(
+            matches!(finding.class, ExposureClass::Exposed),
+            "a computed or index read must keep its base verdict, got {:?} for {test_src:?}",
+            finding.class
+        );
+    }
+    Ok(())
+}
+
+/// #14814 round 2: an operator glues onto the changed field's segment.
+/// `f().retries || f().verbose` reads `retries`, so it witnesses the change
+/// and must stay `exposed`; a dot-segment comparison sees `retries || f()`
+/// and wrongly downgrades it.
+#[test]
+fn ts_fieldconstruction_mixed_expression_read_through_changed_field_stays_exposed()
+-> Result<(), String> {
+    let owner_src = "export interface C { retries: number; verbose: boolean }\nexport function f(): C {\n  return { retries: 3, verbose: false };\n}\n";
+    let test_src = "import { f } from \"./owner\";\ntest(\"retries\", () => { expect(f().retries || f().verbose).toBe(5); });\n";
+
+    let owners = extract_owners(Path::new("owner.ts"), owner_src);
+    let tests = extract_tests(Path::new("owner.test.ts"), test_src);
+    let finding = classify_change_with_alias_state(
+        Path::new("owner.ts"),
+        3,
+        "  return { retries: 5, verbose: false };",
+        Some("  return { retries: 3, verbose: false };"),
+        &owners,
+        &tests,
+        None,
+        &ReExportIndex::empty(),
+        None,
+        None,
+    )
+    .ok_or_else(|| "expected a finding".to_string())?;
+
+    assert!(
+        matches!(finding.class, ExposureClass::Exposed),
+        "a mixed expression that reads the changed field must stay exposed, got {:?}",
+        finding.class
+    );
+    Ok(())
+}
+
+/// #14814 round 2: optional chaining glues onto the changed field's segment.
+/// `f().retries?.n` reads through `retries`, so it stays `exposed`; a
+/// dot-segment comparison sees `retries?` and wrongly downgrades it.
+#[test]
+fn ts_fieldconstruction_optional_chain_read_through_changed_field_stays_exposed()
+-> Result<(), String> {
+    let owner_src = "export interface C { retries?: { n: number }; verbose: boolean }\nexport function f(): C {\n  return { retries: { n: 3 }, verbose: false };\n}\n";
+    let test_src = "import { f } from \"./owner\";\ntest(\"retries\", () => { expect(f().retries?.n).toBe(5); });\n";
+
+    let owners = extract_owners(Path::new("owner.ts"), owner_src);
+    let tests = extract_tests(Path::new("owner.test.ts"), test_src);
+    let finding = classify_change_with_alias_state(
+        Path::new("owner.ts"),
+        3,
+        "  return { retries: { n: 5 }, verbose: false };",
+        Some("  return { retries: { n: 3 }, verbose: false };"),
+        &owners,
+        &tests,
+        None,
+        &ReExportIndex::empty(),
+        None,
+        None,
+    )
+    .ok_or_else(|| "expected a finding".to_string())?;
+
+    assert!(
+        matches!(finding.class, ExposureClass::Exposed),
+        "an optional-chain read through the changed field must stay exposed, got {:?}",
+        finding.class
+    );
+    Ok(())
+}
+
+/// #14814 round 3: a local that merely spells the changed field's name is not
+/// a field read. `retries && f().verbose` reads only the sibling off the owner,
+/// so it must downgrade; a whole-expression token scan finds the local and
+/// wrongly keeps the credit, which is a false green on the strongest signal.
+#[test]
+fn ts_fieldconstruction_local_named_like_changed_field_does_not_keep_credit() -> Result<(), String>
+{
+    let owner_src = "export interface C { retries: number; verbose: boolean }\nexport function f(): C {\n  return { retries: 3, verbose: false };\n}\n";
+    let test_src = "import { f } from \"./owner\";\ntest(\"sibling\", () => { const retries = 1; expect(retries && f().verbose).toBe(false); });\n";
+
+    let owners = extract_owners(Path::new("owner.ts"), owner_src);
+    let tests = extract_tests(Path::new("owner.test.ts"), test_src);
+    let finding = classify_change_with_alias_state(
+        Path::new("owner.ts"),
+        3,
+        "  return { retries: 5, verbose: false };",
+        Some("  return { retries: 3, verbose: false };"),
+        &owners,
+        &tests,
+        None,
+        &ReExportIndex::empty(),
+        None,
+        None,
+    )
+    .ok_or_else(|| "expected a finding".to_string())?;
+
+    assert!(
+        matches!(finding.class, ExposureClass::WeaklyExposed),
+        "a local named like the changed field is not a field read, got {:?}",
+        finding.class
+    );
+    Ok(())
+}
+
+/// #14814 round 3: the member check is owner-rooted, so a member read of the
+/// same name on a DIFFERENT object is not a witness of the changed field.
+#[test]
+fn ts_fieldconstruction_foreign_member_named_like_changed_field_does_not_keep_credit()
+-> Result<(), String> {
+    let owner_src = "export interface C { retries: number; verbose: boolean }\nexport function f(): C {\n  return { retries: 3, verbose: false };\n}\n";
+    let test_src = "import { f } from \"./owner\";\ntest(\"sibling\", () => { const other = { retries: 1 }; expect(other.retries && f().verbose).toBe(false); });\n";
+
+    let owners = extract_owners(Path::new("owner.ts"), owner_src);
+    let tests = extract_tests(Path::new("owner.test.ts"), test_src);
+    let finding = classify_change_with_alias_state(
+        Path::new("owner.ts"),
+        3,
+        "  return { retries: 5, verbose: false };",
+        Some("  return { retries: 3, verbose: false };"),
+        &owners,
+        &tests,
+        None,
+        &ReExportIndex::empty(),
+        None,
+        None,
+    )
+    .ok_or_else(|| "expected a finding".to_string())?;
+
+    assert!(
+        matches!(finding.class, ExposureClass::WeaklyExposed),
+        "a member read on another object is not the changed field, got {:?}",
+        finding.class
     );
     Ok(())
 }
@@ -11946,8 +13632,10 @@ fn ts_side_effect_observed_by_mock_expectation_stays_exposed() -> Result<(), Str
         exported_as_default: false,
         class_default_export: false,
         default_object_member: false,
+        default_object_unsafe_siblings: Vec::new(),
         commonjs_default_export: false,
         commonjs_whole_function: false,
+        constructor_callback: false,
         module_entries: Vec::new(),
         arity: None,
         params: Vec::new(),
@@ -11990,8 +13678,11 @@ fn ts_side_effect_observed_by_mock_expectation_stays_exposed() -> Result<(), Str
         scope_bindings: Default::default(),
         identity_helpers_in_file: Default::default(),
         default_member_only_locals_in_file: Default::default(),
+        barrel_namespace_members_in_file: Default::default(),
         written_locals_in_file: Default::default(),
         member_replacements_in_file: Default::default(),
+        function_replacements_in_file: Default::default(),
+        dynamic_load_specifiers_in_file: Default::default(),
         mock_factories_in_file: Default::default(),
         mock_spread_sources_in_file: Default::default(),
         assertion_admission: TypeScriptAssertionAdmission::Unresolved,
@@ -12053,8 +13744,10 @@ fn ts_side_effect_includes_template_word_does_not_confirm() -> Result<(), String
         exported_as_default: false,
         class_default_export: false,
         default_object_member: false,
+        default_object_unsafe_siblings: Vec::new(),
         commonjs_default_export: false,
         commonjs_whole_function: false,
+        constructor_callback: false,
         module_entries: Vec::new(),
         imports: Default::default(),
         params: Vec::new(),
@@ -12096,8 +13789,11 @@ fn ts_side_effect_includes_template_word_does_not_confirm() -> Result<(), String
         scope_bindings: Default::default(),
         identity_helpers_in_file: Default::default(),
         default_member_only_locals_in_file: Default::default(),
+        barrel_namespace_members_in_file: Default::default(),
         written_locals_in_file: Default::default(),
         member_replacements_in_file: Default::default(),
+        function_replacements_in_file: Default::default(),
+        dynamic_load_specifiers_in_file: Default::default(),
         mock_factories_in_file: Default::default(),
         mock_spread_sources_in_file: Default::default(),
         assertion_admission: TypeScriptAssertionAdmission::Unresolved,
@@ -12209,8 +13905,10 @@ fn tsconfig_alias_resolution_flag_on_credits_test_as_exposed() -> Result<(), Str
         exported_as_default: false,
         class_default_export: false,
         default_object_member: false,
+        default_object_unsafe_siblings: Vec::new(),
         commonjs_default_export: false,
         commonjs_whole_function: false,
+        constructor_callback: false,
         module_entries: Vec::new(),
         arity: None,
         params: Vec::new(),
@@ -12233,8 +13931,11 @@ fn tsconfig_alias_resolution_flag_on_credits_test_as_exposed() -> Result<(), Str
         scope_bindings: Default::default(),
         identity_helpers_in_file: Default::default(),
         default_member_only_locals_in_file: Default::default(),
+        barrel_namespace_members_in_file: Default::default(),
         written_locals_in_file: Default::default(),
         member_replacements_in_file: Default::default(),
+        function_replacements_in_file: Default::default(),
+        dynamic_load_specifiers_in_file: Default::default(),
         mock_factories_in_file: Default::default(),
         mock_spread_sources_in_file: Default::default(),
         assertion_admission: TypeScriptAssertionAdmission::Unresolved,
@@ -12300,8 +14001,10 @@ fn tsconfig_alias_resolution_flag_off_stays_no_static_path_with_disclosure() -> 
         exported_as_default: false,
         class_default_export: false,
         default_object_member: false,
+        default_object_unsafe_siblings: Vec::new(),
         commonjs_default_export: false,
         commonjs_whole_function: false,
+        constructor_callback: false,
         module_entries: Vec::new(),
         arity: None,
         params: Vec::new(),
@@ -12323,8 +14026,11 @@ fn tsconfig_alias_resolution_flag_off_stays_no_static_path_with_disclosure() -> 
         scope_bindings: Default::default(),
         identity_helpers_in_file: Default::default(),
         default_member_only_locals_in_file: Default::default(),
+        barrel_namespace_members_in_file: Default::default(),
         written_locals_in_file: Default::default(),
         member_replacements_in_file: Default::default(),
+        function_replacements_in_file: Default::default(),
+        dynamic_load_specifiers_in_file: Default::default(),
         mock_factories_in_file: Default::default(),
         mock_spread_sources_in_file: Default::default(),
         assertion_admission: TypeScriptAssertionAdmission::Unresolved,
@@ -12392,8 +14098,10 @@ fn unresolved_alias_import_names_the_import_in_no_reach_text() -> Result<(), Str
         exported_as_default: false,
         class_default_export: false,
         default_object_member: false,
+        default_object_unsafe_siblings: Vec::new(),
         commonjs_default_export: false,
         commonjs_whole_function: false,
+        constructor_callback: false,
         arity: None,
         params: Vec::new(),
         source_text: None,
@@ -12415,8 +14123,11 @@ fn unresolved_alias_import_names_the_import_in_no_reach_text() -> Result<(), Str
         scope_bindings: Default::default(),
         identity_helpers_in_file: Default::default(),
         default_member_only_locals_in_file: Default::default(),
+        barrel_namespace_members_in_file: Default::default(),
         written_locals_in_file: Default::default(),
         member_replacements_in_file: Default::default(),
+        function_replacements_in_file: Default::default(),
+        dynamic_load_specifiers_in_file: Default::default(),
         mock_factories_in_file: Default::default(),
         mock_spread_sources_in_file: Default::default(),
         assertion_admission: TypeScriptAssertionAdmission::Unresolved,
@@ -12664,6 +14375,119 @@ fn qualified_owner_lanes_keep_their_own_guidance() -> Result<(), String> {
     Ok(())
 }
 
+/// #13588: only an initializer that is directly a call with a function-valued
+/// argument is a constructor-callback owner; every other module value keeps
+/// the plain module-initializer reading.
+#[test]
+fn constructor_callback_owner_shape_is_closed() {
+    let owners = extract_owners(
+        Path::new("src/schema.ts"),
+        r#"export const ZodTransform = core.$constructor("ZodTransform", (inst, def) => {
+    inst.parse = (payload) => payload;
+});
+export const WithFunction = factory("W", function (inst) {
+    inst.x = 1;
+});
+export const LIMIT = 5;
+export const STOP = Symbol("stop");
+export const Wrapped = (factory("W", (inst) => {}));
+export const Mixed = [factory("W", (inst) => {})];
+export const NoCall = (inst) => inst;
+export const Doubled = nums.map((n) => n * 2);
+export const Each = nums.forEach(function (n) { sink(n); });
+export const Later = load().then((v) => v + 1);
+export const Caught = load().catch((e) => e);
+export const Eager = new Promise((resolve) => resolve(1));
+export const Copied = Array.from(nums, (n) => n + 1);
+export const Entries = Object.entries(obj).map(([k, v]) => v);
+export const Computed = reg["make"]("X", (inst) => {});
+export const Eached = _.each(items, (item) => sink(item));
+export const Replaced = s.replace(re, (m) => m.toUpperCase());
+export const ReplacedAll = s.replaceAll("a", (m) => m + m);
+export const Parsed = JSON.parse(text, (k, v) => v);
+export const Timed = _.times(3, (i) => i);
+"#,
+    );
+    let flag = |name: &str| {
+        owners
+            .iter()
+            .find(|owner| owner.name == name)
+            .map(|owner| (owner.owner_kind, owner.constructor_callback))
+    };
+    assert_eq!(
+        flag("ZodTransform"),
+        Some((OwnerKind::ModuleFunction, true))
+    );
+    assert_eq!(
+        flag("WithFunction"),
+        Some((OwnerKind::ModuleFunction, true))
+    );
+    // Negative controls: genuine module-initializer values stay unflagged.
+    assert_eq!(flag("LIMIT"), Some((OwnerKind::ModuleFunction, false)));
+    assert_eq!(flag("STOP"), Some((OwnerKind::ModuleFunction, false)));
+    assert_eq!(flag("Wrapped"), Some((OwnerKind::ModuleFunction, false)));
+    assert_eq!(flag("Mixed"), Some((OwnerKind::ModuleFunction, false)));
+    // A plain arrow const is not a ModuleFunction owner at all.
+    assert_eq!(flag("NoCall"), Some((OwnerKind::ArrowFunction, false)));
+    // Eagerly invoked callbacks run at module load: keep the old reading.
+    for name in [
+        "Doubled",
+        "Each",
+        "Later",
+        "Caught",
+        "Eager",
+        "Copied",
+        "Entries",
+        "Computed",
+        "Eached",
+        "Replaced",
+        "ReplacedAll",
+        "Parsed",
+        "Timed",
+    ] {
+        assert_eq!(
+            flag(name),
+            Some((OwnerKind::ModuleFunction, false)),
+            "{name}"
+        );
+    }
+}
+
+/// #13588: the constructor-callback shape names per-use execution and never
+/// asks for a constant observer; the plain module initializer keeps its
+/// advice.
+#[test]
+fn constructor_callback_owner_gets_its_own_no_static_path_wording() {
+    let mut callback = test_owner("ZodTransform", "src/schema.ts");
+    callback.owner_kind = OwnerKind::ModuleFunction;
+    callback.constructor_callback = true;
+    let missing = no_static_path_missing(&callback);
+    let step = no_static_path_recommendation(&callback);
+    assert!(missing.contains("`ZodTransform`"), "got: {missing}");
+    assert!(
+        missing.contains("may run only when a value built from"),
+        "got: {missing}"
+    );
+    assert!(
+        !missing.contains("module-initializer observer"),
+        "got: {missing}"
+    );
+    assert!(
+        step.contains("builds a value from `ZodTransform`"),
+        "got: {step}"
+    );
+    assert!(step.contains("parse a value"), "got: {step}");
+    assert!(!step.contains("expect(IMPORTED_CONST).toBe"), "got: {step}");
+    assert!(!step.contains("module initializer observer"), "got: {step}");
+
+    let mut constant = test_owner("CART_LIMIT", "src/cart.ts");
+    constant.owner_kind = OwnerKind::ModuleFunction;
+    let constant_missing = no_static_path_missing(&constant);
+    let constant_step = no_static_path_recommendation(&constant);
+    assert!(constant_missing.contains("module-initializer observer"));
+    assert!(constant_step.contains("expect(IMPORTED_CONST).toBe"));
+}
+
 /// RIPR-SPEC-0099 test 3 — AMBIGUOUS FAIL-CLOSED (flag ON):
 /// paths value `["src/*","lib/*"]` (multi-entry) → excluded from alias map
 /// → uncredited, stays `no_static_path`, disclosure limitation IS emitted.
@@ -12704,8 +14528,10 @@ fn tsconfig_alias_resolution_multi_entry_value_fails_closed() -> Result<(), Stri
         exported_as_default: false,
         class_default_export: false,
         default_object_member: false,
+        default_object_unsafe_siblings: Vec::new(),
         commonjs_default_export: false,
         commonjs_whole_function: false,
+        constructor_callback: false,
         module_entries: Vec::new(),
         arity: None,
         params: Vec::new(),
@@ -12727,8 +14553,11 @@ fn tsconfig_alias_resolution_multi_entry_value_fails_closed() -> Result<(), Stri
         scope_bindings: Default::default(),
         identity_helpers_in_file: Default::default(),
         default_member_only_locals_in_file: Default::default(),
+        barrel_namespace_members_in_file: Default::default(),
         written_locals_in_file: Default::default(),
         member_replacements_in_file: Default::default(),
+        function_replacements_in_file: Default::default(),
+        dynamic_load_specifiers_in_file: Default::default(),
         mock_factories_in_file: Default::default(),
         mock_spread_sources_in_file: Default::default(),
         assertion_admission: TypeScriptAssertionAdmission::Unresolved,
@@ -12789,8 +14618,10 @@ fn tsconfig_alias_non_owner_import_emits_no_limitation() -> Result<(), String> {
         exported_as_default: false,
         class_default_export: false,
         default_object_member: false,
+        default_object_unsafe_siblings: Vec::new(),
         commonjs_default_export: false,
         commonjs_whole_function: false,
+        constructor_callback: false,
         module_entries: Vec::new(),
         arity: None,
         params: Vec::new(),
@@ -12813,8 +14644,11 @@ fn tsconfig_alias_non_owner_import_emits_no_limitation() -> Result<(), String> {
         scope_bindings: Default::default(),
         identity_helpers_in_file: Default::default(),
         default_member_only_locals_in_file: Default::default(),
+        barrel_namespace_members_in_file: Default::default(),
         written_locals_in_file: Default::default(),
         member_replacements_in_file: Default::default(),
+        function_replacements_in_file: Default::default(),
+        dynamic_load_specifiers_in_file: Default::default(),
         mock_factories_in_file: Default::default(),
         mock_spread_sources_in_file: Default::default(),
         assertion_admission: TypeScriptAssertionAdmission::Unresolved,
@@ -12868,8 +14702,10 @@ fn tsconfig_alias_default_import_local_name_mismatch_emits_no_limitation() -> Re
         exported_as_default: false,
         class_default_export: false,
         default_object_member: false,
+        default_object_unsafe_siblings: Vec::new(),
         commonjs_default_export: false,
         commonjs_whole_function: false,
+        constructor_callback: false,
         module_entries: Vec::new(),
         imports: Default::default(),
         params: Vec::new(),
@@ -12892,8 +14728,11 @@ fn tsconfig_alias_default_import_local_name_mismatch_emits_no_limitation() -> Re
         scope_bindings: Default::default(),
         identity_helpers_in_file: Default::default(),
         default_member_only_locals_in_file: Default::default(),
+        barrel_namespace_members_in_file: Default::default(),
         written_locals_in_file: Default::default(),
         member_replacements_in_file: Default::default(),
+        function_replacements_in_file: Default::default(),
+        dynamic_load_specifiers_in_file: Default::default(),
         mock_factories_in_file: Default::default(),
         mock_spread_sources_in_file: Default::default(),
         assertion_admission: TypeScriptAssertionAdmission::Unresolved,
@@ -12945,8 +14784,10 @@ fn tsconfig_alias_default_import_local_name_match_emits_limitation() -> Result<(
         exported_as_default: false,
         class_default_export: false,
         default_object_member: false,
+        default_object_unsafe_siblings: Vec::new(),
         commonjs_default_export: false,
         commonjs_whole_function: false,
+        constructor_callback: false,
         module_entries: Vec::new(),
         imports: Default::default(),
         params: Vec::new(),
@@ -12968,8 +14809,11 @@ fn tsconfig_alias_default_import_local_name_match_emits_limitation() -> Result<(
         scope_bindings: Default::default(),
         identity_helpers_in_file: Default::default(),
         default_member_only_locals_in_file: Default::default(),
+        barrel_namespace_members_in_file: Default::default(),
         written_locals_in_file: Default::default(),
         member_replacements_in_file: Default::default(),
+        function_replacements_in_file: Default::default(),
+        dynamic_load_specifiers_in_file: Default::default(),
         mock_factories_in_file: Default::default(),
         mock_spread_sources_in_file: Default::default(),
         assertion_admission: TypeScriptAssertionAdmission::Unresolved,
@@ -13022,8 +14866,10 @@ fn tsconfig_alias_advice_names_map_unavailable_cause() -> Result<(), String> {
         exported_as_default: false,
         class_default_export: false,
         default_object_member: false,
+        default_object_unsafe_siblings: Vec::new(),
         commonjs_default_export: false,
         commonjs_whole_function: false,
+        constructor_callback: false,
         module_entries: Vec::new(),
         imports: Default::default(),
         method_kind: TypeScriptMethodKind::Ordinary,
@@ -13045,8 +14891,11 @@ fn tsconfig_alias_advice_names_map_unavailable_cause() -> Result<(), String> {
         scope_bindings: Default::default(),
         identity_helpers_in_file: Default::default(),
         default_member_only_locals_in_file: Default::default(),
+        barrel_namespace_members_in_file: Default::default(),
         written_locals_in_file: Default::default(),
         member_replacements_in_file: Default::default(),
+        function_replacements_in_file: Default::default(),
+        dynamic_load_specifiers_in_file: Default::default(),
         mock_factories_in_file: Default::default(),
         mock_spread_sources_in_file: Default::default(),
         assertion_admission: TypeScriptAssertionAdmission::Unresolved,
@@ -13115,8 +14964,10 @@ fn tsconfig_alias_advice_names_unmatched_pattern_cause() -> Result<(), String> {
         exported_as_default: false,
         class_default_export: false,
         default_object_member: false,
+        default_object_unsafe_siblings: Vec::new(),
         commonjs_default_export: false,
         commonjs_whole_function: false,
+        constructor_callback: false,
         module_entries: Vec::new(),
         imports: Default::default(),
         method_kind: TypeScriptMethodKind::Ordinary,
@@ -13138,8 +14989,11 @@ fn tsconfig_alias_advice_names_unmatched_pattern_cause() -> Result<(), String> {
         scope_bindings: Default::default(),
         identity_helpers_in_file: Default::default(),
         default_member_only_locals_in_file: Default::default(),
+        barrel_namespace_members_in_file: Default::default(),
         written_locals_in_file: Default::default(),
         member_replacements_in_file: Default::default(),
+        function_replacements_in_file: Default::default(),
+        dynamic_load_specifiers_in_file: Default::default(),
         mock_factories_in_file: Default::default(),
         mock_spread_sources_in_file: Default::default(),
         assertion_admission: TypeScriptAssertionAdmission::Unresolved,
@@ -13209,8 +15063,10 @@ fn tsconfig_alias_advice_names_unresolved_candidate_cause() -> Result<(), String
         exported_as_default: false,
         class_default_export: false,
         default_object_member: false,
+        default_object_unsafe_siblings: Vec::new(),
         commonjs_default_export: false,
         commonjs_whole_function: false,
+        constructor_callback: false,
         module_entries: Vec::new(),
         imports: Default::default(),
         method_kind: TypeScriptMethodKind::Ordinary,
@@ -13232,8 +15088,11 @@ fn tsconfig_alias_advice_names_unresolved_candidate_cause() -> Result<(), String
         scope_bindings: Default::default(),
         identity_helpers_in_file: Default::default(),
         default_member_only_locals_in_file: Default::default(),
+        barrel_namespace_members_in_file: Default::default(),
         written_locals_in_file: Default::default(),
         member_replacements_in_file: Default::default(),
+        function_replacements_in_file: Default::default(),
+        dynamic_load_specifiers_in_file: Default::default(),
         mock_factories_in_file: Default::default(),
         mock_spread_sources_in_file: Default::default(),
         assertion_admission: TypeScriptAssertionAdmission::Unresolved,
@@ -13312,8 +15171,10 @@ fn tsconfig_alias_advice_names_absolute_base_url_cause() -> Result<(), String> {
         exported_as_default: false,
         class_default_export: false,
         default_object_member: false,
+        default_object_unsafe_siblings: Vec::new(),
         commonjs_default_export: false,
         commonjs_whole_function: false,
+        constructor_callback: false,
         module_entries: Vec::new(),
         imports: Default::default(),
         method_kind: TypeScriptMethodKind::Ordinary,
@@ -13335,8 +15196,11 @@ fn tsconfig_alias_advice_names_absolute_base_url_cause() -> Result<(), String> {
         scope_bindings: Default::default(),
         identity_helpers_in_file: Default::default(),
         default_member_only_locals_in_file: Default::default(),
+        barrel_namespace_members_in_file: Default::default(),
         written_locals_in_file: Default::default(),
         member_replacements_in_file: Default::default(),
+        function_replacements_in_file: Default::default(),
+        dynamic_load_specifiers_in_file: Default::default(),
         mock_factories_in_file: Default::default(),
         mock_spread_sources_in_file: Default::default(),
         assertion_admission: TypeScriptAssertionAdmission::Unresolved,
@@ -13401,8 +15265,10 @@ fn spec_0104_repro_cross_family_error_oracle_does_not_promote_return_value_seam(
         exported_as_default: false,
         class_default_export: false,
         default_object_member: false,
+        default_object_unsafe_siblings: Vec::new(),
         commonjs_default_export: false,
         commonjs_whole_function: false,
+        constructor_callback: false,
         module_entries: Vec::new(),
         arity: None,
         params: Vec::new(),
@@ -13443,8 +15309,11 @@ fn spec_0104_repro_cross_family_error_oracle_does_not_promote_return_value_seam(
         scope_bindings: Default::default(),
         identity_helpers_in_file: Default::default(),
         default_member_only_locals_in_file: Default::default(),
+        barrel_namespace_members_in_file: Default::default(),
         written_locals_in_file: Default::default(),
         member_replacements_in_file: Default::default(),
+        function_replacements_in_file: Default::default(),
+        dynamic_load_specifiers_in_file: Default::default(),
         mock_factories_in_file: Default::default(),
         mock_spread_sources_in_file: Default::default(),
         assertion_admission: TypeScriptAssertionAdmission::Unresolved,
@@ -13492,8 +15361,11 @@ fn spec_0104_repro_cross_family_error_oracle_does_not_promote_return_value_seam(
         scope_bindings: Default::default(),
         identity_helpers_in_file: Default::default(),
         default_member_only_locals_in_file: Default::default(),
+        barrel_namespace_members_in_file: Default::default(),
         written_locals_in_file: Default::default(),
         member_replacements_in_file: Default::default(),
+        function_replacements_in_file: Default::default(),
+        dynamic_load_specifiers_in_file: Default::default(),
         mock_factories_in_file: Default::default(),
         mock_spread_sources_in_file: Default::default(),
         assertion_admission: TypeScriptAssertionAdmission::Unresolved,
@@ -13559,8 +15431,10 @@ fn spec_0104_no_over_correct_return_value_with_exact_value_stays_exposed() -> Re
         exported_as_default: false,
         class_default_export: false,
         default_object_member: false,
+        default_object_unsafe_siblings: Vec::new(),
         commonjs_default_export: false,
         commonjs_whole_function: false,
+        constructor_callback: false,
         module_entries: Vec::new(),
         arity: None,
         params: Vec::new(),
@@ -13599,8 +15473,11 @@ fn spec_0104_no_over_correct_return_value_with_exact_value_stays_exposed() -> Re
         scope_bindings: Default::default(),
         identity_helpers_in_file: Default::default(),
         default_member_only_locals_in_file: Default::default(),
+        barrel_namespace_members_in_file: Default::default(),
         written_locals_in_file: Default::default(),
         member_replacements_in_file: Default::default(),
+        function_replacements_in_file: Default::default(),
+        dynamic_load_specifiers_in_file: Default::default(),
         mock_factories_in_file: Default::default(),
         mock_spread_sources_in_file: Default::default(),
         assertion_admission: TypeScriptAssertionAdmission::Unresolved,
@@ -13655,8 +15532,10 @@ fn spec_0104_no_over_correct_error_path_with_exact_error_variant_stays_exposed()
         exported_as_default: false,
         class_default_export: false,
         default_object_member: false,
+        default_object_unsafe_siblings: Vec::new(),
         commonjs_default_export: false,
         commonjs_whole_function: false,
+        constructor_callback: false,
         module_entries: Vec::new(),
         arity: None,
         params: Vec::new(),
@@ -13701,8 +15580,11 @@ fn spec_0104_no_over_correct_error_path_with_exact_error_variant_stays_exposed()
         scope_bindings: Default::default(),
         identity_helpers_in_file: Default::default(),
         default_member_only_locals_in_file: Default::default(),
+        barrel_namespace_members_in_file: Default::default(),
         written_locals_in_file: Default::default(),
         member_replacements_in_file: Default::default(),
+        function_replacements_in_file: Default::default(),
+        dynamic_load_specifiers_in_file: Default::default(),
         mock_factories_in_file: Default::default(),
         mock_spread_sources_in_file: Default::default(),
         assertion_admission: TypeScriptAssertionAdmission::Unresolved,
@@ -13765,8 +15647,10 @@ fn spec_0104_single_test_both_assertions_retains_matching_family_assertion_stays
         exported_as_default: false,
         class_default_export: false,
         default_object_member: false,
+        default_object_unsafe_siblings: Vec::new(),
         commonjs_default_export: false,
         commonjs_whole_function: false,
+        constructor_callback: false,
         module_entries: Vec::new(),
         arity: None,
         params: Vec::new(),
@@ -13836,8 +15720,11 @@ fn spec_0104_single_test_both_assertions_retains_matching_family_assertion_stays
         scope_bindings: Default::default(),
         identity_helpers_in_file: Default::default(),
         default_member_only_locals_in_file: Default::default(),
+        barrel_namespace_members_in_file: Default::default(),
         written_locals_in_file: Default::default(),
         member_replacements_in_file: Default::default(),
+        function_replacements_in_file: Default::default(),
+        dynamic_load_specifiers_in_file: Default::default(),
         mock_factories_in_file: Default::default(),
         mock_spread_sources_in_file: Default::default(),
         assertion_admission: TypeScriptAssertionAdmission::Unresolved,
@@ -14358,10 +16245,9 @@ fn delta5_verify_command_stays_in_missing_list_when_runner_unresolved() -> Resul
     Ok(())
 }
 
-/// Mocha fail-closed control: a detected mocha framework has NO file-target
-/// command mapping, so with no lockfile/runner evidence the inferred command
-/// is `None`. The evidence MUST NOT invent a `typescript_verify_command`.
-/// The runner is known (`typescript_test_runner: mocha`), so
+/// Mocha without a lockfile: like Vitest and Jest (#1239), a detected mocha
+/// framework launches the local binary through `npx --no-install`, which never
+/// downloads a missing package (#15340). The runner is known (`typescript_test_runner: mocha`), so
 /// `typescript_test_runner_unresolved` must stay omitted (#7646): that
 /// limitation names a missing runner, not a missing file-target command.
 #[test]
@@ -14436,14 +16322,15 @@ fn mocha_no_lockfile_omits_runner_unresolved_when_mocha_detected() -> Result<(),
         ));
     }
 
-    // No command must be invented.
-    let invented_cmd = finding
+    // The command launches the local mocha binary and never downloads it.
+    let has_local_launch = finding
         .evidence
         .iter()
-        .find(|ev| ev.starts_with("typescript_verify_command:"));
-    if let Some(cmd) = invented_cmd {
+        .any(|ev| ev == "typescript_verify_command: npx --no-install mocha tests/lib.test.ts");
+    if !has_local_launch {
         return Err(format!(
-            "mocha without lockfile: no command should be invented, but got: {cmd:?}"
+            "mocha without lockfile: expected the local npx --no-install mocha launch; evidence={:?}",
+            finding.evidence
         ));
     }
 
@@ -14693,8 +16580,10 @@ fn parse_limit_owner_and_exact_value_test() -> (TypeScriptOwner, TypeScriptTest)
         exported_as_default: false,
         class_default_export: false,
         default_object_member: false,
+        default_object_unsafe_siblings: Vec::new(),
         commonjs_default_export: false,
         commonjs_whole_function: false,
+        constructor_callback: false,
         module_entries: Vec::new(),
         arity: None,
         params: Vec::new(),
@@ -14733,8 +16622,11 @@ fn parse_limit_owner_and_exact_value_test() -> (TypeScriptOwner, TypeScriptTest)
         scope_bindings: Default::default(),
         identity_helpers_in_file: Default::default(),
         default_member_only_locals_in_file: Default::default(),
+        barrel_namespace_members_in_file: Default::default(),
         written_locals_in_file: Default::default(),
         member_replacements_in_file: Default::default(),
+        function_replacements_in_file: Default::default(),
+        dynamic_load_specifiers_in_file: Default::default(),
         mock_factories_in_file: Default::default(),
         mock_spread_sources_in_file: Default::default(),
         assertion_admission: TypeScriptAssertionAdmission::Unresolved,
@@ -14849,8 +16741,11 @@ pub(super) fn exact_value_test(owner_name: &str, observed: &str, expected: &str)
         scope_bindings: Default::default(),
         identity_helpers_in_file: Default::default(),
         default_member_only_locals_in_file: Default::default(),
+        barrel_namespace_members_in_file: Default::default(),
         written_locals_in_file: Default::default(),
         member_replacements_in_file: Default::default(),
+        function_replacements_in_file: Default::default(),
+        dynamic_load_specifiers_in_file: Default::default(),
         mock_factories_in_file: Default::default(),
         mock_spread_sources_in_file: Default::default(),
         assertion_admission: TypeScriptAssertionAdmission::Unresolved,
@@ -15045,13 +16940,15 @@ fn spec_0027_namespace_import_member_call_witnesses_boundary() -> Result<(), Str
         exported_as_default: false,
         class_default_export: false,
         default_object_member: false,
+        default_object_unsafe_siblings: Vec::new(),
         commonjs_default_export: false,
         commonjs_whole_function: false,
+        constructor_callback: false,
         module_entries: Vec::new(),
         imports: Default::default(),
-        params: Vec::new(),
+        params: vec!["amount".into(), "threshold".into()],
         method_kind: TypeScriptMethodKind::Ordinary,
-        arity: None,
+        arity: Some(2),
         source_text: None,
     };
     let mut test = exact_value_test("applyDiscount", "pricing.applyDiscount(100, 100)", "90");
@@ -15104,8 +17001,11 @@ fn spec_0027_unrelated_test_does_not_reach_the_boundary_witness() -> Result<(), 
 /// call with two identical arguments as the boundary witness.
 #[test]
 fn spec_0027_non_literal_boundary_requires_identical_arguments() -> Result<(), String> {
+    let mut owner = test_owner("isAllowed", "src/lib.ts");
+    owner.params = vec!["count".into(), "limit".into()];
+    owner.arity = Some(2);
     let below = [exact_value_test("isAllowed", "isAllowed(4, 5)", "true")];
-    let finding = classify_boundary_line("isAllowed", "  if (count <= limit) {", &below)?;
+    let finding = classify_boundary_line_for_owner(&owner, "  if (count <= limit) {", &below)?;
     assert_eq!(finding.class, ExposureClass::WeaklyExposed);
     assert_eq!(
         missing_discriminator_values(&finding),
@@ -15116,8 +17016,22 @@ fn spec_0027_non_literal_boundary_requires_identical_arguments() -> Result<(), S
         exact_value_test("isAllowed", "isAllowed(4, 5)", "true"),
         exact_value_test("isAllowed", "isAllowed(5, 5)", "false"),
     ];
-    let finding = classify_boundary_line("isAllowed", "  if (count <= limit) {", &at)?;
+    let finding = classify_boundary_line_for_owner(&owner, "  if (count <= limit) {", &at)?;
     assert_eq!(finding.class, ExposureClass::Exposed);
+
+    owner.params = vec!["時".into(), "unused".into(), "limit".into()];
+    owner.arity = Some(3);
+    for (call, result, expected) in [
+        ("isAllowed(0, 0, 10)", "false", ExposureClass::WeaklyExposed),
+        ("isAllowed(10, 0, 10)", "true", ExposureClass::Exposed),
+    ] {
+        let tests = [exact_value_test("isAllowed", call, result)];
+        assert_eq!(
+            classify_boundary_line_for_owner(&owner, "  if (時 >= limit) {", &tests)?.class,
+            expected,
+            "{call}"
+        );
+    }
 
     // Object-literal props name both operands: equal values witness the
     // boundary, unequal values do not.
@@ -15802,8 +17716,10 @@ pub(super) fn boundary_witness_owner() -> TypeScriptOwner {
         exported_as_default: false,
         class_default_export: false,
         default_object_member: false,
+        default_object_unsafe_siblings: Vec::new(),
         commonjs_default_export: false,
         commonjs_whole_function: false,
+        constructor_callback: false,
         module_entries: Vec::new(),
         imports: Default::default(),
         method_kind: TypeScriptMethodKind::Ordinary,
@@ -16107,11 +18023,11 @@ fn e4104_const_result_local_binding_witnesses_predicate_boundary() -> Result<(),
 fn e4104_optional_chaining_predicate_witnesses_boundary() -> Result<(), String> {
     let mut owner = boundary_witness_owner();
     owner.name = "userIsAdmin".to_string();
-    owner.params = vec!["order".to_string()];
-    owner.arity = Some(1);
+    owner.params = vec!["order".to_string(), "other".to_string()];
+    owner.arity = Some(2);
     owner.source_text = Some(
         concat!(
-            "export function userIsAdmin(order: Order): boolean {\n",
+            "export function userIsAdmin(order: Order, other?: Order): boolean {\n",
             "    if (order?.role === \"admin\") {\n",
             "        return true;\n",
             "    }\n",
@@ -16132,6 +18048,18 @@ fn e4104_optional_chaining_predicate_witnesses_boundary() -> Result<(), String> 
         ExposureClass::Exposed,
         "an optional-chaining predicate normalizes to a comparable boundary and witnesses via the object pin"
     );
+    for call in [
+        r#"userIsAdmin({}, { role: "admin" })"#,
+        r#"userIsAdmin("admin", {})"#,
+    ] {
+        let test = exact_value_test("userIsAdmin", call, "false");
+        let finding = classify_boundary_line_for_owner(
+            &owner,
+            "    if (order?.role === \"admin\") {",
+            &[test],
+        )?;
+        assert_eq!(finding.class, ExposureClass::WeaklyExposed, "{call}");
+    }
     Ok(())
 }
 
@@ -17908,8 +19836,10 @@ fn expected_side_is_live_credits_a_signed_live_expected_value() {
         exported_as_default: false,
         class_default_export: false,
         default_object_member: false,
+        default_object_unsafe_siblings: Vec::new(),
         commonjs_default_export: false,
         commonjs_whole_function: false,
+        constructor_callback: false,
         module_entries: Vec::new(),
         imports: Default::default(),
         method_kind: TypeScriptMethodKind::Ordinary,
@@ -17966,8 +19896,10 @@ fn expected_side_is_live_does_not_equate_negative_zero_with_zero() {
         exported_as_default: false,
         class_default_export: false,
         default_object_member: false,
+        default_object_unsafe_siblings: Vec::new(),
         commonjs_default_export: false,
         commonjs_whole_function: false,
+        constructor_callback: false,
         module_entries: Vec::new(),
         imports: Default::default(),
         method_kind: TypeScriptMethodKind::Ordinary,
@@ -20219,10 +22151,11 @@ fn alias_load_gap_types_distinguish_flag_on_failures() -> Result<(), String> {
         "JSONC comments must not fail the load, gap: {gap:?}"
     );
 
-    // extends is a distinct typed cause.
+    // extends is a distinct typed cause: a missing base that could still
+    // supply `baseUrl` (#11204 tolerates it only for a self-sufficient config).
     ts_write_file(
         &root.join("tsconfig.json"),
-        "{\n  \"extends\": \"./base.json\",\n  \"compilerOptions\": { \"baseUrl\": \".\", \"paths\": { \"@/*\": [\"./src/*\"] } }\n}\n",
+        "{\n  \"extends\": \"./base.json\",\n  \"compilerOptions\": { \"paths\": { \"@/*\": [\"./src/*\"] } }\n}\n",
     )?;
     let (map, err, gap) = load_alias_map_with_read_error(&root);
     assert!(map.is_none() && err.is_none());
@@ -20266,7 +22199,7 @@ fn alias_load_gap_names_the_jsconfig_fallback_file() -> Result<(), String> {
     let root = ts_unique_tempdir("alias-gap-jsconfig")?;
     ts_write_file(
         &root.join("jsconfig.json"),
-        "{\n  \"extends\": \"./base.json\",\n  \"compilerOptions\": { \"baseUrl\": \".\", \"paths\": { \"@/*\": [\"./src/*\"] } }\n}\n",
+        "{\n  \"extends\": \"./base.json\",\n  \"compilerOptions\": { \"paths\": { \"@/*\": [\"./src/*\"] } }\n}\n",
     )?;
     let (map, err, gap) = load_alias_map_with_read_error(&root);
     assert!(map.is_none() && err.is_none());
@@ -20811,36 +22744,59 @@ fn undercredit_4103_owner_extraction_records_default_export_fact() {
     assert!(!plain[0].exported_as_default);
 }
 
+mod anonymous_default_class_tests;
 mod async_matcher_completion_tests;
 mod ava_throws_message_tests;
+mod barrel_import_forward_tests;
 mod boolean_pin_tests;
+mod built_value_entry_tests;
+mod call_lexer_tests;
 mod catch_arm_tests;
+mod changed_field_scope_tests;
 mod changed_field_tests;
+mod class_barrel_reexport_tests;
 mod class_entry_tests;
+mod class_receiver_overclaim_tests;
 mod close_to_pin_tests;
+mod closure_entry_tests;
 mod committed_snapshot_tests;
+mod commonjs_barrel_tests;
+mod commonjs_class_receiver_tests;
+mod commonjs_default_class_tests;
 mod commonjs_default_function_tests;
 mod commonjs_export_tests;
+mod commonjs_inline_class_tests;
+mod commonjs_named_class_export_tests;
 mod comparison_edit_tests;
+mod cross_module_entry_tests;
 mod custom_matcher_tests;
 mod decorated_reach_tests;
+mod default_class_declaration_tests;
 mod default_object_member_tests;
 mod derived_operand_tests;
 mod directory_specifier_tests;
 mod dropped_term_tests;
 mod enum_member_tests;
 mod error_payload_tests;
+mod field_shadowed_method_tests;
 mod floating_promise_tests;
+mod folded_module_constant_tests;
 mod function_reference_callback_tests;
+mod function_replacement_tests;
 mod gap_reach_config_tests;
+mod getter_matcher_key_tests;
 mod guard_entry_tests;
+mod implementation_table_tests;
 mod infection_tests;
+mod inherited_and_factory_receiver_tests;
+mod inline_new_getter_read_tests;
 mod instance_class_tests;
 mod instance_factory_tests;
 mod issue10925_alias_resolution_tests;
 mod issue10925_shadow_index_tests;
 mod issue10925_shadow_scan_tests;
 mod issue7507_shadow_tests;
+mod literal_arm_return_tests;
 mod literal_container_tests;
 mod literal_matcher_tests;
 mod lookup_table_tests;
@@ -20855,18 +22811,22 @@ mod mock_spread_source_tests;
 mod mocked_callee_tests;
 mod module_const_tests;
 mod module_entry_tests;
+mod module_value_read_tests;
 mod namespace_reexport_tests;
 mod nested_callback_tests;
 mod nullish_chain_tests;
 mod object_row_callback_comment_tests;
 mod object_row_tests;
 mod out_dir_specifier_tests;
+mod overwritten_method_tests;
+mod plain_class_entry_tests;
 mod playwright_fixture_tests;
 mod playwright_unit_tests;
 mod private_method_owner_tests;
 mod push_length_tests;
 mod reexport_chain_tests;
 mod registration_binding_tests;
+mod replaced_method_tests;
 mod require_member_import_tests;
 mod rethrow_catch_tests;
 mod returned_dataflow_tests;
@@ -20879,10 +22839,13 @@ mod string_write_scan_tests;
 mod suite_factory_tests;
 mod table_case_tests;
 mod table_loop_tests;
+mod tool_config_tests;
 mod typed_loose_equality_tests;
 mod unemitted_stage_unknown_tests;
+mod unused_default_tests;
 mod value_hiding_tests;
 mod var_runner_binding_tests;
+mod vitest_for_tests;
 
 /// #4769: an unresolved import of a workspace package by name is a package
 /// manifest question. The limitation names that manifest instead of telling
@@ -20915,8 +22878,11 @@ fn unresolved_workspace_package_import_names_the_manifest() -> Result<(), String
         scope_bindings: Default::default(),
         identity_helpers_in_file: Default::default(),
         default_member_only_locals_in_file: Default::default(),
+        barrel_namespace_members_in_file: Default::default(),
         written_locals_in_file: Default::default(),
         member_replacements_in_file: Default::default(),
+        function_replacements_in_file: Default::default(),
+        dynamic_load_specifiers_in_file: Default::default(),
         mock_factories_in_file: Default::default(),
         mock_spread_sources_in_file: Default::default(),
         assertion_admission: TypeScriptAssertionAdmission::Unresolved,

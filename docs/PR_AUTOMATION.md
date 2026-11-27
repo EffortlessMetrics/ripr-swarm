@@ -66,12 +66,15 @@ first Ready, validate the body offline and fix every line it names:
 ## Draft to Ready handoff
 
 Publish a coherent candidate as Draft. The review, repair and evidence boundaries
-below apply to candidate preparation. The label-request sequence describes the
-installed legacy route until verified migration; after verified queue activation,
-use [the native-queue procedure](MERGE_FLOW.md#selected-native-queue-procedure-after-verified-activation)
-for qualification and conditional landing authorization instead. For the legacy
-route, the delivery owner completes this order before spending the
-`merge-ready`-requested `Ripr Rust Small Result` qualification:
+below apply to candidate preparation. Ordinary development does not request CI.
+The selected, reviewed candidate uses the installed qualification route. Apply
+`merge-ready` to request PR qualification, inspect its results, make the final
+integration judgment, then use
+[the native-queue procedure](MERGE_FLOW.md#native-queue-landing-procedure)
+for conditional landing and actual-G qualification. Auxiliary event retirement
+does not replace that producer with cheap H admission. Retire its label request
+only after the replacement is qualified and enforced.
+The delivery owner completes this preparation order:
 
 1. Bind the exact candidate head and integration basis. Complete directed
    substantive review through `review-pr` inline in the owning session's main
@@ -112,13 +115,15 @@ route, the delivery owner completes this order before spending the
    [local and hosted proof route](agent-context/validation.md#local-and-hosted-proof):
    record the unavailable dimension and reason, completed available checks, and
    existing authorized narrow hosted qualification that will establish it.
-   `REVIEW_INCOMPLETE` may retain that evidence gap and merge-ready-requested proof;
-   unavailable proof is not a pass. It cannot excuse an executable but unrun
+   `REVIEW_INCOMPLETE` may retain that evidence gap pending the applicable
+   authorized qualification route; unavailable proof is not a pass. It cannot excuse an executable but unrun
    applicable local check, unfinished review or repair, a known-red test, or
-   missing claim-essential native proof. After Ready, inspect the existing label, request and runs for the exact head
-   and subject before acting. The `merge-ready` label requests qualification;
-   Ready alone requests nothing;
-   `REVIEW_READY` and required proof still govern merge under `finish-pr`.
+   missing claim-essential native proof. After Ready, inspect the existing
+   native request and runs for the exact head and subject before acting. Ready
+   alone requests nothing; `REVIEW_READY` and required proof still govern merge
+   under `finish-pr`. If the installed required H check is still needed before
+   enqueue, use its retained label request as described below; do not duplicate
+   an existing current-subject request.
 
 After Ready, inspect the actual job checkout commit, parents and tree against
 the reviewed candidate and basis. A run's head SHA or a pre-Ready ref observation
@@ -128,7 +133,13 @@ or subject is verified; do not relabel that run as proof for the local tree or
 re-apply `merge-ready` merely to refresh it.
 
 A new head or material finding returns the candidate to Draft for one joined
-repair/proof/review wave. Preserve unaffected evidence. Before any label request,
+repair/proof/review wave. Preserve unaffected evidence.
+
+### Retained label-request reconciliation
+
+These details apply while the installed qualification producer still needs its
+label request. A selected, reviewed candidate may use that route; it is not
+development feedback and cannot restore a retired auxiliary subscriber. Before a label request,
 read the current head, label and admitted run state, including the run subject:
 
 - Preserve a queued or running current-subject run and its link; reapplying the
@@ -284,7 +295,7 @@ cargo xtask check-doc-artifacts
 cargo xtask check-doc-index
 cargo xtask check-doc-roles
 cargo xtask check-droid-review-config
-cargo xtask check-evidence-promotion-honesty [--pinned-external] [--clone] [--case <id>] [--checkout-root <path>] [--timeout-secs <n>]
+cargo xtask check-evidence-promotion-honesty [--pinned-external] [--clone] [--case <id>] [--checkout-root <path>] [--timeout-secs <n>] | --pre-label <PR> <target-branch>
 cargo xtask check-executable-files
 cargo xtask check-file-policy
 cargo xtask check-covered-by
@@ -345,6 +356,7 @@ cargo xtask lsp-cockpit-report
 cargo xtask lsp-performance-report
 cargo xtask markdown-links
 cargo xtask merge-queue capture [--repo <owner/name>] [--out <dir>] [--input <path>] [--prior <path>]
+cargo xtask merge-queue conflicts <new-output-directory> [--input <saved-queue-pages.json>]
 cargo xtask metrics
 cargo xtask module-health [--threshold <n>]
 cargo xtask mutation-calibration [root] --mutants-json <path>
@@ -364,6 +376,10 @@ cargo xtask release-readiness --version <version>
 cargo xtask release-server-archive --version <version> --target <triple> --executable <name> --archive <zip\|tar.gz>
 cargo xtask release-server-manifest --version <version> --repository <owner/repo>
 cargo xtask release-upload-assets --version <version>
+cargo xtask release-crates-io-transaction-observe --request <request.json>
+cargo xtask release-crates-io-transaction-plan --request <request.json> --authorization <authorization.json> --inventory <inventory.json>
+cargo xtask release-github-transaction-observe --request <request.json>
+cargo xtask release-github-transaction-plan --request <request.json> --authorization <authorization.json> --inventory <inventory.json>
 cargo xtask repo-badge-artifacts [--gap-ledger <path>]
 cargo xtask repo-contract-report
 cargo xtask repo-exposure-latency-report
@@ -457,15 +473,54 @@ before compilation-bearing file-policy enumeration. It writes
 `target/ripr/reports/ci-policy.{json,md}` through the precommit report owner,
 identifies its composition, and leaves legacy `precommit.md` and structured
 local `precommit-v2` receipts untouched.
-Its pass excludes selected Clippy; the required producer retains explicit
-`cargo clippy --workspace --all-targets -- -D warnings`. The source/toolchain/input
-policy-preflight receipt is still verified. Formatting and the later dependency,
-process and network steps are retained; no duplicate-policy removal or measured
-savings is claimed. Ordinary local `precommit` keeps selected Clippy.
+Its pass excludes formatting and selected Clippy; the required producer retains
+explicit `cargo fmt --check` and
+`cargo clippy --workspace --all-targets -- -D warnings` obligations. The
+source/toolchain/input policy-preflight receipt is still verified and does not
+stand in for formatting proof. Formatting runs once in the hosted early step,
+instead of again inside `ci-policy` (#8198). The later dependency, process and
+network steps are retained. No measured duration saving or complete 20-minute
+route is claimed. Ordinary local `precommit` keeps formatting and selected Clippy.
 
 `precommit` is the cheap non-mutating guardrail. It checks formatting, spec
 format and numbering, and the policy surfaces that should fail quickly before
 review.
+
+The formatting step of `check-fast`, `ci-fast`, local `precommit` and `shape`
+is the `cargo fmt` obligation run as bounded `rustfmt` batches. `cargo fmt`
+passes every root on one command line, which Windows caps at 32,767
+characters; this workspace's 491 roots pass that, and the step failed with
+os error 206 before rustfmt started (#12004). The step makes the decisions
+the pinned `cargo fmt` makes without `--all`. It differs in batching, in
+reading an empty `CARGO` or `RUSTFMT` as unset, in reporting a failure as its
+own exit status, and in refusing a program path that is not UTF-8. It reads
+the metadata through the `cargo` that `CARGO` names, otherwise the first one
+on `PATH`, offline first, and a reply that parses but lacks a workspace root,
+a package list, a package's manifest path, a package's targets, a target's
+path or an edition is asked for again as a failed reply; it runs `RUSTFMT`
+when that is set and otherwise the `rustfmt` beside the `cargo-fmt` that
+`cargo fmt` runs, which cargo finds in its home `bin` directory unless
+`PATH` already holds that directory and then along `PATH`, skipping an empty
+`PATH` entry as cargo does (on Linux a
+`cargo-fmt` reached through a symbolic link is read beside the link's
+target, as cargo-fmt reads itself; on macOS and Windows, beside the link),
+never a `rustfmt` found on `PATH` on its own and never one
+tied to the `cargo` that answered the metadata; beside a `cargo-fmt` that is
+the rustup proxy only the same proxy counts as that `rustfmt`, because
+`cargo fmt` runs the toolchain's own rustfmt there, and any other, or none,
+is refused with `RUSTFMT` named; it formats every workspace member when
+started from the workspace root, only the member under the invocation
+directory when started inside one, the one package of a single-package
+workspace from any directory, and refuses from anywhere else in a workspace
+of more; it hands every target to rustfmt once, grouped by its edition; it
+passes no config, so `rustfmt` finds the nearest `rustfmt.toml` for each
+file; and it runs every batch before it reports the first failure, so one
+`--check` shows every diff, except that it stops at a formatter it cannot
+start, as `cargo fmt` does. Before the first batch starts it measures every
+batch's Windows command line, the formatter's path quoted and the terminating
+NUL included, and refuses the step with nothing formatted when one is over
+the 32,767 UTF-16 code units `CreateProcess` takes; it applies that limit on
+every host. The hosted workflow keeps its explicit `cargo fmt --check` step.
 
 Local `precommit` also runs `goldens check` when the diff against
 `origin/main` touches output-surface code (`crates/ripr/src/output/`,
@@ -478,6 +533,10 @@ prepared in the environment, `precommit` prints `goldens check: INCOMPLETE
 (environment gap, not a pass)` and continues; run `cargo xtask goldens prepare`
 to close the gap, and hosted CI still owns those fixtures. The step is not part
 of the hosted collect-all policy run, which has its own goldens job.
+
+Start `cargo xtask check-fast`, `ci-fast`, `precommit` and `shape` at the
+RIPR workspace root. A call from a member or documentation directory reports
+the resolved root and exits before formatting or writing gate reports.
 
 The strict `check-fast` receipt consumer requires all six unconditional `Ran`
 receipts (`fmt --check`, static-language, command-catalog, generated,
@@ -715,6 +774,9 @@ identity as separate facts under `--out` (default
 `target/ripr/reports/merge-queue`). Tests use `--input`; live mode uses GET-only
 `gh api` calls. It never applies settings or enables a queue.
 
+For conflicting queued PR heads, the operator can inspect a frozen
+[main-versus-head report](CI.md#inspect-queued-heads-against-main).
+
 `suggested-fixes` writes `target/ripr/reports/suggested-fixes.patch` and
 `target/ripr/reports/suggested-fixes.md` with safe deterministic repair
 suggestions. The patch covers allowlist ordering under `.ripr/*.txt` and
@@ -761,8 +823,12 @@ outputs without mutating checked-in files. It also writes
 `target/ripr/reports/golden-drift.json` so reviewers can inspect semantic drift
 before any blessing. `goldens bless <fixture> --reason "RIPR-SPEC-NNNN: <reviewed change>"` requires both placeholders filled with the fixture name, a governing spec id from `docs/specs/`, and a short reviewed change description; the reason must cite an existing `RIPR-SPEC-NNNN`, then records
 the explicit blessing reason, updates expected JSON and human outputs, and
-appends the fixture expected-output changelog. Bless from the Linux arbiter
-platform, never from a Windows host; the sanctioned route is documented in
+appends the fixture expected-output changelog only for surfaces that differ
+under the gate comparison. Gate-equivalent output preserves the original
+expected bytes and leaves the changelog untouched. On Windows, any genuine
+change is refused before writing expected files or the changelog: the Windows
+projection cannot establish canonical Linux golden bytes. Apply changes from
+the Linux arbiter platform; the sanctioned route is documented in
 [Validation commands](agent-context/validation.md#golden-fixtures-and-the-blessing-platform).
 
 Human goldens (`human.txt`, `human-full.txt`) compare the line
@@ -1361,6 +1427,38 @@ This writes a ripr-managed `.git/hooks/pre-commit` hook that runs
 pre-existing hook is already ripr-managed, the command updates it idempotently.
 If a pre-existing hook is not ripr-managed, the command refuses to overwrite it
 so local user hooks are not clobbered.
+
+## Release milestone fixture comparison
+
+Run `cargo xtask check-release-targets --fixture <path>` to compare a local JSON
+snapshot with `policy/release-targets.toml`. The snapshot uses `schema_version: 2`,
+`repository: "EffortlessMetrics/ripr-swarm"`, and an explicit `complete` boolean.
+It contains three arrays.
+
+- `milestones` records have `number`, `title`, and `description`.
+- `issues` records have `number`, `closed`, `milestone`, and `labels` (strings).
+- `pull_requests` records have `number`, `closed`, `milestone`, and `closes`
+  (issue numbers in the same repository).
+
+Use a milestone number or `null` for each `milestone` field. Include every
+manifest issue with a milestone role, all issues in the observed candidate
+milestones, every PR that closes committed work, and all referenced milestones.
+
+Include a `pagination` object with one page array for each of `milestones`,
+`issues`, and `pull_requests`. Each page records its one-based `page`, an explicit
+`next_page` pointing to the next consecutive page or `null` on the terminal
+page, and the numeric `ids` observed on that page. A single terminal page with
+empty `ids` represents a captured empty list. The comparator checks for gaps,
+broken links, duplicate pages or IDs, and exact agreement between the captured
+IDs and the snapshot rows. Page and row serialization order may vary.
+
+Use `complete: false` when coverage is uncertain. The witness checks the
+internal consistency of the fixture's captured page chain. Its coverage claim
+depends on the capture preserving the observed links and IDs. The command writes
+`target/ripr/reports/release-milestone-fixture.{json,md}` and exits successfully
+only when the local comparison is `in_sync`. The report is evidence about the
+supplied fixture alone. See the [fixture comparison contract](specs/RIPR-SPEC-0452-release-milestone-fixture-parity.md)
+for comparison and refusal rules.
 
 ## CI Reports
 

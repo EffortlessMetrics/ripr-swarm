@@ -49,6 +49,13 @@
         "observe": {"state":"no","confidence":"low","summary":"Strongest extracted Python oracle kind: `unknown` (rank 0)"},
         "discriminate": {"state":"no","confidence":"low","summary":"Python preview adapter found no strong discriminator; typed repair guidance is unavailable for this shape."}
        },
+      "evidence_stages": [
+        {"stage":"reach","state":"no","confidence":"low","basis":[{"code":"no_related_test","summary":"no related test reaches the changed owner"}]},
+        {"stage":"infect","state":"yes","confidence":"low"},
+        {"stage":"propagate","state":"weak","confidence":"low"},
+        {"stage":"observe","state":"no","confidence":"low"},
+        {"stage":"discriminate","state":"no","confidence":"low"}
+      ],
       "evidence_path": ["reach no: 0 related Python test(s) found for owner `checkout`", "infection yes: Changed Python field or attribute construction can alter object state: `return {\"detail\": \"coupon expired\"}`", "propagation weak: Changed Python field construction can propagate through returned or retained object state; exact runtime object flow is not resolved.", "observation no: Strongest extracted Python oracle kind: `unknown` (rank 0)", "discriminator no: Python preview adapter found no strong discriminator; typed repair guidance is unavailable for this shape.", "local flow reaches constructed field: return {\"detail\": \"coupon expired\"} (line 15)"],
       "flow_sinks": [
         {"kind":"struct_field","text":"return {\"detail\": \"coupon expired\"}","line":15}

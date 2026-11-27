@@ -212,7 +212,14 @@ fn framework_registration_identity_keeps_the_extension_bounded() -> Result<(), S
             "test",
             "weakly_exposed",
         ),
-        ("@jest/globals", "", "test.only", "exposed"),
+        ("@jest/globals", "", "test.only", "weakly_exposed"),
+        ("@jest/globals", "test.only = fake;", "test.only", "exposed"),
+        (
+            "@jest/globals",
+            "import { test as run } from 'vitest';",
+            "run.only",
+            "exposed",
+        ),
         ("vitest", "", "test.only", "weakly_exposed"),
         (
             "vitest",
@@ -250,6 +257,129 @@ fn changed_cardinality_keeps_length_credit_for_both_frameworks() -> Result<(), S
         assert_eq!(
             finding["classification"], "exposed",
             "{framework}: {finding}"
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn jest_only_distinguishes_appended_value_from_cardinality() -> Result<(), String> {
+    for (new, body, expected) in [
+        (
+            UPPER,
+            "const b: string[] = [];\nlogLine(b, 'hi');\nexpect(b.length).toBe(1);",
+            "weakly_exposed",
+        ),
+        (
+            UPPER,
+            "const b: string[] = [];\nlogLine(b, 'hi');\nexpect(b[0]).toBe('HI');",
+            "exposed",
+        ),
+        (
+            "buf.push(msg, msg);",
+            "const b: string[] = [];\nlogLine(b, 'hi');\nexpect(b.length).toBe(2);",
+            "exposed",
+        ),
+    ] {
+        let workspace = Workspace::new("@jest/globals", new, body)?;
+        let path = workspace.0.join("test/log.test.ts");
+        let source = fs::read_to_string(&path).map_err(|error| error.to_string())?;
+        fs::write(&path, source.replace("test('log'", "test.only('log'"))
+            .map_err(|error| error.to_string())?;
+        let finding = workspace.finding()?;
+        assert_eq!(
+            finding["classification"], expected,
+            "{new}: {body}\n{finding}"
+        );
+        if expected == "weakly_exposed" {
+            assert_eq!(finding["ripr"]["observe"]["state"], "weak", "{finding}");
+            assert_eq!(
+                finding["ripr"]["discriminate"]["state"], "weak",
+                "{finding}"
+            );
+        }
+    }
+    Ok(())
+}
+
+#[test]
+fn jest_only_literal_timeout_distinguishes_value_from_cardinality() -> Result<(), String> {
+    for (new, body, expected) in [
+        (
+            UPPER,
+            "const b: string[] = [];\nlogLine(b, 'hi');\nexpect(b.length).toBe(1);",
+            "weakly_exposed",
+        ),
+        (
+            UPPER,
+            "const b: string[] = [];\nlogLine(b, 'hi');\nexpect(b[0]).toBe('HI');",
+            "exposed",
+        ),
+        (
+            "buf.push(msg, msg);",
+            "const b: string[] = [];\nlogLine(b, 'hi');\nexpect(b.length).toBe(2);",
+            "exposed",
+        ),
+    ] {
+        let workspace = Workspace::new("@jest/globals", new, body)?;
+        let path = workspace.0.join("test/log.test.ts");
+        let source = fs::read_to_string(&path).map_err(|error| error.to_string())?;
+        assert_eq!(source.matches("test('log'").count(), 1);
+        assert_eq!(source.matches("});").count(), 1);
+        fs::write(
+            &path,
+            source
+                .replace("test('log'", "test.only('log'")
+                .replace("});", "}, 5000);"),
+        )
+        .map_err(|error| error.to_string())?;
+        let finding = workspace.finding()?;
+        assert_eq!(
+            finding["classification"], expected,
+            "{new}: {body}\n{finding}"
+        );
+        if expected == "weakly_exposed" {
+            assert_eq!(finding["ripr"]["observe"]["state"], "weak", "{finding}");
+            assert_eq!(
+                finding["ripr"]["discriminate"]["state"], "weak",
+                "{finding}"
+            );
+        }
+    }
+    Ok(())
+}
+
+#[test]
+fn jest_only_timeout_witness_rejects_dynamic_and_extra_arguments() -> Result<(), String> {
+    let body = "const b: string[] = [];\nlogLine(b, 'hi');\nexpect(b.length).toBe(1);";
+    for (prefix, registration, suffix, expected) in [
+        ("", "test.only", ", 0", "weakly_exposed"),
+        ("", "test.only", ", 2147483647", "weakly_exposed"),
+        ("", "test.only", ", 2147483648", "exposed"),
+        ("", "test.only", ", -1", "exposed"),
+        ("", "test.only", ", 5000 + 0", "exposed"),
+        ("", "test.only", ", mutate()", "exposed"),
+        ("", "test.only", ", 5000, mutate()", "exposed"),
+        ("test.only = fake;", "test.only", ", 5000", "exposed"),
+        (
+            "import { test as run } from 'vitest';",
+            "run.only",
+            ", 5000",
+            "exposed",
+        ),
+    ] {
+        let workspace = Workspace::new("@jest/globals", UPPER, body)?;
+        write_file(
+            &workspace.0,
+            "test/log.test.ts",
+            &format!(
+                "import {{ test, expect }} from '@jest/globals';\n{prefix}\nimport {{ logLine }} from '../src/log';\n{registration}('log', () => {{\n{body}\n}}{suffix});\n"
+            ),
+        )?;
+        let finding = workspace.finding()?;
+        assert_eq!(
+            finding["classification"], expected,
+            "{prefix} {registration} {suffix}: {finding}"
         );
     }
     Ok(())

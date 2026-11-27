@@ -53,7 +53,7 @@ Options:
                    walks up to the enclosing workspace or package, or the git
                    top level; `--root .` pins this directory.
   --seam-id ID     Select one visible seam by ID.
-  --out PATH       Workflow output directory (relative to --root). Defaults to target/ripr/workflow.
+  --out PATH       Workflow output directory (relative to --root; must stay inside it). Defaults to target/ripr/workflow.
   --json           Emit one machine-readable JSON document instead of the
                    `Wrote <path>` / `Next: <cmd>` prose lines:
                      {"schema_version": "0.1", "workflow": {"workflow_manifest": <path>,
@@ -73,7 +73,7 @@ with the cause on stderr.
 "#;
 pub(super) const AGENT_BRIEF_HELP: &str = r#"Write a bounded brief for a coding agent over the current diff or change.
 
-Usage: ripr agent brief [--root PATH] (--diff PATH|--base REV|--files PATHS|--seam-id ID) --json [--max-seams N]
+Usage: ripr agent brief [--root PATH] (--diff PATH|--base REV|--files PATHS|--seam-id ID) --json [--max-seams N] [--line-ranges]
 
 Options:
   --root PATH      Workspace root. Defaults to the current directory, then
@@ -89,6 +89,9 @@ Options:
   --seam-id ID     Select one visible seam by ID.
   --json           Required until a human brief surface exists.
   --max-seams N    Requested seam cap. Defaults to 3 and cannot exceed 10.
+  --line-ranges    JSON-only lossless grouped inclusive changed-line ranges.
+                   Minifies output; requires --json. May grow for many files.
+                   Does not truncate locations or change the seam cap.
 
 When --files or --base produces a working set that matches no seams, the brief
 falls back to all repo-actionable seams. This scope-widening is disclosed in
@@ -123,7 +126,9 @@ mutation testing, generate tests, edit files, change cache behavior, or touch
 LSP/MCP surfaces.
 
 A refusal (for example, an unknown seam or gap) exits `3` with the cause on
-stderr and empty stdout.
+stderr and, with `--json`, a refusal document on stdout (an
+agent-seam-packets-json envelope with no findings and the cause in
+`run_limitations`).
 "#;
 pub(super) const AGENT_CARD_HELP: &str = r#"Hand off one seam as the compact default repair card.
 
@@ -148,7 +153,7 @@ complete canonical packet stays behind the card's explicit packet route
 path. It remains advisory and static; it does not run mutation testing,
 generate tests, edit files, change cache behavior, or touch LSP/MCP surfaces.
 
-Refusal contract (#5007): a deliberate named refusal — seam id not found,
+Refusal contract: a deliberate named refusal — seam id not found,
 policy-omitted seam, witness analysis unavailable, unnameable portable
 workspace identity, or builder/budget refusal — exits `3`. Under `--json`
 stdout carries one versioned `agent_card_refusal` envelope (`schema_version`
@@ -171,8 +176,10 @@ Options:
   --seam-id ID     Select one visible seam by ID.
   --at FILE:LINE   Select the gap at a `ripr check` finding location.
   --kind FAMILY    With --at: the finding's probe family (`predicate`,
-                   `return_value`, `error_path`, `match_arm`). Only seams of
-                   that kind are tried, so a line holding several changes
+                   `return_value`, `error_path`, `match_arm`,
+                   `call_deletion`, `field_construction`, `side_effect`).
+                   Only seams of that kind are tried, so a line
+                   holding several changes
                    stubs the one the finding reported; two separate seams of
                    that kind on one line are refused with their seam IDs.
                    `ripr check` prints it. Without it, --at tries only the
@@ -205,9 +212,22 @@ available: edit the test by hand, run the native test command, then refresh
 with `ripr check`. No stub is written for an unsupported language.
 
 The stub calls the changed function with its real receiver and parameters,
-fills a boundary input when the changed comparison names one, and stops at a
-labelled `todo!()` for the value the behavior should produce. It compiles and
-fails until that value is written; ripr never invents the expected value.
+fills a boundary input when the changed comparison names one (for a `&str`
+length boundary such as `s.len() > 3`, a string of that length), copies a
+free function's other inputs from the first call with all-literal arguments
+in an existing test of its inline test module, when the copied values do not
+steer the function away from the changed comparison, fills the input
+a changed match arm's own pattern names (`Event::Fail`, `2`), builds a method's
+receiver from a constructor when the impl has one (the first literal-argument
+call an existing test in that module makes, else a no-argument `new`, `empty`
+or `default`, else a derived `Default`), and stops at a labelled `todo!()` for the value
+the behavior should produce. It compiles and
+fails until that value is written. When the written inputs decide a plain
+`if`/`match` path to a constant, the `todo!()` label names what the changed
+code returns there and, for a changed `>`, `>=`, `<` or `<=`
+comparison, what it returns with the other bound (`>` and `>=` swap, as do
+`<` and `<=`), so you keep the intended one; ripr never writes the expected
+value itself.
 `--at --kind` still selects from that one file's seams without using
 classification to pick the seam; after selection it looks up the inventory
 grip so the stub can disclose it. A strongly_gripped seam is still a
@@ -252,7 +272,7 @@ artifacts — names the cause on stderr, exits `3`, and leaves stdout empty
 . Other rejections (unreadable or invalid artifacts, lineage
 or metadata mismatches) exit `2`.
 
-Movement vocabulary (#2648): the JSON output uses two related fields:
+Movement vocabulary: the JSON output uses two related fields:
   - `change` (per-item): improved | changed | regressed | unchanged | new | resolved
   - `gap_movement` (per-item): closed | persisted | new
 Precedence: `change: improved` means the grip class moved up; `gap_movement: closed`
@@ -300,7 +320,7 @@ owned child is terminated.
 
 Every parsed attempt, including refusals, emits typed JSON on stdout; usage
 errors stay on stderr. Exit status is 0 when a bounded observation was committed
--- including an observed command failure -- 3 for a typed refusal, and 2 when
+-- including an observed command failure -- 3 when ripr declined the request, and 2 when
 the result could not be written. It
 records process evidence only; it does not issue receipts, run mutation testing,
 prove adequacy, or grant gate or merge authority.
@@ -360,6 +380,11 @@ Options:
                    (target/ripr/workflow); any other path fails closed
                    because agent status reads only that directory.
 
+Shell quoting: human Markdown states the host shell boundary in one line
+before the emitted command; add the global `-v`/`--verbose` flag to restore
+the full shell-quoting disclosure. Repeat polls in an agent loop therefore
+stay small, and `--json` is unchanged (typed states, no prose).
+
 The status command reads existing agent-loop artifacts under target/ripr only
 and reports which before snapshot, after snapshot, brief, packet, verify, and
 receipt files are present or missing. It may recover a seam_id from those
@@ -389,6 +414,7 @@ pub(super) const AGENT_REPAIR_HELP: &str = r#"Run the before/edit/after repair t
 Usage: ripr agent repair [--root PATH] [--store PATH] --seam-id ID --phase before [--json]
        ripr agent repair [--root PATH] [--store PATH] --gap-id ID --base REF --phase before [--json]
        ripr agent repair [--root PATH] [--store PATH] (--attempt ID|--seam-id ID) --phase after [--json]
+           [--test-result FILE]
        ripr agent repair [--root PATH] [--store PATH] --attempt ID --phase verify [--json]
            [--verify-authorized --verify-authority ID] [--verify-rollback]
 
@@ -407,6 +433,10 @@ Options:
                        packet, the after-phase result, or the verification
                        receipt). Without it stdout is a short summary and the
                        documents stay in their files under target/ripr/.
+  --quiet              Drop the phase's progress narration and `wrote <path>`
+                       lines from stderr, like `ripr repair --quiet` and
+                       `RIPR_QUIET`. Results, refusal prose and the warning
+                       to write output outside the repo always print.
   --seam-id ID         Select one visible seam; required for `before` and the
                        compatibility selector for `after`. For `--phase before`,
                        a seam ID, a `ripr check` finding ID (`probe:` /
@@ -415,19 +445,20 @@ Options:
                        resolves to that seam. `--phase after` keeps exact seam
                        IDs. An unmapped ID refuses with the `ripr pilot`
                        recovery route.
-  --gap-id ID          Start a repair for one canonical TypeScript preview gap
-                       (`gap:typescript:typescript_preview:...`) printed by
-                       `ripr check`; exclusive with `--seam-id` and requires
-                       `--base`. The before phase re-runs the diff-scoped
-                       check, refuses unless the finding's repair packet is
-                       ready, and records the check-findings snapshot. Run
+  --gap-id ID          Start a repair for one canonical Python or TypeScript
+                       preview gap printed by `ripr check`; exclusive with
+                       `--seam-id` and requires `--base`. The before phase
+                       re-runs the diff-scoped check, refuses unless the
+                       finding's repair packet is ready, and records the
+                       check-findings snapshot. Run
                        `--attempt ID --phase after` after committing the
                        focused test: it re-runs the check against the recorded
                        base commit, reports the gap closed only when it reads
                        exposed (otherwise it refuses and the attempt stays
-                       retryable), then enforces the edit cage. It issues no
-                       receipt; the closure rides the verify result. Python
-                       gaps are not repairable here.
+                       retryable), then enforces the edit cage. It records
+                       advisory static movement and an attempt receipt without
+                       running the focused test. Run the suggested test command
+                       and keep the repair only if that test passes.
   --base REF           The Git base the diff-scoped check compares against;
                        required with, and valid only for, `--gap-id`.
   --attempt ID         Select one durable repair attempt; valid for `after`
@@ -455,6 +486,26 @@ Options:
   --verify-rollback    After the observation, restore the applied edit and
                        record the rollback proof; `verify` only; requires the
                        verification authorization.
+  --test-result FILE   A focused `cargo test` result you ran yourself, as a JSON
+                       file with schema_version "0.1", kind
+                       "focused_test_result", attempt_id, head, test_file and
+                       libtest_events. `after` only. ripr does not run tests: it
+                       checks that the result is bound to this attempt and the
+                       current HEAD, names the selected test file, and has at
+                       least one test that ran in that file or module, and that
+                       no failure falls outside it and that the events it reports
+                       close (every started test ends, every announced suite
+                       finishes), then records the normalized result with the
+                       attempt as a caller-reported claim.
+                       Required to finish an attempt that follows a new-test
+                       proposal (it must count a test and fail none; for an
+                       inline proposal, a passing test must be one the file
+                       did not define when the attempt began); optional
+                       otherwise. Anything else is
+                       refused and the attempt keeps waiting. Rust test files
+                       only; save the file outside the checkout. A finish that
+                       stops after the receipt evaluation began shows as
+                       limited in status; start a new attempt.
 
 The ordinary repair path is:
 
@@ -502,11 +553,14 @@ or declare the repository safe to merge.
 
 Repair scope: the edit target must match the test-surface path
 convention (`tests`/`test` paths, `*_test`/`*_tests`, `test_*`, and
-TypeScript test-file conventions), and the cage authorizes it whole-file.
+TypeScript test-file conventions). For external Rust test files, the cage
+permits only insertion of new test functions and preserves existing test
+bytes; an existing selected file must be committed before the start.
+Other languages retain the whole-file path cage.
 One exception: when a seam's only tests live in one inline `#[cfg(test)]`
 module of the production file, the before phase can bind that module's
 body as the edit cage instead — production code outside the module stays
-untouched, and the file must be committed before the start (#5210, #9033).
+untouched, and the file must be committed before the start.
 Seams with no test-surface file and no such single inline module are out
 of repair scope; the before phase refuses them before creating anything.
 

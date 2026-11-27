@@ -712,7 +712,9 @@ pub(in crate::analysis::classify) fn call_count(text: &str, name: &str) -> usize
         .count()
 }
 
-/// The top-level argument texts of the first call of `name` in `text`.
+/// The top-level argument texts of the first call of `name` in `text`. A
+/// turbofish call (`name::<u8>(..)`) reads like the plain call (#15277), so
+/// an argument gate such as the empty-walk refusal still sees its arguments.
 pub(in crate::analysis::classify) fn call_argument_texts(
     text: &str,
     name: &str,
@@ -720,7 +722,10 @@ pub(in crate::analysis::classify) fn call_argument_texts(
     let masked = mask_comments_and_strings(text);
     let open = whole_word_offsets(&masked, name)
         .into_iter()
-        .map(|offset| offset + name.len())
+        .map(|offset| {
+            let end = offset + name.len();
+            end + crate::analysis::extract::turbofish_len(&masked[end..])
+        })
         .find(|end| masked[*end..].starts_with('('))?;
     let close = super::matching_close(&masked, open, b'(', b')')?;
     Some(split_top_level(&text[open + 1..close]))
@@ -1295,12 +1300,12 @@ mod tests {
             start_line,
             end_line: start_line + body.lines().count(),
             body: body.to_string().into(),
-            calls: Vec::new(),
+            calls: crate::analysis::facts::SharedFactSlice::empty(),
             assertions: Vec::new(),
-            literals: Vec::new(),
-            attrs: Vec::new(),
-            nested_fn_names: Vec::new(),
-            let_bindings: Vec::new(),
+            literals: crate::analysis::facts::SharedFactSlice::empty(),
+            attrs: crate::analysis::facts::SharedFactSlice::empty(),
+            nested_fn_names: crate::analysis::facts::SharedFactSlice::empty(),
+            let_bindings: crate::analysis::facts::SharedFactSlice::empty(),
             generated: None,
         }
     }

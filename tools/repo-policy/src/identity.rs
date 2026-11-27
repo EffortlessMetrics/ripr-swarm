@@ -140,6 +140,10 @@ fn input_identity() -> Result<String, String> {
             Err(e) => return Err(format!("policy input identity: {name}: {e}")),
         }
     }
+    // Bind the pointer bytes and presence of competing paths, including an empty skills tree.
+    let gemini = serde_json::to_vec(&crate::agent_skills::gemini_route_inputs()?)
+        .map_err(|error| format!("Gemini route identity: {error}"))?;
+    hash.update(gemini);
     Ok(format!("{:x}", hash.finalize()))
 }
 

@@ -41,7 +41,9 @@ run the `ripr-setup` workflow and stop with its outcome.
    `fresh_for_working_tree`. Bind subsequent evidence reads to that
    snapshot. A failed refresh's last-known-good snapshot is not new
    evidence, and excluded edits are not analyzed. An empty scope is not
-   an all-clear: surface `empty_scope_hint` when present.
+   an all-clear: surface `empty_scope_hint` when present, or
+   `worktree_base_hint` when a worktree refresh checked no behavior
+   (usually only tests changed after the base) and follow its retry.
 2. Choose one gap. Page `ripr_list_gaps` with `repair_ready: true` from
    the bounded summaries, inspect one candidate with `ripr_get_gap`,
    and record its `canonical_id`, class, file, and line. Identify the
@@ -55,9 +57,9 @@ run the `ripr-setup` workflow and stop with its outcome.
    `readiness.repair_ready` to be true. Otherwise, or when a limitation
    blocks the seam, explain the exact typed stop and end. A wrong
    actionable signal is worse than a missed advisory one.
-4. Prepare a durable attempt with the CLI, using the seam identity from
-   the repair card's receipt binding — the seam ID it names, not an
-   inferred equivalent of the canonical gap ID:
+4. Prepare a durable attempt with the CLI, using the repair card's
+   `card.subject.seam_id`. Keep this seam ID distinct from the canonical
+   gap ID:
 
    ```text
    ripr agent repair --root . --seam-id <seam-id> --phase before --json

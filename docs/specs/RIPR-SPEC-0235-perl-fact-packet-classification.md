@@ -426,7 +426,12 @@ For each change, the first match wins:
     changed owner's sub with a literal argument that equals a numeric literal
     that is a whole side of the comparison (`1000` in
     `'gold' if 1000 <= $points`; digit separators are ignored, a leading `-`
-    counts; the sub name comes from the owner id). A literal beside an
+    counts; the sub name comes from the owner id). A method call on an
+    unrelated or unknown receiver supplies no owner input. Whitespace
+    or a masked comment between `->` and the method name preserves that
+    receiver: `Other-> discount(100)` and `$obj-> discount(100)` cannot supply
+    a threshold for `My::App::discount`, while `My::App-> discount(100)` keeps
+    the same input as its compact spelling (#13150). A literal beside an
     arithmetic or concatenation operator (`$n + 1 > 10`, `$x > 10 + $y`,
     `$total / 100 >= 5` for the `100`) is only part of an operand and is not a
     threshold. Quoted strings and `#` comments in the oracle expression are

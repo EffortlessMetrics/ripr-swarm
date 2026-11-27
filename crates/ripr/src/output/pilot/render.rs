@@ -1,6 +1,7 @@
 mod complete;
 mod render_helpers;
 mod timeout;
+mod unreadable;
 
 pub(crate) use complete::{render_pilot_human_summaries, render_pilot_summary_json};
 #[cfg(test)]

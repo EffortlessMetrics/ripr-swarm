@@ -26,10 +26,14 @@ fn commit(n: u8, position: Option<u64>, effect: &str, paths: &[&str]) -> CommitF
         paths: paths.iter().map(|path| (*path).to_string()).collect(),
         inline_test_paths: Vec::new(),
         final_tree_effect: effect.to_string(),
+        // Alive/absent partition the touched paths exactly, as real capture
+        // derives them; the path-record count must reconcile with this basis.
         effect_basis: EffectBasis {
-            alive_paths: u64::from(effect != "history_reachable_no_final_blob_effect"),
-            absent_paths: u64::from(effect == "history_reachable_no_final_blob_effect"),
-            last_toucher_paths: u64::from(owned),
+            alive_paths: u64::from(effect != "history_reachable_no_final_blob_effect")
+                * paths.len() as u64,
+            absent_paths: u64::from(effect == "history_reachable_no_final_blob_effect")
+                * paths.len() as u64,
+            last_toucher_paths: u64::from(owned) * paths.len() as u64,
             blamed_lines: 0,
         },
     }
@@ -477,7 +481,9 @@ fn bad_overrides_are_rejected() -> Result<(), String> {
 
 #[test]
 fn short_commit_ids_do_not_panic_the_override_reference() -> Result<(), String> {
-    let mut short = commit(5, Some(1), "present_effective", &[]);
+    // A blocking row the override may resolve; present_effective with no
+    // touched path cannot exist in real capture, so use an unclassified path.
+    let mut short = commit(5, Some(1), "present_effective", &["unknown/dir/state.json"]);
     short.commit_sha = "abc".to_string();
     let input = facts(vec![short]);
     let set = Overrides {
@@ -600,4 +606,166 @@ fn inline_test_only_product_paths_count_as_evidence() -> Result<(), String> {
         disposition_of(mixed)? == "included_accepted_product",
         "another product path keeps the commit product",
     )
+}
+
+#[test]
+fn path_inventories_bind_the_captured_record_partition() -> Result<(), String> {
+    // The NUL-framed digest must tell a path named `a\nb` apart from the two
+    // paths `a` and `b\nc`: same count, different partition, different digest
+    // (#4006: a newline-joined digest cannot represent names with newlines).
+    let joined = derive(&DeriveInput {
+        facts: &facts(vec![commit(
+            2,
+            Some(1),
+            "present_effective",
+            &["crates/ripr/src/a\nb.rs"],
+        )]),
+        packet: &packet(),
+        overrides: None,
+        stage: "dry_run",
+        audit: None,
+    })?;
+    let split = derive(&DeriveInput {
+        facts: &facts(vec![commit(
+            2,
+            Some(1),
+            "present_effective",
+            &["crates/ripr/src/a.rs", "crates/ripr/src/b\nc.rs"],
+        )]),
+        packet: &packet(),
+        overrides: None,
+        stage: "dry_run",
+        audit: None,
+    })?;
+    let joined_record = &joined.records[0];
+    let split_record = &split.records[0];
+    require(
+        joined_record.path_record_count == 1 && split_record.path_record_count == 2,
+        "the count names decoded records, not lines",
+    )?;
+    require(
+        joined_record.path_record_sha256 != split_record.path_record_sha256,
+        "the NUL digest separates the newline partition",
+    )?;
+    require(
+        joined.path_inventories.range_touched.path_record_count == 1,
+        "the range union matches the records it covers",
+    )?;
+    require(
+        joined.path_inventories.range_touched.path_record_sha256
+            != split.path_inventories.range_touched.path_record_sha256,
+        "the range union keeps the partition distinct",
+    )?;
+    // Both ledgers must be internally valid with their own inventories.
+    for ledger in [&joined, &split] {
+        let reasons = validate(ledger, &Context::default());
+        require(
+            reasons.is_empty(),
+            &format!("a derived ledger must validate: {reasons:?}"),
+        )?;
+    }
+    Ok(())
+}
+
+#[test]
+fn recorded_provisional_overrides_resolve_only_the_reviewed_rows() -> Result<(), String> {
+    let policy: Overrides = serde_json::from_str(include_str!(
+        "../../../../policy/release-ledger-overrides.json"
+    ))
+    .map_err(|error| error.to_string())?;
+    let historical = "included_historical_reachable_only";
+    let reviewed: [(&str, &str, &[&str]); 9] = [
+        ("264db5967022a0aeaec26cc2827d432d3cdb62a5", historical, &[]),
+        ("bafadaf7986e9056cb9fbc8819d0158bb712baca", historical, &[]),
+        ("c44d0f6ccef88cad1059f994e69831632e90fb5e", historical, &[]),
+        (
+            "af3818be37ed9907209d426c803a4135e62505b1",
+            "included_accepted_product",
+            &["plugins/muse/ripr/.muse-plugin/plugin.json"],
+        ),
+        ("1b7f3740ab49a345f091e95a2b61f4e47bd8a9e4", historical, &[]),
+        ("8e74baf93e5c34bcd08944db07989dafa332aa97", historical, &[]),
+        (
+            "14e6e6dd818d832b12573a453a672d1d5f1f25fd",
+            "included_test_or_evidence",
+            &["examples/rust-discount-threshold/project/src/lib.rs"],
+        ),
+        (
+            "40631fc14a9a10ff7272ff61f6cb2e44a27309d5",
+            "included_accepted_release_or_control",
+            &["evals/ripr-eval-smoke/src/lib.rs"],
+        ),
+        (
+            "090336241623cd0f5f7c6d5252e7c9553ff29f83",
+            "included_test_or_evidence",
+            &["examples/typescript-discount-threshold/project/package.json"],
+        ),
+    ];
+    let mut commits = Vec::new();
+    let mut controls = Vec::new();
+    for (index, (id, _, paths)) in reviewed.iter().enumerate() {
+        let number = 10 + index as u8;
+        let effect = if paths.is_empty() {
+            "history_reachable_no_final_blob_effect"
+        } else {
+            "present_effective"
+        };
+        let mut row = commit(number, Some(index as u64 + 1), effect, paths);
+        row.commit_sha = (*id).to_string();
+        commits.push(row);
+        if !paths.is_empty() {
+            // Identical paths under another commit must still require review.
+            let number = 30 + controls.len() as u8;
+            let position = (reviewed.len() + controls.len() + 1) as u64;
+            controls.push(commit(number, Some(position), effect, paths));
+        }
+    }
+    let control_shas: Vec<_> = controls.iter().map(|row| row.commit_sha.clone()).collect();
+    commits.extend(controls);
+    let input = facts(commits);
+    let relevant = Overrides {
+        schema_version: policy.schema_version,
+        kind: policy.kind,
+        overrides: policy
+            .overrides
+            .into_iter()
+            .filter(|item| reviewed.iter().any(|(id, _, _)| *id == item.commit_sha))
+            .collect(),
+    };
+    require(
+        relevant.overrides.len() == reviewed.len(),
+        "each reviewed commit must have an override",
+    )?;
+    let ledger = derive(&DeriveInput {
+        facts: &input,
+        packet: &packet(),
+        overrides: Some(&relevant),
+        stage: "dry_run",
+        audit: None,
+    })?;
+    for (id, expected, _) in reviewed {
+        let row = ledger
+            .records
+            .iter()
+            .find(|row| row.commit_sha == id)
+            .ok_or_else(|| format!("missing reviewed commit {id}"))?;
+        require(
+            row.release_disposition == expected
+                && row.override_ref.is_some()
+                && row.source_sync_authority_effect == "not_established",
+            "reviewed row disposition or source authority changed",
+        )?;
+    }
+    for id in control_shas {
+        let control = ledger
+            .records
+            .iter()
+            .find(|row| row.commit_sha == id)
+            .ok_or_else(|| format!("missing unreviewed control {id}"))?;
+        require(
+            control.release_disposition == "blocking_unresolved" && control.override_ref.is_none(),
+            "an unreviewed commit with the same paths must remain blocked",
+        )?;
+    }
+    Ok(())
 }

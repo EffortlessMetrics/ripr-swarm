@@ -18,8 +18,10 @@ human-facing layering doctrine lives in
 - `policy/workflow_allowlist.txt`: required workflow budget policy.
 - `docs/agent-context/droid-rollout.md`: Factory Droid rollout checklist.
 - `crates/ripr/src/mcp/`: bounded read-only MCP adapter (`ripr mcp --stdio`,
-  ADR 0022). One status tool and one resource over a workspace status
-  resolved once at process startup; see [`../interop/mcp.md`](../interop/mcp.md).
+  ADR 0022). Exposes workspace status, bounded snapshot refresh (`ripr_refresh`),
+  progressive gap/limitation/repair-card/attempt discovery tools, and
+  `ripr://` resources and resource templates; see
+  [`../interop/mcp.md`](../interop/mcp.md).
 
 ## Important policy files
 

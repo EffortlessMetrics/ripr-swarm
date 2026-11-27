@@ -250,7 +250,7 @@ fn durable_selected_restart_failed_cli_binds_root_mcp_projects_portable() -> Res
     let fixture = literal_root_fixture("restart-failed")?;
     write(
         &fixture.root.join("tests/target.rs"),
-        "#[test]\nfn focused() { assert_eq!(1, 1); }\n",
+        "#[test]\nfn focused() {}\n\n#[test]\nfn added() { assert_eq!(1, 1); }\n",
     )?;
     write(&fixture.root.join("outside.rs"), "pub fn forbidden() {}\n")?;
     let manifest = load_repair_attempt_manifest(&fixture.root, &fixture.id)?;
@@ -354,7 +354,7 @@ fn durable_inventory_failed_restart_retains_literal_unix_root() -> Result<(), St
     let fixture = literal_root_fixture("inventory-failed")?;
     write(
         &fixture.root.join("tests/target.rs"),
-        "#[test]\nfn focused() { assert_eq!(1, 1); }\n",
+        "#[test]\nfn focused() {}\n\n#[test]\nfn added() { assert_eq!(1, 1); }\n",
     )?;
     write(&fixture.root.join("outside.rs"), "pub fn forbidden() {}\n")?;
     let manifest = load_repair_attempt_manifest(&fixture.root, &fixture.id)?;

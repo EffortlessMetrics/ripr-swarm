@@ -67,6 +67,7 @@ fn reports(first: &AnalysisPass, stability: Option<&StabilityResult>) -> (Value,
         stability_performed: stability.is_some(),
         stability_limitation,
         output_identity_stable,
+        retained_repeat: None,
         config_profile: CONFIG_PROFILE_DEFAULT.to_string(),
         subject_config_path: None,
         corpus_state: "absent",
@@ -144,7 +145,7 @@ fn rejects_before_summary(stdout: &[u8], diagnostic: &str) {
         &first,
     );
     assert!(
-        matches!(decision, StabilityResult::NotCompared { limitation }
+        matches!(decision.result, StabilityResult::NotCompared { limitation }
         if limitation.contains("runs only where the first result is complete"))
     );
 

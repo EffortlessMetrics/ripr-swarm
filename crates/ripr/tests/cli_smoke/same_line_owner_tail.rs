@@ -100,6 +100,16 @@ fn retained_split_boundary_tail_keeps_the_predicate_gap_and_exposed_return()
             .ok_or("missing discriminate summary")?
             .contains("same_test_pairing_missing")
     );
+    let summary = predicate["ripr"]["discriminate"]["summary"]
+        .as_str()
+        .ok_or("missing discriminate summary")?;
+    assert_eq!(
+        summary,
+        "Check unconfirmed: no supported assertion that distinguishes the changed behavior is paired with the owner's boundary call (same_test_pairing_missing); a boundary input and a separate exact assertion do not establish that pairing"
+    );
+    for jargon in ["admitted", "discriminator"] {
+        assert!(!summary.to_ascii_lowercase().contains(jargon), "{summary}");
+    }
     assert_eq!(returned["classification"], "exposed", "{returned}");
     for row in [predicate, returned] {
         assert_eq!(row["related_tests_total"], 2);

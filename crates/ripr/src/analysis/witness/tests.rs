@@ -6,11 +6,11 @@ use crate::analysis::seams::{
 };
 use crate::analysis::test_grip_evidence::{RelatedTestGrip, TestGripEvidence, TestTargetEvidence};
 use crate::domain::{
-    ActivationEvidence, Confidence, DeltaKind, ExposureClass, Finding, FindingCanonicalGap,
-    LanguageId, LanguageStatus, MissingDiscriminatorFact, OracleKind, OracleStrength, Probe,
-    ProbeFamily, ProbeId, RelatedTest, RelationReason, RevealEvidence, RiprEvidence,
-    SourceCurrentness, SourceLocation, StageEvidence, StageState, StaticLimitKind, StopReason,
-    SymbolId,
+    ActivationEvidence, Confidence, DeltaKind, DiscriminatorShape, ExposureClass, Finding,
+    FindingCanonicalGap, LanguageId, LanguageStatus, MissingDiscriminatorFact, OracleKind,
+    OracleStrength, Probe, ProbeFamily, ProbeId, RelatedTest, RelationReason, RevealEvidence,
+    RiprEvidence, SourceCurrentness, SourceLocation, StageEvidence, StageState, StaticLimitKind,
+    StopReason, SymbolId,
 };
 
 use super::{
@@ -132,6 +132,7 @@ impl FindingSpec {
                 normalized_discriminator: self.discriminator.to_string(),
             }),
             probe: Probe {
+                before_condition: None,
                 id: ProbeId("probe:pricing".to_string()),
                 location: SourceLocation::new("src/pricing.rs", self.line, 5),
                 owner: Some(SymbolId(self.owner.to_string())),
@@ -160,10 +161,12 @@ impl FindingSpec {
                 missing_discriminators: self
                     .missing
                     .iter()
-                    .map(|value| MissingDiscriminatorFact {
-                        value: (*value).to_string(),
-                        reason: "fixture".to_string(),
-                        flow_sink: None,
+                    .map(|value| {
+                        MissingDiscriminatorFact::equality_spelled(
+                            (*value).to_string(),
+                            "fixture".to_string(),
+                            None,
+                        )
                     })
                     .collect(),
             },
@@ -236,6 +239,7 @@ impl SeamSpec {
         with_target: bool,
     ) -> Self {
         self.related.push(RelatedTestGrip {
+            assertion_targets_non_function: None,
             test_name: name.to_string(),
             file: PathBuf::from("tests/pricing.rs"),
             line: 10,
@@ -283,10 +287,12 @@ impl SeamSpec {
                 missing_discriminators: self
                     .missing
                     .iter()
-                    .map(|value| MissingDiscriminatorFact {
-                        value: (*value).to_string(),
-                        reason: "fixture".to_string(),
-                        flow_sink: None,
+                    .map(|value| {
+                        MissingDiscriminatorFact::equality_spelled(
+                            (*value).to_string(),
+                            "fixture".to_string(),
+                            None,
+                        )
                     })
                     .collect(),
                 statically_contradicted_related_tests: 0,
@@ -965,6 +971,8 @@ fn reordering_source_facts_is_byte_stable() {
             value: "amount >= threshold".to_string(),
             reason: "duplicate".to_string(),
             flow_sink: None,
+            shape: DiscriminatorShape::Other,
+            drafted_boundary: None,
         },
     );
     let first = from_finding(&finding);
