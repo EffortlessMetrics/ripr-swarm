@@ -9,6 +9,7 @@ pub(crate) mod consumed_source;
 pub(crate) mod diagnostic_origin;
 mod diff;
 mod diff_scope_filter;
+mod executable_tests;
 mod extract;
 mod facts;
 pub(crate) use classify::compares_value_with_its_own_copy;
@@ -116,14 +117,14 @@ pub use diff::records::{
 pub(crate) use diff::{
     AnalyzedRevisions, ChangedFile, HeadRefState, another_base_candidate,
     artifact_root_gitignore_entry, artifact_root_pathspec, base_is_checked_out_head,
-    base_is_checked_out_head_with_parent, default_base_unresolved_message, git_operation_advisory,
-    is_shallow_repository, load_diff, load_diff_core,
+    base_is_checked_out_head_with_parent, default_base_unresolved_message, doctor_base_history,
+    git_operation_advisory, is_shallow_repository, load_diff, load_diff_core,
     load_diff_range_with_deadline_and_git_stdout_limit_core, load_diff_with_effective_base_core,
     load_worktree_diff, load_worktree_diff_with_effective_base_core, no_merge_base_diagnosis,
-    parse_unified_diff, probe_head_ref_state, probe_working_tree_tracked_changes_within,
-    resolve_base_commit, resolve_effective_base, resolve_effective_base_core, ripr_artifact_roots,
-    untrack_artifacts_command, working_tree_has_tracked_changes,
-    working_tree_has_uncommitted_changes,
+    origin_lacks_head_pointer, parse_unified_diff, probe_head_ref_state,
+    probe_working_tree_tracked_changes_within, resolve_base_commit, resolve_effective_base,
+    resolve_effective_base_core, ripr_artifact_roots, untrack_artifacts_command,
+    working_tree_has_tracked_changes, working_tree_has_uncommitted_changes,
 };
 /// Shared RIPR-SPEC-0084 default-base authority and pinned analysis-range
 /// diff assembly (#4003): the one named owner for badge input base/diff,
@@ -207,14 +208,17 @@ pub(crate) use seam_inventory::{
     inventory_diff_scoped_seam_at_with_config, inventory_diff_scoped_streamed_seams_at_with_config,
     inventory_diff_scoped_streamed_seams_with_optional_prepared,
     inventory_file_guidance_at_with_config, inventory_pilot_seams_report_at_with_config,
-    inventory_seams_at_with_config, inventory_stub_choices, locate_seam_file_at_with_config,
-    prepare_diff_scoped_classified_workspace, probe_family_for_seam_kind, repo_exposure_seam_limit,
-    scoped_file_seams, seam_kind_for_probe_family,
-    workspace_cache_key_and_production_files_at_with_config, workspace_cache_key_at_with_config,
+    inventory_repair_seams_report, inventory_seams_at_with_config, inventory_stub_choices,
+    locate_seam_file_at_with_config, prepare_diff_scoped_classified_workspace,
+    probe_family_for_seam_kind, repo_exposure_seam_limit, scoped_file_seams,
+    seam_kind_for_probe_family, workspace_cache_key_and_production_files_at_with_config,
+    workspace_cache_key_at_with_config,
 };
 pub(crate) use seam_inventory::{PILOT_PACKET_BUDGET_ENV, pilot_packet_budget};
 #[cfg(test)]
-pub(crate) use seam_inventory::{SEAM_FILE_LOCATIONS, WORKSPACE_CLASSIFIED_INVENTORIES};
+pub(crate) use seam_inventory::{
+    SEAM_FILE_LOCATIONS, WORKSPACE_CLASSIFIED_INVENTORIES, WORKSPACE_SEAMS_CLASSIFIED,
+};
 pub(crate) use seam_inventory::{file_fact_cache_receipt, file_fact_store_failure_summary};
 pub(crate) use seams::{RepoSeam, RequiredDiscriminator, match_arm_seam_result};
 pub(crate) use syntax::fn_signature::{
@@ -223,31 +227,9 @@ pub(crate) use syntax::fn_signature::{
 pub(crate) use syntax::governed_cfg_test_modules;
 pub(crate) use syntax::parse_clean_source_file;
 
-/// Module-qualified executable test functions defined in one Rust file, from
-/// parser-backed facts. Ambiguous duplicate symbol identities fail closed.
-pub(crate) fn executable_test_function_names(
-    path: &Path,
-    source: &str,
-) -> Result<std::collections::BTreeSet<String>, String> {
-    use syntax::{RaRustSyntaxAdapter, RustSyntaxAdapter};
-    let facts = RaRustSyntaxAdapter.summarize_file(path, source)?;
-    let prefix = format!("{}::", stable_path_text(path));
-    Ok(facts
-        .functions
-        .iter()
-        .filter(|function| {
-            function.source_role.registers_executable_test()
-                && matches!(function.item.container, facts::FunctionContainer::Free)
-                && function.item.has_body
-                && !function
-                    .id
-                    .0
-                    .ends_with(&format!("{}#L{}", function.name, function.start_line))
-        })
-        .filter_map(|function| function.id.0.strip_prefix(&prefix))
-        .map(str::to_string)
-        .collect())
-}
+pub(crate) use executable_tests::{
+    executable_test_function_bodies, executable_test_function_names,
+};
 pub(crate) use workspace::DiffOnlySource;
 pub(crate) use workspace::PathDependencyAdjacency;
 pub(crate) use workspace::SourceRoleContext;

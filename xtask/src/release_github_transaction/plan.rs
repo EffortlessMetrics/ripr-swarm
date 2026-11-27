@@ -372,15 +372,25 @@ pub(crate) fn decide(
             stop(StopKind::AuthorizationMismatch, mismatches.join("; ")),
         );
     }
-    if inventory.repository != request.repository || inventory.tag_name != request.tag {
+    if inventory.repository != request.repository
+        || inventory.tag_name != request.tag
+        || inventory.provenance != request.provenance
+    {
         return planned(
             Some(request_id),
             None,
             stop(
                 StopKind::InventoryMismatch,
                 format!(
-                    "the inventory observed {}@{}, not {}@{}",
-                    inventory.repository, inventory.tag_name, request.repository, request.tag
+                    "the inventory observed {}@{} under signer {} at {}, not {}@{} under signer {} at {}",
+                    inventory.repository,
+                    inventory.tag_name,
+                    inventory.provenance.signer_workflow,
+                    inventory.provenance.source_ref,
+                    request.repository,
+                    request.tag,
+                    request.provenance.signer_workflow,
+                    request.provenance.source_ref
                 ),
             ),
         );

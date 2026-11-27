@@ -47,6 +47,16 @@ pub(crate) use crate::core_error::GIT_TIMEOUT_REPAIR_GUIDANCE;
 pub(crate) const GIT_NOT_FOUND_ON_PATH_MESSAGE: &str =
     "git was not found on PATH; install git, or pass a saved diff with `--diff PATH` / `--diff -`";
 
+/// The saved-diff route inside [`GIT_NOT_FOUND_ON_PATH_MESSAGE`].
+const SAVED_DIFF_ROUTE: &str = ", or pass a saved diff with `--diff PATH` / `--diff -`";
+
+/// `error` with the saved-diff route removed, for commands that take no
+/// `--diff` (`pr-evidence`, `review-comments`, `gate check`): naming a flag
+/// the command rejects sends the reader to a second failure (#15257).
+pub(crate) fn without_saved_diff_route(error: &str) -> String {
+    error.replace(SAVED_DIFF_ROUTE, "")
+}
+
 /// True when `error` is the named missing-git spawn failure (#4735).
 pub(crate) fn is_git_not_found_on_path(error: &str) -> bool {
     error == GIT_NOT_FOUND_ON_PATH_MESSAGE
@@ -139,6 +149,21 @@ pub(crate) fn run_git_output_with_deadline(
     // non-zero exit instead, changing the error text). For valid roots the
     // two forms are equivalent.
     collect_output_with_deadline(command, timeout, &describe)
+}
+
+/// Probe only locally available history, including in promisor clones. Older
+/// Git versions that ignore GIT_NO_LAZY_FETCH still cannot open a transport.
+pub(crate) fn local_merge_base(
+    root: &Path,
+    base: &str,
+    timeout: Option<Duration>,
+) -> Result<Output, CoreError> {
+    let (mut command, timeout) =
+        git_command_within(root, &["merge-base", "--", base, "HEAD"], timeout);
+    command
+        .env("GIT_NO_LAZY_FETCH", "1")
+        .env("GIT_ALLOW_PROTOCOL", "");
+    collect_output_with_deadline(command, timeout, "git merge-base")
 }
 
 /// Longest working directory, in UTF-16 units and without the trailing

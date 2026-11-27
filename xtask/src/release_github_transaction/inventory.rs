@@ -3,7 +3,7 @@
 //! Observations come from a transport. "Could not read" is its own state and
 //! is never treated as "absent".
 
-use super::model::{GitHubReleaseTransactionRequest, normalized_name};
+use super::model::{GitHubReleaseTransactionRequest, Provenance, normalized_name};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
@@ -92,6 +92,9 @@ pub(crate) struct RemoteInventory {
     /// when nothing was found, so an empty inventory for another target
     /// cannot stand in for this one.
     pub(crate) tag_name: String,
+    /// The signer workflow and source ref the attestations were verified
+    /// against. A verdict under another policy says nothing about this one.
+    pub(crate) provenance: Provenance,
     pub(crate) tag: TagObservation,
     pub(crate) releases: ReleasesObservation,
     /// Provenance verification per expected subject. A subject with no entry

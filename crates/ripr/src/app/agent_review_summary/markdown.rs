@@ -13,7 +13,7 @@ use crate::output::markdown::{PowershellForm, command_shell_disclosure, powershe
 /// repair is the expected state, not a loop step to run now. The generated
 /// CI summary prints the same text; it holds no single quote so the workflow
 /// can carry it in a single-quoted shell string.
-pub(crate) const NO_RECEIPT_BEFORE_REPAIR: &str = "No agent receipt yet. None is expected before a repair: the `--attempt ... --phase after` command writes it after the focused test edit.";
+pub(crate) const NO_RECEIPT_BEFORE_REPAIR: &str = "No agent receipt yet. None is expected before a repair: the after-phase command the before phase prints writes it after the focused test edit.";
 
 pub(crate) fn render_agent_review_summary_markdown(report: &AgentReviewSummaryReport) -> String {
     let mut rendered = String::new();

@@ -201,7 +201,7 @@ pub(in crate::cli) fn pilot(args: &[String]) -> Result<(), String> {
                     // The loaded change selects both the generated-source view
                     // and later change-first ranking, inside the same deadline.
                     let load_started = Instant::now();
-                    let change = load_pilot_current_change(&input, git_timeout);
+                    let change = load_pilot_current_change(&input, &cfg, git_timeout);
                     let load_ms = elapsed_ms(load_started);
                     let inventory_started = Instant::now();
                     // #10727: the inventory already reports its phases through
@@ -236,7 +236,7 @@ pub(in crate::cli) fn pilot(args: &[String]) -> Result<(), String> {
         )?
     } else {
         let load_started = Instant::now();
-        let change = load_pilot_current_change(&input, git_timeout);
+        let change = load_pilot_current_change(&input, &config, git_timeout);
         PilotAnalysisResult::Complete((
             analysis::ClassifiedSeamsReport {
                 classified: Vec::new(),
@@ -519,6 +519,7 @@ pub(in crate::cli) fn pilot(args: &[String]) -> Result<(), String> {
     )
     .with_rust_exclusion(rust_excluded)
     .with_declined_rust_files(declined_rust_files.clone());
+    let language_routes = withhold_check_routes_without_work_tree(language_routes, &input.root);
     timings.record("language_scan", scan_started, None);
     let context = output::pilot::PilotSummaryContext {
         root: &input.root,
@@ -915,13 +916,16 @@ fn run_pilot_inventory(
 /// tracked changes, else `<base>...HEAD`. Plain `ripr check` reads committed
 /// history only, so a working-tree change is recorded as such and pilot's
 /// printed `ripr check` command carries `--worktree` to analyze the same
-/// diff. Keep this the one place pilot picks its diff. Pilot ranks seams on
+/// diff. With no `--base` on a clean checkout of the comparison base, the
+/// change is the last commit, as bare `ripr check` reads it (#16082). Keep
+/// this the one place pilot picks its diff. Pilot ranks seams on
 /// the changed lines first and says whether its top recommendation is part
 /// of the change. A load failure (not a Git work tree, no resolvable default
 /// base, a git error) never fails pilot: it is recorded as `unavailable` and
 /// the ranking stays repo-wide.
 fn load_pilot_current_change(
     input: &CheckInput,
+    config: &RiprConfig,
     git_timeout: Option<std::time::Duration>,
 ) -> output::pilot::PilotCurrentChange {
     let mut from_working_tree = false;
@@ -956,12 +960,53 @@ fn load_pilot_current_change(
                     None,
                     git_timeout,
                 )
+                .map(|mut loaded| {
+                    // #16082: on a clean checkout of the comparison base, a
+                    // bare `ripr check` analyzes the last commit; pilot's
+                    // change and its printed check command follow it.
+                    if input.base.is_none()
+                        && let Some(text) = app::diff_source::last_commit_fallback_diff(
+                            &input.root,
+                            &loaded.text,
+                            loaded.effective_base.as_deref(),
+                            config,
+                            git_timeout,
+                        )
+                    {
+                        loaded.text = text;
+                        loaded.effective_base =
+                            Some(app::diff_source::LAST_COMMIT_BASE.to_string());
+                    }
+                    loaded
+                })
             }
             .map_err(|err| current_change_unavailable_reason(&err, "git diff failed"))
         })
         .map(|loaded| (loaded.text, loaded.effective_base));
     output::pilot::PilotCurrentChange::from_diff_load(&input.root, loaded)
         .with_working_tree(from_working_tree)
+}
+
+/// `ripr check` refuses a root that is not a Git work tree (and a bare
+/// repository, or any root when Git is missing), so pilot must not print it as the follow-up there (#15297).
+/// Probed only when a route would otherwise print a check command.
+fn withhold_check_routes_without_work_tree(
+    routes: output::pilot::PilotLanguageRoutes,
+    root: &std::path::Path,
+) -> output::pilot::PilotLanguageRoutes {
+    use output::doctor::WorkTreeProbe;
+    use output::pilot::CheckBlocker;
+    if !routes.routes.iter().any(|route| route.command.is_some()) {
+        return routes;
+    }
+    match output::doctor::work_tree_probe(root) {
+        Some(WorkTreeProbe::Outside) => routes.with_check_blocker(root, CheckBlocker::NotWorkTree),
+        Some(WorkTreeProbe::Bare) => routes.with_check_blocker(root, CheckBlocker::BareRepository),
+        Some(WorkTreeProbe::GitMissing) => {
+            routes.with_check_blocker(root, CheckBlocker::GitMissing)
+        }
+        _ => routes,
+    }
 }
 
 /// A few fixed words for why the current change could not be loaded, shown
@@ -1106,14 +1151,28 @@ const DEFAULT_PILOT_OUT_DIR: &str = "target/ripr/pilot";
 /// #9922: a root with no `Cargo.toml` and no source file in any language ripr
 /// reads is not a workspace; `ripr pilot` there used to print "RIPR pilot
 /// complete" with no recommendation and write `target/ripr/` into the folder.
-/// Returns the refusal message, or `None` when the root has something to inspect.
+/// Returns the refusal message, or `None` when the root has something to
+/// inspect. #15297: a bare repository never holds source, because it has no
+/// work tree, so its refusal names the repository and the route to a work
+/// tree rather than another `--root`.
 fn pilot_root_without_workspace(root: &Path) -> Option<String> {
-    analysis::root_has_no_inspectable_workspace(root).then(|| {
-        format!(
-            "pilot root {} has no Cargo.toml and no source files to inspect; pass --root <dir> for the directory that contains your workspace (nothing was written)",
-            root.display()
-        )
-    })
+    if !analysis::root_has_no_inspectable_workspace(root) {
+        return None;
+    }
+    if matches!(
+        output::doctor::work_tree_probe(root),
+        Some(output::doctor::WorkTreeProbe::Bare)
+    ) {
+        return Some(format!(
+            "pilot root {} is a bare Git repository with no work tree, so there is no source to inspect and nothing was written. {}, then run `ripr pilot --root <path>`",
+            root.display(),
+            crate::work_tree_route::bare_root_work_tree_route_or_plain(root)
+        ));
+    }
+    Some(format!(
+        "pilot root {} has no Cargo.toml and no source files to inspect; pass --root <dir> for the directory that contains your workspace (nothing was written)",
+        root.display()
+    ))
 }
 
 /// The default packet directory sits under `--root`, where the cache already
@@ -1391,7 +1450,8 @@ mod tests {
             ..CheckInput::default()
         };
         let config = load_for_root(&root)?;
-        let change = load_pilot_current_change(&input, Some(std::time::Duration::from_secs(30)));
+        let change =
+            load_pilot_current_change(&input, &config, Some(std::time::Duration::from_secs(30)));
         assert!(
             change.is_working_tree(),
             "fixture must be read as a working-tree change: {change:?}"
@@ -1427,7 +1487,8 @@ mod tests {
             ..CheckInput::default()
         };
         let config = load_for_root(&root)?;
-        let change = load_pilot_current_change(&input, Some(std::time::Duration::from_secs(30)));
+        let change =
+            load_pilot_current_change(&input, &config, Some(std::time::Duration::from_secs(30)));
         assert!(
             matches!(change, output::pilot::PilotCurrentChange::NoChange { .. }),
             "restoring the base must leave an empty working-tree diff: {change:?}"
@@ -1491,6 +1552,38 @@ mod tests {
             );
         }
         let _ = std::fs::remove_dir_all(&base);
+        Ok(())
+    }
+
+    /// #15297: a real bare repository holds no source file, because it has no
+    /// work tree. Pilot refuses it as bare, with the route to a work tree the
+    /// way doctor and init do, instead of asking for another `--root`.
+    #[test]
+    fn pilot_refuses_a_bare_repository_without_source_as_bare() -> Result<(), String> {
+        let bare = crate::cli::commands::tests::unique_command_test_dir("pilot-bare-no-source");
+        std::fs::create_dir_all(&bare).map_err(|error| error.to_string())?;
+        crate::git::run_git_output_with_deadline(
+            &bare,
+            &["init", "--bare", "-q", "."],
+            Some(std::time::Duration::from_secs(30)),
+        )
+        .map_err(|error| format!("git init --bare: {error}"))?;
+        let message = pilot_root_without_workspace(&bare)
+            .ok_or_else(|| "a bare repository must be refused".to_string())?;
+        assert!(message.contains("bare Git repository"), "{message}");
+        assert!(message.contains("nothing was written"), "{message}");
+        // An empty bare repository has nothing to check out: its route is a clone.
+        assert!(message.contains("has no commits yet"), "{message}");
+        assert!(message.contains("git clone"), "{message}");
+        assert!(!message.contains("worktree add"), "{message}");
+        assert!(message.contains("ripr pilot --root <path>"), "{message}");
+        assert!(!message.contains("pass --root <dir>"), "{message}");
+
+        let refused = pilot(&args(&["--root", &bare.to_string_lossy()]))
+            .err()
+            .unwrap_or_default();
+        assert!(refused.contains("bare Git repository"), "{refused}");
+        assert!(!bare.join("target").exists(), "refusal must write nothing");
         Ok(())
     }
 

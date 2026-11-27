@@ -307,12 +307,39 @@ pub(crate) const VERIFICATION_CORPUS_BINDINGS: &[Binding] = &[
         ],
     },
     Binding {
+        schema_path: "schemas/ripr/agent-gap-packet.schema.json",
+        pointer: None,
+        corpus: Corpus::Authority(
+            "narrower authority: agent_gap_packet_json_conforms_for_each_document_variant in crates/ripr/tests/agent_packet_json_schema.rs validates the real CLI bytes for an advisory packet from a live-current repo-exposure ledger, the same with a canonical delta artifact, a records ledger blocked as not evaluated and a dirty checkout blocked as stale, the_gap_packet_schema_shares_the_seam_packet_definitions holds the copied definitions equal to agent-seam-packets.schema.json, and published_gap_packet_schema_rejects_documents_it_forbids is the negative experiment; the document names the host's root in its refresh commands, so the committed fixture is a portable capture kept as an edge fixture",
+        ),
+        edge_fixtures: &["tests/fixtures/verification/ripr/agent-gap-packet.valid.json"],
+        excluded: &[],
+    },
+    Binding {
         schema_path: "schemas/ripr/agent-packet-refusal.schema.json",
         pointer: None,
         corpus: Corpus::Authority(
             "narrower authority: agent_packet_json_refusals_conform_to_the_published_schema in crates/ripr/tests/refusal_envelope_schemas.rs validates the real CLI bytes for an unknown seam (exit 3), an unusable root and an unreadable config, refusal_schemas_differ_from_the_diff_refusal_schema_only_where_stated holds the schema equal to diff-refusal.schema.json apart from its version, scope and omitted fields, and published_refusal_schemas_reject_documents_they_forbid is the negative experiment; the committed fixture is a capture kept as an edge fixture",
         ),
         edge_fixtures: &["tests/fixtures/verification/ripr/agent-packet-refusal.valid.json"],
+        excluded: &[],
+    },
+    Binding {
+        schema_path: "schemas/ripr/context-refusal.schema.json",
+        pointer: None,
+        corpus: Corpus::Authority(
+            "narrower authority: context_json_refusals_conform_to_the_published_schema in crates/ripr/tests/refusal_envelope_schemas.rs validates real pretty and compact CLI refusals, and published_refusal_schemas_reject_documents_they_forbid exercises invalid variants; the edge fixture captures an unusable root",
+        ),
+        edge_fixtures: &["tests/fixtures/verification/ripr/context-refusal.valid.json"],
+        excluded: &[],
+    },
+    Binding {
+        schema_path: "schemas/ripr/context.schema.json",
+        pointer: None,
+        corpus: Corpus::Authority(
+            "narrower authority: context_json_conforms_for_every_finding_of_the_covering_fixtures in crates/ripr/tests/context_json_schema.rs validates the real CLI bytes of every finding's packet over eight committed fixtures and a git fixture (also checking --format json-compact and that each packet's top-level missing_discriminators equal its check finding's), and requires the corpus to reach every classification, both source-currentness states, a null and an exposed witness, preview confidence caps, owner_signature, before_condition, a null and an object top-level flow_sink and each discriminator shape; confidence_basis_is_the_check_finding_definition holds the shared field equal to check.schema.json, and published_context_schema_rejects_documents_it_forbids is the negative experiment; the packet names the host root in witness.explain_command, so the committed fixture is a portable capture kept as an edge fixture",
+        ),
+        edge_fixtures: &["tests/fixtures/verification/ripr/context.valid.json"],
         excluded: &[],
     },
     Binding {
@@ -1136,9 +1163,20 @@ fn collect_command_specs<'a>(
                     for (role, spec) in specs {
                         // A null role is a role not offered: the evidence
                         // record writes `null` for a non-actionable item
-                        // (#14385). Any other non-object still fails.
-                        if (role == "verify") == verify && !spec.is_null() {
-                            subjects.push((format!("{child_location}/{role}"), spec));
+                        // (#14385). A GapRecord carries each role as a
+                        // non-empty list of specs (it omits an empty one), so
+                        // every listed spec is a subject. An empty list, like
+                        // any other non-object, is one subject and fails.
+                        if (role == "verify") != verify || spec.is_null() {
+                            continue;
+                        }
+                        match spec.as_array().filter(|listed| !listed.is_empty()) {
+                            Some(listed) => {
+                                subjects.extend(listed.iter().enumerate().map(|(index, item)| {
+                                    (format!("{child_location}/{role}/{index}"), item)
+                                }))
+                            }
+                            None => subjects.push((format!("{child_location}/{role}"), spec)),
                         }
                     }
                     continue;
@@ -1186,8 +1224,16 @@ fn collect_command_specs_exact<'a>(
                     && let Some(specs) = child.as_object()
                 {
                     for (role, spec) in specs {
-                        if (role == "verify") == verify && !matches!(spec, ExactValue::Null) {
-                            subjects.push((format!("{child_location}/{role}"), spec));
+                        if (role == "verify") != verify || matches!(spec, ExactValue::Null) {
+                            continue;
+                        }
+                        match spec {
+                            ExactValue::Array(listed) if !listed.is_empty() => {
+                                subjects.extend(listed.iter().enumerate().map(|(index, item)| {
+                                    (format!("{child_location}/{role}/{index}"), item)
+                                }))
+                            }
+                            _ => subjects.push((format!("{child_location}/{role}"), spec)),
                         }
                     }
                     continue;
@@ -1801,6 +1847,51 @@ mod tests {
             {
                 return Err(format!(
                     "null {role} role was validated as a spec: {row}; {:?}",
+                    report.violations
+                ));
+            }
+        }
+        Ok(())
+    }
+
+    /// A GapRecord lists each role's specs (`{"verify": [spec, ...]}`): each
+    /// listed spec is a subject of its own, so a bad entry fails at its index.
+    /// An empty list is never written by a GapRecord and still fails.
+    #[test]
+    fn listed_command_spec_roles_are_validated_per_entry() -> Result<(), String> {
+        for (role, verify) in [("verify", true), ("receipt", false)] {
+            let root = example_root();
+            write(
+                &root.join("fixtures/a/expected/packet.json"),
+                &format!(r#"{{"command_specs":{{"{role}":["x","y"]}}}}"#),
+            );
+            let report = run(&root, &[binding(Corpus::CommandSpecs { verify }, &[])], &[])?;
+            let row = &report.packet["rows"][0];
+            let at_entry = |index: usize| {
+                report.violations.iter().any(|violation| {
+                    violation.contains(&format!("packet.json/command_specs/{role}/{index}"))
+                })
+            };
+            if row["producer_subjects_discovered"] != 2 || !at_entry(0) || !at_entry(1) {
+                return Err(format!(
+                    "listed {role} specs were not validated per entry: {row}; {:?}",
+                    report.violations
+                ));
+            }
+            let root = example_root();
+            write(
+                &root.join("fixtures/a/expected/packet.json"),
+                &format!(r#"{{"command_specs":{{"{role}":[]}}}}"#),
+            );
+            let report = run(&root, &[binding(Corpus::CommandSpecs { verify }, &[])], &[])?;
+            let row = &report.packet["rows"][0];
+            if row["producer_subjects_discovered"] != 1
+                || !report.violations.iter().any(|violation| {
+                    violation.contains(&format!("packet.json/command_specs/{role}"))
+                })
+            {
+                return Err(format!(
+                    "an empty {role} list escaped the sweep: {row}; {:?}",
                     report.violations
                 ));
             }

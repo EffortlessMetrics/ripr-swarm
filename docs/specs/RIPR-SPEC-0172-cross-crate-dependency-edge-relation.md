@@ -538,6 +538,46 @@ absent manifest authority answers no.
 - `crates/ripr/tests/declared_test_target_crate_name.rs::a_file_no_test_target_declares_stays_uncredited`
 - `crates/ripr/tests/declared_test_target_crate_name.rs::a_member_package_declared_test_never_reads_as_the_root_package`
 
+## A function its crate does not export relates no integration test (#15932)
+
+An integration test under `tests/` is another crate than the library it
+tests, so it can name only what that library exports. A module-level function
+or inherent method declared without `pub` (private, `pub(crate)`,
+`pub(super)`, `pub(in ..)`) cannot be re-exported. A call of its name in such
+a test runs another function (`tokio::time::sleep`, not the crate-private
+`runtime::jspi::sleep`), and a test named after it is named after that other
+function. Neither relates the test to the changed function. The call counts
+as no call at all: it does not make the test a caller on the helper chain
+either, so a test that also calls a public entry in front of the function
+(`run(..)` beside `std::thread::sleep(..)`) keeps the helper relation it has
+without the namesake call. An equality or operator dispatch, a same-file or
+path-token relation, and every test inside the owner's own crate are read as
+before.
+
+The rule answers only when the files settle it. It stays off, keeping the
+name-only reading, when:
+
+- the owner is not a `src/` function with exactly one readable declaration,
+  or is a trait method, which takes its visibility from the trait;
+- the owner, its `impl` or a module around it carries an attribute outside
+  the inert set of RIPR-SPEC-0219 plus `cfg` (`#[no_mangle]`,
+  `#[wasm_bindgen]`, any attribute macro), or the owner declares a foreign
+  ABI;
+- the owner's package or the test's package has a `#[path]` whose literal
+  leaves the declaring file's directory, or an `include!`, either of which
+  can compile a file into a crate its location does not show;
+- the test file is not under `tests/` (a declared `[[test]]` target
+  elsewhere keeps the name-only reading).
+
+Non-claim: a unit test inside the owner's crate that calls a same-named
+function of another crate (`std::thread::sleep`) is not settled here.
+
+- `crates/ripr/tests/crate_private_owner.rs::a_function_the_crate_does_not_export_relates_no_integration_test`
+- `crates/ripr/tests/crate_private_owner.rs::a_function_the_test_may_still_run_keeps_its_relation`
+- `crates/ripr/tests/crate_private_owner.rs::the_crate_s_own_test_still_relates`
+- `crates/ripr/tests/crate_private_owner.rs::a_test_named_after_an_unexported_function_is_not_related`
+- `crates/ripr/tests/crate_private_owner.rs::an_unexported_inherent_method_relates_no_integration_test`
+
 ## Implementation Mapping
 
 - `crates/ripr/src/analysis/classify/related_tests.rs` —

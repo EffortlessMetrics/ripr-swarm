@@ -261,6 +261,43 @@ pub(in crate::app) fn locator_paths_match(stored_file: &str, selector_file: &str
     stored == wanted
         || stored.ends_with(&format!("/{wanted}"))
         || wanted.ends_with(&format!("/{stored}"))
+        || unc_spellings_match(&stored, &wanted)
+}
+
+/// Whether two normalized paths name the same UNC path, one (or both) under
+/// the Windows verbatim spelling (#15921). A finding stored under
+/// `//?/UNC/server/share/...` is printed by `output::path` and typed as
+/// `//server/share/...`, which is neither equal to nor a suffix of the stored
+/// text. Only exact equality after the shared verbatim fold counts, and only
+/// for the UNC form: the equality and suffix rules above are unchanged, and
+/// the drive form (`//?/<drive>:/...`) already matches its plain spelling as
+/// a suffix.
+fn unc_spellings_match(stored: &str, wanted: &str) -> bool {
+    let fold_unc = |path: &str| {
+        crate::output::path::strip_windows_verbatim_prefix(path)
+            .filter(|plain| is_complete_unc_root(plain))
+    };
+    match (fold_unc(stored), fold_unc(wanted)) {
+        (None, None) => false,
+        (stored_plain, wanted_plain) => {
+            stored_plain.as_deref().unwrap_or(stored) == wanted_plain.as_deref().unwrap_or(wanted)
+        }
+    }
+}
+
+/// Whether a folded path starts with a complete UNC root: `//server/share`
+/// with a nonempty server and share, and a server that is not a device
+/// marker (`?` or `.`). The renderer's fold is lexical, so a malformed
+/// `//?/UNC/tmp` folds to `//tmp` and `//?/UNC/?/Volume{..}` folds to a
+/// device spelling; neither may enter the UNC equivalence.
+fn is_complete_unc_root(plain: &str) -> bool {
+    let Some(rest) = plain.strip_prefix("//") else {
+        return false;
+    };
+    let mut segments = rest.splitn(3, '/');
+    let server = segments.next().unwrap_or_default();
+    let share = segments.next().unwrap_or_default();
+    !server.is_empty() && !share.is_empty() && server != "?" && server != "."
 }
 
 /// [`locator_paths_match`] ignoring ASCII case (#14416). Resolution stays
@@ -496,8 +533,8 @@ pub(in crate::app) fn normalize_locator_path(path: &str) -> String {
 mod tests {
     use super::{
         FindingSelection, ScopeCompleteness, location_miss_hint,
-        location_selector_needs_syntax_hint, normalize_locator_path, select_finding,
-        selector_matches_file_line,
+        location_selector_needs_syntax_hint, locator_paths_match, normalize_locator_path,
+        select_finding, selector_matches_file_line,
     };
     use crate::domain::{
         ActivationEvidence, DeltaKind, ExposureClass, Finding, FindingCanonicalGap, Probe,
@@ -1202,5 +1239,116 @@ mod tests {
         assert_eq!(normalize_locator_path("./a/b/c.rs"), "a/b/c.rs");
         assert_eq!(normalize_locator_path("a\\b\\c.rs"), "a/b/c.rs");
         assert_eq!(normalize_locator_path("a/b/c.rs/"), "a/b/c.rs");
+    }
+
+    #[test]
+    fn a_plain_unc_location_selects_a_finding_stored_under_a_verbatim_unc_path() {
+        // #15921: the stored text is the verbatim spelling; the selector is
+        // what `output::path` prints for it and what a user types.
+        const STORED: &str = r"\\?\UNC\server\share\repo\src\lib.rs";
+        // The verdict line's Windows rendering of the stored path, through
+        // the real renderer, so the copy-and-paste round trip is exercised on
+        // every host (the verdict line itself only folds on Windows).
+        let printed = crate::output::path::human_path_text(STORED, true);
+        // Fixture check: the printed location is the plain share path.
+        assert_eq!(printed, "//server/share/repo/src/lib.rs");
+        let printed_selector = format!("{printed}:7");
+        for selector in [
+            printed_selector.as_str(),
+            r"\\server\share\repo\src\lib.rs:7",
+            r"\\?\UNC\server\share\repo\src\lib.rs:7",
+            "src/lib.rs:7",
+        ] {
+            assert!(
+                selector_matches_file_line(STORED, 7, selector),
+                "{selector}"
+            );
+        }
+        // The UNC equivalence holds with the operands reversed.
+        assert!(selector_matches_file_line(
+            "//server/share/repo/src/lib.rs",
+            7,
+            r"\\?\UNC\server\share\repo\src\lib.rs:7"
+        ));
+        // Another server, share or line is still a miss.
+        for selector in [
+            "//other/share/repo/src/lib.rs:7",
+            "//server/other/repo/src/lib.rs:7",
+            "//server/share/repo/src/lib.rs:8",
+        ] {
+            assert!(
+                !selector_matches_file_line(STORED, 7, selector),
+                "{selector}"
+            );
+        }
+    }
+
+    #[test]
+    fn the_unc_fold_leaves_the_existing_path_rules_unchanged() {
+        // Normalization itself does not fold a verbatim root.
+        assert_eq!(
+            normalize_locator_path(r"\\?\UNC\server\share\a.rs"),
+            "//?/UNC/server/share/a.rs"
+        );
+        // A lowercase `unc` verbatim root still equals its plain spelling.
+        assert!(locator_paths_match(
+            r"\\?\unc\server\share\a.rs",
+            "//server/share/a.rs"
+        ));
+        // A folded drive selector must not become a suffix of an unrelated
+        // relative path that happens to contain the drive spelling. The drive
+        // letter is spliced in so the source holds no local path.
+        let drive = 'C';
+        assert!(!locator_paths_match(
+            &format!("mirror/{drive}:/repo/src/lib.rs"),
+            &format!("//?/{drive}:/repo/src/lib.rs")
+        ));
+        // The drive form keeps matching its plain spelling as a suffix.
+        assert!(locator_paths_match(
+            &format!("//?/{drive}:/repo/src/lib.rs"),
+            &format!("{drive}:/repo/src/lib.rs")
+        ));
+        // A relative path ending in the verbatim UNC text keeps its suffix
+        // match.
+        assert!(locator_paths_match(
+            "//?/UNC/server/share/repo/src/lib.rs",
+            "?/UNC/server/share/repo/src/lib.rs"
+        ));
+        // The fold is exact equality: a plain share path that is only a
+        // suffix of the folded text does not match.
+        assert!(!locator_paths_match(
+            "//?/UNC/server/share/repo/src/lib.rs",
+            "/share/repo/src/lib.rs"
+        ));
+        // The equivalence needs a complete UNC root: a verbatim UNC path with
+        // no share, or whose "server" is a device marker, does not fold.
+        assert!(!locator_paths_match("//?/UNC/tmp", "//tmp"));
+        assert!(!locator_paths_match("//?/UNC/server/", "//server/"));
+        assert!(!locator_paths_match("//?/UNC//share/a.rs", "///share/a.rs"));
+        assert!(!locator_paths_match(
+            "//?/UNC/?/Volume{1234}/a.rs",
+            "//?/Volume{1234}/a.rs"
+        ));
+        assert!(!locator_paths_match("//?/UNC/./pipe/name", "//./pipe/name"));
+        // A complete root folds; a different share on it does not match.
+        assert!(locator_paths_match(
+            "//?/UNC/server/share",
+            "//server/share"
+        ));
+        assert!(!locator_paths_match(
+            "//?/UNC/server/share/a.rs",
+            "//server/other/a.rs"
+        ));
+        // Other verbatim forms keep their spelling and match byte for byte.
+        assert!(locator_paths_match(
+            r"\\?\Volume{1234}\a.rs",
+            "//?/Volume{1234}/a.rs"
+        ));
+        // Plain Unix and relative paths are untouched.
+        assert_eq!(
+            normalize_locator_path("/srv/repo/src/lib.rs"),
+            "/srv/repo/src/lib.rs"
+        );
+        assert_eq!(normalize_locator_path("src/lib.rs"), "src/lib.rs");
     }
 }

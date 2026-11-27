@@ -14,7 +14,10 @@ use super::capabilities::{
     workspace_folder_set_from_initialize_params,
 };
 use super::client_features::ClientFeatureProfile;
-use super::config::{LspAnalysisConfig, pulled_options_or_rejections, pulled_rejection_summary};
+use super::config::{
+    LspAnalysisConfig, PushedSettingRejection, pulled_options_or_rejections,
+    pulled_rejection_summary, unannounced_pushed_rejections,
+};
 use super::diagnostics::{
     AnalysisPendingRecovery, DiagnosticBatch, DiagnosticRefreshPlan, DiagnosticResultIdCache,
     WorkspaceDiagnostics, analysis_pending_diagnostics, analysis_pending_withdrawal_diagnostics,
@@ -76,13 +79,13 @@ use crate::output::agent_seam_packets::{
     render_agent_gap_record_packet_json, suggested_assertion_for_classified_seam,
     targeted_test_brief_outline_for_classified_seam, validate_agent_gap_record_packet,
 };
-use crate::output::evidence_record::repair_start_command_for;
 use crate::output::first_useful_action::DEFAULT_FIRST_USEFUL_ACTION_OUT;
 use crate::output::gap_decision_ledger::{
     DEFAULT_GAP_DECISION_LEDGER_OUT, GapRecord, parse_gap_records_json_for_root,
 };
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
+use std::hash::{Hash, Hasher};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, LazyLock, Mutex};
@@ -201,6 +204,10 @@ pub(super) struct Backend {
     /// (#15461 review).
     pending_pull_marker_served_recovery: Mutex<Option<String>>,
     latest_analysis: Mutex<Option<Arc<AnalysisSnapshot>>>,
+    /// Findings whose gap became `exposed` between the previous committed
+    /// snapshot and `latest_analysis` (#13636). Written with the snapshot
+    /// commit and cleared whenever the snapshot is dropped.
+    resolved_findings: Mutex<Vec<super::resolved_findings::ResolvedFinding>>,
     diagnostic_result_ids: Mutex<Option<Arc<DiagnosticResultIdCache>>>,
     analysis_health: Mutex<AnalysisHealth>,
     pull_diagnostics: Mutex<bool>,
@@ -259,6 +266,11 @@ pub(super) struct Backend {
     /// input context resets. An attempt in flight leaves it latched, so pull
     /// and push agree while a retry runs.
     base_withdrawal: Mutex<Option<AnalysisFailure>>,
+    /// Fingerprint of the malformed payload or section in the last pushed
+    /// notification (#15312), so a client re-pushing the same malformed
+    /// shape is not warned twice. Rejected values need no memory here: the
+    /// retained session layer holds them until they are repaired.
+    last_pushed_settings_warning: Mutex<Option<u64>>,
     /// Languages whose "adapter not enabled" notice a generic client has
     /// already been shown (#8585). A language is shown once while it stays
     /// unavailable; leaving the set (adapter enabled, or its files no longer
@@ -392,6 +404,7 @@ impl Backend {
             pending_push_marker_uris: Mutex::new(BTreeMap::new()),
             pending_pull_marker_served_recovery: Mutex::new(None),
             latest_analysis: Mutex::new(None),
+            resolved_findings: Mutex::new(Vec::new()),
             diagnostic_result_ids: Mutex::new(None),
             analysis_health: Mutex::new(AnalysisHealth::default()),
             pull_diagnostics: Mutex::new(false),
@@ -408,6 +421,7 @@ impl Backend {
             pull_delivery_disclosure_logged_for: Mutex::new(None),
             last_analysis_failure_shown: Mutex::new(None),
             base_withdrawal: Mutex::new(None),
+            last_pushed_settings_warning: Mutex::new(None),
             unavailable_language_notices_shown: Mutex::new(BTreeSet::new()),
             initialize_failure_disclosure_omitted: AtomicBool::new(false),
             refresh_scheduler: Arc::new(RefreshScheduler::default()),
@@ -1031,6 +1045,7 @@ impl Backend {
                         (pending, version)
                     })
                     .unwrap_or((None, None));
+                let pending_quarantine = self.disclosed_quarantine(pending_quarantine);
                 if !snapshot.served_diagnostics_for_uri(uri).is_empty()
                     && let Some((path, reason)) = pending_quarantine.as_ref()
                 {
@@ -1133,7 +1148,7 @@ impl Backend {
                         (quarantine, version)
                     })
                     .unwrap_or((None, None));
-                if let Some((_, reason)) = quarantine {
+                if let Some((_, reason)) = self.disclosed_quarantine(quarantine) {
                     let version = self.negotiated_version(raw_version);
                     self.client
                         .publish_diagnostics(uri, withdrawn_quarantine_diagnostics(reason), version)
@@ -1514,6 +1529,9 @@ impl Backend {
         let Ok(mut stored_result_ids) = self.diagnostic_result_ids.lock() else {
             return None;
         };
+        let Ok(mut resolved_findings) = self.resolved_findings.lock() else {
+            return None;
+        };
         let Ok(mut documents) = self.quarantine.documents.lock() else {
             return None;
         };
@@ -1544,6 +1562,12 @@ impl Backend {
             cleared,
         );
         *last_diagnostic_uris = plan.current_uris.clone();
+        // #13636: name the gaps a saved test now appears to expose, so the
+        // editor does not just go quiet when their diagnostics stop.
+        *resolved_findings = latest_analysis
+            .as_deref()
+            .map(|previous| super::resolved_findings::resolved_since(previous, &snapshot))
+            .unwrap_or_default();
         *latest_analysis = Some(snapshot);
         *stored_result_ids = Some(diagnostic_result_ids);
         Some(transitions)
@@ -1626,6 +1650,11 @@ impl Backend {
                 .unwrap_or(false);
         if let Ok(mut latest_analysis) = self.latest_analysis.lock() {
             *latest_analysis = None;
+            // Cleared under the snapshot guard (commit lock order), so a
+            // status read never pairs no snapshot with stale rows.
+            if let Ok(mut resolved_findings) = self.resolved_findings.lock() {
+                resolved_findings.clear();
+            }
         }
         if let Ok(mut diagnostic_result_ids) = self.diagnostic_result_ids.lock() {
             *diagnostic_result_ids = None;
@@ -2321,6 +2350,9 @@ impl Backend {
     pub(super) fn clear_latest_analysis_for_test(&self) {
         if let Ok(mut latest) = self.latest_analysis.lock() {
             *latest = None;
+            if let Ok(mut resolved_findings) = self.resolved_findings.lock() {
+                resolved_findings.clear();
+            }
         }
     }
 
@@ -2994,20 +3026,34 @@ impl Backend {
                     value.analysis_outcome.clone(),
                     withheld_findings_summary(value),
                     value.partial_scope.clone(),
+                    // Read under the snapshot guard (the commit's lock order:
+                    // `latest_analysis`, then `resolved_findings`), so the
+                    // rows always belong to the snapshot read here.
+                    self.resolved_findings
+                        .lock()
+                        .map(|rows| rows.clone())
+                        .unwrap_or_default(),
                 )
             })
         });
-        let (snapshot_identity, components, analysis_outcome, withheld_summary, partial_scope) =
-            match snapshot_state {
-                Some((identity, components, analysis_outcome, withheld, partial_scope)) => (
-                    identity,
-                    components,
-                    analysis_outcome,
-                    withheld,
-                    partial_scope,
-                ),
-                None => (None, Vec::new(), None, None, None),
-            };
+        let (
+            snapshot_identity,
+            components,
+            analysis_outcome,
+            withheld_summary,
+            partial_scope,
+            resolved_findings,
+        ) = match snapshot_state {
+            Some((identity, components, analysis_outcome, withheld, partial_scope, resolved)) => (
+                identity,
+                components,
+                analysis_outcome,
+                withheld,
+                partial_scope,
+                resolved,
+            ),
+            None => (None, Vec::new(), None, None, None, Vec::new()),
+        };
         let snapshot_input = snapshot_identity.map(|identity| identity.status_payload());
         let current_input = match (
             health.current_input_identity.as_deref(),
@@ -3132,6 +3178,10 @@ impl Backend {
             // and the `diagnostic_profile = "full"` recovery route, so
             // `finding_count` and the served listings reconcile on the wire.
             "withheld_findings": withheld_findings_status_payload(withheld_summary),
+            // Gaps the committed snapshot now finds `exposed` that the
+            // previous one listed as gaps (#13636): clients render these so a
+            // vanished diagnostic reads as progress, not a silent failure.
+            "resolved_findings": super::resolved_findings::resolved_findings_status(&resolved_findings),
             // Typed bounded per-component outcomes for the committed snapshot
             // (#1997, RIPR-SPEC-0141): the single typed authority for
             // optional-component degradation. Empty until a snapshot commits.
@@ -3652,27 +3702,63 @@ impl Backend {
     }
 
     async fn apply_session_configuration_change(&self, settings: &LSPAny) {
-        if !LspAnalysisConfig::has_session_option_changes(settings) {
-            return;
+        // #15312: the push path is lenient, so an ignored pushed value falls
+        // back silently. Name every ignored part of this notification that
+        // has not been named already. A rejected value stays in the retained
+        // session layer until a push repairs or clears it, so the owner skips
+        // values that layer already holds (`unannounced_pushed_rejections`).
+        let current = self.analysis_config();
+        let mut rejections = unannounced_pushed_rejections(settings, current.as_ref());
+        // A malformed payload or section is not retained, so a client that
+        // re-pushes it verbatim on every settings change is recognized only
+        // by consecutive notifications. Compare the exact malformed subjects,
+        // not the clipped display text.
+        let shape_fingerprint = rejections
+            .iter()
+            .any(PushedSettingRejection::is_shape)
+            .then(|| {
+                let mut hasher = std::hash::DefaultHasher::new();
+                for rejection in rejections.iter().filter(|part| part.is_shape()) {
+                    rejection.subject.to_string().hash(&mut hasher);
+                }
+                hasher.finish()
+            });
+        let shape_repeated = self
+            .last_pushed_settings_warning
+            .lock()
+            .map(|mut last| std::mem::replace(&mut *last, shape_fingerprint) == shape_fingerprint)
+            .unwrap_or(false);
+        if shape_repeated {
+            rejections.retain(|part| !part.is_shape());
         }
-        let Some(current) = self.analysis_config() else {
-            return;
-        };
-        let Some(next) = current.with_changed_session_options(settings) else {
-            return;
-        };
-        if next == current {
-            return;
+        let warning = (!rejections.is_empty()).then(|| {
+            let listed = rejections
+                .iter()
+                .map(|rejection| bounded_failure_message(&rejection.line))
+                .collect::<Vec<_>>()
+                .join(" | ");
+            format!("ripr ignored pushed ripr settings: {listed}.")
+        });
+        // Commit the settings before any client I/O. The judgment above and
+        // this merge read the same layer with no await between them, so a
+        // newer notification cannot commit in between; awaiting the warning
+        // first would let an older push, suspended on a slow client, resume
+        // and overwrite a newer repair of the same key.
+        let mut committed = false;
+        if LspAnalysisConfig::has_session_option_changes(settings)
+            && let Some(current) = current
+            && let Some(next) = current.with_changed_session_options(settings)
+            && next != current
+        {
+            self.set_analysis_config(next);
+            committed = true;
         }
-        let previous_warnings = current.ignored_initialization_option_warnings();
-        let new_warnings: Vec<String> = next
-            .ignored_initialization_option_warnings()
-            .into_iter()
-            .filter(|warning| !previous_warnings.contains(warning))
-            .collect();
-        self.set_analysis_config(next);
-        for warning in new_warnings {
-            self.client.log_message(MessageType::WARNING, warning).await;
+        if let Some(warning) = warning {
+            self.disclose_configuration_reload_failure(warning.clone(), warning)
+                .await;
+        }
+        if !committed {
+            return;
         }
         if self.configuration_failure().is_some() {
             // Keep the config_invalid signal visible while repository
@@ -3743,6 +3829,13 @@ impl Backend {
         if let Ok(mut features) = self.client_features.lock() {
             *features = profile;
         }
+    }
+
+    /// Drives the push-path settings change directly, so a test can hold
+    /// client egress and observe what was committed before it (#15312).
+    #[cfg(test)]
+    pub(super) async fn apply_session_configuration_change_for_test(&self, settings: &LSPAny) {
+        self.apply_session_configuration_change(settings).await;
     }
 
     /// Poison the profile store so tests can exercise the fail-closed
@@ -4210,6 +4303,9 @@ impl Backend {
                 DocumentStalenessReason::SavedContentNotYetAnalyzed => {
                     "Saving again cannot change this; the evidence returns when ripr analyzes the saved file. Run `ripr.refresh` if it does not."
                 }
+                DocumentStalenessReason::OutsideAnalyzedRoot => {
+                    super::diagnostics::OUTSIDE_ANALYZED_ROOT_ROUTE
+                }
             };
             return markdown_hover(format!(
                 "**ripr** evidence for this file is paused: {}. {route}",
@@ -4337,7 +4433,21 @@ impl Backend {
         &self,
         uri: &Uri,
     ) -> Option<(PathBuf, DocumentStalenessReason)> {
-        self.quarantine.document_quarantine(uri)
+        self.disclosed_quarantine(self.quarantine.document_quarantine(uri))
+    }
+
+    /// The quarantine reason as disclosed to the client. The ledger records
+    /// an out-of-root document as `NoAnalyzedSavedContent` (nothing analyzed
+    /// it), but its "save, then refresh" route can never succeed: analysis
+    /// covers only the selected root. Name that cause instead. Fails closed:
+    /// with no effective root, or a path inside it, the stored reason stays.
+    fn disclosed_quarantine(
+        &self,
+        quarantine: Option<(PathBuf, DocumentStalenessReason)>,
+    ) -> Option<(PathBuf, DocumentStalenessReason)> {
+        let (path, reason) = quarantine?;
+        let reason = disclosed_staleness_reason(self.effective_root().as_deref(), &path, reason);
+        Some((path, reason))
     }
 
     fn document_path_for_uri(&self, uri: &Uri) -> Option<PathBuf> {
@@ -4348,7 +4458,7 @@ impl Backend {
     /// reason)` only on the first disclosure of the episode so one episode
     /// emits exactly one disclosure.
     fn mark_withdrawal_disclosed(&self, uri: &Uri) -> Option<(PathBuf, DocumentStalenessReason)> {
-        self.quarantine.mark_withdrawal_disclosed(uri)
+        self.disclosed_quarantine(self.quarantine.mark_withdrawal_disclosed(uri))
     }
 
     /// Mark the pull-side partial-delivery disclosures for one snapshot input
@@ -4687,16 +4797,18 @@ impl Backend {
         Option<i32>,
         bool,
     ) {
-        self.with_document_state(uri, |state| {
-            let pending = quarantine_for_pending_from_state(state, pending_analyzed);
-            let version = if state.buffer_authority_unknown {
-                None
-            } else {
-                state.version
-            };
-            (pending, version, quarantine_from_state(state).is_some())
-        })
-        .unwrap_or((None, None, false))
+        let (pending, version, is_quarantined) = self
+            .with_document_state(uri, |state| {
+                let pending = quarantine_for_pending_from_state(state, pending_analyzed);
+                let version = if state.buffer_authority_unknown {
+                    None
+                } else {
+                    state.version
+                };
+                (pending, version, quarantine_from_state(state).is_some())
+            })
+            .unwrap_or((None, None, false));
+        (self.disclosed_quarantine(pending), version, is_quarantined)
     }
 
     #[cfg(test)]
@@ -8090,15 +8202,18 @@ impl Backend {
             // version directly (LSP 3.17).
             let (quarantine_reason, raw_version) = self
                 .with_document_state(&uri, |state| {
-                    let reason = quarantine_from_state(state).map(|(_, reason)| reason);
+                    let quarantine = quarantine_from_state(state);
                     let version = if state.buffer_authority_unknown {
                         None
                     } else {
                         state.version
                     };
-                    (reason, version)
+                    (quarantine, version)
                 })
                 .unwrap_or((None, None));
+            let quarantine_reason = self
+                .disclosed_quarantine(quarantine_reason)
+                .map(|(_, reason)| reason);
             // Quarantined (dirty-buffer) documents serve one Information
             // marker under a distinct result id, same as the document pull
             // handler (#1970/#7771); other documents are unaffected.
@@ -8537,6 +8652,9 @@ impl Backend {
         &self,
         snapshot: Option<&AnalysisSnapshot>,
     ) -> serde_json::Value {
+        // Read the root before the document lock so the status projection
+        // discloses the same out-of-root reason as hover and pull (#15462).
+        let effective_root = self.effective_root();
         let Ok(documents) = self.quarantine.documents.lock() else {
             return serde_json::json!([]);
         };
@@ -8614,10 +8732,14 @@ impl Backend {
                     } else {
                         serde_json::Value::Null
                     },
-                    "staleness_reason": state
-                        .quarantine
-                        .as_ref()
-                        .map(|quarantine| quarantine.reason.as_str()),
+                    "staleness_reason": state.quarantine.as_ref().map(|quarantine| {
+                        disclosed_staleness_reason(
+                            effective_root.as_deref(),
+                            &state.path,
+                            quarantine.reason,
+                        )
+                        .as_str()
+                    }),
                     "last_saved_content_identity": state.saved_digest,
                     "analyzed_saved_content_identity": state.analyzed_saved_digest,
                     "analyzed_input_identity": state.analyzed_input_identity,
@@ -9465,6 +9587,9 @@ fn quarantine_withdrawal_log_message(path: &Path, reason: DocumentStalenessReaso
         }
         DocumentStalenessReason::SavedContentNotYetAnalyzed => {
             "they return when ripr analyzes the saved file; run `ripr.refresh` if they do not"
+        }
+        DocumentStalenessReason::OutsideAnalyzedRoot => {
+            "open this file's repository in its own editor window or session; saving or refreshing analyzes only the selected workspace root"
         }
     };
     format!(
@@ -10582,6 +10707,7 @@ mod top_limitation_selection_tests {
             diagnostic_uri_index: None,
             delivery_selection: None,
             seams_deferred: false,
+            seam_inventory_on_full_refresh: false,
             partial_scope,
             component_outcomes: Vec::new(),
             out_of_scope_test_file_findings: 0,
@@ -12534,6 +12660,7 @@ mod delivery_selection_parity_tests {
             diagnostic_uri_index: None,
             delivery_selection: None,
             seams_deferred: false,
+            seam_inventory_on_full_refresh: false,
             partial_scope: None,
             component_outcomes: Vec::new(),
             out_of_scope_test_file_findings: 0,
@@ -13769,6 +13896,7 @@ mod list_actionable_items_tests {
             diagnostic_uri_index: None,
             delivery_selection: selection.map(Arc::new),
             seams_deferred: false,
+            seam_inventory_on_full_refresh: false,
             partial_scope: None,
             component_outcomes: Vec::new(),
             out_of_scope_test_file_findings: 0,
@@ -14496,6 +14624,36 @@ mod list_actionable_items_tests {
         Ok(())
     }
 
+    /// #13636: an `exposed` preview finding is not withheld: there is no gap
+    /// to repair, so it must not read as a preview finding "not shown in the
+    /// editor". The same finding as `weakly_exposed` is still disclosed.
+    #[test]
+    fn exposed_preview_findings_are_not_disclosed_as_withheld() -> Result<(), String> {
+        for (language, file) in [
+            (crate::domain::LanguageId::Python, "src/click/core.py"),
+            (crate::domain::LanguageId::TypeScript, "src/v4/core/util.ts"),
+        ] {
+            let mut snapshot = snapshot_with_selection(Some(applied_selection()?));
+            let mut finding = preview_finding(language, file);
+            finding.class = crate::domain::ExposureClass::Exposed;
+            snapshot.findings = vec![finding];
+            snapshot.diagnostic_profile = LspDiagnosticProfile::Actionable;
+            assert_eq!(super::withheld_preview_summary(&snapshot).0, 0, "{file}");
+            let disclosure = super::profile_withholding_pull_disclosure(&snapshot);
+            assert!(
+                !disclosure
+                    .as_deref()
+                    .is_some_and(|text| text.contains("preview-language")),
+                "{file}: {disclosure:?}"
+            );
+
+            // Discriminator: the same finding as a gap is still disclosed.
+            snapshot.findings[0].class = crate::domain::ExposureClass::WeaklyExposed;
+            assert_eq!(super::withheld_preview_summary(&snapshot).0, 1, "{file}");
+        }
+        Ok(())
+    }
+
     /// #11798: a withheld non-preview (Rust) gap-class finding is counted as
     /// a static-gap withholding, never as a preview one, and the pull
     /// disclosure names the count, static vocabulary and the `full` route. A
@@ -15039,6 +15197,7 @@ mod pull_disclosure_dedup_tests {
             diagnostic_uri_index: None,
             delivery_selection: None,
             seams_deferred: false,
+            seam_inventory_on_full_refresh: false,
             partial_scope: None,
             component_outcomes: Vec::new(),
             out_of_scope_test_file_findings: 0,
@@ -15662,4 +15821,26 @@ mod disk_bytes_equal_text_tests {
         }
         Ok(())
     }
+}
+
+/// The staleness reason a surface discloses (#15462): a never-saved document
+/// outside the analyzed root can never gain analyzed saved content in this
+/// session, so it reads `outside_analyzed_root` instead of the save-then-
+/// refresh route. Fails closed to the stored reason without a root.
+pub(super) fn disclosed_staleness_reason(
+    root: Option<&Path>,
+    path: &Path,
+    reason: DocumentStalenessReason,
+) -> DocumentStalenessReason {
+    // Only an absolute (local file) path can be outside the root. A buffer
+    // with no admitted file path (an `untitled:` document, for example) keeps
+    // the stored reason: saving it into the root can still lift the pause.
+    if reason == DocumentStalenessReason::NoAnalyzedSavedContent
+        && path.is_absolute()
+        && let Some(root) = root
+        && !path_is_within_root(root, path)
+    {
+        return DocumentStalenessReason::OutsideAnalyzedRoot;
+    }
+    reason
 }

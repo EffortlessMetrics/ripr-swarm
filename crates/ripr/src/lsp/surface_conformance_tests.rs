@@ -44,6 +44,16 @@ const CASES: &[(&str, &str, &str)] = &[
         "python",
         "static_unknown",
     ),
+    (
+        "python_patched_callee_reachable_unrevealed",
+        "python",
+        "reachable_unrevealed",
+    ),
+    (
+        "python_full_list_selector_integer_pin_no_exposed_credit",
+        "python",
+        "infection_unknown",
+    ),
     ("ts_already_observed", "typescript", "exposed"),
     (
         "ts_class_getter_factory_read",
@@ -74,6 +84,52 @@ const CASES: &[(&str, &str, &str)] = &[
     ),
 ];
 
+/// Classes each language must keep covered, stated independently of `CASES`
+/// so removing a row cannot shrink the parity matrix silently. No Python or
+/// TypeScript fixture produces `propagation_unknown` yet (#12925).
+const REQUIRED_CLASSES: &[(&str, &[&str])] = &[
+    (
+        "rust",
+        &[
+            "exposed",
+            "weakly_exposed",
+            "reachable_unrevealed",
+            "no_static_path",
+            "infection_unknown",
+            "propagation_unknown",
+            "static_unknown",
+        ],
+    ),
+    (
+        "python",
+        &[
+            "exposed",
+            "weakly_exposed",
+            "reachable_unrevealed",
+            "no_static_path",
+            "infection_unknown",
+            "static_unknown",
+        ],
+    ),
+    (
+        "typescript",
+        &[
+            "exposed",
+            "weakly_exposed",
+            "reachable_unrevealed",
+            "no_static_path",
+            "infection_unknown",
+            "static_unknown",
+        ],
+    ),
+];
+
+fn language_enabled(language: &str) -> bool {
+    (language == "rust" && cfg!(feature = "lang-rust"))
+        || (language == "python" && cfg!(feature = "lang-python"))
+        || (language == "typescript" && cfg!(feature = "lang-typescript"))
+}
+
 fn parse(text: &str) -> Result<Value, String> {
     serde_json::from_str(text).map_err(|error| error.to_string())
 }
@@ -87,10 +143,7 @@ fn existing_fixture_surface_conformance() -> Result<(), String> {
     let repo = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
     let mut covered = BTreeSet::new();
     for &(name, language, class) in CASES {
-        if (language == "rust" && !cfg!(feature = "lang-rust"))
-            || (language == "python" && !cfg!(feature = "lang-python"))
-            || (language == "typescript" && !cfg!(feature = "lang-typescript"))
-        {
+        if !language_enabled(language) {
             continue;
         }
         let fixture = repo.join("fixtures").join(name);
@@ -450,14 +503,21 @@ fn existing_fixture_surface_conformance() -> Result<(), String> {
         }
     }
     for &(name, language, class) in CASES {
-        if (language == "rust" && cfg!(feature = "lang-rust"))
-            || (language == "python" && cfg!(feature = "lang-python"))
-            || (language == "typescript" && cfg!(feature = "lang-typescript"))
-        {
+        if language_enabled(language) {
             assert!(
                 covered.contains(&(language, class)),
                 "{name}: missing coverage"
             );
+        }
+    }
+    for &(language, classes) in REQUIRED_CLASSES {
+        if language_enabled(language) {
+            for &class in classes {
+                assert!(
+                    covered.contains(&(language, class)),
+                    "{language}: required class {class} has no conformance case"
+                );
+            }
         }
     }
     Ok(())

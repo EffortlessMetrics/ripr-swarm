@@ -779,7 +779,48 @@ pub(crate) struct CachedSeamLimitInfo {
 /// no invocation scopes (#12857).
 /// `1.189`: a std- or core-rooted import of an exempt macro name lets a
 /// generated test keep its invocation scopes when the root is not shadowed (#12876).
-pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.189";
+/// `1.191`: a helper wrapper that reads `env!` or `option_env!` forwards
+/// the helper result when neither name is rebound (#10357).
+/// `1.192`: a `std::`/`core::` assertion whose root the manifest binds to a
+/// package reads as an unknown oracle (#10150).
+/// `1.193`: an assertion whose every owner call sits inside an untrusted inner
+/// macro reads as an unknown oracle for that owner (#16188).
+/// `1.194`: a `for` over any non-empty array runs its assertion, not only a
+/// constant-row table (#14116).
+/// `1.195`: an owner result bound to a local that only an untrusted inner macro
+/// uses reads as an unknown oracle for that owner (#16192).
+/// `1.196`: a check helper with `?` lends its assertion when every eager call
+/// is `check(..)?` (#14116).
+/// `1.197`: an owner result unwrapped or chained into a local that only an untrusted
+/// inner macro uses reads as an unknown oracle for that owner (#16219).
+/// `1.198`: an owner call whose result a statement discards (`let _ = pick(0);`,
+/// `pick(0);`) is not a free observation beside a macro-held call (#16258).
+/// `1.199`: a helper wrapper reading `include_str!` or `include_bytes!` forwards
+/// its helper result unless either name is rebound (#10357).
+/// `1.200`: a `matches!` or-pattern whose alternatives all pin a value reads
+/// weak, not exact (#16286).
+/// `1.201`: a renamed call in a test's own module file (`src/tests.rs`) reads
+/// the enclosing module files, so a nested-block rename settles there too (#16277).
+/// `1.202`: `assert_eq!(matches!(..), true)` reads only as strong as its
+/// pattern (#16290).
+/// `1.204`: a test whose every mention of the owner's name is bound by a
+/// local of its body (`let dt = |x| x + 1;`, a nested `fn dt`) no longer
+/// relates by `direct_owner_call` (#14552).
+/// `1.205`: a boolean local compared with `true` reads as its
+/// initializer (#16296).
+/// `1.206`: a helper wrapper that logs through an audited
+/// `tracing::`/`log::` leveled macro forwards (#10357).
+/// `1.207`: a trait impl method on a receiver built by an indexed constructor
+/// relates by `direct_owner_call` unless another method of the name may take
+/// the call, and an inherent by-value twin withholds it (#15956, #15428).
+/// `1.208`: a helper wrapper that builds a value through an
+/// audited `anyhow::anyhow!` or `serde_json::json!` forwards (#10357).
+/// `1.209`: a `&self` or `&mut self` trait impl method is name-only when a
+/// standard trait's method of the name comes at an earlier probing step
+/// (#16040).
+/// `1.210`: a helper wrapper that calls `json!` imported by a
+/// verified `use serde_json::json;` forwards (#10357).
+pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.210";
 /// `0.2` → `0.3`: same semantic transition as the outer cache (#3273 /
 /// #3286) — sharded entries derive from the same facts and cannot bypass
 /// the outer generation bump.
@@ -1007,7 +1048,26 @@ pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.189";
 /// `0.187`: same explicit Cargo harness target identity as full `1.185` (#15846).
 /// `0.189`: same attribute-macro scope refusal as full `1.187` (#12857).
 /// `0.191`: same std-rooted import exemption as full `1.189` (#12876).
-const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.191";
+/// `0.193`: same env!-reading wrapper forwarding as full `1.191` (#10357).
+/// `0.194`: same manifest-rebound assertion root as full `1.192` (#10150).
+/// `0.195`: same macro-held owner call as full `1.193` (#16188).
+/// `0.196`: same non-empty array loop execution as full `1.194` (#14116).
+/// `0.197`: same macro-held owner-result local as full `1.195` (#16192).
+/// `0.198`: same propagated fallible check helper as full `1.196` (#14116).
+/// `0.199`: same chained owner-result local as full `1.197` (#16219).
+/// `0.200`: same discarded owner call as full `1.198` (#16258).
+/// `0.201`: same include-reading wrapper forwarding as full `1.199` (#10357).
+/// `0.202`: same or-pattern oracle reading as full `1.200` (#16286).
+/// `0.203`: same file-module nested-block rename as full `1.201` (#16277).
+/// `0.204`: same compared-pattern oracle reading as full `1.202` (#16290).
+/// `0.206`: same local-binder refusal as full `1.204` (#14552).
+/// `0.207`: same compared-bool-local oracle reading as full `1.205` (#16296).
+/// `0.208`: same audited logging-wrapper forwarding as full `1.206` (#10357).
+/// `0.209`: same constructed trait receiver reading as full `1.207` (#15956).
+/// `0.210`: same audited value-macro wrapper forwarding as full `1.208` (#10357).
+/// `0.211`: same standard trait rival reading as full `1.209` (#16040).
+/// `0.212`: same imported json! wrapper forwarding as full `1.210` (#10357).
+const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.212";
 
 /// Compact-classified seam cache schema. This cache stores the same
 /// `ClassifiedSeam` envelope shape as the full repo exposure cache, but
@@ -1237,7 +1297,26 @@ const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.191";
 /// `0.187`: same explicit Cargo harness target identity as full `1.185` (#15846).
 /// `0.189`: same attribute-macro scope refusal as full `1.187` (#12857).
 /// `0.191`: same std-rooted import exemption as full `1.189` (#12876).
-pub(crate) const COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.191";
+/// `0.193`: same env!-reading wrapper forwarding as full `1.191` (#10357).
+/// `0.194`: same manifest-rebound assertion root as full `1.192` (#10150).
+/// `0.195`: same macro-held owner call as full `1.193` (#16188).
+/// `0.196`: same non-empty array loop execution as full `1.194` (#14116).
+/// `0.197`: same macro-held owner-result local as full `1.195` (#16192).
+/// `0.198`: same propagated fallible check helper as full `1.196` (#14116).
+/// `0.199`: same chained owner-result local as full `1.197` (#16219).
+/// `0.200`: same discarded owner call as full `1.198` (#16258).
+/// `0.201`: same include-reading wrapper forwarding as full `1.199` (#10357).
+/// `0.202`: same or-pattern oracle reading as full `1.200` (#16286).
+/// `0.203`: same file-module nested-block rename as full `1.201` (#16277).
+/// `0.204`: same compared-pattern oracle reading as full `1.202` (#16290).
+/// `0.206`: same local-binder refusal as full `1.204` (#14552).
+/// `0.207`: same compared-bool-local oracle reading as full `1.205` (#16296).
+/// `0.208`: same audited logging-wrapper forwarding as full `1.206` (#10357).
+/// `0.209`: same constructed trait receiver reading as full `1.207` (#15956).
+/// `0.210`: same audited value-macro wrapper forwarding as full `1.208` (#10357).
+/// `0.211`: same standard trait rival reading as full `1.209` (#16040).
+/// `0.212`: same imported json! wrapper forwarding as full `1.210` (#10357).
+pub(crate) const COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.212";
 
 /// Compact class-count cache used by repo badge rendering. It keys off
 /// the same workspace state as the full fact cache, but stores only
@@ -1464,7 +1543,16 @@ pub(crate) const COUNT_CACHE_SCHEMA_VERSION: &str = "0.2";
 /// cannot, and would hide a `macro_rules! env` from the binding scan.
 /// `1.63`: a unit owner's tail block of `;`-terminated statements is not
 /// probed as `return_value` (#15459); `1.62` facts still carry that shape.
-pub(crate) const FILE_FACT_CACHE_SCHEMA_VERSION: &str = "1.64";
+/// `1.65`: `include_bytes` and `include_str` join the trusted macro names
+/// (#14116); `1.64` candidates cannot name them, and would hide a
+/// `macro_rules! include_str` from the binding scan.
+/// `1.66`: an item-position `include!` makes a file's binding candidates
+/// `Any` (#16060); earlier candidates let the binding scan skip such a file.
+/// `1.67`: a grouped `self` import that binds `serde_json` from another
+/// path (`use other::serde_json::{self};`) is a `json` binding candidate
+/// (#10357); earlier candidates let the binding scan skip such a file. The
+/// bare crate name (`use serde_json::{self, json};`) is not (#16350).
+pub(crate) const FILE_FACT_CACHE_SCHEMA_VERSION: &str = "1.67";
 
 /// Keep the best-effort classified-seam cache from turning a successful live
 /// analysis into an unbounded post-analysis stall on large repos. Larger live
@@ -1725,7 +1813,9 @@ fn seam_cache_store_limit_from_env(
     match value {
         Ok(value) => parse_positive_seam_cache_store_limit(&value, env_name),
         Err(std::env::VarError::NotPresent) => Ok(default_limit),
-        Err(std::env::VarError::NotUnicode(_)) => Err(format!("{env_name} must be valid UTF-8")),
+        Err(std::env::VarError::NotUnicode(_)) => Err(format!(
+            "{env_name} must be valid UTF-8; set it to a whole number above zero, or unset it to use the default"
+        )),
     }
 }
 
@@ -1733,9 +1823,11 @@ fn parse_positive_seam_cache_store_limit(value: &str, env_name: &str) -> Result<
     let trimmed = value.trim();
     let parsed = trimmed
         .parse::<usize>()
-        .map_err(|err| format!("{env_name} must be a positive integer: {err}"))?;
+        .map_err(|err| format!("{env_name} must be a positive integer: {err}; set it to a whole number above zero, or unset it to use the default"))?;
     if parsed == 0 {
-        return Err(format!("{env_name} must be a positive integer"));
+        return Err(format!(
+            "{env_name} must be a positive integer; set it to a whole number above zero, or unset it to use the default"
+        ));
     }
     Ok(parsed)
 }
@@ -5612,7 +5704,10 @@ mod tests {
         // 1.60 -> 1.61: digest-framed entries verified over stored bytes (#9216).
         // 1.62 -> 1.63: unit tail statement blocks are not return values (#15459).
         // 1.63 -> 1.64: `env`/`option_env` binding candidates (#14116).
-        assert_eq!(FILE_FACT_CACHE_SCHEMA_VERSION, "1.64");
+        // 1.64 -> 1.65: `include_bytes`/`include_str` binding candidates (#14116).
+        // 1.65 -> 1.66: item-position `include!` binds any name (#16060).
+        // 1.66 -> 1.67: grouped `self` import binding `serde_json` (#10357).
+        assert_eq!(FILE_FACT_CACHE_SCHEMA_VERSION, "1.67");
         // 1.4 -> 1.5: metadata-sourced harness validation (#3634) flips
         // verdicts for workspaces the manifest emulation approximated.
         // 1.5 -> 1.6: the #3636 reachability authority excludes
@@ -5827,7 +5922,27 @@ mod tests {
         // 1.185 -> 1.187: attribute-macro generated tests refuse invocation scopes (#12857).
         // 1.187 -> 1.189: std-rooted imports keep invocation scopes (#12876).
         // 1.188 / 0.190 is left for #13041.
-        assert_eq!(CACHE_SCHEMA_VERSION, "1.189");
+        // 1.189 -> 1.191: env!-reading wrappers forward helper results (#10357).
+        // 1.190 / 0.192 is left for #13041.
+        // 1.191 -> 1.192: manifest-rebound std/core assertion roots read unknown (#10150); 1.190 is left for #13041.
+        // 1.192 -> 1.193: owner calls only an untrusted inner macro holds read unknown (#16188).
+        // 1.193 -> 1.194: a for over any non-empty array runs its assertion (#14116).
+        // 1.194 -> 1.195: owner-result locals only an untrusted inner macro uses read unknown (#16192).
+        // 1.195 -> 1.196: a propagated fallible check helper lends its assertion (#14116).
+        // 1.196 -> 1.197: chained owner-result locals only an untrusted inner macro uses read unknown (#16219).
+        // 1.197 -> 1.198: a discarded owner call is not a free observation beside a macro-held call (#16258).
+        // 1.198 -> 1.199: include_str!/include_bytes! wrappers forward their helper result (#10357).
+        // 1.199 -> 1.200: matches! or-patterns of values read weak (#16286).
+        // 1.200 -> 1.201: nested-block renames settle in a test's own module file (#16277).
+        // 1.201 -> 1.202: assert_eq!(matches!(..), true) follows its pattern (#16290).
+        // 1.202 -> 1.204: a test-local binder of the name withholds direct credit (#14552).
+        // 1.204 -> 1.205: a compared bool local follows its initializer (#16296).
+        // 1.205 -> 1.206: an audited qualified logging macro is transparent (#10357).
+        // 1.206 -> 1.207: constructed trait receivers and by-value twins (#15956, #15428).
+        // 1.207 -> 1.208: an audited qualified value macro is transparent (#10357).
+        // 1.208 -> 1.209: a standard trait method at an earlier probing step (#16040).
+        // 1.209 -> 1.210: an imported serde_json json! is transparent (#10357).
+        assert_eq!(CACHE_SCHEMA_VERSION, "1.210");
         // 1.168 -> 1.169: plain `assert_eq!` literal withhold in the audit (#13005).
         // 0.12 -> 0.13 through 0.14 / 0.15 / 0.16 / 0.17 / 0.18: same
         // #3731 semantic transition as the outer classified-seam cache,
@@ -5995,8 +6110,27 @@ mod tests {
         // 0.187 -> 0.189: same attribute-macro scope refusal as full 1.187 (#12857).
         // 1.186 / 0.188 is left for #13041.
         // 0.189 -> 0.191: same std-rooted import exemption as full 1.189 (#12876).
-        assert_eq!(SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.191");
-        assert_eq!(COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.191");
+        // 0.191 -> 0.193: same env!-reading wrapper forwarding as full 1.191 (#10357).
+        // 0.193 -> 0.194: same manifest-rebound assertion root as full 1.192 (#10150).
+        // 0.194 -> 0.195: same macro-held owner call as full 1.193 (#16188).
+        // 0.195 -> 0.196: same non-empty array loop execution as full 1.194 (#14116).
+        // 0.196 -> 0.197: same macro-held owner-result local as full 1.195 (#16192).
+        // 0.197 -> 0.198: same propagated fallible check helper as full 1.196 (#14116).
+        // 0.198 -> 0.199: same chained owner-result local as full 1.197 (#16219).
+        // 0.199 -> 0.200: same discarded owner call as full 1.198 (#16258).
+        // 0.200 -> 0.201: same include-reading wrapper forwarding as full 1.199 (#10357).
+        // 0.201 -> 0.202: same or-pattern oracle reading as full 1.200 (#16286).
+        // 0.202 -> 0.203: same file-module nested-block rename as full 1.201 (#16277).
+        // 0.203 -> 0.204: same compared-pattern oracle reading as full 1.202 (#16290).
+        // 0.204 -> 0.206: same local-binder refusal as full 1.204 (#14552).
+        // 0.206 -> 0.207: same compared-bool-local oracle reading as full 1.205 (#16296).
+        // 0.207 -> 0.208: same audited logging-wrapper forwarding as full 1.206 (#10357).
+        // 0.208 -> 0.209: same constructed trait receiver reading as full 1.207 (#15956).
+        // 0.209 -> 0.210: same audited value-macro wrapper forwarding as full 1.208 (#10357).
+        // 0.210 -> 0.211: same standard trait rival reading as full 1.209 (#16040).
+        // 0.211 -> 0.212: same imported json! wrapper forwarding as full 1.210 (#10357).
+        assert_eq!(SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.212");
+        assert_eq!(COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.212");
         // 0.170 -> 0.171: same plain `assert_eq!` literal withhold as full 1.169 (#13005).
     }
 

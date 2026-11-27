@@ -71,7 +71,12 @@ pub(crate) fn execute_pr_evidence(mut options: PrEvidenceOptions) -> Result<(), 
         // failure, never a guessed base recorded in the packet.
         options.base =
             crate::analysis::resolve_effective_base(&repo, None, Some(PR_EVIDENCE_GIT_DEADLINE))
-                .map_err(|err| format!("pr-evidence: {err}"))?;
+                .map_err(|err| {
+                    format!(
+                        "pr-evidence: {}",
+                        crate::git::without_saved_diff_route(&err.to_string())
+                    )
+                })?;
     }
     if options.check {
         check_pr_evidence(&repo, &options)
@@ -247,13 +252,14 @@ fn check_pr_evidence(repo: &Path, options: &PrEvidenceOptions) -> Result<(), Str
     let json_path = repo.join(PR_EVIDENCE_JSON);
     let markdown_path = repo.join(PR_EVIDENCE_MD);
     let text = fs::read_to_string(&json_path)
-        .map_err(|err| format!(
-            "missing or unreadable {PR_EVIDENCE_JSON}: {err}; run `ripr pr-evidence` with the same --base, --head and --root to write it, then rerun with --check"
-        ))?;
+        .map_err(|err| {
+        format!(
+            "missing or unreadable {PR_EVIDENCE_JSON}: {}; run `ripr pr-evidence` with the same --base, --head and --root to write it, then rerun with --check",
+            crate::bounded_input::read_failure_detail(&err)
+        )
+    })?;
     let packet: Value = serde_json::from_str(&text)
-        .map_err(|err| format!(
-            "{PR_EVIDENCE_JSON} is not valid JSON: {err}; regenerate it with `ripr pr-evidence` (same --base, --head and --root), then rerun with --check"
-        ))?;
+        .map_err(|err| format!("{PR_EVIDENCE_JSON} is not valid JSON: {err}; regenerate it with `ripr pr-evidence` (same --base, --head and --root), then rerun with --check"))?;
     if let Some(error) = reject_pr_evidence_error_packet(&packet) {
         return Err(error);
     }
@@ -292,7 +298,8 @@ fn verify_revision(repo: &Path, flag: &str, rev: &str) -> Result<(), String> {
     )
     .map_err(|err| {
         format!(
-            "pr-evidence could not run git to resolve {flag} `{rev}`: {err}; check that git is installed and on PATH, then rerun"
+            "pr-evidence could not run git to resolve {flag} `{rev}`: {}; check that git is installed and on PATH, then rerun",
+            crate::git::without_saved_diff_route(&err.to_string())
         )
     })?;
     if output.status.success() {
@@ -474,8 +481,14 @@ fn run_git_output_bytes_within(
     args: &[&str],
     deadline: Duration,
 ) -> Result<Vec<u8>, String> {
-    let output = crate::git::run_git_output_with_deadline(repo, args, Some(deadline))
-        .map_err(|err| format!("failed to run git {}: {err}", args.join(" ")))?;
+    let output =
+        crate::git::run_git_output_with_deadline(repo, args, Some(deadline)).map_err(|err| {
+            format!(
+                "failed to run git {}: {}; fix the git failure, then rerun the command",
+                args.join(" "),
+                crate::git::without_saved_diff_route(&err.to_string())
+            )
+        })?;
     if output.status.success() {
         Ok(output.stdout)
     } else {
@@ -1252,7 +1265,14 @@ mod tests {
         let bounded =
             run_git_output_bytes_within(&missing, &["rev-parse", "HEAD"], Duration::from_mins(1));
         match bounded {
-            Err(err) if !err.contains(crate::git::GIT_INVOCATION_TIMEOUT_PREFIX) => {}
+            // #15257: the spawn failure keeps the argv and the cause, names a
+            // retry step, and never suggests `--diff`, which this command
+            // does not take.
+            Err(err)
+                if !err.contains(crate::git::GIT_INVOCATION_TIMEOUT_PREFIX)
+                    && err.starts_with("failed to run git rev-parse HEAD: ")
+                    && err.ends_with("; fix the git failure, then rerun the command")
+                    && !err.contains("--diff") => {}
             other => return Err(format!("control: expected a spawn failure, got {other:?}")),
         }
         match run_git_output_bytes_within(&missing, &["rev-parse", "HEAD"], Duration::ZERO) {

@@ -36,6 +36,37 @@ const CASES: &[Case] = &[
         stderr: "ripr: review-comments requires --head <sha>; pass the pull request's head commit, for example `--base origin/main --head HEAD`\n",
     },
     Case {
+        args: &[
+            "review-comments",
+            "--base",
+            "origin/main",
+            "--head",
+            "HEAD",
+            "--suppression-policy",
+            "",
+        ],
+        exit: 2,
+        stderr: "ripr: review-comments --suppression-policy requires a non-empty path; pass a path right after it (an empty value usually means an unset shell variable)\n",
+    },
+    Case {
+        args: &[
+            "review-comments",
+            "--base",
+            "origin/main",
+            "--head",
+            "HEAD",
+            "--out",
+            "",
+        ],
+        exit: 2,
+        stderr: "ripr: review-comments --out requires a non-empty path; pass a path right after it (an empty value usually means an unset shell variable)\n",
+    },
+    Case {
+        args: &["pr-comments", "plan", "--max-inline-comments", "0"],
+        exit: 2,
+        stderr: "ripr: pr-comments plan --max-inline-comments must be greater than zero; pass a whole number of 1 or more\n",
+    },
+    Case {
         args: &["receipt", "write"],
         exit: 2,
         stderr: "ripr: receipt write requires a canonical_gap_id; re-run with `--gap <canonical_gap_id>` (`ripr receipt --help` shows the full command)\n",
@@ -86,7 +117,7 @@ const CASES: &[Case] = &[
     Case {
         args: &["reports", "ts-false-actionable"],
         exit: 2,
-        stderr: "ripr: reports ts-false-actionable requires --corpus PATH; pass the TypeScript preview audit corpus JSON (run `ripr help reports` for the format)\n",
+        stderr: "ripr: reports ts-false-actionable requires --corpus PATH; pass the TypeScript preview audit corpus JSON (`ripr reports ts-false-actionable --help` documents the corpus format)\n",
     },
     Case {
         args: &["explain", "--root", "/ripr-missing-root", "some-id"],
@@ -249,7 +280,7 @@ const CASES: &[Case] = &[
     Case {
         args: &["--al"],
         exit: 2,
-        stderr: "ripr: unknown command \"--al\"; options go after the command, and `ripr check` has no `--al` option. Run `ripr --help`.\n",
+        stderr: "ripr: unknown option --al; run `ripr --help` to list commands and options\n",
     },
     // #15201: the same near miss after the command gets no `--all` either.
     Case {

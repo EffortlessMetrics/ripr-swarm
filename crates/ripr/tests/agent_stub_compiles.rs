@@ -308,6 +308,57 @@ impl Counter {
     }
 }
 
+pub fn tier(qty: u32) -> (u32, &'static str) {
+    if qty > 30 { (20, "bulk") } else { (0, "retail") }
+}
+
+pub const MIN_NAME: usize = 3;
+
+pub fn name_ok(s: &str) -> bool {
+    let n = s.chars().count();
+    n > MIN_NAME
+}
+
+pub fn longer<'a>(a: &'a str, b: &'a str) -> &'a str {
+    if a.len() > b.len() { a } else { b }
+}
+
+pub fn fee(amount: i64, rate: u32) -> i64 {
+    if rate > 500 { amount } else { 0 }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum State {
+    Idle,
+    Running,
+    Failed,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub enum Event {
+    Start,
+    Fail,
+}
+
+pub struct Machine {
+    state: State,
+}
+
+impl Machine {
+    pub fn new() -> Self {
+        Machine { state: State::Idle }
+    }
+
+    pub fn step(&mut self, ev: Event) -> State {
+        self.state = match (self.state, ev) {
+            (State::Idle, Event::Start) => State::Running,
+            (State::Running, Event::Fail) => State::Failed,
+            (state, _) => state,
+        };
+        self.state
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -331,6 +382,11 @@ mod tests {
         let mut b = Bucket::new(5);
         assert!(b.allow(2));
     }
+
+    #[test]
+    fn charges() {
+        assert_eq!(fee(-3, 900), -3);
+    }
 }
 "#;
 
@@ -340,6 +396,9 @@ enum Expect {
     /// As `StopsAtRiprTodo`, and the stub text holds this receiver line, so
     /// the run proves the constructor call compiled and ran before the todo.
     BuildsReceiver(&'static str),
+    /// As `StopsAtRiprTodo`, and the stub text holds this input value, so the
+    /// run proves the arm's pattern compiled as an argument (#8361).
+    WritesInput(&'static str),
     /// No stub; the refusal names this kind.
     Refused(&'static str),
 }
@@ -424,7 +483,11 @@ fn written_stubs_compile_and_stop_at_their_own_todo() -> Result<(), String> {
         // `impl<'a> Parser<'a>` with a `&mut self` method.
         ("end > start", Expect::StopsAtRiprTodo, Some("more_tests")),
         // `impl FromStr for Unit` returning `Result<Self, Self::Err>`.
-        ("\"m\" =>", Expect::StopsAtRiprTodo, Some("more_tests")),
+        (
+            "\"m\" =>",
+            Expect::WritesInput("\"m\";"),
+            Some("more_tests"),
+        ),
         // A field of the struct literal the owner returns.
         (
             "minor: self.minor + 1",
@@ -447,6 +510,29 @@ fn written_stubs_compile_and_stop_at_their_own_todo() -> Result<(), String> {
         (
             "sum > cap",
             Expect::BuildsReceiver("let subject: Ledger = Ledger::empty();"),
+        ),
+        // The written input decides the path to a constant: the expected
+        // fill-in names both candidates and still stops the test (#8361).
+        (
+            "qty > 30",
+            Expect::WritesInput(
+                r#"the changed code returns (0, \"retail\"); with `>=` it returns (20, \"bulk\")"#,
+            ),
+        ),
+        // A boundary on a `&str` length writes a string of that length,
+        // through a local bound from `.chars().count()` or between two
+        // parameters (#8361).
+        (
+            "n > MIN_NAME",
+            Expect::WritesInput("let s: &str = \"xxx\";"),
+        ),
+        ("a.len() > b.len()", Expect::WritesInput("= \"cd\";")),
+        // The boundary's other input comes from an existing test's call.
+        ("rate > 500", Expect::WritesInput("let amount: i64 = -3;")),
+        // A match arm's own pattern names the event that reaches it.
+        (
+            "(State::Running, Event::Fail) =>",
+            Expect::WritesInput("Event::Fail;"),
         ),
         // `#[derive(Default)]` beside an inherent `default(hits)`.
         (
@@ -498,7 +584,7 @@ fn written_stubs_compile_and_stop_at_their_own_todo() -> Result<(), String> {
                     "{needle}: a refusal must not touch the file"
                 );
             }
-            Expect::StopsAtRiprTodo | Expect::BuildsReceiver(_) => {
+            Expect::StopsAtRiprTodo | Expect::BuildsReceiver(_) | Expect::WritesInput(_) => {
                 assert!(output.status.success(), "{needle}: {stdout}{stderr}");
                 let ready: serde_json::Value =
                     serde_json::from_str(&stdout).map_err(|error| error.to_string())?;
@@ -517,6 +603,10 @@ fn written_stubs_compile_and_stop_at_their_own_todo() -> Result<(), String> {
                         !text.contains("that `"),
                         "{needle}: no receiver todo remains:\n{text}"
                     );
+                }
+                if let Expect::WritesInput(value) = expect {
+                    let text = document["text"].as_str().unwrap_or_default();
+                    assert!(text.contains(value), "{needle}: input `{value}`:\n{text}");
                 }
                 if fixture == FIXTURE_5471 {
                     // Two inline test modules: one is picked, not refused.

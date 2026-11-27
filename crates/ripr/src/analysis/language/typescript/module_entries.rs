@@ -30,15 +30,33 @@
 //! the importer's exports as entries of the imported module's owners, under
 //! the same three-hop total bound and the same weaker-than-direct contract.
 
+use super::module_class_nodes::{
+    ModuleClass, constructed_method_calls, method_nodes, module_class, this_method_calls,
+};
 use super::module_value_reads::{
-    byte_preserving_mask, never_mutated_in_module, reads_unshadowed_value,
+    byte_preserving_mask, never_mutated_in_module, past_type_arguments, reads_unshadowed_value,
 };
 use super::*;
+use oxc_ast::ast::{
+    AssignmentTargetPropertyIdentifier, BindingIdentifier, IdentifierReference,
+    SimpleAssignmentTarget, TSType,
+};
+use oxc_ast_visit::{Visit, walk};
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 
 /// Maximum call edges followed from an exported entry to the owner. Matches
 /// the Rust helper-owner graph bound (`HELPER_OWNER_CALL_GRAPH_MAX_HOPS`).
 pub(crate) const MODULE_ENTRY_MAX_HOPS: usize = 3;
+
+/// Maximum edges followed from an exported entry to the owner when the path
+/// passes at least one closure edge (#13592). Combinator-built code is deep:
+/// unjs/pathe `matchGlob` reaches `int2alpha` only through `compileGlob`,
+/// the `Grammar` constant, `Range`, `RangeValue`, `RangeAlphaUpper` and
+/// `makeRangeAlpha`. Reach along such a path is never more than unknown.
+pub(crate) const MODULE_CLOSURE_MAX_HOPS: usize = 8;
+
+/// Closure entries kept per owner; an owner past it keeps none (#13592).
+pub(crate) const MAX_CLOSURE_ENTRIES_PER_OWNER: usize = 32;
 
 /// An exported name of the owner's module whose code reaches the owner.
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, serde::Serialize, serde::Deserialize)]
@@ -79,6 +97,15 @@ pub(crate) struct TypeScriptModuleEntry {
     /// the owner's own module.
     #[serde(default)]
     pub(crate) cross_module: Option<TypeScriptCrossModuleLink>,
+    /// `true` when every path from the entry to the owner passes a closure
+    /// edge (#13592): the owner is passed as a value (`JSON.parse(text,
+    /// reviver)`, `keys.sort(compare)`), referenced by a value that is
+    /// invoked later (`parse(input, Grammar)`), or is the factory or a
+    /// callback argument of a call-built constant (`const Rule =
+    /// match(re, () => regex(...))`). Whether and when the value runs is not
+    /// modeled, so such reach is never more than unknown.
+    #[serde(default)]
+    pub(crate) closure: bool,
 }
 
 /// What an `instance_factory` entry names (#15924).
@@ -159,6 +186,17 @@ struct ModuleNode<'s> {
     factory: Option<&'s str>,
     /// Function texts the declaration returns directly, when it is a factory.
     returned_texts: Vec<CallText<'s>>,
+    /// Names the declaration's code references (#13592): every identifier
+    /// read anywhere in the function, its returned closures and nested
+    /// callbacks, or the whole initializer of a call-built constant (its
+    /// callee included), minus every name the code binds itself. A reference
+    /// to another top-level declaration is a closure edge: the value may run
+    /// whenever this code runs, but when (or whether) is not modeled. A
+    /// function's directly returned functions are left out, as for its calls.
+    references: Vec<&'s str>,
+    /// References of the functions this declaration returns directly: closure
+    /// edges of a value it builds (`const p = f()`), never its own.
+    returned_references: Vec<&'s str>,
 }
 
 /// Code whose bare calls count, plus the enclosing function text that decides
@@ -173,6 +211,32 @@ struct CallText<'s> {
     /// The whole enclosing function (the factory, for a returned closure), so
     /// its parameters and locals shadow the top-level binding too.
     scope: &'s str,
+}
+
+/// Module-level non-function `const` bindings the graph may follow.
+#[derive(Default)]
+struct ModuleValues<'s> {
+    names: BTreeSet<&'s str>,
+    /// Parsed offset of each binding identifier.
+    decl_starts: BTreeMap<&'s str, usize>,
+    /// Values an immediately invoked function builds (#15928).
+    built: BTreeMap<&'s str, BuiltValue<'s>>,
+    /// Top-level class declarations whose methods may be nodes (#15928).
+    classes: Vec<ModuleClass<'s>>,
+}
+
+/// `const X = (function () { ... })()`: the function that builds the value.
+struct BuiltValue<'s> {
+    /// The whole function text. Its bare calls are the value's calls: the
+    /// function runs when the module loads, and what it declares (the methods
+    /// of a class it returns) runs through the value.
+    text: &'s str,
+    /// The function's body block, from the parsed span.
+    body: &'s str,
+    /// The function's byte range when its body declares the binding's own
+    /// name (`class X {}` then `return X`): every mention of the name inside
+    /// is the inner binding, not the module-level one.
+    shadow: Option<std::ops::Range<usize>>,
 }
 
 /// Exported entries per top-level owner name, plus the imported bindings the
@@ -195,20 +259,24 @@ pub(crate) fn module_entries_and_outbound<'a>(
     // borrows them instead of owning a String per node (#10087 follow-up).
     let mut nodes: BTreeMap<&'a str, ModuleNode<'a>> = BTreeMap::new();
     let mut exports: BTreeMap<String, BTreeSet<TypeScriptModuleEntry>> = BTreeMap::new();
-    let mut values: BTreeSet<&'a str> = BTreeSet::new();
+    let mut module_values = ModuleValues::default();
     let mut exported_values: BTreeSet<&'a str> = BTreeSet::new();
-    let mut decl_starts: BTreeMap<&'a str, usize> = BTreeMap::new();
     for statement in statements {
         collect_statement(
             statement,
             source,
             &mut nodes,
             &mut exports,
-            &mut values,
+            &mut module_values,
             &mut exported_values,
-            &mut decl_starts,
         );
     }
+    let ModuleValues {
+        names: mut values,
+        decl_starts,
+        built,
+        classes,
+    } = module_values;
     // A value is followable only while nothing in the file writes it; a name
     // that is also a function/factory node keeps its bare-call edges only.
     // Only values some node's code actually mentions are scanned (the mutation
@@ -217,21 +285,57 @@ pub(crate) fn module_entries_and_outbound<'a>(
     let mentioned: std::collections::HashSet<&str> = nodes
         .values()
         .flat_map(|node| node.call_texts.iter().chain(node.returned_texts.iter()))
+        .map(|text| &*text.calls)
+        // A building function and a module-private class read values too.
+        .chain(built.values().map(|value| value.text))
+        .chain(classes.iter().map(|class| class.text))
         .flat_map(|text| {
-            text.calls
-                .split(|ch: char| !is_javascript_identifier_char(ch))
+            text.split(|ch: char| !is_javascript_identifier_char(ch))
                 .filter(|token| !token.is_empty())
         })
         .collect();
     values.retain(|name| {
         !nodes.contains_key(name) && !exported_values.contains(name) && mentioned.contains(name)
     });
-    if !values.is_empty() {
+    // The whole-module mask is built only when a value or class needs it.
+    let mut method_nodes_of_classes = Vec::new();
+    if !values.is_empty() || !classes.is_empty() {
         let masked_source = byte_preserving_mask(source, &ts_mask_literals_and_comments(source));
+        // Dynamic code (`eval`, `Function(...)`) or an identifier spelled with
+        // a unicode escape can write any value or class under a spelling the
+        // text scan cannot see, so the module follows none of them.
+        if runs_dynamic_or_escaped_code(&masked_source) {
+            values.clear();
+        }
         values.retain(|name| {
-            never_mutated_in_module(source, &masked_source, name, decl_starts.get(name).copied())
+            never_mutated_in_module(
+                source,
+                &masked_source,
+                name,
+                decl_starts.get(name).copied(),
+                built.get(name).and_then(|value| value.shadow.as_ref()),
+            ) && built.get(name).is_none_or(|value| {
+                built_value_stays_inside(
+                    source,
+                    &masked_source,
+                    name,
+                    decl_starts.get(name).copied(),
+                    value,
+                )
+            })
+        });
+        let classes: &[ModuleClass<'_>] = if runs_dynamic_or_escaped_code(&masked_source) {
+            &[]
+        } else {
+            &classes
+        };
+        method_nodes_of_classes = method_nodes(classes, source, &masked_source, |name| {
+            nodes.contains_key(name)
+                || decl_starts.contains_key(name)
+                || imports.iter().any(|import| import.local == name)
         });
     }
+    let method_nodes_of_classes = method_nodes_of_classes;
     // Imported bindings a node may bare-call: named, value, bound once, and
     // not also a top-level declaration of this module.
     let bindings: BTreeMap<&str, &TypeScriptImport> = imports
@@ -253,11 +357,16 @@ pub(crate) fn module_entries_and_outbound<'a>(
         .copied()
         .chain(bindings.keys().copied())
         .collect();
+    // A name the module ever reassigns may hold some other value: a
+    // reference to it (`keys.sort(compare)`) is no call edge, and no closure
+    // edge targets it.
+    let reassigned = reassigned_names(statements);
+    let built_names: BTreeSet<&str> = built.keys().copied().collect();
     let mut callees: BTreeMap<&str, BTreeSet<&str>> = BTreeMap::new();
     let mut import_callees: BTreeMap<&str, BTreeSet<&str>> = BTreeMap::new();
     for (name, node) in &nodes {
         let (top_level, imported): (BTreeSet<&str>, BTreeSet<&str>) =
-            node_callees(node, &nodes, &names, &values)
+            node_callees(node, &nodes, &names, &values, &reassigned, &built_names)
                 .into_iter()
                 .partition(|callee| nodes.contains_key(callee) || values.contains(callee));
         callees.insert(*name, top_level);
@@ -265,6 +374,101 @@ pub(crate) fn module_entries_and_outbound<'a>(
             import_callees.insert(*name, imported);
         }
     }
+    // A built value calls what its building function calls (#15928). A name
+    // the function also declares as a member (`compare(a, b) { ... }`) reads
+    // as a call in text, so it is no edge.
+    for (name, value) in &built {
+        if !values.contains(name) {
+            continue;
+        }
+        let node = ModuleNode {
+            call_texts: vec![CallText {
+                calls: std::borrow::Cow::Borrowed(value.text),
+                scope: value.text,
+            }],
+            ..ModuleNode::default()
+        };
+        let top_level: BTreeSet<&str> =
+            node_callees(&node, &nodes, &names, &values, &reassigned, &built_names)
+                .into_iter()
+                .filter(|callee| *callee != *name)
+                .filter(|callee| nodes.contains_key(callee) || values.contains(callee))
+                .filter(|callee| !declares_member_named(value.text, callee))
+                .collect();
+        callees.insert(*name, top_level);
+    }
+    // A method of a module-private class is a node `Class.method` (#15928):
+    // it calls what its text bare-calls, the siblings it calls on `this`, and
+    // any method it runs on a class it constructs. A function reaches it by
+    // `new Class(...).method(`.
+    for method in &method_nodes_of_classes {
+        let node = ModuleNode {
+            call_texts: vec![CallText {
+                calls: std::borrow::Cow::Borrowed(method.text),
+                scope: method.text,
+            }],
+            ..ModuleNode::default()
+        };
+        let mut edges: BTreeSet<&str> =
+            node_callees(&node, &nodes, &names, &values, &reassigned, &built_names)
+                .into_iter()
+                .filter(|callee| nodes.contains_key(callee) || values.contains(callee))
+                .filter(|callee| !declares_member_named(method.text, callee))
+                .collect();
+        edges.extend(this_method_calls(method, &method_nodes_of_classes));
+        edges.extend(constructed_method_calls(
+            method.text,
+            method.text,
+            &method_nodes_of_classes,
+        ));
+        callees.insert(method.key.as_str(), edges);
+    }
+    if !method_nodes_of_classes.is_empty() {
+        for (name, node) in &nodes {
+            if node.factory.is_some() {
+                continue;
+            }
+            for text in &node.call_texts {
+                let constructed =
+                    constructed_method_calls(&text.calls, text.scope, &method_nodes_of_classes);
+                if !constructed.is_empty() {
+                    callees.entry(*name).or_default().extend(constructed);
+                }
+            }
+        }
+    }
+    // Closure edges (#13592): a reference to another top-level declaration
+    // that the bare-call graph does not already record. A name the module
+    // ever reassigns may hold some other value, so it is never a target.
+    let closure_callees: BTreeMap<&str, BTreeSet<&str>> = nodes
+        .iter()
+        .map(|(name, node)| {
+            let calls = callees.get(name);
+            // A built value also reaches what its factory's returned
+            // functions reference.
+            // A factory the module reassigns may no longer be the declared
+            // one, so its returned functions' references are not inherited.
+            let built = node
+                .factory
+                .filter(|factory| !reassigned.contains(factory))
+                .and_then(|factory| nodes.get(factory))
+                .map(|factory| factory.returned_references.as_slice())
+                .unwrap_or_default();
+            let targets: BTreeSet<&str> = node
+                .references
+                .iter()
+                .chain(built)
+                .copied()
+                .filter(|target| {
+                    target != name
+                        && nodes.contains_key(target)
+                        && !reassigned.contains(target)
+                        && !calls.is_some_and(|calls| calls.contains(target))
+                })
+                .collect();
+            (*name, targets)
+        })
+        .collect();
     let mut entries: BTreeMap<String, Vec<TypeScriptModuleEntry>> = BTreeMap::new();
     // (import local) -> exports of this module that reach a call of it.
     let mut outbound: BTreeMap<&str, BTreeMap<String, TypeScriptModuleEntry>> = BTreeMap::new();
@@ -305,7 +509,36 @@ pub(crate) fn module_entries_and_outbound<'a>(
             }
         }
     }
+    // Owners reached from an export only along a path with a closure edge:
+    // an entry of their own, marked so it reads unknown and never chains
+    // like a call (#13592).
+    for (local, exported) in &exports {
+        for (reached, hops) in reachable_through_closures(local, &callees, &closure_callees) {
+            if reached == local.as_str() {
+                continue;
+            }
+            // `reachable_through_closures` leaves out every owner this
+            // export already reaches by calls, and each export is visited
+            // once, so no entry here duplicates another.
+            let owner_entries = entries.entry(reached.to_string()).or_default();
+            owner_entries.extend(exported.iter().map(|entry| TypeScriptModuleEntry {
+                hops: u8::try_from(hops).unwrap_or(u8::MAX),
+                closure: true,
+                ..entry.clone()
+            }));
+        }
+    }
     for owner_entries in entries.values_mut() {
+        // A densely connected module (a combinator grammar with many
+        // exports) could give an owner a closure entry per export, and every
+        // related test rechecks them all. Past the cap the owner keeps only
+        // its call entries: the reading before closure reach, which may be
+        // `no_static_path` though the analysis saw the reach.
+        if owner_entries.iter().filter(|entry| entry.closure).count()
+            > MAX_CLOSURE_ENTRIES_PER_OWNER
+        {
+            owner_entries.retain(|entry| !entry.closure);
+        }
         owner_entries.sort();
     }
     let outbound = outbound
@@ -329,16 +562,20 @@ fn collect_statement<'a>(
     source: &'a str,
     nodes: &mut BTreeMap<&'a str, ModuleNode<'a>>,
     exports: &mut BTreeMap<String, BTreeSet<TypeScriptModuleEntry>>,
-    values: &mut BTreeSet<&'a str>,
+    values: &mut ModuleValues<'a>,
     exported_values: &mut BTreeSet<&'a str>,
-    decl_starts: &mut BTreeMap<&'a str, usize>,
 ) {
     match statement {
         Statement::FunctionDeclaration(func) => {
             collect_function(func, source, nodes);
         }
         Statement::VariableDeclaration(decl) => {
-            collect_variables(decl, source, nodes, values, decl_starts);
+            collect_variables(decl, source, nodes, values);
+        }
+        // An exported class is constructed by tests directly; only a
+        // module-private one needs the entry graph.
+        Statement::ClassDeclaration(class) => {
+            values.classes.extend(module_class(class, source));
         }
         Statement::ExportNamedDeclaration(export) => {
             if export.export_kind == ImportOrExportKind::Type {
@@ -351,7 +588,7 @@ fn collect_statement<'a>(
                     }
                 }
                 Some(Declaration::VariableDeclaration(decl)) => {
-                    for name in collect_variables(decl, source, nodes, values, decl_starts) {
+                    for name in collect_variables(decl, source, nodes, values) {
                         record_export(exports, name, name);
                     }
                     // An exported value may be imported and mutated by another
@@ -422,6 +659,7 @@ fn record_export(
             instance_kind: TypeScriptInstanceKind::default(),
             hops: 0,
             cross_module: None,
+            closure: false,
         });
 }
 
@@ -447,6 +685,18 @@ fn collect_function_as<'a>(
     };
     let returned = returned_functions(&body.statements);
     add_function_node(name, func.span, &returned, source, nodes);
+    add_function_references(name, &func.params, body, &returned, nodes);
+    // A named function expression binds its own name inside its body
+    // (`const label = function helper() { return helper.name; }`): a
+    // reference to that name is the function itself, never a top-level
+    // declaration of the same name.
+    if let Some(own) = func.id.as_ref().map(|id| id.name.as_str())
+        && own != name
+        && let Some(node) = nodes.get_mut(name)
+    {
+        node.references.retain(|target| *target != own);
+        node.returned_references.retain(|target| *target != own);
+    }
     true
 }
 
@@ -466,6 +716,7 @@ fn collect_arrow_as<'a>(
         returned_functions(&arrow.body.statements)
     };
     add_function_node(name, arrow.span, &returned, source, nodes);
+    add_function_references(name, &arrow.params, &arrow.body, &returned, nodes);
 }
 
 /// A function node: its own calls exclude the functions it returns, which
@@ -536,8 +787,7 @@ fn collect_variables<'a>(
     decl: &'a VariableDeclaration<'a>,
     source: &'a str,
     nodes: &mut BTreeMap<&'a str, ModuleNode<'a>>,
-    values: &mut BTreeSet<&'a str>,
-    decl_starts: &mut BTreeMap<&'a str, usize>,
+    values: &mut ModuleValues<'a>,
 ) -> Vec<&'a str> {
     let mut names = Vec::new();
     let is_const = decl.kind == oxc_ast::ast::VariableDeclarationKind::Const;
@@ -554,10 +804,10 @@ fn collect_variables<'a>(
             BindingPattern::BindingIdentifier(identifier) => identifier.span.start as usize,
             _ => continue,
         };
-        let mut add_value = |values: &mut BTreeSet<&'a str>| {
+        let add_value = |values: &mut ModuleValues<'a>| {
             if is_const {
-                values.insert(name);
-                decl_starts.insert(name, start);
+                values.names.insert(name);
+                values.decl_starts.insert(name, start);
             }
         };
         match unwrap_type_wrappers(init) {
@@ -571,6 +821,9 @@ fn collect_variables<'a>(
             Expression::CallExpression(call) => {
                 let Expression::Identifier(callee) = unwrap_type_wrappers(&call.callee) else {
                     add_value(values);
+                    if is_const && let Some(value) = built_value(call, name, source) {
+                        values.built.insert(name, value);
+                    }
                     continue;
                 };
                 // `Symbol("x")` builds a value, not a factory product.
@@ -579,6 +832,15 @@ fn collect_variables<'a>(
                     continue;
                 }
                 nodes.entry(name).or_default().factory = Some(callee.name.as_str());
+                // The callee and every argument (callbacks included) are
+                // closure references of the built value (#13592).
+                let mut references = References::default();
+                references.visit_expression(init);
+                let References {
+                    referenced, bound, ..
+                } = references;
+                let node = nodes.entry(name).or_default();
+                push_unbound(&mut node.references, referenced, &bound);
                 names.push(name);
             }
             // A non-function `const` value (regex, string, object, array,
@@ -588,6 +850,413 @@ fn collect_variables<'a>(
         }
     }
     names
+}
+
+/// Identifier references and bindings of one declaration's code (#13592).
+/// Type positions are skipped: a `typeof f` annotation runs nothing.
+#[derive(Default)]
+struct References<'a> {
+    referenced: Vec<&'a str>,
+    bound: std::collections::HashSet<&'a str>,
+}
+
+impl<'a> Visit<'a> for References<'a> {
+    fn visit_identifier_reference(&mut self, it: &IdentifierReference<'a>) {
+        self.referenced.push(it.name.as_str());
+    }
+
+    fn visit_binding_identifier(&mut self, it: &BindingIdentifier<'a>) {
+        self.bound.insert(it.name.as_str());
+    }
+
+    fn visit_ts_type(&mut self, _it: &TSType<'a>) {}
+}
+
+/// Record a function node's references: its own code minus the functions it
+/// returns directly, and, apart, those returned functions' references, which
+/// a value the function builds reaches (like `returned_texts`). Fail-closed:
+/// a name the function binds anywhere, returned closures included (a
+/// parameter, a local, a nested callback's parameter, a catch binding), may
+/// shadow the top-level declaration at any of its references, so none of
+/// its references counts.
+fn add_function_references<'a>(
+    name: &'a str,
+    params: &'a FormalParameters<'a>,
+    body: &'a oxc_ast::ast::FunctionBody<'a>,
+    returned: &[oxc_span::Span],
+    nodes: &mut BTreeMap<&'a str, ModuleNode<'a>>,
+) {
+    let mut all = References::default();
+    all.visit_formal_parameters(params);
+    all.visit_function_body(body);
+    if returned.is_empty() {
+        let node = nodes.entry(name).or_default();
+        push_unbound(&mut node.references, all.referenced, &all.bound);
+        return;
+    }
+    // The same statements, minus each top-level `return` of a function the
+    // node returns directly (an arrow's expression body is such a return).
+    let mut own = References::default();
+    own.visit_formal_parameters(params);
+    for statement in &body.statements {
+        let returns_function = match statement {
+            Statement::ReturnStatement(ret) => ret.argument.as_ref(),
+            Statement::ExpressionStatement(expression) => Some(&expression.expression),
+            _ => None,
+        }
+        .and_then(function_span)
+        .is_some_and(|span| returned.contains(&span));
+        if !returns_function {
+            own.visit_statement(statement);
+        }
+    }
+    let own_names: std::collections::HashSet<&str> = own.referenced.iter().copied().collect();
+    let returned_references: Vec<&'a str> = all
+        .referenced
+        .iter()
+        .copied()
+        .filter(|target| !own_names.contains(target))
+        .collect();
+    let node = nodes.entry(name).or_default();
+    push_unbound(&mut node.references, own.referenced, &all.bound);
+    push_unbound(
+        &mut node.returned_references,
+        returned_references,
+        &all.bound,
+    );
+}
+
+fn push_unbound<'a>(
+    into: &mut Vec<&'a str>,
+    referenced: Vec<&'a str>,
+    bound: &std::collections::HashSet<&'a str>,
+) {
+    let mut seen: std::collections::HashSet<&'a str> = into.iter().copied().collect();
+    for target in referenced {
+        if !bound.contains(target) && seen.insert(target) {
+            into.push(target);
+        }
+    }
+}
+
+/// Names the module assigns or updates anywhere (`x = ...`, `x++`, a
+/// destructuring or `for (x of ...)` target), so a closure edge never
+/// follows a binding that may hold some other value.
+fn reassigned_names<'a>(statements: &'a [Statement<'a>]) -> std::collections::HashSet<&'a str> {
+    #[derive(Default)]
+    struct Reassigned<'a> {
+        names: std::collections::HashSet<&'a str>,
+    }
+    // Only a bare identifier target rebinds a name: `obj.prop = 1` and
+    // `obj[key]++` mutate `obj` and read `key`, they rebind neither.
+    impl<'a> Visit<'a> for Reassigned<'a> {
+        fn visit_simple_assignment_target(&mut self, it: &SimpleAssignmentTarget<'a>) {
+            if let SimpleAssignmentTarget::AssignmentTargetIdentifier(id) = it {
+                self.names.insert(id.name.as_str());
+            }
+            walk::walk_simple_assignment_target(self, it);
+        }
+
+        fn visit_assignment_target_property_identifier(
+            &mut self,
+            it: &AssignmentTargetPropertyIdentifier<'a>,
+        ) {
+            // `({ name } = value)` rebinds `name`.
+            self.names.insert(it.binding.name.as_str());
+            walk::walk_assignment_target_property_identifier(self, it);
+        }
+    }
+    let mut visitor = Reassigned::default();
+    for statement in statements {
+        visitor.visit_statement(statement);
+    }
+    visitor.names
+}
+
+/// `(function () { ... })()` or `(() => { ... })()` with no arguments.
+fn built_value<'a>(
+    call: &'a oxc_ast::ast::CallExpression<'a>,
+    name: &str,
+    source: &'a str,
+) -> Option<BuiltValue<'a>> {
+    if !call.arguments.is_empty() || call.optional {
+        return None;
+    }
+    let (span, body, statements) = match unwrap_type_wrappers(&call.callee) {
+        Expression::FunctionExpression(func) if !func.generator && !func.r#async => {
+            let body = func.body.as_ref()?;
+            (func.span, body.span, &body.statements)
+        }
+        Expression::ArrowFunctionExpression(arrow) if !arrow.expression && !arrow.r#async => {
+            (arrow.span, arrow.body.span, &arrow.body.statements)
+        }
+        _ => return None,
+    };
+    let declares_name = statements.iter().any(|statement| match statement {
+        Statement::ClassDeclaration(class) => {
+            class.id.as_ref().is_some_and(|id| id.name.as_str() == name)
+        }
+        Statement::FunctionDeclaration(func) => {
+            func.id.as_ref().is_some_and(|id| id.name.as_str() == name)
+        }
+        Statement::VariableDeclaration(decl) => decl
+            .declarations
+            .iter()
+            .any(|declarator| binding_identifier_name(&declarator.id) == Some(name)),
+        _ => false,
+    });
+    Some(BuiltValue {
+        text: span_text(source, span),
+        body: span_text(source, body),
+        shadow: declares_name.then_some(span.start as usize..span.end as usize),
+    })
+}
+
+/// `eval`, `Function` as a word (other than `Function.prototype.toString.call(`,
+/// which only reads a function's source), or a `\\` in code (outside comments and literals, so a
+/// unicode-escaped identifier) anywhere in `masked`.
+fn runs_dynamic_or_escaped_code(masked: &str) -> bool {
+    masked.contains('\\')
+        || ["eval", "Function"].iter().any(|word| {
+            masked.match_indices(word).any(|(idx, _)| {
+                word_at(masked, idx, word)
+                    && !(*word == "Function"
+                        && masked[idx + word.len()..].starts_with(".prototype.toString.call("))
+            })
+        })
+}
+
+fn word_at(text: &str, idx: usize, word: &str) -> bool {
+    !text[..idx]
+        .chars()
+        .next_back()
+        .is_some_and(is_javascript_identifier_char)
+        && !text[idx + word.len()..]
+            .chars()
+            .next()
+            .is_some_and(is_javascript_identifier_char)
+}
+
+/// Whether module code outside the function that builds `name` only
+/// constructs it and never reaches a prototype. The allowlisted value reads
+/// admit `NAME.prototype` and passing it on (`patch(NAME.prototype)`), and an
+/// instance a method hands back reaches the same prototype
+/// (`Object.getPrototypeOf(new NAME().self())`): either can replace a method
+/// every later instance runs. So outside the building function every mention
+/// of `name` is `new NAME(`, and no code names `prototype`, `__proto__`,
+/// `constructor`, `getPrototypeOf`, `setPrototypeOf` or `Reflect`.
+fn built_value_stays_inside(
+    source: &str,
+    masked: &str,
+    name: &str,
+    declaration: Option<usize>,
+    value: &BuiltValue<'_>,
+) -> bool {
+    // A value whose building function body has no block (so no class,
+    // nested function, method or arrow body) made all its calls at load
+    // time; nothing a later write does can undo them.
+    let inner = value
+        .body
+        .strip_prefix('{')
+        .and_then(|rest| rest.strip_suffix('}'))
+        .unwrap_or(value.body);
+    let body_masked = ts_mask_literals_and_comments(inner);
+    if !body_masked.contains('{') && !body_masked.contains("=>") {
+        return true;
+    }
+    // A method may hand the instance back (`return this`,
+    // `this.valueOf()`) or give it to code outside (`helper(this)`,
+    // `helper.call(this)`).
+    if hands_this_out(&body_masked) {
+        return false;
+    }
+    let outside = |idx: usize| {
+        value
+            .shadow
+            .as_ref()
+            .is_none_or(|range| !range.contains(&idx))
+    };
+    // Every outside mention is `new NAME(...).method(`: the instance goes
+    // straight into one of its own calls, never `new NAME()["__proto__"]`.
+    let only_constructed = masked.match_indices(name).all(|(idx, _)| {
+        !outside(idx)
+            || declaration == Some(idx)
+            || !word_at(masked, idx, name)
+            || constructed_and_called_at(masked, idx, name)
+    });
+    only_constructed
+        && [
+            "prototype",
+            "__proto__",
+            "constructor",
+            "getPrototypeOf",
+            "setPrototypeOf",
+            "Reflect",
+        ]
+        .iter()
+        .all(|word| {
+            // The source, not the masked text: `Object["getPrototypeOf"]`
+            // names the word inside a literal.
+            source.match_indices(word).all(|(idx, _)| !outside(idx))
+        })
+}
+
+/// `new NAME(...).method(` at `idx`, the mention of `name` in `masked`.
+fn constructed_and_called_at(masked: &str, idx: usize, name: &str) -> bool {
+    let before = masked[..idx].trim_end();
+    if !before.strip_suffix("new").is_some_and(|rest| {
+        !rest.ends_with(|ch: char| is_javascript_identifier_char(ch) || ch == '.')
+    }) {
+        return false;
+    }
+    let rest = past_type_arguments(&masked[idx + name.len()..]);
+    let Some(close) = balanced_paren_close(rest) else {
+        return false;
+    };
+    let Some(member) = rest[close..].trim_start().strip_prefix('.') else {
+        return false;
+    };
+    let member = member.trim_start();
+    let end = member
+        .find(|ch: char| !is_javascript_identifier_char(ch))
+        .unwrap_or(member.len());
+    end > 0
+        && !matches!(
+            &member[..end],
+            "constructor" | "valueOf" | "toString" | "toLocaleString" | "__proto__"
+        )
+        && past_type_arguments(&member[end..]).starts_with('(')
+}
+
+/// Offset just past the `)` closing the `(` that `text` starts with.
+fn balanced_paren_close(text: &str) -> Option<usize> {
+    if !text.starts_with('(') {
+        return None;
+    }
+    let mut depth = 0usize;
+    for (offset, ch) in text.char_indices() {
+        match ch {
+            '(' => depth += 1,
+            ')' => {
+                depth = depth.checked_sub(1)?;
+                if depth == 0 {
+                    return Some(offset + 1);
+                }
+            }
+            _ => {}
+        }
+    }
+    None
+}
+
+/// Whether `rest`, the right side of `NAME =`, is `this[...]` or a member
+/// `this.x` the body declares (`this.valueOf` hands the instance back).
+fn bound_from_this(code: &str, rest: &str) -> bool {
+    let Some(after) = rest.trim_start().strip_prefix("this") else {
+        return false;
+    };
+    let after = after.trim_start();
+    if after.starts_with('[') {
+        return true;
+    }
+    let Some(member) = after.strip_prefix('.') else {
+        return false;
+    };
+    let member = member.trim_start();
+    let end = member
+        .find(|ch: char| !is_javascript_identifier_char(ch))
+        .unwrap_or(member.len());
+    end > 0 && declares_member_named(code, &member[..end])
+}
+
+/// Whether masked code may hand the instance on: any `this` other than
+/// `this.x`, `this?.x` or `this[...]`, a call `this.x(` of a member the body
+/// does not declare (`this.valueOf()` returns the instance), or a receiver
+/// `NAME.call(this` / `NAME.apply(this` unless the body binds `NAME` from
+/// `this` (`const handler = this["$" + type]`).
+fn hands_this_out(code: &str) -> bool {
+    code.match_indices("this").any(|(idx, _)| {
+        if !word_at(code, idx, "this") || code[..idx].ends_with('.') {
+            return false;
+        }
+        let after = code[idx + 4..].trim_start();
+        if let Some(member) = after.strip_prefix("?.").or_else(|| after.strip_prefix('.')) {
+            let member = member.trim_start();
+            // `this.#name` is a private member.
+            let end = member
+                .char_indices()
+                .find(|&(offset, ch)| {
+                    !(is_javascript_identifier_char(ch) || (offset == 0 && ch == '#'))
+                })
+                .map_or(member.len(), |(offset, _)| offset);
+            let name = &member[..end];
+            if name == "#" {
+                return true;
+            }
+            let called = past_type_arguments(member[end..].trim_start()).starts_with('(');
+            return name.is_empty() || (called && !declares_member_named(code, name));
+        }
+        if after.starts_with('[') {
+            return false;
+        }
+        let before = code[..idx].trim_end();
+        let Some(callee) = before
+            .strip_suffix(".call(")
+            .or_else(|| before.strip_suffix(".apply("))
+        else {
+            return true;
+        };
+        let start = callee
+            .rfind(|ch: char| !is_javascript_identifier_char(ch))
+            .map_or(0, |offset| offset + 1);
+        let callee = &callee[start..];
+        callee.is_empty()
+            || callee.starts_with(|ch: char| ch.is_ascii_digit())
+            || !code.match_indices(callee).any(|(at, _)| {
+                word_at(code, at, callee)
+                    && code[at + callee.len()..]
+                        .trim_start()
+                        .strip_prefix('=')
+                        .is_some_and(|rest| {
+                            !rest.starts_with(['=', '>']) && bound_from_this(code, rest)
+                        })
+            })
+    })
+}
+
+/// `name(...) {` or `name(...): T {` in `text`: a method or shorthand member
+/// declaration of that name. Fail-closed for the caller: a call followed by
+/// `:` in a conditional expression also answers `true`.
+fn declares_member_named(text: &str, name: &str) -> bool {
+    text.match_indices(name).any(|(idx, _)| {
+        let before = &text[..idx];
+        // `name (a) {` and `name<T>(a: T) {` declare the same member.
+        let after = past_type_arguments(&text[idx + name.len()..]);
+        if before
+            .chars()
+            .next_back()
+            .is_some_and(is_javascript_identifier_char)
+            || before.trim_end().ends_with('.')
+            || !after.starts_with('(')
+        {
+            return false;
+        }
+        let mut depth = 0usize;
+        for (offset, ch) in after.char_indices() {
+            match ch {
+                '(' => depth += 1,
+                ')' => {
+                    depth = depth.saturating_sub(1);
+                    if depth == 0 {
+                        let tail = after[offset + 1..].trim_start();
+                        return tail.starts_with('{') || tail.starts_with(':');
+                    }
+                }
+                _ => {}
+            }
+        }
+        true
+    })
 }
 
 /// Spans of the function expressions the body returns from its own top-level
@@ -643,6 +1312,8 @@ fn node_callees<'n, 'a>(
     nodes: &BTreeMap<&'a str, ModuleNode<'a>>,
     names: &std::collections::HashSet<&'n str>,
     values: &BTreeSet<&'n str>,
+    reassigned: &std::collections::HashSet<&str>,
+    built: &BTreeSet<&str>,
 ) -> BTreeSet<&'n str> {
     let texts: Vec<&CallText<'_>> = match node.factory {
         Some(factory) => nodes
@@ -660,6 +1331,8 @@ fn node_callees<'n, 'a>(
     for text in texts {
         // Masked at most once per function text, not once per value.
         let mut masked: Option<String> = None;
+        // The code that runs when the function runs, for built values.
+        let mut executed: Option<Option<String>> = None;
         let mut checked: std::collections::HashSet<&str> = std::collections::HashSet::new();
         for token in text
             .calls
@@ -670,12 +1343,28 @@ fn node_callees<'n, 'a>(
                 // Comments and literals are masked only for the read-presence
                 // check; the shadow check stays on the raw scope, so a
                 // mis-masked declaration can only remove an edge.
+                // A built value (a class built in an immediately invoked
+                // function) is reached only from code that runs when the
+                // function runs: a construction inside a stored or deferred
+                // arrow (`const later = () => new X().m()`,
+                // `setTimeout(() => ...)`) is no edge.
                 if checked.insert(value)
                     && reads_unshadowed_value(
                         masked.get_or_insert_with(|| ts_mask_literals_and_comments(&text.calls)),
                         text.scope,
                         value,
                     )
+                    && (!built.contains(value)
+                        || executed
+                            .get_or_insert_with(|| {
+                                super::module_class_nodes::executed_body(&text.calls)
+                                    .map(|code| ts_mask_literals_and_comments(&code))
+                            })
+                            .as_deref()
+                            .is_some_and(|code| {
+                                code.match_indices(value)
+                                    .any(|(idx, _)| word_at(code, idx, value))
+                            }))
                 {
                     callees.insert(value);
                 }
@@ -690,7 +1379,10 @@ fn node_callees<'n, 'a>(
             if !checked.insert(name) {
                 continue;
             }
-            if text_calls_top_level(text, name) {
+            // Only a declaration of this module the module never reassigns
+            // is run by a reference passed to a synchronous array method.
+            let stable_here = nodes.contains_key(name) && !reassigned.contains(name);
+            if text_calls_top_level(text, name, stable_here) {
                 callees.insert(name);
             }
         }
@@ -698,13 +1390,41 @@ fn node_callees<'n, 'a>(
     callees
 }
 
-/// A bare call to `name` that the enclosing function cannot have rebound.
-/// Fail-closed: every mention of `name` in the scope must be a bare call. Any
-/// other mention (a parameter, including destructured and nested-callback
-/// parameters, an assignment, a `function name` declaration, a value passed
-/// along) may bind or alias it, so no edge is recorded.
-fn text_calls_top_level(text: &CallText<'_>, name: &str) -> bool {
-    contains_call_name(&text.calls, name) && every_mention_is_a_bare_call(text.scope, name)
+/// A bare call to `name` that the enclosing function cannot have rebound, or,
+/// for a declaration of this module (`declared_here`), `name` handed by
+/// reference to a synchronous array callback method (`keys.sort(name)`,
+/// #15928), which calls it before returning. An imported binding passed by
+/// reference is no edge: cross-module reach stays bare calls only.
+/// Fail-closed: every mention of `name` in the scope must be one of those two
+/// forms. Any other mention (a parameter, including destructured and
+/// nested-callback parameters, an assignment, a `function name` declaration, a
+/// value stored or passed to anything else, such as `setTimeout(name)` or
+/// `promise.then(name)`) may bind, alias or defer it, so no edge is recorded.
+fn text_calls_top_level(text: &CallText<'_>, name: &str, declared_here: bool) -> bool {
+    (contains_call_name(&text.calls, name)
+        || (declared_here && runs_function_reference(&text.calls, name)))
+        && every_mention_is_a_bare_call(text.scope, name)
+}
+
+/// The raw scan is the cheap filter; the reference counts only when it is
+/// still there with comments and literals masked, so `// keys.sort(name)`
+/// after code on the same line, or inside a string, is no call.
+fn runs_function_reference(calls: &str, name: &str) -> bool {
+    let referenced = |code: &str| {
+        code.match_indices(name)
+            .any(|(idx, _)| is_sync_callback_reference(&code[..idx], &code[idx + name.len()..]))
+    };
+    referenced(calls) && referenced(&ts_mask_literals_and_comments(calls))
+}
+
+/// `recv.sort(NAME)` / `recv.map(NAME, ...)`: the whole first argument of a
+/// synchronous array callback method.
+fn is_sync_callback_reference(before: &str, after: &str) -> bool {
+    let head = before.trim_end();
+    let rest = after.trim_start();
+    head.ends_with('(')
+        && (rest.starts_with(')') || rest.starts_with(','))
+        && callback_runs_synchronously(head)
 }
 
 fn every_mention_is_a_bare_call(scope: &str, name: &str) -> bool {
@@ -735,8 +1455,53 @@ fn every_mention_is_a_bare_call(scope: &str, name: &str) -> bool {
         let rest = after.trim_start();
         let called = rest.starts_with('(') || rest.starts_with("?.(");
         // `x.name(...)` is a member call, which is another binding entirely.
-        member || (called && !declared)
+        member || (called && !declared) || is_sync_callback_reference(before, after)
     })
+}
+
+/// Names reachable from `start` only along paths that take at least one
+/// closure edge, within [`MODULE_CLOSURE_MAX_HOPS`], each with its shortest
+/// such distance. A path may begin with bare calls (at most
+/// [`MODULE_ENTRY_MAX_HOPS`] of them before its first closure edge) and mix
+/// both kinds after it. Names the bare-call graph alone reaches within its
+/// own bound are left out: their call entry already stands.
+fn reachable_through_closures<'n>(
+    start: &'n str,
+    callees: &BTreeMap<&'n str, BTreeSet<&'n str>>,
+    closure_callees: &BTreeMap<&'n str, BTreeSet<&'n str>>,
+) -> BTreeMap<&'n str, usize> {
+    let by_call = reachable_within_hops(start, callees);
+    // States are (name, took a closure edge yet).
+    let mut seen: std::collections::HashSet<(&str, bool)> =
+        std::collections::HashSet::from([(start, false)]);
+    let mut queue: VecDeque<(&str, bool, usize)> = VecDeque::from([(start, false, 0)]);
+    let mut reached: BTreeMap<&str, usize> = BTreeMap::new();
+    while let Some((name, closure, hops)) = queue.pop_front() {
+        if closure && !by_call.contains_key(name) {
+            reached.entry(name).or_insert(hops);
+        }
+        if hops == MODULE_CLOSURE_MAX_HOPS {
+            continue;
+        }
+        let call_allowed = closure || hops < MODULE_ENTRY_MAX_HOPS;
+        let next_calls = callees
+            .get(name)
+            .into_iter()
+            .flatten()
+            .filter(|_| call_allowed)
+            .map(|callee| (*callee, closure));
+        let next_closures = closure_callees
+            .get(name)
+            .into_iter()
+            .flatten()
+            .map(|callee| (*callee, true));
+        for state in next_calls.chain(next_closures).collect::<Vec<_>>() {
+            if seen.insert(state) {
+                queue.push_back((state.0, state.1, hops + 1));
+            }
+        }
+    }
+    reached
 }
 
 /// Names reachable from `start` within the hop bound, each with its shortest

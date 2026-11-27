@@ -92,6 +92,7 @@ mod discovery;
 mod dropped_term_guard;
 mod enum_member_guard;
 mod error_payload_guard;
+mod export_equals;
 mod extraction_cache;
 mod fact_prefetch;
 mod fact_store;
@@ -140,6 +141,7 @@ mod loop_bound_guard;
 mod match_object_guard;
 mod method_replacement_guard;
 mod mock_payload_guard;
+mod module_class_nodes;
 mod module_entries;
 mod module_value_reads;
 #[cfg(test)]
@@ -149,6 +151,7 @@ mod new_declaration_tests;
 mod nullish_chain_guard;
 mod object_rows;
 mod oracle;
+mod overwritten_methods;
 #[cfg(test)]
 mod owner_path_tests;
 mod owners;
@@ -205,6 +208,7 @@ mod unused_default_guard;
 mod assertion_helper;
 mod boolean_pin_guard;
 mod close_to_guard;
+mod implementation_tables;
 #[cfg(test)]
 #[path = "tests/issue7483_masker_tests.rs"]
 mod issue7483_masker_tests;

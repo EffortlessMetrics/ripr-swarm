@@ -35,3 +35,16 @@ Command:
 
 Updated:
 - `expected/human.txt`
+
+## Pending — wildcard_owner_discard (4)
+
+Reason:
+RIPR-SPEC-0231: assert_eq!(matches!(Some(100), Some(_)), true) is a side-only pattern, so the related-test oracle reads smoke_only instead of exact_value; the finding stays weakly_exposed (#16290)
+
+Command:
+`cargo xtask goldens bless wildcard_owner_discard --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`

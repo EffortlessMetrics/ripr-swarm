@@ -34,6 +34,7 @@
 mod cross_crate_hop;
 mod cross_crate_path;
 pub(super) use cross_crate_path::public_path;
+mod audited_macro_roots;
 mod macro_argument;
 mod own_crate_test_hop;
 mod qualified_hop;
@@ -243,6 +244,13 @@ pub(crate) struct HelperHop {
     /// import, a glob or `#[macro_use]`), so no bare macro in the caller
     /// is trusted to be transparent (#10351).
     pub(crate) transparent_macros_rebound: bool,
+    /// The audited macro crate roots (`tracing`, `log`, `anyhow`,
+    /// `serde_json`) the caller spells as a macro path root and whose file
+    /// names the registry crate by them (#10357), so `tracing::info!(..)` or
+    /// `serde_json::json!(..)` there is transparent when its arguments do not
+    /// mention the callee. Empty when the caller spells none or the proof
+    /// fails.
+    pub(crate) verified_macro_roots: Vec<&'static str>,
     /// The `.unwrap_or_else(<path>)` handler paths in the caller's body whose
     /// target is one workspace function that only diverges (#9638), so an
     /// `Ok` value passes through that unwrap unchanged. Resolved once at hop
@@ -1155,6 +1163,7 @@ pub(crate) fn resolve_chain(
             module_qualified: false,
             crate_qualifier: None,
             transparent_macros_rebound: transparent_macro_name_rebound(&caller.body, index),
+            verified_macro_roots: audited_macro_roots::verified_macro_roots(caller, index),
             diverging_handlers: diverging_handlers(caller, callee_name, index),
         };
         return extend_chain(hop, callee_name, index, workspace_complete, visited);
@@ -1366,6 +1375,7 @@ fn chain_through_caller(
         module_qualified: false,
         crate_qualifier: None,
         transparent_macros_rebound: transparent_macro_name_rebound(&caller.body, index),
+        verified_macro_roots: audited_macro_roots::verified_macro_roots(caller, index),
         diverging_handlers: diverging_handlers(caller, callee_name, index),
     };
     extend_chain(hop, callee_name, index, workspace_complete, visited)
@@ -1393,14 +1403,20 @@ fn crosses_member_packages(caller: &FunctionSummary, callee_name: &str, index: &
 /// (`expected.to_string()`) is not a caller: a method call can never resolve
 /// to a free function, so it neither binds nor makes the callee multi-caller.
 /// A callee whose container is not established keeps every caller.
+///
+/// #15932: a function in an integration-test crate is not a caller of a
+/// callee its crate does not export either. Its call of the name runs
+/// another function (`std::thread::sleep` beside a crate-private `sleep`),
+/// so it neither binds nor makes the callee multi-caller.
 fn chain_callers<'a>(callee_name: &str, index: &'a RustIndex) -> Vec<&'a FunctionSummary> {
-    let callee_is_free = index
+    let callee = index
         .functions()
         .iter()
-        .find(|function| function.name == callee_name)
-        .is_some_and(|function| {
-            function.item.container == crate::analysis::facts::FunctionContainer::Free
-        });
+        .find(|function| function.name == callee_name);
+    let callee_is_free = callee.is_some_and(|function| {
+        function.item.container == crate::analysis::facts::FunctionContainer::Free
+    });
+    let callee_is_crate_private = std::cell::OnceCell::new();
     direct_callers(callee_name, index)
         .into_iter()
         .filter(|caller| {
@@ -1410,6 +1426,14 @@ fn chain_callers<'a>(callee_name: &str, index: &'a RustIndex) -> Vec<&'a Functio
                     .iter()
                     .filter(|call| call.name == callee_name)
                     .any(|call| !mentions_only_as_receiver_call(&call.text, callee_name))
+        })
+        .filter(|caller| {
+            !(super::call_identity::is_plain_integration_test_file(index, &caller.file)
+                && *callee_is_crate_private.get_or_init(|| {
+                    callee.is_some_and(|callee| {
+                        super::call_identity::owner_is_private_to_its_crate(index, callee)
+                    })
+                }))
         })
         .collect()
 }
@@ -1738,6 +1762,7 @@ fn method_hop(caller: &FunctionSummary, callee_name: &str, index: &RustIndex) ->
         module_qualified: false,
         crate_qualifier: None,
         transparent_macros_rebound: transparent_macro_name_rebound(&caller.body, index),
+        verified_macro_roots: audited_macro_roots::verified_macro_roots(caller, index),
         diverging_handlers: diverging_handlers(caller, callee_name, index),
     })
 }
@@ -2988,7 +3013,7 @@ fn hops_carry_owner_string_data(owner_name: &str, hops: &[HelperHop], index: &Ru
                 && format_placeholders_are_plain(&hop.caller.body)
                 && carried_value_stays_injective(&hop.caller.body, &callee.name)
                 && !caller_rebinds_parameter(&hop.caller.body, &callee.name)
-                && !caller_invokes_opaque_macro(&hop.caller.body, hop.transparent_macros_rebound)
+                && !hop_invokes_opaque_macro(hop, &callee.name)
         })
 }
 
@@ -3484,7 +3509,7 @@ fn hops_forward_owner_result_with(
                 // must not forward through a wrapper (`caller_rebinds_parameter`
                 // covers `let`/match only).
                 && !caller_body_rebinds_free_callee_name(&hop.caller.body, callee)
-                && !caller_invokes_opaque_macro(&hop.caller.body, hop.transparent_macros_rebound)
+                && !hop_invokes_opaque_macro(hop, callee)
                 && hop.arguments.iter().all(|argument| {
                     !is_identifier(argument.trim())
                         || !caller_rebinds_parameter(&hop.caller.body, argument.trim())
@@ -3498,6 +3523,8 @@ fn hops_forward_owner_result_with(
 /// change the forwarded value. Each is a parser-checked
 /// [`TRUSTED_MACRO_NAMES`](crate::analysis::syntax::TRUSTED_MACRO_NAMES)
 /// entry, so [`transparent_macro_name_rebound`] can establish its identity.
+/// The one non-standard name, `json`, has the same parser-checked binding
+/// candidates and a verified drop-in import route.
 const TRANSPARENT_STD_MACROS: &[&str] = &[
     "assert",
     "assert_eq",
@@ -3527,27 +3554,63 @@ const TRANSPARENT_STD_MACROS: &[&str] = &[
     "file",
     "line",
     "module_path",
+    // `env!` and `option_env!` expand to a literal read at compile time and
+    // evaluate no code. Both are trusted names, so the binding scan sees a
+    // local `macro_rules! env` or a foreign import of either (#10357).
+    "env",
+    "option_env",
+    // `include_str!` and `include_bytes!` expand to a literal read from a
+    // file at compile time; their argument is a path, never code. Both are
+    // trusted names (#14116), so the binding scan sees a rebinding (#10357).
+    "include_str",
+    "include_bytes",
+    // serde_json's `json!` builds a `Value` and has no `return`, `break`,
+    // `continue` or `?` of its own (the audit behind
+    // `AUDITED_VALUE_MACRO_VERSIONS`). It is not a standard macro: the
+    // binding scan exempts only a `use serde_json::json;` whose root the
+    // drop-in authority verifies at an audited locked version, and it
+    // reports any other import, glob, `#[macro_use]`, local definition or
+    // `serde_json` namespace alias as a rebinding (#10357).
+    "json",
 ];
+
+/// The [`TRANSPARENT_STD_MACROS`] names the binding scan reads only for a
+/// caller whose body mentions them, so that a rebinding of `env` or
+/// `include_str` elsewhere does not withhold credit from a wrapper that
+/// never reads it (#10357).
+const BODY_SCOPED_TRANSPARENT_MACROS: &[&str] =
+    &["env", "option_env", "include_str", "include_bytes", "json"];
 
 /// Whether any indexed file binds a [`TRANSPARENT_STD_MACROS`] name to
 /// something other than the standard macro, by the parser-backed binding
 /// scan the trusted-assertion reading uses. An out-of-line module counts as
 /// unresolved, which only withholds forwarding credit. A caller with no
-/// `!` invokes no macro, so the index scan is skipped for it.
+/// `!` invokes no macro, so the index scan is skipped for it. The
+/// [`BODY_SCOPED_TRANSPARENT_MACROS`] join the scan only when the caller's
+/// body mentions them (`env` also covers `option_env`); any rebinding found
+/// still refuses every bare macro.
 fn transparent_macro_name_rebound(caller_body: &str, index: &RustIndex) -> bool {
+    let names: Vec<&str> = TRANSPARENT_STD_MACROS
+        .iter()
+        .copied()
+        .filter(|name| {
+            !BODY_SCOPED_TRANSPARENT_MACROS.contains(name)
+                || caller_body.contains(name.trim_start_matches("option_"))
+        })
+        .collect();
     caller_body.contains('!')
         && index.files().iter().any(|(path, file)| {
-            if file.macro_candidates.as_deref().is_some_and(|candidates| {
-                TRANSPARENT_STD_MACROS
-                    .iter()
-                    .all(|name| !candidates.may_bind(name))
-            }) {
+            if file
+                .macro_candidates
+                .as_deref()
+                .is_some_and(|candidates| names.iter().all(|name| !candidates.may_bind(name)))
+            {
                 return false;
             }
             !crate::analysis::syntax::trusted_macro_binding_sites(
                 &file.source,
                 index.macro_scope_crates(),
-                TRANSPARENT_STD_MACROS,
+                &names,
                 &|_, _| false,
                 &|krate| index.drop_in_manifests.verified_root(path, krate),
             )
@@ -3571,6 +3634,7 @@ pub(super) fn body_has_unresolved_macro_bindings(body: &str, index: &RustIndex) 
             "debug_assert_ne",
             "vec",
         ],
+        None,
     )
 }
 
@@ -3581,10 +3645,32 @@ pub(super) fn body_has_unresolved_macro_bindings(body: &str, index: &RustIndex) 
 /// (`use crate as tracing;`) can route the path to an exported user macro,
 /// and ripr does not resolve path roots here (#10351).
 fn caller_invokes_opaque_macro(body: &str, transparent_macros_rebound: bool) -> bool {
-    macro_invocation_is_unestablished(body, transparent_macros_rebound, TRANSPARENT_STD_MACROS)
+    macro_invocation_is_unestablished(
+        body,
+        transparent_macros_rebound,
+        TRANSPARENT_STD_MACROS,
+        None,
+    )
 }
 
-fn macro_invocation_is_unestablished(body: &str, macros_rebound: bool, permitted: &[&str]) -> bool {
+/// [`caller_invokes_opaque_macro`] for a hop: an audited macro under one of
+/// the hop's verified roots (`tracing::info!(..)`, `anyhow::anyhow!(..)`) is
+/// transparent when its arguments do not mention `callee` (#10357).
+fn hop_invokes_opaque_macro(hop: &HelperHop, callee: &str) -> bool {
+    macro_invocation_is_unestablished(
+        &hop.caller.body,
+        hop.transparent_macros_rebound,
+        TRANSPARENT_STD_MACROS,
+        Some((&hop.verified_macro_roots, callee)),
+    )
+}
+
+fn macro_invocation_is_unestablished(
+    body: &str,
+    macros_rebound: bool,
+    permitted: &[&str],
+    audited: Option<(&[&str], &str)>,
+) -> bool {
     // Expression keywords may precede a prefix `!` (`if !(a)`, `return !(b)`);
     // any other path before `!` and a delimiter is a macro path, even with
     // whitespace between (`bail ! (qty)` is valid Rust).
@@ -3599,6 +3685,15 @@ fn macro_invocation_is_unestablished(body: &str, macros_rebound: bool, permitted
             return false;
         }
         let (segments, global) = macro_path_before(masked.get(..at).unwrap_or_default());
+        if let Some((roots, callee)) = audited
+            && !global
+            && audited_macro_roots::is_verified_audited_macro(&segments, roots)
+        {
+            let open = masked.get(at + 1..).map_or(0, |rest| {
+                at + 1 + (rest.len() - rest.trim_start_matches(is_rust_whitespace).len())
+            });
+            return audited_macro_roots::arguments_mention(&masked, open, callee);
+        }
         let [name] = segments.as_slice() else {
             // No path is no macro; a qualified path (`dep :: r#println!`,
             // `::m!`) may name any crate's macro, so it is opaque.
@@ -5432,6 +5527,7 @@ mod tests {
                 module_qualified: false,
                 crate_qualifier: None,
                 transparent_macros_rebound: false,
+                verified_macro_roots: Vec::new(),
                 diverging_handlers: Vec::new(),
             }],
             stop_above: None,
@@ -5465,6 +5561,7 @@ mod tests {
                 module_qualified,
                 crate_qualifier: None,
                 transparent_macros_rebound: false,
+                verified_macro_roots: Vec::new(),
                 diverging_handlers: Vec::new(),
             })
         };
@@ -5553,6 +5650,10 @@ mod tests {
             "let _d = cfg!(debug_assertions); if is_bulk(qty) { 5 } else { 0 }",
             "let _here = line!(); if is_bulk(qty) { 5 } else { 0 }",
             "file!(); column!(); module_path!(); if is_bulk(qty) { 5 } else { 0 }",
+            "let _n = env!(\"CARGO_PKG_NAME\"); if is_bulk(qty) { 5 } else { 0 }",
+            "let _x = option_env!(\"X\"); if is_bulk(qty) { 5 } else { 0 }",
+            "let _t = include_str!(\"t.txt\"); if is_bulk(qty) { 5 } else { 0 }",
+            "let _b = include_bytes!(\"b.bin\"); if is_bulk(qty) { 5 } else { 0 }",
         ] {
             assert!(
                 !caller_invokes_opaque_macro(body, false),
@@ -5560,9 +5661,10 @@ mod tests {
             );
         }
         for body in [
-            "env!(\"X\"); if is_bulk(qty) { 5 } else { 0 }",
+            "std::env!(\"X\"); if is_bulk(qty) { 5 } else { 0 }",
             "core::cfg!(debug_assertions); if is_bulk(qty) { 5 } else { 0 }",
             "std::line!(); if is_bulk(qty) { 5 } else { 0 }",
+            "std::include_str!(\"t.txt\"); if is_bulk(qty) { 5 } else { 0 }",
         ] {
             assert!(
                 caller_invokes_opaque_macro(body, false),
@@ -6014,6 +6116,7 @@ mod tests {
             module_qualified: false,
             crate_qualifier: None,
             transparent_macros_rebound: false,
+            verified_macro_roots: Vec::new(),
             diverging_handlers: Vec::new(),
         };
         let chain = HelperChain {
@@ -6101,6 +6204,7 @@ mod tests {
                     module_qualified: false,
                     crate_qualifier: None,
                     transparent_macros_rebound: false,
+                    verified_macro_roots: Vec::new(),
                     diverging_handlers: Vec::new(),
                 }],
                 stop_above: None,

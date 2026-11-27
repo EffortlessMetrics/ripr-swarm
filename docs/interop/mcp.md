@@ -155,6 +155,15 @@ limitation instead of leaving that to the first failed refresh. The field is a
 bounded marker probe, not a Git invocation, and is absent when a plausible
 marker exists: absence does not mean Git accepted it.
 
+When a worktree refresh found changed files but no behavior candidate
+(`no_behavioral_candidates` with zero items; most often only tests were edited
+after the production change was committed onto the base), `ripr_refresh` adds a
+`worktree_base_hint` (`why`, `pass_base`, #13096). `pass_base` names the retry:
+`base` set to a commit before the production change with the worktree source
+kept, for example `{"source": "worktree", "base": "HEAD~1"}`. The server names
+it and never infers or widens the base.
+`ripr check` prints the matching hint for the same state.
+
 When a committed refresh analyzed nothing (`no_scope`, `no_changed_lines` or
 `no_behavioral_candidates` with zero items), `ripr_refresh` adds an
 `empty_scope_hint` (`why`, `pass_base`, `pass_source`, #11213): the default base
@@ -907,6 +916,20 @@ an otherwise actionable status to `stale`; unknown HEAD weakens it to `limited`.
 Existing invalid, stale or limited producer states retain their refusal.
 RIPR performs no verification and issues no receipt: the external client owns
 the edit, the verification execution, and the receipt under its own authority.
+A finished durable attempt whose issued receipt records `verification_not_run`
+also carries an optional `test_run` object (#16251): the same object `ripr
+agent status --attempt <id> --json` emits, read from the same retained record.
+It is `not_recorded` when the caller reported no focused run and
+`caller_reported` (with `file`, `ran`, `passed`, `failed` and `next_step`) when
+the finish retained one; a reported failure is named in `next_step`, and
+`edited_test` (#16311) says whether the reported tests included one the
+attempt's edit added or changed (`covered`, `not_covered` or `unknown`). It never
+changes `status`, and session transactions omit it. The output schema types
+every field but does not tie the counts to `status` (no `oneOf`, to keep the
+opt-in full listing small): one shared producer emits both shapes, so a
+`caller_reported` object always carries the counts and a `not_recorded` object
+never does. A consumer that validates that pairing itself should key on
+`status`.
 
 The `ripr://snapshot/{snapshot_id}` resource returns bounded snapshot
 evidence: the snapshot identity, the typed `AnalysisOutcome`, the full

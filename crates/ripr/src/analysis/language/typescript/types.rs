@@ -140,6 +140,22 @@ pub(crate) enum TypeScriptMethodKind {
     Setter,
     /// `constructor(...)` — invoked by `new ClassName(...)`.
     Constructor,
+    /// A method, getter or setter that a later member of the same class with
+    /// the same key and placement replaces (#16261, RIPR-SPEC-0243 rule 26):
+    /// its body never runs, so it relates to no test.
+    Overwritten,
+    /// A method, getter or setter that a field of the same key and placement
+    /// shadows (#16306, RIPR-SPEC-0243 rule 28): calls on an instance (or the
+    /// class, for a static field) reach the field, so it relates to no test.
+    FieldShadowed,
+    /// An ordinary instance method that an unconditional `this.NAME = ...`
+    /// of its class constructor replaces (#16314, RIPR-SPEC-0243 rule 29):
+    /// calls reach the assigned value, so it relates to no test.
+    ReplacedInConstructor,
+    /// An ordinary method that a top-level `Class.prototype.NAME = ...` or
+    /// `Class.NAME = ...` of the same file replaces (#16314, RIPR-SPEC-0243
+    /// rule 29): calls reach the assigned value, so it relates to no test.
+    ReplacedByAssignment,
 }
 
 impl TypeScriptOwner {
@@ -361,6 +377,13 @@ pub(crate) struct TypeScriptScopeBinding {
     /// tests), is only declared, or anything else in the file could rebind
     /// the name or the class.
     pub(crate) constructed_by: Option<String>,
+    /// The namespace import locals whose same-named member `name` holds on
+    /// each iteration, when `name` is a loop header's shorthand destructure
+    /// from a file-level table of namespace imports (#13592, unjs/ohash):
+    /// `for (const [, { digest }] of Object.entries({ js: cryptoJS }))`.
+    /// Empty for every other binding.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub(crate) namespace_member_of: Vec<String>,
     /// `true` when the innermost binding of `name` is a file-level
     /// declaration. Such a name cannot shadow an import (redeclaring an
     /// imported name is a syntax error); it is the owner itself in a

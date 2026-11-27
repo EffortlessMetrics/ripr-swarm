@@ -88,8 +88,10 @@ the rows claim nothing and consumers read the existing `related_tests` and
 bump rule ("nested `finding` … may grow additively within the pinned
 version"), the same rule #10700 and #7258 used. `json-terse` codes nothing in
 the new field (states and tokens are short shared vocabulary; `basis` entries
-ride the document unchanged), and expanding the terse legend reconstructs the
-same rows.
+ride the document unchanged). Since #14005 it omits the whole array when the
+rows are exactly the five basis-free rows the finding's `ripr` stages yield,
+and names `evidence_stages` in `dropped_aliases`; the rows are restored from
+`ripr`, not by expanding the legend. Any other array rides inline.
 
 ### `stages=` compact row on the agent surfaces
 

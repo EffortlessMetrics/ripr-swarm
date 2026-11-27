@@ -766,6 +766,32 @@ fn guarded_self_field_write_is_credited_when_every_call_enters_the_guard() -> Re
     Ok(())
 }
 
+/// #15292: an annotated parameter on its own header line is not a write in
+/// the body prefix, so the multi-line signature reads like the one-line one.
+#[test]
+fn guarded_self_field_write_is_credited_below_an_annotated_multi_line_header() -> Result<(), String>
+{
+    for header in [
+        "    def note(self, kind: str):",
+        "    def note(\n        self,\n        kind: str,\n    ):",
+    ] {
+        let source = guarded_note_source("", "        if kind == \"error\":")
+            .replace("    def note(self, kind):", header);
+        assert!(source.contains(header), "{source}");
+        let entering = classify_guarded(
+            &source,
+            "    rec = Recorder()\n    rec.note(\"error\")\n    assert rec.last == \"error\"",
+        )?;
+        assert_eq!(entering.class, ExposureClass::Exposed, "{header}");
+        let skipping = classify_guarded(
+            &source,
+            "    rec = Recorder()\n    rec.note(\"ok\")\n    assert rec.last == None",
+        )?;
+        assert_ne!(skipping.class, ExposureClass::Exposed, "{header}");
+    }
+    Ok(())
+}
+
 #[test]
 fn guarded_self_field_write_stays_uncredited_when_a_call_skips_the_guard() -> Result<(), String> {
     let source = guarded_note_source("", "        if kind == \"error\":");

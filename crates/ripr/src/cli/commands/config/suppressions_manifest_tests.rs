@@ -157,7 +157,11 @@ fn a_directory_at_the_manifest_path_fails_instead_of_passing() -> Result<(), Str
     let result = validate_config(&root);
     let _ = fs::remove_dir_all(&root);
     let error = result.err().ok_or("a directory is not a manifest")?;
-    if !error.starts_with(".ripr/suppressions.toml validation failed:\nfailed to read ") {
+    // The confinement check refuses a non-regular file before the read, so the
+    // refusal names the regular-file rule instead of a read error.
+    if !error.starts_with(
+        ".ripr/suppressions.toml validation failed:\n`suppressions.path` must resolve to a regular file inside the repository",
+    ) {
         return Err(format!("unexpected error: {error}"));
     }
     Ok(())
