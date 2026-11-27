@@ -1,0 +1,4 @@
+[package]
+name = "rust_deref_receiver_prelude_value_wrapper_fixture"
+version = "0.0.0"
+edition = "2024"
