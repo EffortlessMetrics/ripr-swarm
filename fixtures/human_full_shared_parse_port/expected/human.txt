@@ -2,7 +2,7 @@ ripr static RIPR exposure analysis
 mode: fast
 root: fixtures/human_full_shared_parse_port/input
 
-Summary: 7 changed behaviors checked: 0 appear noticed by tests, 7 partly noticed, 0 reached but not noticed, 0 no test path. 7 found, 0 suppressed by your settings (2 base-side evidence, not candidate edit targets)
+Summary: 7 changed behaviors checked on 2 candidate lines: 0 appear noticed by tests, 7 partly noticed, 0 reached but not noticed, 0 no test path. 7 found, 0 suppressed by your settings (2 base-side evidence, not candidate edit targets)
 
 Analysis outcome: findings below (analysis complete)
   Counts: 1 changed file(s), 3 changed line(s), 2 candidate line(s), 7 changed behavior(s) checked, 7 finding(s)

@@ -271,6 +271,30 @@ fn an_empty_command_name_json_refusal_carries_no_token() -> TestResult {
     Ok(())
 }
 
+/// #16374: an unknown help topic keeps the `unknown_command` code and names
+/// the topic, but its `next` is `ripr help`, the listing route its message
+/// names. A bare unknown command still points at `ripr --help`.
+#[test]
+fn an_unknown_help_topic_json_refusal_points_at_ripr_help() -> TestResult {
+    let value = document(&run_ripr(&["help", "bogus-topic", "--json"]), 2)?;
+    assert_eq!(value["status"], "refused", "{value}");
+    assert_eq!(value["error"]["code"], "unknown_command", "{value}");
+    assert_eq!(value["error"]["token"], "bogus-topic", "{value}");
+    assert_eq!(
+        value["error"]["message"],
+        "unknown help topic \"bogus-topic\". Run `ripr help` to list commands, or `ripr help workflow` to list workflows.",
+        "{value}"
+    );
+    assert_eq!(value["error"]["next"]["command"], "ripr help", "{value}");
+
+    let command = document(&run_ripr(&["bogus-topic", "--json"]), 2)?;
+    assert_eq!(
+        command["error"]["next"]["command"], "ripr --help",
+        "{command}"
+    );
+    Ok(())
+}
+
 /// #15985: a word after `--version` is a stray positional, so a JSON request
 /// gets the `unknown_argument` document naming it, and an empty word carries
 /// no token. Without the request stdout stays empty and no version prints.

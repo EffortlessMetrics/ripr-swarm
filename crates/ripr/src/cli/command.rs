@@ -84,7 +84,7 @@ impl CliCommand {
             // `ripr <command> --help [args...]` — i.e. the rest of the args are
             // preserved with `--help` prepended, so each command's existing
             // `--help` branch prints its own help. `help` followed by an
-            // unknown command still returns the unknown-command error so a
+            // unknown topic still refuses, as an unknown help topic, so a
             // typo is not silently swallowed.
             Some("help") => {
                 if wants_all(&command_args) {
@@ -120,6 +120,9 @@ impl CliCommand {
                     Some((target, rest)) => (target.clone(), rest.to_vec()),
                     None => return Ok(Self::Help),
                 };
+                if let Some(error) = unknown_help_topic_error(&target) {
+                    return Err(error);
+                }
                 Self::from_parts(Some(&target), help_request_args(rest))
             }
             Some("--version" | "-V") => Ok(Self::Version),
@@ -327,6 +330,33 @@ fn unknown_command_error(command: &str, command_typed: bool) -> String {
     message
 }
 
+/// `ripr help <topic>` where the topic is a plain word that is neither a
+/// command nor a near miss the command-position message already answers
+/// (`version`, a nested subcommand, the workflow route). The request was for
+/// help, so the refusal says so instead of claiming the user ran an unknown
+/// command (#16374). `ripr help` with no topic prints the same overview as
+/// `ripr --help`, and `ripr help workflow` lists workflows.
+fn unknown_help_topic_error(topic: &str) -> Option<String> {
+    if topic.trim().is_empty()
+        || topic.starts_with('-')
+        || topic == "version"
+        || crate::cli::command_catalog::resolve_top_level(topic).is_some()
+        || crate::cli::command_catalog::nested_route_for_subcommand(topic).is_some()
+        || closest_of(topic, &["workflow"]).is_some()
+    {
+        return None;
+    }
+    let hint = match closest_command(topic) {
+        Some(suggestion) => format!(" Did you mean `ripr help {suggestion}`?"),
+        None => String::new(),
+    };
+    let message = format!(
+        "unknown help topic {topic:?}.{hint} Run `ripr help` to list commands, or `ripr help workflow` to list workflows."
+    );
+    crate::cli::usage_refusal::note_unknown_help_topic(topic, &message);
+    Some(message)
+}
+
 fn unknown_command_message(command: &str, command_typed: bool) -> String {
     // An empty command name is nearly always an unset shell variable
     // (`ripr $CMD`). Echoing `""` back says nothing about that (#15985).
@@ -472,7 +502,10 @@ fn edit_distance(left: &str, right: &str) -> usize {
 
 #[cfg(test)]
 mod tests {
-    use super::{CliCommand, closest_command, known_commands, unknown_command_error};
+    use super::{
+        CliCommand, closest_command, known_commands, unknown_command_error,
+        unknown_help_topic_error,
+    };
 
     fn args(values: &[&str]) -> Vec<String> {
         values.iter().map(|value| value.to_string()).collect()
@@ -626,8 +659,8 @@ mod tests {
         let typo = CliCommand::from_parts(Some("help"), args(&["chekc", "--all"]));
         assert_eq!(
             typo,
-            Err(unknown_command_error("chekc", false)),
-            "`ripr help <typo> --all` should still report the typo"
+            Err(unknown_help_topic_error("chekc").unwrap_or_default()),
+            "`ripr help <typo> --all` should still report the typo (as a help topic, #16374)"
         );
     }
 
@@ -930,15 +963,20 @@ mod tests {
     }
 
     #[test]
-    fn help_with_unknown_subcommand_returns_unknown_command_error() {
-        // A typo after `help` should produce the same unknown-command error as
-        // the typo would without `help`, including a typo suggestion.
+    fn help_with_unknown_subcommand_returns_unknown_help_topic_error() {
+        // A typo after `help` is a help-topic refusal (#16374), with the typo
+        // suggestion kept.
         assert_eq!(
             CliCommand::from_parts(Some("help"), args(&["nonexistent"])),
-            Err("unknown command \"nonexistent\". Run `ripr --help`.".to_string())
+            Err("unknown help topic \"nonexistent\". Run `ripr help` to list commands, or `ripr help workflow` to list workflows.".to_string())
         );
         assert_eq!(
             CliCommand::from_parts(Some("help"), args(&["chekc"])),
+            Err("unknown help topic \"chekc\". Did you mean `ripr help check`? Run `ripr help` to list commands, or `ripr help workflow` to list workflows.".to_string())
+        );
+        // A bare unknown command keeps the command wording.
+        assert_eq!(
+            CliCommand::from_parts(Some("chekc"), Vec::new()),
             Err("unknown command \"chekc\". Did you mean `check`? Run `ripr --help`.".to_string())
         );
     }

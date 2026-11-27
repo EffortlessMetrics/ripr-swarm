@@ -1,0 +1,3 @@
+[[extend]]
+id = "RIPR-SPEC-0241"
+tests = ["xtask/src/verification_contracts.rs::tests::empty_check_root_requires_a_typed_refusal"]
