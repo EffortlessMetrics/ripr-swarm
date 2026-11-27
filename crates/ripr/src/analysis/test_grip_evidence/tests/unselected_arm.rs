@@ -555,6 +555,164 @@ let _ = $f(Size::Medium);\n    };\n}\n",
                 named,
                 "{prelude}: {evidence:?}"
             );
+            // #15233: the refusal leaves activation unknown, not the generic
+            // `yes` the visible `Small`/`Large` inputs would otherwise keep.
+            let state = if named {
+                StageState::Weak
+            } else {
+                StageState::Unknown
+            };
+            assert_eq!(evidence.activate.state, state, "{prelude}: {evidence:?}");
+        }
+    }
+    Ok(())
+}
+
+/// #15233: the #15181 refusal fell back to the generic "Observed N concrete
+/// activation value(s)" reading, which reads `yes`, so an arm no visible
+/// input selects could grip strongly. Three test files over the same calls
+/// (`Small` and `Large` asserted, `Medium` never passed): a test-local
+/// `macro_rules! assert_eq` defined after every assertion (it never expands
+/// there, but the whole-index rebound scan still sees it), one defined
+/// before that runs the owner with `Size::Medium`, and the standard macro.
+#[test]
+fn a_rebound_read_macro_refusal_reads_activation_unknown_not_yes() -> Result<(), String> {
+    const ASSERTS: &str = "        assert_eq!(price_cents(Size::Small), 300);\n        \
+assert_eq!(price_cents(Size::Large), 500);\n";
+    const REBIND: &str = "        macro_rules! assert_eq {\n            \
+($f:ident ( $($arg:tt)* ), $e:expr) => {\n                let _ = $f(Size::Medium);\n            \
+};\n        }\n";
+    let file = |body: String| {
+        format!(
+            "#[cfg(test)]\nmod tests {{\n    use prices::*;\n\n    #[test]\n    \
+fn small_and_large_prices() {{\n{body}    }}\n}}\n"
+        )
+    };
+    for (label, tests, rebound) in [
+        ("defined after", file(format!("{ASSERTS}{REBIND}")), true),
+        ("defined before", file(format!("{REBIND}{ASSERTS}")), true),
+        ("standard macro", file(ASSERTS.to_string()), false),
+    ] {
+        // Fixture premise: the three files differ only in the rebinding and
+        // its place, and no file passes `Size::Medium` to the owner itself.
+        assert_eq!(tests.matches("price_cents(Size::Small)").count(), 1);
+        assert_eq!(tests.matches("price_cents(Size::Large)").count(), 1);
+        assert!(!tests.contains("price_cents(Size::Medium)"), "{label}");
+        assert_eq!(tests.contains("macro_rules! assert_eq"), rebound, "{label}");
+        if rebound {
+            let (definition, first_assert) = (
+                tests.find("macro_rules!").unwrap_or(usize::MAX),
+                tests.find("assert_eq!(price_cents").unwrap_or(usize::MAX),
+            );
+            assert_eq!(definition > first_assert, label == "defined after");
+        }
+        let (full, compact, class) = arm_evidence_with_tests(PRICES, &tests, "Size::Medium")?;
+        for (evidence, class) in [(&full, class[0]), (&compact, class[1])] {
+            // Premise: both visible inputs read as observed values.
+            assert!(
+                evidence
+                    .activate
+                    .summary
+                    .contains("`Size::Large`, `Size::Small`"),
+                "{label}: {}",
+                evidence.activate.summary
+            );
+            if rebound {
+                assert_eq!(evidence.activate.state, StageState::Unknown, "{label}");
+                assert!(
+                    evidence.activate.summary.starts_with(
+                        "A read macro on the related tests' path (`assert_eq!`) is rebound"
+                    ),
+                    "{label}: {}",
+                    evidence.activate.summary
+                );
+                assert_eq!(missing_values(evidence), Vec::<&str>::new(), "{label}");
+                assert_eq!(class, SeamGripClass::ActivationUnknown, "{label}");
+            } else {
+                assert_eq!(evidence.activate.state, StageState::Weak, "{label}");
+                assert_eq!(missing_values(evidence), ["Size::Medium"], "{label}");
+                assert_eq!(class, SeamGripClass::WeaklyGripped, "{label}");
+            }
+            assert_ne!(class, SeamGripClass::StronglyGripped, "{label}");
+        }
+    }
+    Ok(())
+}
+
+/// #15233 corpus capture: the rebinding inside the owner file's inline test
+/// module (the issue's shape) also reads as a mention of the owner outside
+/// the related tests' calls, a refusal that kept the generic `yes`. The
+/// rebound check is asked before it, so the arm reads unknown there too. The
+/// control without the rebinding names the arm.
+#[test]
+fn an_inline_test_module_rebinding_reads_activation_unknown() -> Result<(), String> {
+    let rebind = "    macro_rules! assert_eq {\n        \
+($f:ident ( $($arg:tt)* ), $expected:expr) => {\n            \
+let _ = $f(Size::Medium);\n        };\n    }\n";
+    for (prelude, rebound) in [(rebind, true), ("", false)] {
+        let source = format!(
+            "{PRICES}\n#[cfg(test)]\nmod tests {{\n    use super::*;\n\n{prelude}\n    \
+#[test]\n    fn small_and_large_prices() {{\n        \
+assert_eq!(price_cents(Size::Small), 300);\n        \
+assert_eq!(price_cents(Size::Large), 500);\n    }}\n}}\n"
+        );
+        // Fixture premise: the test sits in the owner's file, before or
+        // without a rebinding, and never passes `Size::Medium` itself.
+        assert!(source.contains("mod tests {\n    use super::*;"));
+        assert!(!source.contains("price_cents(Size::Medium)"));
+        assert_eq!(source.contains("macro_rules! assert_eq"), rebound);
+        let (full, compact, class) =
+            arm_evidence_with_tests(&source, "// no out-of-line tests\n", "Size::Medium")?;
+        for (evidence, class) in [(&full, class[0]), (&compact, class[1])] {
+            let summary = evidence.activate.summary.as_str();
+            if rebound {
+                assert_eq!(evidence.activate.state, StageState::Unknown, "{summary}");
+                assert_eq!(class, SeamGripClass::ActivationUnknown, "{summary}");
+                assert!(summary.starts_with("A read macro"), "{summary}");
+            } else {
+                assert_eq!(evidence.activate.state, StageState::Weak, "{summary}");
+                assert_eq!(class, SeamGripClass::WeaklyGripped, "{summary}");
+                assert_eq!(missing_values(evidence), ["Size::Medium"]);
+            }
+        }
+    }
+    Ok(())
+}
+
+/// #15233 review: the refusal summary names only the read macros that are
+/// rebound. The test invokes a rebound `assert_eq!` and the standard
+/// `println!`; only `assert_eq!` is named. The control, with the standard
+/// `assert_eq!`, names the arm instead.
+#[test]
+fn the_rebound_refusal_names_only_the_rebound_read_macro() -> Result<(), String> {
+    let body = "#[test]\nfn prices() {\n    println!(\"{}\", 1);\n    \
+assert_eq!(price_cents(Size::Small), 300);\n    \
+assert_eq!(price_cents(Size::Large), 500);\n}\n";
+    let rebind = "macro_rules! assert_eq {\n    ($f:ident ( $($arg:tt)* ), $expected:expr) => {\n        \
+let _ = $f(Size::Medium);\n    };\n}\n";
+    for (prelude, rebound) in [(rebind, true), ("", false)] {
+        let tests = format!("use prices::*;\n\n{prelude}\n{body}");
+        // Fixture premise: both read macros are invoked, and only
+        // `assert_eq` is ever rebound.
+        assert!(tests.contains("println!(") && tests.contains("assert_eq!(price_cents"));
+        assert!(!tests.contains("macro_rules! println"));
+        assert_eq!(tests.contains("macro_rules! assert_eq"), rebound);
+        let (full, compact, _) = arm_evidence_with_tests(PRICES, &tests, "Size::Medium")?;
+        for evidence in [&full, &compact] {
+            let summary = evidence.activate.summary.as_str();
+            if rebound {
+                assert_eq!(evidence.activate.state, StageState::Unknown, "{summary}");
+                assert!(
+                    summary.starts_with(
+                        "A read macro on the related tests' path (`assert_eq!`) is rebound"
+                    ),
+                    "{summary}"
+                );
+                assert!(!summary.contains("println"), "{summary}");
+            } else {
+                assert_eq!(evidence.activate.state, StageState::Weak, "{summary}");
+                assert_eq!(missing_values(evidence), ["Size::Medium"]);
+            }
         }
     }
     Ok(())

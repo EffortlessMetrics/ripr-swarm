@@ -30,7 +30,7 @@ pub(crate) use load::{
     another_base_candidate, base_is_checked_out_head, base_is_checked_out_head_with_parent,
     is_shallow_repository, load_diff_core, load_diff_range_with_deadline_and_git_stdout_limit_core,
     load_diff_with_effective_base_core, load_worktree_diff_with_effective_base_core,
-    no_merge_base_diagnosis, resolve_effective_base_core,
+    names_shallow_no_merge_base, no_merge_base_diagnosis, resolve_effective_base_core,
 };
 pub use load::{
     load_diff, load_diff_range, load_pr_evidence_diff_range, load_worktree_diff,

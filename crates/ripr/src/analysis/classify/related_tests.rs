@@ -33,10 +33,12 @@ use std::path::Path;
 
 mod dependent_test_hosts;
 mod dispatch_target;
+pub(in crate::analysis::classify) use dispatch_target::declared_unrestricted_pub;
 mod drop_dispatch;
 mod equality_dispatch;
 mod generic_sibling;
 mod implicit_dispatch;
+mod into_dispatch;
 mod iterator_dispatch;
 mod operator_dispatch;
 mod parse_dispatch;
@@ -575,7 +577,7 @@ impl RelatedTestCandidateIndex {
         if owner_fn.is_some_and(equality_dispatch::has_partial_eq_shape) {
             extend_bucket(&mut selected, Some(self.by_equality_assert.as_slice()));
         }
-        // Operator, loop, scope-end and `str::parse` syntax has no token worth
+        // Operator, loop, scope-end, `str::parse` and `.into()` syntax has no token worth
         // indexing; same-file tests of such an impl are scanned in full.
         if owner_fn.is_some_and(implicit_dispatch::has_implicit_shape) {
             scan_all = true;
@@ -7020,16 +7022,31 @@ fn inherent_receiver_call_resolves_with(
                 && index.is_some_and(|index| !file_rebinds_type(index, &test.file, impl_type))
         })
     };
+    // #15277: the one `Deref` wrapper of the owner's type, read only when a
+    // call is not otherwise resolved.
+    let deref_wrapper = std::cell::OnceCell::new();
     let resolves = |node: SyntaxNode, scope: Option<&SyntaxNode>| {
         inherent_call_node_resolves(
-            node,
+            node.clone(),
             scope,
             method,
             impl_type,
             (&unit_struct, &unit_variant),
             &factory,
             &owner_unrebound,
-        )
+        ) || (ast::MethodCallExpr::cast(node.clone())
+            .and_then(|call| call.name_ref())
+            .is_some_and(|name| name.text() == method)
+            && deref_wrapper
+                .get_or_init(|| {
+                    index.zip(owner).and_then(|(index, owner)| {
+                        super::owner_pin::deref_receiver::deref_wrapper(owner, index)
+                    })
+                })
+                .as_deref()
+                .is_some_and(|wrapper| {
+                    deref_wrapper_call_resolves(node, scope, method, wrapper, test, index)
+                }))
     };
     if let Some(assertion) = assertion {
         assertion_calls_resolve(test, assertion, method, index, pin_syntax, &resolves)
@@ -7491,6 +7508,41 @@ fn inherent_call_node_resolves(
                     owner_unrebound,
                 )
             })
+}
+
+/// #15277: a method call whose receiver is built by the owner type's one
+/// `Deref` wrapper: `Guard(..)` or `Guard { .. }` inline, or a visible `let`
+/// bound to one (or annotated `Guard`). Only the wrapper's own tuple or record
+/// constructor types the receiver; a factory, a parameter, a unit value or a
+/// path call does not, and UFCS (`Inner::limit(&g)`) is not read here.
+fn deref_wrapper_call_resolves(
+    node: SyntaxNode,
+    scope: Option<&SyntaxNode>,
+    method: &str,
+    wrapper: &str,
+    test: &TestSummary,
+    index: Option<&RustIndex>,
+) -> bool {
+    let Some(index) = index else {
+        return false;
+    };
+    let constructor = |ty: &str, name: &str| {
+        ty.is_empty()
+            && name == wrapper
+            && !free_function_declared(index, &test.file, wrapper)
+            && !test_module_rebinds_free_function(index, test, wrapper)
+    };
+    let refuse = |_: &str| false;
+    ast::MethodCallExpr::can_cast(node.kind())
+        && inherent_call_node_resolves(
+            node,
+            scope,
+            method,
+            wrapper,
+            (&refuse, &refuse),
+            &constructor,
+            &|| false,
+        )
 }
 
 /// Whether any indexed file declares `macro_rules! name`, whatever its scope or

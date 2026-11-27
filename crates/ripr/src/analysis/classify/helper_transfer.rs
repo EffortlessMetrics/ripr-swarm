@@ -3579,6 +3579,16 @@ const TRANSPARENT_STD_MACROS: &[&str] = &[
     // `use anyhow::anyhow;` keeps it, and any other binding of `anyhow`, as a
     // macro or as the crate's namespace, refuses it (#10357).
     "anyhow",
+    // #16420: the leveled logging macros of an audited tracing or log
+    // release (see `audited_macro_roots`). The binding scan keeps a bare one
+    // only behind a verified `use tracing::info;` or `use log::warn;`, and
+    // the hop check also requires that its arguments do not mention the
+    // callee, since they run only when the level is enabled.
+    "trace",
+    "debug",
+    "info",
+    "warn",
+    "error",
 ];
 
 /// The [`TRANSPARENT_STD_MACROS`] names the binding scan reads only for a
@@ -3592,6 +3602,11 @@ const BODY_SCOPED_TRANSPARENT_MACROS: &[&str] = &[
     "include_bytes",
     "json",
     "anyhow",
+    "trace",
+    "debug",
+    "info",
+    "warn",
+    "error",
 ];
 
 /// Whether any indexed file binds a [`TRANSPARENT_STD_MACROS`] name to
@@ -3607,6 +3622,13 @@ fn transparent_macro_name_rebound(caller_body: &str, index: &RustIndex) -> bool 
         .iter()
         .copied()
         .filter(|name| {
+            // A logging name joins only for a caller that invokes it bare:
+            // these are common words (`error`), and a `use crate::error;`
+            // elsewhere must not withhold credit from a wrapper that never
+            // logs. The invocation reading is the one the hop check uses.
+            if audited_macro_roots::LEVELED_LOGGING_MACROS.contains(name) {
+                return invokes_bare_macro(caller_body, name);
+            }
             !BODY_SCOPED_TRANSPARENT_MACROS.contains(name)
                 || caller_body.contains(name.trim_start_matches("option_"))
         })
@@ -3718,7 +3740,39 @@ fn macro_invocation_is_unestablished(
         if PREFIX_KEYWORDS.contains(name) {
             return false;
         }
-        macros_rebound || !permitted.contains(&name.trim_start_matches("r#"))
+        let bare = name.trim_start_matches("r#");
+        if audited_macro_roots::LEVELED_LOGGING_MACROS.contains(&bare) {
+            // #16420: a bare logging macro is the audited one only behind a
+            // verified import (the rebinding scan), and only when the helper
+            // call is not in arguments that run when the level is enabled.
+            let Some((_, callee)) = audited else {
+                return true;
+            };
+            let open = masked.get(at + 1..).map_or(0, |rest| {
+                at + 1 + (rest.len() - rest.trim_start_matches(is_rust_whitespace).len())
+            });
+            return macros_rebound
+                || !permitted.contains(&bare)
+                || audited_macro_roots::arguments_mention(&masked, open, callee);
+        }
+        macros_rebound || !permitted.contains(&bare)
+    })
+}
+
+/// Whether `body` invokes `name` as a bare macro (`info!(..)`, `r#info!`),
+/// by the invocation reading [`macro_invocation_is_unestablished`] uses.
+fn invokes_bare_macro(body: &str, name: &str) -> bool {
+    let masked = crate::analysis::language::mask_rust_comments_and_strings(body);
+    masked.match_indices('!').any(|(at, _)| {
+        let is_invocation = masked.get(at + 1..).is_some_and(|rest| {
+            rest.trim_start_matches(is_rust_whitespace)
+                .starts_with(['(', '[', '{'])
+        });
+        if !is_invocation {
+            return false;
+        }
+        let (segments, global) = macro_path_before(masked.get(..at).unwrap_or_default());
+        !global && matches!(segments.as_slice(), [only] if only.trim_start_matches("r#") == name)
     })
 }
 
@@ -4551,7 +4605,11 @@ pub(crate) fn caller_rebinds_parameter(body: &str, parameter: &str) -> bool {
     // `{` or a top-level `,`, cut at a top-level `if` guard. A guard only
     // reads the parameter (`n if n > qty =>`); the pattern before it can
     // bind it (`Some(qty) if .. =>`, `Foo { qty } =>`).
-    for (at, _) in inner.match_indices("=>") {
+    let parsed_arms = match_arm_patterns_bind(body, parameter);
+    if parsed_arms == Some(true) {
+        return true;
+    }
+    for (at, _) in inner.match_indices("=>").filter(|_| parsed_arms.is_none()) {
         let start = match_arm_start(&inner[..at]);
         let arm = &inner[start..at];
         // A comma-less block arm before this one (`None => if f { 1 } else
@@ -4580,6 +4638,67 @@ pub(crate) fn caller_rebinds_parameter(body: &str, parameter: &str) -> bool {
         }
     }
     false
+}
+
+/// Parser-backed match-arm reading (#10357 item 4): `Some(binds)` when
+/// `body` parses cleanly and no macro call's tokens hold a `=>` the parser
+/// cannot read as an arm, `None` otherwise (the lexical scan then decides).
+/// An arm binds the parameter when its pattern, not its guard or its body,
+/// holds an identifier pattern of that name, so a comma-less block arm that
+/// only reads the parameter (`0 => { qty + 1 }`) no longer refuses the arms
+/// after it.
+fn match_arm_patterns_bind(body: &str, parameter: &str) -> Option<bool> {
+    use ra_ap_syntax::AstNode;
+    use ra_ap_syntax::ast::{self, HasName};
+    let parse = crate::analysis::syntax::parse_clean_source_file_memoized(body)?;
+    let root = parse.tree();
+    // A pattern macro (`bind!(qty) =>`) can bind any name once expanded.
+    let pattern_macro = root
+        .syntax()
+        .descendants()
+        .any(|node| ast::MacroPat::can_cast(node.kind()));
+    let opaque_arms = root
+        .syntax()
+        .descendants()
+        .filter_map(ast::MacroCall::cast)
+        .filter_map(|call| call.token_tree())
+        .any(|tree| token_tree_holds_arrow(&tree));
+    if pattern_macro || opaque_arms {
+        return None;
+    }
+    let parameter = parameter.trim_start_matches("r#");
+    Some(
+        root.syntax()
+            .descendants()
+            .filter_map(ast::MatchArm::cast)
+            .filter_map(|arm| arm.pat())
+            .any(|pat| {
+                pat.syntax()
+                    .descendants()
+                    .filter_map(ast::IdentPat::cast)
+                    .filter_map(|ident| ident.name())
+                    .any(|name| name.text().trim_start_matches("r#") == parameter)
+            }),
+    )
+}
+
+/// Whether a macro call's tokens hold `=>` punctuation (one token, or `=`
+/// directly followed by `>`). String literals and comments are single
+/// tokens, so a log message such as `"qty => {qty}"` holds no arrow.
+fn token_tree_holds_arrow(tree: &ra_ap_syntax::ast::TokenTree) -> bool {
+    use ra_ap_syntax::{AstNode, SyntaxKind, T};
+    let tokens: Vec<_> = tree
+        .syntax()
+        .descendants_with_tokens()
+        .filter_map(|element| element.into_token())
+        .collect();
+    tokens.iter().enumerate().any(|(at, token)| {
+        token.kind() == T![=>]
+            || (token.kind() == T![=]
+                && tokens
+                    .get(at + 1)
+                    .is_some_and(|next| next.kind() == SyntaxKind::R_ANGLE))
+    })
 }
 
 /// Where the match arm ending at the end of `before` starts: after the
@@ -5823,6 +5942,33 @@ mod tests {
         }
     }
 
+    // #16420: a bare logging macro is transparent only on the hop path,
+    // with no rebinding, and with the callee outside its arguments.
+    #[test]
+    fn a_bare_logging_macro_needs_the_hop_check_and_clean_arguments() {
+        let opaque = |body: &str, rebound: bool| {
+            macro_invocation_is_unestablished(
+                body,
+                rebound,
+                TRANSPARENT_STD_MACROS,
+                Some((&[], "is_bulk")),
+            )
+        };
+        assert!(!opaque("info!(\"order {qty}\"); is_bulk(qty)", false));
+        assert!(!opaque("r#warn!(qty, \"order\"); is_bulk(qty)", false));
+        assert!(opaque("info!(\"bulk {}\", is_bulk(qty));", false));
+        assert!(opaque("error!(\"order\"); is_bulk(qty)", true));
+        assert!(caller_invokes_opaque_macro("info!(\"order\");", false));
+        assert!(invokes_bare_macro("info ! (\"order\")", "info"));
+        assert!(invokes_bare_macro("r#info!(\"order\")", "info"));
+        assert!(!invokes_bare_macro("tracing::info!(\"order\")", "info"));
+        assert!(!invokes_bare_macro("let e = \"info!(x)\";", "info"));
+        assert!(!invokes_bare_macro(
+            "information!(x); let info = 1;",
+            "info"
+        ));
+    }
+
     #[test]
     fn caller_rebinds_parameter_finds_patterns_and_assignments() {
         for body in [
@@ -5840,9 +5986,18 @@ mod tests {
             // #6780 review round 2: a comma-less block arm before the
             // binding arm must not hide `Some(qty)`.
             "fn w(qty: Option<u32>, f: bool) -> bool { match qty { None => if f { 1 } else { 2 } Some(qty) => is_bulk(qty) } }",
+            // #16406 review: a pattern macro may bind the parameter, and a
+            // macro whose tokens hold an arm stays on the lexical scan.
+            "fn w(qty: u32) -> bool { match Some(qty + 1) { bind!(qty) => is_bulk(qty), None => false } }",
+            "fn w(qty: u32) -> u32 { let _t = arms! { 0 => {\n qty + 1\n }\n Some(qty) => 0 }; 1 }",
         ] {
             assert!(caller_rebinds_parameter(body, "qty"), "{body}");
         }
+        // #16406 review: a raw-identifier parameter spelled `r#qty` in the
+        // signature is rebound by an arm pattern spelled `r#qty`.
+        let raw = "fn w(r#qty: u32) -> bool { match Some(r#qty + 1) { Some(r#qty) => is_bulk(r#qty), None => false } }";
+        assert!(caller_rebinds_parameter(raw, "r#qty"), "{raw}");
+        assert!(match_arm_patterns_bind(raw, "r#qty") == Some(true), "{raw}");
         for body in [
             "fn w(qty: u32) -> u32 { if is_bulk(qty) { 5 } else { 0 } }",
             "fn w(qty: u32) -> bool { qty <= 3 || qty == 9 || qty >= 7 }",
@@ -5855,6 +6010,11 @@ mod tests {
             // #6780 review round 3: a comma-less block arm (rustfmt's
             // layout) that never names the parameter is not a rebinding.
             "fn w(qty: u32, n: Option<u32>, f: bool) -> u32 { let k = is_bulk(qty); match n { None => {\n if f { 1 } else { 2 }\n }\n Some(m) => m, } }",
+            // #10357 item 4: a comma-less block arm that only reads the
+            // parameter does not rebind it for the arms after it.
+            "fn w(qty: u32, n: u32) -> u32 { let _t = match n { 0 => {\n qty + 1\n }\n _ => 0, }; if is_bulk(qty) { 5 } else { 0 } }",
+            // #16406 review: an arrow inside a log string is not an arm.
+            "fn w(qty: u32, n: u32) -> u32 { println!(\"qty => {qty}\"); let _t = match n { 0 => {\n qty + 1\n }\n _ => 0, }; if is_bulk(qty) { 5 } else { 0 } }",
         ] {
             assert!(!caller_rebinds_parameter(body, "qty"), "{body}");
         }

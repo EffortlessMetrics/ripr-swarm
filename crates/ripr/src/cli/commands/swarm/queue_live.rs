@@ -20,7 +20,7 @@ fn render_from_gap_ledger_contents_with_live_currentness(
         output::gap_decision_ledger_live::parse_gap_record_source_with_provenance_json(contents)
             .map_err(|err| {
                 format!(
-                    "swarm queue --gap-ledger {} is invalid: {err}",
+                    "swarm queue --gap-ledger {} is invalid: {err}; regenerate it with `ripr reports gap-ledger` or pass the ledger that command wrote",
                     options.gap_ledger.display()
                 )
             })?;

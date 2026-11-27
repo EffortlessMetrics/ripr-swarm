@@ -262,11 +262,13 @@ fn only_a_staged_package_is_allowed_dirty_and_path_dependencies_are_packaged() -
         return Err(format!("unexpected packaged packages: {packages:?}"));
     }
     let path = Path::new("x");
-    let staged = package_args(path, path, path, true, &packages);
-    let checkout = package_args(path, path, path, false, &packages);
+    let staged = package_args(path, path, path, true, &packages, None);
+    let checkout = package_args(path, path, path, false, &packages, Some(2));
     if !staged.iter().any(|arg| arg == "--allow-dirty")
+        || staged.iter().any(|arg| arg == "--jobs")
         || checkout.iter().any(|arg| arg == "--allow-dirty")
         || !checkout.iter().any(|arg| arg == "--locked")
+        || !checkout.windows(2).any(|pair| pair == ["--jobs", "2"])
     {
         return Err(format!("unexpected arguments: {staged:?} / {checkout:?}"));
     }
@@ -357,7 +359,14 @@ fn real_stage_archive(root: &Path) -> Result<(), String> {
         return Err(format!("unexpected packaged packages: {packages:?}"));
     }
     let config = owned_cargo_config(root, "package", None)?;
-    let args = package_args(&config, &stage.join("Cargo.toml"), &target, true, &packages);
+    let args = package_args(
+        &config,
+        &stage.join("Cargo.toml"),
+        &target,
+        true,
+        &packages,
+        None,
+    );
     qualified_command(
         Path::new("cargo"),
         &args,
