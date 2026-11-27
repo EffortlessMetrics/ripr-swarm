@@ -10873,7 +10873,7 @@ fn agent_repair_accepts_empty_effectively_ignored_build_tree_and_actual_cargo_te
     let manifest_path = root.join("Cargo.toml");
     let mut manifest = std::fs::read_to_string(&manifest_path)?;
     manifest.push_str("\n[workspace]\n");
-    std::fs::write(manifest_path, manifest)?;
+    std::fs::write(&manifest_path, manifest)?;
     run_git(root, &["add", "Cargo.toml"])?;
     commit_repair_fixture(root, &["-qm", "standalone adopter workspace"])?;
     if root.join(".gitignore").exists() || root.join("target").exists() {
@@ -10887,28 +10887,68 @@ fn agent_repair_accepts_empty_effectively_ignored_build_tree_and_actual_cargo_te
     }
     let (attempt_id, _) = sole_repair_attempt(root)?;
     add_boundary_test(root)?;
-    // Explicitly anchor the child build here even when the parent Cargo
-    // invocation shares a CARGO_TARGET_DIR with another verification lane.
-    let target = root.join("target").display().to_string();
+    // Keep final and intermediate Cargo output inside the fixture's ignored tree.
+    let target_dir = root.join("target");
+    let target = target_dir.display().to_string();
+    let test_target = "pricing";
     let test = run_command_with_env(
         "cargo",
         root,
         &[
             "test",
             "--offline",
+            "--test",
+            test_target,
+            "--message-format=json",
             "equality_boundary_discounts",
             "--",
             "--exact",
         ],
-        &[("CARGO_TARGET_DIR", &target)],
+        &[
+            ("CARGO_TARGET_DIR", &target),
+            ("CARGO_BUILD_BUILD_DIR", &target),
+            // Exercise the optional-cache case even under default Cargo settings.
+            ("CARGO_CACHE_RUSTC_INFO", "0"),
+        ],
     )?;
-    if !test.status.success()
-        || !String::from_utf8_lossy(&test.stdout)
-            .contains("test equality_boundary_discounts ... ok")
-        || !root.join("target/.rustc_info.json").exists()
+    if !test.status.success() {
+        return Err(format!("focused Cargo test command failed: {test:?}").into());
+    }
+    let stdout = String::from_utf8_lossy(&test.stdout);
+    if !stdout
+        .lines()
+        .any(|line| line == "test equality_boundary_discounts ... ok")
     {
+        return Err(format!("focused Cargo run did not pass the named test: {test:?}").into());
+    }
+
+    let manifest_path = manifest_path.canonicalize()?;
+    let target_dir = target_dir.canonicalize()?;
+    let canonical_path = |value: &serde_json::Value| {
+        value
+            .as_str()
+            .map(Path::new)
+            .filter(|path| path.is_absolute())
+            .and_then(|path| path.canonicalize().ok())
+    };
+    let built_test = stdout
+        .lines()
+        .filter_map(|line| serde_json::from_str::<serde_json::Value>(line).ok())
+        .take_while(|message| message["reason"] != "build-finished")
+        .any(|artifact| {
+            artifact["reason"] == "compiler-artifact"
+                && artifact["target"]["name"] == test_target
+                && artifact["target"]["kind"][0] == "test"
+                && artifact["profile"]["test"] == true
+                && artifact["fresh"] == false
+                && canonical_path(&artifact["manifest_path"]).as_ref() == Some(&manifest_path)
+                && canonical_path(&artifact["executable"])
+                    .is_some_and(|path| path.starts_with(&target_dir) && path.is_file())
+        });
+    if !built_test {
         return Err(format!(
-            "focused Cargo test must run and write actual build output here: {test:?}"
+            "focused Cargo test did not produce a fresh {test_target} test executable under {}: {test:?}",
+            target_dir.display()
         )
         .into());
     }
