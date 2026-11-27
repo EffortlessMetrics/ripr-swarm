@@ -10,8 +10,8 @@ mod fallible_check;
 mod literal_json;
 mod scan_memo;
 use literal_json::{
-    json_namespace_rebound, literal_json_import_visible_among, literal_json_tokens,
-    literal_json_tree, literal_json_uses,
+    crate_namespace_rebound, json_namespace_rebound, literal_json_import_visible_among,
+    literal_json_tokens, literal_json_tree, literal_json_uses,
 };
 mod slice_table;
 pub(crate) use fallible_check::{decimal_u8, literal_check_syntax, literal_owner_syntax};
@@ -516,6 +516,13 @@ pub(crate) fn macro_binding_scan(
     .collect()
 }
 
+/// Drop-in value macros outside [`TRUSTED_MACRO_NAMES`] whose binding sites
+/// the scan also records: `serde_json`'s `json!` and `anyhow`'s `anyhow!`
+/// build a value and cannot return. Each is trusted only through a
+/// manifest-verified import from its own crate whose root the file does not
+/// rebind (#10357).
+pub(crate) const DROP_IN_VALUE_MACROS: &[&str] = &["json", "anyhow"];
+
 /// Standard macros that cannot return a value from the enclosing function,
 /// whose workspace rebinding the owner-pin scans look for.
 pub(crate) const TRUSTED_MACRO_NAMES: &[&str] = &[
@@ -625,7 +632,8 @@ impl MacroBindingCandidates {
 pub(crate) fn macro_binding_candidates(source: &ast::SourceFile) -> MacroBindingCandidates {
     let trusted = |text: &str| {
         let name = text.trim_start_matches("r#");
-        (TRUSTED_MACRO_NAMES.contains(&name) || name == "json").then(|| name.to_string())
+        (TRUSTED_MACRO_NAMES.contains(&name) || DROP_IN_VALUE_MACROS.contains(&name))
+            .then(|| name.to_string())
     };
     let binds_any = |text: &str| {
         matches!(
@@ -637,6 +645,9 @@ pub(crate) fn macro_binding_candidates(source: &ast::SourceFile) -> MacroBinding
     for node in source.syntax().descendants() {
         if json_namespace_rebound(&node) {
             names.insert("json".to_string());
+        }
+        if crate_namespace_rebound(&node, "anyhow") {
+            names.insert("anyhow".to_string());
         }
         if renames_standard_crate(&node) {
             return MacroBindingCandidates::Any;
@@ -1011,6 +1022,7 @@ fn renames_standard_crate(node: &SyntaxNode) -> bool {
 // `FILE_FACT_CACHE_SCHEMA_VERSION`, or cached candidates hide the new sites.
 fn macro_binding_scan_needed(source: &str, trusted: &[&str]) -> bool {
     trusted.contains(&"json") && source.contains("serde_json")
+        || trusted.contains(&"anyhow") && source.contains("anyhow")
         || source.contains("macro")
         || source.contains("use")
         || source.contains("extern")
@@ -1359,6 +1371,19 @@ fn macro_binding_sites_in_tree(
         if trusted.contains(&"json") && json_namespace_rebound(node) {
             ambiguous.push((
                 "json".to_string(),
+                MacroBindingSite {
+                    line: line_of(node),
+                    kind: MacroBindingKind::Import,
+                    scope: None,
+                    scope_bytes: None,
+                    crate_local: false,
+                    module_local: false,
+                },
+            ));
+        }
+        if trusted.contains(&"anyhow") && crate_namespace_rebound(node, "anyhow") {
+            ambiguous.push((
+                "anyhow".to_string(),
                 MacroBindingSite {
                     line: line_of(node),
                     kind: MacroBindingKind::Import,
@@ -2163,6 +2188,7 @@ fn drop_in_crates(name: &str) -> &'static [&'static str] {
         "assert_eq" | "assert_ne" => DROP_IN_ASSERTION_CRATES,
         "expect" | "expect_file" => EXPECT_TEST_CRATES,
         "json" => &["serde_json"],
+        "anyhow" => &["anyhow"],
         // `use std::env;` names the module and, in the macro namespace, the
         // standard `env!` itself; `use std::include_str;` is the standard
         // macro as well.

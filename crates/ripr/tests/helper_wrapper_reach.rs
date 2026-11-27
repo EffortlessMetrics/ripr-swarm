@@ -852,6 +852,76 @@ fn imported_json_wrapper_forwards_unless_json_is_rebound() -> Result<(), String>
 }
 
 #[test]
+fn imported_anyhow_wrapper_forwards_unless_anyhow_is_rebound() -> Result<(), String> {
+    const ANYHOW: &str = "anyhow = \"1\"";
+    const AUDITED: &[(&str, &str)] = &[("anyhow", "1.0.104")];
+    let wrapper = "    let _ = anyhow!(\"qty {qty}\");\n    if is_bulk(qty) { 5 } else { 0 }";
+    let with_prelude = |prelude: &str| -> Result<(String, String, usize), String> {
+        let source = format!("{prelude}\n{}", bulk_source(wrapper, BOUNDARY_TESTS));
+        let first = source
+            .lines()
+            .position(|line| line.contains("10 <= qty"))
+            .ok_or("probe")?;
+        let diff = BULK_DIFF.replace("@@ -1,3 +1,3 @@", &format!("@@ -{0},3 +{0},3 @@", first));
+        Ok((source, diff, first + 1))
+    };
+    // A verified `use anyhow::anyhow;` at an audited locked release forwards,
+    // alone or grouped with the crate's other items.
+    for prelude in [
+        "use anyhow::anyhow;",
+        "use anyhow::{anyhow, Result};",
+        "use ::anyhow::anyhow;",
+    ] {
+        let (source, diff, line) = with_prelude(prelude)?;
+        for family in ["predicate", "return_value"] {
+            let finding = finding_with_dependencies(ANYHOW, AUDITED, &source, &diff, family)?;
+            assert_eq!(finding["probe"]["line"], line, "{prelude}\n{finding}");
+            assert_eq!(finding["classification"], "exposed", "{prelude}\n{finding}");
+        }
+    }
+    for (label, locked, prelude) in [
+        // A release outside the audit.
+        (
+            "unaudited",
+            &[("anyhow", "1.0.99")][..],
+            "use anyhow::anyhow;",
+        ),
+        // Anything else that may bind `anyhow`.
+        (
+            "local definition",
+            AUDITED,
+            "macro_rules! anyhow { ($($t:tt)*) => { return 5 }; }",
+        ),
+        ("foreign import", AUDITED, "use other::anyhow;"),
+        ("glob import", AUDITED, "use anyhow::*;"),
+        ("macro_use", AUDITED, "#[macro_use]\nextern crate anyhow;"),
+        (
+            "grouped self import",
+            AUDITED,
+            "use anyhow::anyhow;\nuse other::{anyhow::{self}};",
+        ),
+        (
+            "namespace alias",
+            AUDITED,
+            "use anyhow::anyhow;\nmod anyhow { macro_rules! anyhow { ($($t:tt)*) => { return 5 }; } }",
+        ),
+        (
+            "crate alias",
+            AUDITED,
+            "use anyhow::anyhow;\nextern crate other as anyhow;",
+        ),
+    ] {
+        let (source, diff, line) = with_prelude(prelude)?;
+        for family in ["predicate", "return_value"] {
+            let finding = finding_with_dependencies(ANYHOW, locked, &source, &diff, family)?;
+            assert_eq!(finding["probe"]["line"], line, "{label}\n{finding}");
+            assert_ne!(finding["classification"], "exposed", "{label}\n{finding}");
+        }
+    }
+    Ok(())
+}
+
+#[test]
 fn boolean_return_twin_does_not_borrow_other_calls_or_short_circuit_gates() -> Result<(), String> {
     let split = bulk_source(FORWARDING, "        let _ = order_discount(10);");
     let split = split.replace(
