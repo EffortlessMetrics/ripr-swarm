@@ -22,3 +22,14 @@ Command:
 
 Updated:
 - `expected/human-full.txt`
+
+## Pending — rust_deref_receiver_path_module (3)
+
+Reason:
+RIPR-SPEC-0001: main's summary wording
+
+Command:
+`cargo xtask goldens bless rust_deref_receiver_path_module --reason "..."`
+
+Updated:
+- `expected/human.txt`

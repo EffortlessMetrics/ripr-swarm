@@ -23,3 +23,14 @@ Command:
 
 Updated:
 - `expected/check.json`
+
+## Pending — rust_deref_receiver_wrapper_method (3)
+
+Reason:
+RIPR-SPEC-0001: main's summary wording
+
+Command:
+`cargo xtask goldens bless rust_deref_receiver_wrapper_method --reason "..."`
+
+Updated:
+- `expected/human.txt`

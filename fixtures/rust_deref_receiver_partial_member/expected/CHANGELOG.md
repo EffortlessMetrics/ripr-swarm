@@ -35,3 +35,14 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — rust_deref_receiver_partial_member (4)
+
+Reason:
+RIPR-SPEC-0001: main's summary wording
+
+Command:
+`cargo xtask goldens bless rust_deref_receiver_partial_member --reason "..."`
+
+Updated:
+- `expected/human.txt`
