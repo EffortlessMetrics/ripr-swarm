@@ -2409,7 +2409,13 @@ owner = "repo-owner"
             );
         }
         assert!(!err.contains('\\'), "err: {err}");
-        assert!(!err.contains(SUPPRESSIONS_PATH), "err: {err}");
+        // Every parser prefix was renamed: no line still opens with the
+        // default location (the renamed name ends with it, so only the
+        // line start discriminates).
+        assert!(
+            !problems.iter().any(|p| p.starts_with(SUPPRESSIONS_PATH)),
+            "err: {err}"
+        );
 
         // The Unix rule keeps the literal backslash: it names this file.
         let unix_err = load_check_suppression_policy_on(&policy, false)
