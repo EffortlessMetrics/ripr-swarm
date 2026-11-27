@@ -4929,7 +4929,7 @@ pub(crate) fn checked_reusable_awaiting_attempt(
         format!("; and {more} more")
     };
     Err(format!(
-        "{} repair attempt manifest(s) in the store could not be read, and an unreadable manifest's seam cannot be told: {named}{more}",
+        "{} repair attempt manifest(s) in the store could not be read, and an unreadable manifest's seam cannot be told: {named}{more}; repair or remove those attempt directories, then retry",
         scan.invalid.len()
     ))
 }
