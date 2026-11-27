@@ -1,3 +1,5 @@
+//! Run-level finding counts and per-language changed-file counts.
+
 use crate::domain::ExposureClass;
 
 /// Changed-file count for one language: the count an adapter that returned a

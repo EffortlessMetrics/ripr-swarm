@@ -1,0 +1,10 @@
+[[extend]]
+id = "RIPR-SPEC-0009"
+tests = [
+  "crates/ripr/tests/cli_help_hierarchy.rs::agent_setup_help_is_usable_without_repository_docs",
+]
+code = [
+  "crates/ripr/src/cli/help/core.rs",
+  "crates/ripr/src/cli/help/overview.rs",
+]
+outputs = ["docs/CLI_REFERENCE.md"]

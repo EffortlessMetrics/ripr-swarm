@@ -797,6 +797,9 @@ fn imported_json_wrapper_forwards_unless_json_is_rebound() -> Result<(), String>
         "use serde_json::{self, json};",
         "use serde_json::{self};\nuse serde_json::json;",
         "use serde_json;\nuse serde_json::json;",
+        // #16388: a rootless group verifies each leaf by its own root.
+        "use {serde_json::json, std::path::Path};",
+        "use {serde_json::{json}};",
     ] {
         let (source, diff, line) = with_prelude(prelude)?;
         for family in ["predicate", "return_value"] {
@@ -819,6 +822,11 @@ fn imported_json_wrapper_forwards_unless_json_is_rebound() -> Result<(), String>
             "macro_rules! json { ($($t:tt)*) => { return 5 }; }",
         ),
         ("foreign import", AUDITED, "use other::json;"),
+        (
+            "rootless foreign import",
+            AUDITED,
+            "use {other::json, std::path::Path};",
+        ),
         ("glob import", AUDITED, "use serde_json::*;"),
         (
             "macro_use",
@@ -1013,6 +1021,10 @@ fn imported_anyhow_wrapper_forwards_unless_anyhow_is_rebound() -> Result<(), Str
         "use anyhow::{anyhow, Result};",
         "use ::anyhow::anyhow;",
         "use anyhow;\nuse anyhow::anyhow;",
+        // #16388: a rootless group verifies each leaf by its own root.
+        "use {anyhow::anyhow, std::path::Path};",
+        "use {anyhow::{anyhow, Result}};",
+        "use {anyhow, anyhow::anyhow};",
     ] {
         let (source, diff, line) = with_prelude(prelude)?;
         for family in ["predicate", "return_value"] {
@@ -1035,6 +1047,16 @@ fn imported_anyhow_wrapper_forwards_unless_anyhow_is_rebound() -> Result<(), Str
             "macro_rules! anyhow { ($($t:tt)*) => { return 5 }; }",
         ),
         ("foreign import", AUDITED, "use other::anyhow;"),
+        (
+            "rootless foreign import",
+            AUDITED,
+            "use {other::anyhow, std::path::Path};",
+        ),
+        (
+            "rootless unaudited",
+            &[("anyhow", "1.0.99")][..],
+            "use {anyhow::anyhow, std::path::Path};",
+        ),
         ("glob import", AUDITED, "use anyhow::*;"),
         ("macro_use", AUDITED, "#[macro_use]\nextern crate anyhow;"),
         (
@@ -1058,6 +1080,48 @@ fn imported_anyhow_wrapper_forwards_unless_anyhow_is_rebound() -> Result<(), Str
             let finding = finding_with_dependencies(ANYHOW, locked, &source, &diff, family)?;
             assert_eq!(finding["probe"]["line"], line, "{label}\n{finding}");
             assert_ne!(finding["classification"], "exposed", "{label}\n{finding}");
+        }
+    }
+    Ok(())
+}
+
+/// #16388 item 2: a body-scoped name joins the rebinding scan only when the
+/// wrapper invokes it bare. The word in a log string leaves a local
+/// `anyhow` or `json` definition unread, so the wrapper still forwards;
+/// a bare invocation in any spelling still reads it and refuses.
+#[test]
+fn a_body_scoped_name_in_a_string_leaves_its_rebinding_unread() -> Result<(), String> {
+    let with_prelude = |prelude: &str, wrapper: &str| -> Result<(String, String, usize), String> {
+        let source = format!("{prelude}\n{}", bulk_source(wrapper, BOUNDARY_TESTS));
+        let first = source
+            .lines()
+            .position(|line| line.contains("10 <= qty"))
+            .ok_or("probe")?;
+        let diff = BULK_DIFF.replace("@@ -1,3 +1,3 @@", &format!("@@ -{0},3 +{0},3 @@", first));
+        Ok((source, diff, first + 1))
+    };
+    for name in ["anyhow", "json"] {
+        let prelude = format!("macro_rules! {name} {{ ($($t:tt)*) => {{ 0 }}; }}");
+        let mentions =
+            format!("    println!(\"{name} {{qty}}\");\n    if is_bulk(qty) {{ 5 }} else {{ 0 }}");
+        let (source, diff, line) = with_prelude(&prelude, &mentions)?;
+        for family in ["predicate", "return_value"] {
+            let finding = family_finding(&source, &diff, family)?;
+            assert_eq!(finding["probe"]["line"], line, "{name}\n{finding}");
+            assert_eq!(finding["classification"], "exposed", "{name}\n{finding}");
+        }
+        for call in [
+            format!("{name}!(qty)"),
+            format!("{name} ! (qty)"),
+            format!("r#{name}!(qty)"),
+        ] {
+            let invokes = format!("    let _ = {call};\n    if is_bulk(qty) {{ 5 }} else {{ 0 }}");
+            let (source, diff, line) = with_prelude(&prelude, &invokes)?;
+            for family in ["predicate", "return_value"] {
+                let finding = family_finding(&source, &diff, family)?;
+                assert_eq!(finding["probe"]["line"], line, "{call}\n{finding}");
+                assert_ne!(finding["classification"], "exposed", "{call}\n{finding}");
+            }
         }
     }
     Ok(())

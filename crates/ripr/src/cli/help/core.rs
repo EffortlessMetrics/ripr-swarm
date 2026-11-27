@@ -28,7 +28,6 @@ Options:
                    and an edited section is kept unless --force refreshes it.
                    A symlink, an unreadable file or an unterminated marker is
                    refused. With cursor, --mcp also writes .cursor/mcp.json.
-                   Guide: docs/AGENT_QUICKSTART.md.
   --dry-run       Show the plan and the file bodies without writing anything.
                    Resolves the same preconditions as the real run, so it
                    fails the same way (existing file without --force, root
