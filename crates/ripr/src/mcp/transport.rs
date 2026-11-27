@@ -7,8 +7,8 @@ use crate::workspace_status::{WorkspaceState, WorkspaceStatus};
 use rmcp::{
     RoleServer, ServiceExt,
     model::{
-        ClientJsonRpcMessage, ClientNotification, ClientRequest, CustomRequest, GetExtensions,
-        RequestId, ServerJsonRpcMessage,
+        ClientJsonRpcMessage, ClientNotification, ClientRequest, CustomRequest, ErrorCode,
+        GetExtensions, RequestId, ServerJsonRpcMessage,
     },
     transport::{Transport, async_rw::JsonRpcMessageCodec},
 };
@@ -48,6 +48,11 @@ type Failure = Arc<TransportFailure>;
 struct Admission {
     slots: StdMutex<AdmissionSlots>,
     wake: Notify,
+    /// A malformed `initialize` (one the SDK cannot type) and the message
+    /// naming its bad field. The SDK answers it before the handshake with a
+    /// generic `_meta` error; the reply for this id says what is actually
+    /// wrong instead.
+    initialize_hint: StdMutex<Option<(RequestId, String)>>,
 }
 #[derive(Default)]
 struct AdmissionSlots {
@@ -55,6 +60,50 @@ struct AdmissionSlots {
     refresh: Option<RequestId>,
 }
 impl Admission {
+    fn note_malformed_initialize(&self, id: RequestId, message: String) {
+        if let Ok(mut hint) = self.initialize_hint.lock() {
+            *hint = Some((id, message));
+        }
+    }
+    /// Rewrites the SDK's pre-handshake `_meta` refusal so it also names the
+    /// session lifecycle (or, for a malformed `initialize`, the bad field).
+    /// The wire code and id are unchanged. The stored hint is taken only by
+    /// the reply for its own request id, so an unrelated refusal cannot
+    /// consume it, and any reply for that id (a refusal or not) clears it.
+    fn clarify(&self, mut item: ServerJsonRpcMessage) -> ServerJsonRpcMessage {
+        let reply_id = match &item {
+            ServerJsonRpcMessage::Response(response) => Some(&response.id),
+            ServerJsonRpcMessage::Error(error) => error.id.as_ref(),
+            _ => None,
+        };
+        let hint = reply_id.and_then(|reply_id| self.take_initialize_hint(reply_id));
+        if let ServerJsonRpcMessage::Error(error) = &mut item
+            && error.error.code == ErrorCode::INVALID_PARAMS
+            && error.error.message.starts_with(META_REFUSAL_PREFIX)
+        {
+            error.error.message = match hint {
+                Some(message) => message.into(),
+                None => format!(
+                    "{}; if no session is established yet, send an `initialize` request first (params: protocolVersion, capabilities, clientInfo) then the `notifications/initialized` notification; a session that already uses the inline lifecycle must complete params._meta with the `io.modelcontextprotocol/...` keys",
+                    error.error.message
+                )
+                .into(),
+            };
+        }
+        item
+    }
+    /// The stored `initialize` hint, removed only when it belongs to `id`.
+    fn take_initialize_hint(&self, id: &RequestId) -> Option<String> {
+        let mut slot = self.initialize_hint.lock().ok()?;
+        if slot
+            .as_ref()
+            .is_some_and(|(hint_id, _message)| hint_id == id)
+        {
+            slot.take().map(|(_id, message)| message)
+        } else {
+            None
+        }
+    }
     fn slots(&self) -> Result<std::sync::MutexGuard<'_, AdmissionSlots>, Error> {
         self.slots
             .lock()
@@ -106,6 +155,52 @@ impl Admission {
         Ok(())
     }
 }
+/// The SDK's refusal text for a request that lacks its inline-lifecycle
+/// `_meta` (rmcp `missing_request_metadata_error`).
+const META_REFUSAL_PREFIX: &str = "request _meta is missing or has malformed required fields";
+
+/// The params an `initialize` request must carry, as every refusal names them.
+const INITIALIZE_PARAMS_SHAPE: &str = "`protocolVersion` (string), `capabilities` (object) and `clientInfo` (object with string `name` and `version`)";
+
+/// Names what is wrong with the params of an `initialize` request the SDK
+/// could not type, or `None` when no single field explains it.
+pub(super) fn describe_malformed_initialize(params: Option<&serde_json::Value>) -> Option<String> {
+    let Some(object) = params.and_then(serde_json::Value::as_object) else {
+        return Some(format!(
+            "invalid params for `initialize`: params must be an object with {INITIALIZE_PARAMS_SHAPE}"
+        ));
+    };
+    let problem = if !object
+        .get("protocolVersion")
+        .is_some_and(serde_json::Value::is_string)
+    {
+        "`protocolVersion` is required and must be a string such as \"2025-11-25\""
+    } else if !object
+        .get("capabilities")
+        .is_some_and(serde_json::Value::is_object)
+    {
+        "`capabilities` is required and must be an object (`{}` when the client has none)"
+    } else if !object
+        .get("clientInfo")
+        .is_some_and(serde_json::Value::is_object)
+    {
+        "`clientInfo` is required and must be an object with string `name` and `version`"
+    } else if !object.get("clientInfo").is_some_and(|info| {
+        info.get("name").is_some_and(serde_json::Value::is_string)
+            && info
+                .get("version")
+                .is_some_and(serde_json::Value::is_string)
+    }) {
+        "`clientInfo` must carry string `name` and `version`"
+    } else {
+        // The named fields are well formed, so the SDK refused something
+        // else (for example a nested `capabilities` member): no single
+        // field explains it, and the generic lifecycle text is used.
+        return None;
+    };
+    Some(format!("invalid params for `initialize`: {problem}"))
+}
+
 /// How a request relates to a running refresh.
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Lane {
@@ -279,11 +374,39 @@ fn unreadable_frame_error(frame: &[u8]) -> std::io::Result<Vec<u8>> {
     if serde_json::from_slice::<serde_json::Value>(frame).is_err() {
         return protocol_error_frame(-32700, "Parse error");
     }
-    protocol_error_frame_with_id(
-        recoverable_request_id(frame).unwrap_or(serde_json::Value::Null),
-        -32600,
-        "Invalid request",
-    )
+    let id = recoverable_request_id(frame);
+    let message = id
+        .as_ref()
+        .and_then(|_id| non_object_params_message(frame))
+        .unwrap_or_else(|| "Invalid request".to_owned());
+    protocol_error_frame_with_id(id.unwrap_or(serde_json::Value::Null), -32600, &message)
+}
+/// The fix for a request the SDK refused only because its `params` is not an
+/// object (for example an array): the SDK decodes params as a map before any
+/// handler sees the request, so neither the initialize hint nor
+/// `on_custom_request` can name the shape. Only a valid `"jsonrpc": "2.0"`
+/// envelope for one of the methods whose params are required gets the
+/// method-specific text; the code and id are those of the generic rejection.
+fn non_object_params_message(frame: &[u8]) -> Option<String> {
+    let value: serde_json::Value = serde_json::from_slice(frame).ok()?;
+    let object = value.as_object()?;
+    if object.get("jsonrpc").and_then(serde_json::Value::as_str) != Some("2.0") {
+        return None;
+    }
+    let params = object.get("params")?;
+    if params.is_object() {
+        return None;
+    }
+    let method = object.get("method")?.as_str()?;
+    let shape = match method {
+        "initialize" => INITIALIZE_PARAMS_SHAPE,
+        "tools/call" => "`name` (string) and, when present, `arguments` (object)",
+        "resources/read" => "`uri` (string)",
+        _ => return None,
+    };
+    Some(format!(
+        "invalid request for `{method}`: params must be an object with {shape}"
+    ))
 }
 /// The request id of an over-cap message, read from its retained prefix.
 ///
@@ -337,6 +460,7 @@ impl<R: AsyncRead + Unpin + Send, W: AsyncWrite + Unpin + Send + 'static> Transp
         let writer = self.writer.clone();
         let failure = self.failure.clone();
         let admission = self.admission.clone();
+        let item = admission.clarify(item);
         async move {
             let result = async {
                 let mut writer = writer.lock().await;
@@ -505,7 +629,10 @@ impl<R: AsyncRead + Unpin + Send, W: AsyncWrite + Unpin + Send + 'static> Transp
                     match protocol_error_frame_with_id(
                         oversized_request_id(&prefix).unwrap_or(serde_json::Value::Null),
                         -32600,
-                        "MCP message exceeds the configured byte limit",
+                        &format!(
+                            "MCP message exceeds the configured limit of {} bytes; send a smaller message",
+                            super::MAX_MESSAGE_BYTES
+                        ),
                     ) {
                         Ok(frame) => {
                             self.pending_protocol_error = Some(frame);
@@ -564,6 +691,14 @@ impl<R: AsyncRead + Unpin + Send, W: AsyncWrite + Unpin + Send + 'static> Transp
                         continue;
                     }
                     preserve_malformed_request_params(&mut message, &frame);
+                    if let ClientJsonRpcMessage::Request(request) = &message
+                        && let ClientRequest::CustomRequest(custom) = &request.request
+                        && custom.method == "initialize"
+                        && let Some(hint) = describe_malformed_initialize(custom.params.as_ref())
+                    {
+                        self.admission
+                            .note_malformed_initialize(request.id.clone(), hint);
+                    }
                     let request = match &message {
                         ClientJsonRpcMessage::Request(request) => {
                             Some((request.id.clone(), request_lane(&request.request)))

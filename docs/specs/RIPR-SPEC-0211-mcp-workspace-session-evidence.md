@@ -614,8 +614,13 @@ official SDK transport:
   is computed: identical eight-row windows with totals 12 and 13 must have
   distinct evidence and snapshot identities. Retained rows and repair-readiness
   decisions remain unchanged; one-row and empty findings disclose 1/1 and 0/0.
-- Reads may bind an explicit `snapshot_id`; a mismatch fails closed with
-  `stale_snapshot` and the current identity. Snapshot-dependent reads on
+- Reads may bind an explicit `snapshot_id`. A tool argument that is not of
+  the issued form `snapshot:sha256:<64 lowercase hex>` can never name a
+  snapshot and fails closed with `invalid_argument`, naming that form before
+  the escaped echo of the value. A well-formed identity that is not current
+  fails closed with `stale_snapshot` and the current identity (`no_snapshot`
+  before the first successful refresh); resource reads keep their stale
+  handling. Snapshot-dependent reads on
   a root resolved unavailable at startup fail closed with
   `workspace_unavailable` and the same restart-with-root recovery as
   `ripr_refresh`; the adapter does not discover or recheck the root again.
@@ -921,6 +926,13 @@ strings and are not URI-decoded. RIPR-SPEC-0283 owns the decoding contract.
   `-32602` naming the vocabulary; valid classes after a real refresh return
   exactly their filtered gaps; near-cap, escape-heavy and multibyte tokens
   yield a bounded, id-correlated `-32602`, not `-32603`.
+- `crates/ripr/tests/mcp_stdio.rs::error_text_names_the_fix_for_lifecycle_params_snapshot_and_limit_errors`
+  — over real stdio, malformed `snapshot_id` values (including an escaped
+  preview larger than the detail bound) are `invalid_argument` naming the
+  issued form and the omit option, while a well-formed non-current identity
+  reaches `no_snapshot`; lifecycle, `initialize` (before and after a legacy
+  handshake), non-object params, `tools/call`, `resources/read` and oversize
+  errors name what to send with their codes unchanged.
 - `crates/ripr/tests/mcp_stdio.rs::empty_gap_pages_keep_structured_outcomes_at_the_response_bound`
   — real committed analysis with nonempty subjects before filtering, fitting
   empty pages, independently sized structured-envelope overflow below the

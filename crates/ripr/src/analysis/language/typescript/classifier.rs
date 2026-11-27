@@ -11196,7 +11196,8 @@ fn ts_unentered_guard(context: &TsPostLadderContext<'_>) -> Option<TsUnenteredGu
             .copied()
             .chain(["expect", "assert", "test", "it", "describe"])
             .collect();
-        if !super::guard_entry_guard::calls_only_allowed(callback, &allowed, &receivers) {
+        let registration = super::guard_entry_guard::registration_root_as_test(callback);
+        if !super::guard_entry_guard::calls_only_allowed(&registration, &allowed, &receivers) {
             return None;
         }
         let mut calls = 0usize;
@@ -11206,7 +11207,13 @@ fn ts_unentered_guard(context: &TsPostLadderContext<'_>) -> Option<TsUnenteredGu
             {
                 return None;
             }
-            for arguments in owner_call_arguments(callback, name, &receivers) {
+            let owner_calls = owner_call_arguments(callback, name, &receivers);
+            if owner_calls.len()
+                != super::guard_entry_guard::owner_reference_count(&masked_body, name)
+            {
+                return None;
+            }
+            for arguments in owner_calls {
                 // An actual argument named `undefined` may also bind a local value.
                 // The early-return witness only admits a direct numeric literal.
                 if after_nonzero_return
