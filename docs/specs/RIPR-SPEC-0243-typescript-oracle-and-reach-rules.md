@@ -40,9 +40,11 @@ Linked issues:
 - #16252 (inline class expression as a CommonJS module's whole export)
 - #16261 (class method overwritten by a later same-key member; rule 26)
 - #16275 (class expression as a CommonJS named export; rule 27)
+- #16353 (getter read straight off `new Class(...)`)
 - #16306 (class method shadowed by a same-key field; rule 28)
 - #16314 (class method replaced by an assignment; rule 29)
 - #16349 (methods of an anonymous default-exported class; rule 19)
+- #16365 (TypeScript `export = Name;` and `import x = require()`; rule 19)
 - #9435 (exact oracle ignored on five changed-line shapes)
 - #9497 (skipped or unexercised tests credited as exposed; rules 17 and 18)
 - #11196 (start rate: a conditional assertion in an unconsulted test no longer
@@ -933,8 +935,11 @@ Candidates come from the first non-empty tier:
      `expect(...)` actual, same file or through an import of the owner
      module;
    - method: `ReceiverOwnerCall`, a receiver bound by `new Class(...)` in
-     the body or in describe or `beforeEach` scope, a getter read, or a
-     constructor call;
+     the body or in describe or `beforeEach` scope, a getter read (on such a
+     receiver, or straight off `new Class(...)`, as in `expect(new
+     Cart(100).total)`, since #16353; like the inline call, a parenthesized
+     `(new Cart(100)).total` or an explicit `new Cart<T>(...)` is not read), or
+     a constructor call;
    - static method: `ClassMethodCall` through the class name or an import;
    - function, arrow or component, in order: an owner-module mock or a
      spy fabrication blocks every relation; then `DirectOwnerCall` (a
@@ -1940,6 +1945,26 @@ CommonJS form, and a named export beside the inline class stay unrelated).
 Before, both read `no_static_path`. Named property
 exports of a class expression (`exports.Name = class ...`) and `const Name =
 class ...; module.exports = Name;` are not read.
+Amended 2026-11-26 (#16365): TypeScript's CommonJS syntax reads as its
+compiled twin. `export = Name;` is `module.exports = Name;`: one such
+statement naming an identifier, with no ES export statement beside it, is the
+whole-export target, and every gate above applies unchanged except that the
+file must hold no `module.exports =` write (a file with both forms is
+refused). In a test, a value `import x = require("<literal>")` is `const x =
+require("<literal>")`: the same default-named namespace binding, under the
+same ambient-`require` and member-mutation gates, so a whole-export function
+or class relates through the local and a member is read off it
+(`x.name(...)`, `new x.Name()`). A type-only `import type x = require(...)`
+and the entity-name forms (`import x = Ns.y`) load nothing and record no
+import. An ES `import Name from` of an `export =` class stays refused, as for
+its `module.exports` twin. A CommonJS barrel (#15284) reads both forms the same
+way: `export = require('./x')`, or `export = local` of an `import local =
+require('./x')` or `const local = require('./x')`, forwards the whole module,
+and an `export =` beside a `module.exports =` write is a second whole write,
+which refuses every edge from that barrel. Before, both sides read `no_static_path`. An
+inline `export = class { ... }` or `export = function ...`, and a class
+merged with a same-named `namespace` (two file-level declarations of the
+name), are not read.
 
 **Rule 21. A method decorator that passes the original result through
 lends `exposed` to the decorated method's tests (design decision, #10189).**
@@ -3087,6 +3112,16 @@ keys); do not take the next number.
   property, a changed `#private` method of either CommonJS class shape yields a
   finding, and the field and repeated-name guards key the class by the
   property.
+- #16353 (getter read off a fresh instance):
+  `crates/ripr/src/analysis/language/typescript/tests/inline_new_getter_read_tests.rs`
+  runs `analyze_diff` on a changed getter read as `new Cart(100).total`, through
+  `?.`, wrapped across lines and chained (`.total.toFixed(0)`): each relates,
+  as does the named-receiver control. A longer property (`.totalPrice`),
+  another class's same-named getter, the read inside a comment or string, a
+  spied getter, an assignment through the fresh instance and a `delete` of the
+  member (fresh instance or receiver; a `delete` does not run the getter) stay
+  unrelated, and so does a bare read of an ordinary method, which does not run
+  it.
 - #16306 (rule 28, field-shadowed class method):
   `crates/ripr/src/analysis/language/typescript/tests/field_shadowed_method_tests.rs`
   runs `analyze_diff` on a method shadowed by an instance field before or after
@@ -3133,6 +3168,21 @@ keys); do not take the next number.
   keys such a class by `default`, and two anonymous default classes in one file
   repeat that name. `commonjs_inline_class_tests.rs` now credits the anonymous
   inline class through a whole-module `require`.
+- #16365 (rule 19, TypeScript `export =` and `import x = require()`):
+  `crates/ripr/src/analysis/language/typescript/tests/export_equals_tests.rs`
+  runs `analyze_diff` on a changed line of an `export = Cart;` class and an
+  `export = total;` function: `import x = require(...)` and `const x =
+  require(...)` relate (and an ES default import of the function), as do
+  members read off an `import lib = require(...)` namespace (`lib.total(...)`
+  of `export = { total }`, `new m.Cart()` of a named export). An ES default
+  import of the class, another function as the export, a `module.exports`
+  write beside `export =`, a class rewritten after the export, a type-only
+  import and an import spelled only in a comment stay unrelated. A parse test
+  pins that only one identifier `export =` with no ES export beside it is a
+  target. Through a TypeScript barrel, `export =` of an import-equals local,
+  of a `require()` local or of an inline `require()` forwards to the owner,
+  while a barrel that also writes `module.exports` (a forward TypeScript's
+  trailing `export =` overwrites) or forwards another module does not.
 
 - #11196 (rule 11, object rows): `tests/object_row_tests.rs` pins the per-row
   literal assertions for the `for...of` and `test.each` object-row forms and
