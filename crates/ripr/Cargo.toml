@@ -46,6 +46,7 @@ include = [
   "!src/analysis/classify/stop_reason_contract.rs",
   "!src/analysis/language/python/may_reach.rs",
   "!src/analysis/source_role_corpus.rs",
+  "!src/analysis/test_grip_evidence/compact_windows.rs",
   "!src/analysis/test_grip_evidence/value_contradiction/fold_plan.rs",
   "!src/analysis/verification_plan/resources.rs",
   "!src/analysis/witness/language_projection_fixtures.rs",
