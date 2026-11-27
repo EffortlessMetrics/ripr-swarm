@@ -34,31 +34,42 @@ and packaging reference; the runbook owns exact pins, J/K expected-head guards,
 receipts, invalidation, publication authorization, and cleanup.
 
 For the 0.11.0 release train, and as the standard two-repository pattern for
-future releases, use this authority sequence:
+future releases, use the `#2379` **public → swarm → public** authority sequence
+(see also [the 0.11.0 cut checklist](releases/0.11.0-cut-checklist.md#02-phase-vocabulary)):
 
 ```text
-develop in ripr-swarm
-→ select exact ripr-swarm/main at the transaction boundary
-→ create an immutable swarm pin and hold ripr/main
-→ qualify that exact swarm head
-→ preflight the exact source/swarm pair
-→ construct and prove one ordered two-parent source join
-→ merge source with source parent 1 and swarm parent 2
-→ establish metadata and build source artifacts
-→ produce the immutable ship packet
-→ explicitly authorize publication
-→ publish and verify each channel
-→ ancestry-preserving source-to-swarm back-sync
-→ re-baseline the next release and resume swarm development
+admit and perform inbound public → swarm integration (ripr#1627 → ripr#1768/#1769/#1770; reconciled by ripr#1762)
+→ finish selected pre-cut product work in ripr-swarm (#2766, #3920, #3921, platform/quality owners)
+→ freeze the combined product cut (#5114/#5391) and finish pre-pin evidence (#3807 → #2766/#2768)
+→ create an immutable swarm pin (#1609) and qualify that exact swarm candidate (#2769)
+→ admit qualification and return to public via guarded source join (ripr#1771 → ripr#1772/#1773)
+→ establish final source metadata/artifacts and produce the immutable ship packet (ripr#1466/#1467 → #1578/#1468/#1469)
+→ run public RC and independent verification/stable decision (ripr#1632–#1637)
+→ explicitly authorize stable channels (ripr#1470), publish, and independently verify each channel (ripr#1479–#1481)
+→ ancestry-preserving post-release source-to-swarm back-sync K (#3419 → #3313)
+→ re-baseline the next release and resume rolling swarm development (#3420)
 ```
 
-The selected swarm head includes all history reachable from that exact commit.
-Do not squash, rebase, cherry-pick, or reconstruct a tree-equivalent source
-join. The promotion PR head must itself be the reviewed join, with source as
-parent 1 and the selected swarm head as parent 2. The back-sync must preserve
-the source release ancestry through a controlled merge exception or another
-explicitly reviewed ancestry-preserving path, even when swarm branch settings
-normally disable merge commits.
+Inbound public-history integration (`ripr#1627` → `ripr#1768`/`#1769`/`#1770`,
+reconciled by `ripr#1762`) precedes final swarm convergence, freeze,
+denominator, and pin; the guarded return to public (`ripr#1771` →
+`ripr#1772`/`#1773`) follows swarm qualification (`#2769`). The older sequence
+that postponed the entire source sync until after the swarm cut is historical.
+Reordering the runbook does not invent transport authority, waive a protected
+check, select an RC ordinal, or authorize publication.
+
+The selected swarm head includes all history reachable from that exact commit,
+including the inbound public-history merge (`ripr#1627` →
+`ripr#1768`/`#1769`/`#1770`, tracked in `ripr-swarm#13325`). Do not squash,
+rebase, cherry-pick, reconstruct a tree-equivalent source join, or construct a
+raw `git merge` promotion branch by hand. For `0.11.0`, the return to
+`EffortlessMetrics/ripr` runs through the source repository's trusted/guarded
+admission, constructor, and merge route (`ripr#1627`/`#1889`, `ripr#1771` →
+`ripr#1772`/`#1773`; see `ripr` `docs/SOURCE_PROMOTION.md`) with source as
+parent 1 and the selected qualified swarm head as parent 2. The post-release
+back-sync `K` must preserve the source release ancestry through a controlled
+merge exception or another explicitly reviewed ancestry-preserving path, even
+when swarm branch settings normally disable merge commits.
 
 After the swarm pin, later `ripr-swarm/main` merges are outside the release and
 must not move the pin. Development may continue on branches, but no main merge
@@ -78,19 +89,23 @@ issuance. Never copy a historical blanket no-execution sentence, and never
 claim correctness, test adequacy, mutation adequacy, requirement satisfaction,
 or merge safety.
 
-The two history-preserving joins have separate identities and parent order:
+The history-preserving public return (`J`, via `ripr#1627`/`#1889` and
+`ripr#1771`–`#1773`) and post-publication back-sync (`K`, via `#3419`–`#3313`)
+have separate identities and parent order:
 
 ```text
-J = source promotion
+J = guarded public return (source promotion after swarm qualification)
 J.parent[0] = exact SOURCE_PARENT
 J.parent[1] = exact SWARM_PARENT
 
-K = post-publication back-sync
+K = post-publication back-sync (after terminal #1481 public verification)
 K.parent[0] = exact swarm main before back-sync
 K.parent[1] = exact released source main
 ```
 
-The promotion head must itself be `J`; an appended repair commit, squash,
+For `0.11.0`, `J` is built and merged only through the source repository's
+guarded constructor and merge route (`ripr#1772`/`#1773`), never by raw
+`git merge` or a direct branch push; an appended repair commit, squash,
 rebase, cherry-pick, or tree-equivalent reconstruction fails the promotion
 contract. After public verification, review and transport `K` under an
 expected-head guard. If swarm policy has merge commits disabled, use a
@@ -185,9 +200,16 @@ cargo xtask check-packaged-readme
 cargo xtask check-generated-clean
 cargo xtask release-readiness --version 0.11.0   # the version you are cutting
 cargo xtask release-negative-corpus --version 0.11.0   # readiness-chain authority negatives (#2824)
+cargo package -p ripr-contract --list
 cargo package -p ripr --list
 cargo xtask publish-dry-run   # packages from the publish stage; see Crate tarball contents
 ```
+
+`ripr` depends on `ripr-contract = "=<version>"` (ADR 0027), so a bare
+`cargo publish -p ripr --dry-run` fails pre-publish until `ripr-contract` exists
+on crates.io. `cargo xtask publish-dry-run` is the canonical lockstep rehearsal
+(`cargo publish -p ripr-contract --dry-run`, native two-package Cargo rehearsal, and
+unlocked check against the packaged `ripr-contract`).
 
 For the #1609-qualified path, the existing corpus also accepts the complete
 `--controller-root`, `--candidate-source-root`, `--candidate-artifact` group.
@@ -277,8 +299,21 @@ crate measured 10,285,280 bytes on 2026-11-15 and 10,838,401 bytes on
 remaining source is inline `#[cfg(test)] mod tests { .. }` blocks and every new
 test adds to them (#14198).
 
-So `ripr` is packaged from a **publish stage**, never straight from the
-checkout. `cargo xtask publish-dry-run` makes the stage as a sparse local
+The publish stage below is a **temporary uploadability bridge** (#14198): it
+gets the source package under the upload limit, and it does not separate
+development tests from what customers download. It strips only inline modules
+marked exactly `#[cfg(test)]` under `crates/ripr/src`. Other test cfgs (for
+example `#[cfg(all(test, not(windows)))]`), test-only items outside such
+modules, out-of-line test support not matched by the `include` exclusions, the
+`ripr-contract` tests and the packaged CLI help harness all stay in the source
+packages. Native executables already omit test code, because they come from an
+ordinary non-test `cargo build`. The intended layout puts tests in owner-local
+test files that Cargo's package rules exclude, for both crates, enforced by
+package-content checks. Once that lands, the strip has nothing left to remove,
+and the stage can be retired.
+
+Until then, `ripr` is packaged from a **publish stage**, never straight from
+the checkout. `cargo xtask publish-dry-run` makes the stage as a sparse local
 clone of the workspace checked out at `HEAD` (the workspace members, the root
 files and `.cargo/`; uncommitted edits are not staged) and, in
 `crates/ripr/src` only, removes every inline module whose attributes include
@@ -304,12 +339,16 @@ identity check; any other dirty record stays dirty
 (`crates/ripr/src/build_commit_record.rs`).
 
 The #1609-qualified producer (`release-negative-corpus` with the
-`--candidate-*` group, `candidate_harness/archive.rs`) does not use the stage
-yet: it packages `ripr` straight from the admitted source and requires every
-packaged entry to equal its committed blob, so it cannot qualify the published
-representation. It also cannot package the real `ripr` before `ripr-contract`
-is on crates.io. #15204 owns moving it onto the stage with an explicit
-committed-blob-or-exact-strip rule.
+`--candidate-*` group, `candidate_harness/archive.rs`) packages from a publish
+stage of the admitted commit too (#15204), with `ripr` and its path
+dependencies (`ripr-contract`) in one multi-package `cargo package`. Its archive
+inventory accepts an ordinary entry only when it is the committed blob or, under
+`crates/ripr/src`, exactly the inline-test strip of that blob; it accepts a dirty
+Cargo VCS record only together with the marker naming the admitted commit and at
+least one stripped entry. The qualified `cargo install --offline` of the
+extracted crate still needs `ripr-contract` from a registry, so the real
+candidate cannot be installed by this producer before `ripr-contract` is
+published.
 
 From the stage the crate measured 7,384,939 bytes on 2026-11-19 (3,100,821
 bytes, about 29.6%, under the limit; 728 inline test modules, 19,361,471
@@ -400,6 +439,7 @@ Before calling an install or release-path PR complete, verify the crate package,
 the local install path, the extension package, and the published server assets:
 
 ```bash
+cargo package -p ripr-contract --list
 cargo package -p ripr --list
 cargo xtask publish-dry-run
 cargo install --path crates/ripr --locked --force --root target/ripr/install-smoke
@@ -437,34 +477,41 @@ manifest checksum matches the downloaded archive. The extracted server must run
 
 ## Name Gate
 
-Immediately before the first real publish:
+Immediately before the first real publish, verify crates.io ownership, name
+availability, and existing-version metadata for both `ripr-contract` and
+`ripr`:
 
 ```bash
+cargo search ripr-contract --limit 5
 cargo search ripr --limit 5
 ```
 
-Then check the crates.io API:
+Then check the crates.io API for both crates:
 
 ```bash
+curl -i https://crates.io/api/v1/crates/ripr-contract
 curl -i https://crates.io/api/v1/crates/ripr
 ```
 
-If `ripr` is taken, stop. Do not publish under a fallback name without a naming
-decision.
+If either `ripr-contract` or `ripr` is owned by an unexpected publisher, or if
+`ripr-contract` at the target version already exists with different bytes or
+metadata than the rehearsed receipt, stop. Do not publish under a fallback name
+without a naming decision, and do not try to overwrite an immutable version.
 
 ## Publish
+
+Both `cargo publish -p ripr-contract` and `cargo publish -p ripr` require the
+exact qualified ship packet (`cargo xtask release-readiness --version <version>`
+and `cargo xtask publish-dry-run` receipt recording both `.crate` filenames,
+versions, SHA-256 checksums, source commit, the retained stage's commit and
+strip counts, and the `verification` it passed) plus explicit per-channel
+authorization. The receipt is written last, after the stage is retained: a
+receipt exists only for a pair that passed the packaged check and a stage that
+was kept, so a failed rehearsal or a failed retention leaves none.
 
 Publish from the stage the rehearsal just packaged and measured, not from the
 checkout: the checkout's `ripr` package is over the crates.io upload limit
 (see [Crate tarball contents](#crate-tarball-contents)).
-
-```bash
-cargo login
-cargo xtask publish-dry-run        # leaves the rehearsed stage at target/publish-stage
-cd target/publish-stage
-cargo publish --allow-dirty -p ripr-contract
-cargo publish --allow-dirty -p ripr
-```
 
 Run the rehearsal immediately before publishing, on the release commit, and
 check that the kept stage is that commit
@@ -472,13 +519,73 @@ check that the kept stage is that commit
 stage again rather than uploading the rehearsed `.crate`, so a stage left by
 an earlier rehearsal would publish that earlier commit. `--allow-dirty` is
 required because the strip modifies the checked-out `ripr` sources. The
-rehearsal verifies, after staging and again after packaging, that the stage
-differs from `HEAD` only by the marker and by `.rs` files under
-`crates/ripr/src` that are exactly their `HEAD` content with inline test
-modules stripped, and fails otherwise.
+rehearsal verifies, after staging, after packaging, and again after retaining
+the stage, that the stage differs from `HEAD` only by the marker and by `.rs`
+files under `crates/ripr/src` that are exactly their `HEAD` content with
+inline test modules stripped, and fails otherwise. The receipt records a
+digest of that exact stripped path/content set, so a stripped file restored
+byte-for-byte to `HEAD` — which Git stops reporting as modified — is refused
+rather than accepted with its inline tests back.
 
-Cargo may time out while polling the registry index after upload. If that
-happens, check crates.io manually before retrying.
+1. Publish `ripr-contract` first:
+
+```bash
+cargo login
+(
+  cd target/publish-stage || exit 1
+  cargo publish --allow-dirty -p ripr-contract
+)
+```
+
+2. Read back the exact public `ripr-contract` version, checksum, and metadata
+from crates.io under a bounded polling/timeout policy and verify the published
+checksum matches the repository root's `target/package/publish-receipt.json`
+and that the receipt's `verification` is `packaged-check-passed` before
+attempting `ripr`. Use the bounded readback commands in
+[the release transaction](RELEASE_TRANSACTION.md).
+
+A transient index delay is not a product failure, but an unavailable or
+mismatched `ripr-contract` dependency is not permission to publish `ripr`
+around the edge.
+
+3. Prove the bytes about to be uploaded are the rehearsed ones, then publish
+   `ripr` against that exact `=<version>` dependency. `cargo publish` repacks
+   the stage, so the pre-upload check packages `ripr` again in registry mode
+   from the retained stage and refuses unless the fresh archive's SHA-256
+   equals the receipt's `ripr_sha256`:
+
+```bash
+cargo xtask publish-precheck && (
+  cd target/publish-stage || exit 1
+  cargo publish --allow-dirty -p ripr
+)
+```
+
+4. Read back the public `ripr` checksum and compare it to the receipt's
+   `ripr_sha256`; a mismatch means the uploaded bytes are not the qualified
+   ones, so stop and follow partial-publication recovery. Then verify `ripr`
+   from public bytes in a clean environment without path or vendor
+   substitution (`cargo install ripr --version <version> --locked --root
+   target/ripr/install-smoke-cratesio --force`, then run `ripr --version` as shown
+   in [Post-Publish](#post-publish)). The clean install is separate evidence:
+   it proves the published crate builds, not that its bytes match the receipt.
+
+### Partial-publication recovery
+
+- **Contract-only / `ripr` failed**: if `ripr-contract` is public and its
+  version/checksum matches the receipt, retain the exact `ripr-contract`
+  receipt, diagnose the `ripr` failure, and retry only the unchanged authorized
+  `ripr` package where registry policy permits.
+- **Mismatched existing `ripr-contract` bytes or metadata**: stop. Published
+  bytes for a crate version on crates.io are immutable. Select a new coordinated
+  version for both `ripr-contract` and `ripr`; never silently weaken `ripr`'s
+  `=<version>` dependency or auto-yank as recovery.
+- **Registry propagation timeout**: stop and re-check the sparse index and
+  crates.io API before attempting `ripr`.
+- **Cross-channel partial completion**: if `ripr` publishes to crates.io but a
+  later channel fails, preserve the successful Cargo publication as an immutable
+  fact and follow the cross-channel recovery/authorization record; do not treat
+  the release as atomic across registries.
 
 ## Post-Publish
 

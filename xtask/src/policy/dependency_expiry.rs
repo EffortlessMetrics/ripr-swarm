@@ -83,7 +83,10 @@ pub(crate) fn check_dependency_suppression_expiry(path: &Path) -> Result<(), Str
     check_dependency_suppression_expiry_text(&text, &today)
 }
 
-fn check_dependency_suppression_expiry_text(text: &str, today: &str) -> Result<(), String> {
+pub(super) fn check_dependency_suppression_expiry_text(
+    text: &str,
+    today: &str,
+) -> Result<(), String> {
     let mut in_advisories = false;
     let mut in_ignore = false;
     let mut checked = 0usize;
@@ -217,7 +220,7 @@ fn parse_digits(bytes: &[u8], start: usize, end: usize) -> Option<u16> {
     Some(value)
 }
 
-fn utc_date_string() -> String {
+pub(super) fn utc_date_string() -> String {
     let days = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .unwrap_or_default()

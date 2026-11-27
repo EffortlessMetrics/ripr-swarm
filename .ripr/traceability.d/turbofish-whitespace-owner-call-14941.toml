@@ -1,0 +1,6 @@
+# A whitespace-spelled turbofish is a call, not an owner function value (#14941).
+[[extend]]
+id = "RIPR-SPEC-0197"
+tests = [
+  "crates/ripr/src/analysis/classify/indirect_owner.rs::tests::a_whitespace_spelled_turbofish_is_a_call_not_a_value",
+]

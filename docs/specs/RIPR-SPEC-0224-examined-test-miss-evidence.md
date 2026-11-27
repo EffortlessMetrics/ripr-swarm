@@ -148,6 +148,10 @@ The typed `ProbeFamily` is authoritative for behavior-family prose; source
 text such as ` == ` never decides whether a fact is a boundary, return value,
 field, error variant, effect, call deletion or match arm.
 
+In the Rust slice-table boundary fixture (#14808), the assertion-free direct
+caller carries `no_assertion`. Its neighbor, linked only by file proximity,
+carries `no_call_path`. Known implicit dispatch also establishes row reach.
+
 ### Adapter capability table
 
 This table documents which propositions each adapter may emit today. It is
@@ -516,7 +520,7 @@ written and must not copy these gaps.
   probe whose paired base line and head line each hold exactly one `Err`
   construction, with differing literal variants, and are otherwise identical
   up to whitespace; unknown base text fails closed), a row the annotation pass marked `missing_exact_assertion`
-  whose oracle is a plain `assert_eq!` pinning only the `Ok` arm (an
+  whose oracle is an `assert_eq!` or `debug_assert_eq!` pinning only the `Ok` arm (an
   `Ok(..)` side, or a direct `.unwrap()` / `.expect(..)` side; no text
   naming `Err` and no `.err()`, `.unwrap_err()`, `.expect_err(..)` or
   `.map_err(..)`; and the `Ok` side is the changed call's result: an
@@ -536,8 +540,19 @@ written and must not copy these gaps.
   and an `Err`-naming side keep `missing_exact_assertion`. Limits: the base
   line comes from line pairing in the replacement block, so a guard rewritten
   on an earlier line of the same block is not seen by this check (that guard
-  gets its own predicate finding), and a `#[should_panic(expected = ..)]` test
-  whose body unwraps is read as an `Ok` pin.
+  gets its own predicate finding). A test marked `#[should_panic]` keeps its
+  original annotation because an expected panic message can distinguish the
+  variant printed by `.unwrap()` or `.expect(..)`. This pass does not verify
+  that the expected substring matches either variant.
+  A weak `assert!(matches!(f(), Ok(_)))` row with a direct owner-call
+  relation also becomes `assertion_not_observing` when the scrutinee is the
+  bare owner call with simple inputs (bindings, plain strings or decimal
+  integers). Other patterns and expressions keep their original annotation.
+  Debug assertions with no credited oracle keep their existing miss.
+  Two conservative limits also keep the original annotation:
+  `let value = f(..)?;` followed by `assert_eq!(value, expected)` needs a
+  binding traced across statements, and `.ok_or(A)?` to `.ok_or(B)?`
+  lacks the explicit paired `Err(..)` constructions this pass requires.
 - One prose owner, `output::related_test_miss`, renders the reason. The human
   digest appends it in parentheses after the related test; human-full prints
   `misses: <why>; checked <assertion>`; JSON, the context packet and MCP gap
@@ -579,6 +594,10 @@ written and must not copy these gaps.
 - `ripr explain` adds a "Why this verdict" section: every retained examined
   test with its verdict and checked assertion, what a test would need to change
   the verdict (gap classes only), and the meaning of each stop reason.
+  A refused assertion contributes the always-run assertion recipe only when its
+  row records `assertion_inert`. Rows with `assertion_admission_unproven` or
+  legacy `assertion_not_credited` leave the recipe to independently established
+  test or input evidence (#5446).
 
 ### Assertion admission prerequisite (Python, TypeScript)
 
@@ -638,12 +657,17 @@ assertion than the strength-only pick surfaces
 reason, so no repair card becomes agent-packet eligible because of this
 selection.
 
-The human `Related test` headline row is one shared display pick: among the
-rows with the first row's oracle strength, the first row whose test file the
-same diff changed leads, and otherwise the first row stays, so the headline
-names the test the change extended rather than an untouched same-strength
-file that sorts earlier (#14027). The pick moves no row, class or oracle
-strength.
+The human `Related test` headline row is one shared display pick. The anchor
+is the first row of the best observation tier (#14483); among the rows with
+the anchor's oracle strength and tier, the first row whose test file the same
+diff changed leads, and otherwise the anchor stays, so the headline prefers a
+test file the change touched over an untouched same-strength file that sorts
+earlier (#14027). The match is by file, not by test: when the diff edits one
+test in a file, the headline can name another related test in that file that
+the diff left alone. The Python adapter writes no changed-file marks when the
+anchor itself is already in a changed file; a changed first row that ranks
+below the anchor does not suppress them (#14083). The pick moves no row, class
+or oracle strength.
 
 ### Family-relevant assertion selection (TypeScript)
 

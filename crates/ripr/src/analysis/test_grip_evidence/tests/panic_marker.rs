@@ -89,6 +89,10 @@ fn t() {{ div(1, 0); }}
             evidence_for_seam(seam, &index),
             compact_evidence_for_seam(seam, &context),
         ] {
+            assert_eq!(
+                evidence.discriminate.static_limit_kind,
+                expected.then_some(PANIC)
+            );
             assert_eq!(evidence.names_static_limit(PANIC), expected, "{evidence:?}");
             let entry = ClassifiedSeam {
                 class: classify_seam(seam, &evidence),

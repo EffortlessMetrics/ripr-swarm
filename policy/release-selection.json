@@ -5,7 +5,7 @@
   "authority_issue": 2766,
   "stage": "scope_pending",
   "observed_main": {
-    "sha": "4a03e174bd757bfce001fb410d76a5bbd8f58dec"
+    "sha": "0053c8feef554743445f094ff412a78a26dbc37b"
   },
   "claims": [
     {
@@ -56,7 +56,7 @@
       "resolution": "landed_and_accepted",
       "candidate_effect": "Cache status/clear help and scoped flag suggestions are in the cut.",
       "implementation_refs": [
-        "pr:3823"
+        "commit:012e2ab995fb3e00c42eb12f12f92f2874cc0eba"
       ],
       "proof_refs": [
         "https://github.com/EffortlessMetrics/ripr-swarm/issues/3786"
@@ -393,6 +393,9 @@
     {
       "claim_id": "candidate-exec-4508",
       "owner_issue": 4508,
+      "related_issues": [
+        15902
+      ],
       "materiality": "release_required",
       "resolution": "final_candidate_execution_only",
       "candidate_effect": "Exact-candidate proof: literal installed Rust, Python and TypeScript journeys.",
@@ -527,7 +530,7 @@
       "owner_issue": 4624,
       "materiality": "release_required",
       "resolution": "final_candidate_execution_only",
-      "candidate_effect": "Distribution evidence on the candidate: same-target payload identity across archive, wheel and npm.",
+      "candidate_effect": "The 0.11.0 release scope includes the PyPI ripr-rs and npm @effortlessmetrics/ripr alpha adapters. Verify same-target payload identity across the server archive, wheel and npm package on the immutable candidate.",
       "execution_refs": [
         "https://github.com/EffortlessMetrics/ripr-swarm/issues/4624",
         "https://github.com/EffortlessMetrics/ripr-swarm/issues/2769"
@@ -621,12 +624,17 @@
     {
       "claim_id": "windows-test-verdict",
       "owner_issue": 3922,
+      "related_issues": [
+        9272,
+        10865,
+        12092,
+        12338,
+        15601,
+        16036
+      ],
       "materiality": "release_required",
       "resolution": "final_candidate_execution_only",
       "candidate_effect": "The nightly Windows advisory ends in a terminal summarizer verdict inside its 320-minute job limit on main (run 42212645842 success at de41ed063, and the Nov-5 nightly 41973214901); the per-seam native-Windows subrows run on the candidate.",
-      "related_issues": [
-        9272
-      ],
       "implementation_refs": [
         "pr:13303",
         "pr:13434"
@@ -640,6 +648,10 @@
     {
       "claim_id": "final-audit",
       "owner_issue": 3807,
+      "related_issues": [
+        9305,
+        11475
+      ],
       "materiality": "release_required",
       "resolution": "final_candidate_execution_only",
       "candidate_effect": "The reduced release-diff and join-risk audit runs on the frozen product cut M and the source parent; its packet is consumed unchanged by #2766, #2768, #1609 and #2769.",
@@ -651,28 +663,41 @@
     {
       "claim_id": "schema-convergence",
       "owner_issue": 3920,
+      "related_issues": [
+        15839,
+        15842,
+        15860
+      ],
       "materiality": "release_required",
       "resolution": "pending",
-      "candidate_effect": "Pre-cut schema inventory and producer bytes are not yet current for the proposed cut.",
-      "next": "Run the schema-producer sweep on the proposed cut and record the inventory and route dispositions. Owner: Release critical path thread."
+      "candidate_effect": "Published-schema lanes for cache export, agent status, rerun and help are in main (#15453, #15640, #15855, #15890), and command working directories match the published pattern (#15905, closing #15860); the required Rust gate replays the schema-producer sweep on every protected merge. Open before the cut: empty-root refusal coverage (#15839, #15842; PRs #15838, #15845), agent packet and agent brief, and the review-comments 0.1 compatibility repair carried by the public-history import (#16016, successor to #13325).",
+      "next": "Land or disposition the open schema rows (#15838, #15845, agent packet, agent brief version decision, the review-comments compatibility repair in #16016), then run the schema-producer sweep with live artifacts on the proposed cut and record the inventory and route dispositions on #3920. Owner: published-schema lane (#3920 comment 7068352513)."
     },
     {
       "claim_id": "release-docs",
       "owner_issue": 3921,
+      "related_issues": [
+        11567,
+        12862,
+        15576,
+        15578,
+        15606
+      ],
       "materiality": "release_required",
       "resolution": "pending",
-      "candidate_effect": "Release notes and user docs verify current-within-contract pre-cut and the sync-runbook operator-authority citations landed (#13270); the candidate-bound remainder stays open.",
-      "next": "Complete the pre-promotion packet work with the candidate-bound consumers — the #1609 manifest identity and the #2769 complete exact-candidate bundle acceptance precede source promotion (docs/RELEASE_TRANSACTION.md:420-429) — then the post-integration remainder: source replay (ripr#1466/#1472/#1473/#1484) and the populated public release copy. Owner: release-docs thread (#3921 comment 6543601274)."
+      "candidate_effect": "Release notes, the 0.10 to 0.11 upgrade guide and the alpha adapter copy are in main (#15291, #15674) and the sync-runbook operator-authority citations landed (#13270). The changelog fold is in progress: changelog.d still holds unfolded fragments at this observation, and the combined release-cut check has not run. The candidate-bound remainder stays open.",
+      "next": "Finish the changelog fold batches and run the combined fold-changelog release-cut check; reconcile the docs audit (#11567) and the fragment inventory (#12862, proposed entries in #15934). Fold-tool defects #15576 and #15578 are fixed by #15684; for #15606 the duplicate-bullet refusal landed in #15656 and #15920 owns the remaining check-before-write change. Then complete the pre-promotion packet work with the candidate-bound consumers: the #1609 manifest identity and the #2769 complete exact-candidate bundle acceptance precede source promotion (docs/RELEASE_TRANSACTION.md), followed by source replay (ripr#1466/#1472/#1473/#1484) and the populated public release copy. Owner: release-docs thread (#3921 comment 6543601274)."
     },
     {
       "claim_id": "verdict-corpus",
       "owner_issue": 7490,
+      "related_issues": [
+        8979,
+        9430
+      ],
       "materiality": "release_required",
       "resolution": "final_candidate_execution_only",
       "candidate_effect": "All four language corpora measure zero false verdicts at main 984c69a290 (Rust 0/846 with 0/1035 contradictions, TypeScript 0/373, Python 0/385, Perl 0/94); the disposition packet runs on the candidate.",
-      "related_issues": [
-        8979
-      ],
       "implementation_refs": [
         "pr:11315",
         "pr:10584",
@@ -805,6 +830,57 @@
         "https://github.com/EffortlessMetrics/ripr-swarm/issues/9480"
       ],
       "non_claim": "The release does not claim that the harness runs the #1609 manifest admission checks (it reads candidate.sha only, and a test requires that to agree with the admitted manifest), a decoy in a caller directory (the child always runs in the owned case root; the decoy control plants one above it), a per-path generated-exclusion cause in ripr output (attributed by a paired nonmatching-pattern run instead), an end-to-end observation of a spawned child's Git environment (the removal list is pinned), or blind rows for the harness. Nothing has run on the cut binary: the main rehearsal is not the cut packet. Gaps are tracked in #9480 and #4510 stays open."
+    },
+    {
+      "claim_id": "baseline-owner-opt-out",
+      "owner_issue": 14898,
+      "materiality": "release_required",
+      "resolution": "landed_and_accepted",
+      "candidate_effect": "A baseline entry whose owner the current repo-exposure analysis withholds through an owner opt-out reads suppressed or not_evaluated instead of resolved, and baseline update --remove-resolved keeps it.",
+      "implementation_refs": [
+        "pr:15528"
+      ],
+      "proof_refs": [
+        "https://github.com/EffortlessMetrics/ripr-swarm/pull/15528"
+      ],
+      "non_claim": "The diff-scope --check-output ledger and PR-guidance routes carry no owner_opt_outs disclosure and apply no opt-out reading; gate decisions written by older builds carry none either."
+    },
+    {
+      "claim_id": "cargo-package-admission",
+      "owner_issue": 14071,
+      "related_issues": [
+        14198,
+        14792,
+        15204,
+        15216
+      ],
+      "materiality": "release_required",
+      "resolution": "pending",
+      "implementation_refs": [
+        "pr:15194",
+        "pr:15161",
+        "pr:15474"
+      ],
+      "candidate_effect": "ripr is packaged and published from a publish stage that strips inline test modules; the staged ripr-0.11.0.crate measured 7,384,942 bytes against the 10,485,760-byte crates.io default (#15194), publish-dry-run refuses an over-limit crate, the contract-first two-crate order and recovery are enforced (#15161), and the qualified producer packages the publish-stage archive (#15474). #14071, #14198 and #15216 are still open; #14792 and #15204 closed on 2026-11-21.",
+      "next": "Reconcile acceptance on #14071, #14198 and #15216 against merged #15194, #15161 and #15474, including #15216's open Windows cold-install deadline and any archive exception; then record the remaining candidate packaging and size receipts as final-candidate execution under #2769. Owner: the package composition owner named on #15474."
+    },
+    {
+      "claim_id": "server-size-receipts",
+      "owner_issue": 14776,
+      "related_issues": [
+        14777
+      ],
+      "materiality": "release_required",
+      "resolution": "final_candidate_execution_only",
+      "implementation_refs": [
+        "pr:14750"
+      ],
+      "execution_refs": [
+        "https://github.com/EffortlessMetrics/ripr-swarm/issues/14776",
+        "https://github.com/EffortlessMetrics/ripr-swarm/issues/2769"
+      ],
+      "candidate_effect": "Server archive qualification measures executable, staged-payload and archive bytes per target and enforces size ceilings (#14750); the five-target receipts from run 43722063769 are a rehearsal on af88836e4d, and the producers run again on the frozen candidate.",
+      "non_claim": "The release does not claim exact server payload or archive size receipts until the producers run on the frozen candidate under #2769. The shipped build profile is the profile on main; the opt-level selection in #14777 (draft #14753) is not selected for 0.11.0 unless it lands before the cut."
     }
   ],
   "outside_selection": [
@@ -1002,6 +1078,96 @@
       "issue": 6550,
       "reason": "rolling",
       "note": "Unmilestoned Go and language-expansion lane; 0.11 ships no Go adapter, so qualification of one is outside the cut."
+    },
+    {
+      "issue": 4841,
+      "reason": "rolling",
+      "note": "CI qualification latency programme with continuing measurements; it selects no product claim for the 0.11.0 candidate."
+    },
+    {
+      "issue": 4987,
+      "reason": "rolling",
+      "note": "CI cost and proof-plan routing at merge-queue qualification; repository operations, not a selected product claim."
+    },
+    {
+      "issue": 8198,
+      "reason": "rolling",
+      "note": "CI critical-path scheduling for Rust qualification; repository operations, not a selected product claim."
+    },
+    {
+      "issue": 11299,
+      "reason": "rolling",
+      "note": "Unrelated CI flakes observed on one PR; tracked as ordinary test-infrastructure work."
+    },
+    {
+      "issue": 14269,
+      "reason": "rolling",
+      "note": "Flaky harness-registry guard tests; ordinary test-infrastructure work, not a candidate claim."
+    },
+    {
+      "issue": 14633,
+      "reason": "rolling",
+      "note": "Steward direction record for campaigns and non-goals; a standing record, not a release claim."
+    },
+    {
+      "issue": 9601,
+      "reason": "rolling",
+      "note": "Residual tokenizer forms in the npm publish and dist-tag workflow guard after #11850; guard hardening over repository workflows with no product bytes in the candidate."
+    },
+    {
+      "issue": 12909,
+      "reason": "rolling",
+      "note": "Nightly or per-release first-run matrix across channels and operating systems is north-star board work; candidate installed-route proof stays with the candidate-exec rows under #2769."
+    },
+    {
+      "issue": 12129,
+      "reason": "rolling",
+      "note": "Test and oracle residuals from the earlier ripr-main sync (#12009); ordinary parity work, with the inbound public-history integration owned by ripr#1768."
+    },
+    {
+      "issue": 5409,
+      "reason": "post_release",
+      "note": "The remaining work is the clean-consumer exercise against the published v0.11.0 Action tag, which needs the release to exist."
+    },
+    {
+      "issue": 11243,
+      "reason": "post_release",
+      "note": "Maintainer decision memos on typed errors, API sealing and overflow checks; each recommended option is deprecation-first or post-0.11 and changes no 0.11.0 claim."
+    },
+    {
+      "issue": 9333,
+      "reason": "later_release_candidate",
+      "note": "The hosted publish-extension rehearsal can only run against the first release candidate; no pre-cut claim is made for it."
+    },
+    {
+      "issue": 10731,
+      "reason": "downstream_release_control",
+      "note": "Public v0.10.0 GitHub release asset carries the wrong VSIX; correcting a published asset is an operator publication action outside the 0.11.0 candidate tree."
+    },
+    {
+      "issue": 10732,
+      "reason": "downstream_release_control",
+      "note": "Public npm dist-tags and PyPI versions are registry state changed only by the operator's publication step; the 0.11.0 alpha adapter scope is recorded on candidate-exec-4624 and related rows."
+    },
+    {
+      "issue": 11501,
+      "reason": "downstream_release_control",
+      "note": "Ledger of owner rulings awaiting authority; a control record for decisions, not a selected product claim."
+    },
+    {
+      "issue": 12437,
+      "reason": "downstream_release_control",
+      "note": "Qualification route for history-preserving source and swarm sync merges; consumed by the source integration under ripr#1768."
+    },
+    {
+      "issue": 12794,
+      "reason": "downstream_release_control",
+      "note": "Integration plan for the history-preserving swarm-to-ripr sync; downstream consumer of this packet."
+    },
+    {
+      "issue": 12830,
+      "reason": "downstream_release_control",
+      "note": "Release-candidate checklist for 0.11.0; a downstream control that consumes this packet's terminal state."
     }
   ],
   "open_prs": {
@@ -1009,7 +1175,7 @@
     "rows": []
   },
   "census": {
-    "captured_on": "2026-10-21",
+    "captured_on": "2026-11-22",
     "open_release_check_issues": [
       1579,
       1609,
@@ -1031,15 +1197,14 @@
       3008,
       3009,
       3013,
-      3056,
       3094,
       3096,
       3313,
       3419,
       3420,
       3750,
+      3785,
       3793,
-      3794,
       3796,
       3797,
       3804,
@@ -1065,14 +1230,9 @@
       4506,
       4507,
       4508,
-      4510,
       4511,
-      4512,
-      4513,
       4514,
       4515,
-      4516,
-      4519,
       4522,
       4600,
       4604,
@@ -1080,19 +1240,19 @@
       4622,
       4623,
       4624,
-      4627,
       4628,
       4629,
-      4632,
       4633,
       4781,
       4782,
+      4841,
       4850,
       4985,
+      4987,
       5114,
-      5115,
       5116,
       5391,
+      5409,
       5497,
       6234,
       6237,
@@ -1103,10 +1263,42 @@
       6550,
       7454,
       7490,
+      8198,
       9271,
-      9272,
-      9273,
-      9274
+      9274,
+      9305,
+      9333,
+      9430,
+      9601,
+      10731,
+      10732,
+      10865,
+      11243,
+      11299,
+      11475,
+      11501,
+      11567,
+      12092,
+      12129,
+      12338,
+      12437,
+      12794,
+      12830,
+      12862,
+      12909,
+      14071,
+      14198,
+      14269,
+      14633,
+      14776,
+      14777,
+      15216,
+      15601,
+      15606,
+      15839,
+      15842,
+      15902,
+      16036
     ]
   },
   "non_claims": [

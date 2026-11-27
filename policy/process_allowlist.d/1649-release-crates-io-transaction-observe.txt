@@ -1,0 +1,2 @@
+xtask/src/release_crates_io_transaction/observe.rs|Command::new|1|release-crates-io-transaction|ripr#1649: cargo xtask release-crates-io-transaction-observe runs `curl --proto =https` GETs against crates.io, index.crates.io and static.crates.io to read one request's package versions and archives. Read-only, no credential, no redirects, direct argv spawn with no shell, output captured via .output().
+xtask/src/release_crates_io_transaction/observe.rs|use std::process::Command|1|release-crates-io-transaction|ripr#1649: import for the bounded read-only invocation above.

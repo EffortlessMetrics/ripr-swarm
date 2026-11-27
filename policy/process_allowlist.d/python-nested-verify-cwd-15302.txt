@@ -1,0 +1,2 @@
+crates/ripr/tests/python_nested_project_verify_cwd.rs|Command::new|1|cli-tests|#15302: runs the built ripr binary (ripr check in json, human-full, github and sarif formats) against isolated temp git repositories holding a nested Python project; fixture git setup goes through the shared fixture_git helper. No shell, network, or user-repository mutation.
+crates/ripr/tests/python_nested_project_verify_cwd.rs|use std::process::Command|1|cli-tests|#15302: imports Command for the ripr binary runs above.

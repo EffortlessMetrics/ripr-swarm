@@ -1,0 +1,11 @@
+diff --git a/src/subject.py b/src/subject.py
+--- a/src/subject.py
++++ b/src/subject.py
+@@ -5,6 +5,6 @@ def largest(xs):
+     except StopIteration:
+         return None
+     for x in it:
+-        if x > best:
++        if x >= best:
+             best = x
+     return best

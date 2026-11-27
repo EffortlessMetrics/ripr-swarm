@@ -1,0 +1,24 @@
+# Registers the #15357 missing-check producers: the Python multi-line
+# returned-dict entry key read (RIPR-SPEC-0238) and the TypeScript changed
+# `??` default call (RIPR-SPEC-0246 rule 5).
+[[extend]]
+id = "RIPR-SPEC-0238"
+tests = [
+  "crates/ripr/src/analysis/language/python/tests.rs::multiline_return_dict_entry_names_an_exact_key_read",
+  "crates/ripr/src/analysis/language/python/tests.rs::multiline_return_dict_entry_refuses_what_it_cannot_prove",
+]
+code = [
+  "crates/ripr/src/analysis/language/python/discriminators.rs",
+]
+
+[[extend]]
+id = "RIPR-SPEC-0246"
+tests = [
+  "crates/ripr/src/analysis/language/typescript/tests/nullish_chain_tests.rs::changed_default_names_the_call_that_omits_the_option",
+  "crates/ripr/src/analysis/language/typescript/tests/nullish_chain_tests.rs::changed_default_names_nothing_when_a_call_may_reach_it",
+  "crates/ripr/src/analysis/language/typescript/tests/nullish_chain_tests.rs::changed_default_reader_is_closed",
+  "crates/ripr/src/analysis/language/typescript/tests/nullish_chain_tests.rs::empty_object_default_keeps_inherited_reads_for_undefined",
+]
+code = [
+  "crates/ripr/src/analysis/language/typescript/nullish_chain_guard.rs",
+]

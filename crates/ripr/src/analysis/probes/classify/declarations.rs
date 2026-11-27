@@ -184,7 +184,8 @@ pub(super) fn declaration_shape<'a>(
                 start_byte: declaration.start,
                 text,
                 standalone_call: false,
-                unsafe_boundary: false,
+                unsafe_boundary: None,
+                unsafe_interior: false,
             });
         }
     }
@@ -195,7 +196,8 @@ pub(super) fn declaration_shape<'a>(
             start_byte: declaration.start,
             text,
             standalone_call: false,
-            unsafe_boundary: false,
+            unsafe_boundary: None,
+            unsafe_interior: false,
         });
     }
     None
@@ -1101,7 +1103,7 @@ mod tests {
             assert_eq!(Some(shape.start_byte), source.find("out: &Path,"));
             assert_eq!(shape.text, "out: &Path,");
             assert!(!shape.standalone_call);
-            assert!(!shape.unsafe_boundary);
+            assert!(shape.unsafe_boundary.is_none());
         }
         Ok(())
     }
@@ -1184,7 +1186,7 @@ mod tests {
                 assert_eq!(shape.start_line, 4);
                 assert_eq!(Some(shape.start_byte), source.find("out: &Path"));
                 assert_eq!(shape.text, text);
-                assert!(!shape.unsafe_boundary);
+                assert!(shape.unsafe_boundary.is_none());
             }
         }
         Ok(())
@@ -1209,7 +1211,7 @@ mod tests {
                 assert_eq!(shape.start_line, 4);
                 assert_eq!(Some(shape.start_byte), source.find(text));
                 assert!(!shape.standalone_call);
-                assert!(!shape.unsafe_boundary);
+                assert!(shape.unsafe_boundary.is_none());
             }
         }
         Ok(())
@@ -1291,7 +1293,7 @@ mod tests {
                 assert_eq!(shape.start_line, line);
                 assert_eq!(Some(shape.start_byte), source.find(text));
                 assert!(!shape.standalone_call);
-                assert!(!shape.unsafe_boundary);
+                assert!(shape.unsafe_boundary.is_none());
             }
         }
         Ok(())

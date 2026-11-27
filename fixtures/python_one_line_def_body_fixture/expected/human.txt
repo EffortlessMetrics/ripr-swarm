@@ -20,9 +20,9 @@ Start here:
   Why capped: preview adapter: infection/propagation not modeled (Python); syntax-first, no type or import resolution; whether a test checks this behavior is not established. Preview score, not on the same scale as Rust confidence.
   Why unknown: test `test_bulk_discount_at_threshold` takes pytest fixture `quantity` that ripr does not read, so it cannot tell what it supplies; open the fixture to see whether it passes the changed input
   Changed behavior: if quantity > 100:
-  Analyzer limit: Static limit `unresolved_pytest_fixture`: a related pytest test depends on
-    fixture-sourced values; syntax-first preview evidence cannot prove whether the fixture supplies
-    the changed discriminator or expected value
+  Analyzer limit: Static limit `unresolved_pytest_fixture`: a related pytest test uses a fixture,
+    and static analysis cannot tell whether it supplies an input that exercises the change or the
+    value the test expects
   Related test: tests/test_discount.py:4 test_bulk_discount_at_threshold
   Evidence: reach yes · infection unknown · propagation unknown · observation yes · assertion unknown
     Stages (static evidence): reach = test path to changed owner; infection = inputs can activate change;

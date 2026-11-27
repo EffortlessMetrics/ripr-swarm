@@ -1,0 +1,7 @@
+[[extend]]
+id = "RIPR-SPEC-0224"
+tests = [
+  "crates/ripr/tests/assertion_refusal_miss_split.rs::explain_recommends_replacing_only_the_inert_assertion",
+  "crates/ripr/src/output/human/explain.rs::tests::legacy_refusal_adds_no_recipe_to_an_independent_weak_assertion",
+]
+code = ["crates/ripr/src/output/human/explain.rs"]

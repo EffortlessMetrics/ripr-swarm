@@ -120,7 +120,9 @@ The SARIF layer should:
 - bound the results array by bytes: `RIPR_SARIF_RESULTS_BYTES` (default
   `1000000`, `0` removes the cap, an unparseable value fails the run) keeps
   the highest-priority results in both diff-scoped and repo-scoped runs
-  (errors, then warnings, then notes, original order as the tiebreak; kept
+  (results without `suppressions` metadata before suppressed audit rows
+  (#15377); within each group errors, then warnings, then notes, original
+  order as the tiebreak; kept
   results stay in their original order), always keeping the first admitted
   result. When the budget omits results, the run records
   `runs[].properties.results_rendered`, `results_total`, `results_omitted`,
@@ -189,7 +191,7 @@ Every SARIF result should include:
 - `ruleId` matching the tables above;
 - `level` from configured severity;
 - one primary physical location when file and line are known;
-- a short message that uses static exposure vocabulary; finding results (not seam results) lead with the first missing check when one exists and bound that evidence head to 240 characters (the reconciled next step is appended whole per RIPR-SPEC-0088), with full evidence kept in `properties` (#11219);
+- a short, single-line, plain-language message, because code scanning shows `message.text` verbatim (#11219, #15374). Finding results lead with the first missing check when one exists (bounded to 160 characters), then quote the changed code whitespace-collapsed and bounded to 120 characters with what the static evidence suggests in the human summary's words (for example "Changed code `amount >= limit` is only partly noticed by tests."); a class whose plain words claim a reaching test says reach is not established when the reach stage does not establish it, and says no test input appears to exercise the change when tests call the owner but infection is `no`, then the reconciled next step whole per RIPR-SPEC-0088 (which carries no internal analyzer route, #15309), with only line breaks joined so a quoted literal keeps its spacing. Seam results use the seam rule title and the same bounded changed-code quote. A cut ends in a single `...`, never `....`. Class and probe-family tokens stay in `ruleId` and `properties`, and full evidence stays in `properties`. Message text never feeds a fingerprint;
 - `partialFingerprints.riprFingerprintV1`;
 - `properties.tool = "ripr"`;
 - `properties.kind = "finding"` or `"seam"`;
@@ -265,7 +267,14 @@ universal collision freedom.
 
 `normalized_file` and the physical location `uri` do not depend on how
 `--root` is spelled: `.`, `./` and the checkout's absolute path render the
-same text, because an absolute root prefix is removed before rendering. A
+same text, because an absolute root prefix is removed before rendering. Inside
+a Git work tree the uri is relative to the checkout top level, the base code
+scanning resolves it against (#15367): a root below the top level, such as a
+workspace member at `crates/app`, renders `crates/app/src/lib.rs` whether it is
+spelled `crates/app`, `"$PWD/crates/app"`, `.` from inside the member, or with a
+`..` detour. Root-joined Rust files and root-relative preview-language files
+(Python, TypeScript, JavaScript) take the same prefix, and so do repo-seam
+uris. Without a work tree a
 relative root keeps its spelling, since it already names a path under the
 invoking directory.
 
@@ -295,8 +304,15 @@ is `off`.
 
 For v1:
 
-- `kind = "exposure_gap"` suppressions matching a Finding ID should attach a
-  SARIF `suppressions` entry to that result.
+- `kind = "exposure_gap"` suppressions attach a SARIF `suppressions` entry to
+  each result they match. They match by the one rule `ripr check
+  --suppression-policy` and the badges use (#15377): a `finding_id`, an exact
+  `path` + `function` owner, or a `path` glob, the last two optionally
+  narrowed by `static_class`. The first live entry in manifest order supplies
+  the justification. Selectors match the finding's root-relative path with
+  only the platform separator rewritten to `/` (#16271): on Unix a literal
+  `\` stays part of a file name, so a directory glob never reaches a file
+  whose name contains one, consistent with that file's distinct SARIF URI.
 - Expired or malformed suppressions must not suppress a result.
 - Seam results whose grip class is `suppressed` are omitted by default because
   `severity.seams.suppressed = "off"`. If a repository configures that class to
@@ -305,8 +321,11 @@ For v1:
 - Suppression metadata should include the configured justification when SARIF
   can represent it.
 
-The SARIF renderer must not invent suppressions. It consumes the same configured
-suppression path used by badge/report policy.
+The SARIF renderer must not invent suppressions. Without a flag it consumes the
+same configured suppression path used by badge/report policy. `ripr check
+--format sarif|sarif-compact --suppression-policy PATH` replaces that path with
+PATH for the run (#15377), fail-closed like the findings formats, so one flag
+gives the `github` annotations and the code-scanning alerts the same decision.
 
 ## CI Policy
 
@@ -457,6 +476,12 @@ Implemented renderer tests:
 - `crates/ripr/src/output/sarif.rs::tests::the_kept_alert_does_not_depend_on_input_order`
 - `crates/ripr/src/output/sarif.rs::tests::a_suppressed_finding_is_not_folded_into_an_active_one`
 - `crates/ripr/src/output/sarif.rs::tests::findings_without_a_line_are_never_folded`
+- `crates/ripr/src/output/sarif.rs::tests::anchored_sarif_uris_name_member_root_files_from_the_checkout_top_level`
+- `crates/ripr/src/output/path.rs::tests::anchored_display_path_names_the_file_from_the_checkout_top_level`
+- `crates/ripr/src/output/path.rs::tests::anchored_paths_never_climb_or_invent_a_location`
+- `crates/ripr/src/output/path.rs::tests::checkout_anchor_discovers_a_member_root_below_the_git_top_level`
+- `crates/ripr/tests/checkout_anchored_locations.rs::member_root_rust_findings_name_files_from_the_checkout_top_level`
+- `crates/ripr/tests/checkout_anchored_locations.rs::member_root_python_findings_name_files_from_the_checkout_top_level`
 
 Implemented policy tests (the `sarif_identity_*` controls need the Perl adapter and compile only with `cargo test -p xtask --features perl-identity`, run in the Perl lane so the shared workspace graph keeps the shipped feature set):
 

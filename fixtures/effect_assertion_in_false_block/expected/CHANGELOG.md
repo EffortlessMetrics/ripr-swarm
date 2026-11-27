@@ -285,12 +285,10 @@ Updated:
 ## Pending — effect_assertion_in_false_block (22)
 
 Reason:
-RIPR-SPEC-0224: inert row names the construct its refusals agree on (#15337)
+RIPR-SPEC-0122: the call_deletion change type reads "a line that makes a call changed"; the family names the probe ripr runs on a changed call, not the edit (#15271); human text only, check.json unchanged
 
 Command:
 `cargo xtask goldens bless effect_assertion_in_false_block --reason "..."`
 
 Updated:
-- `expected/check.json`
-- `expected/human.txt`
 - `expected/human-full.txt`

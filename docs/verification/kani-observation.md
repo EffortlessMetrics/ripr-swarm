@@ -101,6 +101,12 @@ not a declaration that the most recently started run is current. A publication
 failure makes the command fail. Failure before the first marker can leave an
 older alias; no consumer may interpret mere file presence as the new run's proof.
 
+The run-owned checkpoint pair is the authoritative record for a journal run.
+The default outputs of `ripr reports kani` are `target/ripr/reports/kani-import.json`
+and `target/ripr/reports/kani-import.md`. They describe an external, unattested
+import. Readers of earlier imports at `kani.json` or `kani.md` should switch to
+the new paths when rerunning the importer.
+
 The existing workflow's artifact includes the self-contained JSON and Markdown
 aliases. Inline Markdown and captured text make the JSON inspectable without
 uploading every historical checkpoint. Checkpoints remain local diagnostic

@@ -3,6 +3,7 @@ use super::action_contract::{
     action_data, disabled_reason_emittable, parse_validated_action_data,
 };
 use super::client_features::ClientFeatureProfile;
+use super::component_outcome::{AnalysisComponent, ComponentState};
 use super::fix_instruction_authority;
 use super::gap_artifacts::{
     ValidatedGapArtifact, bind_portable_command, editor_command_is_safe, workspace_path_is_safe,
@@ -85,6 +86,18 @@ pub(super) fn code_action_response(
             diagnostic,
             snapshot,
         ));
+        // #13636: with no spot inventory (deferred by a quick save, or not
+        // built in this configuration) the finding has no seam-bound start.
+        // A disabled-capable client sees the start inert with the blocker
+        // and next step named; other clients keep the legacy omission. A
+        // gap record in the same request carries its own repair-packet
+        // actions, so no inert finding start is added beside them.
+        if client_features.code_action_disabled
+            && !params.context.diagnostics.iter().any(is_gap_diagnostic)
+            && let Some(action) = finding_start_blocked_action(diagnostic, snapshot)
+        {
+            actions.push(action);
+        }
     }
     actions.push(CodeActionOrCommand::CodeAction(CodeAction {
         title: REFRESH_ANALYSIS_TITLE.to_string(),
@@ -633,6 +646,57 @@ pub(super) mod test_premise {
     }
 }
 
+/// The inert "Start repair" action for a gap-class finding that has no
+/// seam-bound start because the snapshot carries no spot inventory (#13636).
+/// The cited finding must be a candidate-current actionable Rust gap with no
+/// static limit: an exposed or base-side finding has no start to explain, and
+/// a preview, non-Rust or static-limited finding gets no spot start in any
+/// configuration. The reason names the real blocker:
+/// - `seam_inventory_not_enabled` when even a full refresh builds no spots
+///   under the snapshot's configuration (the default actionable profile, or
+///   spot diagnostics off), naming the setting;
+/// - `seam_evidence_deferred` when an interactive refresh deferred the
+///   inventory a full refresh would build, naming that refresh.
+///
+/// `None` for a full snapshot whose configuration builds spots: the seam
+/// diagnostics carry their own start.
+fn finding_start_blocked_action(
+    diagnostic: &Diagnostic,
+    snapshot: Option<&AnalysisSnapshot>,
+) -> Option<CodeActionOrCommand> {
+    let snapshot = snapshot?;
+    let reason = if !snapshot.seam_inventory_on_full_refresh {
+        ActionDisabledReason::SeamInventoryNotEnabled
+    } else if snapshot.seams_deferred {
+        ActionDisabledReason::SeamEvidenceDeferred
+    } else {
+        return None;
+    };
+    let finding_id = diagnostic
+        .data
+        .as_ref()
+        .and_then(|data| data.get("finding_id"))
+        .and_then(Value::as_str)?;
+    snapshot.findings.iter().find(|finding| {
+        finding.id == finding_id
+            && super::diagnostics::finding_is_withheld_gap(finding)
+            && finding.language_status != Some(crate::domain::LanguageStatus::Preview)
+            && finding
+                .language
+                .is_none_or(|language| language == crate::domain::LanguageId::Rust)
+            && finding.static_limit_kind.is_none()
+    })?;
+    disabled_action(
+        AGENT_REPAIR_COMMAND_TITLE,
+        "quickfix.ripr.inspect",
+        "copy_agent_repair_command",
+        COPY_AGENT_REPAIR_COMMAND,
+        diagnostic,
+        Some(snapshot),
+        reason,
+    )
+}
+
 /// The inert "Start repair" action for a seam whose start the dirty-premise
 /// preflight refuses (#13636): same title, kind and command identity as the
 /// enabled start, no command, and a human reason naming the commit step.
@@ -817,6 +881,36 @@ fn gap_identities_overlap(left: &Value, right: &Value) -> bool {
     false
 }
 
+/// A saved-workspace finding may withhold a start the classified seam could
+/// otherwise format. This ceiling leaves the packet and card readable and
+/// lets code actions, hover, and the standard context packet agree.
+pub(super) fn seam_repair_start_command(
+    entry: &ClassifiedSeam,
+    snapshot: &AnalysisSnapshot,
+    root: &str,
+) -> Option<String> {
+    // Retained diagnostics still support inspection after truncation, but
+    // a partial inventory cannot promise a Start. An absent card witness
+    // without a recorded inventory limit keeps the ordinary seam route.
+    if snapshot.component_outcomes.iter().any(|outcome| {
+        outcome.component == AnalysisComponent::SeamInventory
+            && outcome.state == ComponentState::Limited
+    }) {
+        return None;
+    }
+    if let Some(candidate_seams) = snapshot.repair_card_candidate_seams.as_deref()
+        && crate::app::repair_card_handoff::bound_no_path_start_refusal(
+            &snapshot.findings,
+            entry,
+            candidate_seams,
+        )
+        .is_some()
+    {
+        return None;
+    }
+    repair_start_command_for(entry, root)
+}
+
 fn push_seam_actions(
     actions: &mut CodeActionResponse,
     params: &CodeActionParams,
@@ -899,7 +993,7 @@ fn push_seam_actions(
     // payload's `root` field stays the portable role (`COMMAND_ROOT`).
     let root = loop_commands::bound_root(&context.snapshot.root.to_string_lossy());
     if !instruction_blocks_repair
-        && let Some(command) = repair_start_command_for(context.seam, &root)
+        && let Some(command) = seam_repair_start_command(context.seam, context.snapshot, &root)
     {
         // #13636: `ripr agent repair` refuses a dirty production premise
         // ("commit first ... Nothing was started"). Ask its own preflight so
@@ -3605,6 +3699,7 @@ mod tests {
             diagnostic_uri_index: None,
             delivery_selection: None,
             seams_deferred: false,
+            seam_inventory_on_full_refresh: false,
             partial_scope: None,
             component_outcomes: Vec::new(),
             out_of_scope_test_file_findings: 0,

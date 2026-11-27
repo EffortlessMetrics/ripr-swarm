@@ -301,9 +301,30 @@ impl<'a> Parser<'a> {
 }
 
 impl ClosedOwner {
+    /// [`Self::read`] of an owner's current text, read once per run scope
+    /// (#11738). The owner-return pin reads the current owner for every
+    /// changed line it pins and every repo seam it audits, so a long owner
+    /// with many changed lines paid a mask and lex of its whole text each
+    /// time. The reading is a pure function of the text and the name, which
+    /// key the entry. A reconstructed pre-change text is new for every
+    /// changed line and is still read by [`Self::read`] directly.
+    pub(super) fn read_current(definition: &str, name: &str) -> Option<Self> {
+        crate::analysis::syntax::run_memo::memoize_with(
+            crate::analysis::syntax::run_memo::Product::ClosedOwnerRead,
+            0,
+            name,
+            definition,
+            || std::rc::Rc::new(Self::read(definition, name)),
+        )
+        .as_ref()
+        .clone()
+    }
+
     /// Read `definition` (the owner's `fn` text) as the closed subset, or
     /// `None` when any part of it is outside it.
     pub(super) fn read(definition: &str, name: &str) -> Option<Self> {
+        #[cfg(test)]
+        CLOSED_OWNER_READS.with(|reads| reads.set(reads.get() + 1));
         let masked = crate::analysis::extract::mask_comments_and_strings(definition);
         // Attributes and visibility before `fn` are not part of the subset's
         // concern: the reading starts at the `fn <name>` item itself.
@@ -535,7 +556,7 @@ impl ClosedChange {
         let mut lines: Vec<&str> = definition.lines().collect();
         *lines.get_mut(changed_line)? = before.trim_end();
         Some(Self {
-            after: ClosedOwner::read(definition, name)?,
+            after: ClosedOwner::read_current(definition, name)?,
             before: ClosedOwner::read(&lines.join("\n"), name)?,
         })
     }
@@ -647,7 +668,7 @@ impl ClosedChange {
     /// diff (the repo-wide audit, #12394 item 3): a literal the current owner
     /// provably does not return is unpinned.
     pub(super) fn current(definition: &str, name: &str) -> Option<Self> {
-        let owner = ClosedOwner::read(definition, name)?;
+        let owner = ClosedOwner::read_current(definition, name)?;
         Some(Self {
             before: owner.clone(),
             after: owner,
@@ -1076,6 +1097,15 @@ pub(super) fn lower_tuple_call(call: &str, name: &str, type_name: &str) -> Optio
     }
     Some(format!("{name}({})", operands.join(", ")))
 }
+
+#[cfg(test)]
+thread_local! {
+    /// How many owner texts this thread has read as the closed subset.
+    static CLOSED_OWNER_READS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+#[cfg(test)]
+mod read_current_tests;
 
 #[cfg(test)]
 mod tests {

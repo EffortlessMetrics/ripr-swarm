@@ -748,7 +748,7 @@ Updated:
 ## Pending — guarded_result_match_fail_closed (56)
 
 Reason:
-RIPR-SPEC-0224: inert row names the construct its refusals agree on (#15337)
+RIPR-SPEC-0175: a test whose every mention of the owner's name is a local closure or let binding of its body no longer relates by direct_owner_call (#14552)
 
 Command:
 `cargo xtask goldens bless guarded_result_match_fail_closed --reason "..."`

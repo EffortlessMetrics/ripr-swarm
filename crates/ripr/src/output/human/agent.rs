@@ -18,8 +18,9 @@
 //! next=ripr explain --root /repo probe:...
 //! ```
 //!
-//! The last line is always `verify=complete|...` or `verify=refused|...|reason=`
-//! (#13516): the post-edit completion record, projected from the producer's
+//! The last line is always `verify=complete|...`,
+//! `verify=complete_with_limits|...|limits=` (#14821) or
+//! `verify=refused|...|reason=` (#13516): the post-edit completion record, projected from the producer's
 //! outcome and full summary counts, never from the displayed subset.
 //!
 //! Terminal states are one explicit line: `done=` when nothing is left to fix
@@ -89,6 +90,18 @@ fn verification_line(output: &CheckOutput) -> String {
     );
     if verdict.is_complete() {
         return format!("verify=complete|{facts}");
+    }
+    // #14821: every unexposed finding is an analyzer limit no test edit can
+    // close; the loop may finish, with the limits disclosed, not upgraded.
+    if let Some(limits) = &verdict.closable_limits {
+        let limits: Vec<String> = limits
+            .iter()
+            .map(|(class, count)| format!("{}:{count}", class.as_str()))
+            .collect();
+        return format!(
+            "verify=complete_with_limits|{facts}|limits={}",
+            limits.join(",")
+        );
     }
     let reasons: Vec<&str> = verdict
         .refusals
@@ -451,10 +464,7 @@ pub(super) fn render_finding(
     context_command: &str,
     suppressed: bool,
 ) -> String {
-    let mut out = format!(
-        "#ripr explain agent static-advisory class={}\n",
-        finding.class.as_str()
-    );
+    let mut out = explain_header(finding);
     let weak_row = triage::weak_assertion_row(finding);
     let currentness = finding.source_currentness_disclosure();
     let (terminal, test) = if suppressed {
@@ -552,6 +562,49 @@ pub(super) fn render_finding(
         out.push_str(&format!("next={context_command}\n"));
     }
     out
+}
+
+fn explain_header(finding: &Finding) -> String {
+    format!(
+        "#ripr explain agent static-advisory class={}\n",
+        finding.class.as_str()
+    )
+}
+
+impl crate::app::ExplainFormat {
+    /// A producer-withheld finding has no repair route in either format.
+    pub(crate) fn render_withheld(
+        self,
+        opt_out: &crate::analysis::owner_opt_out::OwnerOptOut,
+        finding: &Finding,
+        root: &Path,
+        context_command: &str,
+    ) -> String {
+        match self {
+            Self::Human => format!(
+                "{}\n",
+                crate::terminal_text::single_line(&super::owner_opt_out_explain_text(opt_out))
+            ),
+            Self::Agent => {
+                let mut stop = format!(
+                    "stop={}|owner={}|scope={}",
+                    opt_out.reason.as_str(),
+                    field(&opt_out.owner),
+                    opt_out.scope.as_str()
+                );
+                if !opt_out.scope_label.is_empty() {
+                    stop.push_str(&format!("|scope_label={}", field(&opt_out.scope_label)));
+                }
+                super::terminal_safe(finish_stop(
+                    explain_header(finding),
+                    finding,
+                    root,
+                    context_command,
+                    &stop,
+                ))
+            }
+        }
+    }
 }
 
 /// Most observed test inputs a `seen=` line lists before `(+N more)`.
