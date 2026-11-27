@@ -165,6 +165,7 @@ impl PreflightCheck {
 }
 
 pub(super) fn first_pr_preflight(root: &Path, options: &FirstPrOptions) -> FirstPrPreflight {
+    let command = options.command;
     let mut checks = Vec::new();
     // #5252 item 4: every renderer-owned preflight spelling renders through
     // the shared human-path rule (#4378) so one document never mixes the
@@ -193,7 +194,7 @@ pub(super) fn first_pr_preflight(root: &Path, options: &FirstPrOptions) -> First
             "Git head",
             &options.head,
             Some(format!(
-                "Check --head `{}` or fetch the branch, then rerun `ripr first-pr --root {} --base {} --head {}`.",
+                "Check --head `{}` or fetch the branch, then rerun `ripr {command} --root {} --base {} --head {}`.",
                 options.head,
                 shell_arg(&options.command_root()),
                 shell_arg(&options.base),
@@ -252,8 +253,9 @@ pub(super) fn first_pr_preflight(root: &Path, options: &FirstPrOptions) -> First
 /// Executable display commands are carried separately from recovery prose.
 /// Renderers can pair their shell forms without extracting code from a sentence.
 fn rerun_command(options: &FirstPrOptions) -> String {
+    let command = options.command;
     format!(
-        "ripr first-pr --root {} --base {} --head {}",
+        "ripr {command} --root {} --base {} --head {}",
         shell_arg(&options.command_root()),
         shell_arg(&options.base),
         shell_arg(&options.head)
@@ -416,6 +418,7 @@ fn preflight_git_ref_check(
 }
 
 fn preflight_diff_check(root: &Path, options: &FirstPrOptions, checks: &mut Vec<PreflightCheck>) {
+    let command = options.command;
     let range = format!("{}..{}", options.base, options.head);
     match run_git(
         root,
@@ -437,7 +440,7 @@ fn preflight_diff_check(root: &Path, options: &FirstPrOptions, checks: &mut Vec<
                 "Git diff",
                 format!("No file diff was found for `{range}`."),
                 Some(format!(
-                    "Pass the real PR base and rerun: `ripr first-pr --root {} --base {} --head {}` (replace `{}~1` with the commit before the work).",
+                    "Pass the real PR base and rerun: `ripr {command} --root {} --base {} --head {}` (replace `{}~1` with the commit before the work).",
                     shell_arg(&options.command_root()),
                     shell_arg(&format!("{}~1", options.head)),
                     shell_arg(&options.head),
@@ -460,10 +463,10 @@ fn preflight_diff_check(root: &Path, options: &FirstPrOptions, checks: &mut Vec<
                 command_problem(
                     &format!("Could not inspect diff range `{range}`."),
                     &output,
-                    "Check --base and --head, then rerun first-pr.",
+                    &format!("Check --base and --head, then rerun {command}."),
                 ),
                 Some(format!(
-                    "Check --base and --head, then rerun `ripr first-pr --root {} --base {} --head {}`.",
+                    "Check --base and --head, then rerun `ripr {command} --root {} --base {} --head {}`.",
                     shell_arg(&options.command_root()),
                     shell_arg(&options.base),
                     shell_arg(&options.head)

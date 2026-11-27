@@ -580,3 +580,131 @@ fn first_pr_spellings_protect_an_explicit_malformed_gap_ledger() -> TestResult {
     }
     Ok(())
 }
+
+#[test]
+fn first_pr_spellings_withhold_uninspected_explicit_ledger_regeneration() -> TestResult {
+    let (scratch, _cleanup) = scratch("err-first-pr-uninspected-ledger")?;
+    let root = scratch.join("fixture");
+    std::fs::create_dir(&root)?;
+    init_producer_fixture_repo(&root)?;
+    let ledger = root.join("supplied ledger.json");
+    let original = b"{malformed JSON\n";
+    std::fs::write(&ledger, original)?;
+    let before = super::snapshot_tree(&root)?;
+    for command in ["first-pr", "start-here"] {
+        let reports = scratch.join(format!("{command} reports"));
+        let args = [
+            command,
+            "--base",
+            "origin/unavailable-review-base",
+            "--gap-ledger",
+            "supplied ledger.json",
+            "--output-dir",
+            reports.to_str().ok_or("fixture path must be UTF-8")?,
+        ];
+        let write = ripr(&root, &args)?;
+        assert_eq!(write.status.code(), Some(0), "{}", stderr(&write));
+        let packet: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(reports.join("start-here.json"))?)?;
+        assert_eq!(packet["selected"]["state"], "blocked_artifact");
+        let message = packet["selected"]["message"]
+            .as_str()
+            .ok_or("missing message")?;
+        assert!(
+            message.contains("does not resolve to a commit"),
+            "{message}"
+        );
+        assert!(message.contains("ledger was not inspected"), "{message}");
+        assert!(message.contains("choose a new output path"), "{message}");
+        assert!(packet["commands"].get("regenerate_gap_ledger").is_none());
+        let artifacts = packet["artifacts"].as_array().ok_or("missing artifacts")?;
+        let gap = artifacts
+            .iter()
+            .find(|entry| entry["id"] == "gap_ledger")
+            .ok_or("missing ledger artifact")?;
+        assert_eq!(gap["regeneration_command"], serde_json::Value::Null);
+        let markdown = std::fs::read_to_string(reports.join("start-here.md"))?;
+        assert!(
+            markdown.contains(&format!("ripr {command} --root")),
+            "{markdown}"
+        );
+        assert!(!markdown.contains("ripr reports gap-ledger"), "{markdown}");
+        let outputs = super::snapshot_tree(&reports)?;
+        assert_eq!(outputs.len(), 2);
+        let check = ripr(&root, &[&args[..], &["--check"]].concat())?;
+        assert_eq!(check.status.code(), Some(2), "{}", stderr(&check));
+        let diagnostic = stderr(&check);
+        assert!(
+            diagnostic.contains(&format!("{command} --check:"))
+                && diagnostic.contains("blocked state `missing_artifacts`"),
+            "{diagnostic}"
+        );
+        assert_eq!(packet["selected"]["output_state"], "missing_artifacts");
+        assert!(!stdout(&check).contains("ripr reports gap-ledger"));
+        assert!(!diagnostic.contains("ripr reports gap-ledger"));
+        assert_eq!(super::snapshot_tree(&reports)?, outputs);
+        assert_eq!(super::snapshot_tree(&root)?, before);
+        assert_eq!(std::fs::read(&ledger)?, original);
+    }
+
+    // A valid, parsed blocked ledger still gets its normal refresh command.
+    let valid = br#"{"status":"blocked","warnings":["valid blocked control"],"records":[]}"#;
+    std::fs::write(&ledger, valid)?;
+    let output = ripr(
+        &root,
+        &[
+            "start-here",
+            "--base",
+            "HEAD",
+            "--gap-ledger",
+            "supplied ledger.json",
+            "--output-dir",
+            "../valid-control",
+        ],
+    )?;
+    assert_eq!(output.status.code(), Some(0), "{}", stderr(&output));
+    let packet: serde_json::Value = serde_json::from_slice(&std::fs::read(
+        scratch.join("valid-control/start-here.json"),
+    )?)?;
+    assert_eq!(packet["selected"]["state"], "blocked_artifact");
+    assert!(
+        packet["selected"]["message"]
+            .as_str()
+            .is_some_and(|text| text.contains("valid blocked control"))
+    );
+    assert!(
+        packet["commands"]["regenerate_gap_ledger"].is_string(),
+        "{packet}"
+    );
+    assert_eq!(std::fs::read(&ledger)?, valid);
+    Ok(())
+}
+
+#[test]
+fn first_pr_spellings_name_themselves_in_saved_missing_report_markdown() -> TestResult {
+    let (root, _cleanup) = scratch("err-first-pr-missing-report-markdown")?;
+    init_producer_fixture_repo(&root)?;
+    for (command, other) in [("first-pr", "start-here"), ("start-here", "first-pr")] {
+        let reports = format!("{command} reports");
+        let output = ripr(
+            &root,
+            &[command, "--base", "HEAD", "--output-dir", &reports],
+        )?;
+        assert_eq!(output.status.code(), Some(0), "{}", stderr(&output));
+        let markdown = std::fs::read_to_string(root.join(reports).join("start-here.md"))?;
+        assert!(
+            markdown.contains(&format!("Later steps (rerun `ripr {command}`")),
+            "{markdown}"
+        );
+        assert!(
+            !markdown.contains(&format!("Later steps (rerun `ripr {other}`")),
+            "{markdown}"
+        );
+        assert!(
+            markdown.contains("Gap decision ledger; PR repair cards"),
+            "{markdown}"
+        );
+        assert!(stdout(&output).contains(&format!("Later steps (rerun `ripr {command}`")));
+    }
+    Ok(())
+}

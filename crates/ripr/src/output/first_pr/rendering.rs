@@ -14,7 +14,7 @@ use crate::output::start_here_state::{
 use serde_json::Value;
 use std::path::Path;
 
-pub(super) fn render_start_here_markdown(packet: &Value) -> String {
+pub(super) fn render_start_here_markdown_named(command: &str, packet: &Value) -> String {
     let selected = packet.get("selected").unwrap_or(&Value::Null);
     let state = string_path(selected, &["state"]).unwrap_or_else(|| "unknown".to_string());
     let mut out = String::new();
@@ -36,14 +36,14 @@ pub(super) fn render_start_here_markdown(packet: &Value) -> String {
         string_path(packet, &["preflight", "status"]).as_deref() == Some("needs_attention");
     match state.as_str() {
         "top_gap" => render_top_gap_markdown(selected, &mut out),
-        "missing_artifact" => render_missing_artifact_markdown(selected, &mut out),
+        "missing_artifact" => render_missing_artifact_markdown(command, selected, &mut out),
         "empty_diff" | "no_action" => {
             render_no_action_markdown(selected, preflight_needs_attention, &mut out);
         }
         _ => render_blocked_markdown(selected, &mut out),
     }
 
-    render_preflight_markdown(packet, &mut out);
+    render_preflight_markdown(command, packet, &mut out);
 
     out.push_str("\n## Artifacts\n\n");
     if let Some(artifacts) = packet.get("artifacts").and_then(Value::as_array) {
@@ -304,7 +304,7 @@ fn cli_evidence_limit(selected: &Value) -> Option<String> {
     })
 }
 
-fn render_preflight_markdown(packet: &Value, out: &mut String) {
+fn render_preflight_markdown(invoked: &str, packet: &Value, out: &mut String) {
     let Some(preflight) = packet.get("preflight").and_then(Value::as_object) else {
         return;
     };
@@ -341,7 +341,7 @@ fn render_preflight_markdown(packet: &Value, out: &mut String) {
             out.push('\n');
             if command.contains(['\r', '\n']) {
                 out.push_str(&format!(
-                    "Recovery step {} unavailable: use a single-line root/ref alias and rerun first-pr.\n",
+                    "Recovery step {} unavailable: use a single-line root/ref alias and rerun {invoked}.\n",
                     index + 1
                 ));
                 continue;
@@ -741,7 +741,7 @@ fn later_steps_line(command: &str, selected: &Value) -> Option<String> {
     ))
 }
 
-fn render_missing_artifact_markdown(selected: &Value, out: &mut String) {
+fn render_missing_artifact_markdown(command: &str, selected: &Value, out: &mut String) {
     out.push_str("## Start Here\n\n");
     out.push_str("- State: `missing_artifact`\n");
     out.push_str(&format!(
@@ -762,7 +762,7 @@ fn render_missing_artifact_markdown(selected: &Value, out: &mut String) {
     if let Some(command) = selected.get("regeneration_command").and_then(Value::as_str) {
         push_recovery_command(out, "- Regeneration command", command);
     }
-    if let Some(line) = later_steps_line("first-pr", selected) {
+    if let Some(line) = later_steps_line(command, selected) {
         out.push_str(&format!("- {line}\n"));
     }
 }
@@ -868,7 +868,7 @@ mod tests {
             },
         });
         let mut out = String::new();
-        render_preflight_markdown(&packet, &mut out);
+        render_preflight_markdown("first-pr", &packet, &mut out);
         assert!(
             out.contains(&crate::output::markdown::code_span(command)),
             "{out}"
@@ -890,7 +890,7 @@ mod tests {
             },
         });
         let mut out = String::new();
-        render_preflight_markdown(&legacy, &mut out);
+        render_preflight_markdown("first-pr", &legacy, &mut out);
         assert!(
             out.contains("Next command: Choose a head, then rerun `ripr first-pr`."),
             "{out}"
@@ -906,7 +906,7 @@ mod tests {
             },
         });
         out.clear();
-        render_preflight_markdown(&packet, &mut out);
+        render_preflight_markdown("first-pr", &packet, &mut out);
         assert!(
             out.contains("Recovery: Commit PR work before rerunning."),
             "{out}"

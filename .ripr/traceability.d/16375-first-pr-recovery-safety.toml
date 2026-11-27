@@ -1,0 +1,6 @@
+[[extend]]
+id = "RIPR-SPEC-0051"
+tests = [
+  "crates/ripr/tests/cli_smoke/error_next_steps.rs::first_pr_spellings_withhold_uninspected_explicit_ledger_regeneration",
+  "crates/ripr/tests/cli_smoke/error_next_steps.rs::first_pr_spellings_name_themselves_in_saved_missing_report_markdown",
+]

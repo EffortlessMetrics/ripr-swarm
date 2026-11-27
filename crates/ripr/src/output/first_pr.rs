@@ -150,7 +150,12 @@ pub(crate) use options::{FIRST_PR_HELP, FirstPrOptions};
 use preflight::{FirstPrPreflight, first_pr_preflight};
 #[cfg(test)]
 use rendering::markdown_code_or_text;
-use rendering::{render_start_here_markdown, start_here_cli_summary};
+use rendering::{render_start_here_markdown_named, start_here_cli_summary};
+
+#[cfg(test)]
+fn render_start_here_markdown(packet: &Value) -> String {
+    render_start_here_markdown_named("first-pr", packet)
+}
 /// Test-only path to first-pr's own start-here renderer, so another
 /// surface's tests can pin pairing parity against the real producer
 /// (#4950) instead of restating its expected lines.
@@ -349,7 +354,7 @@ fn write_first_pr(repo: &Path, options: &FirstPrOptions) -> Result<(), String> {
         .map_err(|err| crate::output::file_write::write_failure_message(&json_path, &err))?;
     crate::output::file_write::write(
         &markdown_path,
-        render_start_here_markdown(&packet).as_bytes(),
+        render_start_here_markdown_named(options.command, &packet).as_bytes(),
     )
     .map_err(|err| crate::output::file_write::write_failure_message(&markdown_path, &err))?;
     validate_start_here_packet(&json_path, &markdown_path, options.command)?;
@@ -622,8 +627,22 @@ fn render_start_here_packet(root: &Path, options: &FirstPrOptions) -> Value {
 fn render_start_here_recovery_packet(
     root: &Path,
     options: &FirstPrOptions,
-    selection: Selection,
+    mut selection: Selection,
 ) -> Value {
+    // A root or Git failure bypasses the ledger read. An explicit input is
+    // therefore unverified and must not become a regeneration destination.
+    if options.gap_ledger_explicit
+        && options.check_output.is_none()
+        && !options.run_chain
+        && let Selection::Blocked {
+            message,
+            withhold_gap_ledger_regeneration,
+            ..
+        } = &mut selection
+    {
+        *withhold_gap_ledger_regeneration = true;
+        message.push_str(" The supplied gap decision ledger was not inspected. Leave it unchanged. If it needs regeneration, choose a new output path and pass it with --gap-ledger.");
+    }
     let mut warnings = selection.warning().into_iter().collect::<Vec<_>>();
     let preflight = options.preflight.then(|| first_pr_preflight(root, options));
     if let Some(preflight) = &preflight {
@@ -854,11 +873,12 @@ fn materialize_check_output_gap_ledger(
 }
 
 fn missing_base_command(options: &FirstPrOptions) -> String {
+    let command = options.command;
     options.base.strip_prefix("origin/")
         .filter(|branch| !branch.trim().is_empty())
         .map(|branch| {
             format!(
-                "git fetch origin -- {}; then rerun `ripr first-pr --root {} --base {} --head {}`.",
+                "git fetch origin -- {}; then rerun `ripr {command} --root {} --base {} --head {}`.",
                 shell_arg(&base_fetch_refspec(branch)),
                 shell_arg(&options.command_root()),
                 shell_arg(&options.base),
@@ -867,7 +887,7 @@ fn missing_base_command(options: &FirstPrOptions) -> String {
         })
         .unwrap_or_else(|| {
             format!(
-                "Fetch or choose a local base ref, then rerun `ripr first-pr --root {} --base {} --head {}`.",
+                "Fetch or choose a local base ref, then rerun `ripr {command} --root {} --base {} --head {}`.",
                 shell_arg(&options.command_root()),
                 shell_arg(&options.base),
                 shell_arg(&options.head)
@@ -1256,7 +1276,7 @@ impl Selection {
         options: &FirstPrOptions,
     ) -> Option<String> {
         // The normal generator writes to the selected ledger path, so it
-        // cannot be offered for an explicitly supplied malformed input.
+        // cannot be offered for an explicitly supplied malformed or unread input.
         (!self.is_unbound_no_action_limit()
             && !matches!(
                 self,
@@ -3408,7 +3428,8 @@ fn fetch_base_command(options: &FirstPrOptions) -> String {
             // the line stays safe to copy into a shell (an unquoted `<ref>`
             // would parse as redirection).
             return format!(
-                "ripr first-pr --root {} --base origin/main --head HEAD",
+                "ripr {} --root {} --base origin/main --head HEAD",
+                options.command,
                 shell_arg(&options.command_root())
             );
         }
