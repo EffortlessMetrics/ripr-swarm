@@ -163,8 +163,10 @@ pub enum StopReason {
     /// The changed code states an unsafe contract the compiler does not
     /// check: an `unsafe fn` (callers now carry a safety obligation) or an
     /// unchecked assumption (`unreachable_unchecked`, `assert_unchecked`).
-    /// A safe-code test cannot discharge it. Classification stays
-    /// `static_unknown`, never `exposed` (#11549).
+    /// A safe-code test cannot discharge it. The boundary's own finding
+    /// stays `static_unknown`, never `exposed` (#11549). A classified finding
+    /// that replaced that boundary on its line carries the reason as a note,
+    /// with the class its own evidence gives (#16302).
     UnsafeObligation,
 }
 

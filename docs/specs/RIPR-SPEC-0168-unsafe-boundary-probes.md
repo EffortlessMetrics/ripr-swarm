@@ -75,10 +75,14 @@ caller or assumption site by hand. The class stays `static_unknown`, nothing
 is credited, and no test-stub repair is offered. Detection is by parsed call
 path, so a string, comment or similarly named item does not match.
 
-That reason belongs to the boundary's own finding. When a classified probe
-carries the edit on the same line and that finding is withdrawn, the reason
-goes with it: the remaining finding names the edit and its test evidence, and
-does not repeat the safety-contract step (#15348).
+When a classified probe carries the edit on the same line and owner, the
+boundary's own finding is withdrawn (#15348), and the remaining finding names
+the edit and its test evidence. If the withdrawn boundary carried
+`unsafe_obligation`, the remaining finding carries that stop reason too, so the
+line still says the change alters an unsafe contract (#16302). It is a note:
+the class, stages and gap are what the classified probe's own evidence gives.
+A plain `unsafe {}` block without an unchecked assumption has no obligation to
+hand over.
 
 The call must resolve to the `std`/`core` `hint` (or `intrinsics`) function
 through the `use` bindings visible at the call (#12196): a spelled-out or
@@ -106,6 +110,9 @@ keeps the plain `unsafe block` label.
   edit reports that probe alone: one finding for one edit. An edited opener
   keeps the boundary's own finding, so an edit to an `unsafe fn` signature
   keeps it too.
+- That classified probe's finding carries `unsafe_obligation` when the
+  withdrawn boundary had it, and only then
+  (`unsafe_context.rs::a_replaced_unsafe_fn_boundary_hands_its_obligation_to_the_edited_behavior`).
 - Parser and classifier unit tests cover extraction, innermost-boundary
   selection, shared-edge-line fail-closed rejection, and comment/string
   false-positive controls.

@@ -224,10 +224,28 @@ pub(super) fn is_compile_time_assertion(expression: &str) -> bool {
 /// #11549 / #12174: the probe label of a changed `unsafe fn` or of an `unsafe`
 /// block holding an unchecked assumption, only for `static_unknown` probes.
 /// The shape extractor owns the parsing.
-fn is_unsafe_obligation(probe: &Probe) -> bool {
+pub(in crate::analysis) fn is_unsafe_obligation(probe: &Probe) -> bool {
     matches!(probe.family, ProbeFamily::StaticUnknown)
         && (probe.expression.starts_with("unsafe fn ")
             || probe.expression == crate::analysis::syntax::ra::UNCHECKED_ASSUMPTION_LABEL)
+}
+
+/// #16302: a classified probe that replaced an enclosing `unsafe fn` or
+/// unchecked-assumption boundary's finding on its line (#15348) carries that
+/// boundary's `unsafe_obligation` stop reason. It is a note only: the
+/// contract marks the reason as not changing classification, so the class,
+/// stages and gap stay what the probe's own evidence gives.
+pub(in crate::analysis) fn carry_enclosing_unsafe_obligation(finding: &mut Finding) {
+    if !finding
+        .stop_reasons
+        .iter()
+        .any(|reason| *reason == StopReason::UnsafeObligation)
+    {
+        finding.stop_reasons.push(StopReason::UnsafeObligation);
+        finding
+            .stop_reasons
+            .sort_by(|a, b| a.as_str().cmp(b.as_str()));
+    }
 }
 
 /// Typed spellings of the substring heuristics that mark related-test bodies or

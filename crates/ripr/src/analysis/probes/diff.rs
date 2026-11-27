@@ -1108,6 +1108,9 @@ pub(crate) fn probes_for_file_with_relations(
             .collect::<BTreeSet<_>>();
         let mut retained = BTreeSet::new();
         let mut keep = vec![true; probes.len()];
+        // #16302: a withdrawn boundary that carried an `unsafe_obligation`
+        // hands it to the classified probes on its line and owner.
+        let mut obligations = BTreeSet::new();
         for (index, boundary, context_only) in unsafe_boundaries {
             let probe = &probes[index].probe;
             let shadowed = context_only == super::classify::UnsafeBoundary::Enclosing
@@ -1115,7 +1118,23 @@ pub(crate) fn probes_for_file_with_relations(
                     .owner
                     .as_ref()
                     .is_some_and(|owner| classified.contains(&(probe.location.line, owner)));
+            if shadowed
+                && crate::analysis::classify::is_unsafe_obligation(probe)
+                && let Some(owner) = probe.owner.clone()
+            {
+                obligations.insert((probe.location.line, owner));
+            }
             keep[index] = !shadowed && retained.insert(boundary);
+        }
+        for seeded in &mut probes {
+            let probe = &seeded.probe;
+            if probe.family != ProbeFamily::StaticUnknown
+                && probe.owner.as_ref().is_some_and(|owner| {
+                    obligations.contains(&(probe.location.line, owner.clone()))
+                })
+            {
+                seeded.enclosing_unsafe_obligation = true;
+            }
         }
         probes = probes
             .into_iter()
