@@ -1682,13 +1682,13 @@ mod tests {
 
     #[test]
     fn non_tty_fast_run_prints_no_progress_including_completed() {
-        let text = held_run(300, AnalysisProgressStage::Completed);
+        let text = held_run(1_999, AnalysisProgressStage::Completed);
         assert_eq!(text, "", "a sub-threshold non-TTY run must be silent");
     }
 
     #[test]
     fn non_tty_run_past_the_hold_still_prints_stage_and_completed() {
-        let text = held_run(2_100, AnalysisProgressStage::Completed);
+        let text = held_run(2_000, AnalysisProgressStage::Completed);
         assert_eq!(
             text, "ripr progress: analyzing [diff]\nripr progress: completed [diff]\n",
             "the current stage appears once the hold elapses, no doubled heartbeat"
@@ -1752,13 +1752,20 @@ mod tests {
         sink.hold_success_terminal();
         sink.stop_heartbeat();
         sink.emit(event(AnalysisProgressStage::Analyzing));
-        clock.advance_millis(2_001);
+        clock.advance_millis(1_999);
+        sink.emit(event(AnalysisProgressStage::BuildingOutput));
+        assert_eq!(
+            buffer.text(),
+            "",
+            "building output is still inside the hold"
+        );
+        clock.advance_millis(2);
         sink.emit(event(AnalysisProgressStage::Completed));
         sink.commit_success();
         drop(sink);
         assert_eq!(
             buffer.text(),
-            "ripr progress: analyzing [diff]\nripr progress: completed [diff]\n"
+            "ripr progress: building_output [diff]\nripr progress: completed [diff]\n"
         );
     }
 
