@@ -80,7 +80,8 @@ boundary's own finding is withdrawn (#15348), and the remaining finding names
 the edit and its test evidence. If the withdrawn boundary carried
 `unsafe_obligation`, the remaining finding carries that stop reason too, so the
 line still says the change alters an unsafe contract (#16302). It is a note:
-the class, stages and gap are what the classified probe's own evidence gives.
+the class, stages, gap and recommended next step are what the classified
+probe's own evidence gives.
 A plain `unsafe {}` block without an unchecked assumption has no obligation to
 hand over.
 
@@ -116,8 +117,8 @@ keeps the plain `unsafe block` label.
   it over like an `unsafe fn`
   (`unsafe_context.rs::a_replaced_unsafe_fn_boundary_hands_its_obligation_to_the_edited_behavior`,
   `unsafe_context.rs::only_the_probe_carrying_the_edit_inherits_the_unsafe_obligation`).
-  The carried note does not withdraw the weak-oracle boundary-input flag,
-  which only a reach stop reason does.
+  The carried note does not withdraw the weak-oracle boundary-input flag;
+  any stop reason other than `unsafe_obligation` still does.
 - Parser and classifier unit tests cover extraction, innermost-boundary
   selection, shared-edge-line fail-closed rejection, and comment/string
   false-positive controls.
