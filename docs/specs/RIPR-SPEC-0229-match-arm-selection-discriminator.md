@@ -679,7 +679,12 @@ the diff changes `None => 1` to `None => 0`.
   `an_inline_test_module_rebinding_reads_activation_unknown`: the same
   rebinding inside the owner file's inline `mod tests` reads `unknown`.
   Honesty corpus case
-  `rust_repo_exposure_rebound_read_macro_unselected_arm_not_promoted`.
+  `rust_repo_exposure_rebound_read_macro_unselected_arm_not_promoted`,
+  and the `Size::Medium` rows of
+  `rust_repo_exposure_rebound_assert_eq_match_arms_not_promoted` and
+  `rust_repo_exposure_late_assert_eq_definition_match_arms_keeps_credit`
+  (a late definition never runs, yet the arm reads `activation_unknown`:
+  the scan ignores order, and costs the arm its name, never credit).
 - `crates/ripr/tests/match_arm_helper_selection.rs` (decision 5): a
   helper-lent char literal that selects the changed arm credits it; a
   literal for another arm and a variable argument do not. Verdict corpus
