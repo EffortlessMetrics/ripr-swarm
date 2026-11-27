@@ -1,3 +1,7 @@
+//! Language-neutral domain DTOs: findings, evidence, probes, identities,
+//! summaries and the refusal and verification records that adapters, the
+//! facade and renderers exchange.
+
 pub mod analysis_execution_identity;
 pub mod candidate_relation;
 pub mod canonical_item;

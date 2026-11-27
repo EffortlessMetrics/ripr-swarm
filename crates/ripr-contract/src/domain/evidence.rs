@@ -1,3 +1,6 @@
+//! Per-finding RIPR evidence: stage states, oracle shape and strength,
+//! confidence, and how a related test was linked to the changed owner.
+
 /// The shape of a related test's assertion. Whether that assertion observes
 /// the changed behavior is decided separately, and its strength is reported in
 /// [`OracleStrength`].
