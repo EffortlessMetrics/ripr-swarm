@@ -49,6 +49,11 @@ const PRODUCTION_ALLOWLIST: &[(&str, &str, &str)] = &[
     ),
     (
         "ripr",
+        "src/analysis/executable_tests.rs",
+        "unconditional `mod executable_tests;` in analysis/mod.rs; its executable-test name/body readers are called by the production focused-run edit coverage path in app/focused_run (#16311)",
+    ),
+    (
+        "ripr",
         "src/analysis/facts/macro_generated_tests.rs",
         "unconditional module in facts/mod.rs; register_macro_generated_tests is called on the production fact path",
     ),
@@ -97,9 +102,25 @@ const PRODUCTION_DIRECTORY_ALLOWLIST: &[(&str, &str)] = &[
 
 pub(crate) fn check_package_content() -> Result<(), String> {
     let mut violations = Vec::new();
+    // The package list names files relative to the crate directory; read
+    // them from this checkout, not the process working directory.
+    let crates_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .map(|root| root.join("crates"));
     for package in PACKAGES {
         let package_list = crate::run_output("cargo", &["package", "-p", package, "--list"]);
+        if let (Ok(list), Some(crates_dir)) = (&package_list, &crates_dir) {
+            violations.extend(missing_module_violations(
+                package,
+                &listed_members(&crates_dir.join(package), list),
+            ));
+        }
         collect_package_violations(package, package_list, &mut violations);
+    }
+    if crates_dir.is_none() {
+        violations.push(
+            "the workspace root cannot be resolved from the xtask manifest, so packaged module declarations were not checked".to_string(),
+        );
     }
     finish_policy_report(report_spec(), &violations)
 }
@@ -117,6 +138,47 @@ fn collect_package_violations(
         Err(err) => violations.push(format!(
             "`cargo package -p {package} --list` failed; packaged content cannot be judged without the list cargo would ship: {err}"
         )),
+    }
+}
+
+/// Reads each listed package member from the working tree under `root`.
+/// Members cargo generates (`Cargo.toml.orig`, `.cargo_vcs_info.json`) are
+/// not on disk and are skipped; the module graph only reads `.rs` sources.
+fn listed_members(
+    root: &std::path::Path,
+    package_list: &str,
+) -> std::collections::BTreeMap<String, Vec<u8>> {
+    package_list
+        .lines()
+        .map(normalize_slashes)
+        .filter(|path| !path.is_empty())
+        .filter_map(|path| {
+            std::fs::read(root.join(&path))
+                .ok()
+                .map(|bytes| (path, bytes))
+        })
+        .collect()
+}
+
+/// A production module that the package list leaves out makes the published
+/// crate fail to compile. The check is the publish rehearsal's own module
+/// graph (`source_package_contents`), applied to the listed members.
+pub(crate) fn missing_module_violations(
+    package: &str,
+    members: &std::collections::BTreeMap<String, Vec<u8>>,
+) -> Vec<String> {
+    match crate::source_package_contents::missing_declared_files(members) {
+        Ok(missing) => missing
+            .into_iter()
+            .map(|path| {
+                format!(
+                    "{package}: `{path}` is declared by a production module but the package leaves it out, so the published crate cannot compile; re-include it in crates/{package}/Cargo.toml (and PRODUCTION_ALLOWLIST if it is named `*_tests.rs`)"
+                )
+            })
+            .collect(),
+        Err(err) => vec![format!(
+            "{package}: the packaged module graph cannot be read: {err}"
+        )],
     }
 }
 
@@ -279,6 +341,7 @@ LICENSE-MIT
     /// code with a test-shaped name must not be flagged.
     const PRODUCTION_LIST: &str = "\
 src/analysis/classify/related_tests.rs
+src/analysis/executable_tests.rs
 src/analysis/facts/macro_generated_tests.rs
 src/analysis/facts/parameterized_tests.rs
 src/analysis/language/python/doctest_tests.rs
@@ -302,6 +365,39 @@ src/analysis/classify/decision/kani_proofs.rs
 src\\testing\\cwd_lock.rs
 tests/integration.rs
 ";
+
+    fn members(files: &[(&str, &str)]) -> std::collections::BTreeMap<String, Vec<u8>> {
+        files
+            .iter()
+            .map(|(path, text)| ((*path).to_string(), text.as_bytes().to_vec()))
+            .collect()
+    }
+
+    #[test]
+    fn a_production_module_left_out_of_the_package_is_a_violation() {
+        let listed = members(&[
+            ("src/lib.rs", "mod kept;\nmod executable_tests;\n"),
+            ("src/kept.rs", "pub fn f() {}\n"),
+        ]);
+        let violations = missing_module_violations("ripr", &listed);
+        assert_eq!(violations.len(), 1, "{violations:?}");
+        assert!(
+            violations[0].contains("`src/executable_tests.rs`"),
+            "{violations:?}"
+        );
+    }
+
+    #[test]
+    fn a_test_only_module_left_out_of_the_package_is_not_a_violation() {
+        let listed = members(&[
+            ("src/lib.rs", "mod kept;\n#[cfg(test)]\nmod widget_tests;\n"),
+            ("src/kept.rs", "pub fn f() {}\n"),
+        ]);
+        assert_eq!(
+            missing_module_violations("ripr", &listed),
+            Vec::<String>::new()
+        );
+    }
 
     #[test]
     fn clean_list_has_no_violations() {

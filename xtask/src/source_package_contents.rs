@@ -99,12 +99,7 @@ pub(crate) fn check_source_package(
         }
     }
     let graph = module_graph(members)?;
-    let missing: Vec<&str> = graph
-        .required
-        .iter()
-        .filter(|files| !files.iter().any(|file| members.contains_key(file)))
-        .filter_map(|files| files.first().map(String::as_str))
-        .collect();
+    let missing = graph_missing_files(&graph, members);
     if !missing.is_empty() {
         return Err(format!(
             "lacks {} file(s) its production modules declare or include; the manifest's include/exclude drops them (#15216): {}",
@@ -152,6 +147,33 @@ pub(crate) fn check_source_package(
 
 fn is_library_source(path: &str) -> bool {
     path.starts_with("src/") && path.ends_with(".rs")
+}
+
+/// Files that a production `mod` declaration or include in `members` needs
+/// but `members` lacks. `check-package-content` runs this on the
+/// `cargo package --list` members read from the working tree, so a manifest
+/// exclusion that drops a production module fails per PR, not only in the
+/// publish rehearsal (#16317 shipped `executable_tests.rs` excluded).
+pub(crate) fn missing_declared_files(
+    members: &BTreeMap<String, Vec<u8>>,
+) -> Result<Vec<String>, String> {
+    let graph = module_graph(members)?;
+    Ok(graph_missing_files(&graph, members)
+        .into_iter()
+        .map(str::to_string)
+        .collect())
+}
+
+fn graph_missing_files<'a>(
+    graph: &'a ModuleGraph,
+    members: &BTreeMap<String, Vec<u8>>,
+) -> Vec<&'a str> {
+    graph
+        .required
+        .iter()
+        .filter(|files| !files.iter().any(|file| members.contains_key(file)))
+        .filter_map(|files| files.first().map(String::as_str))
+        .collect()
 }
 
 #[derive(Default)]
