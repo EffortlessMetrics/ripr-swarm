@@ -2864,7 +2864,7 @@ pub(crate) fn command_catalog() -> Vec<CommandCatalogEntry> {
             "non_mutating_check",
             "target/ripr/reports/package-content.md",
             false,
-            false,
+            true,
             "Checks `cargo package -p ripr --list` and `-p ripr-contract --list` carry no test-only paths (`src/testing/**`, `tests.rs`, `tests/**`, `*_tests.rs`, `corpus_tests`, `kani_proofs`) and no production-declared module is left out of the list; runs in precommit and ci-policy; fails closed when a list cannot be obtained.",
         ),
         command_entry(
