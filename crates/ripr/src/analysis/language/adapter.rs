@@ -133,9 +133,9 @@ pub(crate) struct LanguageDiffResult {
 }
 
 // Producer accounting DTOs compile below the adapters; existing paths remain.
-pub(crate) use ripr_contract::analysis::language_outcome::{
-    RepoCapFired, RepoFileAccounting, RepoLimitingStage,
-};
+pub(crate) use ripr_contract::analysis::language_outcome::RepoFileAccounting;
+#[cfg(any(test, feature = "lang-python", feature = "lang-typescript"))]
+pub(crate) use ripr_contract::analysis::language_outcome::{RepoCapFired, RepoLimitingStage};
 
 /// Per-language results returned by [`LanguageAdapter::analyze_repo`].
 ///
