@@ -1,5 +1,8 @@
 crates/ripr/src/output/outcome/mod.rs|before artifact does not contain selected seam_id(s): {} ,
 crates/ripr/src/output/outcome/mod.rs|static snapshot is a seam-limited repo-exposure file (its seams[] is a prefix of the inventory cut by {}, so a missing seam cannot be read as removed; {})  and
 crates/ripr/src/output/outcome/mod.rs|targeted rerun before artifact is missing `seams` array
+crates/ripr/src/output/outcome/mod.rs|targeted rerun seam is missing numeric `line`
+crates/ripr/src/output/outcome/mod.rs|targeted rerun seam is missing string `file`
+crates/ripr/src/output/outcome/mod.rs|targeted rerun seam is missing string `seam_id`
 crates/ripr/src/output/outcome/mod.rs|targeted rerun seam is missing string `static_class`
 crates/ripr/src/output/outcome/mod.rs|targeted rerun selected no current seams

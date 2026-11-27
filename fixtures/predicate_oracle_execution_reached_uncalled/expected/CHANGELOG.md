@@ -452,3 +452,16 @@ Command:
 
 Updated:
 - `expected/human.txt`
+
+## Pending — predicate_oracle_execution_reached_uncalled (36)
+
+Reason:
+RIPR-SPEC-0224: inert row names the construct its refusals agree on (#15337)
+
+Command:
+`cargo xtask goldens bless predicate_oracle_execution_reached_uncalled --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
