@@ -4776,8 +4776,7 @@ mod type_parameter_qualified_call_tests {
 
     #[test]
     fn a_turbofish_call_is_counted_and_keeps_the_function() {
-        let mixed =
-            "fn route<helpers: Foreign>() {\n    helpers::read();\n    crate::helpers::read::<u8>();\n}\n";
+        let mixed = "fn route<helpers: Foreign>() {\n    helpers::read();\n    crate::helpers::read::<u8>();\n}\n";
         assert!(!shadowed(mixed, "route", "read"));
         let qualified = "fn route<helpers: Foreign>() {\n    helpers::read::<u8>();\n}\n";
         assert!(shadowed(qualified, "route", "read"));
