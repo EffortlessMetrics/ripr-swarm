@@ -2380,10 +2380,11 @@ fn pilot_commit_step_prints_its_powershell_form_when_quoting_differs() -> Result
 
 /// #16381 review: a dirty production file whose name holds a line break would
 /// print a commit spanning lines that could close the Markdown command fence.
-/// Pilot prints no commit step for it on either surface.
+/// Pilot and check withhold the start with the unreadable-premise advisory
+/// rather than offer it without the commit it needs.
 #[cfg(unix)]
 #[test]
-fn pilot_prints_no_commit_step_for_a_file_name_with_a_line_break() -> Result<(), String> {
+fn a_file_name_with_a_line_break_withholds_the_start_on_pilot_and_check() -> Result<(), String> {
     let repo = Repo::create_uncommitted(CONST_OLD, CONST_NEW, CONST_TEST)?;
     let name = "src/x\n```\necho forged\n.rs";
     repo.write(name, "pub fn extra() -> u8 {\n    1\n}\n")?;
@@ -2397,14 +2398,31 @@ fn pilot_prints_no_commit_step_for_a_file_name_with_a_line_break() -> Result<(),
         pilot.contains("gap "),
         "precondition, pilot ranks the gap:\n{pilot}"
     );
-    for (surface, text) in [("terminal", &pilot), ("markdown", &markdown)] {
+    let check = repo.ripr(&["check", "--root", "."])?;
+    for (surface, text) in [
+        ("pilot terminal", &pilot),
+        ("pilot markdown", &markdown),
+        ("check", &check),
+    ] {
         assert!(
             !text.contains("--literal-pathspecs commit"),
             "the {surface} must print no commit step:\n{text}"
         );
+        // Check's limitation prose still prints the name raw (#16455); the
+        // pilot surfaces carry no copy of it.
         assert!(
-            !text.lines().any(|line| line.trim() == "echo forged"),
+            surface == "check" || !text.lines().any(|line| line.trim() == "echo forged"),
             "the {surface} must not show the name's tail as a command line:\n{text}"
+        );
+        // Fail closed: the start would refuse this dirty premise, so it is
+        // withheld with the unreadable-premise advisory, not offered bare.
+        assert!(
+            text.contains("could not validate the prerequisites for the repair start"),
+            "the {surface} must withhold the start with check's advisory:\n{text}"
+        );
+        assert!(
+            !text.contains("--phase before"),
+            "the {surface} must not offer the start without its commit:\n{text}"
         );
     }
     Ok(())

@@ -3401,8 +3401,10 @@ fn dirty_paths_outside_surface(
     policy: &crate::edit_cage::EditCagePolicy,
 ) -> Result<Vec<String>, String> {
     let head = crate::agent::artifact::current_git_head(root).map_err(|e| e.to_string())?;
-    crate::app::repair_attempt::trusted_head_surface_violations(root, policy, &[], &head)
-        .map_err(|e| e.to_string())
+    let paths =
+        crate::app::repair_attempt::trusted_head_surface_violations(root, policy, &[], &head)
+            .map_err(|e| e.to_string())?;
+    crate::app::repair_attempt::refuse_line_break_paths(paths)
 }
 
 /// The gap-bound start the default human `ripr check` would print for this

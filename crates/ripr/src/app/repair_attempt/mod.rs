@@ -5877,7 +5877,25 @@ pub(crate) fn conservative_dirty_premise_violations(
 /// empty one does not promise it starts.
 pub(crate) fn seam_start_dirty_premise(root: &Path) -> Result<Vec<String>, String> {
     let head = crate::agent::artifact::current_git_head(root)?;
-    conservative_dirty_premise_violations(root, &head, None, None)
+    refuse_line_break_paths(conservative_dirty_premise_violations(
+        root, &head, None, None,
+    )?)
+}
+
+/// A dirty-premise answer a screen can print a commit step from: an error
+/// when any path holds a line break (#16381). The shell quoting keeps a
+/// newline literal, so a commit naming such a path would span lines and could
+/// close a Markdown command fence, presenting the rest of the name as a
+/// separate command; a carriage return ends a Markdown line the same way.
+/// Callers treat the error as an unreadable premise and withhold the start,
+/// so no surface offers a start that would refuse without its commit.
+pub(crate) fn refuse_line_break_paths(paths: Vec<String>) -> Result<Vec<String>, String> {
+    if paths.iter().any(|path| path.contains(['\n', '\r'])) {
+        return Err(
+            "a dirty file name holds a line break, so no commit step can be printed".to_string(),
+        );
+    }
+    Ok(paths)
 }
 
 /// The before-phase refusal for a dirty production premise (#5262), for a
