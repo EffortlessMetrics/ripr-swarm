@@ -417,8 +417,13 @@ directory pytest's prepend import mode puts ahead on `sys.path` for that test
 means a bare import of that name is not the owner's for that test (#13706). The
 directory set is the basedir of the test's directory (the first ancestor,
 inclusive, without an `__init__.py`), the same basedir for each `conftest.py`
-at or above the test, and the repository root; package directories themselves
-are not on `sys.path` and are not included.
+at or above the test, the same basedir for each directory above the test, up
+to and including its nearest project root, that holds a module pytest collects
+by default (`test_*.py`, `*_test.py`; a run that collects that directory
+inserts it, #14083), and the repository root; package directories themselves
+are not on `sys.path` and are not included. Collection order and a run of the
+test's subdirectory alone (which does not collect the modules above it) are not
+modeled, nor are sibling directories collected in the same run.
 Known limits of this pass: directories a pytest `pythonpath` setting
 (`pytest.ini`, `[tool.pytest.ini_options]`, `tox.ini`, `setup.cfg`) puts ahead on
 `sys.path` are not read, so a shadowing module reachable only through one is not
