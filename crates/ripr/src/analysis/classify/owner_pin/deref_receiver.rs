@@ -44,7 +44,10 @@
 //!   `Borrow`, so a std `Cow` field derefs without workspace code. Neither
 //!   the owner nor the wrapper name is a `type` alias or an `as` rename
 //!   (`use std::string::String as Inner;`), and no `const`, `static`, `fn`
-//!   or `let` binds the wrapper's name, so `Guard(..)` is its constructor;
+//!   or `let` binds the wrapper's name, so `Guard(..)` is its constructor.
+//!   Neither name is a std prelude or primitive type name, and no `use`
+//!   outside `crate`/`self`/`super` spells either name or imports a glob,
+//!   so both names denote the workspace types everywhere;
 //! - the wrapper is declared exactly once in the workspace, as a non-generic
 //!   `struct` whose only attributes are std derives; no function shares its
 //!   name; no `type` item mentions it; it is never renamed (`Guard as G`);
@@ -296,6 +299,8 @@ pub(super) fn deref_workspace(
         if no_other_deref_may_reach(&deref_impls, position, target, &aliases)
             && !aliases.contains(target)
             && !aliases.contains(wrapper)
+            && !name_may_bind_outside_workspace(&files, target)
+            && !name_may_bind_outside_workspace(&files, wrapper)
             && own_impls == 1
             && wrapper != target
             && files
@@ -672,6 +677,36 @@ fn declares_plain_struct(masked: &str, wrapper: &str) -> bool {
     })
 }
 
+/// Std prelude and primitive type names: a `type Target = String;` names
+/// the std type wherever no workspace `String` is in scope, whatever a
+/// workspace type of that name declares.
+const PRELUDE_TYPE_NAMES: &[&str] = &[
+    "Box", "Option", "Result", "String", "Vec", "bool", "char", "f32", "f64", "i8", "i16", "i32",
+    "i64", "i128", "isize", "str", "u8", "u16", "u32", "u64", "u128", "usize",
+];
+
+/// Whether `name` may denote a type from outside the workspace somewhere: a
+/// std prelude or primitive name, or a `use` item not rooted at `crate`,
+/// `self` or `super` that spells `name` or imports a glob
+/// (`use std::string::String;`, `use std::collections::*;`). Such a name
+/// may resolve to the std type in one module and to the workspace type in
+/// another, so matching it to the workspace owner by name alone may credit
+/// a call that runs std code.
+fn name_may_bind_outside_workspace(files: &[String], name: &str) -> bool {
+    PRELUDE_TYPE_NAMES.contains(&name)
+        || files.iter().any(|masked| {
+            whole_word_offsets(masked, "use").into_iter().any(|at| {
+                let rest = &masked[at + "use".len()..];
+                let item = &rest[..rest.find(';').unwrap_or(rest.len())];
+                let compact: String = item.split_whitespace().collect();
+                let local = ["crate::", "self::", "super::"]
+                    .iter()
+                    .any(|root| compact.starts_with(root));
+                !local && (compact.contains('*') || !whole_word_offsets(item, name).is_empty())
+            })
+        })
+}
+
 /// Whether one masked file declares `wrapper` as a tuple struct
 /// (`struct Guard(..)`), whose constructor owns the value namespace.
 fn declares_tuple_struct(masked: &str, wrapper: &str) -> bool {
@@ -737,8 +772,8 @@ mod tests {
     use super::{
         DerefImpl, alias_names, attributes_are_std_derives, declares_tuple_struct,
         deref_body_target, file_deref_impls, first_param_is_shared_self, ident_run_start,
-        impl_header_names, inside_item_macro, no_other_deref_may_reach, wrapper_spellings_inert,
-        wrapper_value_unshadowed,
+        impl_header_names, inside_item_macro, name_may_bind_outside_workspace,
+        no_other_deref_may_reach, wrapper_spellings_inert, wrapper_value_unshadowed,
     };
     use std::collections::BTreeSet;
 
@@ -837,6 +872,29 @@ mod tests {
             "Guard",
             false
         ));
+    }
+
+    #[test]
+    fn a_name_a_non_workspace_import_or_the_prelude_may_bind_refuses() {
+        let files =
+            |texts: &[&str]| -> Vec<String> { texts.iter().map(|text| text.to_string()).collect() };
+        let owner = "use std::ops::Deref; use super::*; use crate::model::Inner; struct Inner;";
+        assert!(!name_may_bind_outside_workspace(&files(&[owner]), "Inner"));
+        for text in [
+            "use other::Inner;",
+            "pub use other_crate::{Inner, Thing};",
+            "use std::collections::*;",
+        ] {
+            assert!(
+                name_may_bind_outside_workspace(&files(&[owner, text]), "Inner"),
+                "{text}"
+            );
+        }
+        assert!(name_may_bind_outside_workspace(
+            &files(&["use std::string::String; struct Guard(String);"]),
+            "String"
+        ));
+        assert!(name_may_bind_outside_workspace(&files(&[owner]), "Vec"));
     }
 
     #[test]
