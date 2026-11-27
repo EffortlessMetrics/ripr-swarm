@@ -1114,7 +1114,7 @@ pub(crate) fn collect_tests_from_statements<'s, 'a>(
                         )
                         || conditional_describe_factory(call).is_some(),
                     &resolved.names,
-                )
+                ) || describe_spelling_registers_a_test(call, Some(resolved))
             }
         {
             continue;
@@ -3417,6 +3417,9 @@ pub(crate) fn describe_body_from_statement<'a>(
     {
         return None;
     }
+    if describe_spelling_registers_a_test(call, registration) {
+        return None;
+    }
     let name = title_argument(call.arguments.first()?, source, call.span.start as usize)?;
     let body = function_body_statements_from_argument(
         call.arguments.get(declaration_callback_index(call))?,
@@ -3942,6 +3945,31 @@ pub(crate) fn test_name_and_assertions_from_call(
 /// (`registration_is_known_in`). An alias of any other module's member
 /// (`{ test: t } = require('node:assert')`, `{ deepEqual: eq }`) resolves to
 /// no runner registration, and a local rebinding of the name shadows it.
+/// Whether a call spelled like a suite (`suite(...)`, `describe(...)`) is
+/// bound to a runner's `test` function, such as a tape, ava or node:test
+/// default import named `suite` (#16436). Such a call runs as a test, so it
+/// is read as one and not as a suite body. A suite-spelled call whose root
+/// resolves to a suite, or that is not a direct bare call, is unaffected.
+fn describe_spelling_registers_a_test(
+    call: &oxc_ast::ast::CallExpression<'_>,
+    registration: Option<&RegistrationScope>,
+) -> bool {
+    let Some(resolved) = registration else {
+        return false;
+    };
+    call_callee_is_active_declaration(call, TestDeclarationRoot::Describe)
+        && callee_root_name(&call.callee).is_some_and(|local| {
+            resolved
+                .context
+                .binds_renamed_registration_root(local, |member| {
+                    TestDeclarationRoot::Test.matches_identifier(member)
+                })
+        })
+        && resolved
+            .context
+            .registration_is_known_in(call, false, &resolved.names)
+}
+
 fn renamed_registration_is_known(
     call: &oxc_ast::ast::CallExpression<'_>,
     registration: Option<&RegistrationScope>,

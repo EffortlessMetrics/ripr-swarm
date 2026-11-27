@@ -138,7 +138,11 @@ Test discovery:
   default import is that function: a CommonJS `{ default: check } =
   require('tape')`, with or without a fallback, reads a property that may be
   absent and stays unregistered, as do other runners' defaults (mocha,
-  node-tap's namespace) and a local module's default
+  node-tap's namespace) and a local module's default. Such a default bound
+  under a suite spelling (`const suite = require('tape')`,
+  `import describe from 'tape'`) still runs its calls as tests, so a bare call
+  through it registers a test and is not opened as a suite body (#16436); a
+  genuine named `suite` / `describe` import still opens its body
 - AVA's macro form, a named macro between the title and the callback
   (`test(name, macro, async (t) => {})`, `test(name, ns.macro, fn)`): the
   function third argument is the callback (#10964) for a root bound to AVA's `test`, and only an inline function; a macro without a
@@ -926,6 +930,10 @@ an ES default import, and renamed ava and `node:test` default imports read
 `exposed` like the `test` reference, while a written binding, mocha's and
 node-tap's defaults, a local module's default and a `.skip` call stay
 `no_static_path`.
+`a_default_runner_named_like_a_suite_registers_its_tests` pins #16436: a
+tape default bound as `suite` or `describe` and a `node:test` default bound as
+`suite` read `exposed` beside a genuine Vitest `suite` import, while mocha's
+default, `suite.skip` and a shadowing `suite` parameter stay `no_static_path`.
 
 ## Implementation Mapping
 

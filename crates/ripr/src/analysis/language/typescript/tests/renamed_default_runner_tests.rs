@@ -145,3 +145,61 @@ fn a_renamed_default_binding_that_is_not_a_known_runner_registers_nothing() -> R
     }
     Ok(())
 }
+
+/// #16436: a default runner bound under a suite spelling (`suite`,
+/// `describe`) still runs its calls as tests, so they register as tests and
+/// are not opened as suite bodies.
+#[test]
+fn a_default_runner_named_like_a_suite_registers_its_tests() -> Result<(), String> {
+    for (label, prelude, body) in [
+        (
+            "tape-require-suite",
+            "const suite = require('tape');\n",
+            TAPE.replace("check(", "suite("),
+        ),
+        (
+            "tape-default-describe",
+            "import describe from 'tape';\n",
+            TAPE.replace("check(", "describe("),
+        ),
+        (
+            "node-test-default-suite",
+            "import suite from 'node:test';\n",
+            NODE.replace("check(", "suite("),
+        ),
+        // A real suite import still opens its body.
+        (
+            "vitest-named-suite",
+            "import { suite, test, expect } from 'vitest';\n",
+            "suite('cart', () => {\n  test('checks total', () => {\n    expect(total(50)).toBe(50);\n  });\n});\n".to_string(),
+        ),
+    ] {
+        let class = class_for(label, &format!("{prelude}{IMPORT}{body}"))?;
+        assert_eq!(class, ExposureClass::Exposed, "{label}");
+    }
+    for (label, prelude, body) in [
+        (
+            "mocha-default-suite",
+            "const suite = require('mocha');\n",
+            TAPE.replace("check(", "suite("),
+        ),
+        (
+            "skipped-suite-spelling",
+            "const suite = require('tape');\n",
+            TAPE.replace("check(", "suite.skip("),
+        ),
+        // The suite-spelled call resolves to the local, not the runner.
+        (
+            "shadowed-suite-spelling",
+            "const suite = require('tape');\n",
+            format!(
+                "function wrap(suite: (name: string, run: (t: any) => void) => void) {{\n{}}}\n",
+                TAPE.replace("check(", "suite(")
+            ),
+        ),
+    ] {
+        let class = class_for(label, &format!("{prelude}{IMPORT}{body}"))?;
+        assert_eq!(class, ExposureClass::NoStaticPath, "{label}");
+    }
+    Ok(())
+}

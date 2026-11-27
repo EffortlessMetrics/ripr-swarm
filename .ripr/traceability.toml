@@ -20389,6 +20389,7 @@ tests = [
   "crates/ripr/src/analysis/language/typescript/tests/registration_binding_tests.rs::a_namespace_pick_registers_only_calls_after_its_declaration",
   "crates/ripr/src/analysis/language/typescript/tests/renamed_default_runner_tests.rs::a_renamed_default_runner_registers_like_the_test_spelling",
   "crates/ripr/src/analysis/language/typescript/tests/renamed_default_runner_tests.rs::a_renamed_default_binding_that_is_not_a_known_runner_registers_nothing",
+  "crates/ripr/src/analysis/language/typescript/tests/renamed_default_runner_tests.rs::a_default_runner_named_like_a_suite_registers_its_tests",
   "crates/ripr/src/analysis/language/typescript/tests/registration_binding_tests.rs::a_namespace_pick_never_renames_an_inactive_runner_member",
   "crates/ripr/src/analysis/language/typescript/tests/registration_binding_tests.rs::registration_picked_off_an_unproven_require_namespace_stays_unrelated",
   "crates/ripr/src/analysis/language/typescript/tests/registration_binding_tests.rs::registration_bindings_reject_local_noop_callbacks",
