@@ -2034,21 +2034,52 @@ fn receiver_boundary_state(
         one_line(comparison.lhs.trim()),
         one_line(comparison.rhs.trim())
     );
+    // A parameter is read only by an unqualified mention: `self.len` names a
+    // field, not a `len` parameter.
     let reads_parameter = signature
         .params
         .iter()
         .filter_map(|param| param.name.as_deref())
-        .any(|name| mentions_word(&state, name));
+        .any(|name| {
+            word_offsets(&state, name)
+                .into_iter()
+                .any(|at| !state[..at].ends_with(['.', ':']))
+        });
     if reads_parameter {
         return None;
     }
-    mentions_word(&state, "self").then(|| format!("`{}`", replace_word(&state, "self", subject)))
+    // Only a receiver path (`self.len`) is respelled; `self::MAX` names the
+    // module and stays as written.
+    let receiver_reads = word_offsets(&state, "self")
+        .into_iter()
+        .filter(|&at| {
+            !state[..at].ends_with(['.', ':']) && state[at + "self".len()..].starts_with('.')
+        })
+        .collect::<Vec<_>>();
+    if receiver_reads.is_empty() {
+        return None;
+    }
+    let mut respelled = state.clone();
+    for at in receiver_reads.into_iter().rev() {
+        respelled.replace_range(at..at + "self".len(), subject);
+    }
+    Some(format!("`{respelled}`"))
 }
 
-/// `word` occurs in `text` as a whole identifier (the boundary rule of
-/// [`replace_word`]).
-fn mentions_word(text: &str, word: &str) -> bool {
-    !word.is_empty() && replace_word(text, word, "") != text
+/// Byte offsets where `word` occurs in `text` as a whole identifier (the
+/// boundary rule of [`replace_word`]).
+fn word_offsets(text: &str, word: &str) -> Vec<usize> {
+    if word.is_empty() {
+        return Vec::new();
+    }
+    let ident = |c: char| c.is_alphanumeric() || c == '_';
+    text.match_indices(word)
+        .map(|(at, _)| at)
+        .filter(|&at| {
+            !text[..at].chars().next_back().is_some_and(ident)
+                && !text[at + word.len()..].chars().next().is_some_and(ident)
+        })
+        .collect()
 }
 
 /// #15281: the input condition that tells `a && b` from `a || b`. The two

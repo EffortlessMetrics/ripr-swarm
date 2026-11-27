@@ -156,7 +156,8 @@ A fill-in label for a predicate seam names the inputs where the changed
 predicate and its likely neighbor disagree. It does not restate the predicate.
 Inputs that merely satisfy the changed predicate pass under both spellings.
 
-- A seam whose whole expression is one `&&` or `||` names the split, for
+- A seam whose whole expression is one `&&` or `||`, optionally inside outer
+  parentheses, names the split, for
   example `exactly one of `in_stock` and `paid` is true (where `||` and `&&`
   differ)`. A chain such as `a && b && c` keeps the plain description, because
   which connective changed cannot be recovered from its text.
@@ -165,7 +166,10 @@ Inputs that merely satisfy the changed predicate pass under both spellings.
   uses: `; for this case, set it so `subject.len == MAX``. The note goes on the
   constructed receiver's comment or on the fill-in receiver's label. A boundary
   that reads a parameter (`self.tokens > n`) adds no receiver note, because that
-  parameter's own fill-in already reaches the boundary.
+  parameter's own fill-in already reaches the boundary. A field that shares a
+  parameter's name (`self.len` with a `len` parameter) is not a parameter read,
+  and only receiver paths (`self.`) are respelled, so `self::MAX` stays as
+  written.
 
 These change the emitted stub text only. Classifier credit rules are unchanged.
 

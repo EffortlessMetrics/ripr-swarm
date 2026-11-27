@@ -1012,7 +1012,12 @@ pub(crate) fn single_logical(expression: &str) -> Option<ComparisonFact> {
         .syntax()
         .descendants()
         .find_map(ast::LetStmt::cast)?;
-    let ast::Expr::BinExpr(binary) = let_stmt.initializer()? else {
+    // `if (in_stock || paid)` is the same connective behind parentheses.
+    let mut initializer = let_stmt.initializer()?;
+    while let ast::Expr::ParenExpr(paren) = initializer {
+        initializer = paren.expr()?;
+    }
+    let ast::Expr::BinExpr(binary) = initializer else {
         return None;
     };
     let is_logical = |binary: &ast::BinExpr| {
@@ -1550,6 +1555,10 @@ mod tests {
         assert_eq!(single_logical("a || b && c"), None);
         assert_eq!(single_logical("a >= b"), None);
         assert_eq!(single_logical("if let Some(x) = y && z"), None);
+        assert_eq!(
+            single_logical("if (in_stock || paid)").map(|fact| (fact.lhs, fact.op, fact.rhs)),
+            Some(("in_stock".to_string(), "||".to_string(), "paid".to_string()))
+        );
         assert_eq!(
             single_logical("!a || x > 0").map(|fact| (fact.lhs, fact.rhs)),
             Some(("!a".to_string(), "x > 0".to_string()))

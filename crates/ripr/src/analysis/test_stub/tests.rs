@@ -1673,6 +1673,40 @@ impl Buf {
         stub.text
     );
 
+    // A parameter that shares the field's name is not read by `self.len`, so
+    // the receiver note stays; a `self::` module path is not respelled.
+    const SHARED_NAME: &str = "pub const MAX: usize = 8;
+
+pub struct Buf {
+    pub len: usize,
+}
+
+impl Buf {
+    pub fn new() -> Self {
+        Buf { len: 0 }
+    }
+
+    pub fn can_fit(&self, len: usize) -> bool {
+        self.len > self::MAX && len > 0
+    }
+}
+";
+    let seam = seam_at(
+        "src/lib.rs",
+        SHARED_NAME,
+        "self.len > self::MAX",
+        SeamKind::PredicateBoundary,
+        boundary("self.len > self::MAX"),
+    )?;
+    let stub =
+        rust_test_stub(&seam, None, SHARED_NAME, None).map_err(|r| r.reason().to_string())?;
+    assert!(
+        stub.text
+            .contains("for this case, set it so `subject.len == self::MAX`"),
+        "{}",
+        stub.text
+    );
+
     // A boundary that reads only arguments adds no receiver note.
     const ARGUMENT: &str = "pub struct Buf {
     pub len: usize,
