@@ -3598,6 +3598,17 @@ pub(crate) fn ts_predicate_boundary_row_activation(
     }
     let owner_receivers =
         unshadowed_owner_namespace_receivers(candidate.test, owner, alias_map, workspace_root);
+    // A renamed import of the owner is called bare (`d(100)`); a member
+    // call `x.d(...)` never names it, so aliases take no receivers. The
+    // aliases are the ones that give a test its `ImportAliasOwnerCall`
+    // relation: one binding-identity rule, so a body-local, destructured or
+    // enclosing-scope shadow of the alias never witnesses (#16452).
+    let alias_locals = import_alias_owner_locals(candidate.test, owner, alias_map, workspace_root);
+    let no_receivers: &[String] = &[];
+    let call_spellings: Vec<(&str, &[String])> =
+        std::iter::once((owner.name.as_str(), owner_receivers.as_slice()))
+            .chain(alias_locals.iter().map(|alias| (*alias, no_receivers)))
+            .collect();
     // #4104-E3: a constant-shaped boundary operand reads its value from
     // the owner's own module declaration. Resolution is per candidate so
     // the test's scope never substitutes a value the owner cannot see;
@@ -3637,18 +3648,38 @@ pub(crate) fn ts_predicate_boundary_row_activation(
             continue;
         }
         let mut argument_lists = owner_call_arguments(observed, &owner.name, &owner_receivers);
+        // A renamed import witnesses only when the asserted value is the
+        // whole alias call (`expect(d(100))`): a wrapper such as
+        // `Math.max(d(100), 100)` may map both sides of the boundary to one
+        // value, and nothing here models its effect (#16452). Only the
+        // outer call's arguments count: matches come in source order, so the
+        // whole-call check makes the first one the outer call, and a nested
+        // `d(90, d(100))` must not witness through its inner call.
+        argument_lists.extend(
+            alias_locals
+                .iter()
+                .filter(|alias| observed_is_one_whole_call(observed, alias))
+                .filter_map(|alias| {
+                    owner_call_arguments(observed, alias, no_receivers)
+                        .into_iter()
+                        .next()
+                }),
+        );
         // #4104-E1: the canonical `const result = owner(...);
         // expect(result).toBe(...)` idiom observes the owner call through
         // a one-hop local binding. When the bare local carries no owner
         // reference, its single immutable initializer IS the observed
         // call, and its arguments flow through the same witness path.
         if argument_lists.is_empty()
-            && let Some(initializer_arguments) = ts_observed_local_owner_call_arguments(
-                candidate.test,
-                assertion,
-                &owner.name,
-                &owner_receivers,
-            )
+            && let Some(initializer_arguments) =
+                call_spellings.iter().find_map(|(name, receivers)| {
+                    ts_observed_local_owner_call_arguments(
+                        candidate.test,
+                        assertion,
+                        name,
+                        receivers,
+                    )
+                })
         {
             argument_lists.push(initializer_arguments);
         }
@@ -3720,7 +3751,9 @@ pub(crate) fn ts_predicate_boundary_row_activation(
             // expected literal (`toBe(999)` when the changed behavior
             // produces `90` at the boundary input) proves nothing — the
             // changed value never reaches a passing assertion.
-            if expected_side_calls_owner(&candidate.test.body_text, observed, &owner.name) {
+            if call_spellings.iter().any(|(name, _)| {
+                expected_side_calls_owner(&candidate.test.body_text, observed, name)
+            }) {
                 reached = true;
                 continue;
             }
@@ -4329,6 +4362,18 @@ fn row_boundary_input_activation(
     } else {
         unresolved
     }
+}
+
+/// `true` when `observed` is exactly one call of `name`: the name, an
+/// argument list, and nothing before or after it (#16452).
+fn observed_is_one_whole_call(observed: &str, name: &str) -> bool {
+    let Some(after_name) = observed.trim().strip_prefix(name) else {
+        return false;
+    };
+    let Some(after_open) = after_name.trim_start().strip_prefix('(') else {
+        return false;
+    };
+    balanced_close_offset(after_open).is_some_and(|close| after_open[close + 1..].trim().is_empty())
 }
 
 /// Test-runner modules whose imports cannot reach the owner.

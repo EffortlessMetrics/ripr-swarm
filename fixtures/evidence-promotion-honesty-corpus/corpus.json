@@ -3211,6 +3211,70 @@
       ]
     },
     {
+      "id": "typescript_vitest_renamed_import_boundary_exposed",
+      "language": "typescript",
+      "tier": "pure",
+      "source_fixture": "fixtures/typescript_vitest_renamed_import_boundary_exposed",
+      "vector": "renamed_owner_import_witnesses_changed_boundary",
+      "control": "must_stay_exposed",
+      "probe_family": "predicate",
+      "assertions": [
+        {
+          "type": "expected_finding_count",
+          "count": 1
+        },
+        {
+          "type": "must_promote"
+        },
+        {
+          "type": "expected_class",
+          "class": "exposed"
+        },
+        {
+          "type": "expected_finding_owner",
+          "owner": "typescript:src/price.ts::discount"
+        },
+        {
+          "type": "expected_oracle",
+          "kind": "exact_value",
+          "strength": "strong"
+        }
+      ]
+    },
+    {
+      "id": "typescript_vitest_renamed_import_off_boundary",
+      "language": "typescript",
+      "tier": "pure",
+      "source_fixture": "fixtures/typescript_vitest_renamed_import_off_boundary",
+      "vector": "renamed_owner_import_off_boundary_does_not_witness",
+      "probe_family": "predicate",
+      "assertions": [
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "expected_finding_count",
+          "count": 1
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "expected_class",
+          "class": "weakly_exposed"
+        },
+        {
+          "type": "expected_finding_owner",
+          "owner": "typescript:src/price.ts::discount"
+        },
+        {
+          "type": "expected_oracle",
+          "kind": "exact_value",
+          "strength": "strong"
+        }
+      ]
+    },
+    {
       "id": "typescript_floating_promise_propagation_static_unknown",
       "language": "typescript",
       "tier": "pure",
