@@ -19,12 +19,14 @@ use producer::{InstallProducer, InstallToolchain};
 /// Bounded process deadlines for qualified Cargo packaging and installation (#15216).
 const PACKAGE_TIMEOUT: Duration = Duration::from_mins(15);
 const INSTALL_TIMEOUT: Duration = Duration::from_mins(15);
-/// Job cap applied only on Linux hosts whose detected `/proc/meminfo` or cgroup
-/// memory bound is below 24 GiB, keeping a qualified release build inside the
-/// ~9.6 GiB peak observed on Linux cgroup runs. Off Linux (including Windows
-/// and macOS) or when memory cannot be read, `host_memory_bytes()` returns
-/// `None` and Cargo uses its own parallelism unless `CARGO_BUILD_JOBS` is set,
-/// so Windows MSVC hosts finish well inside [`INSTALL_TIMEOUT`] (#15216).
+/// Job cap applied on hosts whose detected memory bound (Linux `/proc/meminfo`
+/// or cgroup limits, or Windows `.NET` / PowerShell available/physical memory)
+/// is below 24 GiB, keeping a qualified release build inside the ~9.6 GiB peak
+/// observed on constrained runs. On high-memory hosts (`>= 24 GiB`, including
+/// high-RAM Windows MSVC hosts), on platforms without a memory probe, or when
+/// memory cannot be read, Cargo uses its own parallelism unless
+/// `CARGO_BUILD_JOBS` is set, so high-RAM Windows MSVC hosts finish well inside
+/// [`INSTALL_TIMEOUT`] (#15216).
 const CONSTRAINED_CARGO_JOBS: usize = 2;
 
 /// Archive custody starts at an observed successful Cargo producer, never a
@@ -274,6 +276,11 @@ mod tests {
         assert_eq!(qualified_cargo_jobs_for(false, high, Some(32)), None);
         assert_eq!(qualified_cargo_jobs_for(false, None, Some(32)), None);
         assert_eq!(qualified_cargo_jobs_for(false, low, None), None);
+        #[cfg(target_os = "windows")]
+        assert!(
+            crate::cargo_job_cap::host_memory_bytes().is_some(),
+            "native Windows host should report memory bytes for job bounding"
+        );
     }
 
     #[test]
