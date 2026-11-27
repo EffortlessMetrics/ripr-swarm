@@ -409,3 +409,14 @@ Command:
 
 Updated:
 - `expected/human.txt`
+
+## Pending — predicate_pairing_reassigned_binding (32)
+
+Reason:
+RIPR-SPEC-0122: #15313 Summary names shared candidate lines and says No test gap when State reads no test gap found
+
+Command:
+`cargo xtask goldens bless predicate_pairing_reassigned_binding --reason "..."`
+
+Updated:
+- `expected/human.txt`

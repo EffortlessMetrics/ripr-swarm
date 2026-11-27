@@ -106,6 +106,13 @@ pub(crate) struct TypeScriptModuleEntry {
     /// modeled, so such reach is never more than unknown.
     #[serde(default)]
     pub(crate) closure: bool,
+    /// `true` when the entry is the module's CommonJS whole export
+    /// (`module.exports = other`, `export = other`, #16369): a test binds it
+    /// with `const other = require(...)`, so its stand-in is a CommonJS whole
+    /// function. The owner side keeps such an entry only when it proved the
+    /// named function is the whole export.
+    #[serde(default)]
+    pub(crate) commonjs_whole: bool,
 }
 
 /// What an `instance_factory` entry names (#15924).
@@ -271,6 +278,15 @@ pub(crate) fn module_entries_and_outbound<'a>(
             &mut exported_values,
         );
     }
+    // CommonJS export writes are entries too (#16369). They never become
+    // outbound edges: cross-module reach stays with ES exports.
+    let commonjs_locals = record_commonjs_exports(
+        statements,
+        source,
+        &mut nodes,
+        &mut exports,
+        &mut exported_values,
+    );
     let ModuleValues {
         names: mut values,
         decl_starts,
@@ -487,7 +503,7 @@ pub(crate) fn module_entries_and_outbound<'a>(
                 }
             }
             // The import edge itself is one more hop.
-            if hops >= MODULE_ENTRY_MAX_HOPS {
+            if hops >= MODULE_ENTRY_MAX_HOPS || commonjs_locals.contains(local.as_str()) {
                 continue;
             }
             for &binding in import_callees.get(reached).into_iter().flatten() {
@@ -642,6 +658,57 @@ fn collect_statement<'a>(
     }
 }
 
+/// Record the file's CommonJS exports as entries (#16369), adding the node
+/// of an inline whole-export function. Returns the exported locals.
+fn record_commonjs_exports<'a>(
+    statements: &'a [Statement<'a>],
+    source: &'a str,
+    nodes: &mut BTreeMap<&'a str, ModuleNode<'a>>,
+    exports: &mut BTreeMap<String, BTreeSet<TypeScriptModuleEntry>>,
+    exported_values: &mut BTreeSet<&'a str>,
+) -> BTreeSet<&'a str> {
+    use super::commonjs_entries::{InlineWhole, commonjs_exports};
+    let (commonjs, inline) = commonjs_exports(statements, source);
+    // An inline function whose key a declaration already holds is not a node
+    // of its own, so it is no entry either.
+    let inline_key = match inline {
+        Some(InlineWhole::Function(func, key)) if !nodes.contains_key(key) => {
+            collect_function_as(func, key, source, nodes).then_some(key)
+        }
+        Some(InlineWhole::Arrow(arrow)) if !nodes.contains_key("default") => {
+            collect_arrow_as(arrow, "default", source, nodes);
+            Some("default")
+        }
+        _ => None,
+    };
+    // A local the file rebinds may hold another value when it is exported.
+    let reassigned = reassigned_names(statements);
+    let mut locals = BTreeSet::new();
+    for export in commonjs {
+        if reassigned.contains(export.local) {
+            continue;
+        }
+        let whole = export.property.is_none();
+        if whole && inline.is_some() && inline_key != Some(export.local) {
+            continue;
+        }
+        // Another module may write an exported value through `require`.
+        exported_values.insert(export.local);
+        locals.insert(export.local);
+        let name = export.property.unwrap_or_else(|| export.local.to_string());
+        exports
+            .entry(export.local.to_string())
+            .or_default()
+            .insert(TypeScriptModuleEntry {
+                name,
+                exported_as_default: whole,
+                commonjs_whole: whole,
+                ..export_entry("")
+            });
+    }
+    locals
+}
+
 fn record_export(
     exports: &mut BTreeMap<String, BTreeSet<TypeScriptModuleEntry>>,
     local: &str,
@@ -650,17 +717,23 @@ fn record_export(
     exports
         .entry(local.to_string())
         .or_default()
-        .insert(TypeScriptModuleEntry {
-            name: exported.to_string(),
-            exported_as_default: exported == "default",
-            class_member: None,
-            decorated: None,
-            instance_factory: false,
-            instance_kind: TypeScriptInstanceKind::default(),
-            hops: 0,
-            cross_module: None,
-            closure: false,
-        });
+        .insert(export_entry(exported));
+}
+
+/// A plain call-graph entry for the exported name `exported`.
+fn export_entry(exported: &str) -> TypeScriptModuleEntry {
+    TypeScriptModuleEntry {
+        name: exported.to_string(),
+        exported_as_default: exported == "default",
+        class_member: None,
+        decorated: None,
+        instance_factory: false,
+        instance_kind: TypeScriptInstanceKind::default(),
+        hops: 0,
+        cross_module: None,
+        closure: false,
+        commonjs_whole: false,
+    }
 }
 
 fn collect_function<'a>(

@@ -2,7 +2,7 @@ ripr static RIPR exposure analysis
 mode: fast
 root: fixtures/unsafe_assumption_stop_reason/input
 
-Summary: 5 changed behaviors checked: 0 appear noticed by tests, 1 partly noticed, 0 reached but not noticed, 0 no test path, 4 unclear. 5 found, 0 suppressed by your settings
+Summary: 5 changed behaviors checked on 4 candidate lines: 0 appear noticed by tests, 1 partly noticed, 0 reached but not noticed, 0 no test path, 4 unclear. 5 found, 0 suppressed by your settings
 
 Analysis outcome: findings below (analysis complete)
   Counts: 1 changed file(s), 7 changed line(s), 4 candidate line(s), 5 changed behavior(s) checked, 5 finding(s)

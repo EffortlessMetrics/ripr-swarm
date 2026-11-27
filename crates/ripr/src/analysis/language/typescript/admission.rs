@@ -164,6 +164,11 @@ impl TypeScriptAdmissionContext {
                 .iter()
                 .filter(|statement| {
                     matches!(statement, Statement::ImportDeclaration(_))
+                        // `import test = require('tape')` compiles to a `const`
+                        // `require()` binding and TypeScript refuses writes to
+                        // it (#16370).
+                        || (known_require
+                            && super::export_equals::import_equals_require(statement).is_some())
                         || matches!(statement, Statement::VariableDeclaration(declaration)
                             if known_require && !declaration.declare
                                 && (declaration.kind == oxc_ast::ast::VariableDeclarationKind::Const
@@ -714,6 +719,13 @@ fn verified_namespace_member_registrations(
         // The one declaration of the namespace.
         let mut declarations = Vec::new();
         for statement in &program.body {
+            // `import runner = require('node:test')` declares it too (#16370).
+            if let Statement::TSImportEqualsDeclaration(declaration) = statement
+                && declaration.id.name.as_str() == namespace.local
+            {
+                declarations.push((declaration.span.start, declaration.id.span));
+                continue;
+            }
             let Statement::VariableDeclaration(declaration) = statement else {
                 continue;
             };
