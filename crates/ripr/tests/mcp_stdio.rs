@@ -8235,6 +8235,86 @@ fn prepare_repair_refuses_source_changed_after_the_snapshot() -> Result<(), Stri
     Ok(())
 }
 
+/// #15240/#15908: on Unix a backslash is a file-name byte. With the library
+/// root named `src/a\b.rs`, the captured digest is keyed by that native
+/// name, so `ripr_prepare_repair` must re-verify that same file: the
+/// unchanged tree prepares (control) and an edit to `src/a\b.rs` is refused
+/// as `stale_snapshot`, exactly as the repair card refuses it, instead of the
+/// path being folded to `src/a/b.rs` and silently skipped.
+#[cfg(all(unix, feature = "lang-rust"))]
+#[test]
+fn prepare_repair_refuses_an_edited_backslash_named_source_file() -> Result<(), String> {
+    const TIMEOUT: Duration = Duration::from_mins(3);
+    const LIB: &str = "src/a\\b.rs";
+    let root = install_b4_repair_ready_fixture()?;
+    let _cleanup = FixtureGuard { root: root.clone() };
+    std::fs::write(root.join(".gitignore"), "/target/\n").map_err(|error| error.to_string())?;
+    std::fs::write(
+        root.join("Cargo.toml"),
+        "[package]\nname = \"mcp-journey-fixture\"\nversion = \"0.0.0\"\nedition = \"2024\"\n\n[lib]\nname = \"mcp_journey_fixture\"\npath = \"src/a\\\\b.rs\"\n\n[workspace]\n",
+    )
+    .map_err(|error| error.to_string())?;
+    std::fs::rename(root.join("src/lib.rs"), root.join(LIB)).map_err(|error| error.to_string())?;
+    commit_fixture(&root, "library root with a backslash in its file name")?;
+    if !root.join(LIB).is_file() || root.join("src/a").exists() {
+        return Err("fixture must hold one file named `a\\b.rs` inside `src/`".to_string());
+    }
+    let mut session = SequentialStdio::spawn(&root)?;
+    session.call("discover", "server/discover", json!({}), TIMEOUT)?;
+    let reply = session.call_tool("refresh", "ripr_refresh", json!({}), TIMEOUT)?;
+    structured_tool_success(&reply, "ripr_refresh")?;
+    let listed = session.call_tool("list", "ripr_list_gaps", json!({}), TIMEOUT)?;
+    let listed = structured_tool_success(&listed, "ripr_list_gaps")?;
+    let ready = listed["items"]
+        .as_array()
+        .ok_or("list omitted items")?
+        .iter()
+        .find(|item| item["repair_packet_ready"] == true)
+        .cloned()
+        .ok_or_else(|| format!("control must yield a repair-ready item: {listed}"))?;
+    let id = ready["canonical_id"]
+        .as_str()
+        .ok_or("ready item lost its canonical id")?
+        .to_string();
+    // Negative control: the unchanged tree prepares a ready transaction.
+    let control = session.call_tool(
+        "control",
+        "ripr_prepare_repair",
+        json!({ "canonical_id": id }),
+        TIMEOUT,
+    )?;
+    let control = structured_prepare_document(&control, "unchanged prepare")?;
+    if control.get("repair_packet_ready") != Some(&json!(true)) {
+        return Err(format!("unchanged tree must prepare: {control}"));
+    }
+    let path = root.join(LIB);
+    let mut changed = std::fs::read(&path).map_err(|error| error.to_string())?;
+    changed.extend_from_slice(b"\n// edited after the snapshot\n");
+    std::fs::write(&path, changed).map_err(|error| error.to_string())?;
+    for (tool, call_id) in [
+        ("ripr_get_repair_card", "card"),
+        ("ripr_prepare_repair", "prepare"),
+    ] {
+        let reply = session.call_tool(call_id, tool, json!({ "canonical_id": id }), TIMEOUT)?;
+        let result = reply.get("result").ok_or("reply lost its result")?;
+        if result.pointer("/isError") != Some(&json!(true))
+            || result.pointer("/structuredContent/failure/code") != Some(&json!("stale_snapshot"))
+            || result
+                .pointer("/structuredContent/repair_packet_ready")
+                .is_some()
+            || result
+                .pointer("/structuredContent/failure/detail")
+                .and_then(Value::as_str)
+                .is_none_or(|detail| !detail.contains("changed on disk"))
+        {
+            return Err(format!(
+                "{tool} must refuse the edited backslash-named file as stale_snapshot: {reply}"
+            ));
+        }
+    }
+    Ok(())
+}
+
 /// Worktree repair cards and readiness (#7357): with established producer
 /// custody the saved-worktree refresh serves the same repair-ready item, card
 /// and attempt the committed refresh serves for the same input, and a dirty

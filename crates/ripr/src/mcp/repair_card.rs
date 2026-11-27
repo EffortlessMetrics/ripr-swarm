@@ -280,21 +280,34 @@ pub(super) fn verify_consumed_source_custody(
     verify_consumed_paths(root, snapshot, item, producers, &evidence_paths, surface)
 }
 
-/// Repo-relative spelling the captured digests are keyed by: forward slashes
-/// and no leading `./` (repeated `./` and `.//` included). Absolute and `..`
-/// paths are left as written so they stay uncapturable.
-pub(super) fn normalize_item_path(file: &Path) -> PathBuf {
-    let unified = file.to_string_lossy().replace('\\', "/");
+/// The native repo-relative path a rendered item or fix-site spelling names,
+/// in the spelling the captured digests are keyed by (the inventory records
+/// the native relative path it read). Rendered text is stable path text with
+/// a `./` prefix on item locations, so the leading `./` (repeated `./` and
+/// `.//` included) is dropped and the `%XX` layer is decoded: on Unix a
+/// literal backslash is a file-name byte the renderer spells `%5C`, and it
+/// decodes back to that byte rather than to a separator (#15908). Only on
+/// Windows is a backslash a separator, so only there is it unified to `/`
+/// before the prefix is stripped. Absolute and `..` paths are left as written
+/// so they stay uncapturable.
+pub(super) fn native_item_path(rendered: &str) -> PathBuf {
+    let unified = if cfg!(windows) {
+        rendered.replace('\\', "/")
+    } else {
+        rendered.to_string()
+    };
     let mut rest = unified.as_str();
     while let Some(stripped) = rest.strip_prefix("./") {
         rest = stripped.trim_start_matches('/');
     }
-    PathBuf::from(rest)
+    crate::analysis::decode_stable_path_text(rest)
 }
 
-/// The same digest comparison over an explicit path set, for an item with no
-/// bound seam (#15240): the caller names the files, the shared custody owner
-/// decides, and the typed `stale_snapshot` refusal is identical.
+/// The same digest comparison over an explicit set of native repo-relative
+/// paths (#15240): the caller names the files in their native spelling (seam
+/// evidence paths as recorded, rendered item paths through
+/// [`native_item_path`]); nothing here rewrites a path, the shared custody
+/// owner decides, and the typed `stale_snapshot` refusal is identical.
 pub(super) fn verify_consumed_paths(
     root: &Path,
     snapshot: &Snapshot,
@@ -303,7 +316,6 @@ pub(super) fn verify_consumed_paths(
     paths: &[PathBuf],
     surface: &str,
 ) -> Result<(), AttemptFailure> {
-    let paths: Vec<PathBuf> = paths.iter().map(|path| normalize_item_path(path)).collect();
     if let Some(drift) = producers
         .consumed_sources
         .first_drift(paths.iter().map(PathBuf::as_path), |relative| {
@@ -1574,12 +1586,15 @@ mod tests {
     /// #15240: preparing a bound item also checks the item's own file and its
     /// fix-site file, which the seam's evidence files need not include. Here
     /// the fix site (`tests/checkout.rs`) is not one of the seam's evidence
-    /// files (`src/pricing.rs`, `tests/pricing.rs`); unchanged bytes are not
-    /// refused as stale (control), changed bytes are.
+    /// files (`src/pricing.rs`, `tests/pricing.rs`); unchanged bytes prepare
+    /// the ready transaction (control), changed bytes are refused as stale.
     #[test]
     fn prepare_checks_a_bound_item_fix_site_outside_the_seam_evidence() -> Result<(), String> {
         let dir = temp_root()?;
+        std::fs::create_dir_all(dir.join("src")).map_err(|error| error.to_string())?;
         std::fs::create_dir_all(dir.join("tests")).map_err(|error| error.to_string())?;
+        std::fs::write(dir.join("src/lib.rs"), b"fn a() {}\n")
+            .map_err(|error| error.to_string())?;
         let fix = dir.join("tests/checkout.rs");
         std::fs::write(&fix, b"fn t() {}\n").map_err(|error| error.to_string())?;
         let entry = weakly_gripped_entry();
@@ -1608,7 +1623,10 @@ mod tests {
         if fix_site.as_deref() != Some("tests/checkout.rs") {
             return Err(format!("fixture fix site moved: {fix_site:?}"));
         }
+        // The item file is captured too: a bound item's own file with no
+        // digest is refused as not verifiable, which would mask the control.
         let mut consumed = crate::analysis::consumed_source::ConsumedRustSources::default();
+        consumed.record(Path::new("src/lib.rs"), Some(b"fn a() {}\n"));
         consumed.record(Path::new("tests/checkout.rs"), Some(b"fn t() {}\n"));
         snapshot.card_producers = Some(SnapshotCardProducers {
             config: RiprConfig::default(),
@@ -1621,13 +1639,13 @@ mod tests {
         let prepare = |session: &mut WorkspaceSession| {
             session.prepare_repair("gap:test:1", None, Some("root:sha256:a"), Some(&dir))
         };
-        if let Err(failure) = prepare(&mut session)
-            && failure.code == CODE_STALE_SNAPSHOT
+        // Control: the unchanged tree mints the ready transaction.
+        let control = prepare(&mut session)
+            .map_err(|failure| format!("unchanged bound item must prepare: {}", failure.detail))?;
+        if control.pointer("/repair_packet_ready") != Some(&serde_json::Value::Bool(true))
+            || control.pointer("/attempt/attempt_id").is_none()
         {
-            return Err(format!(
-                "unchanged fix site must not be stale: {}",
-                failure.detail
-            ));
+            return Err(format!("unchanged bound item must be ready: {control}"));
         }
         std::fs::write(&fix, b"fn changed() {}\n").map_err(|error| error.to_string())?;
         let result = prepare(&mut session);
@@ -1641,6 +1659,37 @@ mod tests {
             }
             other => Err(format!("changed bound fix site must be stale: {other:?}")),
         }
+    }
+
+    /// #15908/#15240: a rendered item or fix-site spelling converts to the
+    /// native digest key without folding a Unix file-name backslash into a
+    /// separator; `%5C` decodes to that byte, and a `./` prefix is dropped.
+    #[test]
+    fn native_item_path_keeps_a_unix_backslash_file_name_byte() -> Result<(), String> {
+        let cases: [(&str, &str); 3] = [
+            ("./src/lib.rs", "src/lib.rs"),
+            (
+                "src/a%5Cb.rs",
+                if cfg!(windows) {
+                    "src/a/b.rs"
+                } else {
+                    "src/a\\b.rs"
+                },
+            ),
+            ("src/discount%25.rs", "src/discount%.rs"),
+        ];
+        for (rendered, native) in cases {
+            if native_item_path(rendered) != Path::new(native) {
+                return Err(format!(
+                    "{rendered}: expected {native}, got {}",
+                    native_item_path(rendered).display()
+                ));
+            }
+        }
+        if cfg!(unix) && native_item_path("src\\lib.rs") == Path::new("src/lib.rs") {
+            return Err("a Unix backslash must stay a file-name byte".to_string());
+        }
+        Ok(())
     }
 
     #[test]

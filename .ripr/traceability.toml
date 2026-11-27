@@ -17368,6 +17368,13 @@ tests = [
   "crates/ripr/tests/mcp_sdk.rs",
   "crates/ripr/tests/mcp_stdio.rs",
   "crates/ripr/tests/mcp_stdio.rs::resource_reads_match_tools_after_refresh",
+  "crates/ripr/tests/mcp_stdio.rs::prepare_repair_refuses_source_changed_after_the_snapshot",
+  "crates/ripr/tests/mcp_stdio.rs::prepare_repair_refuses_an_edited_backslash_named_source_file",
+  "crates/ripr/src/mcp/repair.rs::tests::ready_unbound_item_is_refused_when_its_files_changed",
+  "crates/ripr/src/mcp/repair.rs::tests::unbound_item_with_dot_slash_file_is_checked_and_uncaptured_is_refused",
+  "crates/ripr/src/mcp/repair.rs::tests::custody_normalizes_spellings_splits_refusals_and_discloses_gaps",
+  "crates/ripr/src/mcp/repair_card.rs::tests::prepare_checks_a_bound_item_fix_site_outside_the_seam_evidence",
+  "crates/ripr/src/mcp/repair_card.rs::tests::native_item_path_keeps_a_unix_backslash_file_name_byte",
 ]
 code = [
   "crates/ripr/src/mcp/repair.rs",

@@ -372,10 +372,18 @@ digests of the files the card's evidence is bound to: an edit or commit after
 `ripr_prepare_repair` runs the same shared check before it creates or replays
 a transaction, ahead of the ineligible (negative) documents, and refuses with
 the same typed `stale_snapshot` (#15240) when a checked file changed or was
-deleted. The checked files are those with a captured digest that the item's
-evidence is bound to (an item without a bound seam is checked over its own
-file and fix-site file); a proposed new test file with no captured digest is
-not checked. Paths are compared after normalizing `./` and backslash spellings. A ready Rust item whose own file has no captured digest (an absolute or `..` path, or an unavailable capture) is refused with `stale_snapshot`, `data.custody: "not_verifiable"` and a recovery that does not promise `ripr_refresh` will clear it. Non-Rust items and fix-site files with no captured digest are not custody-checked; a ready packet says so in `limitations`. A committed refresh whose findings and checkout Rust files were not
+deleted. The checked files are those with a captured digest among the bound
+seam's evidence files plus, for every item, its own file and fix-site file.
+Seam evidence paths are compared in their native spelling; rendered item and
+fix-site paths drop a leading `./` and decode stable path text, so on Unix a
+literal backslash stays a file-name byte (`src/a\b.rs` is not `src/a/b.rs`)
+and only on Windows is it a separator. A ready Rust item whose own file, or an
+existing test its fix site extends, has no captured digest (an absolute or
+`..` path, or an unavailable capture) is refused with `stale_snapshot`,
+`data.custody: "not_verifiable"` and a recovery that does not promise
+`ripr_refresh` will clear it. Non-Rust items and a proposed new test file with
+no captured digest are not custody-checked; a ready packet says so in
+`limitations`. A committed refresh whose findings and checkout Rust files were not
 shown to agree (a consumed file edited, staged, deleted or changed during the
 refresh, or any uncommitted or untracked Rust source or test file, including
 one outside the diff) likewise withholds repair cards (`incomplete_inventory`)

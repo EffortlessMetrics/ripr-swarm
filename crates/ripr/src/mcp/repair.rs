@@ -1192,90 +1192,89 @@ impl WorkspaceSession {
                     "restart the server with `ripr mcp --stdio --root <repository>` and retry",
                 ));
             };
-            let fix_file = fix_site_file(item);
-            match producers
+            // The packet hands out the item's file and its fix site as the
+            // edit surface, which a bound seam's evidence files need not
+            // include (for example a fix-site test file that is not a related
+            // test), so both are checked for every item, bound or not. They
+            // are rendered stable path text; the digests are keyed by native
+            // relative paths, so each is converted without rewriting a Unix
+            // file-name byte (#15908).
+            let item_file = super::repair_card::native_item_path(&item.file);
+            let fix_site = item.repair_readiness.fix_site.as_ref();
+            let fix_path = fix_site
+                .filter(|site| !site.file.is_empty())
+                .map(|site| super::repair_card::native_item_path(&site.file));
+            if let Some(binding) = producers
                 .bindings
                 .iter()
                 .find(|binding| binding.item_canonical_id == item.canonical_id)
             {
-                Some(binding) => {
-                    super::repair_card::verify_consumed_source_custody(
-                        root,
-                        snapshot,
-                        item,
-                        producers,
-                        &binding.seam,
-                        "repair preparation",
-                    )?;
-                    // The packet hands out the item's file and its fix site as
-                    // the edit surface, which the seam's evidence files need
-                    // not include (for example a fix-site test file that is
-                    // not a related test), so check them too.
-                    let mut paths = vec![std::path::PathBuf::from(&item.file)];
-                    if !fix_file.is_empty() {
-                        paths.push(std::path::PathBuf::from(&fix_file));
-                    }
-                    super::repair_card::verify_consumed_paths(
-                        root,
-                        snapshot,
-                        item,
-                        producers,
-                        &paths,
-                        "repair preparation",
-                    )?;
-                }
-                None => {
-                    // An item with no bound seam is checked over its own file
-                    // and its fix-site file (normalized like the digests).
-                    let item_file = super::repair_card::normalize_item_path(Path::new(&item.file));
-                    let mut paths = vec![item_file.clone()];
-                    if !fix_file.is_empty() {
-                        paths.push(std::path::PathBuf::from(&fix_file));
-                    }
-                    super::repair_card::verify_consumed_paths(
-                        root,
-                        snapshot,
-                        item,
-                        producers,
-                        &paths,
-                        "repair preparation",
-                    )?;
-                    if item_file.extension().is_none_or(|ext| ext != "rs") {
-                        custody_notes.push(format!(
-                            "source custody is not checked for `{}`: only Rust source files carry captured digests, so a change after the snapshot is not detected for this item",
-                            item_file.display()
-                        ));
-                    } else if item.repair_readiness.ready
-                        && producers.consumed_sources.digest(&item_file).is_none()
-                    {
-                        // The path cannot be captured at all (absolute, `..`,
-                        // unavailable or conflicting capture, empty custody):
-                        // a refresh cannot clear it, so say so and fail closed.
-                        return Err(AttemptFailure::new(
-                            super::workspace::CODE_STALE_SNAPSHOT,
-                            format!(
-                                "repair preparation for canonical item {} is refused: source custody cannot be verified for `{}` because the snapshot holds no captured digest for it",
-                                item.canonical_id,
-                                item_file.display()
-                            ),
-                            "ripr_refresh will not clear this: the file is outside the captured Rust corpus or its capture was unavailable; read the item with ripr_get_gap, or run `ripr agent packet` in the repository",
-                        )
-                        .with_data(json!({
-                            "current_snapshot_id": snapshot.snapshot_id,
-                            "custody": "not_verifiable",
-                            "path": item_file.display().to_string(),
-                        })));
-                    }
-                }
+                // Seam evidence paths are native already: passed unchanged.
+                super::repair_card::verify_consumed_source_custody(
+                    root,
+                    snapshot,
+                    item,
+                    producers,
+                    &binding.seam,
+                    "repair preparation",
+                )?;
             }
-            if !fix_file.is_empty() {
-                let fix_path = super::repair_card::normalize_item_path(Path::new(&fix_file));
-                if producers.consumed_sources.digest(&fix_path).is_none() {
-                    custody_notes.push(format!(
-                        "source custody is not checked for the fix-site file `{}`: the snapshot holds no captured digest for it (for example a proposed new test file)",
-                        fix_path.display()
-                    ));
+            let mut paths = vec![item_file.clone()];
+            paths.extend(fix_path.clone());
+            super::repair_card::verify_consumed_paths(
+                root,
+                snapshot,
+                item,
+                producers,
+                &paths,
+                "repair preparation",
+            )?;
+            // `first_drift` skips a path with no captured digest, so an edit
+            // surface that custody cannot vouch for must not ride a ready
+            // packet silently: a ready Rust item file, or an existing test the
+            // fix site extends, with no digest fails closed.
+            let not_verifiable = |path: &Path, role: &str| {
+                AttemptFailure::new(
+                    super::workspace::CODE_STALE_SNAPSHOT,
+                    format!(
+                        "repair preparation for canonical item {} is refused: source custody cannot be verified for {role} `{}` because the snapshot holds no captured digest for it",
+                        item.canonical_id,
+                        path.display()
+                    ),
+                    "ripr_refresh will not clear this: the file is outside the captured Rust corpus or its capture was unavailable; read the item with ripr_get_gap, or run `ripr agent packet` in the repository",
+                )
+                .with_data(json!({
+                    "current_snapshot_id": snapshot.snapshot_id,
+                    "custody": "not_verifiable",
+                    "path": path.display().to_string(),
+                }))
+            };
+            let is_rust = |path: &Path| path.extension().is_some_and(|ext| ext == "rs");
+            if !is_rust(&item_file) {
+                custody_notes.push(format!(
+                    "source custody is not checked for `{}`: only Rust source files carry captured digests, so a change after the snapshot is not detected for this item",
+                    item_file.display()
+                ));
+            } else if item.repair_readiness.ready
+                && producers.consumed_sources.digest(&item_file).is_none()
+            {
+                // The path cannot be captured at all (absolute, `..`,
+                // unavailable or conflicting capture, empty custody): a
+                // refresh cannot clear it, so say so and fail closed.
+                return Err(not_verifiable(&item_file, "the item file"));
+            }
+            if let (Some(site), Some(fix_path)) = (fix_site, fix_path.as_ref())
+                && producers.consumed_sources.digest(fix_path).is_none()
+            {
+                if item.repair_readiness.ready && site.new_test_kind.is_none() && is_rust(fix_path)
+                {
+                    // An existing test the packet tells the agent to extend.
+                    return Err(not_verifiable(fix_path, "the fix-site file"));
                 }
+                custody_notes.push(format!(
+                    "source custody is not checked for the fix-site file `{}`: the snapshot holds no captured digest for it (for example a proposed new test file)",
+                    fix_path.display()
+                ));
             }
         }
         let readiness = &item.repair_readiness;
@@ -2864,11 +2863,13 @@ pub(super) mod tests {
         Ok(())
     }
 
-    /// #15240: spelling variants (`./`, `.//`, backslash) of the item file and
-    /// the fix-site file still hit their captured digests; drift carries the
-    /// current snapshot id; an uncapturable ready Rust path refuses with a
-    /// recovery that does not promise a refresh; a non-Rust item discloses
-    /// that custody was not checked; the shared check normalizes bound paths.
+    /// #15240: spelling variants (`./`, `.//`, and on Windows backslash
+    /// separators) of the item file and the fix-site file still hit their
+    /// captured digests; drift carries the current snapshot id; an
+    /// uncapturable ready Rust path (or an existing fix-site test with no
+    /// digest) refuses with a recovery that does not promise a refresh; a
+    /// non-Rust item and a proposed new test file disclose that custody was
+    /// not checked; on Unix a literal backslash stays a file-name byte.
     #[test]
     fn custody_normalizes_spellings_splits_refusals_and_discloses_gaps() -> Result<(), String> {
         let dir = unique_test_dir("custody-variants")?;
@@ -2918,11 +2919,14 @@ pub(super) mod tests {
         };
         // Spelling variants of the item file and the fix-site file: control
         // prepares unchanged, then each is stale after an edit.
-        for (item_file, fix_file) in [
+        let mut variants = vec![
             ("./src/lib.rs", "./tests/checkout.rs"),
             (".//src/lib.rs", "tests/checkout.rs"),
-            ("src\\lib.rs", ".\\tests\\checkout.rs"),
-        ] {
+        ];
+        if cfg!(windows) {
+            variants.push(("src\\lib.rs", ".\\tests\\checkout.rs"));
+        }
+        for (item_file, fix_file) in variants {
             let mut session = build(item_file, fix_file, &both)?;
             prepare(&mut session).map_err(|failure| {
                 format!("{item_file}: control must prepare: {}", failure.detail)
@@ -2960,8 +2964,33 @@ pub(super) mod tests {
                 "non-Rust item must disclose unchecked custody: {notes}"
             ));
         }
-        // A fix-site file with no captured digest is disclosed too.
+        // An existing fix-site test with no captured digest is refused: it is
+        // the file the agent is told to extend.
         let mut session = build("src/lib.rs", "tests/new_test.rs", &both[..1])?;
+        match prepare(&mut session) {
+            Err(failure)
+                if failure.code == CODE_STALE_SNAPSHOT
+                    && failure.detail.contains("tests/new_test.rs")
+                    && failure.data.get("custody") == Some(&json!("not_verifiable")) => {}
+            other => {
+                return Err(format!(
+                    "uncaptured existing fix site must refuse: {other:?}"
+                ));
+            }
+        }
+        // A proposed new test file with no captured digest is disclosed.
+        let mut session = build("src/lib.rs", "tests/new_test.rs", &both[..1])?;
+        for item in &mut session
+            .last_good
+            .as_mut()
+            .and_then(Arc::get_mut)
+            .ok_or("fixture snapshot must be uniquely owned")?
+            .items
+        {
+            if let Some(site) = item.repair_readiness.fix_site.as_mut() {
+                site.new_test_kind = Some("integration");
+            }
+        }
         let packet = prepare(&mut session).map_err(|failure| failure.detail)?;
         if !packet["limitations"]
             .to_string()
@@ -2969,7 +2998,24 @@ pub(super) mod tests {
         {
             return Err(format!("uncaptured fix site must be disclosed: {packet}"));
         }
-        // The shared check the bound-seam path uses normalizes its paths.
+        // On Unix a rendered backslash is never a separator: `src\lib.rs` is
+        // one file name with no captured digest, so it fails closed rather
+        // than borrowing the digest of `src/lib.rs`.
+        if cfg!(unix) {
+            let mut session = build("src\\lib.rs", "tests/checkout.rs", &both)?;
+            match prepare(&mut session) {
+                Err(failure)
+                    if failure.code == CODE_STALE_SNAPSHOT
+                        && failure.data.get("custody") == Some(&json!("not_verifiable")) => {}
+                other => {
+                    return Err(format!(
+                        "a Unix backslash file name must not fold to a separator: {other:?}"
+                    ));
+                }
+            }
+        }
+        // Rendered spellings convert to the native digest key once; the
+        // shared check itself compares the native paths it is given.
         let session = build("src/lib.rs", "tests/checkout.rs", &both)?;
         let snapshot = session.last_good.as_ref().ok_or("snapshot")?;
         let producers = snapshot.card_producers.as_ref().ok_or("producers")?;
@@ -2980,7 +3026,7 @@ pub(super) mod tests {
             snapshot,
             item,
             producers,
-            &[std::path::PathBuf::from(".//src/lib.rs")],
+            &[super::super::repair_card::native_item_path(".//src/lib.rs")],
             "repair card",
         );
         std::fs::remove_dir_all(&dir).map_err(|e| e.to_string())?;
