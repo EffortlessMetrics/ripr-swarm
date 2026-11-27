@@ -39,7 +39,8 @@ Next: drill into the top finding:
   (finding id, for explain/context)
   ripr explain --root <cwd>/fixtures/rust_predicate_appended_str_arm_false_side_only/input --diff <cwd>/fixtures/rust_predicate_appended_str_arm_false_side_only/diff.patch --mode fast probe:src_lib.rs:return_value:a4b89ee2
   ripr context --root <cwd>/fixtures/rust_predicate_appended_str_arm_false_side_only/input --diff <cwd>/fixtures/rust_predicate_appended_str_arm_false_side_only/diff.patch --mode fast --at probe:src_lib.rs:return_value:a4b89ee2
-  no repair start offered: could not establish which revisions the check analyzed; inspect the current workspace and rerun `ripr check`
+  (spot id, for repair)
+  ripr repair be1f5426fe8b6e38 --root <cwd>/fixtures/rust_predicate_appended_str_arm_false_side_only/input
 Write a test for it:
   ripr agent stub --root <cwd>/fixtures/rust_predicate_appended_str_arm_false_side_only/input --at src/lib.rs:2 --kind return_value
 
