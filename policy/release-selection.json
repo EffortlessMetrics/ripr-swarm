@@ -889,6 +889,20 @@
       ],
       "candidate_effect": "Server archive qualification measures executable, staged-payload and archive bytes per target and enforces size ceilings (#14750); the five-target receipts from run 43722063769 are a rehearsal on af88836e4d, and the producers run again on the frozen candidate.",
       "non_claim": "The release does not claim exact server payload or archive size receipts until the producers run on the frozen candidate under #2769. The shipped build profile is the profile on main; the opt-level selection in #14777 (draft #14753) is not selected for 0.11.0 unless it lands before the cut."
+    },
+    {
+      "claim_id": "w7-preflight-ad291d-retention",
+      "owner_issue": 4158,
+      "materiality": "release_required",
+      "resolution": "historical_evidence_only",
+      "proof_refs": [
+        "https://github.com/EffortlessMetrics/ripr-swarm/pull/3529",
+        "https://github.com/EffortlessMetrics/ripr-swarm/issues/4158#issuecomment-6805551755",
+        "https://github.com/EffortlessMetrics/ripr-swarm/actions/runs/33168693251",
+        "docs/releases/0.11.0-cut-checklist.md"
+      ],
+      "candidate_effect": "Historical W7/source preflight PR #3529 (branch release/0.11.0-w7-source-preflight-ad291d at 446c3ebaa33629eb583174a583695b6a26034a3b, closed unmerged 2026-09-29; frozen W7 pin refs/tags/ripr-release-0.11.0-83217e97ec6847db41d757f57279a8b1ca433fe6 paired with source commit ad291d1bc936d00847d9712d2adf9ea56ca19533) is explicitly superseded for 0.11.0 release purposes by the replacement 0.11.0 source-integration transaction under docs/RELEASE_TRANSACTION.md (EffortlessMetrics/ripr#1768, PR #16016, #1609, #12794) while retaining the branch, protected W7 pin tag under active ruleset 20661783, run 33168693251 metadata, and PR #3529 SHA-256 digests as historical evidence.",
+      "non_claim": "No historical consumption receipt exists or is manufactured for PR #3529 or W7 pin 83217e97ec6847db41d757f57279a8b1ca433fe6: neither intermediate J6 join EffortlessMetrics/ripr#1704 nor the replacement transaction consumed the ad291d preflight packet, and hosted artifact 9684707162 expired past its 2026-11-26 retention window (verified HTTP 404 with 0 artifacts on run 33168693251 on 2026-11-27)."
     }
   ],
   "outside_selection": [
