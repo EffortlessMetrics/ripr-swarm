@@ -118,6 +118,23 @@ pub(crate) fn note_unknown_command(token: &str, message: &str) {
     });
 }
 
+/// Note an unknown `ripr help <topic>`. It keeps the `unknown_command` code
+/// (the topic names no command), but `next` is `ripr help`, the listing route
+/// the message names (#16374).
+pub(crate) fn note_unknown_help_topic(token: &str, message: &str) {
+    record(RefusalBlock {
+        code: CODE_UNKNOWN_COMMAND.to_string(),
+        message: message.to_string(),
+        token: (!token.is_empty()).then(|| token.to_string()),
+        next: Some(RefusalNext {
+            purpose: PURPOSE_LIST_COMMANDS,
+            command: "ripr help".to_string(),
+        }),
+        disposition: None,
+        choices: None,
+    });
+}
+
 /// Note a value flag that arrived without a value (or with an empty one).
 /// The token is the flag; the boundary fills the help route from argv.
 pub(crate) fn note_missing_value(flag: &str, message: &str) {

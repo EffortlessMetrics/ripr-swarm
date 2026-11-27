@@ -353,7 +353,7 @@ fn unknown_help_topic_error(topic: &str) -> Option<String> {
     let message = format!(
         "unknown help topic {topic:?}.{hint} Run `ripr help` to list commands, or `ripr help workflow` to list workflows."
     );
-    crate::cli::usage_refusal::note_unknown_command(topic, &message);
+    crate::cli::usage_refusal::note_unknown_help_topic(topic, &message);
     Some(message)
 }
 
