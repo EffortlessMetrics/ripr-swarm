@@ -1,0 +1,2 @@
+crates/ripr/src/app/agent_receipt.rs|canonicalize agent receipt root {} failed: {err}
+crates/ripr/src/app/agent_receipt.rs|read agent receipt {label} snapshot {} failed: {err}
