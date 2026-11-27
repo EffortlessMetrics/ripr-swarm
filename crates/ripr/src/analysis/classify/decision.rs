@@ -236,11 +236,7 @@ pub(in crate::analysis) fn is_unsafe_obligation(probe: &Probe) -> bool {
 /// contract marks the reason as not changing classification, so the class,
 /// stages and gap stay what the probe's own evidence gives.
 pub(in crate::analysis) fn carry_enclosing_unsafe_obligation(finding: &mut Finding) {
-    if !finding
-        .stop_reasons
-        .iter()
-        .any(|reason| *reason == StopReason::UnsafeObligation)
-    {
+    if !finding.stop_reasons.contains(&StopReason::UnsafeObligation) {
         finding.stop_reasons.push(StopReason::UnsafeObligation);
         finding
             .stop_reasons
