@@ -3262,8 +3262,9 @@ keys); do not take the next number.
 - #16436 (a default runner bound under a suite spelling; registration fact in
   RIPR-SPEC-0027): `a_default_runner_named_like_a_suite_registers_its_tests`
   in the same file reads `exposed` for `suite`/`describe` bindings of a tape
-  or `node:test` default and for a genuine Vitest `suite`, and
-  `no_static_path` for mocha's default, `.skip` and a shadowing parameter.
+  or `node:test` default (bare, `.only` or inside a `describe`) and for a
+  genuine Vitest `suite`, and `no_static_path` for mocha's default, `.skip`,
+  a suite-level shadowing local and `import { test as describe }`.
 - #16431 (renamed default runner binding; registration fact in
   RIPR-SPEC-0027):
   `crates/ripr/src/analysis/language/typescript/tests/renamed_default_runner_tests.rs`

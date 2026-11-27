@@ -167,6 +167,19 @@ fn a_default_runner_named_like_a_suite_registers_its_tests() -> Result<(), Strin
             "import suite from 'node:test';\n",
             NODE.replace("check(", "suite("),
         ),
+        (
+            "tape-suite-only",
+            "const suite = require('tape');\n",
+            TAPE.replace("check(", "suite.only("),
+        ),
+        (
+            "tape-suite-in-describe",
+            "const suite = require('tape');\n",
+            format!(
+                "describe('cart', () => {{\n{}}});\n",
+                TAPE.replace("check(", "suite(")
+            ),
+        ),
         // A real suite import still opens its body.
         (
             "vitest-named-suite",
@@ -188,14 +201,22 @@ fn a_default_runner_named_like_a_suite_registers_its_tests() -> Result<(), Strin
             "const suite = require('tape');\n",
             TAPE.replace("check(", "suite.skip("),
         ),
-        // The suite-spelled call resolves to the local, not the runner.
+        // A suite-level binding shadows the runner. `tape-suite-in-describe`
+        // is the same file without the shadowing local.
         (
             "shadowed-suite-spelling",
             "const suite = require('tape');\n",
             format!(
-                "function wrap(suite: (name: string, run: (t: any) => void) => void) {{\n{}}}\n",
+                "describe('cart', () => {{\n  const suite = (name: string, run: (t: any) => void) => {{}};\n{}}});\n",
                 TAPE.replace("check(", "suite(")
             ),
+        ),
+        // A renamed named member under a suite spelling stays unindexed
+        // and disclosed as a kind mismatch.
+        (
+            "named-test-as-describe",
+            "import { test as describe } from 'node:test';\n",
+            NODE.replace("check(", "describe("),
         ),
     ] {
         let class = class_for(label, &format!("{prelude}{IMPORT}{body}"))?;

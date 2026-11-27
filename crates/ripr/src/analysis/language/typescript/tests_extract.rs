@@ -3946,10 +3946,13 @@ pub(crate) fn test_name_and_assertions_from_call(
 /// (`{ test: t } = require('node:assert')`, `{ deepEqual: eq }`) resolves to
 /// no runner registration, and a local rebinding of the name shadows it.
 /// Whether a call spelled like a suite (`suite(...)`, `describe(...)`) is
-/// bound to a runner's `test` function, such as a tape, ava or node:test
-/// default import named `suite` (#16436). Such a call runs as a test, so it
-/// is read as one and not as a suite body. A suite-spelled call whose root
-/// resolves to a suite, or that is not a direct bare call, is unaffected.
+/// bound to the default export of a runner whose default is its `test`
+/// function, such as a tape, ava or node:test default bound as `suite`
+/// (#16436). Such a call runs as a test, so it is read as one and not as a
+/// suite body. It may be bare or go through an active modifier
+/// (`suite.only`), like the `test` spelling. A suite-spelled call whose root
+/// resolves to a suite, or a renamed named member (`import { test as
+/// describe }`, still disclosed as a kind mismatch), is unaffected.
 fn describe_spelling_registers_a_test(
     call: &oxc_ast::ast::CallExpression<'_>,
     registration: Option<&RegistrationScope>,
@@ -3958,13 +3961,8 @@ fn describe_spelling_registers_a_test(
         return false;
     };
     call_callee_is_active_declaration(call, TestDeclarationRoot::Describe)
-        && callee_root_name(&call.callee).is_some_and(|local| {
-            resolved
-                .context
-                .binds_renamed_registration_root(local, |member| {
-                    TestDeclarationRoot::Test.matches_identifier(member)
-                })
-        })
+        && callee_root_name(&call.callee)
+            .is_some_and(|local| resolved.context.binds_default_test_runner(local))
         && resolved
             .context
             .registration_is_known_in(call, false, &resolved.names)
@@ -5825,7 +5823,13 @@ impl UnextractedTestFinder<'_> {
                                 call,
                                 false,
                                 std::iter::empty(),
-                            ))
+                            )
+                            // A default runner bound under a suite spelling
+                            // is indexed as a test (#16436 review).
+                            && !(self.call_is_active_declaration(call, TestDeclarationRoot::Describe)
+                                && callee_root_name(&call.callee).is_some_and(|local| {
+                                    self.admission.binds_default_test_runner(local)
+                                })))
                 {
                     self.gap = Some((
                         self.source.line_for_offset(call.span.start as usize),
