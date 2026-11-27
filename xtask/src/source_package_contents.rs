@@ -11,8 +11,7 @@
 //! This check reads the actual `.crate` members and the module declarations
 //! in its packaged sources. A member fails when it is:
 //!
-//! - an integration test or bench target (`tests/**`, `benches/**`) outside the three
-//!   named product exceptions below; or
+//! - an integration test or bench target (`tests/**`, `benches/**`); or
 //! - the file of a module that no production build compiles: declared under
 //!   a `cfg` that is false whenever `test` and `kani` are off (`test`,
 //!   `all(test, not(windows))`, `kani`), or nested in such a module, or
@@ -27,15 +26,6 @@ use std::path::Path;
 
 use ra_ap_syntax::ast::{self, HasAttrs, HasModuleItem, HasName};
 use ra_ap_syntax::{AstNode, AstToken, Edition, SourceFile};
-
-/// The product manifest excludes these development files. The source-package
-/// checker retains its existing three exact `ripr` exceptions until #15216's
-/// installed-help qualification runs all 39 cases on the joined archive.
-const RIPR_PACKAGED_HELP_HARNESS: [&str; 3] = [
-    "tests/cli_help_hierarchy.rs",
-    "tests/common/help_contract.rs",
-    "tests/common/help_workspace.rs",
-];
 
 /// Reads every regular member of a `.crate` (gzip tar) below `top_dir/`,
 /// keyed by package-relative path.
@@ -82,19 +72,14 @@ pub(crate) fn read_crate_members(
 /// Checks a `.crate` file against the development-test exclusion contract.
 pub(crate) fn check_crate_file(package: &str, krate: &Path, version: &str) -> Result<(), String> {
     let members = read_crate_members(krate, &format!("{package}-{version}"))?;
-    check_source_package(package, &members)
-        .map_err(|err| format!("packaged {} {err}", krate.display()))
+    check_source_package(&members).map_err(|err| format!("packaged {} {err}", krate.display()))
 }
 
 /// Applies the contract to package-relative members.
-pub(crate) fn check_source_package(
-    package: &str,
-    members: &BTreeMap<String, Vec<u8>>,
-) -> Result<(), String> {
+pub(crate) fn check_source_package(members: &BTreeMap<String, Vec<u8>>) -> Result<(), String> {
     let mut refused: BTreeMap<String, &'static str> = BTreeMap::new();
     for path in members.keys() {
-        let exempt = package == "ripr" && RIPR_PACKAGED_HELP_HARNESS.contains(&path.as_str());
-        if (path.starts_with("tests/") || path.starts_with("benches/")) && !exempt {
+        if path.starts_with("tests/") || path.starts_with("benches/") {
             refused.insert(path.clone(), "integration test or bench target");
         }
     }
@@ -591,8 +576,8 @@ mod tests {
             .collect()
     }
 
-    fn refusal(package: &str, files: &[(&str, &str)]) -> Result<String, String> {
-        match check_source_package(package, &members(files)) {
+    fn refusal(files: &[(&str, &str)]) -> Result<String, String> {
+        match check_source_package(&members(files)) {
             Ok(()) => Err(format!("{files:?} must be refused")),
             Err(error) => Ok(error),
         }
@@ -606,11 +591,11 @@ mod tests {
             #[path = "../test_support.rs"] mod production;"#
         );
         let path = ("test_support.rs", "pub fn helper() {}");
-        let error = refusal("ripr", &[("src/lib.rs", gated), path])?;
+        let error = refusal(&[("src/lib.rs", gated), path])?;
         if !error.contains("test_support.rs (module compiled only") {
             return Err(error);
         }
-        check_source_package("ripr", &members(&[("src/lib.rs", &shared), path]))
+        check_source_package(&members(&[("src/lib.rs", &shared), path]))
     }
 
     #[test]
@@ -620,14 +605,14 @@ mod tests {
                 format!("{} {}", stringify!(include_str!("nested.txt")), include_str!("live.txt"))
             }"#;
         let live = ("src/live.txt", "yes");
-        check_source_package("ripr", &members(&[("src/lib.rs", lib), live]))?;
+        check_source_package(&members(&[("src/lib.rs", lib), live]))?;
         for path in ["src/fixture.txt", "src/nested.txt"] {
-            let error = refusal("ripr", &[("src/lib.rs", lib), live, (path, "unused")])?;
+            let error = refusal(&[("src/lib.rs", lib), live, (path, "unused")])?;
             if !error.contains(&format!("{path} (data read by no production include)")) {
                 return Err(error);
             }
         }
-        let error = refusal("ripr", &[("src/lib.rs", lib)])?;
+        let error = refusal(&[("src/lib.rs", lib)])?;
         if !error.contains("src/live.txt") {
             return Err(error);
         }
@@ -638,44 +623,38 @@ mod tests {
     fn cfg_accepts_the_optional_trailing_comma() -> Result<(), String> {
         let gated = "#[cfg(test,)] mod helpers;";
         let helpers = ("src/helpers.rs", "");
-        let error = refusal("ripr", &[("src/lib.rs", gated), helpers])?;
+        let error = refusal(&[("src/lib.rs", gated), helpers])?;
         if !error.contains("helpers.rs (module compiled only") {
             return Err(error);
         }
         let live = "#[cfg(not(test),)] mod helpers;";
-        check_source_package("ripr", &members(&[("src/lib.rs", live), helpers]))
+        check_source_package(&members(&[("src/lib.rs", live), helpers]))
     }
 
     #[test]
     fn production_modules_pass_including_test_named_ones() -> Result<(), String> {
-        check_source_package(
-            "ripr-contract",
-            &members(&[
-                ("Cargo.toml", ""),
-                ("README.md", ""),
-                (
-                    "src/lib.rs",
-                    "pub mod a;\nmod related_tests;\n#[cfg(not(test))]\nmod live;\n#[cfg(unix)]\nmod unix;\nmod inline { mod nested; }\n#[cfg(test)]\nmod tests;\n",
-                ),
-                ("src/a.rs", "mod b;\n"),
-                ("src/a/b.rs", ""),
-                ("src/related_tests.rs", ""),
-                ("src/live.rs", ""),
-                ("src/unix.rs", ""),
-                ("src/inline/nested.rs", ""),
-            ]),
-        )
+        check_source_package(&members(&[
+            ("Cargo.toml", ""),
+            ("README.md", ""),
+            (
+                "src/lib.rs",
+                "pub mod a;\nmod related_tests;\n#[cfg(not(test))]\nmod live;\n#[cfg(unix)]\nmod unix;\nmod inline { mod nested; }\n#[cfg(test)]\nmod tests;\n",
+            ),
+            ("src/a.rs", "mod b;\n"),
+            ("src/a/b.rs", ""),
+            ("src/related_tests.rs", ""),
+            ("src/live.rs", ""),
+            ("src/unix.rs", ""),
+            ("src/inline/nested.rs", ""),
+        ]))
     }
 
     #[test]
     fn commented_cfg_test_still_refuses_packaged_test_module() -> Result<(), String> {
-        let error = refusal(
-            "ripr-contract",
-            &[
-                ("src/lib.rs", "#[cfg(/* ordinary gate */ test)] mod hidden;"),
-                ("src/hidden.rs", ""),
-            ],
-        )?;
+        let error = refusal(&[
+            ("src/lib.rs", "#[cfg(/* ordinary gate */ test)] mod hidden;"),
+            ("src/hidden.rs", ""),
+        ])?;
         if !error.contains("src/hidden.rs (module compiled only in test or kani builds)") {
             return Err(format!("expected test-only module refusal, got {error}"));
         }
@@ -684,25 +663,22 @@ mod tests {
 
     #[test]
     fn test_only_modules_are_refused_whatever_their_name() -> Result<(), String> {
-        let error = refusal(
-            "ripr",
-            &[
-                (
-                    "src/lib.rs",
-                    "#[cfg(test)]\npub(crate) mod testing;\nmod a;\n#[cfg(kani)]\n#[path = \"proofs.rs\"]\nmod proofs;\n",
-                ),
-                ("src/testing/mod.rs", "mod fixture_git;\n"),
-                ("src/testing/fixture_git.rs", ""),
-                (
-                    "src/a.rs",
-                    "#[cfg(all(test, not(windows)))]\nmod hover_rows;\n#[cfg(test)]\nmod rows {\n    mod deep;\n}\n",
-                ),
-                ("src/a/hover_rows.rs", ""),
-                ("src/a/hover_rows/inner.rs", ""),
-                ("src/a/rows/deep.rs", ""),
-                ("src/proofs.rs", ""),
-            ],
-        )?;
+        let error = refusal(&[
+            (
+                "src/lib.rs",
+                "#[cfg(test)]\npub(crate) mod testing;\nmod a;\n#[cfg(kani)]\n#[path = \"proofs.rs\"]\nmod proofs;\n",
+            ),
+            ("src/testing/mod.rs", "mod fixture_git;\n"),
+            ("src/testing/fixture_git.rs", ""),
+            (
+                "src/a.rs",
+                "#[cfg(all(test, not(windows)))]\nmod hover_rows;\n#[cfg(test)]\nmod rows {\n    mod deep;\n}\n",
+            ),
+            ("src/a/hover_rows.rs", ""),
+            ("src/a/hover_rows/inner.rs", ""),
+            ("src/a/rows/deep.rs", ""),
+            ("src/proofs.rs", ""),
+        ])?;
         for member in [
             "src/testing/mod.rs",
             "src/testing/fixture_git.rs",
@@ -727,31 +703,25 @@ mod tests {
 
     #[test]
     fn build_script_modules_and_included_files_are_compiled() -> Result<(), String> {
-        check_source_package(
-            "ripr",
-            &members(&[
-                ("build.rs", "#[path = \"src/record.rs\"]\nmod record;\n"),
-                (
-                    "src/lib.rs",
-                    "// Shared with build.rs; the crate only unit-tests it.\n#[cfg(test)]\nmod record;\nmod swarm;\n",
-                ),
-                ("src/record.rs", ""),
-                (
-                    "src/swarm/mod.rs",
-                    "#[path = \"queue_live.rs\"]\nmod queue;\n",
-                ),
-                ("src/swarm/queue_live.rs", "include!(\"queue.rs\");\n"),
-                ("src/swarm/queue.rs", "pub fn run() {}\n"),
-            ]),
-        )?;
+        check_source_package(&members(&[
+            ("build.rs", "#[path = \"src/record.rs\"]\nmod record;\n"),
+            (
+                "src/lib.rs",
+                "// Shared with build.rs; the crate only unit-tests it.\n#[cfg(test)]\nmod record;\nmod swarm;\n",
+            ),
+            ("src/record.rs", ""),
+            (
+                "src/swarm/mod.rs",
+                "#[path = \"queue_live.rs\"]\nmod queue;\n",
+            ),
+            ("src/swarm/queue_live.rs", "include!(\"queue.rs\");\n"),
+            ("src/swarm/queue.rs", "pub fn run() {}\n"),
+        ]))?;
         // Without the build script, the shared module is test-only.
-        let error = refusal(
-            "ripr",
-            &[
-                ("src/lib.rs", "#[cfg(test)]\nmod record;\n"),
-                ("src/record.rs", ""),
-            ],
-        )?;
+        let error = refusal(&[
+            ("src/lib.rs", "#[cfg(test)]\nmod record;\n"),
+            ("src/record.rs", ""),
+        ])?;
         assert!(
             error.contains("src/record.rs (module compiled only"),
             "{error}"
@@ -762,26 +732,20 @@ mod tests {
     #[test]
     fn path_loaded_files_own_their_directory_and_inner_cfg_test_gates_a_file() -> Result<(), String>
     {
-        check_source_package(
-            "ripr",
-            &members(&[
-                ("src/lib.rs", "mod a;\n"),
-                ("src/a.rs", "#[path = \"x.rs\"]\nmod m;\n"),
-                ("src/x.rs", "mod c;\n"),
-                ("src/c.rs", ""),
-            ]),
-        )?;
-        let error = refusal(
-            "ripr",
-            &[
-                (
-                    "src/lib.rs",
-                    "mod helpers;\nmod inline {\n    #![cfg(test)]\n    mod deep;\n}\n",
-                ),
-                ("src/helpers.rs", "#![cfg(test)]\npub fn helper() {}\n"),
-                ("src/inline/deep.rs", ""),
-            ],
-        )?;
+        check_source_package(&members(&[
+            ("src/lib.rs", "mod a;\n"),
+            ("src/a.rs", "#[path = \"x.rs\"]\nmod m;\n"),
+            ("src/x.rs", "mod c;\n"),
+            ("src/c.rs", ""),
+        ]))?;
+        let error = refusal(&[
+            (
+                "src/lib.rs",
+                "mod helpers;\nmod inline {\n    #![cfg(test)]\n    mod deep;\n}\n",
+            ),
+            ("src/helpers.rs", "#![cfg(test)]\npub fn helper() {}\n"),
+            ("src/inline/deep.rs", ""),
+        ])?;
         assert!(
             error.contains("src/helpers.rs (module compiled only"),
             "{error}"
@@ -796,15 +760,12 @@ mod tests {
     #[test]
     fn source_data_must_be_read_by_production_code() -> Result<(), String> {
         let lib = "const SCHEMA: &str = include_str!(\"schema.json\");\n#[cfg(test)]\nconst FIXTURE: &str = include_str!(\"fixtures/a.json\");\n#[cfg(test)]\nmod tests {\n    const B: &[u8] = include_bytes!(\"fixtures/b.bin\");\n}\n";
-        let error = refusal(
-            "ripr",
-            &[
-                ("src/lib.rs", lib),
-                ("src/schema.json", "{}"),
-                ("src/fixtures/a.json", "{}"),
-                ("src/fixtures/b.bin", ""),
-            ],
-        )?;
+        let error = refusal(&[
+            ("src/lib.rs", lib),
+            ("src/schema.json", "{}"),
+            ("src/fixtures/a.json", "{}"),
+            ("src/fixtures/b.bin", ""),
+        ])?;
         assert!(
             error.contains("carries 2 development-test member(s)"),
             "{error}"
@@ -823,16 +784,13 @@ mod tests {
 
     #[test]
     fn a_production_module_or_include_missing_from_the_package_is_refused() -> Result<(), String> {
-        let error = refusal(
-            "ripr",
-            &[
-                (
-                    "src/lib.rs",
-                    "mod present;\nmod dropped;\nconst DATA: &str = include_str!(/* data */\n    r\"data.txt\");\nconst GEN: &str = include_str!(concat!(env!(\"OUT_DIR\"), \"/gen.txt\"));\npub fn banner() -> String { format!(\"{}\", include_str!(\"banner.txt\")) }\n#[cfg(test)]\nmod tests;\n",
-                ),
-                ("src/present/mod.rs", ""),
-            ],
-        )?;
+        let error = refusal(&[
+            (
+                "src/lib.rs",
+                "mod present;\nmod dropped;\nconst DATA: &str = include_str!(/* data */\n    r\"data.txt\");\nconst GEN: &str = include_str!(concat!(env!(\"OUT_DIR\"), \"/gen.txt\"));\npub fn banner() -> String { format!(\"{}\", include_str!(\"banner.txt\")) }\n#[cfg(test)]\nmod tests;\n",
+            ),
+            ("src/present/mod.rs", ""),
+        ])?;
         assert!(error.contains("lacks 3 file(s)"), "{error}");
         assert!(error.contains("src/banner.txt"), "{error}");
         assert!(error.contains("src/dropped.rs"), "{error}");
@@ -849,15 +807,12 @@ mod tests {
         // An inline module's inner `#![cfg(test)]` and a gated statement
         // both hide the include beneath them.
         let lib = "mod tests {\n    #![cfg(test)]\n    const A: &str = include_str!(\"a.txt\");\n}\npub fn f() {\n    #[cfg(test)]\n    let _b = include_str!(\"b.txt\");\n    let _c = include_str!(\"c.txt\");\n}\n";
-        let error = refusal(
-            "ripr",
-            &[
-                ("src/lib.rs", lib),
-                ("src/a.txt", ""),
-                ("src/b.txt", ""),
-                ("src/c.txt", ""),
-            ],
-        )?;
+        let error = refusal(&[
+            ("src/lib.rs", lib),
+            ("src/a.txt", ""),
+            ("src/b.txt", ""),
+            ("src/c.txt", ""),
+        ])?;
         assert!(
             error.contains("src/a.txt (data read by no production include)"),
             "{error}"
@@ -868,102 +823,66 @@ mod tests {
         );
         assert!(!error.contains("c.txt"), "{error}");
         // A `cfg_attr` that sets a `cfg` is refused; a lint-only one passes.
-        let error = refusal(
-            "ripr",
-            &[
-                (
-                    "src/lib.rs",
-                    "#[cfg_attr(not(test), cfg(test))]\nmod helpers;\n",
-                ),
-                ("src/helpers.rs", ""),
-            ],
-        )?;
+        let error = refusal(&[
+            (
+                "src/lib.rs",
+                "#[cfg_attr(not(test), cfg(test))]\nmod helpers;\n",
+            ),
+            ("src/helpers.rs", ""),
+        ])?;
         assert!(error.contains("not understood"), "{error}");
-        check_source_package(
-            "ripr",
-            &members(&[
-                (
-                    "src/lib.rs",
-                    "#[cfg_attr(test, warn(missing_docs))]\nmod lints;\n",
-                ),
-                ("src/lints.rs", ""),
-            ]),
-        )?;
+        check_source_package(&members(&[
+            (
+                "src/lib.rs",
+                "#[cfg_attr(test, warn(missing_docs))]\nmod lints;\n",
+            ),
+            ("src/lints.rs", ""),
+        ]))?;
         Ok(())
     }
 
     #[test]
     fn path_literals_decode_and_an_included_module_file_keeps_its_children() -> Result<(), String> {
-        check_source_package(
-            "ripr",
-            &members(&[
-                (
-                    "src/lib.rs",
-                    "#[path = \"live file.rs\"]\nmod live;\n#[path = r\"raw.rs\"]\nmod raw;\nmod a;\nmod b;\n",
-                ),
-                ("src/live file.rs", ""),
-                ("src/raw.rs", ""),
-                // `b` is walked first and includes `a.rs` as data; `a`'s
-                // own `mod c` is still followed.
-                ("src/b.rs", "pub const A: &str = include_str!(\"a.rs\");\n"),
-                ("src/a.rs", "mod c;\n"),
-                ("src/a/c.rs", ""),
-            ]),
-        )?;
+        check_source_package(&members(&[
+            (
+                "src/lib.rs",
+                "#[path = \"live file.rs\"]\nmod live;\n#[path = r\"raw.rs\"]\nmod raw;\nmod a;\nmod b;\n",
+            ),
+            ("src/live file.rs", ""),
+            ("src/raw.rs", ""),
+            // `b` is walked first and includes `a.rs` as data; `a`'s
+            // own `mod c` is still followed.
+            ("src/b.rs", "pub const A: &str = include_str!(\"a.rs\");\n"),
+            ("src/a.rs", "mod c;\n"),
+            ("src/a/c.rs", ""),
+        ]))?;
         Ok(())
     }
 
     #[test]
     fn orphan_sources_and_integration_tests_are_refused() -> Result<(), String> {
-        let error = refusal(
-            "ripr-contract",
-            &[
-                ("src/lib.rs", ""),
-                ("src/orphan.rs", ""),
-                ("tests/cli_help_hierarchy.rs", ""),
-                ("benches/speed.rs", ""),
-            ],
-        )?;
+        let error = refusal(&[
+            ("src/lib.rs", ""),
+            ("src/orphan.rs", ""),
+            ("tests/cli_help_hierarchy.rs", ""),
+            ("tests/common/help_contract.rs", ""),
+            ("tests/common/help_workspace.rs", ""),
+            ("tests/extra/cli_help_hierarchy.rs", ""),
+            ("benches/speed.rs", ""),
+        ])?;
         assert!(
             error.contains("src/orphan.rs (declared by no packaged production module)"),
             "{error}"
         );
-        assert!(
-            error.contains("tests/cli_help_hierarchy.rs (integration test"),
-            "{error}"
-        );
-        assert!(
-            error.contains("benches/speed.rs (integration test"),
-            "{error}"
-        );
-        // The named help-harness exception is `ripr`'s only, and covers
-        // exactly its three files.
-        check_source_package(
-            "ripr",
-            &members(&[
-                ("src/lib.rs", ""),
-                ("tests/cli_help_hierarchy.rs", ""),
-                ("tests/common/help_contract.rs", ""),
-                ("tests/common/help_workspace.rs", ""),
-            ]),
-        )?;
-        let adjacent = "tests/extra/cli_help_hierarchy.rs";
-        let error = refusal("ripr", &[("src/lib.rs", ""), (adjacent, "")])?;
-        if !error.contains(adjacent) {
-            return Err(format!("missing refusal for {adjacent}: {error}"));
-        }
-        let error = refusal(
-            "ripr-contract",
-            &[
-                ("src/lib.rs", ""),
-                ("tests/cli_help_hierarchy.rs", ""),
-                ("tests/common/help_contract.rs", ""),
-                ("tests/common/help_workspace.rs", ""),
-            ],
-        )?;
-        for path in RIPR_PACKAGED_HELP_HARNESS {
-            if !error.contains(path) {
-                return Err(format!("missing ripr-contract refusal for {path}: {error}"));
+        for path in [
+            "tests/cli_help_hierarchy.rs",
+            "tests/common/help_contract.rs",
+            "tests/common/help_workspace.rs",
+            "tests/extra/cli_help_hierarchy.rs",
+            "benches/speed.rs",
+        ] {
+            if !error.contains(&format!("{path} (integration test or bench target)")) {
+                return Err(format!("missing refusal for {path}: {error}"));
             }
         }
         Ok(())
@@ -988,15 +907,12 @@ mod tests {
 
     #[test]
     fn unparseable_sources_and_cfg_attr_fail_closed() -> Result<(), String> {
-        let error = refusal("ripr", &[("src/lib.rs", "mod a")])?;
+        let error = refusal(&[("src/lib.rs", "mod a")])?;
         assert!(error.contains("does not parse"), "{error}");
-        let error = refusal(
-            "ripr",
-            &[
-                ("src/lib.rs", "#[cfg_attr(test, path = \"t.rs\")]\nmod a;\n"),
-                ("src/a.rs", ""),
-            ],
-        )?;
+        let error = refusal(&[
+            ("src/lib.rs", "#[cfg_attr(test, path = \"t.rs\")]\nmod a;\n"),
+            ("src/a.rs", ""),
+        ])?;
         assert!(error.contains("not understood"), "{error}");
         Ok(())
     }

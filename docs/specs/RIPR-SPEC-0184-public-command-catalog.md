@@ -73,6 +73,12 @@ Authority:
 
 The top-level parser retains help/version flag dispatch and `help <command>`
 rewriting, then resolves remaining top-level spellings through the catalog.
+`help <topic>` whose topic is a plain word that the catalog does not resolve
+(and that is not `version`, a nested-subcommand spelling or a `workflow` near
+miss) refuses as `unknown help topic "<topic>"` with exit 2, keeps a catalog
+typo suggestion as `ripr help <command>`, and names `ripr help` and
+`ripr help workflow` as the listing routes. Its JSON refusal keeps code
+`unknown_command` and the token, with `next` set to `ripr help` (#16374).
 Nested parsers remain hand-written; two-way tests bind them to catalog
 children.
 
@@ -85,6 +91,9 @@ children.
   each catalog child accepts `--help`.
 - Existing bounded `ripr --help`, `help <command>`, and `help --all` tests
   continue to pass.
+- An unknown `help <topic>` refuses as a help topic in stderr and JSON, while
+  a real topic still prints that command's help and a bare unknown command
+  keeps the command wording (#16374).
 - Real CLI tests bind the twelve bare examples from machine discovery to
   literal group identities and their rendered help. An invalid-config scratch
   workspace stays unchanged. Unknown subcommands, explicit leaves missing

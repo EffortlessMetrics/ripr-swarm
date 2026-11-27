@@ -1,0 +1,12 @@
+diff --git a/src/lib.rs b/src/lib.rs
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -9,7 +9,7 @@ pub mod model {
+ 
+     impl Ipv4Addr {
+         pub fn octets(&self) -> [u8; 4] {
+-            [self.cap, 0, 0, 1]
++            [self.cap, 0, 0, 2]
+         }
+     }
+ }
