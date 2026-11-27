@@ -40,7 +40,7 @@ fn check_base_without_a_value_under_json_writes_the_missing_value_document() {
 /// two-word command path when that path has its own help.
 #[test]
 fn missing_and_malformed_values_under_json_name_code_token_and_help_route() -> Result<(), String> {
-    let cases: [(&[&str], &str, &str, &str); 8] = [
+    let cases: [(&[&str], &str, &str, &str); 9] = [
         (
             &["agent", "status", "--json", "--attempt"],
             "missing_value",
@@ -83,6 +83,23 @@ fn missing_and_malformed_values_under_json_name_code_token_and_help_route() -> R
             "invalid_value",
             "11",
             "ripr agent brief --help",
+        ),
+        // #16019: the one review-comments path flag that skipped the typed
+        // empty-value refusal now records it like its siblings.
+        (
+            &[
+                "review-comments",
+                "--base",
+                "main",
+                "--head",
+                "HEAD",
+                "--suppression-policy",
+                "",
+                "--json",
+            ],
+            "missing_value",
+            "--suppression-policy",
+            "ripr review-comments --help",
         ),
         (
             &["swarm", "queue", "--json", "--top", "0"],

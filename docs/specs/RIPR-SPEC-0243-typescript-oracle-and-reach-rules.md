@@ -44,6 +44,8 @@ Linked issues:
 - #16306 (class method shadowed by a same-key field; rule 28)
 - #16314 (class method replaced by an assignment; rule 29)
 - #16349 (methods of an anonymous default-exported class; rule 19)
+- #16365 (TypeScript `export = Name;` and `import x = require()`; rule 19)
+- #16366 (a function beside a one-identifier CommonJS whole export; rule 19)
 - #9435 (exact oracle ignored on five changed-line shapes)
 - #9497 (skipped or unexercised tests credited as exposed; rules 17 and 18)
 - #11196 (start rate: a conditional assertion in an unconsulted test no longer
@@ -1944,6 +1946,41 @@ CommonJS form, and a named export beside the inline class stay unrelated).
 Before, both read `no_static_path`. Named property
 exports of a class expression (`exports.Name = class ...`) and `const Name =
 class ...; module.exports = Name;` are not read.
+Amended 2026-11-26 (#16365): TypeScript's CommonJS syntax reads as its
+compiled twin. `export = Name;` is `module.exports = Name;`: one such
+statement naming an identifier, with no ES export statement beside it, is the
+whole-export target, and every gate above applies unchanged except that the
+file must hold no `module.exports =` write (a file with both forms is
+refused). In a test, a value `import x = require("<literal>")` is `const x =
+require("<literal>")`: the same default-named namespace binding, under the
+same ambient-`require` and member-mutation gates, so a whole-export function
+or class relates through the local and a member is read off it
+(`x.name(...)`, `new x.Name()`). A type-only `import type x = require(...)`
+and the entity-name forms (`import x = Ns.y`) load nothing and record no
+import. An ES `import Name from` of an `export =` class stays refused, as for
+its `module.exports` twin. A CommonJS barrel (#15284) reads both forms the same
+way: `export = require('./x')`, or `export = local` of an `import local =
+require('./x')` or `const local = require('./x')`, forwards the whole module,
+and an `export =` beside a `module.exports =` write is a second whole write,
+which refuses every edge from that barrel. Before, both sides read `no_static_path`. An
+inline `export = class { ... }` or `export = function ...`, and a class
+merged with a same-named `namespace` (two file-level declarations of the
+name), are not read.
+Amended 2026-11-26 (#16366): when the whole export is one identifier
+(`module.exports = name;` or `export = name;`) and the file gate holds, every
+other top-level function of the file is no property of it unless the file
+adds one, so a named binding (`const { f } = require(...)`, `require(...).f`)
+or a namespace member (`lib.f`) of such a sibling reads `undefined` and is not
+related, as for a member of the export itself. The sibling keeps the named
+reading when the file may add the property: any `exports.` or `exports[`
+spelling, any ES export statement, a member written onto the export name or
+an `Object.assign` / `defineProperty` onto it, a second file-level
+declaration of the name (a merged `namespace`), any use of the name other than
+its declaration, a call or construction and the whole-export write (an alias
+may add the property), or an export that is not a declared function or a
+declared class without heritage, static member or static block (`const api =
+{ total }; module.exports = api;` carries the sibling from the start). Before,
+such a binding related as `exposed`.
 
 **Rule 21. A method decorator that passes the original result through
 lends `exposed` to the decorated method's tests (design decision, #10189).**
@@ -3147,6 +3184,30 @@ keys); do not take the next number.
   keys such a class by `default`, and two anonymous default classes in one file
   repeat that name. `commonjs_inline_class_tests.rs` now credits the anonymous
   inline class through a whole-module `require`.
+- #16365 (rule 19, TypeScript `export =` and `import x = require()`):
+  `crates/ripr/src/analysis/language/typescript/tests/export_equals_tests.rs`
+  runs `analyze_diff` on a changed line of an `export = Cart;` class and an
+  `export = total;` function: `import x = require(...)` and `const x =
+  require(...)` relate (and an ES default import of the function), as do
+  members read off an `import lib = require(...)` namespace (`lib.total(...)`
+  of `export = { total }`, `new m.Cart()` of a named export). An ES default
+  import of the class, another function as the export, a `module.exports`
+  write beside `export =`, a class rewritten after the export, a type-only
+  import and an import spelled only in a comment stay unrelated. A parse test
+  pins that only one identifier `export =` with no ES export beside it is a
+  target. Through a TypeScript barrel, `export =` of an import-equals local,
+  of a `require()` local or of an inline `require()` forwards to the owner,
+  while a barrel that also writes `module.exports` (a forward TypeScript's
+  trailing `export =` overwrites) or forwards another module does not.
+- #16366 (rule 19, sibling of a whole export):
+  `crates/ripr/src/analysis/language/typescript/tests/commonjs_unexported_sibling_tests.rs`
+  runs `analyze_diff` on a function beside `module.exports = other;` (and a
+  class export, and TypeScript `export = other;`): a named, member or
+  namespace binding of it stays unrelated, while `module.exports.total =
+  total`, `other.total = total`, `Object.assign(other, { total })`, an
+  object whole export, an object bound to the export name, a static field, a
+  class with heritage and a write through an alias keep the relation. Owner extraction marks the sibling
+  only without a named export or ES export statement.
 
 - #11196 (rule 11, object rows): `tests/object_row_tests.rs` pins the per-row
   literal assertions for the `for...of` and `test.each` object-row forms and

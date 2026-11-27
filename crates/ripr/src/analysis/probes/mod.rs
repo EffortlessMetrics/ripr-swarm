@@ -67,6 +67,11 @@ pub(crate) struct SeededProbe {
     /// #11400: a returned expression that reads a changed `const`, standing
     /// in for the declaration line (`const_reader_returns`).
     pub const_reader: bool,
+    /// #16302: an enclosing `unsafe fn` or unchecked-assumption boundary
+    /// withdrew its own finding because this classified probe carries the
+    /// edit on that line (#15348). The boundary's `unsafe_obligation` stop
+    /// reason moves onto this probe's finding so the line still says it.
+    pub enclosing_unsafe_obligation: bool,
 }
 
 impl SeededProbe {
@@ -78,6 +83,7 @@ impl SeededProbe {
             propagation_origin: None,
             parser_span: None,
             const_reader: false,
+            enclosing_unsafe_obligation: false,
         }
     }
 
@@ -89,6 +95,7 @@ impl SeededProbe {
             propagation_origin: None,
             parser_span: Some(parser_span),
             const_reader: false,
+            enclosing_unsafe_obligation: false,
         }
     }
 
@@ -107,6 +114,7 @@ impl SeededProbe {
             propagation_origin: None,
             parser_span: None,
             const_reader: false,
+            enclosing_unsafe_obligation: false,
         }
     }
 

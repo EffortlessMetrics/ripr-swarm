@@ -503,7 +503,9 @@ fn plan_mcp_target(path: PathBuf, force: bool) -> Result<InitTarget, String> {
     // (a shared or dotfiles-managed config) would be swapped for a plain
     // copy and the real target never updated.
     if std::fs::symlink_metadata(&path)
-        .map_err(|err| format!("cannot inspect {shown}: {err}"))?
+        .map_err(|err| {
+            format!("cannot inspect {shown}: {err}; check permissions on that path, then rerun")
+        })?
         .file_type()
         .is_symlink()
     {
@@ -1484,21 +1486,29 @@ mod tests {
     /// each keep init quiet, and a Go-only root keeps its own wording.
     #[test]
     fn unanalyzed_root_warning_names_a_root_with_no_source() -> Result<(), String> {
-        let root = temp_root("no-source")?;
+        // Exercise a root whose rendered path contains a language name.
+        let root = temp_root("Rust-no-source")?;
         std::fs::write(root.join("README.md"), "demo\n")
             .map_err(|err| format!("write README: {err}"))?;
         let warning = unanalyzed_root_warning(&root).unwrap_or_default();
+        let root_prefix = format!(
+            "ripr: warning: the root `{}` ",
+            output::path::human_path(&root)
+        );
+        let message = warning
+            .strip_prefix(&root_prefix)
+            .ok_or_else(|| format!("warning does not name the fixture root: {warning}"))?;
         assert!(
-            warning.contains("has no Cargo.toml and no source file ripr reads yet"),
+            message.contains("has no Cargo.toml and no source file ripr reads yet"),
             "{warning}"
         );
-        assert!(warning.contains("with `--root <dir>`"), "{warning}");
+        assert!(message.contains("with `--root <dir>`"), "{warning}");
         // No pasteable `ripr init --force`: without the selected root it
         // would overwrite the configuration of whatever directory it runs in.
-        assert!(!warning.contains("ripr init --force"), "{warning}");
+        assert!(!message.contains("ripr init --force"), "{warning}");
         // A marker-only root gets its language enabled, so the warning makes
         // no claim about which languages the configuration enables.
-        assert!(!warning.contains("Rust"), "{warning}");
+        assert!(!message.contains("Rust"), "{warning}");
 
         std::fs::write(root.join("main.go"), "package main\n")
             .map_err(|err| format!("write main.go: {err}"))?;

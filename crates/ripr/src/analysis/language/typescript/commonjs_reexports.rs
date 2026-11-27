@@ -125,20 +125,33 @@ pub(crate) fn commonjs_reexports(
     // References to `module`/`exports` the recognized statements account for.
     let mut accounted = 0usize;
     for (position, statement) in body.iter().enumerate() {
-        let Statement::ExpressionStatement(statement) = statement else {
-            continue;
+        // TypeScript `export = value;` compiles to `module.exports = value;`
+        // (#16365): the same whole write, naming neither root, so it adds
+        // nothing to `accounted`. Beside a `module.exports =` write it makes
+        // two whole writes, which refuses the file below.
+        let (target, right) = match statement {
+            Statement::TSExportAssignment(assignment) => {
+                (Some(ExportTarget::Whole), &assignment.expression)
+            }
+            Statement::ExpressionStatement(statement) => {
+                let Expression::AssignmentExpression(assign) =
+                    statement.expression.get_inner_expression()
+                else {
+                    continue;
+                };
+                if assign.operator != AssignmentOperator::Assign {
+                    continue;
+                }
+                (export_target(&assign.left), &assign.right)
+            }
+            _ => continue,
         };
-        let Expression::AssignmentExpression(assign) = statement.expression.get_inner_expression()
-        else {
-            continue;
-        };
-        if assign.operator != AssignmentOperator::Assign {
-            continue;
-        }
-        match export_target(&assign.left) {
+        match target {
             Some(ExportTarget::Whole) => {
-                accounted += 1;
-                match assign.right.get_inner_expression() {
+                if !matches!(statement, Statement::TSExportAssignment(_)) {
+                    accounted += 1;
+                }
+                match right.get_inner_expression() {
                     Expression::ObjectExpression(object) => {
                         whole.push((None, position));
                         if object.properties.iter().any(|property| {
@@ -184,7 +197,7 @@ pub(crate) fn commonjs_reexports(
                 if name == "default" {
                     named.push((String::new(), None, bare, position));
                 } else {
-                    named.push((name, forward_of(&assign.right, position), bare, position));
+                    named.push((name, forward_of(right, position), bare, position));
                 }
             }
             None => {}
@@ -359,6 +372,11 @@ fn require_locals(
 ) -> HashMap<String, (Forward, usize)> {
     let mut locals: HashMap<String, (Forward, usize)> = HashMap::new();
     for (position, statement) in body.iter().enumerate() {
+        // `import x = require('./y')` is `const x = require('./y')` (#16365).
+        if let Some((name, source)) = super::export_equals::import_equals_require(statement) {
+            locals.insert(name.to_string(), ((source, None), position));
+            continue;
+        }
         let Statement::VariableDeclaration(declaration) = statement else {
             continue;
         };
