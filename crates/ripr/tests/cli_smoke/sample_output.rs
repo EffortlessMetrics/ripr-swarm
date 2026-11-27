@@ -154,7 +154,7 @@ pub(super) fn human(output: Output) -> Result<(), String> {
     assert_success(&output);
 
     let stdout = String::from_utf8_lossy(&output.stdout);
-    assert!(stdout.contains("Summary: 4 changed behaviors checked: "));
+    assert!(stdout.contains("Summary: 4 changed behaviors checked"));
     assert!(stdout.contains("Start here:"));
     assert!(stdout.contains("Static exposure: weak (severity: "));
     // #8165: the default render must not leak schema tokens.
@@ -462,8 +462,8 @@ fn retained_oracles_reject_wrong_contract_shape_count_and_refusal() -> TestResul
     rejects(|| {
         human(changed_output(
             &human_output,
-            "Summary: 4 changed behaviors checked: ",
-            "Summary: 0 changed behaviors checked: ",
+            "Summary: 4 changed behaviors checked",
+            "Summary: 0 changed behaviors checked",
         ))
     });
     rejects(|| {
