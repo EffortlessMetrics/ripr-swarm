@@ -25,6 +25,7 @@
         "mode": {},
         "root": {},
         "base": { "type": "string" },
+        "rendering": { "const": "terse" },
         "status": {},
         "error": { "properties": { "code": { "const": "repository_root_unusable" } } },
         "findings": { "maxItems": 0 },

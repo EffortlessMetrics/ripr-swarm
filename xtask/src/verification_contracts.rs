@@ -4734,6 +4734,11 @@ mod tests {
         };
         let genuine = read_json(directory.join("check-empty-root-refusal.valid.json"))?;
         check(&genuine, true, "unusable root refusal")?;
+        let mut terse = genuine.clone();
+        terse["rendering"] = serde_json::json!("terse");
+        check(&terse, true, "terse unusable root refusal")?;
+        terse["rendering"] = serde_json::json!("full");
+        check(&terse, false, "unknown rendering on unusable root refusal")?;
         for name in [
             "check-complete.valid.json",
             "check-partial-scope.valid.json",
@@ -4743,7 +4748,7 @@ mod tests {
             let mut doc = read_json(directory.join(name))?;
             check(&doc, true, name)?;
             for (key, value) in doc.as_object().ok_or("expected report object")? {
-                if key != "base" && genuine.get(key).is_none() {
+                if !matches!(key.as_str(), "base" | "rendering") && genuine.get(key).is_none() {
                     let mut mixed = genuine.clone();
                     mixed[key] = value.clone();
                     check(&mixed, false, key)?;
