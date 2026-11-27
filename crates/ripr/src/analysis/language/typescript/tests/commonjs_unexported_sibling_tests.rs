@@ -64,7 +64,9 @@ fn finding(label: &str, ext: &str, owner: &str, test_source: &str) -> Result<Fin
 #[test]
 fn a_binding_of_a_sibling_of_the_whole_export_stays_unrelated() -> Result<(), String> {
     let function_export = format!("{TOTAL}{OTHER}module.exports = other;\n");
-    let class_export = format!("{TOTAL}class Cart {{}}\nmodule.exports = Cart;\n");
+    let class_export = format!(
+        "{TOTAL}class Cart {{\n  clone() {{\n    return new Cart();\n  }}\n}}\nmodule.exports = Cart;\n"
+    );
     for (label, ext, owner, preamble, body) in [
         (
             "sibling-named-require",
@@ -86,6 +88,15 @@ fn a_binding_of_a_sibling_of_the_whole_export_stays_unrelated() -> Result<(), St
             function_export.clone(),
             "const lib = require('../src/cart');",
             "    expect(lib.total(50)).toBe(45);",
+        ),
+        (
+            "sibling-of-a-recursive-export",
+            "js",
+            format!(
+                "{TOTAL}function other(n) {{\n  return n > 0 ? other(n - 1) : 0;\n}}\nmodule.exports = other;\n"
+            ),
+            "const { total } = require('../src/cart');",
+            CALL,
         ),
         (
             "sibling-of-a-class-export",
@@ -132,6 +143,29 @@ fn a_sibling_the_file_adds_as_a_property_keeps_the_relation() -> Result<(), Stri
             "object-whole-export",
             format!("{TOTAL}{OTHER}module.exports = {{ total, other }};\n"),
         ),
+        // The export is not a declared function or plain class, so its
+        // property set is not known (review of #16376).
+        (
+            "object-bound-to-the-export-name",
+            format!("{TOTAL}const api = {{ total }};\nmodule.exports = api;\n"),
+        ),
+        (
+            "static-field-of-a-class-export",
+            format!("{TOTAL}class Cart {{\n  static total = total;\n}}\nmodule.exports = Cart;\n"),
+        ),
+        (
+            "class-export-with-heritage",
+            format!(
+                "{TOTAL}class Base {{}}\nclass Cart extends Base {{}}\nmodule.exports = Cart;\n"
+            ),
+        ),
+        // A write through an alias of the export adds the property.
+        (
+            "property-through-an-alias",
+            format!(
+                "{TOTAL}{OTHER}const alias = other;\nalias.total = total;\nmodule.exports = other;\n"
+            ),
+        ),
     ] {
         let finding = finding(
             label,
@@ -165,8 +199,7 @@ fn only_siblings_of_a_one_identifier_whole_export_are_marked() {
         marked(&format!("{TOTAL}{OTHER}module.exports = other;\n")),
         ["other", "total"]
     );
-    // A merged second declaration of the export name, a named export or an
-    // ES export statement leaves the sibling unmarked.
+    // A named export or an ES export statement leaves the sibling unmarked.
     assert_eq!(
         marked(&format!(
             "{TOTAL}{OTHER}exports.total = total;\nmodule.exports = other;\n"
@@ -174,6 +207,20 @@ fn only_siblings_of_a_one_identifier_whole_export_are_marked() {
         ["other"]
     );
     assert!(marked(&format!("{TOTAL}{OTHER}module.exports = {{ other }};\n")).is_empty());
+    // An export whose own properties are not known, or a name that escapes
+    // into an alias, leaves the sibling unmarked.
+    assert!(
+        marked(&format!(
+            "{TOTAL}const api = {{ total }};\nmodule.exports = api;\n"
+        ))
+        .is_empty()
+    );
+    assert_eq!(
+        marked(&format!(
+            "{TOTAL}{OTHER}const alias = other;\nalias.total = total;\nmodule.exports = other;\n"
+        )),
+        ["other"]
+    );
     assert_eq!(
         marked(&format!("export {TOTAL}{OTHER}module.exports = other;\n")),
         ["other"]

@@ -217,9 +217,12 @@ fn member_chain_is_assigned(rest: &str) -> bool {
 /// the file-level `module.exports` gate held. The sibling stays readable when
 /// the file may add a named property: any `exports.` / `exports[` spelling,
 /// any ES export statement, a member written onto `target` or an
-/// `Object.assign` / `defineProperty` onto it, or a second declaration of
+/// `Object.assign` / `defineProperty` onto it, a second declaration of
 /// `target` (a merged `namespace target {}` exports its members as
-/// properties).
+/// properties), a `target` that is not a declared function or a plain
+/// declared class, or any use of the name other than its declaration, a call
+/// or construction, and the whole-export write (an alias could add the
+/// property).
 pub(super) fn mark_unexported_siblings(
     program: &oxc_ast::ast::Program<'_>,
     target: &str,
@@ -248,11 +251,36 @@ pub(super) fn mark_unexported_siblings(
     {
         return;
     }
+    // Only a value whose own properties are all written by statements the
+    // checks below read: a declared function, or a declared class with no
+    // heritage, static member or static block. An object, a call result or a
+    // `require()` may carry the sibling as a property from the start
+    // (`const api = { total }; module.exports = api;`, review of #16376).
+    let shape_known = program.body.iter().any(|stmt| match stmt {
+        Statement::FunctionDeclaration(function) => {
+            function.id.as_ref().is_some_and(|id| id.name == target)
+        }
+        Statement::ClassDeclaration(class) => {
+            !class.declare
+                && class.super_class.is_none()
+                && class.id.as_ref().is_some_and(|id| id.name == target)
+                && class
+                    .body
+                    .body
+                    .iter()
+                    .all(|element| !element.r#static() && !element.is_static_block())
+        }
+        _ => false,
+    });
+    if !shape_known {
+        return;
+    }
     let adds_property = [code, division_code].iter().any(|text| {
         let compact: String = text.chars().filter(|ch| !ch.is_whitespace()).collect();
         compact.contains("exports.")
             || compact.contains("exports[")
             || class_binding_gains_member(text, &compact, target)
+            || binding_escapes(text, target)
     });
     if adds_property {
         return;
@@ -264,4 +292,22 @@ pub(super) fn mark_unexported_siblings(
     }) {
         owner.commonjs_whole_function = true;
     }
+}
+
+/// `true` when `name` occurs in `text` other than as its own `function name`
+/// / `class name` declaration, a call or construction (`name(`), or the
+/// right side of the whole-export write (`module.exports = name`, `export =
+/// name`). Any other use (`const alias = name`, `f(name)`, `typeof name`) may
+/// let a write through another reference add a property.
+fn binding_escapes(text: &str, name: &str) -> bool {
+    super::tests_extract::identifier_occurrences(text, name).any(|at| {
+        let before = text[..at].trim_end();
+        let after = text[at + name.len()..].trim_start();
+        let declaration = before.ends_with("function") || before.ends_with("class");
+        let whole_export = before.strip_suffix('=').is_some_and(|lhs| {
+            let lhs = lhs.trim_end();
+            lhs.ends_with("module.exports") || lhs.ends_with("export")
+        });
+        !(after.starts_with('(') || declaration || whole_export)
+    })
 }

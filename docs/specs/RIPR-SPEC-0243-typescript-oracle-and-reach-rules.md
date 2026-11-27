@@ -1970,9 +1970,13 @@ or a namespace member (`lib.f`) of such a sibling reads `undefined` and is not
 related, as for a member of the export itself. The sibling keeps the named
 reading when the file may add the property: any `exports.` or `exports[`
 spelling, any ES export statement, a member written onto the export name or
-an `Object.assign` / `defineProperty` onto it, or a second file-level
-declaration of the name (a merged `namespace`). Before, such a binding related
-as `exposed`.
+an `Object.assign` / `defineProperty` onto it, a second file-level
+declaration of the name (a merged `namespace`), any use of the name other than
+its declaration, a call or construction and the whole-export write (an alias
+may add the property), or an export that is not a declared function or a
+declared class without heritage, static member or static block (`const api =
+{ total }; module.exports = api;` carries the sibling from the start). Before,
+such a binding related as `exposed`.
 
 **Rule 21. A method decorator that passes the original result through
 lends `exposed` to the decorated method's tests (design decision, #10189).**
@@ -3186,8 +3190,9 @@ keys); do not take the next number.
   runs `analyze_diff` on a function beside `module.exports = other;` (and a
   class export, and TypeScript `export = other;`): a named, member or
   namespace binding of it stays unrelated, while `module.exports.total =
-  total`, `other.total = total`, `Object.assign(other, { total })` and an
-  object whole export keep the relation. Owner extraction marks the sibling
+  total`, `other.total = total`, `Object.assign(other, { total })`, an
+  object whole export, an object bound to the export name, a static field, a
+  class with heritage and a write through an alias keep the relation. Owner extraction marks the sibling
   only without a named export or ES export statement.
 
 - #11196 (rule 11, object rows): `tests/object_row_tests.rs` pins the per-row
