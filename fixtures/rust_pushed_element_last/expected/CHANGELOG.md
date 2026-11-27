@@ -268,3 +268,14 @@ Command:
 
 Updated:
 - `expected/human-full.txt`
+
+## Pending — rust_pushed_element_last (21)
+
+Reason:
+RIPR-SPEC-0122: #15313 Summary names shared candidate lines and says No test gap when State reads no test gap found
+
+Command:
+`cargo xtask goldens bless rust_pushed_element_last --reason "..."`
+
+Updated:
+- `expected/human.txt`
