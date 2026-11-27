@@ -69,3 +69,10 @@ id = "RIPR-SPEC-0135"
 tests = [
   "crates/ripr/tests/evidence_refusal_next_step.rs::kani_report_input_refusals_name_the_flag_to_fix",
 ]
+
+# `agent verify` with a missing `--root` says to pass an existing directory (#16019).
+[[extend]]
+id = "RIPR-SPEC-0011"
+tests = [
+  "crates/ripr/tests/evidence_refusal_next_step.rs::agent_root_refusal_names_the_fix",
+]
