@@ -426,7 +426,7 @@ fn root_cause_text(error: &crate::core_error::CoreError) -> String {
 
 /// The repository root vanished after the server started: no tool call can
 /// succeed until the server is restarted against a valid root.
-pub(crate) const RESTART_ROOT_GONE_RECOVERY: &str = "the repository root no longer exists, so retrying cannot succeed; restart the server with `ripr mcp --stdio --root <repository>` pointing at an existing Git work tree";
+pub(crate) const RESTART_ROOT_GONE_RECOVERY: &str = "the repository root no longer exists, so do not retry: no call can succeed until the server restarts; restart the server with `ripr mcp --stdio --root <repository>` pointing at an existing Git work tree";
 
 fn check_retry_recovery(root: &Path, base: Option<&str>, source: RefreshSource) -> String {
     format!(
@@ -2823,7 +2823,9 @@ fn check_failure(
     // request, so committed and worktree recoveries share one builder.
     let retry = |base: Option<&str>| refresh_retry_arguments(base, source);
     let recovery = match (error.check_refusal().identity, base) {
-        // A vanished root fails every kind the same way: no retry or other
+        // A vanished root fails every kind that reaches this builder the same
+        // way (configuration refusals raised before the analysis keep their
+        // own recovery): no retry or other
         // `base` can succeed until the server restarts against a valid root,
         // so this filesystem fact outranks each typed route.
         _ if !root.is_dir() => RESTART_ROOT_GONE_RECOVERY.to_string(),
@@ -2855,7 +2857,7 @@ fn check_failure(
             if crate::analysis::is_diff_scope_oversized(&root_cause_text(error)) =>
         {
             format!(
-                "retrying the same ripr_refresh fails the same way; call ripr_refresh with a nearer `base` (a recent commit or the merge base of your branch), for example {}, or restart the server with a higher value in the environment variable the detail names",
+                "do not retry the same ripr_refresh, it fails the same way; call ripr_refresh with a nearer `base`, a commit on HEAD's history after the current merge base (the comparison already starts at the merge base, so passing it changes nothing), for example {}, or, when no nearer commit narrows the diff enough, restart the server with a higher value in the environment variable the detail names",
                 retry(Some("<nearer-ref>"))
             )
         }
@@ -2868,7 +2870,7 @@ fn check_failure(
         {
             format!(
                 "fetch the missing history with `git -C {} fetch --unshallow` (in GitHub Actions, set `fetch-depth: 0` on actions/checkout), then retry ripr_refresh with {}; retrying before the fetch fails the same way",
-                crate::terminal_text::terminal_safe(root.display().to_string()),
+                crate::agent::loop_commands::shell_arg(&root.display().to_string()),
                 retry(base)
             )
         }
@@ -4573,6 +4575,25 @@ mod tests {
             "{}",
             big.recovery
         );
+        // The merge base is where the comparison already starts, so it is
+        // never offered as the nearer base, and the structured remedy says
+        // no retry rather than leaving it unknown.
+        assert!(
+            !big.recovery.contains("the merge base of your branch"),
+            "{}",
+            big.recovery
+        );
+        assert!(
+            big.recovery.contains("after the current merge base"),
+            "{}",
+            big.recovery
+        );
+        assert_eq!(
+            crate::domain::RefusalRemedy::from_prose(&big.recovery).retry_stated,
+            Some(false),
+            "{}",
+            big.recovery
+        );
 
         // Not the missing-history failure: a cancellation or an unrelated
         // untyped error on a shallow clone keeps the plain retry.
@@ -4667,6 +4688,10 @@ mod tests {
             assert_eq!(gone.recovery, RESTART_ROOT_GONE_RECOVERY, "{error}");
         }
         assert!(RESTART_ROOT_GONE_RECOVERY.contains("--root"));
+        assert_eq!(
+            crate::domain::RefusalRemedy::from_prose(RESTART_ROOT_GONE_RECOVERY).retry_stated,
+            Some(false)
+        );
         assert!(!RESTART_ROOT_GONE_RECOVERY.starts_with("retry"));
         Ok(())
     }

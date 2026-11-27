@@ -387,9 +387,9 @@ roots at equivalent inputs share one portable identity, while the concrete
 root evidence stays a separate
 host-local hash), `failed` with a typed failure code and bounded detail (the
 last-known-good snapshot is kept), `in_flight`, or `workspace_unavailable`.
-A failed attempt's `recovery` follows the cause: a deleted root says restart the server with
-a valid `--root`, a failure naming a missing merge base on a shallow clone says fetch history before retrying, an oversized diff scope says pick a nearer base or raise the limit, and only a failure with no
-such cause says to retry `ripr_refresh`.
+A failed attempt's `recovery` follows the cause: for a failure the analysis reports, a deleted root says do not retry and restart the server with
+a valid `--root`, a failure naming a missing merge base on a shallow clone says fetch history before retrying, an oversized diff scope says do not retry the same call and pick a nearer base after the current merge base (the comparison already starts at the merge base) or raise the limit, and only a failure with no
+such cause says to retry `ripr_refresh`. A configuration refusal raised before the analysis starts (`ripr.toml`, `RIPR_GIT_TIMEOUT`) keeps its own recovery.
 An attempt runs to a terminal state; cancelling the MCP request never rolls
 an attempt back or manufactures a snapshot. A cancelled attempt still commits
 as a completed snapshot when it finishes and only transport teardown abandons

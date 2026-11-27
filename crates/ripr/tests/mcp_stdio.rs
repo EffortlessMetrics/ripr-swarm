@@ -6158,6 +6158,15 @@ fn deleted_root_after_start_recovers_by_restart_not_retry() -> Result<(), String
             "a deleted root must recover by restart, not retry: {recovery}"
         ));
     }
+    // The structured remedy carries the same no-retry verdict as the prose.
+    let gone_remedy = gone
+        .pointer("/result/structuredContent/attempt/failure/remedy/retry_stated")
+        .or_else(|| gone.pointer("/result/structuredContent/failure/remedy/retry_stated"));
+    if gone_remedy != Some(&Value::Bool(false)) {
+        return Err(format!(
+            "a deleted root's remedy must state no retry: {gone}"
+        ));
+    }
 
     let attempts =
         session.call_tool("attempts", "ripr_list_repair_attempts", json!({}), timeout)?;
@@ -6176,6 +6185,7 @@ fn deleted_root_after_start_recovers_by_restart_not_retry() -> Result<(), String
     if failure.get("code").and_then(Value::as_str) != Some("workspace_unavailable")
         || !failure_recovery.contains("restart the server")
         || !failure_recovery.contains("--root")
+        || failure.pointer("/remedy/retry_stated") != Some(&Value::Bool(false))
     {
         return Err(format!(
             "attempt list on a deleted root must be workspace_unavailable with restart: {attempts}"
@@ -6199,8 +6209,9 @@ fn shallow_clone_without_merge_base_recovers_by_fetching_history() -> Result<(),
     commit_fixture(&origin, "main moves")?;
     fixture_git_ok(&origin, &["checkout", "-q", "journey"])?;
 
+    // A spaced clone path: the fetch command must keep it one argument.
     let clone = origin.with_file_name(format!(
-        "{}-shallow",
+        "{} shallow",
         origin
             .file_name()
             .and_then(|name| name.to_str())
@@ -6271,6 +6282,20 @@ fn shallow_clone_without_merge_base_recovers_by_fetching_history() -> Result<(),
     {
         return Err(format!(
             "shallow recovery must name the history fetch before the retry: {recovery}"
+        ));
+    }
+    // The whole spaced root arrives quoted as one `-C` argument.
+    let clone_text = clone.display().to_string();
+    let quoted_root = if cfg!(windows) {
+        format!("\"{clone_text}\"")
+    } else {
+        format!("'{clone_text}'")
+    };
+    if !clone_text.contains(' ')
+        || !recovery.contains(&format!("git -C {quoted_root} fetch --unshallow"))
+    {
+        return Err(format!(
+            "shallow recovery must quote the spaced root {clone_text:?} as one argument: {recovery}"
         ));
     }
     Ok(())
