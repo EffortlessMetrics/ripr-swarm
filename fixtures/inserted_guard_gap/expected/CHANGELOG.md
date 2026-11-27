@@ -85,3 +85,14 @@ Command:
 
 Updated:
 - `expected/human.txt`
+
+## Pending — inserted_guard_gap (8)
+
+Reason:
+RIPR-SPEC-0122: #15336 human-full Terms line stops claiming test reach for weakly_exposed and reachable_unrevealed
+
+Command:
+`cargo xtask goldens bless inserted_guard_gap --reason "..."`
+
+Updated:
+- `expected/human-full.txt`

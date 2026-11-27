@@ -55,3 +55,14 @@ Command:
 Updated:
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — python_patched_callee_reachable_h (6)
+
+Reason:
+RIPR-SPEC-0122: #15336 human-full Terms line stops claiming test reach for weakly_exposed and reachable_unrevealed
+
+Command:
+`cargo xtask goldens bless python_patched_callee_reachable_h --reason "..."`
+
+Updated:
+- `expected/human-full.txt`
