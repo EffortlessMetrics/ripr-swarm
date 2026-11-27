@@ -1,0 +1,2 @@
+<!-- section: Fixed -->
+- A Rust helper wrapper that forwards through a standard macro such as `println!` no longer loses its forwarding credit because another function in the workspace calls a verified drop-in macro with a macro in its arguments, such as `anyhow!(format!("bad {qty}"))` behind an audited `use anyhow::anyhow;`. ripr now reads that call as the drop-in macro it is, unless the file rebinds the name, instead of reading the inner `format!` as a possible rebinding. An unverified import still leaves the call opaque and keeps the refusal (#16462).

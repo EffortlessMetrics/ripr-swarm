@@ -1,5 +1,18 @@
 # Golden Output Changes
 
+## Pending — corpus cache generation 1.218 for verified calls outside the rebinding query (#16462)
+
+The transparent-macro rebinding scan now reads a call of any transparent
+name as that standard macro unless the file binds it, so a verified
+`anyhow!(format!(..))` elsewhere no longer reads as a `format` binding,
+which bumps the analyzer cache schema to 1.218. Move the portable
+unchanged-attempt snapshots to 1.218, recompute the
+`raw_json_placeholder_v1` artifact content commitment, then the dependent
+verify commitments and receipt byte hashes. Weak grip, unchanged movement,
+historical currentness, incomplete receipt status and fail-closed
+first-action routing remain the same. No other fixture output is
+regenerated.
+
 ## Pending — corpus cache generation 1.217 for rootless grouped imports and body-scoped macro names (#16388)
 
 A rootless grouped drop-in import (`use {anyhow::anyhow, ..};`) is now

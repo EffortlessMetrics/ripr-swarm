@@ -3638,10 +3638,14 @@ fn transparent_macro_name_rebound(caller_body: &str, index: &RustIndex) -> bool 
             {
                 return false;
             }
-            !crate::analysis::syntax::trusted_macro_binding_sites(
+            // Every transparent name reads as its standard macro unless
+            // this file binds it, though only the invoked names report
+            // (#16462).
+            !crate::analysis::syntax::trusted_macro_binding_sites_in_context(
                 &file.source,
                 index.macro_scope_crates(),
                 &names,
+                TRANSPARENT_STD_MACROS,
                 &|_, _| false,
                 &|krate| index.drop_in_manifests.verified_root(path, krate),
             )

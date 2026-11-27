@@ -1,0 +1,9 @@
+[[extend]]
+id = "RIPR-SPEC-0186"
+tests = [
+  "crates/ripr/tests/helper_wrapper_reach.rs::a_verified_drop_in_call_elsewhere_does_not_rebind_its_arguments",
+]
+code = [
+  "crates/ripr/src/analysis/syntax/owner_pin.rs",
+  "crates/ripr/src/analysis/classify/helper_transfer.rs",
+]
