@@ -551,7 +551,7 @@ command in the error:
   `analysis_complete = true`;
 - an artifact that discloses a findings-budget-bounded document (a prefix of
   the findings) or a partial-scope run;
-- an artifact whose candidate base tree is not the empty tree (a diff-scoped
+- an artifact whose base tree is not the empty tree (a diff-scoped
   run would baseline only the slice it saw);
 - an artifact without a `findings` array.
 
