@@ -216,7 +216,7 @@ fn cache_dir_for_current_dir(
     } else {
         let current_dir = std::fs::canonicalize(current_dir).map_err(|error| {
             format!(
-                "resolve cache workspace root from {} failed: {error}",
+                "resolve cache workspace root from {} failed: {error}; run from a directory that still exists, or pass --root PATH",
                 current_dir.display()
             )
         })?;

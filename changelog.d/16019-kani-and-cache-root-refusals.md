@@ -1,0 +1,2 @@
+<!-- section: Changed -->
+- `ripr reports kani` refusals now say which flag to fix. A missing or unresolvable `--input` or `--binding` says to pass an existing, readable file, an unusable report destination says to choose a writable `--out` or `--out-md`, and an output with no existing parent says to use one. A directory or an oversized input keeps its own single next step. `ripr cache` started from a directory that no longer exists says to run from one that does, or to pass `--root` (#16019).
