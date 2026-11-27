@@ -33,6 +33,47 @@ pub(super) fn mark_whole_export_class(
     true
 }
 
+/// Clears the whole-export markers of an inline `module.exports = class ...`
+/// when the file also adds a named export (`module.exports.helper = ...`,
+/// `exports.Cart = ...`): `require()` then hands back the class with an extra
+/// property, and a named `require` of that property is not the class.
+/// Called only after the file-level `module.exports` gate held; a class
+/// marked through `module.exports = Name;` already passed the same check in
+/// [`commonjs_default_class`].
+pub(super) fn keep_inline_class_whole_export(
+    code: &str,
+    division_code: &str,
+    owners: &mut [TypeScriptOwner],
+) {
+    let named_export = [code, division_code].iter().any(|text| {
+        let compact: String = text.chars().filter(|ch| !ch.is_whitespace()).collect();
+        compact.contains("exports.") || compact.contains("exports[")
+    });
+    if !named_export {
+        return;
+    }
+    for owner in owners
+        .iter_mut()
+        .filter(|owner| owner.commonjs_default_export)
+    {
+        unmark_inline_class_member(owner);
+    }
+}
+
+/// Withdraws the whole-export reading from a member of an inline
+/// `module.exports = class ...` (the only owners that carry both markers
+/// before the declared-class pass runs). The class expression's own name
+/// binds only inside its body, so once the class is not the provable whole
+/// export the name is not a module binding either: it is cleared, and no
+/// named import or same-file construction can reach the member through it.
+pub(super) fn unmark_inline_class_member(owner: &mut TypeScriptOwner) {
+    if owner.class_default_export && owner.commonjs_default_export {
+        owner.class_default_export = false;
+        owner.commonjs_default_export = false;
+        owner.class_name = None;
+    }
+}
+
 /// `true` when `name` is one top-level `class name {}` declaration that
 /// `module.exports = name;` hands out as the module's whole export.
 ///

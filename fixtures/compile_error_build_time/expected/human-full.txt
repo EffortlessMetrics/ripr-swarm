@@ -1,0 +1,99 @@
+ripr static RIPR exposure analysis
+mode: fast
+root: fixtures/compile_error_build_time/input
+
+Summary: 2 changed behavior(s) checked: 0 exposed, 0 weakly_exposed, 0 reachable_unrevealed, 0 no_static_path, 0 infection_unknown, 0 propagation_unknown, 2 static_unknown; 2 of 2 finding(s) unsuppressed
+Terms: exposed = tests appear to notice the change; weakly_exposed = tests reach it but check it
+  only loosely; reachable_unrevealed = tests reach it but nothing appears to notice a change;
+  no_static_path = no test path found; infection_unknown, propagation_unknown, static_unknown = ripr
+  could not tell from the code (analysis limited, not a verdict); finding = one reported gap;
+  unsuppressed = not hidden by your suppression policy
+
+Analysis outcome: findings below (analysis complete; complete_with_findings)
+  Counts: 1 changed file(s), 4 changed line(s), 2 candidate line(s), 2 changed behavior(s) checked, 2 finding(s)
+
+NOTE ./src/lib.rs:2
+  id: probe:src_lib.rs:static_unknown:8bf2f281
+
+Changed
+  before: compile_error!("Feature process is not supported.");
+  after:  compile_error!("Feature process is not supported on emscripten.");
+
+Change type
+  a change ripr could not classify
+  family: static_unknown
+  delta:  unknown (kind of change not determined)
+
+Static exposure
+  static_unknown (note, confidence 0.20)
+
+Evidence
+  - reach no: No static test path found for the changed owner
+  - infection unknown: Changed syntax is not mapped to a high-confidence change type
+  - propagation unknown: No propagation model is available for this changed syntax
+  - observation no: No reachable test oracle found
+  - discriminator no: No assertion can discriminate the changed behavior without a reachable test
+  - local flow reaches unknown sink (line 2) — ripr could not classify where the changed value ends up; propagation confidence is limited
+
+Weakness
+  - No relevant oracle was detected
+  - No strong discriminator was detected
+  - Syntax-first analysis cannot classify this change; inspect the changed behavior and its existing tests
+
+Stop reasons:
+  - the changed line is a compile-time assertion, so a violating edit fails to build instead of failing a test (compile_time_invariant)
+    Next: Check the compile-time assertion by building with the target, features and cfg that include it (a gated assertion is not compiled otherwise); no test run observes it, so do not add a test for it.
+  - the changed expression contains a macro call whose expansion ripr does not see (proc_macro_opaque)
+    Next: Call the changed owner directly from a test, outside the macro, and assert on its result.
+
+Next step
+  No static test path reaches this change; a test may still reach it through paths ripr cannot follow. Inspect the changed behavior and its existing tests; ripr has not established a test gap. Check the assertion by building with the target, features and cfg that include it (a gated assertion is not compiled otherwise); a violating edit fails to compile, so no test observes it. Inspect the macro invocation and the output or effect it produces; ripr does not expand the macro. Add or tighten a test only if this finds a gap; compare old and new code with the project's configured test runner (`cargo test` for ordinary Cargo tests). The static class may remain unknown
+Drill in:
+  (finding id, for explain/context)
+  ripr explain --root <cwd>/fixtures/compile_error_build_time/input --diff <cwd>/fixtures/compile_error_build_time/diff.patch --mode fast probe:src_lib.rs:static_unknown:8bf2f281
+  ripr context --root <cwd>/fixtures/compile_error_build_time/input --diff <cwd>/fixtures/compile_error_build_time/diff.patch --mode fast --at probe:src_lib.rs:static_unknown:8bf2f281
+
+NOTE ./src/lib.rs:5
+  id: probe:src_lib.rs:static_unknown:4b21365a
+
+Changed
+  before: "Feature signal is not supported."
+  after:  "Feature signal is not supported on wasi."
+
+Change type
+  a change ripr could not classify
+  family: static_unknown
+  delta:  unknown (kind of change not determined)
+
+Static exposure
+  static_unknown (note, confidence 0.20)
+
+Evidence
+  - reach no: No static test path found for the changed owner
+  - infection unknown: Changed syntax is not mapped to a high-confidence change type
+  - propagation unknown: No propagation model is available for this changed syntax
+  - observation no: No reachable test oracle found
+  - discriminator no: No assertion can discriminate the changed behavior without a reachable test
+  - local flow reaches unknown sink (line 5) — ripr could not classify where the changed value ends up; propagation confidence is limited
+
+Weakness
+  - No relevant oracle was detected
+  - No strong discriminator was detected
+  - Syntax-first analysis cannot classify this change; inspect the changed behavior and its existing tests
+
+Stop reasons:
+  - the changed line is a compile-time assertion, so a violating edit fails to build instead of failing a test (compile_time_invariant)
+    Next: Check the compile-time assertion by building with the target, features and cfg that include it (a gated assertion is not compiled otherwise); no test run observes it, so do not add a test for it.
+
+Next step
+  No static test path reaches this change; a test may still reach it through paths ripr cannot follow. Inspect the changed behavior and its existing tests; ripr has not established a test gap. Check the assertion by building with the target, features and cfg that include it (a gated assertion is not compiled otherwise); a violating edit fails to compile, so no test observes it. Add or tighten a test only if this finds a gap; compare old and new code with the project's configured test runner (`cargo test` for ordinary Cargo tests). The static class may remain unknown
+Drill in:
+  (finding id, for explain/context)
+  ripr explain --root <cwd>/fixtures/compile_error_build_time/input --diff <cwd>/fixtures/compile_error_build_time/diff.patch --mode fast probe:src_lib.rs:static_unknown:4b21365a
+  ripr context --root <cwd>/fixtures/compile_error_build_time/input --diff <cwd>/fixtures/compile_error_build_time/diff.patch --mode fast --at probe:src_lib.rs:static_unknown:4b21365a
+
+Note: ripr could not classify any of the 2 changed expression(s) in this diff well enough to
+  establish a static test path. Scope analyzed: 1 changed Rust file(s), 2 changed expression(s), and
+  0 statically linked related test(s). This is not a coverage assessment. A test may already
+  exercise these changes through macros, helper-call chains, or integration tests that ripr's static
+  model does not yet trace; if none does, add co-located tests that observe the changed behavior.

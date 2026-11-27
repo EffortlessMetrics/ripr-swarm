@@ -1,0 +1,13 @@
+diff --git a/src/lib.rs b/src/lib.rs
+index 1111111..2222222 100644
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -5,7 +5,7 @@ pub fn classify_tier(tier: u32) -> &'static str {
+ }
+
+ pub fn classify_grade(grade: u32) -> &'static str {
+-    if grade < 10 { "low" } else { "high" }
++    if grade <= 10 { "low" } else { "high" }
+ }
+
+ pub fn classify_band(band: u32) -> &'static str {

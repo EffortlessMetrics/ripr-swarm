@@ -376,6 +376,7 @@ mod tests {
 
         fn stage(state: StageState) -> StageEvidence {
             StageEvidence {
+                static_limit_kind: None,
                 state,
                 confidence: Confidence::Low,
                 summary: String::new(),
@@ -389,6 +390,7 @@ mod tests {
                 id: "probe:src/a.ts:typescript_preview:deadbeef".to_string(),
                 canonical_gap: None,
                 probe: Probe {
+                    before_condition: None,
                     id: ProbeId("probe:src/a.ts:typescript_preview:deadbeef".to_string()),
                     family,
                     delta: DeltaKind::Control,
@@ -506,6 +508,7 @@ mod tests {
 
         fn stage(state: StageState) -> StageEvidence {
             StageEvidence {
+                static_limit_kind: None,
                 state,
                 confidence: Confidence::Low,
                 summary: String::new(),
@@ -527,6 +530,7 @@ mod tests {
             id: "probe:src/discount.ts:typescript_preview:2396aec1".to_string(),
             canonical_gap: None,
             probe: Probe {
+                before_condition: None,
                 id: ProbeId(
                     "probe:src/discount.ts:typescript_preview:2396aec1".to_string(),
                 ),

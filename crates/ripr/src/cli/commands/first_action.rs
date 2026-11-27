@@ -54,6 +54,7 @@ pub(in crate::cli) fn first_action(args: &[String]) -> Result<(), String> {
         .editor_context
         .as_ref()
         .map(|path| output::first_useful_action::display_path(path));
+    let mut reads = super::SuppliedInputReads::default();
     let input = output::first_useful_action::FirstUsefulActionInput {
         root: options.root,
         generated_at: first_action_generated_at()?,
@@ -69,7 +70,7 @@ pub(in crate::cli) fn first_action(args: &[String]) -> Result<(), String> {
         pr_guidance_json: options
             .pr_guidance
             .as_ref()
-            .map(|path| read_optional_text_for_report("PR guidance", path)),
+            .map(|path| reads.read("--pr-guidance", "PR guidance", path)),
         assistant_proof_json: options
             .assistant_proof
             .as_ref()
@@ -116,7 +117,7 @@ pub(in crate::cli) fn first_action(args: &[String]) -> Result<(), String> {
     emit_report_warnings(output::first_useful_action::first_useful_action_warnings(
         &report,
     ));
-    Ok(())
+    reads.finish("first-action")
 }
 
 fn parse_first_action_options(args: &[String]) -> Result<FirstActionOptions, String> {
@@ -423,19 +424,17 @@ mod tests {
     }
 
     #[test]
-    fn first_action_missing_input_completes_with_warnings() -> Result<(), String> {
-        // A missing required input must keep the documented exit-0 contract
-        // (docs/EXIT_CODES.md: the command completed its typed answer) while
-        // the warning that was previously report-only becomes visible: the
-        // report carries it and the CLI echoes the same text to stderr
-        // (#9856).
+    fn first_action_missing_input_writes_report_then_refuses() -> Result<(), String> {
+        // A supplied input that cannot be read is a could-not-complete
+        // condition (exit 2, #15254): the report is still written and keeps
+        // its warnings (#9856), but the command refuses instead of exiting 0.
         let dir = unique_command_test_dir("first-action-missing-input");
         std::fs::create_dir_all(&dir)
             .map_err(|err| format!("create first-action missing-input dir: {err}"))?;
         let missing = dir.join("missing-pr-guidance.json");
         let out = dir.join("first-useful-action.json");
         let out_md = dir.join("first-useful-action.md");
-        super::first_action(&args(&[
+        let refusal = super::first_action(&args(&[
             "--pr-guidance",
             &missing.display().to_string(),
             "--out",
@@ -443,7 +442,12 @@ mod tests {
             "--out-md",
             &out_md.display().to_string(),
         ]))
-        .map_err(|err| format!("missing-input first-action must complete (exit 0): {err}"))?;
+        .err()
+        .ok_or("missing-input first-action must refuse (exit 2)")?;
+        assert!(
+            refusal.contains("--pr-guidance") && refusal.contains("Pass an existing file"),
+            "{refusal}"
+        );
         let json = std::fs::read_to_string(&out)
             .map_err(|err| format!("read first-action JSON: {err}"))?;
         let value: serde_json::Value = serde_json::from_str(&json)

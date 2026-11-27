@@ -301,6 +301,19 @@ pub(crate) struct AgentBriefSelection<'a> {
     pub(crate) withheld_changed_gaps: Vec<AgentBriefWithheldChangedGap>,
 }
 
+impl AgentBriefSelection<'_> {
+    /// Whether a changed line reaches every named seam. That is the only
+    /// selection in which the brief may call the seam values changed code: a
+    /// seam asked for by its ID, a repository fallback after a comment-only
+    /// or unrelated change, and a seam chosen for its owner, its test or its
+    /// file are read from the current source all the same (#15361 review).
+    pub(crate) fn every_seam_is_on_a_changed_line(&self) -> bool {
+        self.top_seams
+            .iter()
+            .all(|seam| seam.why_now.reason == AgentBriefWhyNowReason::ChangedLineIntersectsSeam)
+    }
+}
+
 /// Reason PR guidance names for an [`AgentBriefWithheldChangedGap`].
 pub(crate) const WITHHELD_CHANGED_GAP_REASON: &str = "static_limitation";
 
@@ -1471,6 +1484,7 @@ mod tests {
             evidence: TestGripEvidence {
                 seam_id,
                 related_tests: vec![Arc::new(RelatedTestGrip {
+                    assertion_targets_non_function: None,
                     test_name: format!("{owner}_test"),
                     file: PathBuf::from("tests/sample.rs"),
                     line: 5,

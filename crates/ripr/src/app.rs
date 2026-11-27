@@ -269,7 +269,7 @@ pub(crate) fn git_timeout_from_env_value(
         Ok(value) => parse_git_timeout_seconds("RIPR_GIT_TIMEOUT", &value).map(Some),
         Err(std::env::VarError::NotPresent) => Ok(None),
         Err(std::env::VarError::NotUnicode(_)) => {
-            Err("RIPR_GIT_TIMEOUT must be valid UTF-8".to_string())
+            Err("RIPR_GIT_TIMEOUT must be valid UTF-8; set it to a whole number of seconds (0 disables the deadline), or unset it to use the default".to_string())
         }
     }
 }

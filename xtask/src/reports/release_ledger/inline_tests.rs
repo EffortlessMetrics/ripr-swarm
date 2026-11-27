@@ -4,6 +4,8 @@
 //! reads each such commit's zero-context diff and the `#[cfg(test)]` item spans
 //! of both file revisions. Anything it cannot place inside a span stays product.
 
+mod batch;
+
 use rayon::prelude::*;
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
@@ -28,6 +30,21 @@ pub(super) struct FileDiff {
     /// Added or deleted whole files are never inline test edits.
     pub(super) whole_file: bool,
     pub(super) hunks: Vec<Hunk>,
+}
+
+impl FileDiff {
+    fn needed_revisions<'a>(&self, parent: &'a str, sha: &'a str) -> [Option<&'a str>; 2] {
+        [
+            self.hunks
+                .iter()
+                .any(|hunk| hunk.old_count > 0)
+                .then_some(parent),
+            self.hunks
+                .iter()
+                .any(|hunk| hunk.new_count > 0)
+                .then_some(sha),
+        ]
+    }
 }
 
 /// A product-class `.rs` file that could hold inline tests.
@@ -386,11 +403,15 @@ impl Side {
 
 fn side_at(repo: &Path, rev: &str, path: &str) -> Result<Side, String> {
     let bytes = git_bytes(repo, &["show", &format!("{rev}:{path}")], GIT_TIMEOUT)?;
-    let source = String::from_utf8_lossy(&bytes);
-    Ok(Side {
+    Ok(side_from_bytes(&bytes))
+}
+
+fn side_from_bytes(bytes: &[u8]) -> Side {
+    let source = String::from_utf8_lossy(bytes);
+    Side {
         spans: test_spans(&source),
         blank: source.lines().map(|line| line.trim().is_empty()).collect(),
-    })
+    }
 }
 
 /// A hunk range without the blank lines at either edge, so a blank separator
@@ -470,23 +491,27 @@ fn commit_inline_paths(repo: &Path, parent: &str, sha: &str) -> Result<Vec<Strin
     )?;
     let text = String::from_utf8_lossy(&bytes);
     let mut inline = Vec::new();
-    for file in parse_diff(&text) {
-        if !is_candidate(&file.path) || file.whole_file || file.hunks.is_empty() {
-            continue;
-        }
-        let old = if file.hunks.iter().any(|hunk| hunk.old_count > 0) {
-            side_at(repo, parent, &file.path)?
-        } else {
-            Side::empty()
-        };
-        let new = if file.hunks.iter().any(|hunk| hunk.new_count > 0) {
-            side_at(repo, sha, &file.path)?
-        } else {
-            Side::empty()
-        };
-        let trimmed = trim_blank_hunks(&file, &old, &new);
-        if is_inline_test_edit(&trimmed, &old.spans, &new.spans) {
-            inline.push(file.path);
+    let mut files = parse_diff(&text);
+    files.retain(|file| is_candidate(&file.path) && !file.whole_file && !file.hunks.is_empty());
+    for chunk in files.chunks(4) {
+        let requests: Vec<_> = chunk
+            .iter()
+            .flat_map(|file| {
+                file.needed_revisions(parent, sha)
+                    .into_iter()
+                    .flatten()
+                    .map(|rev| (rev, file.path.as_str()))
+            })
+            .collect();
+        let mut sides = batch::Reader::new(repo, &requests);
+        for file in chunk {
+            let [old_rev, new_rev] = file.needed_revisions(parent, sha);
+            let old = sides.read(old_rev, &file.path)?;
+            let new = sides.read(new_rev, &file.path)?;
+            let trimmed = trim_blank_hunks(file, &old, &new);
+            if is_inline_test_edit(&trimmed, &old.spans, &new.spans) {
+                inline.push(file.path.clone());
+            }
         }
     }
     inline.sort();

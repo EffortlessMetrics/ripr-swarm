@@ -132,6 +132,9 @@ async fn actual_sdk_held_stdout_preserves_serial_request_admission() -> Result<(
             admission: Arc::new(Admission::default()),
             pending_protocol_error: None,
             writer_needs_drain: false,
+            held: None,
+            attempt_running: Arc::new(AtomicBool::new(false)),
+            input_closed: Arc::new(AtomicBool::new(false)),
             idle_interrupt: None,
         },
         requests: requests.clone(),
@@ -222,6 +225,9 @@ fn direct_transport<W: AsyncWrite + Unpin>(writer: W) -> BoundedTransport<&'stat
         admission: Arc::new(Admission::default()),
         pending_protocol_error: None,
         writer_needs_drain: false,
+        held: None,
+        attempt_running: Arc::new(AtomicBool::new(false)),
+        input_closed: Arc::new(AtomicBool::new(false)),
         idle_interrupt: None,
     }
 }
@@ -233,13 +239,16 @@ where
     R: AsyncRead + Unpin + Send,
     W: AsyncWrite + Unpin + Send + 'static,
 {
-    match transport.receive().await {
-        Some(ClientJsonRpcMessage::Request(request))
+    // Bounded: a regression that keeps the request unadmitted must end this
+    // test, not stall the suite waiting for a reply only the test can send.
+    match tokio::time::timeout(Duration::from_secs(5), transport.receive()).await {
+        Ok(Some(ClientJsonRpcMessage::Request(request)))
             if request.id == rmcp::model::RequestId::Number(id) =>
         {
             Ok(())
         }
-        _ => Err(format!("actual transport did not admit request {id}")),
+        Ok(_) => Err(format!("actual transport did not admit request {id}")),
+        Err(_) => Err(format!("request {id} was not admitted within the deadline")),
     }
 }
 async fn require_pending<R, W>(transport: &mut BoundedTransport<R, W>) -> Result<(), String>
@@ -448,4 +457,218 @@ async fn fatal_send_wakes_receive_with_an_admitted_request() -> Result<(), Strin
         return Err("fatal output admitted another request".into());
     }
     Ok(())
+}
+
+fn refresh_lane_transport(input: &'static [u8]) -> BoundedTransport<&'static [u8], Vec<u8>> {
+    BoundedTransport {
+        reader: Arc::new(Mutex::new(FrameReader::new(input))),
+        // These tests model a refresh whose attempt is running.
+        attempt_running: Arc::new(AtomicBool::new(true)),
+        ..direct_transport(Vec::<u8>::new())
+    }
+}
+async fn require_end_of_input<R, W>(transport: &mut BoundedTransport<R, W>) -> Result<(), String>
+where
+    R: AsyncRead + Unpin + Send,
+    W: AsyncWrite + Unpin + Send + 'static,
+{
+    match tokio::time::timeout(Duration::from_secs(5), transport.receive()).await {
+        Ok(None) => Ok(()),
+        Ok(Some(_)) => Err("transport admitted a message after end of input".into()),
+        Err(_) => Err("transport did not end at idle end of input".into()),
+    }
+}
+
+/// #15983: while the only admitted request is a `ripr_refresh` call, input is
+/// still read. Status, liveness and a repeated refresh are admitted one at a
+/// time; a request that reads the snapshot is held, with nothing read behind
+/// it, until the refresh reply is flushed.
+#[tokio::test]
+async fn running_refresh_admits_observers_and_holds_snapshot_readers() -> Result<(), String> {
+    let mut transport = refresh_lane_transport(
+        b"{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"tools/call\",\"params\":{\"name\":\"ripr_refresh\",\"arguments\":{}}}\n\
+{\"jsonrpc\":\"2.0\",\"id\":2,\"method\":\"tools/call\",\"params\":{\"name\":\"ripr_workspace_status\",\"arguments\":{}}}\n\
+{\"jsonrpc\":\"2.0\",\"id\":3,\"method\":\"tools/call\",\"params\":{\"name\":\"ripr_refresh\",\"arguments\":{}}}\n\
+{\"jsonrpc\":\"2.0\",\"id\":4,\"method\":\"ping\"}\n\
+{\"jsonrpc\":\"2.0\",\"id\":5,\"method\":\"resources/read\",\"params\":{\"uri\":\"ripr://workspace/status\"}}\n\
+{\"jsonrpc\":\"2.0\",\"id\":6,\"method\":\"tools/call\",\"params\":{\"name\":\"ripr_list_gaps\",\"arguments\":{}}}\n\
+{\"jsonrpc\":\"2.0\",\"id\":7,\"method\":\"tools/call\",\"params\":{\"name\":\"ripr_workspace_status\",\"arguments\":{}}}\n",
+    );
+    require_request(&mut transport, 1).await?;
+    require_request(&mut transport, 2).await?;
+    // One observer at a time: nothing is read until its reply is flushed.
+    require_pending(&mut transport).await?;
+    transport
+        .send(reply(2))
+        .await
+        .map_err(|error| error.to_string())?;
+    // The repeated refresh is an ordinary request, not a second lane, and it
+    // carries the mark its handler refuses from.
+    match tokio::time::timeout(Duration::from_secs(5), transport.receive()).await {
+        Ok(Some(ClientJsonRpcMessage::Request(request)))
+            if request.id == rmcp::model::RequestId::Number(3)
+                && request
+                    .request
+                    .extensions()
+                    .get::<BesideRunningRefresh>()
+                    .is_some() => {}
+        _ => return Err("the repeated refresh was not admitted with its mark".into()),
+    }
+    require_pending(&mut transport).await?;
+    transport
+        .send(reply(3))
+        .await
+        .map_err(|error| error.to_string())?;
+    require_request(&mut transport, 4).await?;
+    transport
+        .send(reply(4))
+        .await
+        .map_err(|error| error.to_string())?;
+    require_request(&mut transport, 5).await?;
+    transport
+        .send(reply(5))
+        .await
+        .map_err(|error| error.to_string())?;
+    // The snapshot reader is held, and the status call behind it is not read.
+    require_pending(&mut transport).await?;
+    require_pending(&mut transport).await?;
+    transport
+        .send(reply(1))
+        .await
+        .map_err(|error| error.to_string())?;
+    require_request(&mut transport, 6).await?;
+    // With no refresh running, admission is serial again.
+    require_pending(&mut transport).await?;
+    transport
+        .send(reply(6))
+        .await
+        .map_err(|error| error.to_string())?;
+    require_request(&mut transport, 7).await?;
+    require_pending(&mut transport).await
+}
+
+/// Without a running refresh nothing opens the second slot: a snapshot read
+/// and a status call behind it are admitted strictly one at a time.
+#[tokio::test]
+async fn only_a_refresh_tool_call_opens_the_second_slot() -> Result<(), String> {
+    let mut transport = refresh_lane_transport(
+        b"{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"tools/call\",\"params\":{\"name\":\"ripr_list_gaps\",\"arguments\":{}}}\n\
+{\"jsonrpc\":\"2.0\",\"id\":2,\"method\":\"tools/call\",\"params\":{\"name\":\"ripr_workspace_status\",\"arguments\":{}}}\n\
+{\"jsonrpc\":\"2.0\",\"id\":3,\"method\":\"tools/list\",\"params\":{}}\n",
+    );
+    require_request(&mut transport, 1).await?;
+    require_pending(&mut transport).await?;
+    transport
+        .send(reply(1))
+        .await
+        .map_err(|error| error.to_string())?;
+    require_request(&mut transport, 2).await?;
+    require_pending(&mut transport).await
+}
+
+/// End of input read while a refresh runs still owes that refresh its reply,
+/// as it did when input could not be read before the reply was flushed.
+#[tokio::test]
+async fn end_of_input_during_a_refresh_waits_for_its_reply() -> Result<(), String> {
+    let mut transport = refresh_lane_transport(
+        b"{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"tools/call\",\"params\":{\"name\":\"ripr_refresh\",\"arguments\":{}}}\n",
+    );
+    require_request(&mut transport, 1).await?;
+    require_pending(&mut transport).await?;
+    transport
+        .send(reply(99))
+        .await
+        .map_err(|error| error.to_string())?;
+    require_pending(&mut transport).await?;
+    transport
+        .send(reply(1))
+        .await
+        .map_err(|error| error.to_string())?;
+    require_end_of_input(&mut transport).await
+}
+
+/// The SDK drops the reply of a cancelled request, so the typed cancellation
+/// itself releases the slot; a cancellation naming another id releases nothing.
+#[tokio::test]
+async fn cancelling_the_running_refresh_releases_its_slot() -> Result<(), String> {
+    let mut transport = refresh_lane_transport(
+        b"{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"tools/call\",\"params\":{\"name\":\"ripr_refresh\",\"arguments\":{}}}\n\
+{\"jsonrpc\":\"2.0\",\"method\":\"notifications/cancelled\",\"params\":{\"requestId\":7}}\n\
+{\"jsonrpc\":\"2.0\",\"method\":\"notifications/cancelled\",\"params\":{\"requestId\":1,\"reason\":\"client timeout\"}}\n",
+    );
+    require_request(&mut transport, 1).await?;
+    if !matches!(
+        tokio::time::timeout(Duration::from_secs(5), transport.receive()).await,
+        Ok(Some(ClientJsonRpcMessage::Notification(_)))
+    ) {
+        return Err("unrelated cancellation was not delivered".into());
+    }
+    if transport
+        .admission
+        .is_idle()
+        .map_err(|error| error.to_string())?
+    {
+        return Err("a cancellation naming another request released the refresh".into());
+    }
+    if !matches!(
+        tokio::time::timeout(Duration::from_secs(5), transport.receive()).await,
+        Ok(Some(ClientJsonRpcMessage::Notification(_)))
+    ) {
+        return Err("typed cancellation was not delivered".into());
+    }
+    require_end_of_input(&mut transport).await
+}
+
+/// Only the SDK-typed cancellation names a request to release. A frame whose
+/// params do not type as a cancellation (the SDK does not act on it) names
+/// none, whether the SDK rejects it or carries it as a custom notification.
+#[test]
+fn untyped_cancellation_names_no_request() -> Result<(), String> {
+    let typed: ClientJsonRpcMessage = serde_json::from_str(
+        r#"{"jsonrpc":"2.0","method":"notifications/cancelled","params":{"requestId":1,"reason":"client timeout"}}"#,
+    )
+    .map_err(|error| error.to_string())?;
+    let ClientJsonRpcMessage::Notification(typed) = typed else {
+        return Err("typed cancellation did not decode as a notification".into());
+    };
+    if cancelled_request_id(&typed.notification) != Some(rmcp::model::RequestId::Number(1)) {
+        return Err("typed cancellation did not name request 1".into());
+    }
+    let untyped = serde_json::from_str::<ClientJsonRpcMessage>(
+        r#"{"jsonrpc":"2.0","method":"notifications/cancelled","params":{"requestId":1,"reason":42}}"#,
+    );
+    match untyped {
+        Ok(ClientJsonRpcMessage::Notification(untyped))
+            if cancelled_request_id(&untyped.notification).is_some() =>
+        {
+            Err("an untyped cancellation named a request to release".into())
+        }
+        _ => Ok(()),
+    }
+}
+
+/// The refresh slot stays occupied until the reply frame is flushed, and a
+/// client that has read that reply may already have written its next refresh.
+/// With the attempt over, that refresh is admitted without the refusal mark.
+#[tokio::test]
+async fn refresh_written_after_the_attempt_ended_is_not_marked() -> Result<(), String> {
+    let mut transport = refresh_lane_transport(
+        b"{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"tools/call\",\"params\":{\"name\":\"ripr_refresh\",\"arguments\":{}}}\n\
+{\"jsonrpc\":\"2.0\",\"id\":2,\"method\":\"tools/call\",\"params\":{\"name\":\"ripr_refresh\",\"arguments\":{}}}\n",
+    );
+    require_request(&mut transport, 1).await?;
+    transport.attempt_running.store(false, Ordering::SeqCst);
+    match tokio::time::timeout(Duration::from_secs(5), transport.receive()).await {
+        Ok(Some(ClientJsonRpcMessage::Request(request)))
+            if request.id == rmcp::model::RequestId::Number(2)
+                && request
+                    .request
+                    .extensions()
+                    .get::<BesideRunningRefresh>()
+                    .is_none() =>
+        {
+            Ok(())
+        }
+        _ => Err("a refresh written after the attempt ended was marked or not admitted".into()),
+    }
 }

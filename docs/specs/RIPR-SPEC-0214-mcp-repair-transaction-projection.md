@@ -165,6 +165,11 @@ read-only and without execution authority (ADR 0022):
   failing gate except that `seam_inventory_truncated` outranks it. MCP never reads readiness from finding facts alone and keeps
   no parallel validator: `ripr_prepare_repair` cannot return a ready packet
   or an `awaiting_edit` attempt for an item `ripr repair` refuses.
+- When the resolved seam and its bound candidate-current finding both
+  report no static test path, preparation also requires the producer to
+  establish that its owner is unreferenced in the workspace (#4668).
+  The refusal remains `seam_gate_refused` through list, detail, and
+  prepare. The RepairCard can still show the proposed target for inspection.
 - When every gate is established, the tool creates one session repair
   transaction with a deterministic, root-bound `repair-attempt-` identity
   (the first 24 hex digits of a SHA-256 over schema version, snapshot id,
@@ -255,8 +260,11 @@ read-only and without execution authority (ADR 0022):
   attempt the tools report `analysis_in_flight`. An unknown item fails with
   `item_not_found`. The supported stdio transport admits one request through
   its reply flush, so a refresh queued behind a durable read cannot begin
-  during that read. The session guard is evaluated at read admission; this
-  slice adds no concurrent public transport or response-time lease. An
+  during that read, and a read written during a refresh is held until the
+  refresh reply is flushed, unless that refresh was cancelled, after which
+  the read reports `analysis_in_flight` (#15983). The session guard is evaluated at read
+  admission; this slice adds no concurrent public transport or response-time
+  lease. An
   unknown attempt or receipt identity fails with
   `attempt_not_found`; a durable manifest that fails canonical validation
   fails with `attempt_invalid`; a session transaction bound to a snapshot

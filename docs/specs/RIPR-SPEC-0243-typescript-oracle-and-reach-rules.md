@@ -37,6 +37,12 @@ Linked issues:
 - #14241 (class exported as default by a later statement)
 - #14088 (class imported by a named `require()`; re-declared `var` import)
 - #15092 (class as a CommonJS module's whole export)
+- #16252 (inline class expression as a CommonJS module's whole export)
+- #16261 (class method overwritten by a later same-key member; rule 26)
+- #16275 (class expression as a CommonJS named export; rule 27)
+- #16306 (class method shadowed by a same-key field; rule 28)
+- #16314 (class method replaced by an assignment; rule 29)
+- #16349 (methods of an anonymous default-exported class; rule 19)
 - #9435 (exact oracle ignored on five changed-line shapes)
 - #9497 (skipped or unexercised tests credited as exposed; rules 17 and 18)
 - #11196 (start rate: a conditional assertion in an unconsulted test no longer
@@ -367,6 +373,23 @@ Evaluated inline ordinary
 function constructors and tags retain body registration notices; their parameter
 shadows and uncalled function values remain separate from runner registrations.
 
+Deno registrations (#15622). `Deno.test(name, fn)`, `Deno.test(name, options,
+fn)`, `Deno.test({ name, fn })` (with `fn` a method, arrow or function value),
+`Deno.test(options, fn)`, `Deno.test(function named() {})` and `Deno.test.only`
+each register one test. An options object whose `ignore` is anything but a
+literal `false`, or that has a spread or computed key, registers nothing, and
+so does `Deno.test.ignore`. A declaration, import or registration-scope name
+`Deno` shadows the runtime namespace, so its `.test` calls register nothing.
+Assertion collection and the unused-closure reach mask read the same resolved
+callback. Deno's standard assertions bind only from `@std/assert`,
+`jsr:@std/assert[@range][/subpath]` or `https://deno.land/std[@version]/...`
+(`/assert/` or `/testing/asserts.ts`): `assertEquals` reads as
+`deepStrictEqual`, `assertStrictEquals` as `strictEqual`, `assert` as the
+truthy `ok` call (it has no node-style members), and `assertThrows` /
+`assertRejects` as the broad `throws` / `rejects`. Other exports, namespace
+imports, look-alike specifiers and same-named local helpers stay unbound.
+`t.step` bodies are not walked for assertions.
+
 ### Assertion collection
 
 - Only the test callback's own statement list is walked, through blocks,
@@ -577,12 +600,21 @@ falling through to the Jest table. A renamed import (`expect as e`) and
 | Matcher | Kind / strength |
 | --- | --- |
 | `toBe`, `toEqual`, `toStrictEqual` | `exact_value` / strong |
+| Jasmine `toBeTrue()`, `toBeFalse()` (no argument; expected value `true` / `false`, as `toBe(true)` / `toBe(false)`) | `exact_value` / strong |
 | `toThrow`, `toThrowError` without an exact payload | `broad_error` / weak |
 | `toMatchSnapshot`, `toMatchInlineSnapshot` | `snapshot` / medium (strong for a literal inline snapshot, RIPR-SPEC-0247 rule 3, or a named committed entry, RIPR-SPEC-0258) |
 | `toHaveBeenCalled`, `toHaveBeenCalledWith`, `toHaveBeenCalledTimes`, `toHaveBeenLastCalledWith`, `toHaveBeenNthCalledWith` | `mock_expectation` / medium |
 | `toBeTruthy`, `toBeFalsy`, `toBeDefined`, `toBeUndefined`, `toBeNull`, `toBeNaN` | `smoke_only` / smoke |
-| `toContain`, `toMatch`, `toBeGreaterThan`, `toBeGreaterThanOrEqual`, `toBeLessThan`, `toBeLessThanOrEqual`, `toHaveLength`, `toHaveProperty`, `toBeInstanceOf` (RIPR-SPEC-0249; strong for a predicate's class split), `toMatchObject` (RIPR-SPEC-0250; strong for a listed returned field) | `relational_check` / weak |
+| `toContain`, `toMatch`, `toBeGreaterThan`, `toBeGreaterThanOrEqual`, `toBeLessThan`, `toBeLessThanOrEqual`, `toHaveLength`, Jasmine `toHaveSize`, `toHaveProperty`, `toBeInstanceOf` (RIPR-SPEC-0249; strong for a predicate's class split), `toMatchObject` (RIPR-SPEC-0250; strong for a listed returned field) | `relational_check` / weak |
 | any other matcher | `unknown` / unknown, `typescript_custom_matcher_unresolved` (a same-file strict-equality `expect.extend` matcher reads `exact_value` / strong, RIPR-SPEC-0262) |
+
+Jasmine-only names are also common names for home-grown matchers, so
+`toBeTrue`, `toBeFalse` and `toHaveSize` read `unknown` / unknown in a file
+that mentions `extend` or `addMatchers`, with `.rejects`, or (for the
+boolean pair) with an argument (#15627). Negated, they cap like `.not.toBe`. The
+mention check is textual (comments and strings count, which only refuses
+more); a registration in another file, such as a setup or helper file, is
+not seen, the same limit `toBe` has.
 
 `.resolves` uses the same table. For an unshadowed `expect` import from
 `vitest` or `@jest/globals`, `.rejects.toBe`, `.rejects.toEqual` and
@@ -745,7 +777,9 @@ the `rejects` exact-error override, so neither re-raises it. Owner:
   strong, or `relational_check` / weak under `not`; `throw`, `throws` and
   `Throw` are `broad_error` / weak, except as rule 10 states; `include`,
   `match`, `above`, `below`, `least`, `most`, `lengthOf` and the like are
-  `relational_check` / weak; the property terminals `true`, `false`, `ok`,
+  `relational_check` / weak. The `empty` property also reads as relational:
+  it observes emptiness of the receiver, leaving its element values and order
+  open (#15342). The property terminals `true`, `false`, `ok`,
   `null`, `undefined` and `exist` are `smoke_only` / smoke. Any other
   chain word or terminal yields no assertion.
 
@@ -921,11 +955,17 @@ Candidates come from the first non-empty tier:
    strings, templates and comments do not count), a name defined twice in the
    class, a name some method assigns, deletes or defines on `this`, a name an
    instance field of the class defines (a computed field defines any name),
-   an arrow body that is not the first argument of a synchronous array method
+   an arrow, parameter defaults included, that is not an unannotated,
+   non-async first argument of a synchronous array method
    (`forEach`, `map`, `filter`, `reduce`, `some`, `every`, `find`, `sort` and
-   their kin; `map`'s `thisArg` is a stored value; `const later = () => this.helper()`, an array element, a logical
+   their kin; `map`'s `thisArg` is a stored value; `const later = () => this.helper()`,
+   `const later = (k = this.helper()) => k`, an array element, a logical
    operand, a stored callback, and a deferred callee such as `setTimeout`,
-   an event listener, `subscribe` or `then` are created or run later), the body
+   an event listener, `subscribe` or `then` are created or run later; an
+   async callback runs past its first `await` later, and an arrow with a
+   return type annotation is never read as a synchronous callback; an
+   annotation the scan cannot bound, a function or conditional type, drops
+   the caller), the body
    of a nested `function`, parameter defaults included (a call the method makes
    outside it still counts; a
    function whose parameters are followed by a return type annotation, or a
@@ -972,6 +1012,136 @@ Candidates come from the first non-empty tier:
    bare-call edges does not extend to its own `ModuleFunction` owner.
    Module-const (`ModuleFunction` value) reach stays same-module only: it
    does not continue across an import, and an exported value is not followed.
+   **Built values and function references (#15928).** Two more forms are
+   edges of the same graph, under the same hop bound and the same limits.
+   `new X(...)` is a read of a module-level `const X`: constructing an
+   instance binds nothing to the name. A `const` built by an immediately
+   invoked function with no arguments (`const X = (function () { class X
+   { ... } return X; })()`, or the arrow form; not `async`, not a generator)
+   also calls what that function's text bare-calls, methods of a class it
+   declares included, because the owner is the whole `const`: an exported
+   entry that constructs the class reaches the module functions the class's
+   code calls. The entry reaches the value only from code that runs when it
+   runs, under the same header and nesting rule as the class constructions
+   below: a read inside a stored or deferred arrow (`const later = () => new
+   X().m()`, `setTimeout(() => ...)`) is no edge. An expression-bodied
+   arrow runs its whole expression when it is the entry itself or the
+   function a factory product returns (`export const f = (x) => new
+   X().m(x)`, `export const f = make()` where `make` returns that arrow),
+   so it keeps the edge; the factory itself, which only makes the arrow,
+   does not. When the building function declares the binding's own name,
+   mentions of the name inside it are the inner binding and are left out of
+   the module-wide scan; every mention outside it must be an allowlisted read
+   and, when the building function's parsed body holds any block or arrow
+   (a class, a method, a nested function or a block statement whose code
+   may run later), a construction that goes straight into a member call,
+   `new X(...).member(` (not `constructor`, `valueOf`, `toString`,
+   `toLocaleString` or `__proto__`), with no text outside it,
+   literals and comments included, naming `prototype`, `__proto__`,
+   `constructor`, `getPrototypeOf`, `setPrototypeOf` or `Reflect`, and no
+   `this` in the body other than `this.x`, `this?.x`, `this[...]`, a call
+   `this.x(` of a member the body declares (`this.valueOf()` hands the
+   instance back), or the receiver of `NAME.call(` / `NAME.apply(` where the
+   body binds `NAME` from `this[...]` or a member it declares
+   (`const h = this["$" + t]; h.call(this, v)`)
+   (an allowlisted read such as
+   `patch(X.prototype)`, a kept instance, `new X()["__proto__"]`, or a method
+   that returns `this` or hands it to other code, could replace a method
+   every later instance runs). A top-level name the building function also declares as
+   a member (`compare(a, b) { ... }`) is no edge, and neither is a call
+   followed by `:` (a conditional arm reads like a return type). A function
+   passed by reference as the whole first argument of a synchronous array
+   callback method (`keys.sort(compare)`, `values.reduce(add, 0)`) is a call
+   of it when the function is declared in this module, the module never
+   reassigns it, and the reference is code, not a comment or a literal; an imported binding passed by reference
+   is no edge, so cross-module reach stays bare calls only. An explicit type
+   argument list and whitespace before the argument list are read through
+   (`new Box<string>()`, `new Box ()`, `values.map<string>(format)`); `new
+   Box` with no argument list is not a construction here. Any other mention of the name in the enclosing function (stored,
+   an array element, a later argument, an argument of a bare call,
+   `setTimeout`, `then`, an event listener) leaves no call edge; the
+   closure edges below may still read it as value-passing reach. Limits: the
+   class is one node, so a method no entry calls is reached with the rest of
+   the class, and so is a function only a method the building function itself
+   replaces calls (static text reach, as for the bare-call graph); a
+   member reached through a computed `this[...]` is trusted not to hand the
+   instance back, and a prototype key built at run time
+   (`o["__pro" + "to__"]`) is not seen; every guard reads the shared
+   literal and comment mask, so text that desynchronizes it (#16244) is a limit of
+   all masked checks; the receiver of the array method is not typed.
+   **Methods of a module-private class (#15928).** A top-level `class X`
+   declaration that is not exported has one node per plain instance method,
+   `X.method`, in the same graph under the same hop bound. A function or
+   method reaches `X.method` by `new X(...).method(` written as one
+   expression in code that runs when it runs (not inside a nested function,
+   or an arrow, parameter defaults included, other than an unannotated,
+   non-async synchronous array callback, such as
+   `const later = () => new X().m()`, `const later = (v = new X().m()) => v`
+   or `setTimeout(() => ...)`; a generator function or method, whose body
+   runs only when its iterator is advanced, reaches no class or built value
+   (#16249); a function
+   whose header is not `(params) [: Type] [=>] {` gives no construction
+   edge, except an arrow `(params) [: Type] => expression` whose
+   expression holds no nested function, class or block, which runs it
+   all), when every
+   mention of `X` in that function is a construction.
+   `X.method` calls what its text bare-calls, the sibling methods it calls
+   as `this.other(` (or hands by reference to a synchronous array callback),
+   and the methods it runs on a class it constructs the same way. A method
+   owner then carries the exported entries that reach its node, and so does
+   a module function only such a method calls. Fail-closed: the class has no
+   `extends`, no decorator (on the class, a member or a parameter: any `@`
+   in the class's code, outside comments and literals, refuses it; a JSDoc
+   `@param` does not), no computed member and no `return` in a constructor
+   spelled `constructor` or `"constructor"`, no `this.m` of a method other
+   than a direct call (`this.m(`, `this.m?.(`, `this.m<T>(`) or an argument
+   of a call whose `(` follows a callee name, not a keyword or `)`
+   (`.sort(this.m)`), since any other spelling may be an assignment target
+   that replaces it (`[this.m] = ...`, `({ k: this.m } = ...)`,
+   `for (this.m of ...)`, `(this.m as T) = f`, `this.m! = f`,
+   `(this.m) = f`, `if (c) (this.m) &&= f`); its name is declared once
+   in the file and every other mention outside the declaration is a
+   construction `new X(...)` (a property of the same name `o.X`, which
+   text cannot tell from the binding after `1.` and a line break, an alias,
+   a read such as `X.prototype` even
+   when nothing writes through it, a type position, a re-export, a subclass,
+   a prototype write or any other mention refuses the whole class); the class text uses `this` only
+   as a plain access `this.name` / `this?.name` / `this.#name` to a member
+   the class body declares or a field it assigns as `this.name = ...`, calls
+   `this.name(...)` only for an instance method the class declares that no
+   field, accessor or quoted key shares the name of and that nothing in the
+   module reassigns (a field
+   or getter may hold `Object.prototype.valueOf`, which returns the
+   instance; any other member must be followed by a separator or operator
+   that cannot call it, so `(this.f)()`, `this.f!()`, `this.f<T>()` and a
+   comment before `(` refuse the class), has no static member or static
+   block (whose `this` is the class), and never uses `super` or
+   `new.target` (`Object.assign(this, o)`,
+   `this[key] = f`, `(this as any).name`, `const self = this`, an inherited
+   member such as `this.constructor`, `this.__proto__`, `this.valueOf()` or
+   `this.__defineGetter__`, a static block's `this.prototype`,
+   `super.valueOf()` or `new.target.prototype` refuses every method, since
+   any of them can replace a method on the instance the entry calls; the
+   class text is not masked, so a `this` in a comment, a string or a type
+   position is scanned like code and may refuse the class, and a member name
+   spelled with a unicode escape refuses it); every `new X(...)` in the
+   module is the direct receiver of a call to one of its methods,
+   `new X(...).method(` (a kept, passed or inspected instance, such as
+   `Object.getPrototypeOf(new X())`, refuses the class); a method is a node only when
+   no other member of the class has its name (a field, an accessor, a
+   static, or a member whose key is the same name quoted, `"write" = ...`),
+   it is not a generator, nothing in the module assigns a member of that
+   name on any receiver, and no literal bracket key of that name
+   (`["write"]`) appears anywhere in the module, even as a read. Limits: an instance kept in a
+   variable (`const s = new X(); s.method()`) refuses the whole class, and neither
+   is a class expression, a static method, an accessor or a constructor body.
+   A module whose code (outside comments and literals) names `eval` or
+   `Function` (other than `Function.prototype.toString.call(`, which only
+   reads a function's source), or holds a `\` (an identifier spelled with a unicode escape),
+   follows no module value, built value or class, since either can write one
+   under a spelling the scan cannot see; and a mention after `.` reads as
+   another binding only when the `.` does not follow a digit, which may end a
+   numeric literal before a line break (`1.\nX.prototype.m = f`).
    **Cross-module continuation (#13592).** The same chain continues across an
    import: an exported function of module X that bare-calls a binding it
    imported from module Y reaches the owner Y declares (or the owner Y's own
@@ -1020,6 +1190,62 @@ Candidates come from the first non-empty tier:
    it reaches once, so per-line classification does not rescan them. The importer's calls ride in the per-file export facts
    (file-fact schema 8), so resolution never re-parses an importer, and run
    only for owners of changed files.
+   **Closure continuation (#13592).** The same-module graph also records
+   closure edges: a reference to another top-level declaration that is not a
+   recorded bare call, read from the AST of the declaration's code (a
+   function with its nested callbacks, or the whole initializer of a
+   call-built constant, callee included). As for calls, a function's directly
+   returned functions are not its own code: calling a factory does not run
+   them, so only a value the factory builds reaches what they reference. This covers a function passed as
+   a value (`JSON.parse(text, reviver)`, `setTimeout(tick)`; a synchronous
+   array callback such as `keys.sort(compare)` is a call edge above, so
+   it is no closure edge), a call-built
+   constant passed or referenced as a value (`parse(input, Grammar)`), the
+   callbacks of such a constant (`const Rule = match(re, (s) => upper(s))`)
+   and the combinator that built it (`match`). A name the referencing code
+   binds anywhere (parameter, local, inner function, nested callback
+   parameter, catch binding), a name the module ever assigns or updates, and
+   a reference in a type position add no edge. An owner reached from an
+   export only along paths that take at least one closure edge gets a
+   closure entry: at most 3 bare-call edges before the first closure edge
+   and at most 8 edges in total (`MODULE_CLOSURE_MAX_HOPS`), and only when
+   no bare-call path within its own bound reaches the owner from that export.
+   A call-built constant owner (`ModuleFunction`) that is a graph node (a
+   factory product, not a B2 value such as `Symbol(...)`, a literal or
+   `new X()`) reads every entry as a closure entry, a bare call of it
+   (`Rule(s)`) included, because what runs is the callback it was built from.
+   A B2 value keeps its reader entries as B2 reads them. A test that names
+   the constant itself keeps the `module_value_use` relation (#8568) and its
+   closure entries are not consulted, so a direct value use never reads worse
+   than it did before #13592's closure continuation. An
+   owner with more than 32 closure entries
+   (`MAX_CLOSURE_ENTRIES_PER_OWNER`) keeps none of them and reads as it did
+   before closure reach (possibly `no_static_path`); the cap is not yet
+   disclosed. A reassignment is a bare identifier target (`x = ...`, `x++`,
+   `[x] = ...`, `({ x } = ...)`); a member write (`obj.x = ...`) rebinds
+   nothing. A factory the module reassigns lends its product no returned
+   references, and a named function expression's own name
+   (`const label = function helper() { ... }`) binds inside its body, so it is
+   never an edge to a top-level `helper`. A module value (B2) continues across
+   importers only on its closure entries. A reference that
+   invokes nothing (`typeof helper === "function"`, an identity comparison)
+   still adds an edge; that can only turn a `no_static_path` into
+   `static_unknown`, never credit a test. When some related tests reach the
+   owner through plain same-module calls and others through closure entries,
+   the same-module rule decides the class and the text says "same-module or
+   callback callers".
+   Closure entries continue across importers like call entries, within the
+   closure bound, and a call chain is preferred over a closure chain for the
+   same importer export. Reach whose every entry is cross-module or closure
+   reads `static_unknown` whatever the oracle, is never `exposed` or
+   `weakly_exposed`, and starts no repair; the missing-evidence line says
+   "only through callback or value-passing callers". When or whether the
+   value runs is not modeled: a callback stored and never invoked, or run
+   only at import, still counts as reach. On the eight-package unjs Stryker
+   corpus (`benchmarks/mutation_spot_check/corpus-typescript.json`), this
+   moves 296 caught mutants and 49 missed ones from `no_static_path` to
+   `static_unknown` against main with #13719, and changes no other verdict.
+   File-fact schema 13 carries the `closure` flag.
 3. **Heuristic relations** when tiers 1 and 2 are empty, package-filtered,
    for function, arrow and component owners, when the test body
    references the owner name and does not import that name from an
@@ -1060,8 +1286,75 @@ Mocks and spies: `vi.` or `jest.` with `mock`, `doMock`,
 `node:test`, are mocks at any depth. A non-string specifier counts as an
 owner-module mock (fail closed). `spyOn(x, "owner")` with
 `.mockReturnValue`, `.mockImplementation`, `.mockResolvedValue` or
-`.mockRejectedValue` removes the trusted relation and adds
+`.mockRejectedValue`, their `*Once` forms, `.mockReturnThis` or a Jasmine
+`.and.` strategy (`returnValue`, `returnValues`, `callFake`, `throwError`,
+`resolveTo`, `rejectWith`) removes the trusted relation and adds
 `typescript_spy_fabricated_observer`; a bare `spyOn` still relates.
+
+Setup-file mocks (#15949): a mock registered by a runner setup file counts
+for every test file under the config's directory, exactly like a mock
+written in the test file. Configs read: `vitest.config.*`, `vite.config.*`,
+`vitest.workspace.*`, `jest.config.*`, and, in every directory from a test
+file up to the root, `jest.config.json` and the `jest` key of `package.json`.
+Keys read, at any depth: `setupFiles`,
+`setupFilesAfterEnv` and the legacy `setupTestFrameworkScriptFile`
+(`globalSetup` runs in another process and registers no mock for a test).
+Every string literal inside the value is an entry, read against the config's
+directory and a literal `rootDir` or `root` beside it; `<rootDir>` is
+stripped. An absolute path inside the analysis root is read as that file, and
+one outside it names nothing. A relative mock specifier resolves from the file that holds the
+mock call, not from the test. Files a setup file loads through relative
+static imports, value re-exports and bare `require('./x')` statements are
+read too, 2 hops and 32 files per config at most; `import type` and
+`export type` load nothing. An entry
+that names no workspace file (a package, a variable), a setup file that does
+not parse, `automock` and automatic `__mocks__` are not modelled. A nearer
+config of another project is not told apart from the one that governs:
+applying both can only withhold a relation.
+
+Replaced methods (#15950, #6980): an instance method (not a getter, which
+has the wider #13726 rule, and not a constructor) or a static method has no
+tier-1 relation when the test file may replace the member. That is: the
+member's name is among the file-wide replacement names (an argument token of
+a `spyOn`, `stub`, `replace`, `mock`, `doMock`, `stubGlobal`,
+`mockImplementation` or `mockReturnValue` call, or a `.name =` target,
+hooks included); or the test body assigns the member (`c.apply =`, `c['apply'] =`), names it in a
+`defineProperty` or a prototype `delete`, or calls `spyOn`, `stub`,
+`replace`, `replaceGetter`, `replaceSetter`, `method` or `replaceProperty`
+with the literal name as second argument. A call-through spy is withheld as
+well. The file's any-name marker alone does not withhold an ordinary method
+(a `.mock.calls` read or an index assignment sets it); the body is read
+directly because that marker hides the file's names, so a hook-level
+replacement in such a file is not seen. A receiver the body declares with
+`new Class(...)` and assigns again (`c = new Other()`, `c ??= x`) is not a
+receiver; a block-scoped redeclaration of the name is a shadow and leaves the
+first binding a receiver.
+
+Replaced owner function (#15939): a function owner is not related through a
+test file that replaces it on its module object, wherever in the file the
+replacement sits (the test body, a hook, the top level, a sibling test). The
+replacements read are `stub(x, "owner")`, a three-argument
+`replace(x, "owner", fake)`, `replaceProperty` and `defineProperty` naming the
+owner, `mock.method(x, "owner", fake)` (or with two arguments when the file
+mentions `mockImplementation`), a `spyOn(x, "owner")` fabricated anywhere in
+the file, directly or through the variable it is bound to (with or without a
+type annotation), and a member assignment `x.owner = ...`. The target `x`
+counts when it is rooted at a local the file imports (a plain identifier, a
+dotted path, a cast), at a local the test body binds with
+`const x = await import(...)`, or is not rooted at an identifier at all (a call result such as `require("./m")`); a
+global or a body-local object (`console`, `Date`, a fixture) is not the
+owner's module. A whole-object stub `stub(x)` or a member name that is not a
+plain string literal replaces every member of `x`. A default-exported owner
+is also named by `"default"`. The finding carries
+`typescript_spy_fabricated_observer`. `spy(x, "owner")`, a two-argument
+`mock.method` with no `mockImplementation` in the file, a `mock.method` whose
+third argument is an options object literal (`{ times: 1 }`), a
+`defineProperty` whose descriptor literal supplies no `value`, `get` or `set`,
+a two-argument `replace` (`String.prototype.replace`), a replacement naming
+another member and a replacement on a line that is a comment still relate. Not read: `Object.assign(x, { owner: fake })`, a
+replacement made by a helper in another file, and a restore before a sibling
+test's call (that sibling loses its relation). The fact is text-level and can
+only withhold.
 
 **Rule 5. A default import anchors only a default-exported owner.** A bare
 call `local(` through `import local from "<owner module>"` has a declaration
@@ -1113,7 +1406,12 @@ the relation, since it could reach the sibling outside `local.member(` calls
 (`u2.extend()`, `ns.default.extend()`, `extend()`); this is a blanket
 fail-closed rule, not a check of which names the second binding uses (#13750).
 Known limits: a second binding whose source the import resolver cannot match
-to the owner module, and a sibling that reaches the module only through a
+to the owner module (for example a named import through a barrel,
+`import { extend } from '../src/index'` where the index has
+`export * from './utils'`, which resolves to the barrel and not to the owner's
+module), an inline loader call such as
+`createRequire(import.meta.url)('../src/utils')` (only the callees `import`,
+`require`, `requireActual` and `importActual` are read as loads), and a sibling that reaches the module only through a
 path alias such as `@/utils` (only sources starting with `.` count as possibly
 self-reachable), are not covered. The test file must use `local` for nothing but direct
 calls `local.member(` (any number of distinct members, each credited only to
@@ -1122,6 +1420,110 @@ file-level code included), so an alias (`const m = local.name`), a reassignment,
 or a body-local rebinding of `local` all refuse the relation. The relation is
 `imported_owner_call` and the observation guard reads `local.name(...)` as a
 call of the owner, as it does for a namespace import.
+
+JSX render reach (#15295): in a `.tsx` or `.jsx` test, a JSX element
+`<Local .../>` or `<Local>` whose tag is a capitalized bare import local
+counts as a call of that import for `ImportedOwnerCall`, through the same
+import-source, shadow and mock guards as `Local(`. Intrinsic tags (`<div>`),
+member tags (`<Ns.Item>`), type arguments (`Array<Local>`, `useState<Local>`),
+type parameter lists (`<Local extends X>`, `<Local = X>`), comments and
+same-line strings do not count. A render proves reach only; oracle strength
+still comes from the test's assertions, and a render beside an unrelated
+assertion is not `exposed`. Known limits, all fail-closed: same-file
+components, re-export chains, member tags, explicit type arguments on the tag
+(`<Local<T> />`) and a tag directly after JSX text (`Count<Local />`) are not
+credited. A component owner with only heuristic links is advised to render
+`<Local .../>`, not to add a direct owner call.
+
+**Rule 26. A class method that a later same-key member overwrites relates
+to no test (#16261).** A class body defines its members in order, so a later
+method, getter or setter with the same property key (`total`, `'total'`,
+`"total"` and `['total']` are one key; `#total` is a distinct private key) and
+the same `static` placement replaces an earlier one: in `class Cart { total() {...} total()
+{...} }` only the second `total` runs. The earlier body stays an owner (a
+changed line in it is still reported) but relates to no test, by any relation
+tier, so it reads `no_static_path`, and its guidance names the later
+definition instead of suggesting a direct call (which would run the later
+body); the later body keeps its relations. Owners are chosen per changed line,
+so when both definitions share one line the line reads as the earlier,
+overwritten owner: an edit there is not credited, the fail-closed side. This
+holds for every class owner shape (declared, ES default, CommonJS whole
+export, inline `module.exports = class`). Not an overwrite: a getter and a
+setter of one key (one accessor property), a static and an instance member of
+one name (different objects), body-less TypeScript overload signatures, and a
+computed key other than a string literal (`[name]()`), which is never
+compared.
+
+**Rule 27. A class expression assigned to a CommonJS named export is a class
+named by the export property (#16275).** `exports.Cart = class { ... }` and
+`module.exports.Cart = class ... { ... }` are the inline twins of
+`class Cart {}` followed by `exports.Cart = Cart;`: their methods are owners
+whose class name is the property `Cart`, whatever the expression's own id
+says, since that id binds only inside the class body. A named `require` of
+`Cart` relates a changed method as it does for the declared class; a test that
+destructures the inner id or another export stays unrelated. The members of
+one class share the one export slot `Cart`: a later top-level assignment to the
+same slot (another class, a class with no method, or any other value) leaves the
+earlier class dead, so it yields no owner, the fail-closed rule of a reassigned
+function export (#4638), which now also counts a non-function value assigned to
+the slot after the definition. An earlier one, such as the hoisted
+`exports.Cart = void 0;` of compiled TypeScript and Babel output, is overwritten
+by the definition and does not drop it. A whole-module
+`module.exports = function NAME` has its own slot, apart from every property:
+a property write on it (`module.exports.NAME = ...`, a function or a class)
+leaves both live. Instance fields and the repeated-class-name guard read such a
+class under the property name, not its inner id, and its `#private` methods
+(like those of `module.exports = class`) are owners whose changed lines reach
+owner lookup, as for a declared class.
+
+**Rule 28. A class method that a field of the same key shadows relates to no
+test (#16306).** A class field is defined on each instance when it is
+constructed (a static field on the constructor when the class is evaluated),
+after the prototype (or the constructor) already holds the methods, so in
+`class Cart { total = (n) => n; total(n) {...} }` a call `new Cart().total()`
+runs the field's value, whatever the source order. A method, getter or setter
+whose key and `static` placement match a field, keyed as in rule 26 (a bare
+`total;` field counts), stays an owner (a changed line is still reported) but
+relates to no test, so it reads `no_static_path`, and its guidance names the
+field instead of suggesting a direct call. Not a shadow: a `declare` or
+`abstract` field (no runtime definition), a field of the other placement, a
+`#private` field beside a public method, a computed key other than a string
+literal, and a field initialized from the method itself (`total = this.total;`
+or `total = this.total.bind(this);`, `this` being the class for a static
+field), which reads the method before the field is installed, so calling the
+field runs the method body. Any other initializer still shadows. Because the
+method has its own no-reach cause, a test importing a same-named package symbol
+does not replace this guidance with an unresolved-alias disclosure; the same
+holds for an overwritten method (rule 26). Sibling reach already treated such a
+field as shadowing.
+
+**Rule 29. A class method that an assignment replaces relates to no test
+(#16314).** An unconditional `this.NAME = ...` statement at the top level of a
+class's constructor, before any statement that can `return` from it, defines
+`NAME` on each instance; an unconditional top-level `Class.prototype.NAME =
+...` statement of the same file overwrites the method on the prototype; and a
+top-level `Class.NAME = ...` replaces a static method. In each case
+`new Class().NAME()` (or `Class.NAME()`) runs the assigned value. The receiver
+is read through parentheses and TypeScript casts (`(Cart.prototype as
+any).total = ...`, `(this as any).total = ...`), and a top-level assignment
+counts only for a class a top-level declaration binds in module scope (the
+class name of an inline `exports.Cart = class {}` is an export property, not a
+binding), and only for a method of that declaration itself, not of an
+inline `exports.Cart = class {}` sharing its name, even on the same line. Such an ordinary method (not a getter, setter or constructor) stays
+an owner (a changed line is still reported) but relates to no test, so it
+reads `no_static_path`, and its guidance names the assignment it found. Not a
+replacement: any read of the same member in the same scope (the constructor
+body and its parameter initializers, or the file's top level) outside the assignment's own target, dotted or
+bracketed with a string key (`this.total = this.total.bind(this)`,
+`this['total'].bind(this)`, `Class.prototype.total =
+wrap(Class.prototype.total)`, `const original = Class.prototype.total;`),
+since the replacement may still call the method; an assignment nested in a
+condition, loop or callback, or after a possible `return`; an assignment of
+the other placement (`Class.total = ...` beside an instance method,
+`Class.prototype.total = ...` beside a static method); and an assignment to
+an accessor, which calls its setter. As for rules 26 and 28, a same-named
+package import in a test does not replace this guidance with an
+unresolved-alias disclosure.
 
 ### Observation guard
 
@@ -1510,7 +1912,34 @@ require(...)`, ES `import Name from` of the CommonJS module) is refused as for
 a function export, and a `require()` of an ES default class stays a namespace
 object. A `let`/`var` local the test file writes again, a re-declared `var`,
 and a binding of the local in a `describe` body, a hook or the test body
-(including a `class Local {}` declared there) are not the class. `module.exports = class Name {}` inline is not read.
+(including a `class Local {}` declared there) are not the class.
+
+Amended 2026-11-25 (#16252): an inline `module.exports = class Name { ... }`
+is the same whole export. Its methods are owners (before, a changed method
+produced no finding at all), and while the file gate above holds and the file
+adds no named export beside the class (no `exports.` or `exports[` spelling)
+they relate through a whole-module `require` exactly as the declared form
+does. Otherwise the members stay owners but lose the class name: a class
+expression's name binds only inside its body, so no named import or same-file
+construction reaches them. A static method of a whole-export class (inline
+or declared) relates through the whole-module `require` binding
+(`Local.method()`), never through a named binding, which reads a static
+property of the class. An instance field of an inline class shadows the
+prototype method of the same name for sibling calls, as for a declared class.
+Amended 2026-11-26 (#16349): an anonymous `module.exports = class { ... }`
+and an anonymous ES `export default class { ... }` are default exports like
+their named twins, reached under any local name, so a missing class name is
+no reason to withhold the relation. Their members carry the class name
+`default` (the ES class's runtime name; a reserved word, so no same-file
+construction or static call can spell it) and relate through the whole-module
+`require` or the default import respectively; their instance fields are keyed by
+the same name, so a field (a computed one included) still shadows a method a
+sibling calls, and two anonymous default classes in one file repeat it. Every
+other gate above is unchanged (a named import or `require`, a default-named `require` of the
+CommonJS form, and a named export beside the inline class stay unrelated).
+Before, both read `no_static_path`. Named property
+exports of a class expression (`exports.Name = class ...`) and `const Name =
+class ...; module.exports = Name;` are not read.
 
 **Rule 21. A method decorator that passes the original result through
 lends `exposed` to the decorated method's tests (design decision, #10189).**
@@ -1647,6 +2076,41 @@ reading a member or destructuring it, such as `Object.assign(lib, stubs)`,
 `const alias = lib` or `{ lib }`) no longer holds the module's export
 there, so members read off it record nothing.
 
+A loop that runs one suite over a table of namespace imports calls each
+module's export (#13592, unjs/ohash `test/crypto.test.ts`). With
+`import * as cryptoJS from "<module>"`, a file-level `const impls = { js:
+cryptoJS, node: cryptoNode }` (or `{ cryptoJS }`, or `[cryptoJS, cryptoNode]`)
+and `for (const [name, { digest }] of Object.entries(impls))`, a bare
+`digest(...)` in a test the loop registers is `ImportedOwnerCall` of
+`digest` in each listed namespace's module, as `cryptoJS.digest(...)` would
+be, and module-entry reach continues from it. `Object.values(impls)` with
+`{ digest }`, and an array table iterated directly, are the same. Refused:
+a table value that is not an identifier, a table naming no namespace import,
+an exported table (another file could swap an entry), a table name mentioned
+anywhere in the file except as the argument of `Object.entries(` /
+`Object.values(` or the iterable after `of` (so no write, alias or call can
+swap an entry), a table a describe or loop level re-declares, an `Object`
+the file binds or imports, a `var` or `let` loop binding (one shared or
+reassignable binding), a renamed, defaulted or rest destructure
+(`{ digest: run }`), an `await` loop, and a body-local declaration of the
+name. Every iteration must register the same tests: the path from the loop
+to its tests (the loop body and `describe` / `context` / `suite` callbacks)
+holds only call statements with a bare identifier callee
+(`describe.only`, `describe.skipIf(c)` and `it.each` are refused) and
+blocks, with no `if`,
+`switch`, `continue`, `break`, `return`, `try`, label or `cond && it(...)`,
+and no declaration (one can carry per-iteration state), and no test body,
+registration argument after the title (Vitest's `it(name, { skip }, fn)`),
+or argument of a call that takes no title (a hook's
+`beforeEach(skipUnless(supported))`) reads another loop binding:
+the `Object.entries` key or another destructured member (`{ digest,
+supported }` with `if (!supported) return;` refuses `digest`). A suite or
+test title may read the key. A nested or defaulted member pattern refuses
+the loop. `as const`, `satisfies` and other type-only wrappers around the
+table literal keep it; a repeated key or a `__proto__` key refuses it.
+The binding is recorded on the test's
+scope binding as `namespace_member_of`; file-fact schema 14 carries it.
+
 Two bindings this rule and the destructured form share are refused (#10401).
 A test file that binds its own `require` at top level (`const require = ...`,
 `function require() {}`, also a block-level function, which hoists in sloppy
@@ -1751,13 +2215,56 @@ unconfirmed, not `exposed`. A read that names either changed field
 (`f().retries`, `f().verbose`), a path that reads through a changed field
 (`f().retries.n`) and a whole-result assertion (`expect(f()).toEqual(...)`)
 keep the existing credit. This is the two-value shape; the single-field
-sibling rule (#14814) covers exactly one changed value. A compound assertion
+sibling rule (#14814) covers exactly one changed value. Both rules read the
+field off the owner's result directly (`f().timeout`) or through a one-hop
+local alias of the owner call (`const cfg = f(); cfg.timeout`, #14856): the
+alias form is affirmatively not observing, not merely unconfirmed. A
+whole-result assertion on the alias and the changed field through the alias
+(`cfg.retries`) keep their credit; a foreign or mutated local is not the
+owner's result. A compound assertion
 subject is not a field projection of the owner's result: in
 `expect(f() ?? defaults.config)` the trailing `config` belongs to the
 fallback while the assertion receives the whole object `f()` returns, so it
-keeps its credit. A key-list change, a
+keeps its credit. A plain projection is a base with no top-level operator,
+or a call or member-access chain that a small grammar accepts (#14928): a
+postfix non-null assertion (`f()!.timeout`), optional chaining, a prefix
+negation (`!f().enabled`) and a balanced generic call (`f<string>()`) are all
+projections of the owner's result, so an untouched field read through any of
+them drops to `weakly_exposed` too (a generic call is not yet resolved as an
+owner call, so it already reads `weakly_exposed`). A key-list change, a
 shorthand or spread member, a computed key and a literal of fewer than two
-fields are not this shape and keep their old reading.
+fields are outside this multi-value rule.
+
+For the two-member form `return { retries: 5, verbose };`, a change between
+decimal integer literals on the explicit field cannot change the unchanged
+shorthand binding. A direct assertion on `config().verbose` therefore reads
+`weakly_exposed`, while `config().retries` keeps its exact-field credit. This
+case requires the same two distinct names in the same positions and a bare
+zero-argument owner call. An expression that could write to `verbose` while
+building the object remains outside this rule.
+
+**Rule 25. A read of an unchanged child of a changed field is not witnessed
+(#14858).** When a changed field's new value is an object literal of simple
+`key: value` members whose values are plain literals (a number, a string,
+`true`, `false`, `null`, `undefined`) and none of which is `__proto__`, the
+children the change moves are those whose value differs from the old literal's
+same key, plus any key the change drops. A member with an effect
+(`n: (counter = 5)`) or a prototype entry keeps the existing credit, since it can
+move a child whose text is unchanged. When
+the old value is a number or boolean literal, every new child is moved, and so
+is every member the old primitive answered through its prototype (`toFixed`,
+`valueOf`); any other old value (a string, an array, `null`, an expression)
+keeps the existing credit, since its members (`.length`) or behavior (a throw)
+are not modeled. A strong assertion whose path is
+`<owner call>.<changed field>.<child>`, with the changed field read directly off
+the owner's result, and names a child the
+change does not move (`f().retries.other` while `retries: 3` becomes
+`retries: { n: 5 }`) observes a value the change never alters: the finding
+drops to `weakly_exposed`, not `exposed`. A read of a moved child
+(`f().retries.n`), the whole field and a changed value
+that is not an object literal keep the existing credit. The alias
+form of the sibling rule (`const cfg = f(); expect(cfg.verbose)`, #14856) reads
+`weakly_exposed` and its changed-field control (`cfg.retries`) stays `exposed`.
 
 **Rule 8. A mocked dependency on the changed line is `static_unknown`.**
 When the changed line calls a symbol imported (`imported_symbol_call`)
@@ -1766,9 +2273,10 @@ and every test file holding an assertion that credits `exposed` mocks that
 module, a ladder result of `exposed` reads `static_unknown` instead. A
 module mock applies to its whole test file and to no other, so it is read
 per file: when one crediting assertion sits in a file with no such mock,
-`exposed` stands, with the limit as advisory below. ripr reads only mock
-calls written in the test file; config-level mocks (`setupFiles`,
-`automock`, automatic `__mocks__`) are not modelled. The result then is: reach Yes, observe and
+`exposed` stands, with the limit as advisory below. ripr reads mock
+calls written in the test file and in the runner setup files that govern it
+(#15949, see Reach); `automock` and automatic `__mocks__` are not modelled.
+The result then is: reach Yes, observe and
 discriminate Unknown, `static_limit_kind: mocked_module`,
 `gap_state: static_limitation` and `typescript_mock_only_observer`. The
 mock specifier resolves from the test file and the import source from the
@@ -2486,10 +2994,49 @@ keys); do not take the next number.
 
 ## Test Mapping
 
+- #15939 (replaced owner function):
+  `crates/ripr/tests/typescript_replaced_owner_function.rs` runs the binary over
+  each replacement call in the test body, in a hook and at the top level, the
+  hook-bound spy fabricated in the test, the named-import call beside a stubbed
+  namespace, the `require` binding, the `default` member, and the call-through,
+  other-member and other-target controls; `tests/function_replacement_tests.rs`
+  pins the recorded entry forms;
+  `fixtures/typescript_adversarial_stubbed_namespace_owner` and its control
+  `fixtures/typescript_namespace_owner_call_through_spy` pin the rendered
+  findings.
+
+- #15622 (Deno registrations and `@std/assert`):
+  `crates/ripr/src/analysis/language/typescript/tests_extract_tests.rs` pins
+  each registration shape, the ignored/spread/unreadable refusals, the
+  shadowed-namespace refusal, the unused-closure reach mask for every callback
+  position, the std assertion grades and the look-alike, namespace, local and
+  member-call refusals; `crates/ripr/tests/typescript_no_config_detection.rs`
+  pins a zero-config `deno.json` run linking the `Deno.test`.
+
 - #13592 (module-level `const` reached through a reader): `tests/module_value_read_tests.rs`
   pins the read-only allowlist, the shadowed, aliased, passed-along, `let`/`var`,
   assigned and module-mutated refusals, the unused and uncalled-reader controls
   (`no_static_path`), and the called-reader `static_unknown` reading.
+
+- #15928 (built values and function references): `tests/built_value_entry_tests.rs`
+  pins the constructing entry, the class's callees, the arrow form, the
+  parameter, local, passed-along and unconstructed refusals, module-level
+  writes outside the building function, the same-name member, the synchronous
+  callback methods against stored and deferred references, and the
+  `static_unknown` and `no_static_path` readings;
+  `fixtures/typescript_built_class_entry_reach` pins the rendered check.
+
+- #15928 (methods of a module-private class): `tests/plain_class_entry_tests.rs`
+  pins the constructed method, the sibling called on `this`, the function only
+  a method calls, the hop bound, the method off the call path, the parameter,
+  local-class, stored-instance, method-reference, namespace and string
+  refusals, the replaced, aliased, typed, re-exported and subclassed class,
+  the field, accessor, constructor and member-assignment refusals, the
+  deferred `this` call, the parameter default of an arrow never called (typed
+  or not) against the default of a synchronous callback, the async and
+  annotated callbacks, the returning constructor, and the `static_unknown`
+  and `no_static_path` readings;
+  `fixtures/typescript_plain_class_entry_reach` pins the rendered check.
 
 - #10314 (decorated-method reach, constructor spellings): `crates/ripr/src/analysis/language/typescript/tests/decorated_reach_tests.rs`
   pins `aliased_constructor_import_credits_the_return_edit` (a named-import alias
@@ -2505,6 +3052,87 @@ keys); do not take the next number.
   import of a default-only class, a class that is not the default, a rewritten
   class binding, and a type-only default export. A class with a named export as
   well keeps its named-import relation.
+
+- #16252 (rule 19, inline whole-export class):
+  `crates/ripr/src/analysis/language/typescript/tests/commonjs_inline_class_tests.rs`
+  pins every method of `module.exports = class Cart {...}` as an owner and a
+  whole-module `require` under any local name as related, beside the controls
+  that stay unrelated: named, default-named and ES imports, another module, a
+  named export beside the class, an ambiguous whole export, a rebound or
+  shadowed require local (an anonymous class relates since #16349). End-to-end `analyze_diff`
+  cases pin that a changed method yields a finding, a static method relates
+  only through the whole-module binding, and an instance field shadows a
+  sibling-called method.
+
+- #16261 (rule 26, overwritten class method):
+  `crates/ripr/src/analysis/language/typescript/tests/overwritten_method_tests.rs`
+  runs `analyze_diff` on a declared class, an ES default class and an inline
+  `module.exports = class` that define `total` twice: a change to the earlier
+  body relates to no test and a change to the later body keeps its relation.
+  A later quoted or bracketed string key overwrites as well, and the finding on
+  an overwritten body names the later definition in its guidance. Controls
+  that keep their relation: a getter beside its setter, an instance method
+  beside a static member of the same name, and an implementation after
+  TypeScript overload signatures.
+
+- #16275 (rule 27, CommonJS named-export class expression):
+  `crates/ripr/src/analysis/language/typescript/tests/commonjs_named_class_export_tests.rs`
+  pins the owner shape (class name is the property, not the inner id) for
+  `exports.Cart = class` and `module.exports.Cart = class`, and runs
+  `analyze_diff` to show a named `require` relates a changed method while an
+  inner-id import and a sibling export stay unrelated. A later assignment of the
+  slot (class, empty class, `null`) drops the earlier class, a function export
+  reassigned to `null` drops as well, an earlier hoisted `exports.Cart = void 0;`
+  does not, a whole-module function keeps its owner beside a same-named class
+  property, a changed `#private` method of either CommonJS class shape yields a
+  finding, and the field and repeated-name guards key the class by the
+  property.
+- #16306 (rule 28, field-shadowed class method):
+  `crates/ripr/src/analysis/language/typescript/tests/field_shadowed_method_tests.rs`
+  runs `analyze_diff` on a method shadowed by an instance field before or after
+  it, a bare field, a quoted field key, an ES export and a static field beside a
+  static method: each relates to no test, the owner is marked `FieldShadowed`,
+  and the guidance names the field. Controls that keep their relation: no
+  field, a field of another name, a static field beside an instance method, a
+  `#private` field, a TypeScript `declare` field, and a field bound or read
+  from the method itself (instance and static). A test that also imports a
+  same-named package symbol keeps the field guidance. Each test body asserts
+  the runtime value (the field's for a shadowed case, the method's for a
+  control).
+- #16314 (rule 29, replaced class method):
+  `crates/ripr/src/analysis/language/typescript/tests/replaced_method_tests.rs`
+  runs `analyze_diff` on a method replaced by a constructor `this.total = ...`
+  (an arrow, or a read of another object's member), a top-level
+  `Cart.prototype.total = ...`, a static `Cart.total = ...` and a constructor
+  replacement in an ES-exported class, plus the three receivers behind a
+  TypeScript `as any` cast in a `.ts` file: each relates to no test, and the guidance
+  names the assignment and keeps the method through the same receiver
+  (`this.total = this.total.bind(this)`, `Cart.prototype.total =
+  wrap(Cart.prototype.total)`). A wrapper that
+  calls a different saved method still replaces. Controls that keep their
+  relation: no assignment, a constructor self-bind (dotted or bracketed), a
+  saved original in the constructor, a constructor parameter default
+  (`constructor(original = this.total)`) or at the top level, a prototype or static
+  wrap of the same member, a conditional constructor assignment, one after an
+  early `return`, assignments of another name, assignments of the other
+  placement, and a write to a local named like an inline
+  `exports.Cart = class {}`, including one beside a declared `class Cart`
+  whose own method the write does replace. The owner is marked `Replaced`, while a
+  constructor assignment to an accessor leaves the setter and getter as they
+  are. Each test body asserts the runtime value.
+- #16349 (rule 19, anonymous default class):
+  `crates/ripr/src/analysis/language/typescript/tests/anonymous_default_class_tests.rs`
+  runs `analyze_diff` on a method of `export default class {}` (also
+  `extends Base`) and `module.exports = class {}`: a default import or
+  whole-module `require` under any local name relates, while a named import or
+  `require`, a default-named `require` and a named export beside the inline
+  class stay unrelated; owner extraction names the members `default` and leaves
+  a named or non-default anonymous class alone. A method the constructor
+  replaces stays unrelated (rule 29), and a computed instance field blocks the
+  edge from a sibling that calls the method, in both forms; the field inventory
+  keys such a class by `default`, and two anonymous default classes in one file
+  repeat that name. `commonjs_inline_class_tests.rs` now credits the anonymous
+  inline class through a whole-module `require`.
 
 - #11196 (rule 11, object rows): `tests/object_row_tests.rs` pins the per-row
   literal assertions for the `for...of` and `test.each` object-row forms and
@@ -2642,6 +3270,13 @@ keys); do not take the next number.
   reads `weakly_exposed`, and every unreadable shape (spread, defaulted or
   rebound parameter, helper or member call, file-level call, CRLF, deleted
   line) keeps the ladder verdict.
+  For a single literal message edit in a final `throw new Error(...)`, a
+  one-parameter function can also exclude the throw with a preceding
+  `if (b !== 0) return b;`. When every related call supplies a numeric
+  literal that takes that return, the finding is `reachable_unrevealed` with
+  infection `no`. The adapter test `isolated_throw_message_after_a_nonzero_return`
+  pairs this case with a zero input checking the message and a zero input
+  checking only that an error is thrown.
   The `guard_entry_guard.rs` unit tests (`reads_then_else_if_and_else_arms`,
   `comments_before_if_do_not_shift_the_condition_text`,
   `mock_module_loaders_and_call_result_chains_are_unreadable`,
@@ -2683,6 +3318,83 @@ keys); do not take the next number.
   and `a_switch_clause_no_test_input_selects_withdraws_exposed` and
   `a_switch_clause_some_test_input_can_select_keeps_exposed` are the
   production-path positive and negative.
+- #15306: a changed one-line `return <literal>` whose owner returns only
+  distinct scalar literals (a switch or if-chain lookup) is credited only when
+  some strong related assertion expects the arm's old or new literal (either
+  distinguishes the versions when the call takes the arm). When another arm
+  also returns the new literal, an exact assertion expecting it counts as that
+  arm's result only when its call's literal inputs provably leave the changed
+  arm closed (the #8569 condition reader) and the owner's module names it
+  once (no recursion or re-export); otherwise it keeps the verdict. The rule
+  applies only to a lone one-for-one line replacement in the file. The changed
+  line is located, and its selector read, from the owner text's own first
+  line (an arrow after `export const dir =` starts one line later), and the
+  text must hold the changed line there. Argument slots skip commas inside comments; an unterminated comment
+  or string leaves them unreadable. A `return undefined` with an `undefined`
+  binding in scope, and a BigInt literal (`5n !== 5`), are refused.
+  When every strong assertion on a direct owner call expects another arm's
+  readable literal, the change is not observed: the existing literal-return reading makes it
+  `infection_unknown`, with a line naming the unpinned arm result.
+  A duplicated old literal, any non-literal or multi-line return, a generator
+  or concise-arrow owner, a non-direct relation, and a snapshot, structural,
+  dynamic or table-row expected side on a direct owner call, and any strong
+  assertion whose expected text spells the old or new literal (alone or inside an
+  object, array or expression), keep the verdict.
+  `tests/literal_arm_return_tests.rs` pins the reader
+  (`a_switch_arm_literal_return_is_located_with_its_old_value` and its
+  refusals) and the production path:
+  `an_arm_no_assertion_expects_is_not_exposed_and_names_the_arm`,
+  `an_assertion_expecting_the_arms_old_result_keeps_exposed`,
+  `an_assertion_expecting_the_arms_new_result_keeps_exposed`,
+  `a_shared_new_result_is_credited_only_on_the_selected_arm`,
+  `a_recursive_owner_keeps_a_shared_new_result`,
+  `a_reentrant_owner_keeps_the_verdict_for_a_shared_new_result`,
+  `an_arrow_owner_whose_text_starts_on_a_later_line_locates_the_return`,
+  `an_arrow_on_the_next_line_locates_the_changed_return`,
+  `a_multiline_arrow_reads_the_changed_arms_own_selector`,
+  `a_source_that_starts_after_the_owner_line_or_binds_undefined_is_refused`,
+  `a_bigint_return_is_not_a_readable_scalar`,
+  `an_unreadable_expected_side_keeps_the_verdict` and
+  `a_lookup_that_is_not_all_distinct_literals_keeps_exposed`.
+- #15393: an edit that changes only one default parameter value of the owner
+  (on a one-line signature or its own parameter line) is not observed when
+  every call of every direct, aliased or barrel-followed related test passes
+  a value at that position that cannot be `undefined` (a literal, object,
+  array, function, template or whole `new` expression, under any trailing
+  `as T`, `satisfies T` or `!` cast). Every owner call elsewhere in a related
+  test file, and in the owner's own module (its own body included), must fill
+  the position the same way, and no other workspace file may name the owner
+  outside a pure re-export. It reads `reachable_unrevealed` with infection
+  `no` (`default_not_applied`), naming the parameter and the observed calls.
+  The verdict stands on: an omitted argument; `undefined`, an identifier or a
+  spread argument; a relation through a wrapper or entry; another caller; a
+  default export or renaming re-export; an import that renames a binding or
+  has code after it on its line; a namespace import, `require`, dynamic
+  `import()`, `requireActual` or `importActual` of the owner's module or
+  of a barrel that re-exports it (its file stem, or its directory for an
+  `index` file) in another file; an import or re-export line with code after
+  its specifier; a loader or computed
+  key; an owner reference whose call arguments the reader cannot parse (a
+  comment before the parenthesis, an unbalanced argument); and a truncated
+  scan or a skipped symlink. The advice asks for a test call that omits the
+  argument.
+  Scope limit: the scan reads the TypeScript adapter's default handwritten
+  workspace files and ignores configured handwritten overrides, so callers
+  in pruned build directories, generated or minified files,
+  non-TS sources (`.vue`, `.svelte`, `.mdx`) or outside the workspace root
+  are not seen. `tests/unused_default_tests.rs` pins the reader
+  (`only_a_lone_default_value_edit_is_located`,
+  `only_arguments_that_cannot_be_undefined_fill_a_default`) and the
+  production path (`a_default_every_call_fills_is_not_exposed`,
+  `a_call_that_may_use_the_default_keeps_the_verdict`,
+  `a_call_the_argument_reader_drops_keeps_the_verdict`,
+  `a_caller_the_scan_cannot_resolve_keeps_the_verdict`,
+  `a_describe_titled_with_the_owner_name_is_not_a_caller`,
+  `a_multi_line_import_is_not_a_caller_but_a_renaming_one_refuses`,
+  `a_barrel_import_under_the_owner_name_is_followed`,
+  `code_after_an_import_and_a_namespace_import_keep_the_verdict`); the
+  honesty corpus case `typescript_vitest_unused_default_parameter` rejects
+  promotion independently.
 - Planned: one unit test per changed example (5, 6, 7, 8, 13, 14, 16, 18,
   19, 22, 23, 24, 31, 32, 33, 34, 35), and a verdict corpus holding all
   35 examples, each with
@@ -2771,6 +3483,18 @@ keys); do not take the next number.
   the receiver-call stand-in that tier 2 checks, and
   `tests/class_entry_tests.rs` pins the credited chains against each shape
   that records no edge.
+- #13592 (closure continuation): `module_entries.rs` records closure edges
+  (`References`, `reassigned_names`) and closure entries
+  (`reachable_through_closures`, `MODULE_CLOSURE_MAX_HOPS`), `owners.rs` gives
+  call-built constants their closure entries, `related_tests.rs`
+  `ReExportIndex::cross_module_entries` continues them across importers, and
+  `classifier.rs` reads opaque-only reach (`module_entry_reach_is_opaque_only`)
+  as `static_unknown`. `tests/closure_entry_tests.rs` pins the credited shapes
+  (a passed reviver and comparator, a combinator-built constant, its callback
+  and its combinator, a function both called and passed, an importer chain)
+  against each refusal (a parameter, local, inner function, nested callback
+  parameter, reassignment and type-position reference; the hop bounds; a test
+  of an export that reaches nothing; a mocked module).
 - #13592: `module_entries.rs` (`module_entries_and_outbound`) records, from the
   same module graph as the entries, the imported bindings each export's code
   bare-calls (`OutboundImportCall`, persisted in `ModuleExportFacts`);
@@ -2796,6 +3520,14 @@ keys); do not take the next number.
   reads the enclosing conditions and evaluates literal call inputs;
   `ts_unentered_guard` in `classifier.rs` applies it as a post-ladder rule in
   `ts_apply_post_ladder_rules`, withdrawing the credit only on proof.
+- #15306: `crates/ripr/src/analysis/language/typescript/literal_arm_return_guard.rs`
+  reads the owner's literal returns and the related assertions' expected
+  values; `classify_resolved_owner` in `classifier.rs` withholds
+  `observation_confirmed` when the changed arm is unpinned.
+- #15393: `crates/ripr/src/analysis/language/typescript/unused_default_guard.rs`
+  locates the changed default and reads call arguments; `ts_unused_default`
+  in `classifier.rs` applies it in `ts_apply_post_ladder_rules` and the
+  infection stage, withdrawing credit only on proof.
 - `crates/ripr/src/analysis/language/typescript/actionability.rs`:
   unchanged.
 

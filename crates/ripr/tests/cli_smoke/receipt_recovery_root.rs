@@ -109,7 +109,7 @@ fn missing_hint(cwd: &Path, root: &Path, verify: &str) -> TestResult<String> {
     );
     assert!(!root.join(RECEIPT).exists());
     let error = String::from_utf8(output.stderr)?;
-    assert!(error.contains("canonicalize agent receipt --verify-json"));
+    assert!(error.contains("agent receipt --verify-json") && error.contains("does not exist; "));
     Ok(error
         .split_once("; produce it with: ")
         .ok_or("actual CLI refusal must name the workflow producer")?
@@ -292,7 +292,7 @@ fn recovery_case(absolute: bool) -> TestResult {
     assert_eq!(custom.status.code(), Some(2));
     assert!(custom.stdout.is_empty());
     let error = String::from_utf8(custom.stderr)?;
-    assert!(error.contains("canonicalize agent receipt --verify-json comparisons/verify.json"));
+    assert!(error.contains("agent receipt --verify-json comparisons/verify.json does not exist"));
     assert!(!error.contains("produce it with:") && !error.contains(BEFORE));
     assert!(!selected.join(RECEIPT).exists());
     assert!(!selected_verify.exists());

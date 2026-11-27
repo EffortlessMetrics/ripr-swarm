@@ -126,6 +126,7 @@ pub(crate) use dogfood::dogfood;
 pub(crate) use dx_scoreboard::dx_scoreboard;
 pub(crate) use eval_sweep::eval_sweep;
 pub(crate) use first_pr::first_pr;
+pub(crate) use fixtures::{ANNOTATION_GOLDEN_SURFACES, HUMAN_GOLDEN_SURFACES};
 #[cfg(test)]
 pub(crate) use fixtures::{
     FIXTURE_BINARY_ISOLATE_ENV, GoldenDriftEntry, GoldenDriftProvenance, GoldenDriftSemantics,

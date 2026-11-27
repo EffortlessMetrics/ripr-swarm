@@ -195,6 +195,41 @@ pub(crate) fn attribute_test_build_availability(attr_text: &str) -> Option<bool>
     availability_attribute(body, 0).ok().flatten()
 }
 
+/// Whether the attribute is an outer `#[cfg(<predicate>)]` that no build
+/// satisfies, whatever its features, target or test flag: the predicate is
+/// false from empty combinators alone (`any()`, `not(all())`,
+/// `all(unix, any())`). rustc strips such an item before it loads an
+/// out-of-line module, so a `mod` it gates mounts nothing (#15877). Any atom
+/// stays unknown, `cfg_attr` and malformed input answer `false`.
+pub(crate) fn attribute_disables_every_build(attr_text: &str) -> bool {
+    let Some(positioned) = positioned_tokens(attr_text) else {
+        return false;
+    };
+    let tokens: Vec<_> = positioned.into_iter().map(|token| token.token).collect();
+    match tokens.as_slice() {
+        [
+            Token::Punct('#'),
+            Token::Punct('['),
+            Token::Word(cfg),
+            Token::Punct('('),
+            inner @ ..,
+            Token::Punct(')'),
+            Token::Punct(']'),
+        ] if cfg == "cfg" && body_is_balanced(inner) => match availability_arguments(inner) {
+            // rustc accepts one predicate with an optional trailing comma
+            // (`cfg(any(),)`).
+            Ok(parts) if parts.len() == 1 => {
+                matches!(
+                    availability_predicate_with(parts[0], 1, None),
+                    Ok(Some(false))
+                )
+            }
+            _ => false,
+        },
+        _ => false,
+    }
+}
+
 /// Whether `#[cfg_attr(<predicate>, test)]` makes the function a plain
 /// `#[test]` in a test build: the predicate is known true there (`all()`,
 /// `test`, `not(any())`) and `test` is the only attribute introduced. A
@@ -659,11 +694,21 @@ fn availability_attribute(tokens: &[Token], depth: usize) -> Result<Option<bool>
 }
 
 fn availability_predicate(tokens: &[Token], depth: usize) -> Result<Option<bool>, ()> {
+    availability_predicate_with(tokens, depth, Some(true))
+}
+
+/// `availability_predicate` with the value of the `test` atom given: a test
+/// build fixes it to `Some(true)`; `None` asks about every build at once.
+fn availability_predicate_with(
+    tokens: &[Token],
+    depth: usize,
+    test: Option<bool>,
+) -> Result<Option<bool>, ()> {
     if depth > MAX_PREDICATE_NESTING || !body_is_balanced(tokens) {
         return Err(());
     }
     match tokens {
-        [Token::Word(name)] if name == "test" => Ok(Some(true)),
+        [Token::Word(name)] if name == "test" => Ok(test),
         [Token::Word(_)] | [Token::Word(_), Token::Punct('='), Token::Literal] => Ok(None),
         [
             Token::Word(name),
@@ -674,7 +719,7 @@ fn availability_predicate(tokens: &[Token], depth: usize) -> Result<Option<bool>
             let parts = availability_arguments(inner)?;
             let values = parts
                 .iter()
-                .map(|part| availability_predicate(part, depth + 1))
+                .map(|part| availability_predicate_with(part, depth + 1, test))
                 .collect::<Result<Vec<_>, _>>()?;
             match name.as_str() {
                 "all" => Ok(availability_all(&values)),
@@ -1223,6 +1268,49 @@ fn positioned_tokens(text: &str) -> Option<Vec<PositionedToken>> {
         }
     }
     Some(tokens)
+}
+
+/// Find an outer attribute's end while ignoring brackets in comments and literals.
+/// An ambiguous or unterminated attribute returns None so callers can defer.
+pub(crate) fn outer_attribute_end(source: &str) -> Option<usize> {
+    let bytes = source.as_bytes();
+    if !source.starts_with("#[") {
+        return None;
+    }
+    let mut index = 2;
+    let mut depth = 1usize;
+    while index < bytes.len() {
+        match bytes[index] {
+            b'/' if bytes.get(index + 1) == Some(&b'/') => {
+                index += 2;
+                while bytes.get(index).is_some_and(|byte| *byte != b'\n') {
+                    index += 1;
+                }
+            }
+            b'/' if bytes.get(index + 1) == Some(&b'*') => {
+                index = skip_block_comment(bytes, index)?
+            }
+            b'"' => index = skip_regular_string(bytes, index)?,
+            b'\'' => return None,
+            _ if raw_string_start(bytes, index).is_some() => {
+                let (quote, hashes) = raw_string_start(bytes, index)?;
+                index = skip_raw_string(bytes, quote, hashes)?;
+            }
+            b'[' => {
+                depth = depth.checked_add(1)?;
+                index += 1;
+            }
+            b']' => {
+                depth -= 1;
+                index += 1;
+                if depth == 0 {
+                    return Some(index);
+                }
+            }
+            _ => index += 1,
+        }
+    }
+    None
 }
 
 /// Returns the opening-quote offset and hash count when the bytes at `index`

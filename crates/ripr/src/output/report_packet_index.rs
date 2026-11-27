@@ -469,7 +469,7 @@ fn artifact_specs(input: &ReportPacketIndexInput) -> Vec<ArtifactSpec> {
             description: "Canonical first-screen repair packet.",
             default_status: "available",
             next_command: at_root(
-                "ripr first-pr --root . --gap-ledger target/ripr/reports/gap-decision-ledger.json --first-action target/ripr/reports/first-useful-action.json --review-comments target/ripr/review/comments.json --agent-packet target/ripr/workflow/agent-packet.json --gate-decision target/ripr/reports/gate-decision.json --receipts-dir target/ripr/receipts --out-dir target/ripr/reports",
+                "ripr first-pr --root . --gap-ledger target/ripr/reports/gap-decision-ledger.json --first-action target/ripr/reports/first-useful-action.json --review-comments target/ripr/review/comments.json --agent-packet target/ripr/workflow/agent-packet.json --gate-decision target/ripr/reports/gate-decision.json --receipts-dir target/ripr/receipts --output-dir target/ripr/reports",
             ),
         },
         ArtifactSpec {
@@ -742,7 +742,7 @@ fn artifact_specs(input: &ReportPacketIndexInput) -> Vec<ArtifactSpec> {
 /// command stays portable, and the default packet's templates come back
 /// byte-identical. Otherwise the `--root .` placeholder becomes the resolved
 /// repository and every artifact path is absolute: `ripr first-pr` resolves
-/// its inputs and `--out-dir` against `--root`, so a relative path would read
+/// its inputs and `--output-dir` against `--root`, so a relative path would read
 /// and write under the indexed root, not where the index looks.
 fn command_at_root(template: &str, input: &ReportPacketIndexInput) -> String {
     let bind = input.root != ".";
@@ -2114,12 +2114,12 @@ mod tests {
         Ok(())
     }
 
-    /// #4000: `ripr first-pr` resolves its inputs and `--out-dir` against
+    /// #4000: `ripr first-pr` resolves its inputs and `--output-dir` against
     /// `--root`, and an explicit `--reports-dir` must be named, not the
     /// default `target/ripr/reports`.
     #[test]
     fn regeneration_commands_follow_the_indexed_directories() {
-        let template = "ripr first-pr --root . --gap-ledger target/ripr/reports/g.json --out-dir target/ripr/reports";
+        let template = "ripr first-pr --root . --gap-ledger target/ripr/reports/g.json --output-dir target/ripr/reports";
         let defaults = ReportPacketIndexInput {
             root: ".".to_string(),
             generated_at: String::new(),
@@ -2149,7 +2149,7 @@ mod tests {
             bound.starts_with(&format!(
                 "ripr first-pr --root {} ",
                 shell_arg(&bound_root("sub"))
-            )) && bound.ends_with(&format!("--out-dir {}", shell_arg(&out_dir))),
+            )) && bound.ends_with(&format!("--output-dir {}", shell_arg(&out_dir))),
             "{bound}"
         );
 
@@ -2159,7 +2159,7 @@ mod tests {
         };
         assert_eq!(
             command_at_root(template, &explicit),
-            "ripr first-pr --root . --gap-ledger /packet/reports/g.json --out-dir /packet/reports"
+            "ripr first-pr --root . --gap-ledger /packet/reports/g.json --output-dir /packet/reports"
         );
         // A `--root` that merely starts with `.` is not the placeholder, and a
         // path that only shares a prefix is not an artifact directory.

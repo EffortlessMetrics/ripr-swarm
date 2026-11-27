@@ -15,7 +15,9 @@ failure-output = "immediate-final"
 # the longest shard build step was 774s and the longest test step 494s against the
 # 40-minute shard step. 1200s + 774s = 1974s and 1200s + 494s = 1694s both stay
 # under 2400s, so a hang is terminated and named before the step cap.
-# `nextest_hang_window_fits_the_shard_step_budget` pins that arithmetic.
+# That calculation covers the required shard step. The test-analytics.yml
+# job includes both phases: using the shard measurements as estimates gives
+# 774s + 494s + 1200s = 2468s against its separate 2700s job cap (#14946).
 slow-timeout = { period = "120s", terminate-after = 10 }
 
 # #9272: the sharded Windows advisory lane. A test that never finishes must show
