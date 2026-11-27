@@ -1064,7 +1064,11 @@ fn bare_repository_reports_its_work_tree_next_action() -> Result<(), String> {
     );
     let message = error.to_string();
     assert_eq!(message, crate::analysis::bare_repository_message(&bare.0));
-    assert!(message.contains("git worktree add"), "{message}");
+    // #15297 review: the route names the bare repository itself, so it works
+    // from any directory, instead of a bare `git worktree add` that would
+    // act on whatever repository the caller stands in.
+    assert!(message.contains("git --git-dir="), "{message}");
+    assert!(message.contains(" worktree add <path>"), "{message}");
     assert!(!message.contains("committed-source probe"), "{message}");
     Ok(())
 }

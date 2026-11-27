@@ -75,7 +75,7 @@ pub(super) fn run(options: Options) -> Result<(), String> {
         )
     })?;
     let result_path = validate_result_path(&root, &options.result)?;
-    let contents = crate::bounded_input::read_to_string(&result_path).map_err(|err| {
+    let contents = crate::bounded_input::read_artifact_text(&result_path).map_err(|err| {
         format!(
             "read swarm ingest --result {} failed: {err}",
             options.result.display()
@@ -410,10 +410,7 @@ mod tests {
         let Err(message) = run(options(&root, Path::new("bad.json"))) else {
             return Err("malformed JSON must fail".to_string());
         };
-        assert!(
-            message.starts_with("failed to parse swarm ingest result JSON: "),
-            "{message}"
-        );
+        assert!(message.contains(" is not valid JSON ("), "{message}");
         let _ = std::fs::remove_dir_all(&parent);
         Ok(())
     }

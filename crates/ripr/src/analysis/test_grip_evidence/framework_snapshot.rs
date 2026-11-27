@@ -63,6 +63,7 @@ pub(super) fn withhold<'a>(
     else {
         return false;
     };
+    evidence.discriminate.static_limit_kind = Some(LIMIT);
     evidence.discriminate.summary = format!(
         "{}: {judged}; Original discrimination: {}",
         LIMIT.as_str(),

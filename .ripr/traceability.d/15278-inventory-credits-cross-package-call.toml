@@ -1,0 +1,18 @@
+# Registers the #15278 item 3 screens under RIPR-SPEC-0407: the seam
+# inventory credits a direct call of a uniquely named free function from a
+# test in another workspace package when the call settles on the owner
+# through the owner's crate name, and keeps the package guard for a shared
+# name, for a call spelled through or imported from another crate, for a
+# bare call shadowed by a local, and for a spelling inside `stringify!`.
+[[extend]]
+id = "RIPR-SPEC-0407"
+tests = [
+  "crates/ripr/tests/check_repair_agree.rs::pilot_credits_a_direct_call_from_a_test_in_another_package",
+  "crates/ripr/tests/check_repair_agree.rs::pilot_credits_a_bare_call_imported_from_the_owners_crate",
+  "crates/ripr/tests/check_repair_agree.rs::pilot_keeps_the_package_guard_when_the_function_name_is_shared",
+  "crates/ripr/tests/check_repair_agree.rs::pilot_keeps_the_package_guard_for_a_call_through_another_crate",
+  "crates/ripr/tests/check_repair_agree.rs::pilot_keeps_the_package_guard_for_a_bare_call_imported_from_another_crate",
+  "crates/ripr/tests/check_repair_agree.rs::pilot_keeps_the_package_guard_for_a_bare_call_shadowed_by_a_closure",
+  "crates/ripr/tests/check_repair_agree.rs::pilot_credits_a_bare_call_made_before_a_later_shadow",
+  "crates/ripr/tests/check_repair_agree.rs::pilot_keeps_the_package_guard_for_an_owner_spelled_only_in_stringify",
+]

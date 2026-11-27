@@ -1,0 +1,8 @@
+[[extend]]
+id = "RIPR-SPEC-0231"
+tests = [
+  "crates/ripr/tests/bool_local_equality_strength.rs::a_compared_bool_local_is_only_as_strong_as_its_initializer",
+]
+code = [
+  "crates/ripr/src/analysis/extract/oracles/bool_local.rs",
+]

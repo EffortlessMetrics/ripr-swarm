@@ -15,6 +15,34 @@ import {
 import { workspaceHasAnalyzableProject } from './workspaceHelpers';
 
 let controller: RiprClientController | undefined;
+// Live-applied settings that the initialize handshake also carries when a
+// settings layer sets them. `ripr.check.mode` is the fourth; every change to
+// it already restarts.
+const OPTIONAL_SESSION_SETTING_SECTIONS = [
+  'ripr.includeUnchangedTests',
+  'ripr.seamDiagnostics',
+  'ripr.diagnosticProfile'
+];
+
+/** Whether a settings change needs a server restart rather than the live
+ * configuration pull. `initializedSettingWasUnset` is consulted only for the
+ * optional session settings, whose value changes apply live. */
+export function configurationChangeRequiresRestart(
+  affectsConfiguration: (section: string) => boolean,
+  initializedSettingWasUnset: () => boolean
+): boolean {
+  return (
+    affectsConfiguration('ripr.enabled') ||
+    affectsConfiguration('ripr.server') ||
+    affectsConfiguration('ripr.check') ||
+    affectsConfiguration('ripr.baseRef') ||
+    // Removing a setting the session started with: the server would keep
+    // the removed value until a restart (#15897).
+    (OPTIONAL_SESSION_SETTING_SECTIONS.some((section) => affectsConfiguration(section)) &&
+      initializedSettingWasUnset())
+  );
+}
+
 let lifecycleCoordinator = new ExtensionLifecycleCoordinator();
 
 /** Test-only reset for suites that exercise activation-scoped helpers with
@@ -375,10 +403,10 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     }),
     vscode.workspace.onDidChangeConfiguration(async (event) => {
       if (
-        event.affectsConfiguration('ripr.enabled') ||
-        event.affectsConfiguration('ripr.server') ||
-        event.affectsConfiguration('ripr.check') ||
-        event.affectsConfiguration('ripr.baseRef')
+        configurationChangeRequiresRestart(
+          (section) => event.affectsConfiguration(section),
+          () => controller?.initializedSettingWasUnset() === true
+        )
       ) {
         try {
           await restartServerOnce(controller);

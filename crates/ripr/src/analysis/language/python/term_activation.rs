@@ -90,9 +90,24 @@ pub(super) struct PythonTermFacts {
     /// or a coroutine/wrapper the call returns before the body runs). Textual
     /// and over-approximate: a nested or bare `return` makes it false.
     returns_no_value: bool,
+    /// The start line of the first top-level body statement that mentions
+    /// each parameter as code. A parameter no statement mentions is absent,
+    /// and facts read from an older cache carry none.
+    #[serde(default)]
+    first_mention_lines: Vec<(String, usize)>,
 }
 
 impl PythonTermFacts {
+    /// The start line of the first top-level body statement that mentions
+    /// `name`: before it, the body cannot have changed the object the caller
+    /// passed (#16203).
+    pub(super) fn first_mention_line(&self, name: &str) -> Option<usize> {
+        self.first_mention_lines
+            .iter()
+            .find(|(parameter, _)| parameter == name)
+            .map(|(_, line)| *line)
+    }
+
     pub(super) fn returns_no_value(&self) -> bool {
         self.returns_no_value
     }
@@ -123,18 +138,22 @@ impl PythonTermFacts {
 
 /// The rule 20 facts of a function owner.
 pub(super) fn term_facts(
-    source: &str,
+    source: &SourceText<'_>,
     body: &[Stmt],
     parameters: &[PythonParameter],
     owner_text: &str,
     wrapped: bool,
-    // Synchronous, with every decorator `@classmethod` or `@staticmethod`.
+    // Every decorator is `@classmethod` or `@staticmethod`.
     binding_only: bool,
 ) -> PythonTermFacts {
     let bound_names = body_bound_names(body);
+    // The outer async declaration changes how a caller obtains the return
+    // value. It does not rebind a parameter inside the function.
+    let async_signature = owner_text.strip_prefix("async");
+    let scope_text = async_signature.unwrap_or(owner_text);
     let opaque_scope = ["lambda", "for", "async", "await", ":="]
         .into_iter()
-        .any(|keyword| code_mentions(owner_text, keyword));
+        .any(|keyword| code_mentions(scope_text, keyword));
     let stable_parameters = match (&bound_names, opaque_scope) {
         (Some(bound), false) => parameters
             .iter()
@@ -159,17 +178,65 @@ pub(super) fn term_facts(
         }
         _ => None,
     };
+    // The statement texts once: the scan below reads each of them for every
+    // parameter. A statement the scan must refuse is found once too, since
+    // that reading costs a pass over the statement.
+    let statement_texts: Vec<String> = body
+        .iter()
+        .map(|statement| text_for_range(source, statement.range()))
+        .collect();
+    let statement_unreadable: Vec<bool> = statement_texts
+        .iter()
+        .map(|text| code_holds_non_ascii(text) || code_reader_stops_short(text))
+        .collect();
+    let first_mention_lines = parameters
+        .iter()
+        .filter_map(|parameter| {
+            // #16221: Python NFKC-normalises identifiers, so a raw spelling
+            // match can miss a prior use (`K` for `K`). A non-ASCII character
+            // in code may spell the parameter under such a normalization or a
+            // confusable, so abstain for that parameter; non-ASCII string
+            // data or comment text cannot name it.
+            if !parameter.name.is_ascii() {
+                return None;
+            }
+            let mut first = None;
+            for ((statement, text), unreadable) in
+                body.iter().zip(&statement_texts).zip(&statement_unreadable)
+            {
+                // A statement the text reader stops short of hides every
+                // later mention in it: reading on would take a later line
+                // for the parameter's first mention.
+                if *unreadable {
+                    return None;
+                }
+                if code_mentions(text, &parameter.name) {
+                    let start = usize::from(statement.range().start());
+                    let line = source.get(..start)?.matches('\n').count() + 1;
+                    first = Some((parameter.name.clone(), line));
+                    break;
+                }
+            }
+            first
+        })
+        .collect();
     PythonTermFacts {
         may_yield: super::mentions_python_name(owner_text, "yield"),
         guarded_return: (!wrapped)
             .then(|| guarded_return(source, body, parameters))
             .flatten(),
-        stable_parameters,
+        // Existing call-site propagation only models synchronous callers.
+        stable_parameters: if async_signature.is_some() {
+            Vec::new()
+        } else {
+            stable_parameters
+        },
         bound_names,
         returned_parameter,
         calls_own_name: false,
         returns_no_value: code_mention_count(owner_text, "return") == 0
             && code_mention_count(owner_text, "yield") == 0,
+        first_mention_lines,
     }
 }
 
@@ -179,8 +246,28 @@ fn code_mentions(text: &str, token: &str) -> bool {
     code_mention_count(text, token) > 0
 }
 
+/// Whether `text` holds a non-ASCII character outside strings and comments:
+/// such a character may spell an identifier in code, and Python may
+/// normalize it onto another name (`K` is `K`), so a raw-text scan cannot
+/// safely read past it (#16221).
+fn code_holds_non_ascii(text: &str) -> bool {
+    let mut hidden = PythonHiddenCode::new(text);
+    text.char_indices()
+        .any(|(offset, ch)| !ch.is_ascii() && !hidden.hides(offset))
+}
+
+/// Whether `text` holds a single-line f-string whose quote pairing cannot be
+/// followed, or a field of a triple-quoted f-string the reader cannot prove
+/// closed: after it the reader hides the rest of the text, so a mention of
+/// the parameter there is missed. For finding calls a miss withholds; for a
+/// first mention it would let the sort gate fire on a body that reaches the
+/// list before the sorted line (#16203 review).
+fn code_reader_stops_short(text: &str) -> bool {
+    PythonHiddenCode::new(text).hides_unproven_rest()
+}
+
 /// How many times `text` holds `token` as code (see `code_mentions`).
-fn code_mention_count(text: &str, token: &str) -> usize {
+pub(super) fn code_mention_count(text: &str, token: &str) -> usize {
     let is_word = |ch: char| ch.is_alphanumeric() || ch == '_';
     let word = token.chars().all(is_word);
     let mut hidden = PythonHiddenCode::new(text);

@@ -1,0 +1,6 @@
+[package]
+name = "rust_macro_declared_flags_vec_contains_fixture"
+version = "0.1.0"
+edition = "2024"
+
+[workspace]

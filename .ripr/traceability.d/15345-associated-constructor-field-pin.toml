@@ -1,0 +1,22 @@
+# An associated constructor's returned literal field pins through the
+# T::name(..) call identity (#15345, RIPR-SPEC-0225 decision 10).
+[[extend]]
+id = "RIPR-SPEC-0225"
+tests = [
+  "crates/ripr/src/analysis/classify/owner_pin/tests.rs::an_associated_constructor_pins_its_whole_value_field",
+]
+fixtures = [
+  "fixtures/rust_whole_value_associated_constructor_field",
+  "fixtures/rust_whole_value_associated_constructor_unpinned_field",
+]
+outputs = [
+  "fixtures/rust_whole_value_associated_constructor_field/expected/check.json",
+  "fixtures/rust_whole_value_associated_constructor_field/expected/human.txt",
+  "fixtures/rust_whole_value_associated_constructor_field/expected/human-full.txt",
+  "fixtures/rust_whole_value_associated_constructor_unpinned_field/expected/check.json",
+  "fixtures/rust_whole_value_associated_constructor_unpinned_field/expected/human.txt",
+  "fixtures/rust_whole_value_associated_constructor_unpinned_field/expected/human-full.txt",
+]
+code = [
+  "crates/ripr/src/analysis/classify/owner_pin.rs",
+]

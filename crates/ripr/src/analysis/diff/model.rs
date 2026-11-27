@@ -165,6 +165,34 @@ impl ChangedFile {
         pairs
     }
 
+    /// New-side lines of every contiguous added run in which each line is
+    /// `quiet`. Such a run carries no behavior, so a removed line recorded
+    /// against it was deleted rather than replaced: the adapters drop these
+    /// lines from [`Self::aligned_counterparts`] so the removed line keeps
+    /// its own base-side record.
+    #[cfg(any(test, feature = "lang-python", feature = "lang-typescript"))]
+    pub(crate) fn added_lines_in_quiet_runs(
+        &self,
+        quiet: impl Fn(&ChangedLine) -> bool,
+    ) -> BTreeSet<usize> {
+        let mut added: Vec<&ChangedLine> = self.added_lines.iter().collect();
+        added.sort_by_key(|line| line.line);
+        let mut lines = BTreeSet::new();
+        let mut start = 0;
+        while start < added.len() {
+            let mut end = start + 1;
+            while end < added.len() && added[end - 1].line.checked_add(1) == Some(added[end].line) {
+                end += 1;
+            }
+            let run = &added[start..end];
+            if run.iter().all(|line| quiet(line)) {
+                lines.extend(run.iter().map(|line| line.line));
+            }
+            start = end;
+        }
+        lines
+    }
+
     /// Added lines whose trimmed text is byte-identical to one removed line of
     /// the same replacement run, as `(added new-side line, removed old-side
     /// line)`. Git reports an unchanged or moved line inside a rewritten block
@@ -785,6 +813,24 @@ fn align_by_content(removed: &[&ChangedLine], added: &[&ChangedLine]) -> Vec<(us
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn quiet_runs_are_whole_added_runs_of_quiet_lines() {
+        let changed = ChangedFile {
+            path: PathBuf::from("a.py"),
+            added_lines: vec![
+                line(5, 5, "code"),
+                line(2, 2, "# note"),
+                line(4, 4, "# note"),
+            ],
+            removed_lines: vec![line(2, 2, "old one"), line(4, 4, "old two")],
+        };
+        let quiet = changed.added_lines_in_quiet_runs(|line| line.text.starts_with('#'));
+        // Line 2 is a run of one comment; lines 4 and 5 are a run that holds
+        // code, so its comment is not in a quiet run.
+        assert_eq!(quiet.into_iter().collect::<Vec<_>>(), vec![2]);
+        assert!(changed.added_lines_in_quiet_runs(|_| false).is_empty());
+    }
 
     #[test]
     fn model_types_are_constructible() {
