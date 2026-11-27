@@ -6396,6 +6396,56 @@ fn any_mention_in_another_macros_arguments_stays_ambiguous() {
     );
 }
 
+/// #16420: a file that declares, renames or imports a `tracing` or `log`
+/// namespace reports a site for each requested logging name, even when it
+/// never names the macro, so a verified `use tracing::info;` elsewhere stops
+/// counting. The crate's own spellings and other names report none.
+#[test]
+fn a_logging_root_rebinding_reports_each_requested_logging_name() {
+    let sites = |source: &str, names: &[&str]| -> BTreeSet<String> {
+        trusted_macro_binding_sites(source, &BTreeSet::new(), names, &|_, _| false, &|_| true)
+            .into_iter()
+            .map(|(name, _)| name)
+            .collect()
+    };
+    let both: BTreeSet<String> = ["info", "warn"]
+        .iter()
+        .map(|name| name.to_string())
+        .collect();
+    for source in [
+        "mod log {}",
+        "mod tracing {}",
+        "extern crate other as tracing;",
+        "use other::log;",
+        "use other as tracing;",
+    ] {
+        assert_eq!(sites(source, &["info", "warn"]), both, "{source}");
+        assert!(sites(source, &["json"]).is_empty(), "{source}");
+    }
+    for source in [
+        "use tracing::info;",
+        "use log::{self, warn};",
+        "use ::tracing::{debug, info};",
+        "use log;",
+        "fn log() {}",
+    ] {
+        assert!(sites(source, &["info", "warn"]).is_empty(), "{source}");
+    }
+    // An import of the name from anywhere else, or one Cargo may route to
+    // another package, is a site for that name.
+    assert!(sites("use other::info;", &["info"]).contains("info"));
+    assert!(
+        !trusted_macro_binding_sites(
+            "use tracing::info;",
+            &BTreeSet::new(),
+            &["info"],
+            &|_, _| false,
+            &|_| false,
+        )
+        .is_empty()
+    );
+}
+
 /// #5993: `#[macro_use] mod NAME;` written directly in the branches of a
 /// verified registry `cfg_if::cfg_if!` is that item written directly; any
 /// other `macro_use`, any `no_implicit_prelude`, and an unverified or

@@ -1025,6 +1025,10 @@ fn renames_standard_crate(node: &SyntaxNode) -> bool {
 fn macro_binding_scan_needed(source: &str, trusted: &[&str]) -> bool {
     trusted.contains(&"json") && source.contains("serde_json")
         || trusted.contains(&"anyhow") && source.contains("anyhow")
+        || trusted
+            .iter()
+            .any(|name| LEVELED_LOGGING_MACROS.contains(name))
+            && (source.contains("tracing") || source.contains("log"))
         || source.contains("macro")
         || source.contains("use")
         || source.contains("extern")
@@ -1382,6 +1386,29 @@ fn macro_binding_sites_in_tree(
                     module_local: false,
                 },
             ));
+        }
+        // #16420: a module, rename or foreign import named `tracing` or
+        // `log` may take over the root a bare logging import names.
+        if LOGGING_CRATES
+            .iter()
+            .any(|krate| crate_namespace_rebound(node, krate))
+        {
+            for name in trusted
+                .iter()
+                .filter(|name| LEVELED_LOGGING_MACROS.contains(name))
+            {
+                ambiguous.push((
+                    (*name).to_string(),
+                    MacroBindingSite {
+                        line: line_of(node),
+                        kind: MacroBindingKind::Import,
+                        scope: None,
+                        scope_bytes: None,
+                        crate_local: false,
+                        module_local: false,
+                    },
+                ));
+            }
         }
         if trusted.contains(&"anyhow") && crate_namespace_rebound(node, "anyhow") {
             ambiguous.push((
@@ -2187,6 +2214,14 @@ const EXPECT_TEST_CRATES: &[&str] = &["expect_test"];
 /// and (for `assert_ok!`/`assert_some!`) yields the payload.
 const CLAIMS_CRATES: &[&str] = &["claims"];
 
+/// #16420: the leveled logging macros tracing and log both export, whose
+/// bare spelling is trusted for helper forwarding only through a verified
+/// import from one of [`LOGGING_CRATES`].
+pub(crate) const LEVELED_LOGGING_MACROS: &[&str] = &["trace", "debug", "info", "warn", "error"];
+
+/// The crates whose leveled logging macros were audited (#10357, #16420).
+const LOGGING_CRATES: &[&str] = &["tracing", "log"];
+
 /// The crates whose export under `name` is a drop-in for the trusted macro.
 fn drop_in_crates(name: &str) -> &'static [&'static str] {
     match name {
@@ -2195,6 +2230,9 @@ fn drop_in_crates(name: &str) -> &'static [&'static str] {
         "expect" | "expect_file" => EXPECT_TEST_CRATES,
         "json" => &["serde_json"],
         "anyhow" => &["anyhow"],
+        // #16420: tracing and log export the leveled logging macros under
+        // the same names; a verified import from either is the audited one.
+        _ if LEVELED_LOGGING_MACROS.contains(&name) => LOGGING_CRATES,
         // `use std::env;` names the module and, in the macro namespace, the
         // standard `env!` itself; `use std::include_str;` is the standard
         // macro as well.
