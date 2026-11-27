@@ -14,15 +14,26 @@ use super::{CandidateRelation, RelatedTest, RelationReason};
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum TestCandidateNextRoute {
+    /// At least one producer-backed candidate was selected; run those tests.
     RunTargetedPreflight,
+    /// No candidate was selected, but context-only rows exist or the window
+    /// was truncated; inspect them before writing a new test.
     InspectWeakCandidates,
+    /// The complete discovery set is empty; add a new focused test.
     AddNewFocusedTest,
+    /// The seam or its owner needs resolving first. Reserved: no current
+    /// producer selects it.
     ResolveSeamOrOwner,
+    /// The analysis is stale and needs refreshing first. Reserved: no current
+    /// producer selects it.
     RefreshStaleAnalysis,
+    /// The case needs manual handling or is unsupported. Reserved: no current
+    /// producer selects it.
     ManualOrUnsupported,
 }
 
 impl TestCandidateNextRoute {
+    /// The stable `snake_case` word, as serialized.
     pub fn as_str(self) -> &'static str {
         match self {
             Self::RunTargetedPreflight => "run_targeted_preflight",
@@ -38,11 +49,19 @@ impl TestCandidateNextRoute {
 /// One bounded candidate row with discovery relation and eligibility.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub struct TestCandidateRow {
+    /// Name of the related test.
     pub test_name: String,
+    /// File that defines the test.
     pub source_file: PathBuf,
+    /// Line of the test in `source_file`.
     pub line: usize,
+    /// Discovery channel derived from `relation_reason`; `Unknown` when the
+    /// row carries no reason.
     pub candidate_relation: CandidateRelation,
+    /// Whether the relation is producer-backed, which places the row in
+    /// `selected` rather than `context_only`.
     pub eligible: bool,
+    /// Why discovery related the test to the seam, when the producer said.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub relation_reason: Option<RelationReason>,
 }
@@ -50,7 +69,10 @@ pub struct TestCandidateRow {
 /// Envelope over a finite related-test candidate set.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub struct TestCandidateSet {
+    /// Producer-backed rows, ordered by relation, then name, file and line.
     pub selected: Vec<TestCandidateRow>,
+    /// Proximity or coincidence rows, in the same order. They are context
+    /// for a reader, not selectors.
     pub context_only: Vec<TestCandidateRow>,
     /// Rows present in this bounded window (for example after reveal truncation).
     pub total_discovered: usize,
@@ -58,6 +80,7 @@ pub struct TestCandidateSet {
     pub matched_total: usize,
     /// False when upstream discovery omitted rows from this window.
     pub complete: bool,
+    /// What to do next with this set.
     pub next_route: TestCandidateNextRoute,
 }
 
