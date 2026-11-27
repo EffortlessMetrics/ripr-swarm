@@ -158,10 +158,13 @@ pub(crate) use ripr_contract::domain::classify_reference;
 pub(crate) use ripr_contract::domain::command_tokens;
 pub use ripr_contract::domain::compare_fixture_delta;
 pub(crate) use ripr_contract::domain::declared_const_name;
+pub(crate) use ripr_contract::domain::enablement_tip_keeps_rust;
 pub(crate) use ripr_contract::domain::enablement_tip_languages;
 pub(crate) use ripr_contract::domain::exact_assertion_fact;
 #[cfg(test)]
 pub(crate) use ripr_contract::domain::example_preregistered_study;
+#[cfg(feature = "lang-python")]
+pub(crate) use ripr_contract::domain::first_observing_related_test;
 pub(crate) use ripr_contract::domain::format_languages_enabled_toml;
 pub(crate) use ripr_contract::domain::guard_refusal_digest_classification_hint;
 pub(crate) use ripr_contract::domain::guard_refusal_kind;
@@ -195,6 +198,13 @@ pub(crate) use ripr_contract::domain::{
     SourceUnitFactV1, TestEnvironmentFactV1, python_headline_related_test,
     typescript_script_preview_related_test,
 };
+
+/// The marker a proximity-only reach summary carries: every related test shares
+/// only the changed file or a name token with the owner, and none is seen
+/// calling it (`analysis::classify::reach`). The human `Why` line reads it to
+/// name that link instead of a bare "not established" (#15336), so producer
+/// and renderer share one spelling.
+pub(crate) const PROXIMITY_ONLY_REACH_MARKER: &str = "; tests share only ";
 
 #[doc(hidden)]
 pub mod context_packet;

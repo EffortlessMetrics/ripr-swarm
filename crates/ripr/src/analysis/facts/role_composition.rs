@@ -303,6 +303,14 @@ fn files_in_skipped_unit_test_targets(
         if context.roots.is_empty() {
             continue;
         }
+        // With no workspace membership the analyzed package cannot run its
+        // bench targets. Keep other execution roots on their ordinary path.
+        if context.roots.iter().all(|root| root.starts_with("benches"))
+            && inventory.workspace_membership_rejected(workspace_root)
+        {
+            skipped.insert(file.clone());
+            continue;
+        }
         let all_skipped = context.roots.iter().all(|root| {
             if let Some(verdict) = verdicts.get(root) {
                 return *verdict;
@@ -878,7 +886,8 @@ struct SkipPremise {
 /// Cheap premise for the metadata probe (#14962): the package manifest sets
 /// `test = false` on its `[lib]` table or on a `[[bin]]` entry, a `[[bin]]`
 /// names `required-features`, an `[[example]]` or `[[bench]]` table exists,
-/// or a `[package]` `auto*` key is false (#14972, #15262). Sources under
+/// a `[package]` `auto*` key is false, or an edition 2015 manifest declares
+/// a target of a kind it then stops discovering (#14972, #15262, #15877). Sources under
 /// `examples/` or `benches/` are a premise on their own (the caller adds
 /// it). Anything else cannot
 /// skip a crate root's unit tests, so no `cargo metadata` subprocess is
@@ -895,17 +904,18 @@ fn manifest_skip_premise(workspace_root: &Path, package_dir: &Path) -> SkipPremi
         table.get("test").and_then(toml::Value::as_bool) == Some(false)
             || table.get("required-features").is_some()
     };
+    // An explicit `auto* = false`, or edition 2015 with a declared target of
+    // that kind (#15877), leaves a conventional root undiscovered.
     let undiscovered_roots = value.get("package").is_some_and(|package| {
-        [
-            "autolib",
-            "autobins",
-            "autoexamples",
-            "autotests",
-            "autobenches",
-        ]
-        .iter()
-        .any(|key| package.get(key).and_then(toml::Value::as_bool) == Some(false))
-    });
+        package.get("autolib").and_then(toml::Value::as_bool) == Some(false)
+    }) || [
+        ("autobins", "bin"),
+        ("autoexamples", "example"),
+        ("autotests", "test"),
+        ("autobenches", "bench"),
+    ]
+    .iter()
+    .any(|(key, section)| !crate::analysis::workspace::discovers_targets(&value, key, section));
     let probe = undiscovered_roots
         || value.get("lib").is_some_and(switches_off)
         || value.get("example").is_some()

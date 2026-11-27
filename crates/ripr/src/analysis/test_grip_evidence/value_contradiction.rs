@@ -35,7 +35,8 @@ use crate::analysis::rust_index::RustIndex;
 use crate::analysis::syntax::parse_clean_source_file;
 use crate::analysis::syntax::run_memo::{self, Product};
 use ra_ap_syntax::{
-    AstNode, ast, ast::HasArgList, ast::HasAttrs, ast::HasGenericArgs, ast::HasName, ast::RangeItem,
+    AstNode, ast, ast::HasArgList, ast::HasAttrs, ast::HasGenericArgs, ast::HasGenericParams,
+    ast::HasName, ast::RangeItem,
 };
 use std::collections::BTreeMap;
 use std::rc::Rc;
@@ -399,7 +400,12 @@ impl PointerReturnChange {
     pub(in crate::analysis) fn is_invisible_at_call(&self, call: &str) -> bool {
         let Some(baseline) = self.baseline.get_or_init(|| {
             let baseline = self.current.replacen(&self.after, &self.before, 1);
-            versions_differ_on_small_inputs(&self.current, &baseline).then_some(baseline)
+            OwnerFold::read(&self.current)
+                .zip(OwnerFold::read(&baseline))
+                .is_some_and(|(current, baseline)| {
+                    versions_differ_on_small_inputs(&current, &baseline)
+                })
+                .then_some(baseline)
         }) else {
             return false;
         };
@@ -463,11 +469,21 @@ pub(in crate::analysis) fn change_is_invisible_to_every_assertion(
         return None;
     }
     let baseline = current.replacen(after, before, 1);
+    // An owner whose whole body is one shared constructor around the changed
+    // payload (`Ok(x * 2)` to `Ok(x * 3)`) returns equal values exactly when
+    // the payloads are equal, so the equality reading folds the payloads
+    // (#15414). Relational assertions keep the unpeeled bodies.
+    let (current_value, baseline_value) = shared_constructor_payloads(current, &baseline)
+        .unwrap_or_else(|| (current.to_string(), baseline.clone()));
     // An equivalent rewrite (`x * 3` to `3 * x`) is invisible to every test
     // too, but "no input reaches a difference" would send the reader after a
     // test that cannot exist. The change must differ somewhere: a small input
     // grid has to find a call at which the two bodies fold to different values.
-    if !versions_differ_on_small_inputs(current, &baseline) {
+    // #15272: a method called on a record literal of its self type is read
+    // through the receiver's fields, and a tuple tail per component.
+    let (current_fold, baseline_fold) =
+        OwnerFold::read(&current_value).zip(OwnerFold::read(&baseline_value))?;
+    if !versions_differ_on_small_inputs(&current_fold, &baseline_fold) {
         return None;
     }
     // A related test that never names the owner exercises it through no call
@@ -483,6 +499,10 @@ pub(in crate::analysis) fn change_is_invisible_to_every_assertion(
     // "no input reaches a difference" does not survive a relational
     // assertion that calls the owner at two different inputs.
     let mut relational_seen = false;
+    let self_type = match &owner.impl_context {
+        crate::analysis::facts::FunctionImplContext::Impl { self_type } => Some(self_type.as_str()),
+        _ => None,
+    };
     for test in naming_tests {
         if case_row_bindings(test).is_some()
             || test
@@ -518,7 +538,7 @@ pub(in crate::analysis) fn change_is_invisible_to_every_assertion(
         }
         let resolved: Vec<Vec<ResolvedOperand>> = equality_assertions
             .iter()
-            .map(|oracle| assertion_operands(&oracle.text, test.body.as_str()))
+            .map(|oracle| invisibility_operands(&oracle.text, test.body.as_str()))
             .collect();
         // A `let` read by several assertions is one call in the body, so each
         // binding's initializer counts once however many assertions use it.
@@ -552,10 +572,15 @@ pub(in crate::analysis) fn change_is_invisible_to_every_assertion(
             // give equal results through any one-argument wrapper
             // (`block_on(owner(..))`), so reading through it can only
             // withhold credit, never grant it.
-            let Some(call_arguments) = owner_call_arguments(actual, &owner.name)
-                .or_else(|| wrapped_owner_call_arguments(actual, &owner.name))
-                .or_else(|| qualified_owner_call_arguments(actual, &owner.name))
-            else {
+            let read = match self_type.filter(|_| current_fold.has_receiver()) {
+                Some(self_type) => literal_receiver_call(actual, self_type, &owner.name)
+                    .map(|(receiver, arguments)| (Some(receiver), arguments)),
+                None => owner_call_arguments(actual, &owner.name)
+                    .or_else(|| wrapped_owner_call_arguments(actual, &owner.name))
+                    .or_else(|| qualified_owner_call_arguments(actual, &owner.name))
+                    .map(|arguments| (None, arguments)),
+            };
+            let Some((receiver, call_arguments)) = read else {
                 return false;
             };
             let environment = BTreeMap::new();
@@ -567,9 +592,11 @@ pub(in crate::analysis) fn change_is_invisible_to_every_assertion(
                 values.push(value);
             }
             match (
-                fold_function_text(current, &values),
-                fold_function_text(&baseline, &values),
+                current_fold.at(receiver.as_ref(), &values),
+                baseline_fold.at(receiver.as_ref(), &values),
             ) {
+                // A bare boolean result stays unread here, as before.
+                (Some(Folded::Scalar(Value::Bool(_))), _) => false,
                 (Some(changed), Some(unchanged)) => changed == unchanged,
                 _ => false,
             }
@@ -665,31 +692,51 @@ pub(in crate::analysis) fn owner_change_visibility(
     if current == baseline {
         return RangeChangeVisibility::NotEstablished;
     }
+    // #15272: a method owner is read through its receiver's fields when the
+    // test calls it on a record literal of its self type; a tuple tail is
+    // read per component. Either version unread leaves every call unread.
+    let folds = OwnerFold::read(current).zip(OwnerFold::read(baseline));
+    let self_type = match &owner.impl_context {
+        crate::analysis::facts::FunctionImplContext::Impl { self_type } => Some(self_type.as_str()),
+        _ => None,
+    };
     let read_call = |operand: &str| -> CallReading {
         let read = || {
             if count_name_tokens(operand, &owner.name) != 1 {
                 return None;
             }
+            let (current_fold, baseline_fold) = folds.as_ref()?;
             // Only the bare call, or the same call awaited: a wrapper
             // (`is_positive(owner(3))`) may map both results to one value,
             // so it never grants credit here.
             let trimmed = operand.trim();
-            let arguments = owner_call_arguments(
-                trimmed.strip_suffix(".await").unwrap_or(trimmed),
-                &owner.name,
-            )?;
+            let called = trimmed.strip_suffix(".await").unwrap_or(trimmed);
+            let (receiver, arguments) = match self_type.filter(|_| current_fold.has_receiver()) {
+                Some(self_type) => {
+                    let (receiver, arguments) =
+                        literal_receiver_call(called, self_type, &owner.name)?;
+                    (Some(receiver), arguments)
+                }
+                None => (None, owner_call_arguments(called, &owner.name)?),
+            };
             let environment = BTreeMap::new();
             let mut values = Vec::with_capacity(arguments.len());
             for argument in &arguments {
                 values.push(fold_expression(argument, &environment)?);
             }
-            let changed = fold_function_value(current, &values)?;
-            let unchanged = fold_function_value(baseline, &values)?;
+            let changed = current_fold.at(receiver.as_ref(), &values)?;
+            let unchanged = baseline_fold.at(receiver.as_ref(), &values)?;
             let call = operand.trim().to_string();
             Some(if changed == unchanged {
                 CallReading::Agrees(call)
             } else {
-                CallReading::Separates(call, changed)
+                // Only a bare call's scalar is read as separating. A
+                // receiver call or a tuple that differs stays unread, so the
+                // #15272 readings grant nothing.
+                match (changed, &receiver) {
+                    (Folded::Scalar(changed), None) => CallReading::Separates(call, changed),
+                    _ => return None,
+                }
             })
         };
         read().unwrap_or(CallReading::Unread)
@@ -841,7 +888,9 @@ pub(in crate::analysis) fn owner_change_visibility(
         (None, Some(call))
             if every_mention_agrees
                 && !owner_has_other_callers
-                && versions_differ_on_small_inputs(current, baseline) =>
+                && folds.as_ref().is_some_and(|(current, baseline)| {
+                    versions_differ_on_small_inputs(current, baseline)
+                }) =>
         {
             RangeChangeVisibility::EveryAssertedInputAgrees(call)
         }
@@ -955,15 +1004,50 @@ fn is_ident_byte(byte: u8) -> bool {
 }
 
 /// An operand that names one constant no owner change can move: an integer
-/// literal expression, `true`/`false`, or a plain string literal.
+/// literal expression, `true`/`false`, a plain string literal, or a tuple of
+/// those (#15272: `(5, true)`).
 fn is_pinned_literal(text: &str) -> bool {
     let text = text.trim();
+    if let Some(inner) = text
+        .strip_prefix('(')
+        .and_then(|rest| rest.strip_suffix(')'))
+    {
+        let masked = crate::analysis::extract::mask_comments_and_strings(inner);
+        let parts = super::split_top_level_commas(inner);
+        // The parentheses must be one pair around the whole operand, and no
+        // string may hide a comma the split would read.
+        if masked == inner
+            && parts.len() > 1
+            && matching_paren_closes_at_end(text)
+            && parts.iter().all(|part| is_pinned_literal(part))
+        {
+            return true;
+        }
+    }
     matches!(text, "true" | "false")
         || fold_expression(text, &BTreeMap::new()).is_some()
         || text
             .strip_prefix('"')
             .and_then(|rest| rest.strip_suffix('"'))
             .is_some_and(|inner| !inner.contains(['"', '\\']))
+}
+
+/// Whether the `(` that opens `text` is closed by its last byte.
+fn matching_paren_closes_at_end(text: &str) -> bool {
+    let mut depth = 0i32;
+    for (offset, byte) in text.bytes().enumerate() {
+        match byte {
+            b'(' => depth += 1,
+            b')' => {
+                depth -= 1;
+                if depth == 0 {
+                    return offset + 1 == text.len();
+                }
+            }
+            _ => {}
+        }
+    }
+    false
 }
 
 /// The folded value of a pinned literal operand; `None` for a string
@@ -1119,6 +1203,16 @@ fn assertion_operands(oracle_text: &str, test_body: &str) -> Vec<ResolvedOperand
             .map(Vec::from)
             .unwrap_or_default(),
     };
+    resolve_operands(operands, oracle_text, test_body)
+}
+
+/// Each operand with a bare identifier replaced by the one `let` initializer
+/// that binds it in `test_body` (see [`assertion_operands`]).
+fn resolve_operands(
+    operands: Vec<String>,
+    oracle_text: &str,
+    test_body: &str,
+) -> Vec<ResolvedOperand> {
     operands
         .into_iter()
         .map(|operand| {
@@ -1135,6 +1229,111 @@ fn assertion_operands(oracle_text: &str, test_body: &str) -> Vec<ResolvedOperand
             }
         })
         .collect()
+}
+
+/// [`assertion_operands`], plus the scrutinee and pinned value of a literal
+/// `matches!` assertion (#15414). Invisibility only: `matches!(owner(0),
+/// Ok(0))` passes on both versions when the owner folds to the same value
+/// there, so reading it can only withhold credit; the credit-granting callers
+/// of [`assertion_operands`] keep their equality-only reading.
+fn invisibility_operands(oracle_text: &str, test_body: &str) -> Vec<ResolvedOperand> {
+    let operands = assertion_operands(oracle_text, test_body);
+    if !operands.is_empty() {
+        return operands;
+    }
+    crate::analysis::classify::literal_matches_assertion_operands(oracle_text)
+        .map(|pair| resolve_operands(Vec::from(pair), oracle_text, test_body))
+        .unwrap_or_default()
+}
+
+/// The body texts with one shared one-argument constructor (`Ok`, `Some` or
+/// `Err`) peeled off when each owner body is exactly that constructor around
+/// its tail payload and nothing else, rebuilt as a function of the same
+/// parameters returning the payload. Equal payloads give equal values, and
+/// a different constructor on either side (`Ok(x)` to `Err(x)`) or any
+/// statement, generic or receiver refuses, so a peeled fold can only say two
+/// values are equal when the real ones are (#15414). The rebuilt function
+/// returns the payload's declared type, so the fold keeps its width guard;
+/// a return type that does not spell it (an alias) refuses.
+fn shared_constructor_payloads(current: &str, baseline: &str) -> Option<(String, String)> {
+    let (current_constructor, current_payload) = constructor_payload_function(current)?;
+    let (baseline_constructor, baseline_payload) = constructor_payload_function(baseline)?;
+    (current_constructor == baseline_constructor).then_some((current_payload, baseline_payload))
+}
+
+/// One function text's constructor name and its payload-returning rewrite;
+/// see [`shared_constructor_payloads`].
+fn constructor_payload_function(body: &str) -> Option<(String, String)> {
+    let parse = parse_clean_source_file(body)?;
+    let function = parse
+        .tree()
+        .syntax()
+        .descendants()
+        .find_map(ast::Fn::cast)?;
+    if function.generic_param_list().is_some() {
+        return None;
+    }
+    let param_list = function.param_list()?;
+    if param_list.self_param().is_some() {
+        return None;
+    }
+    let block = function.body()?;
+    let statements = block.stmt_list()?;
+    if statements.statements().next().is_some() {
+        return None;
+    }
+    let ast::Expr::CallExpr(call) = statements.tail_expr()? else {
+        return None;
+    };
+    let ast::Expr::PathExpr(callee) = call.expr()? else {
+        return None;
+    };
+    let constructor = callee.syntax().text().to_string();
+    if !matches!(constructor.as_str(), "Ok" | "Some" | "Err") {
+        return None;
+    }
+    let mut arguments = call.arg_list()?.args();
+    let (Some(payload), None) = (arguments.next(), arguments.next()) else {
+        return None;
+    };
+    let name = function.name()?;
+    // Keep the payload's declared type so the fold still refuses a result
+    // outside that integer width.
+    let payload_type = function
+        .ret_type()
+        .and_then(|ret| ret.ty())
+        .and_then(|ty| match ty {
+            ast::Type::PathType(path) => path.path()?.segment(),
+            _ => None,
+        })
+        .and_then(|segment| {
+            let wrapper = segment.name_ref()?.text().to_string();
+            // `Ok` carries `T` and `Err` carries `E` of `Result<T, E>`;
+            // `Some` carries `T` of `Option<T>`.
+            let position = match (wrapper.as_str(), constructor.as_str()) {
+                ("Result", "Ok") | ("Option", "Some") => 0,
+                ("Result", "Err") => 1,
+                _ => return None,
+            };
+            match segment.generic_arg_list()?.generic_args().nth(position)? {
+                ast::GenericArg::TypeArg(arg) => Some(arg.ty()?.syntax().text().to_string()),
+                _ => None,
+            }
+        });
+    // An alias (`-> Fee`) or any return type whose payload type is not
+    // spelled refuses the peel: folding without the payload's width could
+    // call a baseline that overflows equal to a current version that does not.
+    let return_type = format!(" -> {}", payload_type?);
+    Some((
+        constructor,
+        format!(
+            "fn {}{}{} {{\n    {}\n}}\n",
+            name.text(),
+            param_list.syntax().text(),
+            return_type,
+            payload.syntax().text()
+        ),
+    ))
 }
 
 /// A compared operand after `let` resolution; `binding` names the `let` it
@@ -1328,26 +1527,28 @@ fn count_name_tokens(text: &str, name: &str) -> usize {
 /// [`SEPARATION_WIDE_GRID`], so a change a divisor or a saturation hides below
 /// the small values still counts as a real difference). More than
 /// [`SEPARATION_MAX_PARAMETERS`] parameters are not searched.
-fn versions_differ_on_small_inputs(current: &str, baseline: &str) -> bool {
+fn versions_differ_on_small_inputs(current: &OwnerFold, baseline: &OwnerFold) -> bool {
     const SEPARATION_SMALL_GRID: [i128; 8] = [0, 1, 2, 3, 5, 6, 7, 10];
     const SEPARATION_WIDE_GRID: [i128; 16] = [
         0, 1, 2, 3, 5, 6, 7, 10, 16, 31, 64, 100, 255, 1000, 4096, 65536,
     ];
     const SEPARATION_MAX_PARAMETERS: usize = 3;
-    let Some(parameters) = parse_clean_source_file(current)
-        .and_then(|parse| {
-            parse
-                .tree()
-                .syntax()
-                .descendants()
-                .find_map(ast::Fn::cast)
-                .and_then(|function| function.param_list())
-        })
-        .map(|list| list.params().count())
-    else {
-        return false;
-    };
-    if parameters == 0 || parameters > SEPARATION_MAX_PARAMETERS {
+    // #15272: a receiver field either version reads is an input like a
+    // parameter. The fields lead, in sorted order, and the owner's own
+    // parameters follow.
+    let fields: Vec<&String> = current
+        .receiver_fields()
+        .iter()
+        .chain(baseline.receiver_fields())
+        .collect::<std::collections::BTreeSet<_>>()
+        .into_iter()
+        .collect();
+    let has_receiver = current.has_receiver();
+    let parameters = fields.len() + current.parameters();
+    if parameters == 0
+        || parameters > SEPARATION_MAX_PARAMETERS
+        || has_receiver != baseline.has_receiver()
+    {
         return false;
     }
     let grid: &[i128] = if parameters == 1 {
@@ -1361,9 +1562,17 @@ fn versions_differ_on_small_inputs(current: &str, baseline: &str) -> bool {
         for (argument, counter) in arguments.iter_mut().zip(&counters) {
             *argument = grid[*counter];
         }
+        let (field_values, own_arguments) = arguments.split_at(fields.len());
+        let receiver: Option<BTreeMap<String, i128>> = has_receiver.then(|| {
+            fields
+                .iter()
+                .map(|field| (*field).clone())
+                .zip(field_values.iter().copied())
+                .collect()
+        });
         if let (Some(changed), Some(unchanged)) = (
-            fold_function_value(current, &arguments),
-            fold_function_value(baseline, &arguments),
+            current.at(receiver.as_ref(), own_arguments),
+            baseline.at(receiver.as_ref(), own_arguments),
         ) && changed != unchanged
         {
             return true;
@@ -1991,7 +2200,9 @@ impl FoldPlan {
 }
 
 mod branch_index;
+mod owner_fold;
 mod tuple_guard;
+use owner_fold::{Folded, OwnerFold, literal_receiver_call};
 pub(in crate::analysis) use tuple_guard::tuple_branch_reached;
 
 #[cfg(test)]
@@ -3153,7 +3364,17 @@ fn single_compared_owner_call(
     test: &TestSummary,
     through_wrapper: bool,
 ) -> Option<Vec<String>> {
-    let operands = assertion_operands(oracle_text, test.body.as_str());
+    single_compared_owner_call_in(owner, oracle_text, test.body.as_str(), through_wrapper)
+}
+
+/// [`single_compared_owner_call`] over a test body given as text.
+fn single_compared_owner_call_in(
+    owner: &FunctionSummary,
+    oracle_text: &str,
+    test_body: &str,
+    through_wrapper: bool,
+) -> Option<Vec<String>> {
+    let operands = assertion_operands(oracle_text, test_body);
     let mut calls = Vec::new();
     for operand in &operands {
         let arguments = owner_call_arguments(&operand.text, &owner.name).or_else(|| {
@@ -3203,18 +3424,58 @@ pub(in crate::analysis) fn return_seam_tail_reached_by_call(
     seam_expression: &str,
     seam_line: usize,
     oracle_text: &str,
+    qualified_owner_path: Option<&str>,
     test: &TestSummary,
     constant: &dyn Fn(&str) -> Option<(String, String)>,
 ) -> bool {
+    // `qualified_owner_path` is the one path the caller established as the
+    // owner's own-crate spelling (`pkg::owner`). The assertion and the test
+    // body are read with that path spelled bare, together, so a `let` the
+    // assertion names is still found by the assertion's own position.
+    let spelled = qualified_owner_path.and_then(|path| {
+        let oracle = spell_path_bare(oracle_text, path, &owner.name);
+        let body = spell_path_bare(test.body.as_str(), path, &owner.name);
+        (oracle.is_some() || body.is_some()).then(|| {
+            (
+                oracle.unwrap_or_else(|| oracle_text.to_string()),
+                body.unwrap_or_else(|| test.body.as_str().to_string()),
+            )
+        })
+    });
+    let (oracle_text, test_body) = match &spelled {
+        Some((oracle, body)) => (oracle.as_str(), body.as_str()),
+        None => (oracle_text, test.body.as_str()),
+    };
     tail_reach(
         owner,
         seam_expression,
         seam_line,
         oracle_text,
-        test,
+        test_body,
         constant,
     )
     .unwrap_or(false)
+}
+
+/// `text` with every occurrence of `path` that is a whole path (not the tail
+/// of a longer one such as `other::pkg::owner`, nor the head of another item
+/// such as `pkg::owner_v2`) replaced by `name`. `None` when there is none.
+fn spell_path_bare(text: &str, path: &str, name: &str) -> Option<String> {
+    let continues_a_path = |ch: char| ch == ':' || ch == '_' || ch.is_alphanumeric();
+    let mut bare = String::with_capacity(text.len());
+    let mut rest = text;
+    let mut rewrote = false;
+    while let Some(at) = rest.find(path) {
+        let after = &rest[at + path.len()..];
+        let whole = !rest[..at].chars().next_back().is_some_and(continues_a_path)
+            && !after.chars().next().is_some_and(continues_a_path);
+        bare.push_str(&rest[..at]);
+        bare.push_str(if whole { name } else { path });
+        rewrote |= whole;
+        rest = after;
+    }
+    bare.push_str(rest);
+    rewrote.then_some(bare)
 }
 
 fn tail_reach(
@@ -3222,7 +3483,7 @@ fn tail_reach(
     seam_expression: &str,
     seam_line: usize,
     oracle_text: &str,
-    test: &TestSummary,
+    test_body: &str,
     constant: &dyn Fn(&str) -> Option<(String, String)>,
 ) -> Option<bool> {
     // Only an equality pins the value; `assert_ne!` excludes one value, and a
@@ -3235,11 +3496,11 @@ fn tail_reach(
     {
         return None;
     }
-    let call_arguments = single_compared_owner_call(owner, oracle_text, test, false)?;
+    let call_arguments = single_compared_owner_call_in(owner, oracle_text, test_body, false)?;
     // The expected side must be a value the test fixes itself: an expected
     // value computed by calling code (`let expected = helper(..)`, where the
     // helper may call the owner) moves with the mutant (#14950 review).
-    for operand in assertion_operands(oracle_text, test.body.as_str()) {
+    for operand in assertion_operands(oracle_text, test_body) {
         let text = operand.text.trim();
         if owner_call_arguments(text, &owner.name).is_none()
             && !matches!(text, "true" | "false")

@@ -76,7 +76,10 @@ pub(crate) struct TypeScriptOwner {
     /// `module.exports = <function>` as the file's whole export, independent of
     /// the file-level gate that licenses `commonjs_default_export`: a named
     /// import or member of such a module (`const { f } = require(...)`,
-    /// `k.f`) is a property of the function, never the owner.
+    /// `k.f`) is a property of the function, never the owner. Also set on the
+    /// other top-level functions of a module whose whole export is one
+    /// identifier and that adds no named property (#16366): a named import
+    /// or member reads a property of that export, never the sibling.
     pub(crate) commonjs_whole_function: bool,
     /// `true` for a `ModuleFunction` owner whose declarator initializer is a
     /// call with a function-valued argument (`export const X =
@@ -102,6 +105,21 @@ pub(crate) struct TypeScriptOwner {
     pub(crate) source_text: Option<String>,
 }
 
+impl TypeScriptOwner {
+    /// The 1-indexed line `source_text` starts on. `start_line` is the
+    /// declaration's first line, which for an arrow owner can be the line
+    /// before the arrow (`export const dir =` then `(n) => ...`), so a
+    /// changed line must be offset from the text's own origin, not from
+    /// `start_line`. `end_line` is the text's last line, so the origin is
+    /// that line minus the text's own line breaks.
+    pub(crate) fn source_start_line(&self) -> usize {
+        match self.source_text.as_deref() {
+            Some(text) => self.end_line.saturating_sub(text.matches('\n').count()),
+            None => self.start_line,
+        }
+    }
+}
+
 /// Syntactic method-shape refinement recorded during owner extraction.
 #[derive(
     Clone,
@@ -125,6 +143,22 @@ pub(crate) enum TypeScriptMethodKind {
     Setter,
     /// `constructor(...)` — invoked by `new ClassName(...)`.
     Constructor,
+    /// A method, getter or setter that a later member of the same class with
+    /// the same key and placement replaces (#16261, RIPR-SPEC-0243 rule 26):
+    /// its body never runs, so it relates to no test.
+    Overwritten,
+    /// A method, getter or setter that a field of the same key and placement
+    /// shadows (#16306, RIPR-SPEC-0243 rule 28): calls on an instance (or the
+    /// class, for a static field) reach the field, so it relates to no test.
+    FieldShadowed,
+    /// An ordinary instance method that an unconditional `this.NAME = ...`
+    /// of its class constructor replaces (#16314, RIPR-SPEC-0243 rule 29):
+    /// calls reach the assigned value, so it relates to no test.
+    ReplacedInConstructor,
+    /// An ordinary method that a top-level `Class.prototype.NAME = ...` or
+    /// `Class.NAME = ...` of the same file replaces (#16314, RIPR-SPEC-0243
+    /// rule 29): calls reach the assigned value, so it relates to no test.
+    ReplacedByAssignment,
 }
 
 impl TypeScriptOwner {
@@ -136,6 +170,17 @@ impl TypeScriptOwner {
             self.name
         ))
     }
+}
+
+/// One member a test file calls on an ES namespace import of a barrel, with
+/// the declaration the member binds (#15923): `lib.member` is `name` as
+/// declared by `module` (a normalized module path).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct TypeScriptBarrelNamespaceMember {
+    pub(crate) local: String,
+    pub(crate) member: String,
+    pub(crate) module: String,
+    pub(crate) name: String,
 }
 
 /// Test block extracted from a TypeScript / JavaScript test file.
@@ -191,8 +236,19 @@ pub(crate) struct TypeScriptTest {
     /// file-level code included) except as its own import binding and as
     /// direct calls `local.member(`; one pair per directly called member, so
     /// calls of several members credit each of them (RIPR-SPEC-0243 rule 5).
+    /// Also holds, for each ES namespace import (`import * as local`) the
+    /// whole file uses only as a member receiver it never writes, one pair
+    /// per directly called member (#15923); read those through
+    /// [`TypeScriptTest::namespace_member_calls_in_file`].
     /// Populated once per file by `extract_tests`.
     pub(crate) default_member_only_locals_in_file: Shared<(String, String)>,
+    /// What each member the file calls on an ES namespace import of a BARREL
+    /// (`import * as lib from '../src'; lib.f()`) resolves to through the
+    /// bounded re-export chain (#15923). Derived from the workspace's
+    /// re-export index after extraction, once per run, by
+    /// `ReExportIndex::record_barrel_namespace_members`; never persisted.
+    #[serde(skip)]
+    pub(crate) barrel_namespace_members_in_file: Shared<TypeScriptBarrelNamespaceMember>,
     /// Names the containing test file writes more than once (their
     /// declaration initializer plus a reassignment, update or loop target),
     /// so a binding such as `let f = require('./owner')` may no longer hold
@@ -211,6 +267,16 @@ pub(crate) struct TypeScriptTest {
     /// anything but an identifier path, an index assignment, or an argument
     /// list past 8 KB. Populated once per file by `extract_tests`.
     pub(crate) member_replacements_in_file: Shared<String>,
+    /// Members the containing test file replaces with a substitute
+    /// implementation through a stub, a three-argument `replace`,
+    /// `replaceProperty`, `defineProperty`, an implemented `mock.method`, a
+    /// fabricated `spyOn` or a member assignment (#15939).
+    /// Entry forms are documented on
+    /// `function_replacement::replaced_function_member_names`. A function
+    /// owner named here is not credited through this file. Populated once per
+    /// file by `extract_tests`.
+    #[serde(default)]
+    pub(crate) function_replacements_in_file: Shared<String>,
     /// Literal specifiers of every `import("...")`, `require("...")`,
     /// `requireActual("...")` or `importActual("...")` anywhere in the
     /// containing test file (hooks, describe bodies, top level and sibling
@@ -269,6 +335,22 @@ pub(crate) struct TypeScriptTest {
 }
 
 impl TypeScriptTest {
+    /// `(local, member)` for each member the file calls on an ES namespace
+    /// import (`import * as local`) that it uses only as a never-written
+    /// member receiver (#15923). Held in `default_member_only_locals_in_file`
+    /// beside the default-import pairs; the two never share a local.
+    pub(crate) fn namespace_member_calls_in_file(
+        &self,
+    ) -> impl Iterator<Item = &(String, String)> + '_ {
+        self.default_member_only_locals_in_file
+            .iter()
+            .filter(|(local, _)| {
+                self.imports_in_file.iter().any(|import| {
+                    import.namespace && import.imported.is_none() && import.local == *local
+                })
+            })
+    }
+
     /// The file line a rendered pointer to `assertion` should name.
     pub(crate) fn evidence_line(&self, assertion: &TypeScriptAssertion) -> usize {
         self.factory_call_line.unwrap_or(assertion.line)
@@ -298,6 +380,13 @@ pub(crate) struct TypeScriptScopeBinding {
     /// tests), is only declared, or anything else in the file could rebind
     /// the name or the class.
     pub(crate) constructed_by: Option<String>,
+    /// The namespace import locals whose same-named member `name` holds on
+    /// each iteration, when `name` is a loop header's shorthand destructure
+    /// from a file-level table of namespace imports (#13592, unjs/ohash):
+    /// `for (const [, { digest }] of Object.entries({ js: cryptoJS }))`.
+    /// Empty for every other binding.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub(crate) namespace_member_of: Vec<String>,
     /// `true` when the innermost binding of `name` is a file-level
     /// declaration. Such a name cannot shadow an import (redeclaring an
     /// imported name is a syntax error); it is the owner itself in a
@@ -501,6 +590,8 @@ pub(crate) fn reshare_file_lists(tests: &mut [TypeScriptTest]) {
             .share_with(&previous.written_locals_in_file);
         test.member_replacements_in_file
             .share_with(&previous.member_replacements_in_file);
+        test.function_replacements_in_file
+            .share_with(&previous.function_replacements_in_file);
         test.dynamic_load_specifiers_in_file
             .share_with(&previous.dynamic_load_specifiers_in_file);
         test.mock_factories_in_file

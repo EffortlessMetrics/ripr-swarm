@@ -942,6 +942,7 @@ mod tests {
                 normalized_discriminator: "amount == threshold".to_string(),
             }),
             probe: Probe {
+                before_condition: None,
                 id: ProbeId("probe:src_lib_rs:2:predicate".to_string()),
                 location: SourceLocation::new("src/lib.rs", 2, 5),
                 owner: Some(SymbolId("src::over_threshold".to_string())),

@@ -556,6 +556,7 @@ pub(super) fn durable_receipt_document(
     let current_head = crate::agent::artifact::current_git_head(root).ok();
     let head_reading = repair_attempt_head_reading(root, manifest, current_head.as_deref());
     let baseline = repair_attempt_baseline_reading(root, manifest);
+    let mut test_run = None;
     let (status, receipt) = match &manifest.state {
         RepairAttemptState::Prepared | RepairAttemptState::AwaitingEdit
             if !baseline.permits_continuation() =>
@@ -619,6 +620,9 @@ pub(super) fn durable_receipt_document(
             AttemptTerminalReceipt::Issued { path, value } => {
                 // Preserve the presence lifecycle and original producer
                 // document, while the shared reading owns semantic strength.
+                // #16251: the caller-reported run reads back as CLI status does.
+                test_run =
+                    crate::app::agent_status::test_run::issued_test_run_json(manifest, &value);
                 let lifecycle_state = receipt_lifecycle_state_from_receipt_value(&value);
                 let status = terminal_receipt_status(&value);
                 let binding = find_terminal_artifact_by_role(
@@ -668,8 +672,13 @@ pub(super) fn durable_receipt_document(
         ) => "limited",
         _ => status,
     };
+    let scope = if test_run.is_some() {
+        "`status` reports static receipt state only; `test_run` relays the caller's own test report, which RIPR did not execute"
+    } else {
+        "this document reports static receipt state only"
+    };
     let mut limitations = vec![
-        "static movement and focused runtime test execution remain separate evidence axes; this document reports static receipt state only".to_string(),
+        format!("static movement and focused runtime test execution remain separate evidence axes; {scope}"),
         "RIPR executed nothing to produce this state and executes nothing in response to reading it".to_string(),
     ];
     if matches!(
@@ -708,6 +717,9 @@ pub(super) fn durable_receipt_document(
             "repair_attempt": format!("ripr://repair-attempt/{attempt_id}"),
         },
     });
+    if let (Some(test_run), Some(document)) = (test_run, projected.as_object_mut()) {
+        document.insert("test_run".to_string(), test_run);
+    }
     // The embedded CLI receipt keeps host-absolute paths on disk; the MCP
     // projection never returns them (ADR 0022).
     project_root_relative(&mut projected, root);
@@ -3424,8 +3436,23 @@ pub(super) mod tests {
             .map_err(|error| error.to_string())?
             .display()
             .to_string();
+        // Compare against serialized JSON in its escaped form: a Windows root
+        // (drive letter, backslash separators) serializes with doubled
+        // backslashes, so the raw spelling never occurs in the document text
+        // (#16105). On Windows that made the positive control fail and both
+        // leak checks vacuous.
+        let json_spelling = |text: &str| -> String {
+            let quoted = Value::String(text.to_string()).to_string();
+            quoted
+                .strip_prefix('"')
+                .and_then(|inner| inner.strip_suffix('"'))
+                .unwrap_or(&quoted)
+                .to_string()
+        };
+        let root_json = json_spelling(&root_text);
+        let canonical_json = json_spelling(&canonical_text);
         assert!(
-            receipt.to_string().contains(&root_text),
+            receipt.to_string().contains(&root_json),
             "{} positive control: the on-disk receipt spells the root",
             case.label,
         );
@@ -3435,12 +3462,12 @@ pub(super) mod tests {
             case.label,
         );
         assert!(
-            !document.to_string().contains(&canonical_text),
+            !document.to_string().contains(&canonical_json),
             "{} MCP receipt status leaked the canonical root",
             case.label,
         );
         assert!(
-            !document.to_string().contains(&root_text),
+            !document.to_string().contains(&root_json),
             "{} MCP receipt status leaked the host-local root: {document}",
             case.label,
         );
@@ -3451,15 +3478,36 @@ pub(super) mod tests {
         );
         // Non-path fields survive the projection: the MCP document equals the
         // on-disk receipt after an independent naive rewrite that only
-        // replaces the exact root prefix in strings and keys (`<root>/` with
+        // replaces the exact root prefix in strings and keys (`<root>/`, and
+        // on Windows `<root>\` since `root.join` adds a backslash, with
         // nothing, then a remaining bare `<root>` with `.`).
         let mut fixture_roots = vec![root_text.clone(), canonical_text.clone()];
+        if cfg!(windows) {
+            // The repair-attempt binding records the root with `/` separators
+            // (the bound-root display rule, #4287), so the naive rewrite
+            // matches that spelling too (#16105).
+            let forward: Vec<String> = fixture_roots
+                .iter()
+                .map(|spelling| spelling.replace('\\', "/"))
+                .collect();
+            for spelling in &forward {
+                assert!(
+                    !document.to_string().contains(spelling.as_str()),
+                    "{} MCP receipt status leaked the forward-slash root {spelling}",
+                    case.label,
+                );
+            }
+            fixture_roots.extend(forward);
+        }
         fixture_roots.sort_by_key(|spelling| std::cmp::Reverse(spelling.len()));
         fixture_roots.dedup();
         let naive = |text: &str| -> String {
             let mut text = text.to_string();
             for spelling in &fixture_roots {
                 text = text.replace(&format!("{spelling}/"), "");
+                if cfg!(windows) {
+                    text = text.replace(&format!("{spelling}\\"), "");
+                }
                 text = text.replace(spelling.as_str(), ".");
             }
             text

@@ -4,6 +4,7 @@ mod boundary_input_limit;
 mod framework_snapshot;
 mod module_extraction;
 pub(super) mod panic_marker;
+mod predicate_boundary_pairing;
 mod rebound_assertion_macro;
 mod shared_execution_context;
 mod unread_owner_result_field;
@@ -23368,6 +23369,83 @@ fn given_integration_test_when_local_module_shadows_library_crate_then_owner_get
     Ok(())
 }
 
+/// Relation reasons of the `discounted_total` boundary seam's related tests
+/// in a crate root whose inline test module is `tests_src`, beside a
+/// differently named production `other`.
+fn relation_reasons_for_inline_boundary_seam(
+    tests_src: &str,
+) -> Result<Vec<(String, RelationReason)>, String> {
+    let prod_src = format!(
+        "pub fn discounted_total(amount: i32, threshold: i32) -> i32 {{\n    if amount >= threshold {{ amount - 10 }} else {{ amount }}\n}}\n\npub fn other(amount: i32, _threshold: i32) -> i32 {{\n    amount\n}}\n\n{tests_src}"
+    );
+    let index = index_from_files(&[(PathBuf::from("src/lib.rs"), prod_src.as_str())])?;
+    let seams = inventory_seams_from_index(&[PathBuf::from("src/lib.rs")], &index);
+    let seam = seams
+        .iter()
+        .find(|seam| {
+            seam.kind() == SeamKind::PredicateBoundary && seam.owner().ends_with("discounted_total")
+        })
+        .ok_or_else(|| "expected the discounted_total predicate boundary seam".to_string())?;
+    let evidence = evidence_for_seam(seam, &index);
+    Ok(evidence
+        .related_tests
+        .iter()
+        .map(|test| (test.test_name.clone(), test.relation_reason))
+        .collect())
+}
+
+/// #14069 (#14179): a renaming import binds the bare `discounted_total` to
+/// `other`, so the seam path must not credit a direct call of the owner, as
+/// the finding-level relation already refuses. The control calls the owner
+/// through `super::` beside the same rename and keeps the direct call.
+#[test]
+fn given_inline_tests_when_a_renaming_import_binds_the_owner_name_then_no_direct_owner_call()
+-> Result<(), String> {
+    let renamed = "#[cfg(test)]\nmod tests {\n    use super::other as discounted_total;\n\n    #[test]\n    fn renamed_other() {\n        assert_eq!(discounted_total(100, 100), 100);\n    }\n}\n";
+    let related = relation_reasons_for_inline_boundary_seam(renamed)?;
+    assert_eq!(
+        related,
+        vec![("renamed_other".to_string(), RelationReason::SameTestFile)],
+        "#14069: a renamed other function is not a direct owner call; the test keeps its proximity row"
+    );
+    let control = "#[cfg(test)]\nmod tests {\n    use super::other as discounted_total;\n\n    #[test]\n    fn qualified_owner() {\n        assert_eq!(super::discounted_total(100, 100), 90);\n    }\n}\n";
+    let related = relation_reasons_for_inline_boundary_seam(control)?;
+    assert_eq!(
+        related,
+        vec![(
+            "qualified_owner".to_string(),
+            RelationReason::DirectOwnerCall
+        )],
+        "{control}"
+    );
+    Ok(())
+}
+
+/// #14179: the rename refusal runs after the private-visibility record, so a
+/// test that cannot reach a private owner in a sibling module is not
+/// related to it through the same-file fallback either.
+#[test]
+fn given_private_owner_in_sibling_module_when_a_renaming_import_binds_its_name_then_no_related_test()
+-> Result<(), String> {
+    let source = "mod pricing {\n    fn discounted_total(amount: i32, threshold: i32) -> i32 {\n        if amount >= threshold { amount - 10 } else { amount }\n    }\n}\n\npub fn other(amount: i32, _threshold: i32) -> i32 {\n    amount\n}\n\n#[cfg(test)]\nmod tests {\n    use super::other as discounted_total;\n\n    #[test]\n    fn renamed_other() {\n        assert_eq!(discounted_total(100, 100), 100);\n    }\n}\n";
+    let index = index_from_files(&[(PathBuf::from("src/lib.rs"), source)])?;
+    let seams = inventory_seams_from_index(&[PathBuf::from("src/lib.rs")], &index);
+    let seam = seams
+        .iter()
+        .find(|seam| {
+            seam.kind() == SeamKind::PredicateBoundary && seam.owner().ends_with("discounted_total")
+        })
+        .ok_or_else(|| "expected the private discounted_total boundary seam".to_string())?;
+    let evidence = evidence_for_seam(seam, &index);
+    let related: Vec<&str> = evidence
+        .related_tests
+        .iter()
+        .map(|test| test.test_name.as_str())
+        .collect();
+    assert!(related.is_empty(), "{related:?}");
+    Ok(())
+}
+
 /// #14087: a `const`, `static` or tuple `struct` of the owner's name in the
 /// test's own file binds the bare call to itself, with or without a glob of
 /// the library that also offers the name (an item beats a glob). The owner
@@ -25232,6 +25310,54 @@ fn related_tests_name_the_owner_caller_test_before_name_order_neighbours() -> Re
     // Nearness only breaks ties: a stronger oracle still leads.
     let weaker = related_rows_for_clamp("assert!(score(3) > 0);")?;
     assert_ne!(weaker[0].0, "z_score", "{weaker:?}");
+    Ok(())
+}
+
+/// #11726 item 2: a field write in a method has no returned struct, so its
+/// upgrade suggestion names where the written field is read, by receiver
+/// mode. A struct-literal field keeps the returned-struct wording.
+#[test]
+fn a_field_write_upgrade_suggestion_names_where_the_field_is_read() -> Result<(), String> {
+    let upgrade_for = |signature: &str, body: &str, pick: &dyn Fn(&RepoSeam) -> bool| {
+        let prod = PathBuf::from("src/upgrade_wording.rs");
+        let prod_src = format!(
+            "pub struct Counter {{\n    pub count: u32,\n    pub other: u32,\n}}\n\nimpl Counter {{\n    {signature} {{\n        {body}\n    }}\n}}\n"
+        );
+        let index = index_from_files(&[(prod, prod_src.as_str())])?;
+        let seams = inventory_seams_from_index(&[PathBuf::from("src/upgrade_wording.rs")], &index);
+        let seam = seams
+            .iter()
+            .find(|seam| seam.kind() == SeamKind::FieldConstruction && pick(seam))
+            .ok_or_else(|| format!("expected a field seam for `{signature}`: {seams:?}"))?;
+        Ok::<_, String>(
+            oracle_semantics_for_seam(&OracleKind::Unknown, &OracleStrength::None, seam)
+                .upgrade_suggestion,
+        )
+    };
+    let writes_count = |seam: &RepoSeam| seam.expression().contains("self.count");
+    let receiver = upgrade_for("pub fn bump(&mut self)", "self.count = 2;", &writes_count)?;
+    assert_eq!(
+        receiver.as_deref(),
+        Some("assert the changed field on the value the method was called on")
+    );
+    let by_value = upgrade_for(
+        "pub fn with_count(mut self) -> Self",
+        "self.count = 2;\n        self",
+        &writes_count,
+    )?;
+    assert_eq!(
+        by_value.as_deref(),
+        Some("assert the changed field on the value the method call returns")
+    );
+    let literal = upgrade_for(
+        "pub fn make() -> Counter",
+        "Counter { count: 2, other: 0 }",
+        &|seam: &RepoSeam| !seam.expression().contains("self."),
+    )?;
+    assert_eq!(
+        literal.as_deref(),
+        Some("assert the specific output field that carries the changed behavior")
+    );
     Ok(())
 }
 

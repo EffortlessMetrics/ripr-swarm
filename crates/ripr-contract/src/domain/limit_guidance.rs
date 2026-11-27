@@ -62,8 +62,8 @@ impl StaticLimitKind {
     pub fn next_step(&self) -> &'static str {
         match self {
             StaticLimitKind::DynamicDispatch => {
-                "Add a test that calls the changed owner on the concrete type, not through a \
-                 trait object or `dyn` value, and assert on its result."
+                "Add a test that calls the changed owner directly by its own name, not through a \
+                 call whose target is chosen at runtime, and assert on its result."
             }
             StaticLimitKind::Metaprogramming => {
                 "Call the changed owner directly from a test instead of through the macro or \
@@ -264,8 +264,8 @@ impl StopReason {
                  its result there."
             }
             StopReason::DynamicDispatchUnresolved => {
-                "Call the changed owner on the concrete type in a test, not through a trait \
-                 object, and assert on its result."
+                "Call the changed owner directly by its own name in a test, not through a \
+                 dynamically dispatched call, and assert on its result."
             }
             StopReason::ProcMacroOpaque => {
                 "Call the changed owner directly from a test, outside the macro, and assert on \
@@ -440,6 +440,32 @@ mod tests {
             assert!(!step.contains("  "), "{}: {step}", kind.as_str());
             assert_ne!(step, kind.describe(), "{}", kind.as_str());
         }
+    }
+
+    /// `dynamic_dispatch` is produced by the Python, TypeScript and Perl
+    /// adapters and by no Rust producer, so its reader-facing text must not
+    /// describe the limit in Rust-only terms (#15617).
+    #[test]
+    fn dynamic_dispatch_text_uses_no_rust_only_vocabulary() {
+        const RUST_ONLY: [&str; 6] = ["trait", "traits", "dyn", "impl", "crate", "crates"];
+        let texts = [
+            StaticLimitKind::DynamicDispatch.describe(),
+            StaticLimitKind::DynamicDispatch.next_step(),
+            StopReason::DynamicDispatchUnresolved.describe(),
+            StopReason::DynamicDispatchUnresolved.next_step(),
+        ];
+        for text in texts {
+            let lower = text.to_lowercase();
+            for word in lower.split(|ch: char| !ch.is_ascii_alphanumeric()) {
+                assert!(!RUST_ONLY.contains(&word), "`{word}` in: {text}");
+            }
+        }
+        // The description still says what makes the dispatch unresolvable.
+        assert!(
+            StaticLimitKind::DynamicDispatch
+                .describe()
+                .contains("chosen at runtime")
+        );
     }
 
     #[test]

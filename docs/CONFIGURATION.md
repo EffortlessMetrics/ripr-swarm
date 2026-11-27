@@ -406,7 +406,7 @@ that needs the tuning.
 | `RIPR_REPO_EXPOSURE_LATENCY_TRACE` | off when unset | When present, emits diagnostic phase/cache trace lines for repo-exposure analysis, plus one end-of-run `ripr_resource_cost_receipt` line carrying the process's own CPU time and peak resident memory, and one `ripr_cache_family_store_receipt` line naming classified-seam and corpus-fingerprint store failures (an empty row list when healthy). Presence enables tracing even if the value is empty or `0`; it does not change the analysis verdict. Everything goes to stderr, so stdout JSON is unchanged. Linux and Windows observe both figures; any other host, or a failed source read, names an explicit unavailable state and reports no number. |
 | `RIPR_REPO_EXPOSURE_LATENCY_RECEIPT_TOKEN` | unset | Only read with `RIPR_REPO_EXPOSURE_LATENCY_TRACE`. A harness that scrapes the stderr receipts sets a fresh per-xtask-process (not per-run) 1-64 character ASCII alphanumeric value; the `ripr_file_fact_cache_receipt`, `ripr_cache_family_store_receipt` and `ripr_resource_cost_receipt` lines then read `<prefix> token=<value> <json>` and the phase lines read `ripr_repo_exposure_latency token=<value> phase=...`, so a line that only starts with the prefix is not trusted. It is an anti-forgery marker for text echoed from the analyzed repository, not a secret from the analyzer process itself. Unset or invalid, the lines keep the plain `<prefix> <json>` shape. It authenticates a line's origin for the harness; it changes no analysis verdict. |
 | `RIPR_PERSIST_LATENCY_TRACE` | off when unset | When present, emits diagnostic `ripr_persist_latency` wall-clock lines for repair-attempt persist spans: baseline capture (git inventory, worktree identity, index records, stability recheck, serialize, write), per-artifact staging (read, write, digest), the persist total, and after-phase state recapture (`reevaluate_*`). Presence enables tracing even if the value is empty or `0`; it does not change any verdict. Everything goes to stderr, so stdout JSON is unchanged. |
-| `RIPR_GENERATED_AT` | unset (current time) | Pins `artifact.generated_at` in `check-findings-json`, `repo-exposure-json`, `repo-seams-json` and the `ripr pilot` `repo-exposure.json` to the given stamp, so two runs over the same inputs by the same build write the same bytes, `artifact.content_sha256` included (#14230). The value must be exactly `unix_ms:<milliseconds since the Unix epoch>` (for example `unix_ms:1778179200000`); any other non-empty value refuses the run instead of stamping the current time. Unset or empty stamps the current time. Set it only for the command that needs reproducible bytes: readers that age an artifact from its stamp see the pinned time, not the time of the run. It does not affect the badge `generated_at`. |
+| `RIPR_GENERATED_AT` | unset (current time) | Pins `artifact.generated_at` in `check-findings-json`, `repo-exposure-json`, `repo-seams-json` and the `ripr pilot` `repo-exposure.json` to the given stamp, so two runs over the same inputs by the same build write the same bytes, `artifact.content_sha256` included (#14230). The value must be exactly `unix_ms:<milliseconds since the Unix epoch>` (for example `unix_ms:1778179200000`); any other non-empty value refuses the run instead of stamping the current time. Unset or empty stamps the current time. Set it only for the command that needs reproducible bytes: readers that age an artifact from its stamp see the pinned time, not the time of the run. The same pin also sets `written_at` in a `ripr receipt write` receipt (truncated to whole seconds; a stamp past year 9999 is refused) and `generated_at` in the legacy `ripr agent receipt`, `ripr first-action` and `ripr assistant-loop` documents, a baseline's `created_at`, and the PR review front panel, comment publish plan, policy readiness, report packet index, gap decision ledger and TypeScript limitation reports, so each of those repeats byte for byte too. The pin sets the stamp only; it never moves a deadline judgment. `ripr zero status` judges review deadlines against its own stamp, so it stays on the current time, and `ripr policy suppression-health` still compares expiry dates with today's date, so its findings can change across a deadline under one pin. It does not affect the badge `generated_at` or a `ripr feedback` record. |
 | `GITHUB_PR_LABELS`, `PR_LABELS` | empty | Labels for `ripr impacted-evidence` and its xtask counterpart. `GITHUB_PR_LABELS` takes precedence when readable (even if empty); `PR_LABELS` is the fallback. Comma, newline, and semicolon separators are accepted. CLI `--label`/`--labels` add to these labels; the combined set is trimmed, lowercased, deduplicated, and sorted. |
 
 Repo seam cache entries that exceed the encoded-byte ceiling, or the
@@ -750,6 +750,14 @@ Fallback, negotiated from capabilities only (never the client name):
 - `pull` — client answers `workspace/configuration`; behavior above.
 - `push_fallback` — no pull support, but the client advertises
   `workspace/didChangeConfiguration`; pushed values keep applying as today.
+  A pushed value ripr ignores (wrong type, unknown literal, a non-object
+  `ripr` section, or a payload that is not an object of ripr settings) is
+  reported in the log with the key, its accepted values and the value
+  received, and also on screen for clients without the `riprEditor`
+  integration. A rejected value falls back to its repository or default
+  value and is named once until a push repairs or clears it. A malformed
+  payload changes no setting; a malformed `ripr` section changes no setting
+  itself, while flat settings beside it still apply.
 - `initialization_only` — neither transport; only `initializationOptions`
   apply.
 
@@ -789,9 +797,9 @@ download), see
 
 | Setting | Type | Default | Effect |
 | --- | --- | --- | --- |
-| `ripr.check.mode` | enum: `instant` \| `draft` \| `fast` \| `deep` \| `ready` | `draft` | Editor-side analysis mode. Forwarded as `initializationOptions.checkMode`. |
+| `ripr.check.mode` | enum: `instant` \| `draft` \| `fast` \| `deep` \| `ready` | `draft` | Editor-side analysis mode. Forwarded as `initializationOptions.checkMode` and the `workspace/configuration` pull only when set in a VS Code settings layer; otherwise `ripr.toml` `analysis.mode` applies. |
 | `ripr.baseRef` | string | `""` | Git base ref used by editor diagnostics and the context commands. Forwarded as `initializationOptions.baseRef`; empty resolves the repository default branch like `ripr check`, and the context commands omit `--base`. |
-| `ripr.includeUnchangedTests` | boolean | `true` | Include unchanged tests as static evidence. Forwarded as `initializationOptions.includeUnchangedTests` and the `workspace/configuration` pull. |
+| `ripr.includeUnchangedTests` | boolean | `true` | Include unchanged tests as static evidence. Forwarded as `initializationOptions.includeUnchangedTests` and the `workspace/configuration` pull only when set in a VS Code settings layer; otherwise `ripr.toml` `analysis.include_unchanged_tests` applies. |
 | `ripr.seamDiagnostics` | boolean | `true` | Enable saved-workspace repository seam diagnostics in addition to diff-derived findings. Forwarded as `initializationOptions.seamDiagnostics` only when set in a VS Code settings layer; otherwise `ripr.toml` `lsp.seam_diagnostics` applies. |
 | `ripr.diagnosticProfile` | enum: `actionable` \| `full` | `actionable` | Select the bounded actionable or audit/debug diagnostic projection. Forwarded as `initializationOptions.diagnosticProfile` only when set in a VS Code settings layer; otherwise `ripr.toml` `lsp.diagnostic_profile` applies. |
 | `ripr.gitTimeoutMs` | number | `30000` | Cooperative per-invocation git deadline for the server refresh path. Served to the server through the `workspace/configuration` pull; an exceeded deadline commits a limited snapshot naming `git_invocation_timeout`. |
@@ -799,6 +807,14 @@ download), see
 
 The editor default matches the CLI and direct LSP missing-config default:
 `draft`.
+
+The four settings forwarded "only when set" (`ripr.check.mode`,
+`ripr.includeUnchangedTests`, `ripr.seamDiagnostics`,
+`ripr.diagnosticProfile`) have one consequence in the Settings editor: choosing
+the value shown as the default there removes the setting instead of saving it,
+so the `ripr.toml` value applies. To hold the default value against a different
+`ripr.toml` value, write it in `settings.json`, for example
+`"ripr.check.mode": "draft"` (#15930).
 
 ### Diagnostics
 
@@ -1055,9 +1071,29 @@ expires = "2026-12-31"
 
 `owner` stays the team that owns the exception; `function` is the code
 identity. Matching is exact on file and function; a missing or ambiguous owner
-never matches. A `function` entry covers every seam in that function,
+never matches. A `function` entry without `static_class` covers every seam in that function,
 including seams added later, so set `expires` and review it when the function
 changes.
+
+When `ripr check --suppression-policy` finds an id-keyed entry that matches
+no current finding and is not a known ripr 0.10 id (those get the id that now
+selects the same finding instead), its warning names this `path` + `function`
+form as the selector that survives edits. Run `ripr check --format json` on
+the same diff. In `findings[]`, locate the current Rust finding for the
+intended function. When it has a canonical gap and an unambiguous owner,
+copy `canonical_gap.file` into `path` and `canonical_gap.owner` into
+`function`. Use the literal repository-relative filename if the report
+escapes it (for example, `src/rate%.rs` appears as `src/rate%25.rs`).
+A filename containing a literal backslash cannot use `path` + `function`,
+even on Unix. To suppress the finding, use its current `finding_id`.
+A `./`-prefixed `probe.file` is rejected. Omit `static_class` to select
+every finding in the function. Keep a valid `static_class` to match only
+findings of that class. An id selector ignores this field, but an unknown
+value on the new function selector makes the policy invalid. A changed `const` or `static` has no owning function, so
+it needs a fresh `finding_id`. `ripr review-comments` reports only expired
+entries, not unmatched ones. `ripr policy
+suppression-health` lists a `path` + `function` entry under the identity
+`<path>::<function>` (for example `src/retry.rs::retry_allowed`).
 
 In `ripr review-comments`, a `finding_id` entry applies only when the id names
 exactly one seam of the whole diff-scoped inventory; an id shared with another
@@ -1070,7 +1106,7 @@ A `path` + `function` entry must name the file exactly as the repository
 root sees it (`src/retry.rs`, not `./src/retry.rs`). Policy-suppressed
 seams still count against the brief cap, which stays disclosed.
 
-`static_class` is optional narrowing for a path-glob selector and must name a
+`static_class` is optional narrowing for both path-glob and function selectors and must name a
 known exposure class. See [the complete example](suppressions.example.toml)
 for expiry and policy-health metadata.
 
@@ -1080,7 +1116,7 @@ Supported `kind` values (closed set): `exposure_gap`, `test_efficiency`.
 | --- | --- |
 | `schema_version = 1` required | Missing or other values fail. |
 | `kind`, `owner`, `reason` required and non-blank | Missing or whitespace-only values fail. |
-| `kind = "exposure_gap"` requires `finding_id`, a `path` glob, or `path` + `function` | Rejects `test`; `function` needs an exact (non-glob) `path` and cannot combine with `finding_id`; a path-glob selector may narrow by a known `static_class`. |
+| `kind = "exposure_gap"` requires `finding_id`, a `path` glob, or `path` + `function` | Rejects `test`; `function` needs an exact (non-glob) `path` and cannot combine with `finding_id`; either path selector may narrow by a known `static_class`. |
 | `kind = "test_efficiency"` requires `test` | And rejects `finding_id`; `path` is optional for disambiguation. |
 | `path` repo-relative, slash-separated | Absolute paths and backslash paths fail at parse time. |
 | `expires` ISO `YYYY-MM-DD` if present | Other formats fail at parse time. |
@@ -1225,7 +1261,9 @@ Enumerated values (`mode`, the oracle strengths, the severities,
 lowercase and case-sensitive: `mode = "Draft"` is
 an error, not `draft`. When a rejected value is an accepted one in another
 case, padded with spaces, or a small typo, the error ends with
-`(did you mean ...?)` naming the accepted spelling.
+`(did you mean ...?)` naming the accepted spelling. A value that differs only
+in its word separator names the hyphenated spelling: `producer = "perl_lsp"`
+suggests `perl-lsp`, not the equally close `perllsp`.
 
 The example file ([`ripr.toml.example`](../ripr.toml.example)) is kept in sync
 with the supported v1 shape.
@@ -1388,13 +1426,13 @@ card refuse it); `review-comments` output still lists it, labelled `off`.
 
 | Key | Type | Default | Effect |
 | --- | --- | --- | --- |
-| `path` | repo-relative path | `.ripr/suppressions.toml` | `ripr check --format sarif`, `sarif-compact`, `badge-json`, `badge-shields` and the `badge-plus-*` / `repo-badge-plus-*` formats apply suppressions from this path. `repo-badge-json` and `repo-badge-shields` count canonical actionable gaps from the classified seam inventory and load no suppressions. The other findings formats leave the file unapplied unless `--suppression-policy` names a policy; human, human-full, JSON, JSON-compact, GitHub and missed-txt mention a detected `.ripr/suppressions.toml` (the default path only) on stderr, and `agent` does not. Absolute paths, `..`, and backslashes are rejected. |
+| `path` | repo-relative path | `.ripr/suppressions.toml` | `ripr check --format sarif`, `sarif-compact`, `badge-json`, `badge-shields` and the `badge-plus-*` / `repo-badge-plus-*` formats apply suppressions from this path; for `sarif` and `sarif-compact`, `--suppression-policy` replaces it for the run. `repo-badge-json` and `repo-badge-shields` count canonical actionable gaps from the classified seam inventory and load no suppressions. The other findings formats leave the file unapplied unless `--suppression-policy` names a policy; human, human-full, JSON, JSON-compact, GitHub and missed-txt mention a detected `.ripr/suppressions.toml` (the default path only) on stderr, and `agent` does not. Absolute paths, `..`, and backslashes are rejected. |
 
 ### `[languages]`
 
 | Key | Type | Default | Effect |
 | --- | --- | --- | --- |
-| `enabled` | array of strings | `["rust"]` when a `ripr.toml` is found; with no `ripr.toml` (at the root or any ancestor up to the repository boundary), `["rust", "python"]` when Python project markers (`pyproject.toml`, `setup.py`, `setup.cfg`, `requirements.txt`, `pytest.ini`, `tox.ini`, `noxfile.py`) or detectable non-generated `.py` files under root `src/` or `tests/` are found, plus `typescript` when a `tsconfig.json`, `jsconfig.json`, `deno.json` or `deno.jsonc` (a Deno project, with or without a `package.json`), or detectable non-generated, non-declaration `.ts`, `.tsx`, `.mts` or `.cts` files under `src/` or `tests/`, are found at the root, in a directory one level below it, or in a `packages/*`, `apps/*`, `libs/*` or `libraries/*` package (vendored and excluded directories never count; below the root, hidden directories do not count either; `package.json` alone, or tooling config files such as `eslint.config.js`, does not select it; a root with a `package.json` and JavaScript or TypeScript source at the root or under `src/`, `test/` or `tests/` does, including beside a Python project; beside a `Cargo.toml`, only the root and `src/` count, because Rust `tests/` hold integration tests and fixtures). Create a `ripr.toml` with `enabled = ["rust"]` to keep Python preview off, and TypeScript preview off too. | Language adapters the analysis pipeline will dispatch to. Valid values: `rust`, `typescript`, `javascript` (alias for `typescript`; listing both is a duplicate), `python`, `perl`. Unknown values and duplicate entries are rejected. TypeScript covers `.ts`, `.tsx`, `.mts`, `.cts`, `.js`, `.jsx`, `.mjs`, and `.cjs`; Python covers `.py`. Perl consumes externally-produced `ripr-perl-facts-v1` packets and does not parse Perl source directly. Supply one with `--perl-facts <path>`, or configure a managed exporter under `[perl]`; without a packet or available exporter, Perl analysis is unavailable. `perl` is accepted only by a ripr built with Cargo feature `lang-perl`; default builds reject it at config load. Rust remains the reference adapter and the only adapter that may be `stable` per [RIPR-SPEC-0026](specs/RIPR-SPEC-0026-language-adapter-contract.md); TypeScript, Python, and Perl remain preview adapters. See [Support Tiers](status/SUPPORT_TIERS.md) and Campaign 31, #1379. |
+| `enabled` | array of strings | `["rust"]` when a `ripr.toml` is found; with no `ripr.toml` (at the root or any ancestor up to the repository boundary), `["rust", "python"]` when Python project markers (`pyproject.toml`, `setup.py`, `setup.cfg`, `requirements.txt`, `pytest.ini`, `tox.ini`, `noxfile.py`) or detectable non-generated `.py` files under root `src/` or `tests/` are found, plus `typescript` when a `tsconfig.json`, `jsconfig.json`, `deno.json` or `deno.jsonc` (a Deno project, with or without a `package.json`), or detectable non-generated, non-declaration `.ts`, `.tsx`, `.mts` or `.cts` files under `src/` or `tests/`, are found at the root, in a directory one level below it, or in a `packages/*`, `apps/*`, `libs/*` or `libraries/*` package (vendored and excluded directories never count; below the root, hidden directories do not count either; `package.json` alone, or tooling config files such as `eslint.config.js`, does not select it; a root with a `package.json` and JavaScript or TypeScript source at the root or under `src/`, `test/` or `tests/` does, including beside a Python project, and so does a `packages/*`, `apps/*`, `libs/*` or `libraries/*` package shaped that way, which is how a JavaScript-only workspace is selected; beside a `Cargo.toml`, only the root and `src/` count, because Rust `tests/` hold integration tests and fixtures). Create a `ripr.toml` with `enabled = ["rust"]` to keep Python preview off, and TypeScript preview off too. | Language adapters the analysis pipeline will dispatch to. Valid values: `rust`, `typescript`, `javascript` (alias for `typescript`; listing both is a duplicate), `python`, `perl`. Unknown values and duplicate entries are rejected. TypeScript covers `.ts`, `.tsx`, `.mts`, `.cts`, `.js`, `.jsx`, `.mjs`, and `.cjs`; Python covers `.py`. Perl consumes externally-produced `ripr-perl-facts-v1` packets and does not parse Perl source directly. Supply one with `--perl-facts <path>`, or configure a managed exporter under `[perl]`; without a packet or available exporter, Perl analysis is unavailable. `perl` is accepted only by a ripr built with Cargo feature `lang-perl`; default builds reject it at config load. Rust remains the reference adapter and the only adapter that may be `stable` per [RIPR-SPEC-0026](specs/RIPR-SPEC-0026-language-adapter-contract.md); TypeScript, Python, and Perl remain preview adapters. See [Support Tiers](status/SUPPORT_TIERS.md) and Campaign 31, #1379. |
 
 `[languages.rust]` configures the stable Rust adapter:
 

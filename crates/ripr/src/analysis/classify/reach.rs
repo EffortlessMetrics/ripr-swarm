@@ -4,7 +4,8 @@ use super::related_tests::{is_established_free_function, package_prefix};
 use crate::analysis::extract::mask_comments_and_strings;
 use crate::analysis::syntax::external_docs::may_include_external_docs;
 use crate::domain::{
-    CALLEE_ONLY_REACH_PREFIX, Confidence, RelationReason, StageEvidence, StageState,
+    CALLEE_ONLY_REACH_PREFIX, Confidence, PROXIMITY_ONLY_REACH_MARKER, RelationReason,
+    StageEvidence, StageState,
 };
 use ra_ap_syntax::AstNode;
 use std::collections::{BTreeSet, HashMap, HashSet};
@@ -183,6 +184,11 @@ const INERT_OWNER_ATTRS: &[&str] = &[
     "track_caller",
     "rustfmt",
 ];
+
+/// Whether the attribute spelled `path` is one of [`INERT_OWNER_ATTRS`].
+pub(super) fn owner_attribute_is_inert(path: &str) -> bool {
+    INERT_OWNER_ATTRS.contains(&path)
+}
 
 /// RIPR-SPEC-0219: whether a ruled-out owner may be reported as
 /// `(unreferenced in workspace)`. Stricter than
@@ -1207,10 +1213,10 @@ fn proximity_look_summary(
         .map(|(test, _)| test.name.as_str())
         .collect::<Vec<_>>();
     if names.is_empty() {
-        format!("No test is seen calling {target}; tests share only a name token")
+        format!("No test is seen calling {target}{PROXIMITY_ONLY_REACH_MARKER}a name token")
     } else {
         format!(
-            "No test is seen calling {target}; tests share only its file or a name token: {}",
+            "No test is seen calling {target}{PROXIMITY_ONLY_REACH_MARKER}its file or a name token: {}",
             names.join(", ")
         )
     }

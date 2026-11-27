@@ -1,0 +1,2 @@
+<!-- section: Internal / CI -->
+- The `refusal_next_step` source floor now reads all production code in a file and judges each error message on the text of its own call. Files declared as `#[cfg(test)] mod name;` and nested block comments stay out of the scan. It used to stop at the first `#[cfg(test)]` and read on to the next `;`, which hid most of `cli/commands.rs` and let a message without a next step pass on a neighbour's wording. The 378 messages this exposes are listed in `policy/refusal-next-step.d/` as a shrink-only baseline (#14163).

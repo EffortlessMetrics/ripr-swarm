@@ -306,7 +306,7 @@ pub(super) fn evidence_health(args: &[String]) -> Result<(), String> {
     )?;
     let calibration = match &options.mutation_calibration {
         Some(path) => {
-            let contents = crate::bounded_input::read_to_string(path).map_err(|err| {
+            let contents = crate::bounded_input::read_artifact_text(path).map_err(|err| {
                 format!(
                     "read evidence-health calibration context {} failed: {err}",
                     output::outcome::display_path(path)
@@ -408,16 +408,18 @@ pub(super) fn pr_ledger(args: &[String]) -> Result<(), String> {
 }
 
 pub(super) fn pr_comments(args: &[String]) -> Result<(), String> {
+    // The bare group prints its help, like every other group. It used to
+    // imply `plan` (#2013, when `plan` was the only subcommand) and so wrote
+    // the default plan files for a command that named no action (#15985).
+    let Some((subcommand, rest)) = args.split_first() else {
+        help::print_group_help("pr-comments", args);
+        return Ok(());
+    };
     if args.iter().any(|arg| arg == "--help" || arg == "-h") {
         help::print_group_help("pr-comments", args);
         return Ok(());
     }
-    // `plan` is implied when the command runs bare: `ripr pr-comments`
-    // behaves like `ripr pr-comments plan` (#2013).
-    let (subcommand, rest) = match args.split_first() {
-        Some((subcommand, rest)) => (subcommand.as_str(), rest),
-        None => ("plan", &[][..]),
-    };
+    let subcommand = subcommand.as_str();
     match subcommand {
         "plan" => pr_comments_plan(rest),
         "existing" => pr_comments_github::pr_comments_existing(rest),
@@ -494,7 +496,9 @@ fn ripr_zero_status(args: &[String]) -> Result<(), String> {
     let mut reads = SuppliedInputReads::default();
     let input = output::ripr_zero_status::RiprZeroStatusInput {
         root: ".".to_string(),
-        generated_at: baseline_created_at()?,
+        // Zero status judges review deadlines and baseline age against this
+        // stamp, so it stays on the wall clock under `RIPR_GENERATED_AT`.
+        generated_at: crate::cli::commands_timestamps::wall_clock_unix_ms()?,
         baseline_path,
         delta_path: output::ripr_zero_status::display_path(&options.delta),
         gap_ledger_path,
@@ -937,7 +941,24 @@ pub(super) fn calibrate(args: &[String]) -> Result<(), String> {
     let report = output::mutation_calibration::mutation_calibration_report_from_json(
         &repo_exposure_json,
         &mutants_json,
-    )?;
+    )
+    .map_err(|err| {
+        name_calibration_input_error(
+            err,
+            &[
+                (
+                    "repo exposure input is not valid JSON",
+                    "--repo-exposure-json",
+                    &options.repo_exposure_json,
+                ),
+                (
+                    "cargo-mutants input is not valid JSON",
+                    "--mutants-json",
+                    &options.mutants_json,
+                ),
+            ],
+        )
+    })?;
     // The report owns the input-head projection and its qualification on every surface.
     eprintln!("{}", report.head_provenance_disclosure());
     let rendered = match options.format {
@@ -1110,6 +1131,21 @@ fn snapshot_capture_hint(kind: SnapshotCaptureKind, path: &Path) -> String {
     }
 }
 
+/// Name the flag and file on a parse error raised by the pure report builder,
+/// which only sees JSON text. `inputs` maps the builder's stable message prefix
+/// to the flag and path that supplied that text.
+fn name_calibration_input_error(err: String, inputs: &[(&str, &str, &Path)]) -> String {
+    for (prefix, flag, path) in inputs {
+        if let Some(rest) = err.strip_prefix(prefix) {
+            return format!(
+                "calibrate cargo-mutants {flag} {} is not valid JSON{rest}",
+                output::outcome::display_path(path)
+            );
+        }
+    }
+    err
+}
+
 /// `flag` names the command and flag (`outcome --before`) so a directory
 /// passed where a JSON file belongs is named in user words (#14313).
 fn read_calibration_text(
@@ -1126,7 +1162,7 @@ fn read_calibration_text(
             snapshot_capture_hint(kind, Path::new("snapshot.json"))
         ));
     }
-    crate::bounded_input::read_to_string(path).map_err(|err| {
+    crate::bounded_input::read_artifact_text(path).map_err(|err| {
         let displayed = output::outcome::display_path(path);
         if err.kind() == std::io::ErrorKind::NotFound {
             format!(
@@ -1697,7 +1733,7 @@ fn parse_pr_comments_plan_options(args: &[String]) -> Result<PrCommentsPlanOptio
     }
 
     if max_inline_comments == 0 {
-        return Err("pr-comments plan --max-inline-comments must be greater than zero".to_string());
+        return Err("pr-comments plan --max-inline-comments must be greater than zero; pass a whole number of 1 or more".to_string());
     }
 
     refuse_output_naming_input(
@@ -2045,7 +2081,17 @@ fn policy_readiness_generated_at() -> Result<String, String> {
 }
 
 pub(super) fn read_optional_text_for_report(label: &str, path: &Path) -> Result<String, String> {
-    crate::bounded_input::read_to_string(path).map_err(|err| {
+    read_report_input_plain(label, path)
+}
+
+/// Raw-errno variant for the policy history, operations and promotion reports,
+/// which still classify a missing input by the host's errno text
+/// (`policy_history.rs`, `policy_operations.rs`, `policy_promotion.rs`).
+pub(super) fn read_optional_text_with_errno_for_report(
+    label: &str,
+    path: &Path,
+) -> Result<String, String> {
+    crate::bounded_input::read_artifact_text(path).map_err(|err| {
         format!(
             "read {label} {} failed: {err}",
             output::baseline_delta::display_path(path)
@@ -2071,6 +2117,21 @@ impl SuppliedInputReads {
         read
     }
 
+    /// [`Self::read`] on the raw-errno reader, for a report that still
+    /// classifies a missing input by the host's errno text.
+    pub(super) fn read_with_errno(
+        &mut self,
+        flag: &str,
+        label: &str,
+        path: &Path,
+    ) -> Result<String, String> {
+        let read = read_optional_text_with_errno_for_report(label, path);
+        if let Err(err) = &read {
+            self.failures.push(format!("{flag}: {err}"));
+        }
+        read
+    }
+
     /// [`Self::read`] for a flag that must hold JSON: readable-but-malformed
     /// text is recorded too. The text is still returned so the report builds
     /// and discloses the input the way it always did.
@@ -2080,7 +2141,19 @@ impl SuppliedInputReads {
         label: &str,
         path: &Path,
     ) -> Result<String, String> {
-        let read = self.read(flag, label, path)?;
+        // A JSON flag names a ripr artifact a shell redirect may have
+        // written, so read it in the PowerShell 5.1 encodings too (#15936).
+        let read = crate::bounded_input::read_artifact_text(path).map_err(|err| {
+            format!(
+                "read {label} {} failed: {}",
+                output::baseline_delta::display_path(path),
+                crate::bounded_input::read_failure_detail(&err)
+            )
+        });
+        if let Err(err) = &read {
+            self.failures.push(format!("{flag}: {err}"));
+        }
+        let read = read?;
         if let Err(err) = serde_json::from_str::<serde_json::Value>(&read) {
             self.failures.push(format!(
                 "{flag}: {label} {} is not valid JSON: {err}",
@@ -2103,11 +2176,10 @@ impl SuppliedInputReads {
     }
 }
 
-/// Like `read_optional_text_for_report`, but a missing file reads `not found`
-/// (#9851 vocabulary) instead of the host's errno text. Kept separate because
-/// some policy reports still classify a missing input by that errno text.
+/// A missing file reads `not found` (#9851 vocabulary) instead of the host's
+/// errno text; other failures drop the `(os error N)` suffix.
 fn read_report_input_plain(label: &str, path: &Path) -> Result<String, String> {
-    crate::bounded_input::read_to_string(path).map_err(|err| {
+    crate::bounded_input::read_artifact_text(path).map_err(|err| {
         format!(
             "read {label} {} failed: {}",
             output::baseline_delta::display_path(path),
@@ -2122,7 +2194,7 @@ fn read_report_input_plain_typed(
     label: &str,
     path: &Path,
 ) -> Result<String, output::pr_review_front_panel::PanelInputError> {
-    crate::bounded_input::read_to_string(path).map_err(|err| {
+    crate::bounded_input::read_artifact_text(path).map_err(|err| {
         let detail = crate::bounded_input::read_failure_detail(&err);
         let detail = match detail.find(" (os error ") {
             Some(index) => detail[..index].to_string(),
@@ -2179,7 +2251,7 @@ fn read_optional_manifest_for_report(
         Ok(text) => Some(Ok(text)),
         Err(err) if err.kind() == std::io::ErrorKind::NotFound => None,
         Err(err) => Some(Err(format!(
-            "read suppression manifest {} failed: {err}",
+            "read suppression manifest {} failed: {err}; check that the file is readable, or pass --manifest naming a readable manifest",
             output::suppression_health::display_path(&read_path)
         ))),
     }
@@ -4955,42 +5027,20 @@ language = "rust"
     }
     #[test]
     fn pr_comments_plan_rejects_bad_subcommands_and_options() {
-        // Bare `ripr pr-comments` is the `plan` alias (#2013). The dispatch
-        // writes the default plan files, so they are cleaned on both sides.
-        for residue in [
-            "target/ripr/review/comment-publish-plan.json",
-            "target/ripr/review/comment-publish-plan.md",
-        ] {
-            let _ = std::fs::remove_file(residue);
-        }
-        let bare_result = pr_comments(&args(&[]));
+        // Bare `ripr pr-comments` prints the group help and writes no plan
+        // (#15985); only an explicit `plan` writes the default files.
         let json_path = "target/ripr/review/comment-publish-plan.json";
         let md_path = "target/ripr/review/comment-publish-plan.md";
-        let json_text = std::fs::read_to_string(json_path);
-        assert!(json_text.is_ok(), "bare dispatch must write {json_path}");
-        let json_text = json_text.unwrap_or_default();
-        let plan = serde_json::from_str::<serde_json::Value>(&json_text);
-        assert!(
-            plan.is_ok(),
-            "plan output must be valid JSON: {}",
-            plan.err().map(|err| err.to_string()).unwrap_or_default()
-        );
-        let plan = plan.unwrap_or_default();
-        assert!(
-            plan.get("schema_version").is_some() || plan.get("mode").is_some(),
-            "plan output lost its contract shape: {json_text}"
-        );
-        assert!(
-            std::path::Path::new(md_path).is_file(),
-            "bare dispatch must write the markdown plan"
-        );
         for residue in [json_path, md_path] {
             let _ = std::fs::remove_file(residue);
         }
-        assert!(
-            bare_result.is_ok(),
-            "bare pr-comments must dispatch to plan with defaults"
-        );
+        assert_eq!(pr_comments(&args(&[])), Ok(()));
+        for residue in [json_path, md_path] {
+            assert!(
+                !std::path::Path::new(residue).exists(),
+                "bare pr-comments must not write {residue}"
+            );
+        }
         assert_eq!(
             pr_comments(&args(&["publish"])),
             Err("unknown pr-comments subcommand \"publish\". Accepted: plan, existing, requests, summary.".to_string())
@@ -5018,7 +5068,7 @@ language = "rust"
         );
         assert_eq!(
             parse_pr_comments_plan_options(&args(&["--max-inline-comments", "0"])),
-            Err("pr-comments plan --max-inline-comments must be greater than zero".to_string())
+            Err("pr-comments plan --max-inline-comments must be greater than zero; pass a whole number of 1 or more".to_string())
         );
         assert_eq!(
             parse_pr_comments_plan_options(&args(&["--bad"])),
@@ -5775,8 +5825,9 @@ language = "rust"
         std::fs::create_dir_all(&dir).map_err(|err| format!("create temp dir: {err}"))?;
         let before = dir.join("before.json");
         let after = dir.join("after.json");
-        std::fs::write(&before, [0xff, 0xfe])
-            .map_err(|err| format!("write invalid before: {err}"))?;
+        // Not UTF-8, and no UTF-16 mark: an empty marked UTF-16 file now decodes
+        // (#15936), so the read-error fixture must be undecodable outright.
+        std::fs::write(&before, [0xff]).map_err(|err| format!("write invalid before: {err}"))?;
         std::fs::write(&after, outcome_after_json())
             .map_err(|err| format!("write after snapshot: {err}"))?;
 

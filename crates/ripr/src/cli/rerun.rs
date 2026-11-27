@@ -706,12 +706,16 @@ fn rerun_gap(
     // typed `gap_ledger_unusable` so a `--json` refusal names the family
     // instead of the honest fallback (#7331); the message stays the stderr
     // diagnostic verbatim.
-    let contents = crate::bounded_input::read_to_string(&gap_ledger).map_err(|err| {
-        crate::core_error::CoreError::gap_ledger_unusable(format!(
-            "read gap ledger {} failed: {err}",
-            gap_ledger.display()
-        ))
-    })?;
+    // The selector hash covers the ledger as written; the parse reads the
+    // same bytes decoded, so a PowerShell 5.1 spelling (UTF-16 or a UTF-8
+    // mark) parses as the UTF-8 file (#15936).
+    let (ledger_bytes, contents) = crate::bounded_input::read_artifact_bytes_and_text(&gap_ledger)
+        .map_err(|err| {
+            crate::core_error::CoreError::gap_ledger_unusable(format!(
+                "read gap ledger {} failed: {err}",
+                gap_ledger.display()
+            ))
+        })?;
     let source = parse_gap_record_source_json(&contents).map_err(|err| {
         crate::core_error::CoreError::gap_ledger_unusable(format!(
             "parse gap ledger {} failed: {err}",
@@ -994,7 +998,7 @@ fn rerun_gap(
     );
     report.cache.input_fingerprint = input_fingerprint;
     if let Some(fingerprint) = report.cache.input_fingerprint.as_mut() {
-        fingerprint.selector_ledger_hash = stable_input_hash(contents.as_bytes());
+        fingerprint.selector_ledger_hash = stable_input_hash(&ledger_bytes);
     }
     report.parity_scope = Some(ResolvedRerunScope {
         canonical_gap_id: Some(canonical_gap_id.to_string()),
@@ -1670,7 +1674,7 @@ fn apply_before(report: &mut TargetedRerunReport, before: &Path) {
     if report.state == "limited" {
         return;
     }
-    let before_text = match crate::bounded_input::read_to_string(before) {
+    let before_text = match crate::bounded_input::read_artifact_text(before) {
         Ok(text) => text,
         Err(err) => {
             set_before_limitation(
@@ -2008,9 +2012,9 @@ fn normalize_changed_test(root: &Path, changed_test: &Path) -> Result<PathBuf, S
         return changed_test
             .strip_prefix(root)
             .map(PathBuf::from)
-            .map_err(|err| {
+            .map_err(|_prefix_error| {
                 format!(
-                    "rerun changed test {} is outside root {}: {err}",
+                    "rerun changed test {} is outside root {}; pass a test path under that root, or change `--root`",
                     crate::output::path::human_path(changed_test),
                     crate::output::path::human_path(root)
                 )
@@ -3027,6 +3031,41 @@ mod tests {
             display: display.to_string(),
             authority_boundary: crate::domain::CommandAuthorityBoundary::VerificationRouteOnly,
         }
+    }
+
+    #[test]
+    fn ledger_rerun_admits_only_schema_compatible_working_directories() -> Result<(), String> {
+        for (cwd, admitted) in [
+            ("a\n", false),
+            ("a\rb", false),
+            ("src:gen/x", false),
+            ("src/gen:x", true),
+        ] {
+            let mut spec = verify_spec_fixture("verify", "ripr verify", vec!["verify".into()]);
+            spec.cwd = cwd.into();
+            let record = gap_record_with_specs(
+                "gap:cwd",
+                None,
+                None,
+                &["ripr verify"],
+                None,
+                Some(spec),
+                None,
+            );
+            let json = serde_json::to_value(record).map_err(|e| e.to_string())?;
+            match serde_json::from_value::<GapRecord>(json) {
+                Ok(record) if admitted => {
+                    let route = route_from_gap_records(&[(0, record)]);
+                    if route.verify_command_specs.first().map(|s| s.cwd.as_str()) != Some(cwd) {
+                        return Err(format!("lost working directory {cwd:?} in the rerun route"));
+                    }
+                }
+                Err(e)
+                    if !admitted && e.to_string().contains("cwd must be a root-relative path") => {}
+                other => return Err(format!("unexpected ledger outcome for {cwd:?}: {other:?}")),
+            }
+        }
+        Ok(())
     }
 
     #[test]
@@ -4531,7 +4570,7 @@ mod tests {
         assert!(
             limitation
                 .message
-                .starts_with("failed to parse explicit before JSON: "),
+                .starts_with("--before file is not valid JSON ("),
             "unexpected message: {}",
             limitation.message
         );

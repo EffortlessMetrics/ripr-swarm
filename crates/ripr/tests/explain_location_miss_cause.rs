@@ -8,12 +8,11 @@
 //! - the file has a finding at another line: the finding lines are named;
 //! - the text is not the path of a file from the analyzed root: the root is
 //!   named, without claiming a file of that name is absent elsewhere;
-//! - the file exists and has no finding: the reason findings attach where
-//!   they do, with the run's changed-file, changed-line and candidate counts;
-//!   an incomplete run says instead that the file may not have been analyzed.
-//!
-//! The run carries counts, not the per-file changed-line set, so no clause
-//! says whether the named line itself changed.
+//! - the file exists and has no finding: which reason applies to the named
+//!   line (#15039), from the run's own changed-line set, with the run's
+//!   changed-file, changed-line and candidate counts; a file the operator's
+//!   configuration left out is named as such (#16250); an incomplete run
+//!   says instead that the file may not have been analyzed.
 
 use std::path::PathBuf;
 use std::process::Command;
@@ -32,6 +31,7 @@ const NOT_IN_DIFF: &str = "This run's diff changes no text line of that file";
 const LINE_CHANGED: &str = "changed, but this run has no finding on it";
 const LINE_NOT_CHANGED: &str = "is not a line this run's diff changed";
 const ONLY_REMOVES: &str = "The diff only removes lines from that file";
+const CONFIGURED_OUT: &str = "That file is left out by the configured";
 const CLAUSES: [&str; 3] = [OTHER_LINE, NO_FILE, NO_FINDING_IN_FILE];
 
 struct Repo(PathBuf);
@@ -344,6 +344,7 @@ fn a_miss_in_a_changed_file_says_whether_the_named_line_changed() -> Result<(), 
             require_miss(label, selector, &run, Some(NO_FINDING_IN_FILE))?;
             require_contains(label, &run.1, expected)?;
             require_absent(label, &run.1, absent)?;
+            require_absent(label, &run.1, &[CONFIGURED_OUT])?;
         }
     }
     // The one finding is still where it was, so the fixture's extra files
@@ -353,6 +354,84 @@ fn a_miss_in_a_changed_file_says_whether_the_named_line_changed() -> Result<(), 
         return Err(format!(
             "the finding at src/lib.rs:2 must still explain: {finding:?}"
         ));
+    }
+    Ok(())
+}
+
+/// A file the operator's own `generated_file_patterns` leaves out keeps the
+/// run complete, and the miss names that setting rather than a line-level
+/// reason (#16250). The excluded file holds the fixture's one modeled
+/// predicate, so the reason is the configuration, not unmodeled code.
+#[test]
+fn a_miss_in_a_configured_excluded_file_names_the_setting() -> Result<(), String> {
+    let repo = Repo::create_with(
+        &[(
+            "ripr.toml",
+            "[languages.rust]\ngenerated_file_patterns = [\"src/lib.rs\"]\n",
+        )],
+        &[],
+    )?;
+    for selector in ["src/lib.rs:2", "src/./lib.rs:8"] {
+        for (label, run) in [
+            ("explain", repo.explain(selector)?),
+            ("context", repo.context(selector)?),
+        ] {
+            require_miss(label, selector, &run, Some(NO_FINDING_IN_FILE))?;
+            require_contains(
+                label,
+                &run.1,
+                "That file is left out by the configured `[languages.rust] generated_file_patterns` in ripr.toml, so this run did not analyze it",
+            )?;
+            require_absent(
+                label,
+                &run.1,
+                &[NOT_IN_DIFF, LINE_CHANGED, LINE_NOT_CHANGED, ONLY_REMOVES],
+            )?;
+        }
+    }
+    // An unchanged file in the same run keeps its own reason.
+    let unchanged = repo.explain("tests/t.rs:4")?;
+    require_contains("explain", &unchanged.1, NOT_IN_DIFF)?;
+    require_absent("explain", &unchanged.1, &[CONFIGURED_OUT])
+}
+
+/// The preview-language branch hands its configured exclusions to the miss
+/// the same way: a changed Python file that `[languages.python]
+/// excluded_file_patterns` leaves out names that setting (#16250).
+#[cfg(feature = "lang-python")]
+#[test]
+fn a_miss_in_a_python_file_the_configuration_excludes_names_the_setting() -> Result<(), String> {
+    let repo = Repo::create_with(
+        &[
+            (
+                "ripr.toml",
+                "[languages]\nenabled = [\"rust\", \"python\"]\n\n[languages.python]\nexcluded_file_patterns = [\"tool.py\"]\n",
+            ),
+            (
+                "tool.py",
+                "def fee(n):\n    if n > 10:\n        return 5\n    return 0\n",
+            ),
+        ],
+        &[(
+            "tool.py",
+            "def fee(n):\n    if n >= 10:\n        return 5\n    return 0\n",
+        )],
+    )?;
+    for (label, run) in [
+        ("explain", repo.explain("tool.py:2")?),
+        ("context", repo.context("tool.py:2")?),
+    ] {
+        require_miss(label, "tool.py:2", &run, Some(NO_FINDING_IN_FILE))?;
+        require_contains(
+            label,
+            &run.1,
+            "That file is left out by the configured `[languages.python] excluded_file_patterns` in ripr.toml, so this run did not analyze it",
+        )?;
+        require_absent(
+            label,
+            &run.1,
+            &[NOT_IN_DIFF, LINE_CHANGED, LINE_NOT_CHANGED, ONLY_REMOVES],
+        )?;
     }
     Ok(())
 }

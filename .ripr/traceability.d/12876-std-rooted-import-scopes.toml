@@ -1,0 +1,8 @@
+[[extend]]
+id = "RIPR-SPEC-0117"
+tests = [
+  "crates/ripr/src/analysis/classify/call_identity.rs::tests::std_rooted_import_keeps_invocation_scopes_unless_the_root_is_shadowed",
+]
+code = [
+  "crates/ripr/src/analysis/syntax/name_scope.rs",
+]

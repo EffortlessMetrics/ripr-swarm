@@ -68,6 +68,12 @@ pub(super) struct PythonOwnerCallValues {
     pub(super) line: usize,
     pub(super) text: String,
     pub(super) values: BTreeMap<String, String>,
+    /// The scalar literals of each parameter bound to a list, tuple or set
+    /// display, as [`CallRow::elements`] reads them.
+    pub(super) elements: BTreeMap<String, Vec<String>>,
+    /// The scalar key literals of each parameter bound to a dict display, as
+    /// [`CallRow::dict_keys`] reads them.
+    pub(super) dict_keys: BTreeMap<String, Vec<String>>,
 }
 
 /// The owner calls the boundary rule reads, for another activation rule
@@ -97,6 +103,8 @@ pub(super) fn strong_owner_call_values(
                 .into_iter()
                 .map(|(parameter, binding)| (parameter, binding.value))
                 .collect(),
+            elements: row.elements,
+            dict_keys: row.dict_keys,
         })
         .collect();
     Some(rows)
@@ -1603,13 +1611,21 @@ fn starts_with_keyword(text: &str, keyword: &str) -> bool {
 type CaseArguments = Vec<(String, String)>;
 
 /// What one call's arguments bind: scalar literals, the parametrize pairing,
-/// the element literals of list-like arguments, and whether an explicit
-/// argument was a bare name the reader could not bind (#15287).
+/// the element literals of list-like arguments, the key literals of dict
+/// arguments, and whether an explicit argument was a bare name the reader
+/// could not bind (#15287).
 type BoundArguments = (
     BTreeMap<String, Binding>,
     CaseArguments,
     BTreeMap<String, Vec<String>>,
+    BTreeMap<String, Vec<String>>,
     bool,
+);
+
+/// The element literals and dict key literals one call binds, by parameter.
+type ArgumentDisplays<'a> = (
+    &'a BTreeMap<String, Vec<String>>,
+    &'a BTreeMap<String, Vec<String>>,
 );
 
 /// A literal binding for one owner parameter in one test call.
@@ -1631,6 +1647,10 @@ pub(super) struct CallRow {
     /// set display (`prices` in `fetch_total([3, -1, 4])`), for the
     /// comprehension-element boundary rule. Never read as a scalar binding.
     pub(super) elements: BTreeMap<String, Vec<String>>,
+    /// The scalar key literals of each owner parameter bound to a dict
+    /// display (`d` in `score({"k": 2})`), for the `dict.get` fallback rule
+    /// (#16203).
+    pub(super) dict_keys: BTreeMap<String, Vec<String>>,
 }
 
 /// Owner calls from related tests whose strongest assertion is strong: the
@@ -1766,14 +1786,16 @@ fn candidate_call_rows(
                 // the call's position in it (#10707).
                 let call_start = std::ptr::eq(*text, candidate.test.body_text.as_str())
                     .then(|| arglist.as_ptr().addr() - text.as_ptr().addr());
-                let Some((bindings, case_arguments, elements, unread_name)) = bind_call_arguments(
-                    owner,
-                    constants,
-                    candidate.test,
-                    skip,
-                    arglist,
-                    call_start,
-                ) else {
+                let Some((bindings, case_arguments, elements, dict_keys, unread_name)) =
+                    bind_call_arguments(
+                        owner,
+                        constants,
+                        candidate.test,
+                        skip,
+                        arglist,
+                        call_start,
+                    )
+                else {
                     gaps = true;
                     unbound = true;
                     continue;
@@ -1803,7 +1825,7 @@ fn candidate_call_rows(
                                 line,
                                 &text,
                                 &bindings,
-                                &elements,
+                                (&elements, &dict_keys),
                                 &case_arguments,
                                 case,
                             )
@@ -1815,6 +1837,7 @@ fn candidate_call_rows(
                         text,
                         bindings,
                         elements,
+                        dict_keys,
                     }),
                 }
             }
@@ -1939,6 +1962,7 @@ fn bind_call_arguments(
     let mut bound_names = Vec::new();
     let mut bindings = BTreeMap::new();
     let mut elements = BTreeMap::new();
+    let mut dict_keys = BTreeMap::new();
     let mut case_arguments = Vec::new();
     let mut unread_name = false;
     let mut position = 0usize;
@@ -1980,6 +2004,9 @@ fn bind_call_arguments(
             continue;
         }
         bound_names.push(name.clone());
+        if let Some(keys) = super::call_variant::literal_dict_keys(value) {
+            dict_keys.insert(name.clone(), keys);
+        }
         if let Some(literals) = literal_elements(value) {
             elements.insert(name, literals);
         } else if let Some(value) =
@@ -2036,7 +2063,7 @@ fn bind_call_arguments(
             );
         }
     }
-    Some((bindings, case_arguments, elements, unread_name))
+    Some((bindings, case_arguments, elements, dict_keys, unread_name))
 }
 
 /// A bare (optionally dotted) name such as `quantity` or `cases.LOW`: test
@@ -2079,6 +2106,11 @@ pub(super) fn literal_elements(text: &str) -> Option<Vec<String>> {
         .collect()
 }
 
+/// What a parametrize case row's text carries after the call: such a row
+/// binds the decorator's values, which the test body may change in place
+/// before the call.
+pub(super) const PARAMETRIZE_ROW_MARKER: &str = " [parametrize ";
+
 /// One call row per parametrize case: each paired owner parameter binds the
 /// case's argvalue when it is a literal and stays unresolved otherwise.
 fn parametrize_case_row(
@@ -2086,12 +2118,13 @@ fn parametrize_case_row(
     line: usize,
     text: &str,
     bindings: &BTreeMap<String, Binding>,
-    elements: &BTreeMap<String, Vec<String>>,
+    (elements, dict_keys): ArgumentDisplays<'_>,
     case_arguments: &[(String, String)],
     case: &BTreeMap<String, String>,
 ) -> CallRow {
     let mut bindings = bindings.clone();
     let mut elements = elements.clone();
+    let mut dict_keys = dict_keys.clone();
     let mut shown = Vec::new();
     for (parameter, argname) in case_arguments {
         let Some(value) = case.get(argname) else {
@@ -2100,6 +2133,9 @@ fn parametrize_case_row(
         shown.push(format!("{argname}={value}"));
         if let Some(literals) = literal_elements(value) {
             elements.insert(parameter.clone(), literals);
+        }
+        if let Some(keys) = super::call_variant::literal_dict_keys(value) {
+            dict_keys.insert(parameter.clone(), keys);
         }
         if let Some(value) = literal_value(value) {
             bindings.insert(
@@ -2114,9 +2150,10 @@ fn parametrize_case_row(
     CallRow {
         file: file.to_path_buf(),
         line,
-        text: format!("{text} [parametrize {}]", shown.join(", ")),
+        text: format!("{text}{PARAMETRIZE_ROW_MARKER}{}]", shown.join(", ")),
         bindings,
         elements,
+        dict_keys,
     }
 }
 
@@ -2336,9 +2373,14 @@ pub(super) fn literal_value(text: &str) -> Option<String> {
 
 /// Literal equality as Python compares scalar values: decimals by value
 /// (`100 == 100.0`), bools against numbers (`True == 1`, `False == 0`),
-/// strings by decoded content, and `True`/`False`/`None` by identity.
+/// strings by decoded content, and `True`/`False`/`None` by identity. An int
+/// spelling is the exact number and a float spelling is the nearest double,
+/// so above `2^53` an int spelling and a `.0` spelling can be unequal
+/// (`9007199254740993 != 9007199254740993.0`) or equal to a neighbour
+/// (`9007199254740992 == 9007199254740993.0`).
 /// Returns `None` when static evidence cannot read the comparison (mixed
-/// unreadable kinds, escapes, prefixes) rather than a definite inequality.
+/// unreadable kinds, escapes, prefixes, a float that is not finite) rather
+/// than a definite inequality.
 pub(super) fn literals_equal(left: &str, right: &str) -> Option<bool> {
     match (bool_as_decimal(left), bool_as_decimal(right)) {
         (Some(left), Some(right)) => return Some(left == right),
@@ -2355,7 +2397,14 @@ pub(super) fn literals_equal(left: &str, right: &str) -> Option<bool> {
         (None, None) => {}
     }
     match (canonical_decimal(left), canonical_decimal(right)) {
-        (Some(left), Some(right)) => return Some(left == right),
+        (Some(canonical_left), Some(canonical_right)) => {
+            return decimal_spellings_equal(
+                &canonical_left,
+                left.contains('.'),
+                &canonical_right,
+                right.contains('.'),
+            );
+        }
         (Some(_), None) | (None, Some(_)) => return None,
         (None, None) => {}
     }
@@ -2424,6 +2473,59 @@ pub(super) fn canonical_decimal(text: &str) -> Option<String> {
     })
 }
 
+/// Whether Python finds two canonical decimal spellings equal. Two int
+/// spellings compare by their digits; two float spellings name a double each
+/// and are equal when it is one double (`0.1` and the full decimal of the
+/// double it names). An int spelling is exact and a float spelling is the
+/// nearest double, so above `2^53` that double can be a neighbour of the
+/// digits it spells: `9007199254740993.0` is `...992`, which equals the int
+/// `9007199254740992` and not the int `9007199254740993`. `None` when a float
+/// is not finite.
+fn decimal_spellings_equal(
+    left: &str,
+    left_is_float: bool,
+    right: &str,
+    right_is_float: bool,
+) -> Option<bool> {
+    match (left_is_float, right_is_float) {
+        (false, false) => Some(left == right),
+        (true, true) => {
+            let left: f64 = left.parse().ok()?;
+            let right: f64 = right.parse().ok()?;
+            if !left.is_finite() || !right.is_finite() {
+                return None;
+            }
+            // Compared as doubles, as Python compares them, not by a margin.
+            Some(left.partial_cmp(&right) == Some(std::cmp::Ordering::Equal))
+        }
+        (true, false) => int_equals_float(right, left),
+        (false, true) => int_equals_float(left, right),
+    }
+}
+
+/// Whether the int spelled by `int_text` equals the double spelled by
+/// `float_text`, as Python compares an int with a float: exactly, with the
+/// int unrounded.
+fn int_equals_float(int_text: &str, float_text: &str) -> Option<bool> {
+    let float = float_text.parse::<f64>().ok()?;
+    if !float.is_finite() {
+        return None;
+    }
+    if float.fract() != 0.0 {
+        return Some(false);
+    }
+    // Printed with no fraction digits, a double shows the exact integer it
+    // holds, whatever its size (`1e30` is `1000000000000000019884624838656`).
+    let spelled = format!("{float:.0}");
+    let (negative, digits) = spelled
+        .strip_prefix('-')
+        .map_or((false, spelled.as_str()), |rest| (true, rest));
+    if digits == "0" {
+        return Some(int_text == "0");
+    }
+    Some(negative == int_text.starts_with('-') && digits == int_text.trim_start_matches('-'))
+}
+
 /// Whether a parametrize argname may name something other than the case
 /// value where the owner call reads it, beyond the statement bindings the
 /// recorded cases already exclude (`parametrize.rs`, #4612 review): a
@@ -2488,6 +2590,81 @@ mod literals_equal_tests {
         assert_eq!(literals_equal("0", "False"), Some(true));
         assert_eq!(literals_equal("True", "2"), Some(false));
         assert_eq!(literals_equal("2", "True"), Some(false));
+    }
+
+    #[test]
+    fn an_int_spelling_its_float_spelling_above_two_to_the_53rd() {
+        // Python stores `9007199254740993.0` as `...992`, so the int spelling
+        // and the float spelling are unequal; `...994.0` is exact.
+        assert_eq!(
+            literals_equal("9007199254740993", "9007199254740993.0"),
+            Some(false)
+        );
+        assert_eq!(
+            literals_equal("9007199254740994", "9007199254740994.0"),
+            Some(true)
+        );
+        assert_eq!(
+            literals_equal("9007199254740992", "9007199254740992.0"),
+            Some(true)
+        );
+        assert_eq!(literals_equal("4", "4.0"), Some(true));
+    }
+
+    #[test]
+    fn a_float_spelling_is_the_nearest_double_not_its_digits() {
+        // Python: `9007199254740992 == 9007199254740993.0` is True, because
+        // the float spelling is the double `...992`, and the int is exact.
+        assert_eq!(
+            literals_equal("9007199254740992", "9007199254740993.0"),
+            Some(true)
+        );
+        assert_eq!(
+            literals_equal("9007199254740993.0", "9007199254740992"),
+            Some(true)
+        );
+        assert_eq!(
+            literals_equal("9007199254740996", "9007199254740995.0"),
+            Some(true)
+        );
+        assert_eq!(
+            literals_equal("-9007199254740992", "-9007199254740993.0"),
+            Some(true)
+        );
+        assert_eq!(
+            literals_equal("9007199254740993", "9007199254740993.0"),
+            Some(false)
+        );
+        assert_eq!(literals_equal("4", "4.5"), Some(false));
+        assert_eq!(literals_equal("0", "-0.0"), Some(true));
+        // Two float spellings of one double are equal, and two doubles are
+        // not. A float spelling past the last double is not compared, whether
+        // the two differ or are spelled alike: each names the same double,
+        // infinity.
+        let beyond = |digit: char| format!("1{}{digit}.0", "0".repeat(308));
+        assert_eq!(literals_equal(&beyond('1'), &beyond('2')), None);
+        assert_eq!(literals_equal(&beyond('1'), &beyond('1')), None);
+        assert_eq!(
+            literals_equal("0.1", "0.1000000000000000055511151231257827"),
+            Some(true)
+        );
+        assert_eq!(literals_equal("-0.0", "0.0"), Some(true));
+        assert_eq!(literals_equal("0.1", "0.2"), Some(false));
+        // Past every `u128`, the double is still compared exactly.
+        assert_eq!(
+            literals_equal(
+                "1000000000000000019884624838656",
+                "1000000000000000000000000000000.0"
+            ),
+            Some(true)
+        );
+        assert_eq!(
+            literals_equal(
+                "1000000000000000000000000000000",
+                "1000000000000000000000000000000.0"
+            ),
+            Some(false)
+        );
     }
 }
 
@@ -2558,7 +2735,7 @@ mod call_line_text_tests {
 }
 
 /// A deliberately narrow unresolved case: an adjacent comparison change in
-/// the first statement of a loop, observed by one direct integer-sequence or integer-tuple value
+/// the first statement of a loop, observed by one direct literal-sequence or literal-tuple value
 /// assertion. The loop element and accumulator are not owner arguments, so a
 /// literal list alone does not place either operand at the changed boundary.
 /// Identity assertions and other test shapes retain their existing treatment.
@@ -2729,6 +2906,19 @@ pub(super) fn unresolved_loop_list_boundary(
                 ]
                 .contains(&initial.trim().to_string())
                     && loop_line.trim() == format!("for {left} in {}:", parameter.name)
+            } else if initial.trim().starts_with(&format!("{right} = "))
+                && initial.trim().ends_with("math.inf")
+            {
+                // `best = -math.inf` (`math.inf` for a minimum) is the same
+                // infinity once nothing in the module can rebind `math`.
+                let infinity = if new_op.starts_with('>') {
+                    "-math.inf"
+                } else {
+                    "math.inf"
+                };
+                initial.trim() == format!("{right} = {infinity}")
+                    && loop_line.trim() == format!("for {left} in {}:", parameter.name)
+                    && super::math_infinity::stdlib_math_unrebound(source)
             } else {
                 initial.trim() == format!("{right} = {}[0]", parameter.name)
                     // `for x in xs:` also visits `xs[0]` first; comparing it
@@ -2762,7 +2952,7 @@ pub(super) fn unresolved_loop_list_boundary(
         .collect();
     !oracle_candidates.is_empty()
         && oracle_candidates.iter().all(|candidate| {
-            // Every assertion must independently be a strong direct integer
+            // Every assertion must independently be a strong direct literal
             // sequence value pin. In particular, an identity assertion must
             // not disappear behind the selected stronger numeric assertion.
             !candidate.test.assertions.is_empty()
@@ -2778,6 +2968,33 @@ pub(super) fn unresolved_loop_list_boundary(
                         })
                 })
         })
+}
+
+/// A literal a selection loop can compare and a value pin can check: an
+/// integer, float, string or boolean constant, optionally signed when numeric.
+/// Elements that compare equal under the selector's `>=`/`<=` also compare
+/// equal under `==` against any such literal, so a value pin cannot tell which
+/// of two equal elements was selected (#12954). `None`, containers and other
+/// expressions are left out.
+fn selection_literal(expr: &rustpython_parser::ast::Expr) -> bool {
+    use rustpython_parser::ast::{self, Expr};
+    match expr {
+        Expr::Constant(value) => matches!(
+            value.value,
+            ast::Constant::Int(_)
+                | ast::Constant::Float(_)
+                | ast::Constant::Str(_)
+                | ast::Constant::Bool(_)
+        ),
+        Expr::UnaryOp(unary) if matches!(unary.op, ast::UnaryOp::USub | ast::UnaryOp::UAdd) => {
+            matches!(
+                unary.operand.as_ref(),
+                Expr::Constant(value)
+                    if matches!(value.value, ast::Constant::Int(_) | ast::Constant::Float(_))
+            )
+        }
+        _ => false,
+    }
 }
 
 fn is_direct_integer_sequence_assertion(
@@ -2828,9 +3045,9 @@ fn is_direct_integer_sequence_assertion(
         else {
             return false;
         };
-        let observed = if integer(right) {
+        let observed = if selection_literal(right) {
             compare.left.as_ref()
-        } else if integer(&compare.left) {
+        } else if selection_literal(&compare.left) {
             right
         } else {
             return false;
@@ -2900,7 +3117,7 @@ fn is_direct_integer_sequence_assertion(
             Expr::Tuple(tuple) => &tuple.elts,
             _ => return false,
         };
-        !elements.is_empty() && elements.iter().all(integer)
+        !elements.is_empty() && elements.iter().all(selection_literal)
     }
     !module.body.is_empty() && module.body.iter().all(|statement| {
         matches!(statement, Stmt::Assert(assertion) if assertion.msg.is_none() && value_pin(&assertion.test, owner, candidate))
@@ -2908,7 +3125,7 @@ fn is_direct_integer_sequence_assertion(
 }
 
 /// A closed result alias: one direct numeric owner call assigned to a local,
-/// followed immediately by one integer equality assertion on that same local.
+/// followed immediately by one literal equality assertion on that same local.
 /// Other statements and assertions, decorators, fixtures, and aliases through
 /// wrappers are deliberately outside the rule.
 fn is_indirect_integer_sequence_assertion(
@@ -2956,18 +3173,9 @@ fn is_indirect_integer_sequence_assertion(
     else {
         return false;
     };
-    fn integer(value: &Expr) -> bool {
-        match value {
-            Expr::Constant(value) => matches!(value.value, ast::Constant::Int(_)),
-            Expr::UnaryOp(value) if matches!(value.op, ast::UnaryOp::UAdd | ast::UnaryOp::USub) => {
-                matches!(value.operand.as_ref(), Expr::Constant(value) if matches!(value.value, ast::Constant::Int(_)))
-            }
-            _ => false,
-        }
-    }
     let same_local = |value: &Expr| matches!(value, Expr::Name(name) if name.id == target.id);
-    if !((same_local(&compare.left) && integer(right))
-        || (integer(&compare.left) && same_local(right)))
+    if !((same_local(&compare.left) && selection_literal(right))
+        || (selection_literal(&compare.left) && same_local(right)))
     {
         return false;
     }

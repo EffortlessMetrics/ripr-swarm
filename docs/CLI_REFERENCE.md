@@ -341,7 +341,9 @@ mutation testing, generate tests, edit files, change cache behavior, or touch
 LSP/MCP surfaces.
 
 A refusal (for example, an unknown seam or gap) exits `3` with the cause on
-stderr and empty stdout.
+stderr and, with `--json`, a refusal document on stdout (an
+agent-seam-packets-json envelope with no findings and the cause in
+`run_limitations`).
 
 Examples:
   ripr agent packet --root . --seam-id ID --json
@@ -600,7 +602,7 @@ Options:
                    walks up to the enclosing workspace or package, or the git
                    top level; `--root .` pins this directory.
   --seam-id ID     Select one visible seam by ID.
-  --out PATH       Workflow output directory (relative to --root). Defaults to target/ripr/workflow.
+  --out PATH       Workflow output directory (relative to --root; must stay inside it). Defaults to target/ripr/workflow.
   --json           Emit one machine-readable JSON document instead of the
                    `Wrote <path>` / `Next: <cmd>` prose lines:
                      {"schema_version": "0.1", "workflow": {"workflow_manifest": <path>,
@@ -685,8 +687,10 @@ Options:
   --seam-id ID     Select one visible seam by ID.
   --at FILE:LINE   Select the gap at a `ripr check` finding location.
   --kind FAMILY    With --at: the finding's probe family (`predicate`,
-                   `return_value`, `error_path`, `match_arm`). Only seams of
-                   that kind are tried, so a line holding several changes
+                   `return_value`, `error_path`, `match_arm`,
+                   `call_deletion`, `field_construction`, `side_effect`).
+                   Only seams of that kind are tried, so a line
+                   holding several changes
                    stubs the one the finding reported; two separate seams of
                    that kind on one line are refused with their seam IDs.
                    `ripr check` prints it. Without it, --at tries only the
@@ -719,12 +723,22 @@ available: edit the test by hand, run the native test command, then refresh
 with `ripr check`. No stub is written for an unsupported language.
 
 The stub calls the changed function with its real receiver and parameters,
-fills a boundary input when the changed comparison names one, builds a method's
+fills a boundary input when the changed comparison names one (for a `&str`
+length boundary such as `s.len() > 3`, a string of that length), copies a
+free function's other inputs from the first call with all-literal arguments
+in an existing test of its inline test module, when the copied values do not
+steer the function away from the changed comparison, fills the input
+a changed match arm's own pattern names (`Event::Fail`, `2`), builds a method's
 receiver from a constructor when the impl has one (the first literal-argument
 call an existing test in that module makes, else a no-argument `new`, `empty`
 or `default`, else a derived `Default`), and stops at a labelled `todo!()` for the value
 the behavior should produce. It compiles and
-fails until that value is written; ripr never invents the expected value.
+fails until that value is written. When the written inputs decide a plain
+`if`/`match` path to a constant, the `todo!()` label names what the changed
+code returns there and, for a changed `>`, `>=`, `<` or `<=`
+comparison, what it returns with the other bound (`>` and `>=` swap, as do
+`<` and `<=`), so you keep the intended one; ripr never writes the expected
+value itself.
 `--at --kind` still selects from that one file's seams without using
 classification to pick the seam; after selection it looks up the inventory
 grip so the stub can disclose it. A strongly_gripped seam is still a
@@ -1227,7 +1241,8 @@ Usage: ripr cache export [--root PATH] --out NEW_DIRECTORY
 
 Copy a qualified current-input cache snapshot, excluding historical keys,
 unreferenced shards, fingerprint mappings and staging files. The live cache
-is never changed. Run repo exposure or repo badge analysis first.
+is never changed. Run `ripr check --format repo-exposure-summary-json`
+first (same --root).
 
   --root PATH   Analyzed root, preserving the spelling supplied to check.
                 Default: the same implicit workspace resolution as check.
@@ -1561,19 +1576,22 @@ Options:
                            Apply a suppressions TOML (same schema as
                            .ripr/suppressions.toml) to the findings-based
                            formats (human, human-full, json, json-compact,
-                           github, missed-txt). exposure_gap
-                           entries select findings by finding_id or by a
-                           path glob (with optional static_class narrowing).
-                           Suppressed findings stay visible in JSON with
-                           suppressed: true; per-class summary counts cover
+                           github, missed-txt) and to sarif and
+                           sarif-compact. exposure_gap entries select
+                           findings by finding_id, by path + function, or by
+                           a path glob (with optional static_class
+                           narrowing). Suppressed findings stay visible in
+                           JSON with suppressed: true and in SARIF with a
+                           suppressions entry; per-class summary counts cover
                            unsuppressed findings only. Relative PATH
                            resolves against --root; a missing or malformed
-                           policy fails the run. Every other format (sarif,
-                           sarif-compact, agent, json-terse, badge and repo
-                           formats) refuses the flag as a usage error. sarif,
+                           policy fails the run. Every other format (agent,
+                           json-terse, badge and repo formats) refuses the
+                           flag as a usage error. Without the flag, sarif,
                            sarif-compact, badge-json, badge-shields and the
                            badge-plus formats read [suppressions] path from
-                           ripr.toml (default .ripr/suppressions.toml) instead.
+                           ripr.toml (default .ripr/suppressions.toml); the
+                           flag replaces that file for sarif.
   --output-dir DIR         With a named --diff file, write native badge.json,
                            detail.json and human.txt from one analysis. DIR must
                            be new (parent exists). Verify manifest.json and member
@@ -2367,10 +2385,20 @@ Options:
   --actor KIND          Who recorded this: human, agent, or unknown. Default unknown.
   --review STATUS       unreviewed (default), reviewed_accepted, or reviewed_rejected.
   --review-actor KIND   Required when --review is not unreviewed.
-  --reason CODE         Closed taxonomy (useful_actionable, useful_limitation,
-                        wrong_target, wrong_discriminator, false_actionable,
-                        unclear_explanation, too_slow, intentional_defensive_code,
-                        other, ...). `other` requires --note and --judgment.
+  --reason CODE         Closed taxonomy of 25 codes:
+                        useful_actionable, useful_limitation,
+                        correct_target, correct_discriminator,
+                        clear_explanation, wrong_target,
+                        wrong_discriminator, false_actionable,
+                        duplicate_item, already_covered,
+                        incorrect_causal_attribution, stale_result,
+                        missing_context, ambiguous_target,
+                        unclear_explanation, verify_command_failed,
+                        receipt_command_failed, route_too_broad,
+                        too_slow, too_noisy, unsupported_workflow,
+                        intentional_defensive_code,
+                        intentional_low_grip, manual_review_preferred,
+                        other. `other` requires --note and --judgment.
   --judgment CLASS      Required for --reason other. Must match the reason class
                         otherwise.
   --note TEXT           Optional bounded note (1024 bytes). Fail-closed on known
@@ -3089,7 +3117,7 @@ Promotion options:
 Preview promotion options:
   --root PATH                           Display root for the report. Defaults to current directory.
   --language LANGUAGE                   Preview language under review: typescript or python.
-  --class CLASS                         Preview evidence class under review, for example boundary_gap.
+  --class CLASS                         Preview evidence class under review (letters, digits, _ or -), for example boundary_gap.
   --evidence PATH                       Optional explicit preview promotion evidence receipts JSON.
   --out PATH                            JSON output path. Defaults to target/ripr/reports/preview-promotion-<language>-<class>.json.
   --out-md PATH                         Markdown output path. Defaults to target/ripr/reports/preview-promotion-<language>-<class>.md.
@@ -3232,7 +3260,7 @@ Usage:
 Preview promotion options:
   --root PATH                           Display root for the report. Defaults to current directory.
   --language LANGUAGE                   Preview language under review: typescript or python.
-  --class CLASS                         Preview evidence class under review, for example boundary_gap.
+  --class CLASS                         Preview evidence class under review (letters, digits, _ or -), for example boundary_gap.
   --evidence PATH                       Optional explicit preview promotion evidence receipts JSON.
   --out PATH                            JSON output path. Defaults to target/ripr/reports/preview-promotion-<language>-<class>.json.
   --out-md PATH                         Markdown output path. Defaults to target/ripr/reports/preview-promotion-<language>-<class>.md.
@@ -3844,7 +3872,8 @@ Options:
                         alongside --current-head, the writer resolves the actual
                         git rev-parse HEAD and rejects if the caller-provided
                         sha does not match. Without --root, --current-head is
-                        format-checked only.
+                        compared against the HEAD of the repository in the
+                        current directory.
   --out PATH            Write receipt JSON to this path. When omitted, writes to
                         target/ripr/receipts/<canonical_gap_id>.json with
                         filename-unsafe characters (`:`, etc.) percent-encoded
@@ -3937,7 +3966,7 @@ Write reviewer-first report projections from explicit artifacts.
 Usage:
   ripr reports index [--root PATH] [--reports-dir PATH] [--review-dir PATH] [--receipts-dir PATH] [--workflow-dir PATH] [--agent-dir PATH] [--pilot-dir PATH] [--ci-dir PATH] [--out PATH] [--out-md PATH]
   ripr reports ci-packet [--root PATH] [--step NAME]... [--quiet]
-  ripr reports ci-summary [--root PATH] [--base-ref REF] [--upload-sarif VALUE] [--gate-baseline VALUE] [--comment-mode MODE]
+  ripr reports ci-summary [--full] [--root PATH] [--base-ref REF] [--upload-sarif VALUE] [--gate-baseline VALUE] [--comment-mode MODE]
   ripr reports gap-ledger --records PATH [--root PATH] [--out PATH] [--out-md PATH]
   ripr reports gap-ledger --check-output PATH [--root PATH] [--out PATH] [--out-md PATH]
   ripr reports gap-ledger --repo-exposure PATH [--root PATH] [--out PATH] [--out-md PATH]
@@ -3963,6 +3992,7 @@ CI packet options:
   --quiet               Run every step with RIPR_QUIET=1, dropping their progress and `wrote <path>` lines.
 
 CI summary options:
+  --full                Preview the detailed report sections locally from the same artifacts.
   --root PATH           Checkout whose target/ripr and target/ci artifacts to read. Defaults to current directory.
   --base-ref REF        PR base branch named in the regeneration route. Defaults to GITHUB_BASE_REF, then the event's default branch, then main.
   --upload-sarif VALUE  `true` reports SARIF generation; anything else reports the upload as disabled. Defaults to RIPR_UPLOAD_SARIF.
@@ -4059,6 +4089,12 @@ over explicit TypeScript-family preview audit corpus rows. It reports the
 bounded false-actionable rate for rows that must remain non-actionable and does
 not rerun analysis, execute TypeScript tests, edit source, generate tests, call
 providers, run mutation testing, change gates, or contribute badge authority.
+The corpus is a JSON object with `"schema_version": "0.1"`, `"kind": "typescript_preview_false_actionable_audit_corpus"`
+and a `"cases"` array. Each case needs the string fields id, language,
+risk_class, evidence_kind, disposition, gap_state, actionability_category,
+authority_boundary, source_fixture and source_finding_id, the boolean fields
+repair_packet_ready and must_remain_non_actionable, and may carry
+static_limit_kind.
 
 Examples:
   ripr reports ci-packet --root .
@@ -4117,9 +4153,10 @@ Run `ripr help reports` for every reports subcommand.
 Print the generated CI workflow's step summary from existing artifacts.
 
 Usage:
-  ripr reports ci-summary [--root PATH] [--base-ref REF] [--upload-sarif VALUE] [--gate-baseline VALUE] [--comment-mode MODE]
+  ripr reports ci-summary [--full] [--root PATH] [--base-ref REF] [--upload-sarif VALUE] [--gate-baseline VALUE] [--comment-mode MODE]
 
 CI summary options:
+  --full                Preview the detailed report sections locally from the same artifacts.
   --root PATH           Checkout whose target/ripr and target/ci artifacts to read. Defaults to current directory.
   --base-ref REF        PR base branch named in the regeneration route. Defaults to GITHUB_BASE_REF, then the event's default branch, then main.
   --upload-sarif VALUE  `true` reports SARIF generation; anything else reports the upload as disabled. Defaults to RIPR_UPLOAD_SARIF.
@@ -4263,6 +4300,12 @@ over explicit TypeScript-family preview audit corpus rows. It reports the
 bounded false-actionable rate for rows that must remain non-actionable and does
 not rerun analysis, execute TypeScript tests, edit source, generate tests, call
 providers, run mutation testing, change gates, or contribute badge authority.
+The corpus is a JSON object with `"schema_version": "0.1"`, `"kind": "typescript_preview_false_actionable_audit_corpus"`
+and a `"cases"` array. Each case needs the string fields id, language,
+risk_class, evidence_kind, disposition, gap_state, actionability_category,
+authority_boundary, source_fixture and source_finding_id, the boolean fields
+repair_packet_ready and must_remain_non_actionable, and may carry
+static_limit_kind.
 
 Examples:
   ripr reports ts-false-actionable --corpus target/ripr/reports/typescript-false-actionable-corpus.json

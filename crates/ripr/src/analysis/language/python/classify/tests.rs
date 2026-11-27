@@ -2808,6 +2808,80 @@ fn rebound_parameter_keeps_oracle_credit() -> Result<(), String> {
     Ok(())
 }
 
+// #15292: a multi-line `def` header is not part of the body. Its parameters
+// are not rebindings before the guard and its closing `) -> T:` line is not
+// an unreadable dedent, so the dead-arm reading holds exactly as it does for
+// a one-line header. Each shape goes through a different reader: the
+// comparison guard, the `else` chain, the `is None` guard atom and the
+// `match` arm.
+const MULTI_LINE_HEADER_ARMS: [(&str, &str, &str, usize); 4] = [
+    (
+        "def quote(\n    total: float = 0.0,\n    rate: float = 1.0,\n) -> float:\n{rebind}    if total > 1000:\n        return round(total * 1.02, 2)\n    return round(total * 1.05, 2)\n",
+        "from src.subject import quote\n\ndef test_quote():\n    assert quote(100.0) == 105.0\n",
+        "        return round(total * 1.02, 2)",
+        6,
+    ),
+    (
+        "def quote(\n    total: float = 0.0,\n    rate: float = 1.0,\n) -> float:\n{rebind}    if total > 1000:\n        return round(total * 1.02, 2)\n    else:\n        return round(total * 1.05, 2)\n",
+        "from src.subject import quote\n\ndef test_quote():\n    assert quote(2000.0) == 2040.0\n",
+        "        return round(total * 1.05, 2)",
+        8,
+    ),
+    (
+        "def quote(\n    total: float | None = None,\n    rate: float = 1.0,\n) -> float:\n{rebind}    if total is None:\n        return 7.0\n    return round(total * 1.05, 2)\n",
+        "from src.subject import quote\n\ndef test_quote():\n    assert quote(100.0) == 105.0\n",
+        "        return 7.0",
+        6,
+    ),
+    (
+        "def quote(\n    total: int = 0,\n    rate: float = 1.0,\n) -> int:\n{rebind}    match total:\n        case 5:\n            return 50\n        case _:\n            return 1\n",
+        "from src.subject import quote\n\ndef test_quote():\n    assert quote(3) == 1\n",
+        "            return 50",
+        7,
+    ),
+];
+
+#[test]
+fn multi_line_header_does_not_hide_an_unentered_arm() -> Result<(), String> {
+    let mut mismatches = Vec::new();
+    for (source, tests, after, line) in MULTI_LINE_HEADER_ARMS {
+        let source = source.replace("{rebind}", "");
+        let finding = classify_added_case(&source, tests, line, after)?;
+        if finding.class != ExposureClass::WeaklyExposed {
+            mismatches.push(format!("{source}: {:?}", finding.class));
+        }
+        // The one-line header reads the same.
+        let single = source.replacen(
+            &source[..source.find(":\n").map_or(0, |end| end + 2)],
+            "def quote(total=None, rate=1.0):\n",
+            1,
+        );
+        let finding = classify_added_case(&single, tests, line - 3, after)?;
+        if finding.class != ExposureClass::WeaklyExposed {
+            mismatches.push(format!("{single}: {:?}", finding.class));
+        }
+    }
+    assert!(mismatches.is_empty(), "{}", mismatches.join("\n"));
+    Ok(())
+}
+
+#[test]
+fn body_rebinding_below_a_multi_line_header_keeps_oracle_credit() -> Result<(), String> {
+    // The same owners with a real body rebinding above the guard: the call
+    // binding no longer predicts what the guard reads, so the oracle verdict
+    // stays.
+    let mut mismatches = Vec::new();
+    for (source, tests, after, line) in MULTI_LINE_HEADER_ARMS {
+        let source = source.replace("{rebind}", "    total = load(total)\n");
+        let finding = classify_added_case(&source, tests, line + 1, after)?;
+        if finding.class != ExposureClass::Exposed {
+            mismatches.push(format!("{source}: {:?}", finding.class));
+        }
+    }
+    assert!(mismatches.is_empty(), "{}", mismatches.join("\n"));
+    Ok(())
+}
+
 // #7874 counterexamples end to end: each call below enters the guarded arm
 // at runtime and its assertion discriminates the changed return, so the
 // verdict must stay `exposed` rather than a false `weakly_exposed`.
@@ -4939,6 +5013,67 @@ fn loop_boundary_integer_list_is_infection_unknown() -> Result<(), String> {
 }
 
 #[test]
+fn loop_boundary_string_float_and_bool_pins_are_infection_unknown() -> Result<(), String> {
+    // Equal elements compare equal under `==` against any of these literals,
+    // so a value pin cannot tell which of two equal elements was selected.
+    let source = "def largest(xs):\n    it = iter(xs)\n    try:\n        best = next(it)\n    except StopIteration:\n        return None\n    for x in it:\n        if x >= best:\n            best = x\n    return best\n";
+    for body in [
+        "assert largest(['b', 'a', 'b']) == 'b'",
+        "assert largest([1.5, -2.5, 1.5]) == 1.5",
+        "assert largest([False, True]) == True",
+        "assert largest([1, True, 1.0]) == 1",
+        "result = largest(['pear', 'apple'])\n    assert result == 'pear'",
+    ] {
+        let tests = format!("from src.subject import largest\n\ndef test_largest():\n    {body}\n");
+        let finding = classify_edit_case(
+            source,
+            &tests,
+            8,
+            "        if x > best:",
+            "        if x >= best:",
+        )?;
+        assert_eq!(
+            finding.class,
+            ExposureClass::InfectionUnknown,
+            "{body}: {finding:?}"
+        );
+        assert!(finding.recommended_next_step.is_none(), "{finding:?}");
+    }
+    Ok(())
+}
+
+#[test]
+fn loop_boundary_non_literal_elements_or_pins_keep_prior_class() -> Result<(), String> {
+    let source = "def largest(xs):\n    it = iter(xs)\n    try:\n        best = next(it)\n    except StopIteration:\n        return None\n    for x in it:\n        if x >= best:\n            best = x\n    return best\n";
+    for body in [
+        // `None` is not an ordered literal.
+        "assert largest([None, None]) == None",
+        // A container element is outside the literal rule.
+        "assert largest([(1, 'a'), (1, 'b')]) == (1, 'b')",
+        // Identity on literal inputs can still tell `>` from `>=`: on
+        // `[1, True]`, only `>=` selects `True`.
+        "assert largest([1, True]) is True",
+        // Identity on equal strings can still tell `>` from `>=`.
+        "first, second = 'ab' * 1, ''.join(['a', 'b'])\n    assert largest([first, second]) is first",
+    ] {
+        let tests = format!("from src.subject import largest\n\ndef test_largest():\n    {body}\n");
+        let finding = classify_edit_case(
+            source,
+            &tests,
+            8,
+            "        if x > best:",
+            "        if x >= best:",
+        )?;
+        assert_ne!(
+            finding.class,
+            ExposureClass::InfectionUnknown,
+            "{body}: {finding:?}"
+        );
+    }
+    Ok(())
+}
+
+#[test]
 fn loop_boundary_issue_repro_with_annotations_is_infection_unknown() -> Result<(), String> {
     // #12954's own repro: a generic annotated signature over the iterator
     // selector. The annotations do not change the closed body.
@@ -5134,6 +5269,103 @@ fn loop_boundary_infinity_seed_needs_its_own_sign_and_shape() -> Result<(), Stri
         finding.class,
         ExposureClass::InfectionUnknown,
         "identity: {finding:?}"
+    );
+    Ok(())
+}
+
+#[test]
+fn loop_boundary_math_infinity_seeded_selector_is_infection_unknown() -> Result<(), String> {
+    // `best = -math.inf` (`math.inf` for a minimum) is the same seed as
+    // `float("-inf")` when the module imports `math` once and never rebinds it.
+    for (seed, before, after, expected, extra) in [
+        (
+            "    best = -math.inf",
+            "        if x > best:",
+            "        if x >= best:",
+            5,
+            "",
+        ),
+        (
+            "    best = math.inf",
+            "        if x <= best:",
+            "        if x < best:",
+            1,
+            "",
+        ),
+        // Reading another attribute of `math` elsewhere is not a rebinding.
+        (
+            "    best = -math.inf",
+            "        if x >= best:",
+            "        if x > best:",
+            5,
+            "\n\ndef root(v):\n    return math.sqrt(v)\n",
+        ),
+    ] {
+        let source = format!(
+            "import math\n\ndef largest(xs):\n{seed}\n    for x in xs:\n{after}\n            best = x\n    return best\n{extra}"
+        );
+        let tests = format!(
+            "from src.subject import largest\n\ndef test_largest():\n    assert largest([1, 5, 3]) == {expected}\n"
+        );
+        let finding = classify_edit_case(&source, &tests, 6, before, after)?;
+        assert_eq!(
+            finding.class,
+            ExposureClass::InfectionUnknown,
+            "{seed}: {before} -> {after}: {finding:?}"
+        );
+        assert!(finding.recommended_next_step.is_none(), "{finding:?}");
+    }
+    Ok(())
+}
+
+#[test]
+fn loop_boundary_math_infinity_seed_needs_an_unrebound_stdlib_math() -> Result<(), String> {
+    let edit = ("        if x > best:", "        if x >= best:");
+    let tests = "from src.subject import largest\n\ndef test_largest():\n    assert largest([1, 5, 3]) == 5\n";
+    let selector = "def largest(xs):\n    best = -math.inf\n    for x in xs:\n        if x >= best:\n            best = x\n    return best\n";
+    for (label, prefix) in [
+        // Without the import, or with `math` bound to something else, the
+        // seed is not known to be an infinity.
+        ("no import", "\n\n"),
+        ("aliased import", "import numpy as math\n"),
+        ("from import", "from mymod import math\n"),
+        ("star import", "import math\nfrom mymod import *\n"),
+        ("rebound name", "import math\nmath = object()\n"),
+        ("patched attribute", "import math\nmath.inf = 3\n"),
+        ("setattr", "import math\nsetattr(math, 'inf', 3)\n"),
+        // A second name for the module, its namespace dict, or a by-name
+        // lookup can each patch `inf` without naming `math.inf`.
+        ("alias patch", "import math\nimport math as m\nm.inf = 3\n"),
+        ("dict patch", "import math\nmath.__dict__['inf'] = 3\n"),
+        (
+            "sys.modules patch",
+            "import math\nimport sys\nsys.modules['math'].inf = 3\n",
+        ),
+        (
+            "conditional import",
+            "try:\n    import math\nexcept ImportError:\n    pass\n",
+        ),
+    ] {
+        let source = format!("{prefix}{selector}");
+        let line = source
+            .lines()
+            .position(|text| text == edit.1)
+            .map(|index| index + 1)
+            .ok_or("condition line")?;
+        let finding = classify_edit_case(&source, tests, line, edit.0, edit.1)?;
+        assert_ne!(
+            finding.class,
+            ExposureClass::InfectionUnknown,
+            "{label}: {finding:?}"
+        );
+    }
+    // A maximum seeded with `+math.inf` keeps its prior reading too.
+    let source = "import math\n\ndef largest(xs):\n    best = math.inf\n    for x in xs:\n        if x >= best:\n            best = x\n    return best\n";
+    let finding = classify_edit_case(source, tests, 6, edit.0, edit.1)?;
+    assert_ne!(
+        finding.class,
+        ExposureClass::InfectionUnknown,
+        "wrong sign: {finding:?}"
     );
     Ok(())
 }
@@ -6351,5 +6583,148 @@ fn class_attribute_placeholder_only_new_text_rejects_nothing() -> Result<(), Str
     )
     .ok_or_else(|| "class attribute change must produce a finding".to_string())?;
     assert_ne!(finding.class, ExposureClass::Exposed, "{finding:?}");
+    Ok(())
+}
+
+// #15646: the gate reads whole assertion statements and every operand an
+// `and` requires, so a comparison spanning several lines or sitting beside
+// another conjunct pins the old text. An `or`, a negation, a call input and
+// an assert message still pin nothing.
+#[test]
+fn class_attribute_text_change_reads_required_message_comparisons() -> Result<(), String> {
+    let common =
+        "import pytest\nfrom src.subject import Length, ValidationError\n\ndef test_long():\n    ";
+    let raises = "with pytest.raises(ValidationError) as exc:\n        Length(max=1)(\"ab\")\n    ";
+    let mut mismatches = Vec::new();
+    for (case, setup, assertion, should_expose) in [
+        (
+            "single_line",
+            raises,
+            "assert str(exc.value) == \"Longer than maximum length 1.\"",
+            true,
+        ),
+        (
+            "multiline",
+            raises,
+            "assert str(\n        exc.value\n    ) == \"Longer than maximum length 1.\"",
+            true,
+        ),
+        (
+            "parenthesized_multiline",
+            raises,
+            "assert (\n        str(exc.value)\n        == \"Longer than maximum length 1.\"\n    )",
+            true,
+        ),
+        (
+            "conjunction",
+            raises,
+            "assert len(exc.value.args) == 1 and str(exc.value) == \"Longer than maximum length 1.\"",
+            true,
+        ),
+        (
+            "multiline_conjunction",
+            raises,
+            "assert (\n        len(exc.value.args) == 1\n        and str(exc.value) == \"Longer than maximum length 1.\"\n    )",
+            true,
+        ),
+        (
+            "conjunct_membership",
+            "",
+            "assert Length(max=3)(\"abc\") == \"abc\" and \"than maximum\" in Length.message_max",
+            true,
+        ),
+        (
+            "conjunct_other_text",
+            raises,
+            "assert len(exc.value.args) == 1 and str(exc.value) == \"Shorter than minimum length 1.\"",
+            false,
+        ),
+        (
+            "conjunct_after_mutation",
+            raises,
+            "assert setattr(exc.value, \"args\", (\"Longer than maximum length 1.\",)) is None and str(exc.value) == \"Longer than maximum length 1.\"",
+            false,
+        ),
+        (
+            "disjunction",
+            raises,
+            "assert len(exc.value.args) == 1 or str(exc.value) == \"Longer than maximum length 1.\"",
+            false,
+        ),
+        (
+            "negation",
+            raises,
+            "assert not (len(exc.value.args) == 0 and str(exc.value) == \"Longer than maximum length 1.\")",
+            false,
+        ),
+        (
+            "negated_conjunct",
+            raises,
+            "assert len(exc.value.args) == 1 and str(exc.value) != \"Longer than maximum length 1.\"",
+            false,
+        ),
+        (
+            "call_input",
+            raises,
+            "assert str(exc.value).count(\"Longer than maximum length 1.\") in (0, 1)",
+            false,
+        ),
+        (
+            "assert_message",
+            raises,
+            "assert len(exc.value.args) == 1, \"Longer than maximum length 1.\"",
+            false,
+        ),
+        (
+            "construction",
+            "",
+            "assert Length(max=3)(\"abc\") == \"abc\"",
+            false,
+        ),
+    ] {
+        let tests = format!("{common}{setup}{assertion}\n");
+        let finding = classify_length_change(&tests)?;
+        if (finding.class == ExposureClass::Exposed) != should_expose {
+            mismatches.push(format!("{case}: {finding:?}"));
+        }
+    }
+    assert!(mismatches.is_empty(), "{}", mismatches.join("\n"));
+    Ok(())
+}
+
+// #15646: an empty new text has no placeholder, so it renders only as the
+// empty string and an equality on the old text tells the two apart.
+#[test]
+fn class_attribute_empty_new_text_rejects_the_old_literal() -> Result<(), String> {
+    let source = "class Error(Exception):\n    pass\n\n\nclass Gate:\n    message = \"\"\n\n    def check(self, value):\n        if not value:\n            raise Error(self.message)\n        return value\n";
+    let file = Path::new("src/subject.py");
+    let owners = extract_owners(file, source);
+    for (assertion, exposed) in [
+        ("assert str(exc.value) == \"OK\"", true),
+        // A literal the old text never produced pins nothing.
+        ("assert str(exc.value) != \"NO\"", false),
+    ] {
+        let tests = extract_tests(
+            Path::new("tests/test_subject.py"),
+            &format!(
+                "import pytest\nfrom src.subject import Gate, Error\n\ndef test_no():\n    with pytest.raises(Error) as exc:\n        Gate().check(0)\n    {assertion}\n"
+            ),
+        );
+        let finding = classify_change_with_source(
+            file,
+            6,
+            "    message = \"\"",
+            Some("    message = \"OK\""),
+            &owners,
+            &tests,
+            Some(source),
+        )
+        .ok_or_else(|| "class attribute change must produce a finding".to_string())?;
+        assert_eq!(
+            finding.class == ExposureClass::Exposed,
+            exposed,
+            "{assertion}: {finding:?}"
+        );
+    }
     Ok(())
 }

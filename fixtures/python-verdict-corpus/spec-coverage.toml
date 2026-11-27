@@ -922,3 +922,13 @@ reason = "CLI output-path safety rule (an --out naming a command input is refuse
 id = "RIPR-SPEC-0450"
 scope = "out"
 reason = "owner opt-out withholding rule (a cargo-mutants skip attribute withholds and discloses findings); not an exposure-verdict example a corpus case labels"
+
+[[spec]]
+id = "RIPR-SPEC-0451"
+scope = "out"
+reason = "VS Code managed-server download proxy routing and failure hint; not an exposure-verdict example a corpus case labels"
+
+[[spec]]
+id = "RIPR-SPEC-0455"
+scope = "out"
+reason = "DX scoreboard generated recall rows (xtask automation over the mutation spot-check receipt); not an exposure-verdict example a corpus case labels"

@@ -809,6 +809,14 @@
               "type": "integer",
               "minimum": 0
             },
+            "edited_test": {
+              "description": "Whether a reported test is one the attempt's edit added or changed (#16311). Absent on a record retained before that reading existed.",
+              "enum": [
+                "covered",
+                "not_covered",
+                "unknown"
+              ]
+            },
             "next_step": {
               "type": "string",
               "minLength": 1

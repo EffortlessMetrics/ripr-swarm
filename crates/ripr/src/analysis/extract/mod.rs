@@ -26,16 +26,18 @@ pub(crate) use mask::{
     mask_with_string_delimiter_quotes, rust_identity_spans, string_literal_spans,
 };
 pub(crate) use oracles::{
-    LazyDecls, OracleTextShape, PlaceholderScope, assertion_compares_only_literals,
-    assertion_oracle_text, assertion_reads_placeholder, classify_assertion,
-    classify_assertion_with, equality_assertion_arguments, err_return_guard_oracles,
-    err_return_guard_twin, extract_assertions, extract_assertions_in, extract_line_scanned_oracles,
+    BoolLocals, LazyDecls, OracleClassification, OracleTextShape, PlaceholderScope,
+    assertion_compared_operands, assertion_compares_only_literals, assertion_oracle_text,
+    assertion_reads_placeholder, classify_assertion, classify_assertion_with,
+    equality_assertion_arguments, err_return_guard_oracles, err_return_guard_twin,
+    extract_assertions, extract_assertions_in, extract_line_scanned_oracles,
     guarded_result_match_scan_with_shadow_authority, has_oracle_text_shape,
     is_exact_membership_any_assertion, is_inequality_assertion,
     is_inline_unwrap_err_error_assertion, is_unwrap_err_bound_error_assertion,
     lines_touching_unreached, outer_assertion_condition, placeholder_bound_variables,
     retain_reached_oracles, terminal_err_return_guard_oracle, uncompared_unwrap_err,
-    unwrap_err_bound_variables, without_unfilled_expected, without_unfilled_expected_parts,
+    unwrap_err_bound_variables, with_bool_local_inlined, without_unfilled_expected,
+    without_unfilled_expected_parts,
 };
 #[cfg(test)]
 pub(crate) use oracles::{contains_macro_invocation, table_builds};

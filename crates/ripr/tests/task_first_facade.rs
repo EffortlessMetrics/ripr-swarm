@@ -424,6 +424,9 @@ fn repair_without_actionable_item_creates_no_attempt() -> Result<(), String> {
 
 /// An explicit check base is not retained by bare repair. A clean main branch
 /// can therefore have a real diff gap even when the seam inventory is empty.
+/// The gap sits two commits back, behind a docs-only commit, so the range
+/// bare `ripr check` and bare repair read on this clean branch (the last
+/// commit, #16082) is not the explicit check's range.
 #[cfg(feature = "lang-python")]
 #[test]
 fn repair_after_explicit_base_check_points_back_to_its_gap_start() -> Result<(), String> {
@@ -447,8 +450,11 @@ fn repair_after_explicit_base_check_points_back_to_its_gap_start() -> Result<(),
     .map_err(|e| e.to_string())?;
     run_git(root, &["add", "pricing.py"])?;
     git_commit(root, "change")?;
+    std::fs::write(root.join("README.md"), "pricing\n").map_err(|e| e.to_string())?;
+    run_git(root, &["add", "README.md"])?;
+    git_commit(root, "docs")?;
 
-    let check = run_ripr(root, &["check", "--base", "HEAD^"])?;
+    let check = run_ripr(root, &["check", "--base", "HEAD~2"])?;
     assert_exit(&check, 0, "explicit-base check");
     let check_out = stdout_text(&check);
     let gap = "gap:python:pricing.py:price:predicate_boundary:predicate:amount-10_if_amount>100_else_amount";
@@ -464,7 +470,7 @@ fn repair_after_explicit_base_check_points_back_to_its_gap_start() -> Result<(),
     assert!(
         start_line.contains(gap)
             && start_line.contains("--base")
-            && start_line.contains("HEAD^")
+            && start_line.contains("HEAD~2")
             && start_line.contains("--phase before"),
         "start must bind the selected gap and base: {start_line}"
     );
@@ -494,7 +500,7 @@ fn repair_after_explicit_base_check_points_back_to_its_gap_start() -> Result<(),
             "--gap-id",
             gap,
             "--base",
-            "HEAD^",
+            "HEAD~2",
             "--root",
             &root.to_string_lossy(),
             "--phase",
@@ -2465,7 +2471,9 @@ fn cross_namespace_ids_round_trip_between_check_explain_and_repair() -> Result<(
             "before",
         ],
     )?;
-    assert_exit(&agent_stale, 2, "agent repair with a stale probe ID");
+    // docs/EXIT_CODES.md: an unknown `--seam-id` is one typed refusal with
+    // one exit, `3`, as `ripr repair` gives above (#15311).
+    assert_exit(&agent_stale, 3, "agent repair with a stale probe ID");
     let agent_stale_stderr = stderr_text(&agent_stale);
     assert!(
         agent_stale_stderr.contains("agent repair --seam-id")
@@ -3971,7 +3979,23 @@ fn continue_no_movement_keeps_inline_test_module_restrictions() -> Result<(), St
         format!("{FIXTURE_LIB}\n#[cfg(test)]\nmod tests {{\n    use super::discounted_total;\n    #[test]\n    fn below() {{ assert_eq!(discounted_total(50, 100), 50); }}\n    #[test]\n    fn above() {{ assert_eq!(discounted_total(10_000, 100), 9_990); }}\n}}\n"),
     ).map_err(|error| error.to_string())?;
     run_git(root, &["add", "src", "tests"])?;
-    git_commit(root, "inline test target")?;
+    // Amend the fixture's root commit: with a parent commit, bare repair on
+    // this clean default branch would follow check's last-commit rescope
+    // (#16082) to the test-only edit and offer no start.
+    run_git(
+        root,
+        &[
+            "-c",
+            "user.name=RIPR test",
+            "-c",
+            "user.email=ripr@example.invalid",
+            "commit",
+            "--amend",
+            "-q",
+            "-m",
+            "inline test target",
+        ],
+    )?;
     let before = run_ripr(root, &["repair"])?;
     assert_exit(&before, 0, "prepare inline attempt");
     let attempt_id = attempt_id_from_before(&before)?;
@@ -4697,10 +4721,26 @@ fn assert_already_complete_summary(
             ));
         }
     }
+    // The printed root is the bound root, shell-quoted for this host: on
+    // Windows it renders with `/` separators (#4287), so a backslash-separated
+    // drive root prints with forward slashes (#16105). Decode each command
+    // the way its shell would and compare the argument as a path, not as the
+    // bytes the test passed in.
     for (index, command) in [(4, "Next"), (5, "Full status")] {
-        if !lines[index].contains(&format!("--root {root_arg}`")) {
+        let printed = lines[index]
+            .split('`')
+            .nth(1)
+            .ok_or_else(|| format!("the {command} line must carry a command:\n{summary}"))?;
+        let words = printed_words::printed_words(printed)?;
+        // `--root <root>` must be the final pair, as the old byte check
+        // (`--root <root>` before the closing backtick) required.
+        let names_root = match words.as_slice() {
+            [.., flag, value] => flag == "--root" && Path::new(value) == Path::new(root_arg),
+            _ => false,
+        };
+        if !names_root {
             return Err(format!(
-                "the {command} command must name the selected root `{root_arg}`:\n{summary}"
+                "the {command} command must end by naming the selected root `{root_arg}`:\n{summary}"
             ));
         }
     }
@@ -7760,5 +7800,215 @@ fn typed_facade_refusals_under_json_write_code_and_disposition() -> Result<(), S
             stdout_text(&plain)
         );
     }
+    Ok(())
+}
+
+/// #15265: a selected external test file with uncommitted changes (usually
+/// the test an earlier repair added) refuses the start up front with the same
+/// typed refusal as an uncommitted inline target: exit 3, one `cli_refusal`
+/// document under `--json`, no attempt, and a next step naming the file.
+#[test]
+fn repair_refuses_an_uncommitted_external_test_file_before_starting() -> Result<(), String> {
+    let fixture = Fixture::boundary("facade-uncommitted-external-test")?;
+    let root = &fixture.root;
+    let root_arg = root.to_string_lossy().into_owned();
+    std::fs::write(
+        root.join("tests/pricing.rs"),
+        format!("{FIXTURE_WEAK_TEST}// helper notes kept beside the tests\n"),
+    )
+    .map_err(|e| e.to_string())?;
+
+    let refused = run_ripr(root, &["repair", "--root", &root_arg, "--json"])?;
+    assert_exit(&refused, 3, "repair over an uncommitted external test file");
+    assert_refusal_code(
+        &refused,
+        "start_refused_uncommitted_target",
+        "not_started",
+        "uncommitted external test file",
+    );
+    let document: serde_json::Value = serde_json::from_str(&stdout_text(&refused))
+        .map_err(|error| format!("stdout must be one cli_refusal document: {error}"))?;
+    assert_eq!(document["status"], "refused", "{document:#}");
+    assert_eq!(
+        document["error"]["code"], "start_refused_uncommitted_target",
+        "{document:#}"
+    );
+    assert_eq!(
+        document["error"]["disposition"], "not_started",
+        "{document:#}"
+    );
+    let message = document["error"]["message"]
+        .as_str()
+        .ok_or("refusal message missing")?;
+    assert!(
+        message.contains("`tests/pricing.rs` has uncommitted changes")
+            && message.contains("commit or stash `tests/pricing.rs`"),
+        "the refusal must name the held test file:\n{message}"
+    );
+    assert!(attempt_ids(root).is_empty(), "no attempt may be created");
+    assert!(
+        !root.join("target/ripr/workflow/workflow.json").exists(),
+        "a refused start writes no workflow artifact"
+    );
+    assert!(
+        message.contains(&format!("ripr repair {FIXTURE_SEAM} --root ")),
+        "the facade start reruns the facade:\n{message}"
+    );
+
+    // The advanced start with an explicit store reruns that same spelling,
+    // so the retried attempt lands in the store the caller chose.
+    let store = root.join("chosen-store");
+    let store_arg = store.to_string_lossy().into_owned();
+    let advanced = run_ripr(
+        root,
+        &[
+            "agent",
+            "repair",
+            "--root",
+            &root_arg,
+            "--store",
+            &store_arg,
+            "--seam-id",
+            FIXTURE_SEAM,
+            "--phase",
+            "before",
+        ],
+    )?;
+    let advanced_err = stderr_text(&advanced);
+    assert!(
+        advanced_err.contains("ripr agent repair --root ")
+            && advanced_err.contains(" --store ")
+            && advanced_err.contains("chosen-store")
+            && advanced_err.contains("--phase before")
+            && advanced_err.contains("has uncommitted changes"),
+        "the advanced refusal must rerun the advanced start with its store:\n{advanced_err}"
+    );
+    assert!(attempt_ids(root).is_empty(), "no attempt may be created");
+
+    // Control: once the test file is committed, the same start proceeds.
+    run_git(root, &["add", "tests/pricing.rs"])?;
+    git_commit(root, "commit the test file edit")?;
+    let started = run_ripr(root, &["repair", "--root", &root_arg, "--json"])?;
+    assert_exit(&started, 0, "repair over a committed test file");
+    assert_eq!(
+        attempt_ids(root).len(),
+        1,
+        "the clean start creates one attempt"
+    );
+    Ok(())
+}
+
+/// #15265: uncommitted production source is a typed not-started start hold
+/// too. `ripr repair --json` exits 3 with one `cli_refusal` document coded
+/// `start_refused_dirty_premise` and keeps the commit-first prose,
+/// instead of an operational exit 2 with empty stdout.
+#[test]
+fn repair_refuses_uncommitted_source_with_a_typed_json_refusal() -> Result<(), String> {
+    let fixture = Fixture::boundary("facade-uncommitted-source")?;
+    let root = &fixture.root;
+    let root_arg = root.to_string_lossy().into_owned();
+    std::fs::write(
+        root.join("src/lib.rs"),
+        format!("{FIXTURE_LIB}// an unrelated note\n"),
+    )
+    .map_err(|e| e.to_string())?;
+
+    let refused = run_ripr(
+        root,
+        &["repair", FIXTURE_SEAM, "--root", &root_arg, "--json"],
+    )?;
+    assert_exit(&refused, 3, "repair over uncommitted production source");
+    assert_refusal_code(
+        &refused,
+        "start_refused_dirty_premise",
+        "not_started",
+        "uncommitted production source",
+    );
+    let document: serde_json::Value = serde_json::from_str(&stdout_text(&refused))
+        .map_err(|error| format!("stdout must be one cli_refusal document: {error}"))?;
+    assert_eq!(document["status"], "refused", "{document:#}");
+    assert_eq!(
+        document["error"]["code"], "start_refused_dirty_premise",
+        "{document:#}"
+    );
+    assert_eq!(
+        document["error"]["disposition"], "not_started",
+        "{document:#}"
+    );
+    let message = document["error"]["message"]
+        .as_str()
+        .ok_or("refusal message missing")?;
+    assert!(
+        message.contains("Uncommitted: src/lib.rs")
+            && message.contains(&format!("ripr repair {FIXTURE_SEAM} --root ")),
+        "the refusal names the file and the facade rerun:\n{message}"
+    );
+    assert!(attempt_ids(root).is_empty(), "no attempt may be created");
+    assert!(
+        !root.join("target/ripr/workflow/workflow.json").exists(),
+        "a refused start writes no workflow artifact"
+    );
+
+    // Control: committing the source lets the same start proceed.
+    run_git(root, &["add", "src/lib.rs"])?;
+    git_commit(root, "commit the source note")?;
+    let started = run_ripr(root, &["repair", FIXTURE_SEAM, "--root", &root_arg])?;
+    assert_exit(&started, 0, "repair over committed source");
+    assert_eq!(
+        attempt_ids(root).len(),
+        1,
+        "the clean start creates one attempt"
+    );
+    Ok(())
+}
+
+/// #15265: the dirty-premise hold also covers the exact premise check, which
+/// the git-time preflight leaves test paths to. An uncommitted edit to a test
+/// file other than the focused one is outside the allowed edit surface, so
+/// the start refuses with the same typed code before writing anything.
+#[test]
+fn repair_refuses_an_off_target_test_edit_with_the_dirty_premise_code() -> Result<(), String> {
+    let fixture = Fixture::boundary("facade-off-target-test-edit")?;
+    let root = &fixture.root;
+    let root_arg = root.to_string_lossy().into_owned();
+    let other = "#[test]\nfn unrelated_smoke() {\n    assert_eq!(1 + 1, 2);\n}\n";
+    std::fs::write(root.join("tests/shipping.rs"), other).map_err(|e| e.to_string())?;
+    run_git(root, &["add", "tests/shipping.rs"])?;
+    git_commit(root, "an unrelated test file")?;
+    std::fs::write(
+        root.join("tests/shipping.rs"),
+        format!("{other}// an unrelated note\n"),
+    )
+    .map_err(|e| e.to_string())?;
+
+    let refused = run_ripr(
+        root,
+        &["repair", FIXTURE_SEAM, "--root", &root_arg, "--json"],
+    )?;
+    assert_exit(&refused, 3, "repair over an off-target test edit");
+    assert_refusal_code(
+        &refused,
+        "start_refused_dirty_premise",
+        "not_started",
+        "off-target test edit",
+    );
+    let document: serde_json::Value = serde_json::from_str(&stdout_text(&refused))
+        .map_err(|error| format!("stdout must be one cli_refusal document: {error}"))?;
+    assert_eq!(
+        document["error"]["code"], "start_refused_dirty_premise",
+        "{document:#}"
+    );
+    let message = document["error"]["message"]
+        .as_str()
+        .ok_or("refusal message missing")?;
+    assert!(
+        message.contains("tests/shipping.rs"),
+        "the refusal names the off-target file:\n{message}"
+    );
+    assert!(attempt_ids(root).is_empty(), "no attempt may be created");
+    assert!(
+        !root.join("target/ripr/workflow/workflow.json").exists(),
+        "a refused start writes no workflow artifact"
+    );
     Ok(())
 }

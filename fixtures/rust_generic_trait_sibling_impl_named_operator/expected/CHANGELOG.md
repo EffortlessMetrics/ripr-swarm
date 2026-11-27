@@ -23,3 +23,14 @@ Command:
 
 Updated:
 - `expected/human-full.txt`
+
+## Pending — rust_generic_trait_sibling_impl_named_operator (3)
+
+Reason:
+RIPR-SPEC-0122: the Summary names findings whose reach is a test link ripr could not confirm (#15295)
+
+Command:
+`cargo xtask goldens bless rust_generic_trait_sibling_impl_named_operator --reason "..."`
+
+Updated:
+- `expected/human.txt`
