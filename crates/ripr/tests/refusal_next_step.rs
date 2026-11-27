@@ -100,7 +100,7 @@ const ACTION_OPENERS: &[&str] = &[
     "fetch",
     "update",
     "regenerate",
-    "rebuild",
+    "rebuild ",
     "delete",
     "rename",
     "move ",
@@ -206,15 +206,19 @@ fn is_clause_start(prefix: &str) -> bool {
     }
 }
 
-/// The text the action cue is judged on: each literal is its own phrase (a
-/// next step passed as a separate format argument starts a clause), and a
-/// `\` line continuation drops the newline and the indentation after it, as
-/// the compiler does. The baseline key keeps the plain joined text.
+/// The text the action cue is judged on. A later literal starts its own
+/// clause only when the text before it ends in a `{}` placeholder, so a next
+/// step passed to fill the tail (`"read failed: {}", .., "check the path"`)
+/// counts, while an argument that fills a subject (`"{} could not be read",
+/// "update manifest"`) does not. A `\` line continuation drops the newline
+/// and the indentation after it, as the compiler does. The baseline key keeps
+/// the plain joined text.
 fn cue_text(parts: &[String]) -> String {
     let mut out = String::new();
     for part in parts {
         if !out.is_empty() {
-            out.push_str("; ");
+            let tail_placeholder = out.trim_end().ends_with('}');
+            out.push_str(if tail_placeholder { "; " } else { " " });
         }
         let mut rest = part.as_str();
         while let Some(at) = rest.find("\\\n") {
@@ -497,6 +501,24 @@ const TRIGGERS: &[&str] = &[
 /// Triggers that hold the message right after them. A bare `Err(` or `ok_or(`
 /// only counts when what follows is a string or a formatted string, so
 /// `Err(error)` forwarding does not pick up unrelated literals nearby.
+/// `text` after leading whitespace and `//` or `/* */` comments, so a
+/// comment that opens a block closure does not hide its message.
+fn skip_comments(text: &str) -> &str {
+    let mut rest = text.trim_start();
+    loop {
+        if let Some(line) = rest.strip_prefix("//") {
+            rest = line.find('\n').map_or("", |end| &line[end..]).trim_start();
+        } else if let Some(block) = rest.strip_prefix("/*") {
+            rest = block
+                .find("*/")
+                .map_or("", |end| &block[end + 2..])
+                .trim_start();
+        } else {
+            return rest;
+        }
+    }
+}
+
 fn message_follows(trigger: &str, after: &str) -> bool {
     let rest = after.trim_start();
     let rest = if trigger == "map_err(" || trigger == "ok_or_else(" {
@@ -508,7 +530,10 @@ fn message_follows(trigger: &str, after: &str) -> bool {
             Some(inner) => match inner.find('|') {
                 Some(close) => {
                     let body = inner[close + 1..].trim_start();
-                    body.strip_prefix('{').map_or(body, str::trim_start)
+                    match body.strip_prefix('{') {
+                        Some(block) => skip_comments(block),
+                        None => body,
+                    }
                 }
                 None => return false,
             },
@@ -1614,13 +1639,20 @@ fn load(path: &str) -> Result<String, String> {
         format!("read the widget manifest {path} failed: {error}")
     })?;
     std::fs::read_to_string(path).map_err(|error| {
+        // A leading comment does not hide the message either.
+        format!("read the sprocket manifest {path} failed: {error}")
+    })?;
+    std::fs::read_to_string(path).map_err(|error| {
         format!("read the gadget manifest {path} failed: {error}; pass a readable path")
     })
 }
 "#;
     assert_eq!(
         offender_messages(source),
-        vec!["read the widget manifest {path} failed: {error}".to_string()]
+        vec![
+            "read the sprocket manifest {path} failed: {error}".to_string(),
+            "read the widget manifest {path} failed: {error}".to_string(),
+        ]
     );
 }
 
@@ -1640,6 +1672,16 @@ fn action_cue_reads_continuations_separate_literals_and_then() {
     ));
     assert!(!has_action_cue(
         "the worker could not start then save failed"
+    ));
+    // An argument that fills a subject placeholder is not a next step.
+    assert!(!has_action_cue(&cue_text(&[
+        "{} could not be read".to_string(),
+        "update manifest".to_string(),
+    ])));
+    // "rebuilding failed" reports a failure; it does not ask for a rebuild.
+    assert!(!has_action_cue("cache unavailable; rebuilding failed"));
+    assert!(has_action_cue(
+        "cache unavailable; rebuild it with `cargo build`"
     ));
     // A plain message still needs a cue of its own.
     assert!(!has_action_cue(&cue_text(&[
