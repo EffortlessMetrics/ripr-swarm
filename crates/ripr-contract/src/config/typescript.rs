@@ -363,8 +363,9 @@ pub fn javascript_led_source_dir_marker_name(name: &str) -> Option<&'static str>
 }
 
 /// Whether a file name counts as package source for package-led detection:
-/// detectable TypeScript source, or a JavaScript file that is neither
-/// generated nor a tooling config such as `eslint.config.js` or a dotfile.
+/// detectable TypeScript source or a non-generated JavaScript file, and in
+/// either case not a tooling config (a dotfile or a `*.config.*` name such as
+/// `eslint.config.js` or `vite.config.ts`).
 #[cfg(any(feature = "lang-typescript", test))]
 pub fn is_detectable_package_source_name(name: &str) -> bool {
     let is_javascript = Path::new(name)

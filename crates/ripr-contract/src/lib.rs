@@ -1,5 +1,5 @@
 #![forbid(unsafe_code)]
-#![cfg_attr(not(any(test, feature = "test-fixtures")), deny(missing_docs))]
+#![cfg_attr(not(test), deny(missing_docs))]
 //! Contract types shared by the `ripr` facade and its internal support
 //! crates (ADR 0027, #8382/#12726).
 //!
