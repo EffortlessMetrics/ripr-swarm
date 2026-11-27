@@ -3715,6 +3715,14 @@ pub(crate) fn ts_predicate_boundary_row_activation(
             if !witnessed {
                 continue;
             }
+            // #16458: a wrapper call around the owner (`Math.max(owner(100),
+            // 100)`) may map both sides of the boundary to one value, and
+            // nothing here models its effect: the boundary input reached the
+            // owner, but this assertion does not discriminate it.
+            if observed_has_other_call(observed, &owner.name) {
+                reached = true;
+                continue;
+            }
             // Expected-side guards (#4102): a self-comparing expectation
             // (`toBe(applyDiscount(100))`) never discriminates, and a dead
             // expected literal (`toBe(999)` when the changed behavior
