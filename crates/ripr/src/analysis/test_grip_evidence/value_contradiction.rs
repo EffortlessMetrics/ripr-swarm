@@ -1253,7 +1253,8 @@ fn invisibility_operands(oracle_text: &str, test_body: &str) -> Vec<ResolvedOper
 /// a different constructor on either side (`Ok(x)` to `Err(x)`) or any
 /// statement, generic or receiver refuses, so a peeled fold can only say two
 /// values are equal when the real ones are (#15414). The rebuilt function
-/// returns the payload's declared type, so the fold keeps its width guard.
+/// returns the payload's declared type, so the fold keeps its width guard;
+/// a return type that does not spell it (an alias) refuses.
 fn shared_constructor_payloads(current: &str, baseline: &str) -> Option<(String, String)> {
     let (current_constructor, current_payload) = constructor_payload_function(current)?;
     let (baseline_constructor, baseline_payload) = constructor_payload_function(baseline)?;
@@ -1297,8 +1298,7 @@ fn constructor_payload_function(body: &str) -> Option<(String, String)> {
     };
     let name = function.name()?;
     // Keep the payload's declared type so the fold still refuses a result
-    // outside that integer width; a missing or other return type keeps exact
-    // arithmetic as before.
+    // outside that integer width.
     let payload_type = function
         .ret_type()
         .and_then(|ret| ret.ty())
@@ -1320,9 +1320,10 @@ fn constructor_payload_function(body: &str) -> Option<(String, String)> {
                 _ => None,
             }
         });
-    let return_type = payload_type
-        .map(|ty| format!(" -> {ty}"))
-        .unwrap_or_default();
+    // An alias (`-> Fee`) or any return type whose payload type is not
+    // spelled refuses the peel: folding without the payload's width could
+    // call a baseline that overflows equal to a current version that does not.
+    let return_type = format!(" -> {}", payload_type?);
     Some((
         constructor,
         format!(

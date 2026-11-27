@@ -10,4 +10,6 @@ tests = [
   "crates/ripr/tests/invisible_change.rs::a_changed_constructor_is_not_read_as_the_same_value",
   "crates/ripr/tests/invisible_change.rs::an_agreeing_input_wrapped_at_the_payload_width_is_not_read_as_the_same_value",
   "crates/ripr/tests/invisible_change.rs::an_err_payload_keeps_the_error_type_width",
+  "crates/ripr/tests/invisible_change.rs::an_aliased_result_is_not_peeled",
+  "crates/ripr/tests/invisible_change.rs::a_rebound_matches_macro_is_not_read_as_the_same_value",
 ]

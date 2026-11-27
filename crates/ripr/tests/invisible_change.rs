@@ -751,3 +751,35 @@ fn an_err_payload_keeps_the_error_type_width() -> Result<(), String> {
     assert!(!same_value(finding), "{finding:?}");
     Ok(())
 }
+
+#[test]
+fn an_aliased_result_is_not_peeled() -> Result<(), String> {
+    // Control: `-> Fee` hides the payload's `u8` width. `x * 2 / 2` overflows
+    // at 200 while `x + x % 2` does not, so folding the payloads without the
+    // width would call them equal at an input the test does tell apart.
+    let lib =
+        "pub fn fee(x: u8) -> Fee {\n    Ok(x + x % 2)\n}\n\npub type Fee = Result<u8, String>;\n";
+    let findings = findings(
+        lib,
+        "    Ok(x * 2 / 2)",
+        "#[test]\nfn big() {\n    assert_eq!(invisible::fee(200), Ok(200));\n}\n",
+    )?;
+    let finding = return_value(&findings)?;
+    assert!(!same_value(finding), "{finding:?}");
+    Ok(())
+}
+
+#[test]
+fn a_rebound_matches_macro_is_not_read_as_the_same_value() -> Result<(), String> {
+    // Control: a local `matches!` may rewrite the call it is given; this one
+    // calls `fee(1)`, where the versions differ, so its written `fee(0)` is
+    // not the input the assertion reaches.
+    let findings = findings(
+        OK_FEE,
+        OK_FEE_OLD,
+        "macro_rules! matches {\n    ($f:path, $x:expr, $p:pat) => { ::std::matches!($f($x + 1), $p) };\n    ($($t:tt)*) => { ::std::matches!($($t)*) };\n}\n\n#[test]\nfn zero() {\n    assert!(matches!(invisible::fee(0), Ok(0)));\n}\n",
+    )?;
+    let finding = return_value(&findings)?;
+    assert!(!same_value(finding), "{finding:?}");
+    Ok(())
+}
