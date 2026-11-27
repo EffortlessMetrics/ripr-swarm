@@ -1570,7 +1570,10 @@ fn seam_spans_nest(outer: &RepoSeam, inner: &RepoSeam) -> bool {
 
 fn read_owner_source(root: &Path, seam: &RepoSeam) -> Result<String, TestStubError> {
     std::fs::read_to_string(root.join(seam.file())).map_err(|error| {
-        TestStubError::Operational(format!("failed to read {}: {error}", seam.file().display()))
+        TestStubError::Operational(format!(
+            "failed to read {}: {error}; check that the file still exists and is readable, then rerun",
+            seam.file().display()
+        ))
     })
 }
 
@@ -1775,7 +1778,7 @@ pub(crate) fn write_test_stub(
         TestStubPlacement::ExistingInlineModule { offset, .. }
         | TestStubPlacement::NewInlineModule { offset, .. } => {
             let current = std::fs::read_to_string(&path)
-                .map_err(|error| format!("failed to read {}: {error}", relative.display()))?;
+                .map_err(|error| format!("failed to read {}: {error}; check that the file still exists and is readable, then rerun", relative.display()))?;
             if current != resolution.source {
                 return Err(format!(
                     "{} changed after the stub was computed; rerun `ripr agent stub`",
@@ -1794,7 +1797,7 @@ pub(crate) fn write_test_stub(
         }
         TestStubPlacement::ExistingIntegrationFile { .. } => {
             let current = std::fs::read_to_string(&path)
-                .map_err(|error| format!("failed to read {}: {error}", relative.display()))?;
+                .map_err(|error| format!("failed to read {}: {error}; check that the file still exists and is readable, then rerun", relative.display()))?;
             let separator = if current.ends_with('\n') || current.is_empty() {
                 ""
             } else {
@@ -1805,8 +1808,12 @@ pub(crate) fn write_test_stub(
         }
         TestStubPlacement::NewIntegrationFile { .. } => {
             if let Some(parent) = path.parent() {
-                std::fs::create_dir_all(parent)
-                    .map_err(|error| format!("failed to create {}: {error}", parent.display()))?;
+                std::fs::create_dir_all(parent).map_err(|error| {
+                    format!(
+                        "failed to create {}: {error}; check permissions on that path, then rerun",
+                        parent.display()
+                    )
+                })?;
             }
             crate::atomic_file::create_new(&path, stub.text.as_bytes()).map_err(|error| {
                 let error = match error {
@@ -2169,6 +2176,7 @@ pub(crate) fn focused_test_run_command(
         fill_ins: Vec::new(),
         derived_inputs: Vec::new(),
         receiver_setup: None,
+        input_setup: None,
     };
     run_command(&resolved.manifest_arg, &integration, Some(&resolved.target))
 }
@@ -2236,6 +2244,7 @@ fn focused_integration_target(root: &Path, test_file: &str) -> Option<FocusedInt
         fill_ins: Vec::new(),
         derived_inputs: Vec::new(),
         receiver_setup: None,
+        input_setup: None,
     };
     let manifest = package_manifest_for(root, &integration)?;
     let target = match integration_target_lookup(root, &manifest, &integration) {
@@ -2997,6 +3006,7 @@ mod tests {
             fill_ins: Vec::new(),
             derived_inputs: Vec::new(),
             receiver_setup: None,
+            input_setup: None,
         };
         let inline = stub(TestStubPlacement::NewInlineModule {
             file: PathBuf::from("crates/a/src/lib.rs"),
@@ -3256,6 +3266,7 @@ mod tests {
             fill_ins: Vec::new(),
             derived_inputs: Vec::new(),
             receiver_setup: None,
+            input_setup: None,
         };
         let got = |tail: &str, file: &str| -> Result<Option<String>, String> {
             std::fs::write(
@@ -4307,6 +4318,7 @@ impl Size {
             fill_ins: Vec::new(),
             derived_inputs: Vec::new(),
             receiver_setup: None,
+            input_setup: None,
         };
         let resolution = TestStubResolution {
             seam_id: "seam".to_string(),
@@ -4351,6 +4363,7 @@ impl Size {
             fill_ins: Vec::new(),
             derived_inputs: Vec::new(),
             receiver_setup: None,
+            input_setup: None,
         };
         let next = next_repair_for(root, &RiprConfig::default(), &entry, &stub)
             .ok_or("a repair-ready stub must name its repair journey")?;

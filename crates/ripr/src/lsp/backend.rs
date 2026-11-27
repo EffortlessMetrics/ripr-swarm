@@ -79,7 +79,6 @@ use crate::output::agent_seam_packets::{
     render_agent_gap_record_packet_json, suggested_assertion_for_classified_seam,
     targeted_test_brief_outline_for_classified_seam, validate_agent_gap_record_packet,
 };
-use crate::output::evidence_record::repair_start_command_for;
 use crate::output::first_useful_action::DEFAULT_FIRST_USEFUL_ACTION_OUT;
 use crate::output::gap_decision_ledger::{
     DEFAULT_GAP_DECISION_LEDGER_OUT, GapRecord, parse_gap_records_json_for_root,
@@ -1046,6 +1045,7 @@ impl Backend {
                         (pending, version)
                     })
                     .unwrap_or((None, None));
+                let pending_quarantine = self.disclosed_quarantine(pending_quarantine);
                 if !snapshot.served_diagnostics_for_uri(uri).is_empty()
                     && let Some((path, reason)) = pending_quarantine.as_ref()
                 {
@@ -1148,7 +1148,7 @@ impl Backend {
                         (quarantine, version)
                     })
                     .unwrap_or((None, None));
-                if let Some((_, reason)) = quarantine {
+                if let Some((_, reason)) = self.disclosed_quarantine(quarantine) {
                     let version = self.negotiated_version(raw_version);
                     self.client
                         .publish_diagnostics(uri, withdrawn_quarantine_diagnostics(reason), version)
@@ -4308,6 +4308,9 @@ impl Backend {
                 DocumentStalenessReason::SavedContentNotYetAnalyzed => {
                     "Saving again cannot change this; the evidence returns when ripr analyzes the saved file. Run `ripr.refresh` if it does not."
                 }
+                DocumentStalenessReason::OutsideAnalyzedRoot => {
+                    super::diagnostics::OUTSIDE_ANALYZED_ROOT_ROUTE
+                }
             };
             return markdown_hover(format!(
                 "**ripr** evidence for this file is paused: {}. {route}",
@@ -4435,7 +4438,21 @@ impl Backend {
         &self,
         uri: &Uri,
     ) -> Option<(PathBuf, DocumentStalenessReason)> {
-        self.quarantine.document_quarantine(uri)
+        self.disclosed_quarantine(self.quarantine.document_quarantine(uri))
+    }
+
+    /// The quarantine reason as disclosed to the client. The ledger records
+    /// an out-of-root document as `NoAnalyzedSavedContent` (nothing analyzed
+    /// it), but its "save, then refresh" route can never succeed: analysis
+    /// covers only the selected root. Name that cause instead. Fails closed:
+    /// with no effective root, or a path inside it, the stored reason stays.
+    fn disclosed_quarantine(
+        &self,
+        quarantine: Option<(PathBuf, DocumentStalenessReason)>,
+    ) -> Option<(PathBuf, DocumentStalenessReason)> {
+        let (path, reason) = quarantine?;
+        let reason = disclosed_staleness_reason(self.effective_root().as_deref(), &path, reason);
+        Some((path, reason))
     }
 
     fn document_path_for_uri(&self, uri: &Uri) -> Option<PathBuf> {
@@ -4446,7 +4463,7 @@ impl Backend {
     /// reason)` only on the first disclosure of the episode so one episode
     /// emits exactly one disclosure.
     fn mark_withdrawal_disclosed(&self, uri: &Uri) -> Option<(PathBuf, DocumentStalenessReason)> {
-        self.quarantine.mark_withdrawal_disclosed(uri)
+        self.disclosed_quarantine(self.quarantine.mark_withdrawal_disclosed(uri))
     }
 
     /// Mark the pull-side partial-delivery disclosures for one snapshot input
@@ -4785,16 +4802,18 @@ impl Backend {
         Option<i32>,
         bool,
     ) {
-        self.with_document_state(uri, |state| {
-            let pending = quarantine_for_pending_from_state(state, pending_analyzed);
-            let version = if state.buffer_authority_unknown {
-                None
-            } else {
-                state.version
-            };
-            (pending, version, quarantine_from_state(state).is_some())
-        })
-        .unwrap_or((None, None, false))
+        let (pending, version, is_quarantined) = self
+            .with_document_state(uri, |state| {
+                let pending = quarantine_for_pending_from_state(state, pending_analyzed);
+                let version = if state.buffer_authority_unknown {
+                    None
+                } else {
+                    state.version
+                };
+                (pending, version, quarantine_from_state(state).is_some())
+            })
+            .unwrap_or((None, None, false));
+        (self.disclosed_quarantine(pending), version, is_quarantined)
     }
 
     #[cfg(test)]
@@ -8188,15 +8207,18 @@ impl Backend {
             // version directly (LSP 3.17).
             let (quarantine_reason, raw_version) = self
                 .with_document_state(&uri, |state| {
-                    let reason = quarantine_from_state(state).map(|(_, reason)| reason);
+                    let quarantine = quarantine_from_state(state);
                     let version = if state.buffer_authority_unknown {
                         None
                     } else {
                         state.version
                     };
-                    (reason, version)
+                    (quarantine, version)
                 })
                 .unwrap_or((None, None));
+            let quarantine_reason = self
+                .disclosed_quarantine(quarantine_reason)
+                .map(|(_, reason)| reason);
             // Quarantined (dirty-buffer) documents serve one Information
             // marker under a distinct result id, same as the document pull
             // handler (#1970/#7771); other documents are unaffected.
@@ -8635,6 +8657,9 @@ impl Backend {
         &self,
         snapshot: Option<&AnalysisSnapshot>,
     ) -> serde_json::Value {
+        // Read the root before the document lock so the status projection
+        // discloses the same out-of-root reason as hover and pull (#15462).
+        let effective_root = self.effective_root();
         let Ok(documents) = self.quarantine.documents.lock() else {
             return serde_json::json!([]);
         };
@@ -8712,10 +8737,14 @@ impl Backend {
                     } else {
                         serde_json::Value::Null
                     },
-                    "staleness_reason": state
-                        .quarantine
-                        .as_ref()
-                        .map(|quarantine| quarantine.reason.as_str()),
+                    "staleness_reason": state.quarantine.as_ref().map(|quarantine| {
+                        disclosed_staleness_reason(
+                            effective_root.as_deref(),
+                            &state.path,
+                            quarantine.reason,
+                        )
+                        .as_str()
+                    }),
                     "last_saved_content_identity": state.saved_digest,
                     "analyzed_saved_content_identity": state.analyzed_saved_digest,
                     "analyzed_input_identity": state.analyzed_input_identity,
@@ -9563,6 +9592,9 @@ fn quarantine_withdrawal_log_message(path: &Path, reason: DocumentStalenessReaso
         }
         DocumentStalenessReason::SavedContentNotYetAnalyzed => {
             "they return when ripr analyzes the saved file; run `ripr.refresh` if they do not"
+        }
+        DocumentStalenessReason::OutsideAnalyzedRoot => {
+            "open this file's repository in its own editor window or session; saving or refreshing analyzes only the selected workspace root"
         }
     };
     format!(
@@ -15794,4 +15826,26 @@ mod disk_bytes_equal_text_tests {
         }
         Ok(())
     }
+}
+
+/// The staleness reason a surface discloses (#15462): a never-saved document
+/// outside the analyzed root can never gain analyzed saved content in this
+/// session, so it reads `outside_analyzed_root` instead of the save-then-
+/// refresh route. Fails closed to the stored reason without a root.
+pub(super) fn disclosed_staleness_reason(
+    root: Option<&Path>,
+    path: &Path,
+    reason: DocumentStalenessReason,
+) -> DocumentStalenessReason {
+    // Only an absolute (local file) path can be outside the root. A buffer
+    // with no admitted file path (an `untitled:` document, for example) keeps
+    // the stored reason: saving it into the root can still lift the pause.
+    if reason == DocumentStalenessReason::NoAnalyzedSavedContent
+        && path.is_absolute()
+        && let Some(root) = root
+        && !path_is_within_root(root, path)
+    {
+        return DocumentStalenessReason::OutsideAnalyzedRoot;
+    }
+    reason
 }

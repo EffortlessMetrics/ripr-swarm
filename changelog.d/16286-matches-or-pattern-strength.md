@@ -1,0 +1,2 @@
+<!-- section: Fixed -->
+- A Rust `matches!` or `assert_matches!` whose pattern lists several values (`matches!(price(9), 90 | 100)`, `Some(3 | 4)`, `Mode::A | Mode::B`) is no longer read as an exact oracle. It accepts each listed value, so it reads weak, like the same check written with `||`; a test that accepts both the old and the new value no longer makes a change read `exposed`. All-`Err` alternatives read as a broad error check (#16286).

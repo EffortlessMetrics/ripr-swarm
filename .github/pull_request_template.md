@@ -175,7 +175,10 @@ normal CI cannot validate the revert, document that explicitly.
 
 ## Gates
 
-- [ ] `cargo fmt --check`
+- [ ] Formatting: `cargo fmt --check`; on native Windows, run `cargo xtask precommit`
+  from the repository root instead. Its bounded formatting step avoids OS error 206
+  from direct `cargo fmt`. Check this box only after formatting passes. If a later
+  precommit check fails, report it separately; the full precommit run did not pass.
 - [ ] `cargo check --workspace --all-targets`
 - [ ] `cargo test --workspace`
 - [ ] `cargo clippy --workspace --all-targets -- -D warnings`

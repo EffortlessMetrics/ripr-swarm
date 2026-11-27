@@ -941,7 +941,24 @@ pub(super) fn calibrate(args: &[String]) -> Result<(), String> {
     let report = output::mutation_calibration::mutation_calibration_report_from_json(
         &repo_exposure_json,
         &mutants_json,
-    )?;
+    )
+    .map_err(|err| {
+        name_calibration_input_error(
+            err,
+            &[
+                (
+                    "repo exposure input is not valid JSON",
+                    "--repo-exposure-json",
+                    &options.repo_exposure_json,
+                ),
+                (
+                    "cargo-mutants input is not valid JSON",
+                    "--mutants-json",
+                    &options.mutants_json,
+                ),
+            ],
+        )
+    })?;
     // The report owns the input-head projection and its qualification on every surface.
     eprintln!("{}", report.head_provenance_disclosure());
     let rendered = match options.format {
@@ -1112,6 +1129,21 @@ fn snapshot_capture_hint(kind: SnapshotCaptureKind, path: &Path) -> String {
                 .to_string()
         }
     }
+}
+
+/// Name the flag and file on a parse error raised by the pure report builder,
+/// which only sees JSON text. `inputs` maps the builder's stable message prefix
+/// to the flag and path that supplied that text.
+fn name_calibration_input_error(err: String, inputs: &[(&str, &str, &Path)]) -> String {
+    for (prefix, flag, path) in inputs {
+        if let Some(rest) = err.strip_prefix(prefix) {
+            return format!(
+                "calibrate cargo-mutants {flag} {} is not valid JSON{rest}",
+                output::outcome::display_path(path)
+            );
+        }
+    }
+    err
 }
 
 /// `flag` names the command and flag (`outcome --before`) so a directory
@@ -1701,7 +1733,7 @@ fn parse_pr_comments_plan_options(args: &[String]) -> Result<PrCommentsPlanOptio
     }
 
     if max_inline_comments == 0 {
-        return Err("pr-comments plan --max-inline-comments must be greater than zero".to_string());
+        return Err("pr-comments plan --max-inline-comments must be greater than zero; pass a whole number of 1 or more".to_string());
     }
 
     refuse_output_naming_input(
@@ -2049,6 +2081,16 @@ fn policy_readiness_generated_at() -> Result<String, String> {
 }
 
 pub(super) fn read_optional_text_for_report(label: &str, path: &Path) -> Result<String, String> {
+    read_report_input_plain(label, path)
+}
+
+/// Raw-errno variant for the policy history, operations and promotion reports,
+/// which still classify a missing input by the host's errno text
+/// (`policy_history.rs`, `policy_operations.rs`, `policy_promotion.rs`).
+pub(super) fn read_optional_text_with_errno_for_report(
+    label: &str,
+    path: &Path,
+) -> Result<String, String> {
     crate::bounded_input::read_artifact_text(path).map_err(|err| {
         format!(
             "read {label} {} failed: {err}",
@@ -2075,6 +2117,21 @@ impl SuppliedInputReads {
         read
     }
 
+    /// [`Self::read`] on the raw-errno reader, for a report that still
+    /// classifies a missing input by the host's errno text.
+    pub(super) fn read_with_errno(
+        &mut self,
+        flag: &str,
+        label: &str,
+        path: &Path,
+    ) -> Result<String, String> {
+        let read = read_optional_text_with_errno_for_report(label, path);
+        if let Err(err) = &read {
+            self.failures.push(format!("{flag}: {err}"));
+        }
+        read
+    }
+
     /// [`Self::read`] for a flag that must hold JSON: readable-but-malformed
     /// text is recorded too. The text is still returned so the report builds
     /// and discloses the input the way it always did.
@@ -2088,8 +2145,9 @@ impl SuppliedInputReads {
         // written, so read it in the PowerShell 5.1 encodings too (#15936).
         let read = crate::bounded_input::read_artifact_text(path).map_err(|err| {
             format!(
-                "read {label} {} failed: {err}",
-                output::baseline_delta::display_path(path)
+                "read {label} {} failed: {}",
+                output::baseline_delta::display_path(path),
+                crate::bounded_input::read_failure_detail(&err)
             )
         });
         if let Err(err) = &read {
@@ -2118,9 +2176,8 @@ impl SuppliedInputReads {
     }
 }
 
-/// Like `read_optional_text_for_report`, but a missing file reads `not found`
-/// (#9851 vocabulary) instead of the host's errno text. Kept separate because
-/// some policy reports still classify a missing input by that errno text.
+/// A missing file reads `not found` (#9851 vocabulary) instead of the host's
+/// errno text; other failures drop the `(os error N)` suffix.
 fn read_report_input_plain(label: &str, path: &Path) -> Result<String, String> {
     crate::bounded_input::read_artifact_text(path).map_err(|err| {
         format!(
@@ -2194,7 +2251,7 @@ fn read_optional_manifest_for_report(
         Ok(text) => Some(Ok(text)),
         Err(err) if err.kind() == std::io::ErrorKind::NotFound => None,
         Err(err) => Some(Err(format!(
-            "read suppression manifest {} failed: {err}",
+            "read suppression manifest {} failed: {err}; check that the file is readable, or pass --manifest naming a readable manifest",
             output::suppression_health::display_path(&read_path)
         ))),
     }
@@ -5011,7 +5068,7 @@ language = "rust"
         );
         assert_eq!(
             parse_pr_comments_plan_options(&args(&["--max-inline-comments", "0"])),
-            Err("pr-comments plan --max-inline-comments must be greater than zero".to_string())
+            Err("pr-comments plan --max-inline-comments must be greater than zero; pass a whole number of 1 or more".to_string())
         );
         assert_eq!(
             parse_pr_comments_plan_options(&args(&["--bad"])),

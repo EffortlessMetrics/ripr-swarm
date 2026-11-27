@@ -179,6 +179,16 @@ fn repo_with_test(
     test_source: &str,
     edit: impl FnOnce(&Path) -> Result<(), String>,
 ) -> Result<(), String> {
+    init_repo_with_test(root, test_source)?;
+    git(root, &["add", "-A"])?;
+    git(root, &["commit", "-q", "-m", "base"])?;
+    git(root, &["checkout", "-q", "-b", "feat"])?;
+    edit(root)?;
+    git(root, &["add", "-A"])?;
+    git(root, &["commit", "-q", "-m", "change"])
+}
+
+fn init_repo_with_test(root: &Path, test_source: &str) -> Result<(), String> {
     let w = |rel: &str, body: &str| -> Result<(), String> {
         let path = root.join(rel);
         if let Some(parent) = path.parent() {
@@ -190,13 +200,7 @@ fn repo_with_test(
     git(root, &["init", "-q", "-b", "main"])?;
     w("Cargo.toml", MANIFEST)?;
     w("src/lib.rs", BASE_LIB)?;
-    w("tests/t.rs", test_source)?;
-    git(root, &["add", "-A"])?;
-    git(root, &["commit", "-q", "-m", "base"])?;
-    git(root, &["checkout", "-q", "-b", "feat"])?;
-    edit(root)?;
-    git(root, &["add", "-A"])?;
-    git(root, &["commit", "-q", "-m", "change"])
+    w("tests/t.rs", test_source)
 }
 
 fn change_lib(root: &Path) -> Result<(), String> {
@@ -889,20 +893,21 @@ fn unresolved_commit_id_and_tag_bases_name_a_fetch_that_can_supply_them() -> Res
 fn package_over_the_narrowing_threshold_runs_until_the_memory_guard() -> Result<(), String> {
     let scratch = Scratch::new("narrow")?;
     let root = scratch.path.join("r");
-    repo(&root, |root| {
-        for i in 0..1_250 {
-            fs::write(
-                root.join(format!("src/m{i}.rs")),
-                format!("pub fn m{i}(a: u32) -> u32 {{ a + {i} }}\n"),
-            )
-            .map_err(|e| format!("write failed: {e}"))?;
-        }
-        // The unchanged modules belong to the base, so only `total` changes.
-        git(root, &["add", "-A"])?;
-        git(root, &["commit", "-q", "-m", "modules"])?;
-        git(root, &["branch", "-f", "main", "HEAD"])?;
-        change_lib(root)
-    })?;
+    init_repo_with_test(&root, TEST)?;
+    for i in 0..1_250 {
+        fs::write(
+            root.join(format!("src/m{i}.rs")),
+            format!("pub fn m{i}(a: u32) -> u32 {{ a + {i} }}\n"),
+        )
+        .map_err(|e| format!("write failed: {e}"))?;
+    }
+    git(&root, &["add", "-A"])?;
+    git(&root, &["commit", "-q", "-m", "base"])?;
+    git(&root, &["checkout", "-q", "-b", "feat"])?;
+    change_lib(&root)?;
+    // The unchanged modules are already in main. Stage only the changed file.
+    git(&root, &["add", "--", "src/lib.rs"])?;
+    git(&root, &["commit", "-q", "-m", "change"])?;
     let ran = ripr(&root, &["check"], &[])?;
     assert_found_change(&ran, "package over the narrowing threshold")?;
     if ran.stderr.contains("diff_scope_oversized") {
@@ -1390,6 +1395,95 @@ fn shallow_clone_without_merge_base_names_the_repair() -> Result<(), String> {
     assert_sane(&ran, "shallow clone")?;
     if ran.code != Some(2) || !ran.stderr.contains("git fetch --unshallow") {
         return Err(format!("expected unshallow repair route\n{}", ran.stderr));
+    }
+    Ok(())
+}
+
+#[cfg(unix)]
+#[test]
+fn doctor_base_distinguishes_checkout_history() -> Result<(), String> {
+    let scratch = Scratch::new("doctor-base")?;
+    let source = plain(&scratch, "source")?;
+    git(&source, &["checkout", "-q", "main"])?;
+    let url = format!("file://{}", source.display());
+    for (name, shallow) in [("full", false), ("shallow", true)] {
+        let mut args = vec!["clone", "-q", "-b", "feat"];
+        if shallow {
+            args.extend(["--depth", "1", "--no-single-branch"]);
+        }
+        args.extend([&url, name]);
+        git(&scratch.path, &args)?;
+        let root = scratch.path.join(name);
+        let verify = |key: &str, status: &str, words: &[&str]| -> Result<(), String> {
+            let ran = ripr(&root, &["doctor", "--json"], &[])?;
+            let value: serde_json::Value =
+                serde_json::from_str(&ran.stdout).map_err(|e| e.to_string())?;
+            let checks = value["checks"].as_array().ok_or("doctor omitted checks")?;
+            let base_checks = checks
+                .iter()
+                .filter(|row| matches!(row["name"].as_str(), Some("git_default_base" | "git_base")))
+                .count();
+            if base_checks != 1
+                || (status == "pass" && checks.iter().any(|row| row["name"] == "git_origin_head"))
+                || ran.code != Some(0)
+                || !checks.iter().any(|row| {
+                    row["name"] == key
+                        && row["status"] == status
+                        && row["evidence"]
+                            .as_str()
+                            .is_some_and(|text| words.iter().all(|word| text.contains(word)))
+                })
+            {
+                return Err(format!("unexpected {name} doctor {key}: {}", ran.stdout));
+            }
+            Ok(())
+        };
+        if shallow {
+            verify(
+                "git_base",
+                "advisory",
+                &[
+                    "origin/main",
+                    "no merge base",
+                    "git fetch --unshallow",
+                    "fetch-depth: 0",
+                ],
+            )?;
+        } else {
+            verify("git_base", "pass", &["origin/main", "merge base with HEAD"])?;
+            git(
+                &root,
+                &[
+                    "symbolic-ref",
+                    "refs/remotes/origin/HEAD",
+                    "refs/remotes/origin/deleted",
+                ],
+            )?;
+            verify(
+                "git_origin_head",
+                "advisory",
+                &["missing or stale", "change the base"],
+            )?;
+            git(&root, &["remote", "set-head", "origin", "-d"])?;
+            verify(
+                "git_origin_head",
+                "advisory",
+                &["git remote set-head origin --auto"],
+            )?;
+            git(&root, &["checkout", "-q", "--orphan", "disjoint"])?;
+            git(&root, &["commit", "-q", "-m", "unrelated root"])?;
+            verify(
+                "git_base",
+                "advisory",
+                &["origin/main", "unrelated histories", "--base"],
+            )?;
+            git(&root, &["update-ref", "-d", "refs/remotes/origin/main"])?;
+            verify(
+                "git_default_base",
+                "advisory",
+                &["no default base", "--base"],
+            )?;
+        }
     }
     Ok(())
 }
@@ -2977,7 +3071,7 @@ fn committed_run_keeps_a_declared_bin_despite_a_staged_alternate_layout() -> Res
     let before = ripr(&root, &["check", "--base", "main", "--committed"], &[])?;
     assert_sane(&before, "committed bin before staging")?;
     assert!(
-        summary_line(&before).starts_with("Summary: 2 changed behaviors checked: "),
+        summary_line(&before).starts_with("Summary: 2 changed behaviors checked"),
         "premise: the committed bin change is checked\n{}",
         before.stdout
     );

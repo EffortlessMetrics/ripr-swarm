@@ -165,6 +165,11 @@ read-only and without execution authority (ADR 0022):
   failing gate except that `seam_inventory_truncated` outranks it. MCP never reads readiness from finding facts alone and keeps
   no parallel validator: `ripr_prepare_repair` cannot return a ready packet
   or an `awaiting_edit` attempt for an item `ripr repair` refuses.
+- When the resolved seam and its bound candidate-current finding both
+  report no static test path, preparation also requires the producer to
+  establish that its owner is unreferenced in the workspace (#4668).
+  The refusal remains `seam_gate_refused` through list, detail, and
+  prepare. The RepairCard can still show the proposed target for inspection.
 - When every gate is established, the tool creates one session repair
   transaction with a deterministic, root-bound `repair-attempt-` identity
   (the first 24 hex digits of a SHA-256 over schema version, snapshot id,
@@ -175,8 +180,28 @@ read-only and without execution authority (ADR 0022):
   concrete `CommandSpec` routes are published only by the durable CLI
   before phase), the shared non-claims, and resource links. Repeating the
   call for the same current snapshot, item, and root returns the identical
-  document and never creates a second transaction. The transaction is
+  document and never creates a second transaction, except that a live
+  durable attempt that appeared since (below) turns the replay into the
+  durable-attempt refusal. The transaction is
   in-memory like the snapshot: a restart drops it.
+- Single attempt per seam (#15244): when the shared CLI rule
+  (`reusable_awaiting_attempt`: an ordinary durable attempt for the item's
+  seam, awaiting its edit at the current HEAD) finds a live durable attempt,
+  the tool refuses to create a rival session transaction. It returns the
+  refusal shape with `ineligibility.reason` `durable_attempt_awaiting`,
+  `attempt: null`, an additive `existing_attempt` (`attempt_id`, state,
+  `origin: durable_cli`) with `links.repair_attempt`/`links.receipt`, and
+  `next` routing to `ripr_get_repair_attempt`. Without a live durable attempt
+  the session route above is unchanged. MCP has no attempt authority of its
+  own, so it fails closed: a ready item with no seam binding, or an
+  unreadable HEAD or attempt store, returns a typed failure
+  (`no_snapshot`, `seam_not_found`, `analysis_failed`) and creates no session
+  transaction. A store holding a manifest the inventory cannot read refuses
+  the same way (`analysis_failed`, naming the unreadable manifests), since its
+  seam cannot be told. The store is read without holding the session lock,
+  and a snapshot replaced meanwhile refuses with `stale_snapshot` (carrying
+  `current_snapshot_id`) before anything is created. MCP still creates and
+  edits nothing durable.
 - When a gate is not established, the tool returns an
   `isError: false` document with `repair_packet_ready: false`, the typed
   `ineligibility.reason`, and `attempt: null` — never a failure envelope,

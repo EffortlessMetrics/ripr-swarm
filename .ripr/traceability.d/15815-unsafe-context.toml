@@ -1,0 +1,4 @@
+[[extend]]
+id = "RIPR-SPEC-0168"
+tests = ["crates/ripr/tests/unsafe_context.rs"]
+code = ["crates/ripr/src/analysis/probes/diff.rs"]

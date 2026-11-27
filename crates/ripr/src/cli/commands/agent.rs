@@ -1227,14 +1227,19 @@ pub(super) fn classify_incomparable_pair_error(error: String) -> AgentVerifyErro
 
 /// #14021: the no-movement refusal classifies from the producer's typed
 /// `AgentVerifyMovementError`, not a substring of the rendered message. The
-/// producer carries exactly one variant, so every movement error it reports
-/// is the named refusal; the rendered text stays byte-identical to the prose
-/// the old `format!` added.
+/// producer carries exactly one variant today; the match is exhaustive so a
+/// new variant must choose its own refusal class here instead of being read
+/// as no-movement. The rendered text stays byte-identical to the prose the
+/// old `format!` added.
 pub(super) fn classify_verify_movement_error(
     error: crate::agent::artifact::AgentVerifyMovementError,
 ) -> AgentVerifyError {
+    use crate::agent::artifact::AgentVerifyMovementError;
+    let kind = match &error {
+        AgentVerifyMovementError::NoMovement { .. } => AgentVerifyRefusalKind::NoMovement,
+    };
     AgentVerifyError::Refusal {
-        kind: AgentVerifyRefusalKind::NoMovement,
+        kind,
         message: format!("agent verify {error}"),
     }
 }
@@ -2731,12 +2736,15 @@ fn run_agent_repair_phase(
                     )
                 && !preflight_violations.is_empty()
             {
-                return Err(crate::app::repair_attempt::seam_dirty_premise_refusal(
-                    &seam_id,
-                    &root,
-                    store_ref,
-                    facade_start,
-                    &preflight_violations,
+                return Err(dirty_premise_hold(
+                    refusal,
+                    crate::app::repair_attempt::seam_dirty_premise_refusal(
+                        &seam_id,
+                        &root,
+                        store_ref,
+                        facade_start,
+                        &preflight_violations,
+                    ),
                 ));
             }
             if !quiet {
@@ -2767,6 +2775,24 @@ fn run_agent_repair_phase(
                 &before_config,
                 "agent before phase",
             )?;
+            if let Some(reason) = app::task_first::changed_seam_no_path_start_refusal(
+                &before_input.root,
+                base.as_deref(),
+                &before_config,
+                &seam_id,
+                &before_report.classified,
+            ) {
+                let code = app::task_first::RepairRefusalCode::SeamNotRepairEligible;
+                let message = format!(
+                    "seam `{seam_id}` is not repair-eligible: {reason}. No repair attempt was started."
+                );
+                refusal.typed = true;
+                refusal.code = Some(code);
+                if facade_start {
+                    crate::cli::usage_refusal::note_typed_refusal(code, &message);
+                }
+                return Err(message);
+            }
             let packet = render_agent_packet_for_seam_with_report(
                 &root,
                 &seam_id,
@@ -2806,8 +2832,37 @@ fn run_agent_repair_phase(
                 refusal.code =
                     Some(crate::app::task_first::RepairRefusalCode::StartRefusedUncommittedTarget);
                 return Err(crate::app::task_first::uncommitted_start_refusal_message(
-                    &root, &seam_id, &file,
+                    &crate::app::repair_attempt::seam_start_command(
+                        &seam_id,
+                        &root,
+                        store_ref,
+                        facade_start,
+                    ),
+                    &file,
                 ));
+            }
+            // #15265: the same hold for a selected external test file, so the
+            // refusal is typed (exit 3, `cli_refusal` under `--json`) and is
+            // given before any workflow artifact is written.
+            if let Some(file) = crate::app::task_first::held_external_test_start_file(
+                &root,
+                &seam_id,
+                &before_report.classified,
+            ) {
+                refusal.start_refused = true;
+                refusal.code =
+                    Some(crate::app::task_first::RepairRefusalCode::StartRefusedUncommittedTarget);
+                return Err(
+                    crate::app::task_first::uncommitted_test_start_refusal_message(
+                        &crate::app::repair_attempt::seam_start_command(
+                            &seam_id,
+                            &root,
+                            store_ref,
+                            facade_start,
+                        ),
+                        &file,
+                    ),
+                );
             }
             let mut policy = crate::app::repair_attempt::edit_cage_policy_from_packet_in(
                 &root, &packet, &seam_id,
@@ -2868,12 +2923,15 @@ fn run_agent_repair_phase(
                 &premise_head,
             )?;
             if !premise_violations.is_empty() {
-                return Err(crate::app::repair_attempt::seam_dirty_premise_refusal(
-                    &seam_id,
-                    &root,
-                    store_ref,
-                    facade_start,
-                    &premise_violations,
+                return Err(dirty_premise_hold(
+                    refusal,
+                    crate::app::repair_attempt::seam_dirty_premise_refusal(
+                        &seam_id,
+                        &root,
+                        store_ref,
+                        facade_start,
+                        &premise_violations,
+                    ),
                 ));
             }
 
@@ -2998,7 +3056,10 @@ fn run_agent_repair_phase(
                         let supplied =
                             validate_focused_run_input(&root, store_ref, &parsed_id, &policy, path)
                                 .map_err(|error| format!("{error}; inspect `{status}`"))?;
-                        if supplied.identity.record != pending.record {
+                        if !crate::app::focused_run::same_focused_claim(
+                            &supplied.identity.record,
+                            &pending.record,
+                        ) {
                             return Err(format!(
                                 "the supplied focused result differs from the finished proposal; use a --test-result FILE matching the retained normalized claim, or inspect `{status}` before starting a new attempt"
                             ));
@@ -3070,7 +3131,7 @@ fn run_agent_repair_phase(
                         result_path,
                     );
                     let mismatch = match checked {
-                        Ok(supplied) if supplied.identity.record == pending.record => None,
+                        Ok(supplied) if crate::app::focused_run::same_focused_claim(&supplied.identity.record, &pending.record) => None,
                         Ok(_) => Some("the supplied focused result differs from the interrupted finish; retry with the original --test-result FILE".to_string()),
                         Err(error) => Some(format!("the interrupted focused result was refused: {error}; retry with the original --test-result FILE")),
                     };
@@ -3129,7 +3190,10 @@ fn run_agent_repair_phase(
                                 refusal.typed = true;
                                 format!("the finished focused result was refused: {error}; retry with the original --test-result FILE")
                             })?;
-                            if supplied.identity.record != pending.record {
+                            if !crate::app::focused_run::same_focused_claim(
+                                &supplied.identity.record,
+                                &pending.record,
+                            ) {
                                 refusal.typed = true;
                                 return Err("the supplied focused result differs from the finished attempt; retry with the original --test-result FILE".to_string());
                             }
@@ -3258,7 +3322,10 @@ fn run_agent_repair_phase(
                                 refusal.typed = true;
                                 format!("the finished focused result was refused: {error}; retry with the original --test-result FILE")
                             })?;
-                                if supplied.identity.record != pending.record {
+                                if !crate::app::focused_run::same_focused_claim(
+                                    &supplied.identity.record,
+                                    &pending.record,
+                                ) {
                                     refusal.typed = true;
                                     return Err("the supplied focused result differs from the finished attempt; retry with the original --test-result FILE".to_string());
                                 }
@@ -3352,7 +3419,10 @@ fn run_agent_repair_phase(
                             refusal.typed = true;
                             format!("the finished focused result was refused: {error}; retry with the original --test-result FILE")
                         })?;
-                                if supplied.identity.record != pending.record {
+                                if !crate::app::focused_run::same_focused_claim(
+                                    &supplied.identity.record,
+                                    &pending.record,
+                                ) {
                                     refusal.typed = true;
                                     return Err("the supplied focused result differs from the finished attempt; retry with the original --test-result FILE".to_string());
                                 }
@@ -3487,7 +3557,10 @@ fn run_agent_repair_phase(
                         refusal.typed = true;
                         format!("the interrupted focused result was refused: {error}; retry with the original --test-result FILE")
                     })?;
-                    if supplied.identity.record != pending.record {
+                    if !crate::app::focused_run::same_focused_claim(
+                        &supplied.identity.record,
+                        &pending.record,
+                    ) {
                         refusal.typed = true;
                         return Err("the supplied focused result differs from the interrupted finish; retry with the original --test-result FILE".to_string());
                     }
@@ -5297,6 +5370,17 @@ fn gap_bound_rejected_attempt_message(
 /// typed not-started refusal on `refusal`. Called at the early admission and
 /// again immediately before the first shared workflow write (#13452), so both
 /// share one mapping.
+/// A dirty premise (tracked changes outside the allowed edit surface, usually
+/// production source) is a typed not-started start hold (#15265):
+/// `ripr repair` exits `3` with `start_refused_dirty_premise` (and the
+/// `cli_refusal` document under `--json`) instead of an operational exit `2`
+/// with empty stdout. The prose is unchanged.
+fn dirty_premise_hold(refusal: &mut AfterPhaseRefusalContext, message: String) -> String {
+    refusal.start_refused = true;
+    refusal.code = Some(crate::app::task_first::RepairRefusalCode::StartRefusedDirtyPremise);
+    message
+}
+
 fn admit_build_output_before_write(
     root: &Path,
     policy: &crate::edit_cage::EditCagePolicy,
@@ -5366,9 +5450,9 @@ fn run_gap_bound_before_phase(
             )
         && !preflight_violations.is_empty()
     {
-        return Err(crate::app::repair_attempt::dirty_premise_refusal(
-            &restart,
-            &preflight_violations,
+        return Err(dirty_premise_hold(
+            refusal,
+            crate::app::repair_attempt::dirty_premise_refusal(&restart, &preflight_violations),
         ));
     }
     // The snapshot is produced against the commit the base resolves to, and
@@ -5461,9 +5545,9 @@ fn run_gap_bound_before_phase(
         &premise_head,
     )?;
     if !premise_violations.is_empty() {
-        return Err(crate::app::repair_attempt::dirty_premise_refusal(
-            &restart,
-            &premise_violations,
+        return Err(dirty_premise_hold(
+            refusal,
+            crate::app::repair_attempt::dirty_premise_refusal(&restart, &premise_violations),
         ));
     }
 
@@ -5883,6 +5967,12 @@ fn repair_receipt_summary_lines(
     if text("/status").is_some()
         && let Some(action) = text("/summary/next_action/recommended_action")
     {
+        let action = crate::app::agent_status::test_run::next_step_after_reported_run(
+            reported_run,
+            text("/status"),
+            text("/provenance/movement"),
+            action,
+        );
         lines.push(format!("next: {action}"));
     }
     lines
@@ -7080,7 +7170,7 @@ mod tests {
         assert!(matches!(
             missing,
             Err(CommandError::Failure(message))
-                if message.contains("canonicalize agent receipt --verify-json")
+                if message.contains("agent receipt --verify-json")
         ));
         let _ = std::fs::remove_dir_all(&dir);
         Ok(())
@@ -7610,6 +7700,7 @@ mod repair_summary_tests {
             ran: passed + failed,
             passed,
             failed,
+            edited_test: None,
         };
         let line = |run: Option<&ReportedTestRun>| {
             repair_receipt_summary_lines(receipt, run)
@@ -8291,7 +8382,7 @@ mod before_phase_stdout_tests {
         );
         assert!(
             summary.contains(
-                "    (replace each /* ... */ comment with a real value from your test before using it)"
+                "    (replace each /* ... */ comment with a real value from your test before using it; the expected value is what the changed code produces now)"
             ),
             "{summary}"
         );
@@ -8684,6 +8775,10 @@ fn validate_focused_run_input(
             file,
             file_source: &source,
             inline_module,
+            baseline_source: crate::app::focused_run::edit_coverage::baseline_source(
+                root, &baseline, file,
+            )
+            .as_deref(),
         },
     )?;
     let rendered = String::from_utf8(record.render()?)

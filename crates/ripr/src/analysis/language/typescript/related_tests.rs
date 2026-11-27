@@ -630,6 +630,7 @@ impl ReExportIndex {
                             chain_names: names.iter().cloned().collect(),
                         }),
                         closure: frame.closure,
+                        commonjs_whole: false,
                     };
                     best.insert(key, entry.clone());
                     if best.len() > MAX_CROSS_MODULE_ENTRIES {
@@ -787,6 +788,7 @@ impl ReExportIndex {
                             chain_names: Vec::new(),
                         }),
                         closure: false,
+                        commonjs_whole: false,
                     });
                 }
                 frontier.push_back(SubclassFrame {
@@ -2825,6 +2827,17 @@ pub(crate) fn related_test_candidates<'a>(
 ) -> Vec<TypeScriptRelatedCandidate<'a>> {
     #[cfg(test)]
     RELATED_CANDIDATE_SCANS.with(|count| count.set(count.get() + 1));
+    // A later same-key member replaced this body, a same-key field shadows
+    // it, or an assignment replaces it: no test call runs it.
+    if matches!(
+        owner.method_kind,
+        TypeScriptMethodKind::Overwritten
+            | TypeScriptMethodKind::FieldShadowed
+            | TypeScriptMethodKind::ReplacedInConstructor
+            | TypeScriptMethodKind::ReplacedByAssignment
+    ) {
+        return Vec::new();
+    }
     let package_scope = workspace_root.map(|root| OwnerPackageScope::new(&owner.file, root));
     let in_owner_package = |test: &&TypeScriptTest| {
         package_scope
@@ -3513,8 +3526,9 @@ pub(crate) fn module_entry_owner(
         class_default_export: false,
         default_object_member: false,
         default_object_unsafe_siblings: Vec::new(),
-        commonjs_default_export: false,
-        commonjs_whole_function: false,
+        // A CommonJS whole export is bound by `require(...)` itself (#16369).
+        commonjs_default_export: entry.commonjs_whole,
+        commonjs_whole_function: entry.commonjs_whole,
         constructor_callback: false,
         method_kind: TypeScriptMethodKind::Ordinary,
         module_entries: Vec::new(),
@@ -3802,6 +3816,7 @@ pub(crate) fn receiver_owner_call_relation(
         return receiver_names
             .iter()
             .any(|receiver| contains_member_read_name(&test.body_text, receiver, &owner.name))
+            || contains_inline_new_member_read(&test.body_text, &constructor_names, &owner.name)
             || receiver_matcher_key_getter_read(
                 test,
                 &receiver_names,
@@ -4116,7 +4131,49 @@ fn getter_replaced_in_test(test: &TypeScriptTest, owner: &TypeScriptOwner) -> bo
         .any(|n| n == super::tests_extract::MEMBER_REPLACEMENT_ANY || n == &owner.name)
         || test_spies_owner_with_fabrication_for_owner(test, &owner.name, false)
         || class_entries::assigns_member_named(&masked, &owner.name)
+        || deletes_member_named(&masked, &owner.name)
         || spies_on_member_named(&test.body_text, &owner.name)
+}
+
+/// `true` when `text` (literals and comments masked) has a `delete` whose
+/// operand ends in `.name`: `delete cart.total`, `delete new Cart(1).total`.
+/// A `delete` of a member does not run its getter, and it may remove an own
+/// property that shadowed it, so a getter test that deletes the member is not
+/// the getter as written (review of #16360). The operand runs to the first
+/// `;`, `,`, newline or unbalanced closing bracket.
+fn deletes_member_named(text: &str, name: &str) -> bool {
+    if !is_safe_javascript_identifier(name) {
+        return false;
+    }
+    let member = format!(".{name}");
+    text.match_indices("delete").any(|(idx, keyword)| {
+        let starts_clean = text[..idx]
+            .chars()
+            .next_back()
+            .is_none_or(|ch| !is_javascript_identifier_char(ch) && ch != '.');
+        let rest = &text[idx + keyword.len()..];
+        if !starts_clean || !rest.starts_with(|ch: char| ch.is_whitespace() || ch == '(') {
+            return false;
+        }
+        let mut depth = 0usize;
+        let mut end = rest.len();
+        for (offset, ch) in rest.char_indices() {
+            match ch {
+                '(' | '[' | '{' => depth += 1,
+                ')' | ']' | '}' if depth == 0 => {
+                    end = offset;
+                    break;
+                }
+                ')' | ']' | '}' => depth -= 1,
+                ';' | ',' | '\n' if depth == 0 => {
+                    end = offset;
+                    break;
+                }
+                _ => {}
+            }
+        }
+        rest[..end].trim_end().ends_with(&member)
+    })
 }
 
 /// Getter owner reached through an exported factory that returns a fresh
@@ -4618,10 +4675,31 @@ pub(crate) fn class_names_for_class_method_owner(
     {
         push_unique_string(&mut names, class_name.to_string());
     }
+    // A class that is a CommonJS module's whole export (`module.exports =
+    // Cart;` or `module.exports = class Cart {...}`) is the value a
+    // whole-module `require` binds, under any local name; a named binding
+    // reads a static property of it, not the class (#16252).
+    let commonjs_whole_class = owner.class_default_export && owner.commonjs_default_export;
     for import in &test.imports_in_file {
-        if import.namespace
+        if import.namespace != commonjs_whole_class
             || !import_source_matches_owner(import, &test.file, owner, alias_map, workspace_root)
         {
+            continue;
+        }
+        if commonjs_whole_class {
+            if import.imported.as_deref() == Some("default")
+                && !test.written_locals_in_file.contains(&import.local)
+                && !test.imports_in_file.iter().any(|other| {
+                    other.local == import.local
+                        && (other.imported != import.imported
+                            || other.namespace != import.namespace)
+                })
+                && !local_identifier_declared_in_test_body(&test.body_text, &import.local)
+                && !body_declares_class_named(&test.body_text, &import.local)
+                && !enclosing_scope_shadows(test, &import.local)
+            {
+                push_unique_string(&mut names, import.local.clone());
+            }
             continue;
         }
         if import.imported.as_deref() == Some(class_name)
@@ -4962,6 +5040,37 @@ fn contains_inline_new_member_call(
     constructor_names: &[String],
     method_name: &str,
 ) -> bool {
+    inline_new_member_access(body_text, constructor_names, method_name, |after| {
+        after.starts_with('(')
+    })
+}
+
+/// Getter owner (#16353) read straight off a fresh instance:
+/// `expect(new Cart(50).total).toBe(45)` runs the `get total()` body like a
+/// read through a named receiver. The property must not be extended into a
+/// longer identifier and must not be called (the call needle covers a call).
+fn contains_inline_new_member_read(
+    body_text: &str,
+    constructor_names: &[String],
+    getter_name: &str,
+) -> bool {
+    inline_new_member_access(body_text, constructor_names, getter_name, |after| {
+        after
+            .chars()
+            .next()
+            .is_none_or(|ch| !is_javascript_identifier_char(ch) && ch != '(')
+    })
+}
+
+/// `true` when `body_text` accesses `member_name` directly on a `new C(...)`
+/// expression for one of `constructor_names`, and the text after the member
+/// name satisfies `tail_ok`.
+fn inline_new_member_access(
+    body_text: &str,
+    constructor_names: &[String],
+    method_name: &str,
+    tail_ok: impl Fn(&str) -> bool,
+) -> bool {
     if !is_safe_javascript_identifier(method_name) {
         return false;
     }
@@ -4991,7 +5100,7 @@ fn contains_inline_new_member_call(
             let rest = body_text[args_start + close + 1..].trim_start();
             let rest = rest.strip_prefix("?.").or_else(|| rest.strip_prefix('.'));
             rest.and_then(|rest| rest.strip_prefix(method_name))
-                .is_some_and(|after| after.starts_with('('))
+                .is_some_and(&tail_ok)
         })
     })
 }

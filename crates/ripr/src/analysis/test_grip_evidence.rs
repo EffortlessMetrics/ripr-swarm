@@ -1760,6 +1760,16 @@ fn enclosing_header_generics(owner: &FunctionSummary, index: &RustIndex) -> Opti
 /// offset past its closing `>`, or `None` when unbalanced. A `->` in a bound
 /// does not close it.
 fn generic_parameter_names(text: &str) -> Option<(Vec<String>, usize)> {
+    generic_parameter_list(text, true)
+}
+
+/// Like `generic_parameter_names`, but names only type parameters. A const
+/// parameter lives in the value namespace and does not shadow a module.
+fn generic_type_parameter_names(text: &str) -> Option<(Vec<String>, usize)> {
+    generic_parameter_list(text, false)
+}
+
+fn generic_parameter_list(text: &str, include_const: bool) -> Option<(Vec<String>, usize)> {
     let word = |ch: char| ch.is_alphanumeric() || ch == '_';
     let mut depth = 0usize;
     let mut params: Vec<&str> = Vec::new();
@@ -1791,6 +1801,9 @@ fn generic_parameter_names(text: &str) -> Option<(Vec<String>, usize)> {
         .iter()
         .filter_map(|param| {
             let param = param.trim();
+            if !include_const && param.starts_with("const ") {
+                return None;
+            }
             let param = param.strip_prefix("const ").unwrap_or(param).trim_start();
             if param.starts_with('\'') {
                 return None;

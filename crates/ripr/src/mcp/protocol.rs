@@ -72,7 +72,7 @@ pub(super) fn failure_vocabulary() -> Vec<&'static str> {
 /// this server does not, and the CLI route that runs analysis outside this
 /// session. Naming a route is not invoking it: the server still edits
 /// nothing and executes nothing (ADR 0022).
-pub(super) const INSTRUCTIONS: &str = "Flow: call `ripr_workspace_status`, then `ripr_refresh` (analyzes the default-branch diff into a session snapshot), then `ripr_list_gaps`; read one item with `ripr_get_gap` (ripr://gap/{canonical_id}), or `ripr_get_repair_card` (ripr://repair-card/{canonical_id}) to repair. Repair transactions: `ripr_prepare_repair`, `ripr_get_repair_attempt` (ripr://repair-attempt/{attempt_id}), `ripr_get_receipt_status` (ripr://receipt/{receipt_id}), `ripr_list_repair_attempts`. RIPR is a static analyzer: would current tests notice wrong behavior in this diff? This read-only session never edits source, executes nothing, runs no tests or mutation, and launches no processes; it only names CLI routes. No document this server returns is a repair authorization: the client's approval and sandbox policy remain authoritative. By default, like `ripr check`, input is saved staged and unstaged tracked edits when any exist, else committed (`requested_source` and `captured_source` say which ran); `source: \"committed\"` or `source: \"worktree\"` forces one; unsaved buffers and untracked files remain outside. Refresh after edits. Worktree cards require established producer custody; otherwise withheld with the cause. Readiness depends on per-item gates. CLI: `ripr check --committed`, or `ripr check --worktree --format json` for staged and unstaged tracked edits only. Untracked files need staging/intent-to-add (`git add -N <paths>`) before `--worktree`, or explicit `--diff`.";
+pub(super) const INSTRUCTIONS: &str = "Flow: call `ripr_workspace_status`, then `ripr_refresh` (analyzes the default-branch diff into a session snapshot), then `ripr_list_gaps`; read one item with `ripr_get_gap` (ripr://gap/{canonical_id}), or `ripr_get_repair_card` (ripr://repair-card/{canonical_id}) to repair. Repair transactions: `ripr_prepare_repair`, `ripr_get_repair_attempt` (ripr://repair-attempt/{attempt_id}), `ripr_get_receipt_status` (ripr://receipt/{receipt_id}), `ripr_list_repair_attempts`. RIPR is a static analyzer: would current tests notice wrong behavior in this diff? Gap evidence reads the changed code: a new test asserts what it does now. This read-only session never edits source, executes nothing, runs no tests or mutation, and launches no processes; it only names CLI routes. No document this server returns is a repair authorization: the client's approval and sandbox policy remain authoritative. By default, like `ripr check`, input is saved staged and unstaged tracked edits when any exist, else committed (`requested_source` and `captured_source` say which ran); `source: \"committed\"` or `source: \"worktree\"` forces one; unsaved buffers and untracked files remain outside. Refresh after edits. Worktree cards require established producer custody; otherwise withheld with the cause. Readiness depends on per-item gates. CLI: `ripr check --committed`, or `ripr check --worktree --format json` for staged and unstaged tracked edits only. Untracked files need staging/intent-to-add (`git add -N <paths>`) before `--worktree`, or explicit `--diff`.";
 
 const STATUS_TOOL_DESCRIPTION: &str = "Call this first. Reports repository-root discovery (ready or unavailable, with why), authority facts (source edit, verification, mutation and model provider are all none) and session state: attempt (no_snapshot, in_flight, completed, failed), last completed snapshot, last-known-good, freshness and config profile. `workspace_state: ready` means only that a root was found, not that analysis ran or found nothing. No gap evidence: call ripr_refresh to analyze. It never edits source, runs tests or mutation, or executes verification commands.";
 
@@ -1232,6 +1232,7 @@ fn get_top_limitation_tool_descriptor() -> Value {
 
 fn limitation_output_schema() -> Value {
     json!({
+        "type": "object",
         "oneOf": [
             {
                 "type": "object",
@@ -1376,6 +1377,7 @@ fn get_repair_card_tool_descriptor() -> Value {
 
 fn repair_card_output_schema() -> Value {
     json!({
+        "type": "object",
         "oneOf": [
             {
                 "type": "object",
@@ -1474,6 +1476,7 @@ fn status_output_schema() -> Value {
     // Like every other tool schema: the success document, or the typed
     // failure the bound path returns for an oversized status (#6291).
     json!({
+        "type": "object",
         "oneOf": [
             status_success_schema(),
             typed_failure_document_schema(SESSION_SCHEMA_VERSION)
@@ -1844,6 +1847,7 @@ pub(super) fn status_success_schema() -> Value {
 
 fn refresh_output_schema() -> Value {
     json!({
+        "type": "object",
         "oneOf": [
             {
                 "type": "object",
@@ -1908,6 +1912,7 @@ fn refresh_output_schema() -> Value {
 
 fn gap_list_output_schema() -> Value {
     json!({
+        "type": "object",
         "oneOf": [
             {
                 "type": "object",
@@ -2079,6 +2084,7 @@ fn gap_list_output_schema() -> Value {
 
 fn gap_output_schema() -> Value {
     json!({
+        "type": "object",
         "oneOf": [
             {
                 "type": "object",
@@ -2108,6 +2114,7 @@ fn gap_output_schema() -> Value {
 
 fn repair_packet_output_schema() -> Value {
     json!({
+        "type": "object",
         "oneOf": [
             {
                 "type": "object",
@@ -2122,6 +2129,7 @@ fn repair_packet_output_schema() -> Value {
                     "recovery": { "type": "string" },
                     "item": { "type": "object" },
                     "attempt": { "type": ["object", "null"] },
+                    "existing_attempt": { "type": "object" },
                     "changed_behavior": { "type": ["object", "null"] },
                     "discriminator": { "type": ["string", "null"] },
                     "fix_site": { "type": ["object", "null"] },
@@ -2163,6 +2171,7 @@ fn repair_packet_output_schema() -> Value {
 
 fn repair_attempt_output_schema() -> Value {
     json!({
+        "type": "object",
         "oneOf": [
             {
                 "type": "object",
@@ -2207,6 +2216,7 @@ fn repair_attempt_output_schema() -> Value {
 
 fn receipt_status_output_schema() -> Value {
     json!({
+        "type": "object",
         "oneOf": [
             {
                 "type": "object",
@@ -2232,6 +2242,21 @@ fn receipt_status_output_schema() -> Value {
                     "attempt": { "type": "object" },
                     "receipt": { "type": ["object", "null"] },
                     "currentness": { "type": "object" },
+                    "test_run": {
+                        "type": "object",
+                        "description": "Finished attempt whose receipt records no ripr-run test: the `test_run` of `ripr agent status --attempt <id> --json`. ripr ran nothing; never changes `status`.",
+                        "properties": {
+                            "status": { "type": "string", "enum": ["not_recorded", "caller_reported"] },
+                            "test_changed": { "type": ["string", "null"] },
+                            "next_step": { "type": "string" },
+                            "file": { "type": "string" },
+                            "ran": { "type": "integer", "minimum": 0 },
+                            "passed": { "type": "integer", "minimum": 0 },
+                            "failed": { "type": "integer", "minimum": 0 },
+                            "edited_test": { "type": "string", "enum": ["covered", "not_covered", "unknown"] }
+                        },
+                        "required": ["status", "test_changed", "next_step"]
+                    },
                     "limitations": { "type": "array", "items": { "type": "string" } },
                     "non_claims": { "type": "array", "items": { "type": "string" } },
                     "links": { "type": "object" },
@@ -3290,8 +3315,12 @@ mod tests {
         // Intentional metadata changes need to reconcile this byte count as
         // well as the ceilings. #14461: the instructions state each
         // route once and safety boundaries the annotations and instructions
-        // already carry are not repeated per read tool.
-        assert_eq!(total, 10773);
+        // already carry are not repeated per read tool. #15983: the refresh
+        // tool's description grew by 100 bytes. #15361: the instructions say
+        // gap evidence reads the changed code (+74; the sentence first said
+        // "not the pre-change value", which ruled out a value the change had
+        // left alone). The two deltas add.
+        assert_eq!(total, 10847);
         Ok(())
     }
 
@@ -3967,7 +3996,18 @@ mod tests {
         // status answer (+100 bytes on that tool): full 42,466, so only
         // the opt-in full budget moves, from 42,300 to 42,600. The slim
         // default every session pays is unchanged.
-        for (mode, budget) in [(ToolsListMode::Slim, 12_300), (ToolsListMode::Full, 42_600)] {
+        // #16251 budget decision: the full listing declares the optional
+        // `test_run` object on receipt status with every field the shared
+        // CLI reading emits, so a validating host can type the counts.
+        // Measured full 43,051 (slim 12,140, unchanged by this change), so
+        // only the opt-in full budget moves, from 42,600 to 43,200.
+        // #11475 budget decision: rmcp 3.12.0 (upstream #1340) strips tool
+        // `outputSchema` for legacy peers unless the root schema explicitly
+        // carries `"type": "object"`. Declaring `"type": "object"` alongside
+        // `"oneOf"` on all ten object-valued tool schemas adds 160 bytes to
+        // the opt-in full listing (measured 43,211; slim 12,140 unchanged),
+        // so only the opt-in full budget moves, from 43,200 to 43,400.
+        for (mode, budget) in [(ToolsListMode::Slim, 12_300), (ToolsListMode::Full, 43_400)] {
             let payload = tools_list_result_for(mode);
             let bytes = serde_json::to_vec(&payload)
                 .map_err(|error| format!("measure tools/list payload: {error}"))?

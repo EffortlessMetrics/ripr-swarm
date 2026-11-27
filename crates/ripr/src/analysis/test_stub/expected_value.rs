@@ -221,6 +221,26 @@ pub(super) fn expected_value(
     Some(ExpectedHint { changed, neighbor })
 }
 
+/// A path condition's value for `inputs` (`(binding, value text)`), when
+/// the evaluator decides it: comparisons of written parameters and literals
+/// combined with `&&`, `||`, `!` and parentheses.
+pub(super) fn condition_value(
+    file: &SourceFile,
+    condition: &ast::Expr,
+    inputs: &[(String, String)],
+) -> Option<bool> {
+    let context = Context {
+        file,
+        inputs: inputs
+            .iter()
+            .map(|(name, text)| (name.clone(), text.clone(), input_value(text, file)))
+            .collect(),
+        allow_paths: false,
+        flip: None,
+    };
+    context.condition(condition)
+}
+
 fn operator(ordering: ast::Ordering, strict: bool) -> &'static str {
     match (ordering, strict) {
         (ast::Ordering::Less, true) => "<",

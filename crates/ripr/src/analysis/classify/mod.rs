@@ -114,7 +114,8 @@ pub(in crate::analysis) use builder_override::{
 pub(in crate::analysis) use call_identity::{
     CallIdentityMemos, CallTarget, OwnerCallIdentity, bare_owner_call_settles_on_owner,
     bound_free_owner_calls, qualified_owner_calls_resolve, shared_owner_call_identity,
-    test_call_settles_on_owner, test_calls_only_a_local_value_item,
+    test_call_settles_on_owner, test_calls_only_a_local_binding,
+    test_calls_only_a_local_value_item, test_calls_only_a_renamed_other_function,
     test_calls_only_through_local_rival_module, text_calls_owner,
 };
 pub(in crate::analysis) use caller_loop_selector::withhold_caller_loop_selector_gap;
@@ -126,8 +127,9 @@ pub(in crate::analysis) use const_flow::{
 pub(in crate::analysis) use const_readers::{const_reader_returns, same_file_const_readers};
 pub(in crate::analysis) use context::ProbeContext;
 pub(in crate::analysis) use decision::{
-    WRAPPER_ERROR_BINDING_NEXT_STEP, classify, confidence_score, ensure_unknown_stop_reason,
-    exact_oracle_gap_next_step, missing_evidence, recommended_next_step,
+    WRAPPER_ERROR_BINDING_NEXT_STEP, bool_owner_exact_result_next_step,
+    carry_enclosing_unsafe_obligation, classify, confidence_score, ensure_unknown_stop_reason,
+    exact_oracle_gap_next_step, is_unsafe_obligation, missing_evidence, recommended_next_step,
     recommended_next_step_with_boundary, stop_reasons,
 };
 pub(in crate::analysis) use diff_touched::DiffTouchedTests;
@@ -201,9 +203,9 @@ pub(in crate::analysis) use owner_pin::{
     AssertionRefusal, OwnerPinSyntax, OwnerReturnPin, WithheldMacroBindings,
     claims_payload_eq_candidates, direct_call_name, equality_condition_operands,
     expected_operand_value, function_declaration_is_async, helper_pins_owner_call,
-    matches_owner_ok, owner_builds_declared_error_variant, pin_scope_needs,
-    returned_closure_pin_required, targeted_free_call_reaches_owner, targeted_name_is_alias,
-    targeted_type_name_is_unresolved, trait_impl_self_type_names,
+    literal_matches_assertion_operands, matches_owner_ok, owner_builds_declared_error_variant,
+    pin_scope_needs, returned_closure_pin_required, targeted_free_call_reaches_owner,
+    targeted_name_is_alias, targeted_type_name_is_unresolved, trait_impl_self_type_names,
 };
 pub(in crate::analysis) use owner_pin::{
     FallibleCheckReceipt, derived_fields_compare_by_value, fallible_check_receipt,

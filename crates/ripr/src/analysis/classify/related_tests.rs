@@ -37,11 +37,14 @@ mod drop_dispatch;
 mod equality_dispatch;
 mod generic_sibling;
 mod implicit_dispatch;
+mod into_dispatch;
 mod iterator_dispatch;
 mod operator_dispatch;
 mod parse_dispatch;
 mod path_arg;
 mod std_receiver;
+mod std_trait_rival;
+mod trait_receiver;
 pub(in crate::analysis::classify) use operator_dispatch::stringified_ranges;
 
 pub(in crate::analysis) use equality_dispatch::is_partial_eq_method;
@@ -573,7 +576,7 @@ impl RelatedTestCandidateIndex {
         if owner_fn.is_some_and(equality_dispatch::has_partial_eq_shape) {
             extend_bucket(&mut selected, Some(self.by_equality_assert.as_slice()));
         }
-        // Operator, loop, scope-end and `str::parse` syntax has no token worth
+        // Operator, loop, scope-end, `str::parse` and `.into()` syntax has no token worth
         // indexing; same-file tests of such an impl are scanned in full.
         if owner_fn.is_some_and(implicit_dispatch::has_implicit_shape) {
             scan_all = true;
@@ -1912,6 +1915,7 @@ fn find_related_tests_with_candidates<'a>(
                 test_source,
                 index,
                 dispatches_to_fmt,
+                workspace_complete,
             );
             // A name-only call (an unrelated same-named method) never hides
             // the formatting reach of a helper-entry `fmt` (#8999).
@@ -8194,6 +8198,7 @@ pub(in crate::analysis) fn inherent_owner_call_resolves(
                 .map(|facts| facts.data().source.as_ref()),
             index,
             false,
+            false,
         ) == RelationReason::DirectOwnerCall
 }
 
@@ -8259,7 +8264,9 @@ pub(in crate::analysis::classify) fn assertion_inherent_owner_calls_resolve(
 /// resolved receiver, no test-module type or trait shadow, no rename). The
 /// caller must already be known to call `owner` by name; this only refuses.
 /// Same-name workspace functions are read from a full scan, so ambiguity
-/// refuses exactly as it does for the check-side relation.
+/// refuses exactly as it does for the check-side relation. The index is read
+/// as complete: this only refuses after the check-side relation, which
+/// applied the index-completeness gate, already related the caller.
 pub(in crate::analysis) fn owner_call_is_direct(
     caller: &TestSummary,
     owner: &FunctionSummary,
@@ -8282,6 +8289,7 @@ pub(in crate::analysis) fn owner_call_is_direct(
             .map(|facts| facts.data().source.as_ref()),
         index,
         false,
+        true,
     ) == RelationReason::DirectOwnerCall
 }
 
@@ -8308,6 +8316,7 @@ pub(in crate::analysis) fn inherent_owner_call_resolves_if_macros_trusted(
             index,
             false,
             trust,
+            false,
         )
     };
     requires_inherent_receiver_identity(owner)
@@ -8344,6 +8353,7 @@ pub(in crate::analysis) fn inherent_owner_call_resolves_inside_unreadable_macro(
             index,
             false,
             trust,
+            false,
         )
     };
     requires_inherent_receiver_identity(owner)
@@ -8382,6 +8392,7 @@ pub(in crate::analysis) fn inherent_owner_call_resolves_in_forwarded_body(
             .get(&caller.file)
             .map(|facts| facts.data().source.as_ref()),
         index,
+        false,
         false,
         false,
     ) == RelationReason::DirectOwnerCall
@@ -8691,6 +8702,10 @@ fn trait_declaration_owner_shadowed(
     }) || super::owner_pin::parent_chain_shadows_trait(test, trait_name, owner_scope, index)
 }
 
+#[allow(
+    clippy::too_many_arguments,
+    reason = "the relation reason carries the index-completeness input beside the existing ones without a parameter struct"
+)]
 fn owner_call_relation_reason(
     test: &TestSummary,
     owner_fn: Option<&FunctionSummary>,
@@ -8699,6 +8714,7 @@ fn owner_call_relation_reason(
     test_source: Option<&str>,
     index: &RustIndex,
     fmt_dispatch_resolved: bool,
+    workspace_complete: bool,
 ) -> RelationReason {
     owner_call_relation_reason_gated(
         test,
@@ -8709,12 +8725,13 @@ fn owner_call_relation_reason(
         index,
         fmt_dispatch_resolved,
         false,
+        workspace_complete,
     )
 }
 
 #[allow(
     clippy::too_many_arguments,
-    reason = "the gated form adds one input to the existing relation reason without a parameter struct"
+    reason = "the gated form adds two inputs to the existing relation reason without a parameter struct"
 )]
 fn owner_call_relation_reason_gated(
     test: &TestSummary,
@@ -8725,6 +8742,7 @@ fn owner_call_relation_reason_gated(
     index: &RustIndex,
     fmt_dispatch_resolved: bool,
     trust_unplaced_standard_root: bool,
+    workspace_complete: bool,
 ) -> RelationReason {
     let indexed_same_name_count = same_name_ids.len();
     let Some(owner) = owner_fn else {
@@ -8797,6 +8815,12 @@ fn owner_call_relation_reason_gated(
         if super::call_identity::test_calls_only_a_renamed_other_function(index, owner, test) {
             return RelationReason::WeakTokenSubstring;
         }
+        // #14552: a test whose every mention of the name is bound by a
+        // local of its body (`let dt = |x| x + 1;`, a nested `fn dt`) calls
+        // that local, not the owner.
+        if super::call_identity::test_calls_only_a_local_binding(index, owner, test) {
+            return RelationReason::WeakTokenSubstring;
+        }
         // RIPR-SPEC-0005: a free function whose name another module also
         // defines is not reached when the test's own `use` binds the bare
         // name to that other module's twin.
@@ -8866,6 +8890,13 @@ fn owner_call_relation_reason_gated(
             RelationReason::WeakTokenSubstring
         };
     }
+    // #16040: a standard trait's method of the name is indexed nowhere, so
+    // the unique-name credit below cannot see it take the call first.
+    if !fmt_dispatch_resolved
+        && std_trait_rival::a_standard_trait_method_may_take_the_call(test, owner, owner_name)
+    {
+        return RelationReason::WeakTokenSubstring;
+    }
     // The formatting dispatch already bound the value to this impl's type
     // and trait, and refused a second `fmt` for the same pair.
     if indexed_same_name_count <= 1 || fmt_dispatch_resolved {
@@ -8882,6 +8913,24 @@ fn owner_call_relation_reason_gated(
             && impl_trait_name(&owner.id.0).is_some_and(|impl_trait| {
                 fully_qualified_call_names_impl(test, owner_name, &impl_type, &impl_trait)
             }))
+        // A changed-files index can omit the module that declares a rival
+        // method of the name, so the typed trait receiver reading needs the
+        // whole workspace indexed.
+        || (workspace_complete
+            && trait_receiver::typed_receiver_runs_trait_impl(
+                test,
+                owner,
+                &impl_type,
+                index,
+                trust_unplaced_standard_root,
+            ))
+        // #15277: `let s: Box<dyn Trait> = Box::new(Square(3)); s.area()`
+        // runs `Square`'s `Trait` impl.
+        || impl_trait.as_deref().is_some_and(|trait_name| {
+            super::owner_pin::dyn_box::boxed_receiver_calls_impl(
+                test, owner_name, &impl_type, trait_name, index,
+            )
+        })
     {
         RelationReason::DirectOwnerCall
     } else {
@@ -10319,6 +10368,7 @@ mod second {\n    use super::*;\n    #[test]\n    fn dup() {\n        let _ = sc
                 module_qualified: false,
                 crate_qualifier: None,
                 transparent_macros_rebound: false,
+                verified_macro_roots: Vec::new(),
                 diverging_handlers: Vec::new(),
             }],
             stop_above: None,
@@ -10434,6 +10484,7 @@ mod second {\n    use super::*;\n    #[test]\n    fn dup() {\n        let _ = sc
                 module_qualified: false,
                 crate_qualifier: None,
                 transparent_macros_rebound: false,
+                verified_macro_roots: Vec::new(),
                 diverging_handlers: Vec::new(),
             }],
             stop_above: None,
@@ -10493,6 +10544,7 @@ mod second {\n    use super::*;\n    #[test]\n    fn dup() {\n        let _ = sc
                 module_qualified: false,
                 crate_qualifier: None,
                 transparent_macros_rebound: false,
+                verified_macro_roots: Vec::new(),
                 diverging_handlers: Vec::new(),
             }],
             stop_above: None,
@@ -16733,6 +16785,7 @@ fn crate_c_score_test() {
                 module_qualified: false,
                 crate_qualifier: None,
                 transparent_macros_rebound: false,
+                verified_macro_roots: Vec::new(),
                 diverging_handlers: Vec::new(),
             }],
             stop_above: None,
@@ -16848,6 +16901,7 @@ fn crate_c_score_test() {
                 module_qualified: false,
                 crate_qualifier: None,
                 transparent_macros_rebound: false,
+                verified_macro_roots: Vec::new(),
                 diverging_handlers: Vec::new(),
             }],
             stop_above: None,
@@ -16934,6 +16988,7 @@ fn crate_c_score_test() {
                 module_qualified: false,
                 crate_qualifier: None,
                 transparent_macros_rebound: false,
+                verified_macro_roots: Vec::new(),
                 diverging_handlers: Vec::new(),
             }],
             stop_above: None,

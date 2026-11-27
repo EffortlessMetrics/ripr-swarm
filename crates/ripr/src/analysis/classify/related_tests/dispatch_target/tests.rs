@@ -193,6 +193,142 @@ fn a_twin_with_another_receiver_kind_keeps_the_relation() -> Result<(), String> 
     Ok(())
 }
 
+/// `Square` implements `Shape::area(&self)` and has an inherent `area(self)`.
+fn by_value_twin() -> String {
+    SHAPE.replace("pub fn area(&self)", "pub fn area(self)")
+}
+
+/// #15428: an owned `Square` receiver starts method probing at the by-value
+/// step, which finds the inherent `area(self)` before the `&` step reaches
+/// the trait impl.
+#[test]
+fn an_owned_receiver_runs_an_inherent_by_value_twin_first() -> Result<(), String> {
+    let production = by_value_twin();
+    for body in [
+        "assert_eq!(Square(3).area(), 9);",
+        "let s = Square(3); assert_eq!(s.area(), 9);",
+        "let mut s = Square(3); s.0 = 4; assert_eq!(s.area(), 9);",
+        "assert_eq!(Square::area(Square(3)), 9);",
+        "assert_eq!(Square(3).area(), 9); let s = Square(4); assert_eq!(s.area(), 9);",
+        "assert_eq!((Square(3)).area(), 9);",
+        "assert_eq!(( Square(3) ).area(), 9);",
+    ] {
+        assert!(!direct(&production, TRAIT_AREA, body)?, "{body}");
+    }
+    Ok(())
+}
+
+/// A borrowed receiver starts probing at `&Square`, where the trait's
+/// `&self` method is a by-value match and comes before the inherent
+/// `area(self)`. A borrow inside grouping parentheses, a parenthesised
+/// tuple, and a test where one call of several may run the trait impl keep
+/// the relation too.
+#[test]
+fn a_receiver_not_established_as_owned_keeps_the_relation() -> Result<(), String> {
+    let production = by_value_twin();
+    for body in [
+        "assert_eq!((&Square(3)).area(), 9);",
+        "let s = &Square(3); assert_eq!(s.area(), 9);",
+        "let s: &Square = &Square(3); assert_eq!(s.area(), 9);",
+        "assert_eq!((&Square(3)).area(), 9); assert_eq!((&(Square(3))).area(), 9);",
+        "assert_eq!(Square(3).area(), 9); let s = &Square(4); assert_eq!(s.area(), 9);",
+    ] {
+        assert!(direct(&production, TRAIT_AREA, body)?, "{body}");
+    }
+    Ok(())
+}
+
+/// A constructor call is read as an owned receiver only when the type's
+/// indexed constructor returns `Self` by value. `fn new() -> &'static Square`
+/// hands the call a borrowed `Square`, which reaches the trait's `&self`
+/// method first, so the relation stays; the same calls of a `new` returning
+/// `Self` run the inherent by-value twin.
+#[test]
+fn a_constructor_is_owned_only_when_it_returns_self() -> Result<(), String> {
+    let borrowed = by_value_twin().replace(
+        "impl Square {",
+        "impl Square {\n    pub fn new() -> &'static Square { &Square(4) }",
+    );
+    let owned = by_value_twin().replace(
+        "impl Square {",
+        "impl Square {\n    pub fn new() -> Self { Square(4) }",
+    );
+    for body in [
+        "let s = Square::new(); assert_eq!(s.area(), 16);",
+        "assert_eq!(Square::new().area(), 16);",
+    ] {
+        assert!(direct(&borrowed, TRAIT_AREA, body)?, "borrowed: {body}");
+        assert!(!direct(&owned, TRAIT_AREA, body)?, "owned: {body}");
+    }
+    assert!(!direct(
+        &borrowed,
+        TRAIT_AREA,
+        "let s: Square = Square(4); assert_eq!(s.area(), 16);"
+    )?);
+    // A qualified borrowed return names the type and is still a borrow, and
+    // an inherent `default` or `from` is read by its own declared return.
+    let bodies = |constructor: &str| {
+        [
+            format!("let s = Square::{constructor}; assert_eq!(s.area(), 16);"),
+            format!("assert_eq!(Square::{constructor}.area(), 16);"),
+        ]
+    };
+    for (written, call) in [
+        (
+            "pub fn new() -> &'static crate::Square { &Square(4) }",
+            "new()",
+        ),
+        (
+            "pub fn default() -> &'static Square { &Square(4) }",
+            "default()",
+        ),
+        (
+            "pub fn from(_: u32) -> &'static Square { &Square(4) }",
+            "from(4)",
+        ),
+    ] {
+        let production =
+            by_value_twin().replace("impl Square {", &format!("impl Square {{\n    {written}"));
+        for body in bodies(call) {
+            assert!(direct(&production, TRAIT_AREA, &body)?, "{written}: {body}");
+        }
+    }
+    let derived = format!(
+        "{}impl Default for Square {{\n    fn default() -> Self {{ Square(4) }}\n}}\n\
+         impl From<u32> for Square {{\n    fn from(side: u32) -> Self {{ Square(side) }}\n}}\n",
+        by_value_twin()
+    );
+    for call in ["default()", "from(4)"] {
+        for body in bodies(call) {
+            assert!(!direct(&derived, TRAIT_AREA, &body)?, "trait impl: {body}");
+        }
+    }
+    Ok(())
+}
+
+/// The by-value rule orders every pair of kinds: an inherent `&self` comes
+/// before a trait `&mut self` for an owned receiver, and no inherent kind
+/// comes before a by-value trait method.
+#[test]
+fn an_earlier_twin_step_is_read_for_each_receiver_kind() -> Result<(), String> {
+    let exclusive_trait = SHAPE
+        .replace("fn area(&self) -> u32;", "fn area(&mut self) -> u32;")
+        .replace(
+            "fn area(&self) -> u32 { self.0 * self.0 }",
+            "fn area(&mut self) -> u32 { self.0 * self.0 }",
+        );
+    let owned = "let mut s = Square(3); assert_eq!(s.area(), 9);";
+    assert!(!direct(&exclusive_trait, TRAIT_AREA, owned)?);
+    let exclusive_both = exclusive_trait.replace("pub fn area(&self)", "pub fn area(self)");
+    assert!(!direct(&exclusive_both, TRAIT_AREA, owned)?);
+    assert!(direct(
+        &exclusive_both,
+        TRAIT_AREA,
+        "let s = &mut Square(3); assert_eq!(s.area(), 9);"
+    )?);
+    Ok(())
+}
+
 /// An override the test build may not compile, a namesake `Fast` in another
 /// module, or an override of one instantiation of a generic trait does not
 /// establish that `Fast.advance()` skips the default.
@@ -289,5 +425,32 @@ fn an_enclosing_gate_or_private_twin_keeps_the_relation() -> Result<(), String> 
             "{production}"
         );
     }
+    Ok(())
+}
+
+/// The earlier-step refusal takes only a twin every module can call: a
+/// restricted `pub(crate)` by-value twin may be invisible where the test
+/// calls, so the relation stays, while the plain `pub` twin refuses it.
+#[test]
+fn a_restricted_earlier_step_twin_keeps_the_relation() -> Result<(), String> {
+    let body = "assert_eq!(Square(3).area(), 9);";
+    let restricted = by_value_twin().replace("pub fn area(self)", "pub(crate) fn area(self)");
+    assert!(direct(&restricted, TRAIT_AREA, body)?);
+    assert!(!direct(&by_value_twin(), TRAIT_AREA, body)?);
+    Ok(())
+}
+
+/// With no indexed `default` on the type, `Square::default()` is read as the
+/// standard trait's owned `Self` only when no workspace trait provides an
+/// associated function of that name, which could return a borrow.
+#[test]
+fn a_workspace_trait_providing_the_constructor_keeps_the_relation() -> Result<(), String> {
+    let body = "assert_eq!(Square::default().area(), 9);";
+    let provided = format!(
+        "{}pub trait Make {{\n    fn default() -> &'static Square {{ &Square(3) }}\n}}\nimpl Make for Square {{}}\n",
+        by_value_twin()
+    );
+    assert!(direct(&provided, TRAIT_AREA, body)?);
+    assert!(!direct(&by_value_twin(), TRAIT_AREA, body)?);
     Ok(())
 }

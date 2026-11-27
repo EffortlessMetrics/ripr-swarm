@@ -519,6 +519,7 @@ pub(in crate::cli) fn pilot(args: &[String]) -> Result<(), String> {
     )
     .with_rust_exclusion(rust_excluded)
     .with_declined_rust_files(declined_rust_files.clone());
+    let language_routes = withhold_check_routes_without_work_tree(language_routes, &input.root);
     timings.record("language_scan", scan_started, None);
     let context = output::pilot::PilotSummaryContext {
         root: &input.root,
@@ -986,6 +987,28 @@ fn load_pilot_current_change(
         .with_working_tree(from_working_tree)
 }
 
+/// `ripr check` refuses a root that is not a Git work tree (and a bare
+/// repository, or any root when Git is missing), so pilot must not print it as the follow-up there (#15297).
+/// Probed only when a route would otherwise print a check command.
+fn withhold_check_routes_without_work_tree(
+    routes: output::pilot::PilotLanguageRoutes,
+    root: &std::path::Path,
+) -> output::pilot::PilotLanguageRoutes {
+    use output::doctor::WorkTreeProbe;
+    use output::pilot::CheckBlocker;
+    if !routes.routes.iter().any(|route| route.command.is_some()) {
+        return routes;
+    }
+    match output::doctor::work_tree_probe(root) {
+        Some(WorkTreeProbe::Outside) => routes.with_check_blocker(root, CheckBlocker::NotWorkTree),
+        Some(WorkTreeProbe::Bare) => routes.with_check_blocker(root, CheckBlocker::BareRepository),
+        Some(WorkTreeProbe::GitMissing) => {
+            routes.with_check_blocker(root, CheckBlocker::GitMissing)
+        }
+        _ => routes,
+    }
+}
+
 /// A few fixed words for why the current change could not be loaded, shown
 /// in pilot's scope line. Fixed phrases keep pilot artifacts deterministic;
 /// the loader's full message (paths, git stderr) belongs to `ripr check`.
@@ -1128,14 +1151,28 @@ const DEFAULT_PILOT_OUT_DIR: &str = "target/ripr/pilot";
 /// #9922: a root with no `Cargo.toml` and no source file in any language ripr
 /// reads is not a workspace; `ripr pilot` there used to print "RIPR pilot
 /// complete" with no recommendation and write `target/ripr/` into the folder.
-/// Returns the refusal message, or `None` when the root has something to inspect.
+/// Returns the refusal message, or `None` when the root has something to
+/// inspect. #15297: a bare repository never holds source, because it has no
+/// work tree, so its refusal names the repository and the route to a work
+/// tree rather than another `--root`.
 fn pilot_root_without_workspace(root: &Path) -> Option<String> {
-    analysis::root_has_no_inspectable_workspace(root).then(|| {
-        format!(
-            "pilot root {} has no Cargo.toml and no source files to inspect; pass --root <dir> for the directory that contains your workspace (nothing was written)",
-            root.display()
-        )
-    })
+    if !analysis::root_has_no_inspectable_workspace(root) {
+        return None;
+    }
+    if matches!(
+        output::doctor::work_tree_probe(root),
+        Some(output::doctor::WorkTreeProbe::Bare)
+    ) {
+        return Some(format!(
+            "pilot root {} is a bare Git repository with no work tree, so there is no source to inspect and nothing was written. {}, then run `ripr pilot --root <path>`",
+            root.display(),
+            crate::work_tree_route::bare_root_work_tree_route_or_plain(root)
+        ));
+    }
+    Some(format!(
+        "pilot root {} has no Cargo.toml and no source files to inspect; pass --root <dir> for the directory that contains your workspace (nothing was written)",
+        root.display()
+    ))
 }
 
 /// The default packet directory sits under `--root`, where the cache already
@@ -1518,6 +1555,38 @@ mod tests {
             );
         }
         let _ = std::fs::remove_dir_all(&base);
+        Ok(())
+    }
+
+    /// #15297: a real bare repository holds no source file, because it has no
+    /// work tree. Pilot refuses it as bare, with the route to a work tree the
+    /// way doctor and init do, instead of asking for another `--root`.
+    #[test]
+    fn pilot_refuses_a_bare_repository_without_source_as_bare() -> Result<(), String> {
+        let bare = crate::cli::commands::tests::unique_command_test_dir("pilot-bare-no-source");
+        std::fs::create_dir_all(&bare).map_err(|error| error.to_string())?;
+        crate::git::run_git_output_with_deadline(
+            &bare,
+            &["init", "--bare", "-q", "."],
+            Some(std::time::Duration::from_secs(30)),
+        )
+        .map_err(|error| format!("git init --bare: {error}"))?;
+        let message = pilot_root_without_workspace(&bare)
+            .ok_or_else(|| "a bare repository must be refused".to_string())?;
+        assert!(message.contains("bare Git repository"), "{message}");
+        assert!(message.contains("nothing was written"), "{message}");
+        // An empty bare repository has nothing to check out: its route is a clone.
+        assert!(message.contains("has no commits yet"), "{message}");
+        assert!(message.contains("git clone"), "{message}");
+        assert!(!message.contains("worktree add"), "{message}");
+        assert!(message.contains("ripr pilot --root <path>"), "{message}");
+        assert!(!message.contains("pass --root <dir>"), "{message}");
+
+        let refused = pilot(&args(&["--root", &bare.to_string_lossy()]))
+            .err()
+            .unwrap_or_default();
+        assert!(refused.contains("bare Git repository"), "{refused}");
+        assert!(!bare.join("target").exists(), "refusal must write nothing");
         Ok(())
     }
 

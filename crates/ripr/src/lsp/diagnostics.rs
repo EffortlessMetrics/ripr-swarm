@@ -1068,6 +1068,10 @@ pub(super) fn delivery_omission_diagnostic(
     }
 }
 
+/// The recovery for a document outside the selected workspace root: saving
+/// or refreshing analyzes only that root, so neither can lift the pause.
+pub(super) const OUTSIDE_ANALYZED_ROOT_ROUTE: &str = "ripr analyzes one workspace root per server, so saving or refreshing cannot fix this; open this file's repository in its own editor window or session to analyze it.";
+
 /// One visible summary of a dirty-buffer withdrawal (#7771). This is a
 /// delivery limitation, never a source finding or action. Retracted when
 /// quarantine lifts because the restored publish re-serves the saved-state
@@ -1092,6 +1096,10 @@ pub(super) fn quarantine_withdrawal_diagnostic(reason: DocumentStalenessReason) 
         DocumentStalenessReason::SavedContentNotYetAnalyzed => (
             "await_analysis_or_refresh",
             "They return when ripr analyzes the saved file; run `ripr.refresh` if they do not.",
+        ),
+        DocumentStalenessReason::OutsideAnalyzedRoot => (
+            "open_repository_in_own_session",
+            OUTSIDE_ANALYZED_ROOT_ROUTE,
         ),
     };
     Diagnostic {
@@ -1853,12 +1861,19 @@ pub(super) fn workspace_diagnostics_with_config_and_open_rust_paths_and_progress
             // so the card projection fails closed (`None`) instead of binding
             // against an incomplete candidate set.
             Ok((seams, limit_info)) => {
-                let repair_card_candidate_seams = limit_info.is_none().then(|| seams.clone());
-                (
-                    seams,
-                    repair_card_candidate_seams,
-                    ComponentOutcome::complete(AnalysisComponent::SeamInventory),
-                )
+                let truncated = limit_info.filter(|limit| limit.is_truncated());
+                let repair_card_candidate_seams = truncated.is_none().then(|| seams.clone());
+                let outcome = match truncated {
+                    Some(limit) => ComponentOutcome::limited(
+                        AnalysisComponent::SeamInventory,
+                        "seam_inventory_truncated",
+                        format!("analyzed {} of {} spots", limit.analyzed, limit.total),
+                        true,
+                        crate::app::task_first::WIDEN_SEAM_BUDGET,
+                    ),
+                    None => ComponentOutcome::complete(AnalysisComponent::SeamInventory),
+                };
+                (seams, repair_card_candidate_seams, outcome)
             }
             Err(err) => (
                 Vec::new(),

@@ -1,0 +1,5 @@
+crates/ripr/src/app/check_artifact.rs|asserted --diff {} cannot be resolved: {err}
+crates/ripr/src/app/check_artifact.rs|check artifact at {} cannot be reused: {err}
+crates/ripr/src/app/check_artifact.rs|failed to canonicalize diff file {}: {err}
+crates/ripr/src/app/check_artifact.rs|recorded Perl facts packet {} no longer exists or is unreadable: {err}
+crates/ripr/src/app/check_artifact.rs|recorded diff file {path} no longer exists or is unreadable: {err}

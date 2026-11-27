@@ -1,6 +1,8 @@
 //! A raised class swapped for an imported one is not an imported call to
 //! follow (#15356). The edit reads as a weak error-path gap naming the new
-//! class; no superclass or class-only context credits it as exposed.
+//! class. No superclass context credits it as exposed, and a class-only
+//! context naming the new class does only when the workspace shows that the
+//! changed raise is the one place that can raise it.
 
 use super::classify::{PythonNoBehaviorContext, classify_change_with_context};
 use super::owners_tests::{extract_owners, extract_tests};
@@ -39,6 +41,19 @@ fn classify_in(
     new: &str,
     workspace: &[&str],
 ) -> Result<Finding, String> {
+    classify_with(source, tests, old, new, workspace, false)
+}
+
+/// `sole_site` is the workspace fact the diff pipeline computes with
+/// `imported_raise_class_sole_site`.
+fn classify_with(
+    source: &str,
+    tests: &str,
+    old: Option<&str>,
+    new: &str,
+    workspace: &[&str],
+    sole_site: bool,
+) -> Result<Finding, String> {
     let file = Path::new("src/verlib/version.py");
     let mut owners = extract_owners(file, source);
     if !workspace.is_empty() {
@@ -65,6 +80,7 @@ fn classify_in(
             sole_line_replacement: true,
             module_import_unshadowed: true,
             pytest_import_unshadowed: true,
+            imported_raise_class_sole_site: sole_site,
             ..PythonNoBehaviorContext::default()
         },
         Some(source),
@@ -572,4 +588,201 @@ fn narrowing_a_local_subclass_to_its_base_is_credited_by_the_subclass_assertion(
         "foreign: {finding:?}"
     );
     Ok(())
+}
+
+// #15356: a class-only context naming the new imported class is exact when
+// the workspace scan found the changed raise to be the only place that can
+// raise it, because no input can then make the context pass before the edit.
+
+const ERRORS: &str = "class InvalidVersion(ValueError):\n    pass\n";
+
+fn sole_site(tests: &str) -> Result<Finding, String> {
+    classify_with(SOURCE, tests, Some(OLD), NEW, &[], true)
+}
+
+#[test]
+fn class_only_context_on_the_sole_raise_site_of_an_imported_class_is_exposed() -> Check {
+    let finding = sole_site(&tests_with("InvalidVersion"))?;
+    assert_eq!(finding.class, ExposureClass::Exposed, "{finding:?}");
+    assert_eq!(finding.static_limit_kind, None, "{finding:?}");
+    // Without the workspace fact the same test credits nothing.
+    assert_gap(&classify(
+        SOURCE,
+        &tests_with("InvalidVersion"),
+        Some(OLD),
+        NEW,
+    )?);
+    Ok(())
+}
+
+#[test]
+fn class_only_context_on_a_base_or_foreign_class_stays_a_gap() -> Check {
+    // The old class and `Exception` accept the old raise as well.
+    for expected in ["ValueError", "Exception", "(InvalidVersion, ValueError)"] {
+        assert_gap(&sole_site(&tests_with(expected))?);
+    }
+    // The same spelling bound from another module, by an alias, or beside a
+    // second binding is not the owner's class.
+    for import in [
+        "from other.errors import InvalidVersion",
+        "from verlib.errors import Other as InvalidVersion",
+        "from verlib.errors import InvalidVersion\nfrom other.errors import InvalidVersion",
+        "from verlib.errors import *",
+    ] {
+        let tests = tests_with("InvalidVersion")
+            .replace("from verlib.errors import InvalidVersion", import);
+        assert_gap(&sole_site(&tests)?);
+    }
+    // A rebinding in the test module, a second use of the name in the test, a
+    // context that does not call the owner directly, and a keyword on the
+    // context are not read.
+    for tests in [
+        tests_with("InvalidVersion").replace(
+            "\n\n\ndef test_rejects",
+            "\nInvalidVersion = ValueError\n\n\ndef test_rejects",
+        ),
+        tests_with("InvalidVersion").replace(
+            "    with pytest.raises",
+            "    InvalidVersion.__init__ = None\n    with pytest.raises",
+        ),
+        tests_with("InvalidVersion").replace("parse_release(\"1.x\")", "run(parse_release)"),
+        tests_with("InvalidVersion, check=bool"),
+    ] {
+        let finding = sole_site(&tests)?;
+        assert_ne!(
+            finding.class,
+            ExposureClass::Exposed,
+            "{tests}: {finding:?}"
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn class_only_credit_needs_the_changed_raise_to_be_the_owner_modules_only_use() -> Check {
+    let tests = tests_with("InvalidVersion");
+    // Another raise of the class in the owner module could satisfy the
+    // context before the edit.
+    let second = SOURCE.replace(
+        "    parts = text.strip()",
+        "    if not text:\n        raise InvalidVersion(\"empty\")\n    parts = text.strip()",
+    );
+    let finding = classify_with(&second, &tests, Some(OLD), NEW, &[], true)?;
+    assert_ne!(finding.class, ExposureClass::Exposed, "second: {finding:?}");
+    // So could a helper that raises it, or a module-level rebinding.
+    for extra in [
+        "\n\ndef fail():\n    raise InvalidVersion(\"x\")\n",
+        "\n\nInvalidVersion = ValueError\n",
+    ] {
+        let source = format!("{SOURCE}{extra}");
+        let finding = classify_with(&source, &tests, Some(OLD), NEW, &[], true)?;
+        assert_ne!(
+            finding.class,
+            ExposureClass::Exposed,
+            "{extra}: {finding:?}"
+        );
+    }
+    // A changed argument is a message edit as well; a decorated owner may
+    // translate the exception.
+    let finding = classify_with(
+        SOURCE,
+        &tests,
+        Some(r#"        raise ValueError(f"bad version: {text!r}")"#),
+        NEW,
+        &[],
+        true,
+    )?;
+    assert_ne!(
+        finding.class,
+        ExposureClass::Exposed,
+        "message: {finding:?}"
+    );
+    let decorated = SOURCE.replace("def parse_release", "@guarded\ndef parse_release");
+    let finding = classify_with(&decorated, &tests, Some(OLD), NEW, &[], true)?;
+    assert_ne!(
+        finding.class,
+        ExposureClass::Exposed,
+        "decorated: {finding:?}"
+    );
+    Ok(())
+}
+
+fn workspace_fact(files: &[(&str, &str)], admitted: bool) -> bool {
+    let sources = files
+        .iter()
+        .map(|(file, text)| (PathBuf::from(file), (*text).to_string()))
+        .collect::<std::collections::HashMap<_, _>>();
+    let owner_file = Path::new("src/verlib/version.py");
+    let owners = extract_owners(owner_file, SOURCE);
+    let Some(owner) = owners.iter().find(|owner| owner.name == "parse_release") else {
+        return false;
+    };
+    super::exception_variant::imported_raise_class_sole_site(
+        NEW,
+        owner_file,
+        &owner.imports,
+        &sources,
+        |_| admitted.then(super::module_value::ForeignWrites::default),
+    )
+}
+
+#[test]
+fn sole_site_fact_reads_one_plain_class_named_by_no_other_production_source() {
+    let version = ("src/verlib/version.py", SOURCE);
+    let errors = ("src/verlib/errors.py", ERRORS);
+    let test = (
+        "tests/test_version.py",
+        "from verlib.errors import InvalidVersion\n",
+    );
+    assert!(workspace_fact(&[version, errors, test], true));
+    // The defining module must hold the unshadowed-import fact.
+    assert!(!workspace_fact(&[version, errors, test], false));
+    // No source, or two sources, for the imported module.
+    assert!(!workspace_fact(&[version, test], true));
+    assert!(!workspace_fact(
+        &[version, errors, ("verlib/errors.py", ERRORS)],
+        true
+    ));
+    // Another production source or a conftest names the class.
+    for other in [
+        (
+            "src/verlib/cli.py",
+            "from verlib.errors import InvalidVersion\n",
+        ),
+        (
+            "tests/conftest.py",
+            "from verlib.errors import InvalidVersion\n",
+        ),
+    ] {
+        assert!(
+            !workspace_fact(&[version, errors, other], true),
+            "{other:?}"
+        );
+    }
+    // The class is not plain, not defined once, raised by its own module, or
+    // derives from a class the module cannot read.
+    for errors in [
+        "class InvalidVersion(ValueError):\n    def __init__(self, text):\n        super().__init__(text.upper())\n",
+        "class InvalidVersion(ValueError):\n    pass\n\n\nclass InvalidVersion(KeyError):\n    pass\n",
+        "class InvalidVersion(ValueError):\n    pass\n\n\ndef fail():\n    raise InvalidVersion(\"x\")\n",
+        "from base import Base\n\n\nclass InvalidVersion(Base):\n    pass\n",
+        "ValueError = KeyError\n\n\nclass InvalidVersion(ValueError):\n    pass\n",
+        "class InvalidVersion(ValueError, metaclass=Meta):\n    pass\n",
+        "InvalidVersion = ValueError\n",
+    ] {
+        assert!(
+            !workspace_fact(&[version, ("src/verlib/errors.py", errors), test], true),
+            "{errors}"
+        );
+    }
+    // A docstring body and a direct `Exception` base are plain.
+    for errors in [
+        "class InvalidVersion(ValueError):\n    \"\"\"A bad version.\"\"\"\n",
+        "class InvalidVersion(Exception):\n    pass\n",
+    ] {
+        assert!(
+            workspace_fact(&[version, ("src/verlib/errors.py", errors), test], true),
+            "{errors}"
+        );
+    }
 }

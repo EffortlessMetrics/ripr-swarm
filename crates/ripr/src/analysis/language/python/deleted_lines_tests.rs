@@ -163,6 +163,73 @@ fn assert_base_side_shape(findings: &[Finding], expression: &str) -> Result<(), 
 
 const CAPPED: &str = "CAP = 100\n\n\ndef capped_total(items):\n    total = sum(items)\n# keep the cap\n    return total\n";
 
+#[test]
+fn an_unpaired_match_alternative_line_requires_a_row_that_flips_arms() -> Result<(), String> {
+    let alternative = "            | 'y'";
+    let short = "def kind(val):\n    match val:\n        case (\n            'yes'\n        ):\n            return True\n        case _:\n            return False\n";
+    let long = short.replace("        ):", &format!("{alternative}\n        ):"));
+    for (value, class) in [
+        ("yes", ExposureClass::WeaklyExposed),
+        ("y", ExposureClass::Exposed),
+    ] {
+        for (source, added, removed, currentness) in [
+            (
+                short,
+                vec![],
+                vec![line(5, 5, alternative)],
+                SourceCurrentness::BaseDeleted,
+            ),
+            (
+                long.as_str(),
+                vec![5],
+                vec![],
+                SourceCurrentness::CandidateCurrent,
+            ),
+        ] {
+            let test = format!(
+                "from src.cart import kind\n\ndef test_kind():\n    assert kind('{value}') == True\n"
+            );
+            let findings = analyze_with_test("match-or-line", source, &test, &added, removed)?;
+            let [finding] = findings.as_slice() else {
+                return Err(format!("expected one match finding: {findings:?}"));
+            };
+            assert_eq!(finding.source_currentness, currentness);
+            assert_eq!(finding.class, class);
+            if class == ExposureClass::WeaklyExposed {
+                assert!(
+                    finding
+                        .activation
+                        .missing_discriminators
+                        .iter()
+                        .any(|m| m.value == "val == 'y'")
+                );
+            }
+        }
+    }
+    // The separator can stay on the previous line while one member is replaced.
+    let source = short.replace("'yes'", "'yes' |\n            't'");
+    let test = "from src.cart import kind\n\ndef test_kind():\n    assert kind('yes') == True\n";
+    let findings = analyze_with_test(
+        "match-or-replaced-member",
+        &source,
+        test,
+        &[5],
+        vec![line(5, 5, "            'y'")],
+    )?;
+    let [finding] = findings.as_slice() else {
+        return Err(format!("expected one replaced member: {findings:?}"));
+    };
+    assert_eq!(finding.class, ExposureClass::WeaklyExposed);
+    assert!(
+        finding
+            .activation
+            .missing_discriminators
+            .iter()
+            .any(|m| m.value == "val == 'y'")
+    );
+    Ok(())
+}
+
 /// The #7587 shape: the indented comment is re-added at column 0 and pairs
 /// with the old comment by content, so no added line pairs with the deleted
 /// clamp. It was silent; it is now base-side evidence on `capped_total`.
@@ -1718,9 +1785,36 @@ fn stamping_changed_related_rows_is_exact_and_skips_a_changed_first_row() -> Res
     stamp_related_tests_changed_in_diff(&mut none, &changed(&["tests/c.py"]));
     assert!(stamps(&none).is_empty(), "no related row changed");
 
-    let mut empty = base;
+    let mut empty = base.clone();
     stamp_related_tests_changed_in_diff(&mut empty, &BTreeSet::new());
     assert!(stamps(&empty).is_empty(), "no changed files");
+
+    // #14083 B5a: row 0 is in a changed file but cannot observe the change,
+    // so the headline anchor is the untouched observing row 1. The skip reads
+    // that anchor, not row 0, so changed observing row 2 is stamped and leads.
+    let mut blind_first = base;
+    blind_first.related_tests[0].miss = Some(crate::domain::RelatedTestMiss::NoCallPath);
+    assert_eq!(
+        blind_first.related_tests[1].observation_tier(),
+        blind_first.related_tests[2].observation_tier(),
+        "rows 1 and 2 share the anchor's tier"
+    );
+    assert!(
+        blind_first.related_tests[0].observation_tier()
+            < blind_first.related_tests[1].observation_tier(),
+        "row 0 ranks below the anchor"
+    );
+    stamp_related_tests_changed_in_diff(&mut blind_first, &changed(&["tests/a.py", "tests/bb.py"]));
+    assert_eq!(
+        stamps(&blind_first),
+        vec!["tests/a.py:1", "tests/bb.py:3"],
+        "a changed row 0 below the anchor does not suppress the marks"
+    );
+    assert_eq!(
+        crate::domain::python_headline_related_test(&blind_first).map(|row| row.file.clone()),
+        Some(PathBuf::from("tests/bb.py")),
+        "the changed row sharing the anchor's tier leads"
+    );
     Ok(())
 }
 

@@ -76,7 +76,10 @@ pub(crate) struct TypeScriptOwner {
     /// `module.exports = <function>` as the file's whole export, independent of
     /// the file-level gate that licenses `commonjs_default_export`: a named
     /// import or member of such a module (`const { f } = require(...)`,
-    /// `k.f`) is a property of the function, never the owner.
+    /// `k.f`) is a property of the function, never the owner. Also set on the
+    /// other top-level functions of a module whose whole export is one
+    /// identifier and that adds no named property (#16366): a named import
+    /// or member reads a property of that export, never the sibling.
     pub(crate) commonjs_whole_function: bool,
     /// `true` for a `ModuleFunction` owner whose declarator initializer is a
     /// call with a function-valued argument (`export const X =
@@ -140,6 +143,22 @@ pub(crate) enum TypeScriptMethodKind {
     Setter,
     /// `constructor(...)` — invoked by `new ClassName(...)`.
     Constructor,
+    /// A method, getter or setter that a later member of the same class with
+    /// the same key and placement replaces (#16261, RIPR-SPEC-0243 rule 26):
+    /// its body never runs, so it relates to no test.
+    Overwritten,
+    /// A method, getter or setter that a field of the same key and placement
+    /// shadows (#16306, RIPR-SPEC-0243 rule 28): calls on an instance (or the
+    /// class, for a static field) reach the field, so it relates to no test.
+    FieldShadowed,
+    /// An ordinary instance method that an unconditional `this.NAME = ...`
+    /// of its class constructor replaces (#16314, RIPR-SPEC-0243 rule 29):
+    /// calls reach the assigned value, so it relates to no test.
+    ReplacedInConstructor,
+    /// An ordinary method that a top-level `Class.prototype.NAME = ...` or
+    /// `Class.NAME = ...` of the same file replaces (#16314, RIPR-SPEC-0243
+    /// rule 29): calls reach the assigned value, so it relates to no test.
+    ReplacedByAssignment,
 }
 
 impl TypeScriptOwner {

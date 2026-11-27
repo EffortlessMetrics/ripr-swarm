@@ -97,6 +97,9 @@ mod init_ci_guidance;
 #[cfg(feature = "lang-rust")]
 #[path = "cli_smoke/init_followups.rs"]
 mod init_followups;
+#[cfg(feature = "lang-rust")]
+#[path = "cli_smoke/input_file_errors.rs"]
+mod input_file_errors;
 #[cfg(feature = "lang-typescript")]
 #[path = "cli_smoke/javascript_awaited_roots.rs"]
 mod javascript_awaited_roots;
@@ -257,6 +260,9 @@ mod unsupported_check_exit;
 mod unsupported_diff_exit;
 #[path = "cli_smoke/value_refusal_json.rs"]
 mod value_refusal_json;
+#[cfg(feature = "lang-rust")]
+#[path = "cli_smoke/verify_complete_with_limits.rs"]
+mod verify_complete_with_limits;
 #[cfg(feature = "lang-rust")]
 #[path = "cli_smoke/verify_execute_root.rs"]
 mod verify_execute_root;
@@ -3849,6 +3855,97 @@ fn check_suppression_policy_missing_file_fails_closed() -> sample_output::TestRe
     Ok(())
 }
 
+/// #15377: SARIF applies the same suppression decision as the findings
+/// formats. A `path` glob entry marks every sample result, through the
+/// explicit flag and through the implicit `.ripr/suppressions.toml`, and the
+/// flag replaces the implicit file; with neither, no result is marked.
+#[test]
+fn check_sarif_suppression_policy_marks_path_glob_results() -> sample_output::TestResult {
+    const POLICY: &str = "schema_version = 1\n\n[[suppressions]]\nkind = \"exposure_gap\"\npath = \"crates/ripr/examples/sample/**\"\nreason = \"sample surface accepted for this smoke test\"\nowner = \"repo-owner\"\n";
+    let fixture = sample_output::Fixture::new()?;
+    let root = fixture.root().display().to_string();
+    let diff = fixture.diff().display().to_string();
+    let sarif_results = |extra: &[&str]| -> Result<Vec<serde_json::Value>, String> {
+        let mut argv = vec![
+            "check", "--root", &root, "--diff", &diff, "--format", "sarif",
+        ];
+        argv.extend_from_slice(extra);
+        let output = fixture
+            .execute(&argv, &[])
+            .map_err(|err| format!("run {argv:?}: {err}"))?;
+        assert_success(&output);
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let value: serde_json::Value = serde_json::from_str(&stdout)
+            .map_err(|err| format!("SARIF should parse: {err}\n{stdout}"))?;
+        let results = value["runs"][0]["results"]
+            .as_array()
+            .cloned()
+            .ok_or("SARIF results must be an array")?;
+        if results.is_empty() {
+            return Err("sample diff must produce SARIF results".to_string());
+        }
+        Ok(results)
+    };
+    let justification =
+        |result: &serde_json::Value| result["suppressions"][0]["justification"].clone();
+
+    for result in sarif_results(&[])? {
+        assert!(
+            result.get("suppressions").is_none(),
+            "no policy marks nothing: {result}"
+        );
+    }
+
+    let policy = write_suppression_policy("suppression-sarif-flag", POLICY)?;
+    let policy_arg = policy.display().to_string();
+    for result in sarif_results(&["--suppression-policy", &policy_arg])? {
+        assert_eq!(
+            justification(&result),
+            "sample surface accepted for this smoke test",
+            "explicit flag: {result}"
+        );
+    }
+
+    let manifest_dir = fixture.root().join(".ripr");
+    std::fs::create_dir_all(&manifest_dir)?;
+    std::fs::write(
+        manifest_dir.join("suppressions.toml"),
+        POLICY.replace(
+            "accepted for this smoke test",
+            "accepted by the default manifest",
+        ),
+    )?;
+    for result in sarif_results(&[])? {
+        assert_eq!(
+            justification(&result),
+            "sample surface accepted by the default manifest",
+            "implicit manifest: {result}"
+        );
+    }
+    // The explicit file replaces the default manifest for the run: its own
+    // justification wins, and an explicit file that matches nothing leaves
+    // every result unmarked instead of falling back to the default manifest.
+    for result in sarif_results(&["--suppression-policy", &policy_arg])? {
+        assert_eq!(
+            justification(&result),
+            "sample surface accepted for this smoke test",
+            "explicit flag over the default manifest: {result}"
+        );
+    }
+    let unmatched = write_suppression_policy(
+        "suppression-sarif-unmatched",
+        &POLICY.replace("crates/ripr/examples/sample/**", "nowhere/**"),
+    )?;
+    let unmatched_arg = unmatched.display().to_string();
+    for result in sarif_results(&["--suppression-policy", &unmatched_arg])? {
+        assert!(
+            result.get("suppressions").is_none(),
+            "an explicit file that matches nothing must not fall back: {result}"
+        );
+    }
+    Ok(())
+}
+
 #[test]
 fn check_suppression_policy_rejects_unsupported_formats() -> Result<(), String> {
     let root = workspace_root().display().to_string();
@@ -3866,7 +3963,7 @@ fn check_suppression_policy_rejects_unsupported_formats() -> Result<(), String> 
         "--diff",
         &diff,
         "--format",
-        "sarif",
+        "badge-json",
         "--suppression-policy",
         &policy_arg,
     ]);
@@ -3881,7 +3978,7 @@ fn check_suppression_policy_rejects_unsupported_formats() -> Result<(), String> 
     // #15377: the refusal is a usage error, so the machine formats write no
     // `run_status=analysis_failed` record an agent would read as an analyzer
     // failure; stdout stays empty and stderr names the requested format.
-    for format in ["sarif", "agent", "json-terse", "sarif-compact"] {
+    for format in ["agent", "json-terse"] {
         let output = run_ripr(&[
             "check",
             "--root",
@@ -4094,7 +4191,7 @@ fn gate_evaluate_exception_policy_missing_ledger_is_config_error() -> Result<(),
 
     let decision = std::fs::read_to_string(&out).map_err(|err| format!("read out: {err}"))?;
     assert!(
-        decision.contains("failed to read exception policy"),
+        decision.contains("failed to read --exception-policy"),
         "decision: {decision}"
     );
     Ok(())
@@ -6561,7 +6658,7 @@ fn check_rejects_an_invalid_dependent_scope_without_dependents() -> sample_outpu
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(
         stderr.contains(
-            "RIPR_DIFF_DEPENDENT_SCOPE must be `auto`, `named` or `full`, got `everything`"
+            "RIPR_DIFF_DEPENDENT_SCOPE must be `auto`, `named` or `full`, got `everything`; set one of those, or unset it to use `auto`"
         ),
         "stderr should name the invalid override: {stderr}"
     );
@@ -14438,7 +14535,7 @@ fn agent_receipt_rejects_target_absent_from_both_states() -> Result<(), Box<dyn 
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(
         stderr.contains(
-            "agent receipt seam_id seam-retained-target was not found in agent verify JSON"
+            "agent receipt seam_id seam-retained-target was not found in agent verify JSON; pass a --seam-id that the verify JSON lists"
         ),
         "mutation: requested a receipt for a target seam absent from both states; expected the seam-selection rejection; actual stderr: {stderr}"
     );
@@ -37854,6 +37951,14 @@ fn review_guidance_windows_preserve_output_and_bound_retained_payloads()
             &[("RIPR_REVIEW_EVIDENCE_WINDOW_SIZE", "0")],
         )?;
         assert!(!refused.status.success());
+        // The refusal names the repair the widths above just exercised.
+        let stderr = String::from_utf8_lossy(&refused.stderr);
+        assert!(
+            stderr.contains(
+                "RIPR_REVIEW_EVIDENCE_WINDOW_SIZE must be between 1 and 256; set it to a whole number in that range, or unset it to use the default of 32"
+            ),
+            "{stderr}"
+        );
         let receipt: serde_json::Value =
             serde_json::from_slice(&std::fs::read(root.join("target/window/run-receipt.json"))?)?;
         assert_eq!(receipt["status"], "failed");

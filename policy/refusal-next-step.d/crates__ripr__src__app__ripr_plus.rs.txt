@@ -1,0 +1,2 @@
+crates/ripr/src/app/ripr_plus.rs|failed to parse repo exposure summary artifact {}: {err}
+crates/ripr/src/app/ripr_plus.rs|repo-badge-json counts are missing unsuppressed_exposure_gaps

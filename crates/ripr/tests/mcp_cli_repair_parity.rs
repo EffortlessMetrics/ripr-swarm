@@ -1258,16 +1258,18 @@ fn proposed_new_test_is_disclosed_by_mcp_and_agrees_with_the_cli_card() -> Resul
     assert_eq!(cli["proposal_kind"], disclosed["kind"], "{cli} vs {item}");
 
     // Readiness agreement: the CLI start gate admits the same seam, and the
-    // edit cage it enforces is the file `ripr_prepare_repair` names.
-    let cage = cli_start_cage_target(&fixture)?
-        .ok_or("the CLI start gate refused the seam MCP lists as ready")?;
-    assert_eq!(cage, mcp_file, "CLI cage vs MCP disclosure: {item}");
+    // edit cage it enforces is the file `ripr_prepare_repair` names. MCP
+    // prepares first: once the CLI has started a durable attempt for the
+    // seam, MCP discloses it instead of preparing a rival (#15244).
     let canonical_id = item["canonical_id"].as_str().ok_or("item omitted id")?;
     let prepare = mcp.tool(
         "ripr_prepare_repair",
         json!({ "canonical_id": canonical_id }),
     )?;
     assert_eq!(prepare["repair_packet_ready"], true, "{prepare}");
+    let cage = cli_start_cage_target(&fixture)?
+        .ok_or("the CLI start gate refused the seam MCP lists as ready")?;
+    assert_eq!(cage, mcp_file, "CLI cage vs MCP disclosure: {item}");
     assert_eq!(prepare["allowed_edit_surface"], json!([cage]), "{prepare}");
     assert_eq!(prepare["fix_site"]["file"], json!(cage), "{prepare}");
     assert_eq!(
@@ -1350,16 +1352,18 @@ fn inline_proposal_only_item_is_ready_and_confined_like_the_cli_cage() -> Result
     assert_eq!(item["repair_packet_ready"], true, "{item}");
     assert!(item["repair_ineligibility"].is_null(), "{item}");
 
-    let policy = cli_start_policy(&fixture)?
-        .ok_or("the CLI start gate refused the seam MCP lists as ready")?;
-    assert_eq!(policy["selected_target"]["path"], "src/lib.rs", "{policy}");
-    assert_eq!(policy["inline_test_module_target"], true, "{policy}");
-
+    // MCP prepares before the CLI starts its durable attempt: afterwards MCP
+    // discloses that attempt instead of preparing a rival (#15244).
     let canonical_id = item["canonical_id"].as_str().ok_or("item omitted id")?;
     let prepare = mcp.tool(
         "ripr_prepare_repair",
         json!({ "canonical_id": canonical_id }),
     )?;
+    let policy = cli_start_policy(&fixture)?
+        .ok_or("the CLI start gate refused the seam MCP lists as ready")?;
+    assert_eq!(policy["selected_target"]["path"], "src/lib.rs", "{policy}");
+    assert_eq!(policy["inline_test_module_target"], true, "{policy}");
+
     assert_eq!(prepare["repair_packet_ready"], true, "{prepare}");
     assert_eq!(
         prepare["allowed_edit_surface"],
@@ -1390,6 +1394,9 @@ enum ReportedRun {
     Passed,
     /// The agent reports the new test ran and failed.
     Failed,
+    /// The agent reports only an untouched sibling test, which passed
+    /// (#16311): the edited test has no reported run.
+    SiblingOnly,
 }
 
 /// The last line of a `check --format agent` report: its `verify=` record.
@@ -1433,7 +1440,12 @@ fn agent_check_verify_line(fixture: &Fixture, worktree: bool) -> Result<String, 
 ///    receipt state and digest-bound retained evidence.
 #[test]
 fn six_step_agent_contract_holds_through_cli_and_mcp() -> Result<(), String> {
-    for reported in [ReportedRun::None, ReportedRun::Passed, ReportedRun::Failed] {
+    for reported in [
+        ReportedRun::None,
+        ReportedRun::Passed,
+        ReportedRun::Failed,
+        ReportedRun::SiblingOnly,
+    ] {
         six_step_agent_contract(reported).map_err(|error| format!("{reported:?}: {error}"))?;
     }
     Ok(())
@@ -1518,6 +1530,13 @@ fn six_step_agent_contract(reported: ReportedRun) -> Result<(), String> {
     assert_eq!(manifest("after start")?["state"], "awaiting_edit");
     let waiting = mcp.tool("ripr_get_receipt_status", json!({ "receipt_id": id }))?;
     assert_eq!(waiting["status"], "awaiting_edit", "{waiting}");
+    assert!(waiting.get("test_run").is_none(), "{waiting}");
+    assert!(
+        waiting["limitations"]
+            .to_string()
+            .contains("this document reports static receipt state only"),
+        "{waiting}"
+    );
     assert_eq!(
         read("src/lib.rs")?,
         production_before,
@@ -1549,10 +1568,10 @@ fn six_step_agent_contract(reported: ReportedRun) -> Result<(), String> {
     let result_arg = result_file.display().to_string();
     if reported != ReportedRun::None {
         let head = ripr_fixture_head(&fixture)?;
-        let event = if reported == ReportedRun::Passed {
-            "ok"
-        } else {
-            "failed"
+        let (name, event) = match reported {
+            ReportedRun::Failed => (NEW_TEST, "failed"),
+            ReportedRun::SiblingOnly => ("below", "ok"),
+            _ => (NEW_TEST, "ok"),
         };
         let document = json!({
             "schema_version": "0.1",
@@ -1561,8 +1580,8 @@ fn six_step_agent_contract(reported: ReportedRun) -> Result<(), String> {
             "head": head,
             "test_file": TEST_FILE,
             "libtest_events": [
-                {"type": "test", "event": "started", "name": NEW_TEST},
-                {"type": "test", "event": event, "name": NEW_TEST}
+                {"type": "test", "event": "started", "name": name},
+                {"type": "test", "event": event, "name": name}
             ]
         });
         std::fs::write(&result_file, document.to_string()).map_err(|e| e.to_string())?;
@@ -1647,6 +1666,20 @@ fn six_step_agent_contract(reported: ReportedRun) -> Result<(), String> {
         "{status}"
     );
     let test_run = &status["test_run"];
+    // The aggregate `agent status --json` document carries the same reading
+    // and conforms to the published schema in every variant (#16311).
+    let published = stdout_json(&run(&["agent", "status", "--root", ".", "--json"])?)?;
+    let schema = published_schema::read("schemas/ripr/agent-status.schema.json")?;
+    assert_eq!(
+        published_schema::unsupported_keywords(&schema),
+        Vec::<String>::new()
+    );
+    published_schema::check(&published, &schema, &schema, "agent_status")?;
+    assert_eq!(
+        published["test_run"].get("edited_test"),
+        test_run.get("edited_test"),
+        "{published}"
+    );
     let aggregate = run(&["status", "--root", "."])?;
     let aggregate = String::from_utf8_lossy(&aggregate.stdout).to_string();
     let counts = |passed: u64, failed: u64| {
@@ -1662,13 +1695,26 @@ fn six_step_agent_contract(reported: ReportedRun) -> Result<(), String> {
                 assert!(text.contains("Test run: none recorded."), "{text}");
                 assert!(!text.contains("reported by the caller"), "{text}");
             }
+            // #16263: with no reported run, the receipt's own step stands.
+            assert!(
+                finish_stdout
+                    .contains("\nNext: Run the focused test and keep it only if it passes"),
+                "{finish_stdout}"
+            );
         }
-        ReportedRun::Passed | ReportedRun::Failed => {
-            let (passed, failed) = if reported == ReportedRun::Passed {
-                (1, 0)
-            } else {
+        ReportedRun::Passed | ReportedRun::Failed | ReportedRun::SiblingOnly => {
+            let (passed, failed) = if reported == ReportedRun::Failed {
                 (0, 1)
+            } else {
+                (1, 0)
             };
+            // #16311: only the run that included the new test covers the
+            // edit; a passing sibling does not.
+            let edited_test = match reported {
+                ReportedRun::SiblingOnly => "not_covered",
+                _ => "covered",
+            };
+            assert_eq!(test_run["edited_test"], edited_test, "{status}");
             assert_eq!(test_run["status"], "caller_reported", "{status}");
             assert_eq!(test_run["file"], TEST_FILE, "{status}");
             assert_eq!(test_run["ran"], 1, "{status}");
@@ -1689,6 +1735,24 @@ fn six_step_agent_contract(reported: ReportedRun) -> Result<(), String> {
                     "{text}"
                 );
             }
+            // #16263: the finish's next step reads the reported run back
+            // instead of asking for the run it just recorded.
+            let expected_next = match reported {
+                ReportedRun::Passed => {
+                    "\nNext: Keep the focused test (the reported run included the test you added or edited; ripr ran nothing) and include this receipt in review.\n"
+                }
+                ReportedRun::SiblingOnly => {
+                    "\nNext: Run the test you added or edited and keep it only if it passes: the reported run did not include it, and ripr ran nothing. Then include this receipt in review.\n"
+                }
+                _ => {
+                    "\nNext: Make the focused test pass before keeping it; ripr did not run it. A fix that edits the patch leaves this receipt stale, so do not include it in review; re-check the gap with `ripr check` after the fix.\n"
+                }
+            };
+            assert!(finish_stdout.contains(expected_next), "{finish_stdout}");
+            assert!(
+                !finish_stdout.contains("Next: Run the focused test"),
+                "{finish_stdout}"
+            );
         }
     }
 
@@ -1709,6 +1773,19 @@ fn six_step_agent_contract(reported: ReportedRun) -> Result<(), String> {
     let attempt = restarted.tool("ripr_get_repair_attempt", json!({ "attempt_id": id }))?;
     assert_eq!(attempt["origin"], "durable_store", "{attempt}");
     assert_eq!(attempt["terminal_receipt"], "issued", "{attempt}");
+    // #16251: a new MCP process reads back the same test-run object CLI
+    // status emits for this attempt, a reported failure included.
+    let mcp_receipt = restarted.tool("ripr_get_receipt_status", json!({ "receipt_id": id }))?;
+    assert_eq!(mcp_receipt["test_run"], *test_run, "{mcp_receipt}");
+    assert_eq!(mcp_receipt["status"], "improved", "{mcp_receipt}");
+    // The scope limitation names the relayed report instead of claiming
+    // the document is static-only while it carries test counts.
+    assert!(
+        mcp_receipt["limitations"]
+            .to_string()
+            .contains("`test_run` relays the caller's own test report, which RIPR did not execute"),
+        "{mcp_receipt}"
+    );
     let finished_manifest = manifest("after finish")?;
     let terminal = finished_manifest["terminal_artifacts"]
         .as_array()
@@ -1786,4 +1863,101 @@ fn ripr_fixture_head(fixture: &Fixture) -> Result<String, String> {
     std::fs::read_to_string(git.join(reference))
         .map(|sha| sha.trim().to_string())
         .map_err(|e| format!("read {reference}: {e}"))
+}
+
+#[path = "common/repair_start_fixture.rs"]
+mod repair_start_fixture;
+
+#[path = "common/published_schema.rs"]
+mod published_schema;
+
+/// The packet gate and the compact inspection card keep their own contracts.
+/// An approved proposal on the card does not permit preparing a transaction
+/// for a called-but-unreached seam.
+#[test]
+fn called_unreached_proposal_cannot_prepare_a_repair_over_stdio() -> Result<(), String> {
+    use repair_start_fixture::{CALLED_BASE, CALLED_NEW, LOYALTY_BASE, LOYALTY_NEW, LOYALTY_TEST};
+
+    const CANONICAL_GAP: &str =
+        "gap:rust:src/lib.rs:loyalty_price:predicate_boundary:predicate:member_years==5";
+
+    for (base, changed, line, inspection) in [
+        (LOYALTY_BASE, LOYALTY_NEW, 6, true),
+        (CALLED_BASE, CALLED_NEW, 10, false),
+    ] {
+        let fixture = Fixture::create(
+            "packet-vs-card",
+            &[
+                ("Cargo.toml", CARGO_TOML.to_string()),
+                ("src/lib.rs", base.to_string()),
+                ("tests/t.rs", LOYALTY_TEST.to_string()),
+                (".gitignore", "target/\n.ripr/\n".to_string()),
+            ],
+            &[("src/lib.rs", changed.to_string())],
+        )?;
+        let mut mcp = Mcp::spawn(&fixture.0)?;
+        let refresh = mcp.tool("ripr_refresh", json!({"base":"main","source":"committed"}))?;
+        let snapshot = refresh
+            .pointer("/snapshot/snapshot_id")
+            .and_then(Value::as_str)
+            .ok_or("missing committed snapshot")?;
+        let list = mcp.tool("ripr_list_gaps", json!({"snapshot_id":snapshot}))?;
+        assert_eq!(list["snapshot_id"], snapshot);
+        let item = list["items"]
+            .as_array()
+            .ok_or("missing listed items")?
+            .iter()
+            .find(|item| item["canonical_id"] == CANONICAL_GAP)
+            .ok_or("missing canonical changed seam")?;
+        assert_eq!(item["line"], line);
+        assert_eq!(item["class"], "no_static_path");
+        let subject = json!({"canonical_id":CANONICAL_GAP,"snapshot_id":snapshot});
+        let detail = mcp.tool("ripr_get_gap", subject.clone())?;
+        let response = mcp.tool("ripr_get_repair_card", subject.clone())?;
+        assert_eq!(detail["snapshot_id"], snapshot);
+        assert_eq!(response["snapshot_id"], snapshot);
+        let card = &response["card"];
+        assert_eq!(card["snapshot"]["currentness"], "current");
+        assert_eq!(
+            card["snapshot"]["repository_head"],
+            response["currentness"]["repository_head"]
+        );
+        assert_eq!(card["subject"]["canonical_gap_id"], CANONICAL_GAP);
+        assert_eq!(card["subject"]["finding_id"], detail["item"]["finding_id"]);
+        assert_eq!(card["selected_target"]["file"], "tests/loyalty_price.rs");
+        if inspection {
+            assert_eq!(
+                card["canonical_next_action"]["command"]["command_id"],
+                "ripr:agent:packet"
+            );
+            assert_eq!(
+                card["canonical_next_action"]["command"]["role"],
+                "inspection"
+            );
+        } else {
+            assert_eq!(card["instruction"]["state"], "static_limitation");
+            assert!(card["next_action"].is_null(), "{card}");
+        }
+
+        assert_eq!(item["repair_packet_ready"], inspection, "{item}");
+        assert_eq!(
+            detail["item"]["readiness"]["repair_packet_ready"],
+            inspection
+        );
+        if inspection {
+            assert_eq!(item["proposed_new_test"]["file"], "tests/loyalty_price.rs");
+            assert!(item["repair_ineligibility"].is_null());
+        } else {
+            // Prepare only after the list gate refuses. The negative tool
+            // response must match the stored verdict and create no attempt.
+            assert_eq!(item["repair_ineligibility"], "seam_gate_refused");
+            let refusal = mcp.tool("ripr_prepare_repair", subject)?;
+            assert_eq!(refusal["repair_packet_ready"], false, "{refusal}");
+            assert_eq!(refusal["ineligibility"]["reason"], "seam_gate_refused");
+            assert!(refusal["attempt"].is_null(), "{refusal}");
+        }
+        assert!(!fixture.0.join("tests/loyalty_price.rs").exists());
+        assert!(!fixture.0.join("target/ripr/repair-attempts").exists());
+    }
+    Ok(())
 }

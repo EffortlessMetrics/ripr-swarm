@@ -2312,8 +2312,14 @@ and only per pinned call:
    it inside a parenthesis, bracket or brace; each operand only one version
    holds must be an item 1 operand; the operands both versions keep are
    compared as text and never read, so they may be any expression. Retained
-   operands are compared as text with layout whitespace outside literals
-   ignored, and literal contents compared exactly. Fail open to today's
+   operands are compared as sequences of words, literals and punctuation
+   runs (#15149): whitespace is layout, so `a % 2` and `a%2` match, but it
+   still separates words, so `a as u8` (three words) and `aasu8` (one) do
+   not; adjacent punctuation is one run whatever the spacing inside it, so
+   `Vec<Vec<u8> >` and `Vec<Vec<u8>>` (and `> =` and `>=`) match, which keeps
+   a layout-only edit withheld; a `.` is always punctuation, so
+   `x.0.0` and `x.0 .0` match; and each literal is one entry compared
+   exactly, contents included. Fail open to today's
    reading: a rewritten operand, an unreadable argument, a
    call with no run, or any shape outside this one keeps its current
    result. This is a withholding rule only and admits no new pin.
@@ -2867,6 +2873,70 @@ of the owner, and every use of it in the test body sits inside this
 assertion's untrusted macros. A use anywhere else (another assertion, a
 clone, a helper argument) may observe the result, so the assertion keeps its
 parsed reading.
+
+The initializer may also unwrap or chain the call (#16219): `let r =
+pick(0).unwrap();` or `let r = pick(0)?;` counts the same way when the owner
+call is the root of `?`, `.await`, parentheses and standard pass-through
+methods (`unwrap`, `expect`, `unwrap_or`, `clone`, `into` and similar), whose
+arguments are values the method selects or converts rather than invokes. A
+method that invokes a caller-supplied function item (`map(helper)`) is also
+transparent, because a function item cannot capture a test local. A function
+item that records its argument through a static is a known boundary: the
+reading then withholds credit, it never grants it. A path argument is a
+function item only when it is not a local binding in the test: a closure bound
+to a local (`let callback = |v| ..; .inspect(callback)`) is also a path at its
+call site, and it can capture and record the result, so it is not transparent.
+A method that invokes a caller-supplied closure (`inspect(|v| seen = ..)`) is
+not transparent either, because the closure can capture and record the result
+where a later assertion reads it. Any other method is not transparent. A chain
+rooted anywhere else (`other(pick(0))`, `x.pick(0)` for a free function) does
+not count either. For a method owner, `.pick` is a call only when an argument
+list follows; `Holder { pick: .. }.pick` is a field access, not a call of the
+owner. A method call outside the macro is a free use of the owner when its
+receiver is the receiver of a call the macro holds, `self`, `Self`, an owner
+type, an owner-result local, or a top-level binding whose plain type
+annotation, unit-struct initializer or struct literal names the owner's type.
+Parentheses
+around a bare receiver preserve that receiver on either side of the macro.
+A call on a binding of a definitely different type (`let other = Other;`,
+`let other: Other = ..`, `let other = Other { .. }`) is not a call of
+`Widget::new`. Any other receiver is unresolved: a receiver that is not a bare
+name (`w.clone().new()`) or a binding the body does not type
+(`let w = Widget::default();`). A bare path initializer types the binding
+only when it reads as a unit-struct name: an upper-camel name no binding in
+the body declares. A copy of another local (`let alias = held;`) or a
+constant (`let w = SHARED;`) stays unresolved. An unresolved call outside the macro counts as
+a free use and inside it does not count as held, so an unresolved receiver
+never supplies the demotion. A field receiver (`holder.picker.pick(0)`) is
+unresolved, even when a local shares the field's name, and a binding annotated
+with a `type` alias declared in the file is not settled as another type. A
+local initialized by a call on a receiver of a definitely different type
+(`let actual = &other.pick(0);`) does not carry the owner's result. A call of a
+function-item alias (`let f = pick;`, then `f(0)`) is a use of the owner: held
+inside the macro, free outside it, also through parentheses (`(f)(0)`); a
+bare read of the alias is not, and does not make another local carry the
+owner's result, and a
+shadowed or `mut` (reassignable) alias, or one whose unqualified path names
+an item the test imports or defines (`use other::pick;`), is not tracked. A
+`use .. as` rename in the file counts like a `type` alias for a receiver
+annotation, and like a local `macro_rules!` for an inner macro name. A rename
+that shadows the outer assertion's own name (`use std::stringify as
+assert_eq;`) is an assertion-admission question outside this reading. An owner
+call inside a pass-through method's argument (`pick(0).unwrap_or({ seen =
+pick(0).unwrap(); .. })`) is a known boundary: it is not counted, which only
+withholds credit. A read
+outside the untrusted macro of any other local whose initializer names a call
+of the owner or such a local (`let actual = &pick(0);`, then `*actual`)
+observes the result, so the assertion keeps its parsed reading. A bare path to
+the function item (`let f = pick;`) or a field access (`let m = cfg.pick;`)
+names no call, so it does not make the alias carry the owner's result. Only
+the macro-held assertion loses its reading; an `.unwrap()` in the initializer
+still runs and keeps its own smoke oracle. A call of the owner or of its
+function-item alias outside the macro whose statement discards the result
+(`let _ = pick(0);`, `pick(0);`, `crate::pick(0);`, `let _ = (f)(0);`) is not a free use
+(#16258). A call that a statement keeps in any other way, a block tail
+(`{ pick(0) }`), a named binding (`let v = pick(0);`), a `?` or a further
+method, stays free and keeps the parsed reading.
 
 ## Required Evidence
 
@@ -3811,14 +3881,19 @@ assertions. This repair shares the existing callback without that larger migrati
   `layout_whitespace_cannot_invert_the_chain_direction`,
   `layout_whitespace_does_not_hide_a_retained_operand`,
   `a_char_literal_operator_is_not_an_arithmetic_split`,
-  `a_quote_char_literal_does_not_flip_the_literal_scan` and
-  `whitespace_inside_a_raw_string_with_an_inner_quote_is_content` (#15021);
+  `a_quote_char_literal_does_not_flip_the_literal_scan`,
+  `whitespace_inside_a_raw_string_with_an_inner_quote_is_content` (#15021),
+  `a_space_that_separates_words_is_part_of_the_retained_operand`,
+  `a_layout_only_generic_close_keeps_the_dropped_guard_read`,
+  `a_tuple_field_spacing_edit_keeps_the_dropped_guard_read` and
+  `operand_tokens_split_words_and_merge_punctuation_runs`;
   `crates/ripr/tests/short_circuit_or_tail.rs`
   `a_dropped_guard_no_pinned_call_makes_decide_stays_below_exposed`,
   `a_dropped_guard_a_pinned_call_makes_decide_keeps_its_exposure`,
   `an_added_guard_follows_the_same_agreement_rule`,
-  `the_substituted_rendered_call_withholds_exactly_like_the_direct_pin` and
-  `a_substituted_call_reads_the_tests_scope_not_a_same_named_helper_parameter`.
+  `the_substituted_rendered_call_withholds_exactly_like_the_direct_pin`,
+  `a_substituted_call_reads_the_tests_scope_not_a_same_named_helper_parameter` and
+  `a_word_merged_across_a_space_is_a_rewritten_operand_not_a_dropped_guard`.
   The corpus case is
   `benchmarks/stub_quality/cases/D_unsafe_const`. In the evidence-promotion
   honesty corpus (RIPR-SPEC-0108), `rust_guard_operand_dropped_agreement`

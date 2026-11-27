@@ -5,7 +5,7 @@
 //! several over disjoint test targets (`--run1-part`, `--run2-part`): the
 //! nightly splits the suite across jobs so that each part fits its deadline,
 //! and `--expected-targets` holds the split to the unsplit build's own list of
-//! test executables.
+//! test executables, admitted only when that build's captured status is `0`.
 //!
 //! # Absence is not a pass
 //!
@@ -404,8 +404,9 @@ struct Inputs {
     run1_parts: Vec<(String, String)>,
     run2_parts: Vec<(String, String)>,
     /// A `cargo test --workspace --no-run` log naming every test executable
-    /// the unsplit workspace run would start (`--expected-targets`).
-    expected_targets: Option<String>,
+    /// the unsplit workspace run would start, and that build's captured exit
+    /// status (`--expected-targets <log> <status>`).
+    expected_targets: Option<(String, String)>,
 }
 
 /// Parse the argument list exhaustively.
@@ -421,7 +422,7 @@ fn parse_inputs(args: &[String]) -> Result<Inputs, String> {
     let mut run2_status: Option<String> = None;
     let mut run1_parts: Vec<(String, String)> = Vec::new();
     let mut run2_parts: Vec<(String, String)> = Vec::new();
-    let mut expected_targets: Option<String> = None;
+    let mut expected_targets: Option<(String, String)> = None;
 
     fn path_value(args: &[String], index: usize, flag: &str) -> Result<String, String> {
         let value = args
@@ -452,12 +453,25 @@ fn parse_inputs(args: &[String]) -> Result<Inputs, String> {
             index += 3;
             continue;
         }
+        // The build list is only a denominator when the build finished, so it
+        // travels with its own exit status, paired for the same reason.
+        if flag == "--expected-targets" {
+            if expected_targets.is_some() {
+                return Err(format!(
+                    "windows-advisory-summary got {flag} more than once; pass it once"
+                ));
+            }
+            let log = path_value(args, index + 1, flag)?;
+            let status = path_value(args, index + 2, flag)?;
+            expected_targets = Some((log, status));
+            index += 3;
+            continue;
+        }
         let slot = match flag {
             "--run1" => &mut run1_log,
             "--run1-status" => &mut run1_status,
             "--run2" => &mut run2_log,
             "--run2-status" => &mut run2_status,
-            "--expected-targets" => &mut expected_targets,
             other => {
                 return Err(format!(
                     "windows-advisory-summary got unexpected argument {other:?}; expected only --run1, --run1-status, --run2, --run2-status, --run1-part, --run2-part, --expected-targets"
@@ -526,7 +540,10 @@ fn parse_inputs(args: &[String]) -> Result<Inputs, String> {
         paths.push(log);
         paths.push(status);
     }
-    paths.extend(inputs.expected_targets.iter());
+    if let Some((log, status)) = &inputs.expected_targets {
+        paths.push(log);
+        paths.push(status);
+    }
     let distinct: BTreeSet<&&String> = paths.iter().collect();
     if distinct.len() != paths.len() {
         if paths.len() == 4 {
@@ -560,8 +577,8 @@ pub(crate) fn run(args: &[String]) -> Result<(), String> {
 
     let mut first = load_sample((run1_log, run1_status), run1_parts);
     let mut second = load_sample((run2_log, run2_status), run2_parts);
-    if let Some(build_log) = expected_targets {
-        let expected = load_expected_targets(Path::new(&build_log));
+    if let Some((build_log, build_status)) = expected_targets {
+        let expected = load_expected_targets(Path::new(&build_log), Path::new(&build_status));
         for outcome in [&mut first, &mut second] {
             require_expected_targets(outcome, &expected);
         }
@@ -689,7 +706,22 @@ fn merge_parts(parts: Vec<(String, RunOutcome)>) -> RunOutcome {
 /// Compared without the Cargo hash: the list comes from one job's build and
 /// the parts from other jobs', and this check is about which targets ran, not
 /// which build ran them. Identity within a part still carries the hash.
-fn load_expected_targets(build_log: &Path) -> Result<Vec<(TargetKind, String, String)>, String> {
+///
+/// The list is a denominator only when the build finished. A build stopped by
+/// its deadline (status 124) or by a compile error lists fewer executables
+/// than the workspace has, and a sample that skipped the unlisted targets
+/// would then pass this check; so the build's own status must read `0`.
+fn load_expected_targets(
+    build_log: &Path,
+    build_status: &Path,
+) -> Result<Vec<(TargetKind, String, String)>, String> {
+    let status = std::fs::read_to_string(build_status).map_err(|error| {
+        format!(
+            "expected-targets status {} could not be read: {error}",
+            build_status.display()
+        )
+    })?;
+    require_finished_build(build_status, &status)?;
     let text = std::fs::read_to_string(build_log).map_err(|error| {
         format!(
             "expected-targets log {} could not be read: {error}",
@@ -704,6 +736,21 @@ fn load_expected_targets(build_log: &Path) -> Result<Vec<(TargetKind, String, St
         ));
     }
     Ok(expected)
+}
+
+/// Admit the build list only from a build whose captured status is `0`.
+fn require_finished_build(build_status: &Path, raw: &str) -> Result<(), String> {
+    match raw.trim().parse::<i32>() {
+        Ok(0) => Ok(()),
+        Ok(code) => Err(format!(
+            "the workspace build exited {code} ({}; 124 is its deadline), so its executable list may be incomplete",
+            build_status.display()
+        )),
+        Err(error) => Err(format!(
+            "expected-targets status {} is not an integer exit status: {error}",
+            build_status.display()
+        )),
+    }
 }
 
 fn expected_targets(text: &str) -> Vec<(TargetKind, String, String)> {
@@ -731,22 +778,28 @@ fn hashless(target: &TargetIdentity) -> (TargetKind, String, String) {
 /// A split is only as complete as its selectors. A test target that no part
 /// selects is absent from every part's log, so nothing in the logs themselves
 /// can show it is missing; the unsplit build's own list is the denominator.
-/// An unusable sample is already refused and is not reported again per target.
+/// An unusable sample is already refused and is not reported again per target,
+/// but an unusable build list is still named on it: the verdict must show a
+/// failed build even when both samples failed for their own reasons too.
 fn require_expected_targets(
     outcome: &mut RunOutcome,
     expected: &Result<Vec<(TargetKind, String, String)>, String>,
 ) {
-    if !outcome.state.is_usable() {
-        return;
-    }
     let expected = match expected {
         Ok(expected) => expected,
         Err(error) => {
-            outcome.provenance_errors.push(error.clone());
-            outcome.state = RunState::IncompleteEvidence;
+            // First, so the bounded rendering shows it even when the sample's
+            // own errors already exceed the display limit.
+            outcome.provenance_errors.insert(0, error.clone());
+            if outcome.state.is_usable() {
+                outcome.state = RunState::IncompleteEvidence;
+            }
             return;
         }
     };
+    if !outcome.state.is_usable() {
+        return;
+    }
     let mut started: BTreeMap<(TargetKind, String, String), usize> = BTreeMap::new();
     for target in &outcome.targets {
         *started.entry(hashless(target)).or_default() += 1;
@@ -3514,6 +3567,7 @@ mod tests {
             "a2.status",
             "--expected-targets",
             "build.log",
+            "build.status",
         ]));
         args
     }
@@ -3529,7 +3583,7 @@ mod tests {
                 run2_status: "2.status".to_string(),
                 run1_parts: vec![("a1.log".to_string(), "a1.status".to_string())],
                 run2_parts: vec![("a2.log".to_string(), "a2.status".to_string())],
-                expected_targets: Some("build.log".to_string()),
+                expected_targets: Some(("build.log".to_string(), "build.status".to_string())),
             })
         );
     }
@@ -3580,13 +3634,30 @@ mod tests {
             "a log reused across parts must be refused"
         );
         let mut twice = split_argv();
-        twice.extend(argv(&["--expected-targets", "other.log"]));
+        twice.extend(argv(&["--expected-targets", "other.log", "other.status"]));
         assert_eq!(
             parse_inputs(&twice),
             Err(
                 "windows-advisory-summary got --expected-targets more than once; pass it once"
                     .to_string()
             )
+        );
+        // The build list without its status must not swallow the next flag,
+        // and a status reused as a run status is one artifact in two roles.
+        let mut unpaired = complete_argv();
+        unpaired.extend(argv(&["--expected-targets", "build.log", "--run1-part"]));
+        assert_eq!(
+            parse_inputs(&unpaired),
+            Err("windows-advisory-summary got --expected-targets followed by --run1-part, which looks like a flag rather than a path".to_string())
+        );
+        let mut shared = complete_argv();
+        shared.extend(argv(&["--expected-targets", "build.log", "1.status"]));
+        assert!(
+            parse_inputs(&shared)
+                .err()
+                .unwrap_or_default()
+                .starts_with("windows-advisory-summary requires every log, status and expected-targets path to be distinct; got "),
+            "a run status reused as the build status must be refused"
         );
     }
 
@@ -3756,13 +3827,16 @@ mod tests {
     #[test]
     fn an_unusable_build_list_cannot_admit_a_sample() {
         assert_eq!(expected_targets("   Compiling xtask v0.0.0\n"), Vec::new());
-        let missing = load_expected_targets(Path::new("target/ripr-winadv-no-such-build.log"));
+        let missing = load_expected_targets(
+            Path::new("target/ripr-winadv-no-such-build.log"),
+            Path::new("target/ripr-winadv-no-such-build.status"),
+        );
         assert!(
             missing
                 .as_ref()
                 .err()
                 .is_some_and(|error| error.starts_with(
-                    "expected-targets log target/ripr-winadv-no-such-build.log could not be read: "
+                    "expected-targets status target/ripr-winadv-no-such-build.status could not be read: "
                 )),
             "{missing:?}"
         );
@@ -3770,6 +3844,48 @@ mod tests {
         require_expected_targets(&mut sample, &missing);
         assert_eq!(sample.state, RunState::IncompleteEvidence);
         assert_eq!(sample.provenance_errors.len(), 1);
+    }
+
+    /// A build list is a denominator only from a finished build. A prebuild
+    /// cut off by its deadline lists fewer executables, and a sample that
+    /// skipped the unlisted targets must not pass against it.
+    #[test]
+    fn a_build_list_from_an_unfinished_build_cannot_admit_a_sample() {
+        let status = Path::new("target/windows-build.status");
+        assert_eq!(require_finished_build(status, "0\n"), Ok(()));
+        let deadline = require_finished_build(status, "124\n");
+        assert_eq!(
+            deadline,
+            Err("the workspace build exited 124 (target/windows-build.status; 124 is its deadline), so its executable list may be incomplete".to_string())
+        );
+        assert_eq!(
+            require_finished_build(status, "101"),
+            Err("the workspace build exited 101 (target/windows-build.status; 124 is its deadline), so its executable list may be incomplete".to_string())
+        );
+        assert!(
+            require_finished_build(status, "")
+                .err()
+                .is_some_and(|error| error.starts_with(
+                    "expected-targets status target/windows-build.status is not an integer exit status: "
+                ))
+        );
+
+        // The truncated list names only the unit target, so the same sample
+        // that is short the integration target would match it; the status
+        // is what refuses it.
+        let truncated = expected_targets(
+            "  Executable unittests src\\main.rs (target\\debug\\deps\\xtask-9999999999999999.exe)\n",
+        );
+        let mut matches_truncated = judge(&unit_part(), Some(0));
+        require_expected_targets(&mut matches_truncated, &Ok(truncated));
+        assert_eq!(matches_truncated.state, RunState::CompletedClean);
+        let mut refused = judge(&unit_part(), Some(0));
+        require_expected_targets(&mut refused, &deadline.map(|()| Vec::new()));
+        assert_eq!(refused.state, RunState::IncompleteEvidence);
+        assert_eq!(
+            refused.provenance_errors,
+            vec!["the workspace build exited 124 (target/windows-build.status; 124 is its deadline), so its executable list may be incomplete".to_string()]
+        );
     }
 
     #[test]

@@ -162,6 +162,8 @@ pub(super) struct PythonNoBehaviorContext<'a> {
     /// (`module_value.rs`, #9423). A diff with any other changed line cannot
     /// reconstruct the old module and keeps the abstention.
     pub(super) sole_line_replacement: bool,
+    /// The only changed line in this file was inserted or deleted.
+    pub(super) sole_unpaired_line: bool,
     /// The current per-file import check used the raw workspace write view
     /// and all admitted module spellings, before legacy path refusal flags.
     pub(super) module_import_unshadowed: bool,
@@ -169,6 +171,11 @@ pub(super) struct PythonNoBehaviorContext<'a> {
     /// module that can replace the imported pytest framework. Only the bounded
     /// class-only exception reading consumes this positive admission fact.
     pub(super) pytest_import_unshadowed: bool,
+    /// The changed line raises a class its module imports plainly, and the
+    /// workspace scan found that class defined once as a plain exception in
+    /// one unshadowed source and named by no other production source
+    /// (`exception_variant::imported_raise_class_sole_site`, #15356).
+    pub(super) imported_raise_class_sole_site: bool,
     /// This owner's loop header changed in a multi-line diff. Without an
     /// isolated old-body witness, sibling edits cannot borrow oracle credit.
     pub(super) compound_loop_edit: bool,
@@ -778,6 +785,7 @@ fn classify_change_for_owner_inner<'a>(
                     owner,
                     module_owner,
                     &related_candidates,
+                    no_behavior.imported_raise_class_sole_site,
                 )
             })
             .unwrap_or_default()
@@ -1184,6 +1192,23 @@ fn classify_change_for_owner_inner<'a>(
             &focus,
         )
     });
+    // A strip side, `round` digit count, sort direction or `get` fallback
+    // edit (#16203) differs only for an argument with whitespace on the
+    // dropped side, more decimal places, two different elements, or no such
+    // key. A line inside a multiline string is data, not a call.
+    let call_variant_gap = old_line_text
+        .filter(|_| !no_behavior.new_line_in_multiline_string)
+        .and_then(|old| {
+            super::call_variant::python_call_variant_evidence(
+                old,
+                line_text,
+                line,
+                owner,
+                owner_source,
+                &related_candidates,
+                &focus,
+            )
+        });
 
     // A changed relational predicate (`qty > on_hand` -> `qty >= on_hand`) only
     // behaves differently when its operands are equal, so a strong exact-value
@@ -1268,6 +1293,39 @@ fn classify_change_for_owner_inner<'a>(
         &related_candidates,
         &focus,
     );
+    // Paired case headers and literal continuation lines use the native match
+    // statement on both sides. A pure deletion uses the existing base-side
+    // source view, with the same symmetric arm-selection test.
+    let pattern_line = |raw: &str| {
+        (raw.contains('|') && (raw.trim_start().starts_with("case") || old_guard.is_some()))
+            || ((no_behavior.brackets.new_in || no_behavior.brackets.old_in)
+                && owner_source.is_some_and(|source| source.contains("case")))
+    };
+    let pattern_edit = pattern_line(line_text) || old_line_text.is_some_and(pattern_line);
+    let match_gap = if static_limit.is_none() && pattern_edit {
+        let side = owner_source
+            .map(|source| (owner, source, line))
+            .or_else(|| {
+                old_guard
+                    .as_ref()
+                    .map(|view| (&view.owner, view.source, view.line))
+            });
+        side.and_then(|(site_owner, source, site_line)| {
+            super::match_alternatives::missing(
+                site_owner,
+                source,
+                site_line,
+                old_line_text.unwrap_or(""),
+                no_behavior.sole_line_replacement || no_behavior.sole_unpaired_line,
+                &related_candidates,
+                &focus,
+            )
+        })
+    } else {
+        None
+    };
+    let missing_alternative = match_gap.is_some();
+    let boundary = match_gap.or(boundary);
     // Fail closed (#15287): a boundary no strong related call is established to
     // reach is a gap whether the calls were readable and off the boundary
     // (`Missing`) or passed test-side inputs the reader cannot see
@@ -1283,6 +1341,7 @@ fn classify_change_for_owner_inner<'a>(
     });
     let mut boundary_downgraded = false;
     let mut connective_downgraded = false;
+    let mut call_variant_downgraded = false;
     // A removed or added additive call term changes the result only where the
     // term is nonzero (#6733). When every strong related call gives it the
     // value 0, a strong oracle passes either way.
@@ -1748,6 +1807,7 @@ fn classify_change_for_owner_inner<'a>(
         && default_keyword.is_none()
         && positional_only_gap.is_none()
         && connective_gap.is_none()
+        && call_variant_gap.is_none()
         && boundary_gap.is_none()
         && inactive_term.is_none()
         && guarded_arm_gap.is_none()
@@ -1858,6 +1918,29 @@ fn classify_change_for_owner_inner<'a>(
                 owner.name,
                 swap.left,
                 swap.right,
+            )],
+        )
+    } else if strongest_strength >= OracleStrength::Strong.rank()
+        && alignment.observes()
+        && let Some(variant) = &call_variant_gap
+    {
+        // Every strong related call is read to pass an argument both
+        // versions of the changed call treat alike (#16203); the message
+        // claims only what was read, not what the suite would observe.
+        call_variant_downgraded = true;
+        (
+            ExposureClass::WeaklyExposed,
+            StageState::Yes,
+            StageState::Weak,
+            StageState::Weak,
+            vec![format!(
+                "A strong Python oracle reaches `{}`, but the edit only changes `{}` to `{}`, and no strong related call is seen to pass {}; whether these tests would notice the change is not established, so static evidence cannot confirm the change is discriminated. Add a test that calls `{}` with {}.",
+                owner.name,
+                variant.old_call,
+                variant.new_call,
+                variant.discriminator,
+                owner.name,
+                variant.discriminator,
             )],
         )
     } else if strongest_strength >= OracleStrength::Strong.rank()
@@ -2142,6 +2225,7 @@ fn classify_change_for_owner_inner<'a>(
             StageState::Unknown
         } else if boundary_downgraded
             || connective_downgraded
+            || call_variant_downgraded
             || term_downgraded
             || guarded_arm_downgraded
             || table_downgraded
@@ -2168,6 +2252,14 @@ fn classify_change_for_owner_inner<'a>(
             }
         } else if connective_downgraded {
             "Related tests reach the changed condition, but every strong related test call gives both operands the same truth value, where `and` and `or` agree.".to_string()
+        } else if let Some(variant) = call_variant_gap
+            .as_ref()
+            .filter(|_| call_variant_downgraded)
+        {
+            format!(
+                "Related tests reach the changed call, but no strong related test call is seen to pass {}, so whether `{}` and `{}` return different values there is not established.",
+                variant.discriminator, variant.old_call, variant.new_call
+            )
         } else if guarded_arm_downgraded
             && guarded_arm_gap
                 .as_ref()
@@ -2227,10 +2319,12 @@ fn classify_change_for_owner_inner<'a>(
                 shape: DiscriminatorShape::Other,
                 drafted_boundary: None,
             }]
-        } else if boundary_downgraded {
+        } else if boundary_downgraded || missing_alternative {
             // The boundary downgrade names the equality that would activate the
             // changed predicate, with the reason listing the operand values the
-            // strong related calls actually bind.
+            // strong related calls actually bind. For a changed `case a | b`
+            // alternative the reason names the match subject, the discriminator
+            // is the missing value, and the observed list is empty.
             boundary_gap
                 .and_then(|gap| {
                     gap.discriminator
@@ -2355,6 +2449,20 @@ fn classify_change_for_owner_inner<'a>(
                 reason: format!(
                     "the change at line {line} only swaps `and`/`or`, and every related call makes both operands {}",
                     agreed_phrase(&swap.agreed)
+                ),
+                flow_sink: flow_sink.clone(),
+                shape: DiscriminatorShape::Other,
+                drafted_boundary: None,
+            }]
+        } else if let Some(variant) = call_variant_gap
+            .as_ref()
+            .filter(|_| changed_default_override.is_none())
+        {
+            vec![MissingDiscriminatorFact {
+                value: format!("call `{}` with {}", owner.name, variant.discriminator),
+                reason: format!(
+                    "the change at line {line} only changes `{}` to `{}`, and no related call is seen to pass {}; whether the current tests would notice the change is not established",
+                    variant.old_call, variant.new_call, variant.discriminator
                 ),
                 flow_sink: flow_sink.clone(),
                 shape: DiscriminatorShape::Other,
@@ -2715,7 +2823,9 @@ fn classify_change_for_owner_inner<'a>(
         {
             evidence.push(format!(
                 "{}: {} calls {} ({})",
-                if helper.cross_module {
+                if helper.candidate.relation == PythonRelationKind::RouteHelperCall {
+                    "route_helper_call"
+                } else if helper.cross_module {
                     "cross_module_caller_call"
                 } else {
                     "helper_owner_call"

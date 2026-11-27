@@ -414,3 +414,15 @@ Command:
 
 Updated:
 - `expected/human.txt`
+
+## Pending — owner_return_pin_nested_test (33)
+
+Reason:
+RIPR-SPEC-0224: inert row names the construct its refusals agree on (#15337)
+
+Command:
+`cargo xtask goldens bless owner_return_pin_nested_test --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human-full.txt`

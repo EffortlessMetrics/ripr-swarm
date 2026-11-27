@@ -82,6 +82,32 @@ fn find_related_tests_in<'context, 'index>(
         })
         .unwrap_or_default();
     candidates.retain(|test_index, _| !inaccessible_direct.contains(test_index));
+    // #14069 (#14179): a test whose every spelling of the owner's name is a
+    // bare call bound by a renaming import of another function, or only by
+    // standard-library globs, runs that other function. The finding-level
+    // relation demotes the same call to name-only, so the seam drops the
+    // direct row too. This runs after the visibility record above, so a
+    // test shown unable to reach a private owner stays refused below; the
+    // weaker matchers may still relate any other test. A test whose every
+    // mention of the name is bound by a local of its body (`let dt = |x|
+    // x + 1;`, #14552) is dropped the same way.
+    if owner.free_function
+        && let Some(function) = owner.function
+    {
+        candidates.retain(|test_index, _| {
+            context.tests.get(*test_index).is_none_or(|indexed| {
+                !crate::analysis::classify::test_calls_only_a_renamed_other_function(
+                    context.index,
+                    function,
+                    indexed.test,
+                ) && !crate::analysis::classify::test_calls_only_a_local_binding(
+                    context.index,
+                    function,
+                    indexed.test,
+                )
+            })
+        });
+    }
     if cancellation::checkpoint().is_err() {
         return Vec::new();
     }

@@ -107,7 +107,7 @@ fn render_from_gap_ledger_contents(options: &Options, contents: &str) -> Result<
     let source =
         output::gap_decision_ledger::parse_gap_record_source_json(contents).map_err(|err| {
             format!(
-                "swarm queue --gap-ledger {} is invalid: {err}",
+                "swarm queue --gap-ledger {} is invalid: {err}; regenerate it with `ripr reports gap-ledger` or pass the ledger that command wrote",
                 options.gap_ledger.display()
             )
         })?;

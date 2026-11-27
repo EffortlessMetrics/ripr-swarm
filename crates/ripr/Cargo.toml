@@ -53,6 +53,7 @@ include = [
   "!src/lsp/saved_edit_measurement.rs",
   "!src/lsp/saved_edit_sequence.rs",
   "src/analysis/classify/related_tests.rs",
+  "src/analysis/executable_tests.rs",
   "src/analysis/facts/macro_generated_tests.rs",
   "src/analysis/facts/parameterized_tests.rs",
   "src/analysis/language/python/doctest_tests.rs",
@@ -125,7 +126,7 @@ oxc_span = { version = "0.130", optional = true }
 oxc_syntax = { version = "0.130", optional = true }
 ra_ap_syntax = { version = "0.0.349", optional = true }
 rayon = "1"
-rmcp = { version = "=3.9.0", default-features = false, features = ["server", "transport-async-rw"] }
+rmcp = { version = "=3.12.0", default-features = false, features = ["server", "transport-async-rw"] }
 # Default features pull `malachite-bigint` (LGPL-3.0-only), which is
 # incompatible with our MIT/Apache-2.0 license posture. Disable the
 # default and select `num-bigint` (MIT/Apache-2.0) for arbitrary-precision
@@ -223,8 +224,11 @@ lang-perl = ["ripr-contract/lang-perl"]
 # from this crate's own features, and the contract's defaults would unify on.
 ripr-contract = { version = "=0.11.0", path = "../ripr-contract", default-features = false, features = ["test-fixtures"] }
 proptest = "1"
-rmcp = { version = "=3.9.0", default-features = false, features = ["client", "transport-async-rw"] }
+rmcp = { version = "=3.12.0", default-features = false, features = ["client", "transport-async-rw"] }
+# Resolve Rust item boundaries and module declarations in the refusal source floor.
+ra_ap_syntax = "0.0.349"
 serial_test = "4"
+tempfile = "3"
 # Dev-only: deterministic initialize-delivery witnesses (#3802) pause tokio
 # time and drive the service layers (tower Service) directly.
 tokio = { version = "1", features = ["test-util", "process"] }

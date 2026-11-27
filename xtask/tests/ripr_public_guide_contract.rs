@@ -151,6 +151,12 @@ fn doc_section(doc: &str, heading: &str) -> Result<String, String> {
         .ok_or_else(|| format!("document has no content for `{heading}`"))
 }
 
+const README_ARCHIVE_CHECK: &str = " && ./ripr-bin/ripr check";
+
+fn readme_first_run_checks_installed_archive(block: &str) -> bool {
+    block.contains("sha256sum -c") && block.ends_with(README_ARCHIVE_CHECK)
+}
+
 /// Keep task ownership and executable entry points aligned without pinning
 /// editorial prose.
 #[test]
@@ -161,9 +167,10 @@ fn docs_keep_the_canonical_role_vocabulary() -> Result<(), String> {
     // alternative below it. The block must verify the download and end by
     // inspecting a change.
     let first_run = first_bash_block(ROOT_README)?;
-    if !first_run.contains("sha256sum -c") || !first_run.ends_with(" ripr check") {
+    if !readme_first_run_checks_installed_archive(&first_run) {
         return Err(
-            "README first run must install a checksummed ripr and inspect a change".to_string(),
+            "README first run must verify the archive and inspect a change with the extracted ripr"
+                .to_string(),
         );
     }
     for target in [
@@ -427,34 +434,36 @@ fn first_run_guard_does_not_credit_a_later_correct_example() -> Result<(), Strin
     if first_bash_block(changed)? == "ripr check" {
         return Err("a later command must not hide a wrong first-run route".to_string());
     }
-    for (surface, section, expected) in [
-        (
-            "README",
-            doc_section(ROOT_README, "## The first useful run")?,
-            "cargo install ripr ripr check",
-        ),
-        (
-            "Quickstart CLI",
-            doc_section(QUICKSTART_DOC, "## CLI First Hour")?,
-            "ripr check",
-        ),
+    let readme = first_bash_block(&doc_section(ROOT_README, "## The first useful run")?)?;
+    let install = readme
+        .strip_suffix(README_ARCHIVE_CHECK)
+        .ok_or("README negative controls need the guarded extracted command")?;
+    for wrong in [
+        " && ripr check",
+        " ./ripr-bin/ripr check",
+        " && ./ripr-bin/ripr doctor",
+        " && ./ripr-bin/ripr pilot --root .",
+        " && ./ripr-bin/ripr check --base origin/main",
     ] {
-        for command in [
-            "ripr doctor",
-            "ripr pilot --root .",
-            "ripr check --base origin/main",
-        ] {
-            let wrong = section.replacen("\nripr check\n", &format!("\n{command}\n"), 1);
-            if wrong == section {
-                return Err(format!(
-                    "{surface} negative control did not change a command"
-                ));
-            }
-            if first_bash_block(&wrong)? == expected {
-                return Err(format!(
-                    "{surface} first-run guard accepted `{command}` before a later correct example"
-                ));
-            }
+        if readme_first_run_checks_installed_archive(&format!("{install}{wrong}")) {
+            return Err(format!("README first-run guard accepted `{wrong}`"));
+        }
+    }
+
+    let quickstart = doc_section(QUICKSTART_DOC, "## CLI First Hour")?;
+    for command in [
+        "ripr doctor",
+        "ripr pilot --root .",
+        "ripr check --base origin/main",
+    ] {
+        let wrong = quickstart.replacen("\nripr check\n", &format!("\n{command}\n"), 1);
+        if wrong == quickstart {
+            return Err("Quickstart CLI negative control did not change a command".to_string());
+        }
+        if first_bash_block(&wrong)? == "ripr check" {
+            return Err(format!(
+                "Quickstart CLI first-run guard accepted `{command}` before a later correct example"
+            ));
         }
     }
     Ok(())

@@ -780,14 +780,18 @@ pub(crate) fn positive_limit_from_env(
             let parsed = raw
                 .trim()
                 .parse::<usize>()
-                .map_err(|err| format!("{env_name} must be a positive integer: {err}"))?;
+                .map_err(|err| format!("{env_name} must be a positive integer: {err}; set it to a whole number above zero, or unset it to use the default"))?;
             if parsed == 0 {
-                return Err(format!("{env_name} must be a positive integer"));
+                return Err(format!(
+                    "{env_name} must be a positive integer; set it to a whole number above zero, or unset it to use the default"
+                ));
             }
             Ok(parsed)
         }
         Err(std::env::VarError::NotPresent) => Ok(default),
-        Err(std::env::VarError::NotUnicode(_)) => Err(format!("{env_name} must be valid UTF-8")),
+        Err(std::env::VarError::NotUnicode(_)) => Err(format!(
+            "{env_name} must be valid UTF-8; set it to a whole number above zero, or unset it to use the default"
+        )),
     }
 }
 
@@ -3611,6 +3615,7 @@ impl RustAdapter {
                 let probe = seeded.probe;
                 let binding_relation = seeded.binding_relation;
                 let binding_return = seeded.binding_return;
+                let enclosing_unsafe_obligation = seeded.enclosing_unsafe_obligation;
                 finding.language = Some(LanguageId::Rust);
                 // Producer-owned source currentness (#3280): resolved from the diff
                 // evidence that seeded the probe, before any limitation shaping.
@@ -3808,6 +3813,11 @@ impl RustAdapter {
                     binding_relation.as_ref(),
                     pre_cap_syntax_only,
                 );
+                // #16302: the enclosing unsafe boundary this probe replaced on
+                // its line hands over its `unsafe_obligation` note.
+                if enclosing_unsafe_obligation {
+                    crate::analysis::classify::carry_enclosing_unsafe_obligation(&mut finding);
+                }
                 // RIPR-SPEC-0369: name a `verus!` region by the changed file's
                 // own index key; the probe's file is root-joined.
                 probes::apply_verus_macro_region_limit(&mut finding, &probe, &index, changed);

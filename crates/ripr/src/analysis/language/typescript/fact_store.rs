@@ -38,8 +38,11 @@ pub(crate) use crate::analysis::language::adapter::render_fact_cache_line;
 /// to a serialized fact spelling (field rename, type change, new label) is
 /// a schema change: bump this so stale entries read as misses. `13`: module
 /// entries carry `closure` (#13592). `14`: test scope bindings carry
-/// `namespace_member_of` (#13592, implementation tables).
-pub(crate) const TYPESCRIPT_FILE_FACT_SCHEMA_VERSION: &str = "14";
+/// `namespace_member_of` (#13592, implementation tables). `15`: module
+/// entries reach built values and module-private class methods (#15928).
+/// `16`: CommonJS export writes are module entries, which carry
+/// `commonjs_whole` (#16369).
+pub(crate) const TYPESCRIPT_FILE_FACT_SCHEMA_VERSION: &str = "16";
 
 /// Approximate per-run ceiling on newly persisted fact bytes. Parsing the
 /// file already happened by store time, so exhausting the budget only skips
@@ -574,8 +577,11 @@ mod tests {
         // namespace member calls and method-owner instance factories
         // (#15922-#15924). "13" adds the module entries' `closure` flag
         // (#13592). "14" adds the scope bindings' `namespace_member_of`
-        // (#13592).
-        assert_eq!(TYPESCRIPT_FILE_FACT_SCHEMA_VERSION, "14");
+        // (#13592). "15" adds module entries through built values and
+        // module-private class methods (#15928): an envelope written without
+        // them would keep withholding that reach. "16" adds CommonJS export
+        // writes as module entries and their `commonjs_whole` flag (#16369).
+        assert_eq!(TYPESCRIPT_FILE_FACT_SCHEMA_VERSION, "16");
         // A stale-schema envelope: the exact bytes the pre-#11250 ("3")
         // binary wrote — same identity, valid integrity digest, older
         // schema version — sitting at the entry path the current key

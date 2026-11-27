@@ -170,6 +170,8 @@ pub(super) struct AgentRepairOptions {
     pub(super) gap_id: Option<String>,
     /// Diff base a gap-bound attempt analyzes. `ripr check` findings are
     /// diff-scoped, so the base is recorded for the later after phase.
+    /// The task-first facade also carries its selection base here so the
+    /// seam admission check reads the same comparison.
     pub(super) base: Option<String>,
     pub(super) attempt_id: Option<String>,
     pub(super) phase: AgentRepairPhase,

@@ -1845,15 +1845,13 @@ pub(crate) struct BeforeRepairAttemptIdentity {
 impl BeforeRepairAttemptIdentity {
     pub(crate) fn prepare(root: &Path, seam_id: &str) -> Result<Self, String> {
         if seam_id.trim().is_empty() {
-            return Err("repair attempt requires a non-empty seam ID".to_string());
+            return Err("repair attempt requires a non-empty seam ID; pass --seam-id with an ID from `ripr agent status` or `ripr pilot --root .`".to_string());
         }
         let canonical_root = root
             .canonicalize()
             .map_err(|error| format!("canonicalize repair attempt root failed: {error}"))?;
-        let repository_head =
-            crate::agent::artifact::current_git_head(&canonical_root).map_err(|error| {
-                format!("repair attempt requires a concrete repository HEAD: {error}")
-            })?;
+        let repository_head = crate::agent::artifact::current_git_head(&canonical_root)
+            .map_err(|error| concrete_head_refusal(&canonical_root, &error))?;
         let created_unix_ms = current_unix_ms()?;
         let nonce = ATTEMPT_NONCE.fetch_add(1, Ordering::Relaxed);
         let repair_attempt_id = repair_attempt_id_from_parts(
@@ -1883,7 +1881,7 @@ pub(crate) fn begin_repair_attempt_with(
     options: BeginRepairAttemptOptions<'_>,
 ) -> Result<BeginRepairAttemptResult, String> {
     if options.seam_id.trim().is_empty() {
-        return Err("repair attempt requires a non-empty seam ID".to_string());
+        return Err("repair attempt requires a non-empty seam ID; pass --seam-id with an ID from `ripr agent status` or `ripr pilot --root .`".to_string());
     }
     if options.sources.is_empty() {
         return Err("repair attempt requires at least one before-phase artifact".to_string());
@@ -1925,7 +1923,7 @@ fn begin_repair_attempt_inner(
         store,
     } = options;
     if seam_id.trim().is_empty() {
-        return Err("repair attempt requires a non-empty seam ID".to_string());
+        return Err("repair attempt requires a non-empty seam ID; pass --seam-id with an ID from `ripr agent status` or `ripr pilot --root .`".to_string());
     }
     if sources.is_empty() {
         return Err("repair attempt requires at least one before-phase artifact".to_string());
@@ -1942,7 +1940,7 @@ fn begin_repair_attempt_inner(
     // path re-verifies after staging, and an A-B-A swap inside that window
     // is undetectable by commit comparison alone (#6822).
     let repository_identity = crate::agent::artifact::current_git_head_identity(canonical_root)
-        .map_err(|error| format!("repair attempt requires a concrete repository HEAD: {error}"))?;
+        .map_err(|error| concrete_head_refusal(canonical_root, &error))?;
     let repository_head = repository_identity.head.clone();
     // Pre-publication head gate: compare the caller's verified pin against
     // the repository HEAD this publication would record, before the attempt
@@ -3767,7 +3765,7 @@ pub(crate) fn resolve_awaiting_repair_attempt_from(
             );
         }
         (None, None) => {
-            return Err("repair after selection requires an attempt ID or seam ID".to_string());
+            return Err("repair after selection requires an attempt ID or seam ID; pass --attempt ID, or --seam-id ID to select the one repair awaiting that gap".to_string());
         }
     };
     if manifest.state != RepairAttemptState::AwaitingEdit {
@@ -4205,7 +4203,7 @@ pub(crate) fn finish_repair_attempt_with_workflow_backups_from(
     let baseline: AttemptBaseline = serde_json::from_slice(&baseline_bytes)
         .map_err(|error| format!("decode edit-cage baseline failed: {error}; the staged baseline is damaged, so start a new attempt with `ripr agent repair`"))?;
     if baseline.root() != root {
-        return Err("edit-cage baseline root does not match selected repository".to_string());
+        return Err("edit-cage baseline root does not match selected repository; run from the repository the attempt was started in, or select that repository as the root".to_string());
     }
     // Head identity (not just HEAD) brackets the evaluation: an A-B-A
     // swap inside the window is undetectable by commit comparison alone,
@@ -4883,7 +4881,7 @@ fn select_awaiting_repair_attempt_by_seam(
     seam_id: &str,
 ) -> Result<(PathBuf, RepairAttemptManifest), String> {
     if seam_id.trim().is_empty() {
-        return Err("repair after selection requires a non-empty seam ID".to_string());
+        return Err("repair after selection requires a non-empty seam ID; pass the gap's --seam-id, or select the attempt with --attempt ID".to_string());
     }
     let manifests_root = store.resolved_path();
     let mut matches = Vec::new();
@@ -4950,6 +4948,32 @@ fn select_awaiting_repair_attempt_by_seam(
     matches.pop().ok_or_else(|| "missing attempt".to_string())
 }
 
+/// A missing manifest names what to check. The CLI selection boundary
+/// (`repair_attempt_input_error`) appends the read-only status command bound to
+/// the same `--root` and `--store`; naming an unscoped command here would
+/// suppress that follow-up and list a different store (#16345 review).
+fn missing_manifest_refusal(attempt_id: &RepairAttemptId, path: &Path) -> String {
+    format!(
+        "repair attempt manifest not found for {} at {}; check the --attempt ID and --store",
+        attempt_id.as_str(),
+        crate::output::path::human_path(path)
+    )
+}
+
+/// First-commit advice only when Git establishes an unborn HEAD; a committed
+/// checkout whose HEAD ripr cannot use (for example a SHA-256 object ID) keeps
+/// the underlying diagnosis without being told to commit again (#16345 review).
+fn concrete_head_refusal(root: &Path, error: &str) -> String {
+    match crate::analysis::probe_head_ref_state(root, None) {
+        crate::analysis::HeadRefState::Unborn => format!(
+            "repair attempt requires a concrete repository HEAD: {error}; commit the repository at least once, then rerun"
+        ),
+        _ => format!(
+            "repair attempt requires a concrete repository HEAD: {error}; fix the Git problem it names, then rerun"
+        ),
+    }
+}
+
 fn load_repair_attempt_by_id(
     store: &RepairAttemptStoreRef,
     attempt_id: &RepairAttemptId,
@@ -4958,11 +4982,7 @@ fn load_repair_attempt_by_id(
         .attempt_directory(attempt_id)
         .join(REPAIR_ATTEMPT_MANIFEST);
     if !path.is_file() {
-        return Err(format!(
-            "repair attempt manifest not found for {} at {}",
-            attempt_id.as_str(),
-            crate::output::path::human_path(&path)
-        ));
+        return Err(missing_manifest_refusal(attempt_id, &path));
     }
     let manifest = read_repair_attempt_manifest_at(store, &path)?;
     if manifest.repair_attempt_id != *attempt_id {
@@ -4984,11 +5004,7 @@ fn load_repair_attempt_snapshot_by_id(
         .attempt_directory(attempt_id)
         .join(REPAIR_ATTEMPT_MANIFEST);
     if !path.is_file() {
-        return Err(format!(
-            "repair attempt manifest not found for {} at {}",
-            attempt_id.as_str(),
-            crate::output::path::human_path(&path)
-        ));
+        return Err(missing_manifest_refusal(attempt_id, &path));
     }
     let raw =
         std::fs::read(&path).map_err(|error| format!("read {} failed: {error}", path.display()))?;
@@ -5623,7 +5639,7 @@ fn validate_manifest_at(
         .canonicalize()
         .map_err(|error| format!("canonicalize declared manifest root failed: {error}"))?;
     if declared_root != root {
-        return Err("repair attempt manifest root does not match selected repository".to_string());
+        return Err("repair attempt manifest root does not match selected repository; run from the repository the attempt was started in, or select that repository as the root".to_string());
     }
     let expected_manifest = store
         .attempt_directory(&manifest.repair_attempt_id)
@@ -5878,17 +5894,30 @@ pub(crate) fn seam_dirty_premise_refusal(
     facade_start: bool,
     violations: &[String],
 ) -> String {
+    let restart = seam_start_command(seam_id, root, store, facade_start);
+    dirty_premise_refusal(&restart, violations)
+}
+
+/// The command a not-started seam refusal tells the user to rerun: the
+/// `ripr repair <item>` façade keeps its short spelling, and an advanced
+/// start or one with an explicit `--store` keeps that store, so the retried
+/// attempt lands where the original command would have put it (#15265).
+pub(crate) fn seam_start_command(
+    seam_id: &str,
+    root: &Path,
+    store: Option<&Path>,
+    facade_start: bool,
+) -> String {
     let root_arg = shell_arg(&bound_root(&root.to_string_lossy()));
     let seam_arg = shell_arg(seam_id);
     let store_flag = quoted_store_flag(store);
-    let restart = if facade_start && store.is_none() {
+    if facade_start && store.is_none() {
         format!("ripr repair {seam_arg} --root {root_arg}")
     } else {
         format!(
             "ripr agent repair --root {root_arg}{store_flag} --seam-id {seam_arg} --phase before"
         )
-    };
-    dirty_premise_refusal(&restart, violations)
+    }
 }
 
 /// [`seam_dirty_premise_refusal`] for any start spelling: the seam and

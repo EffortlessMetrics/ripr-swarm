@@ -1,0 +1,11 @@
+crates/ripr/src/app/python_repair_binding.rs|durable attempt is missing its retained python repair-trust binding
+crates/ripr/src/app/python_repair_binding.rs|python repair-trust binding could not read the running driver binary: {error}
+crates/ripr/src/app/python_repair_binding.rs|python repair-trust binding requires a concrete repository HEAD: {error}
+crates/ripr/src/app/python_repair_binding.rs|python repair-trust binding requires the before snapshot {}: {error}
+crates/ripr/src/app/python_repair_binding.rs|python repair-trust selection manifest is not well-formed JSON: {error}
+crates/ripr/src/app/python_repair_binding.rs|python repair-trust selection manifest {} is not readable: {error}
+crates/ripr/src/app/python_repair_binding.rs|read retained python repair-trust binding {} failed: {error}
+crates/ripr/src/app/python_repair_binding.rs|retained binding record non_claims[{index}]: non-claim must be a string
+crates/ripr/src/app/python_repair_binding.rs|retained python repair-trust binding is not well-formed JSON: {error}
+crates/ripr/src/app/python_repair_binding.rs|serialize python repair-trust binding record failed: {error}
+crates/ripr/src/app/python_repair_binding.rs|stale packet rejected before recording the applied edit: {error}
