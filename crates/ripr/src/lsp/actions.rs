@@ -564,12 +564,13 @@ pub(super) enum SeamStartStep {
 /// production files under `snapshot_root`, and the commit is spelled with the
 /// `root_display` the start command binds. An unreadable premise is
 /// `Runnable`: the start keeps its legacy form and its own before phase stays
-/// the final authority that refuses.
+/// the final authority that refuses. The line-break refusal is matched by
+/// containment, so context a caller adds to the error keeps it `Withheld`.
 pub(super) fn seam_start_step(snapshot_root: &Path, root_display: &str) -> SeamStartStep {
     match seam_start_dirty_files(snapshot_root) {
         Ok(files) => crate::app::commit_prerequisite_command(root_display, &files)
             .map_or(SeamStartStep::Runnable, SeamStartStep::Commit),
-        Err(error) if error == crate::app::repair_attempt::LINE_BREAK_PREMISE => {
+        Err(error) if error.contains(crate::app::repair_attempt::LINE_BREAK_PREMISE) => {
             SeamStartStep::Withheld
         }
         Err(_) => SeamStartStep::Runnable,
