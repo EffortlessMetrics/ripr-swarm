@@ -99,6 +99,16 @@ pub(super) fn run_agent_stub(mut options: AgentStubOptions) -> Result<(), Comman
         }
     }
     let mut disclosure = stub_grip_disclosure(&resolution.seam_id, resolution.grip_class, &config);
+    // #15278: the inventory judges the whole seam; `ripr check` judges the
+    // changed line. When check reads a gap there, the stub is for that gap.
+    if resolution.grip_class == Some(SeamGripClass::StronglyGripped) {
+        let reading = crate::app::test_stub::check_reading_of_gripped_stub_seam(
+            &options.root,
+            &config,
+            &resolution.seam_id,
+        );
+        disclose_check_reading(&mut disclosure, &resolution.seam_id, &reading);
+    }
     if let Some(note) = &resolution.at_note {
         disclosure.warnings.insert(0, note.clone());
     }
@@ -289,7 +299,7 @@ pub(super) fn run_agent_stub(mut options: AgentStubOptions) -> Result<(), Comman
     Ok(())
 }
 
-/// The human lines that follow the stub: the derived inputs, the receiver and
+/// The human lines that follow the stub: the derived and copied inputs, the receiver and
 /// each fill-in. They carry repository text (comparison and constructor
 /// literals, parameter names), so each is spelled single-line and
 /// terminal-safe; the JSON document keeps the raw values.
@@ -298,9 +308,12 @@ fn stub_detail_lines(stub: &crate::analysis::test_stub::RustTestStub) -> Vec<Str
     let mut lines = Vec::new();
     if !stub.derived_inputs.is_empty() {
         lines.push(format!(
-            "Inputs from the changed comparison: {}",
+            "Inputs from the changed code: {}",
             single_line(&stub.derived_inputs.join(", "))
         ));
+    }
+    if let Some(inputs) = &stub.input_setup {
+        lines.push(format!("Other inputs: {}", single_line(inputs)));
     }
     if let Some(receiver) = &stub.receiver_setup {
         lines.push(format!("Receiver: {}", single_line(receiver)));
@@ -492,6 +505,40 @@ fn stub_grip_disclosure(
     }
 }
 
+/// Replace the strongly-gripped disclosure when `ripr check` reads the
+/// changed code of the seam as a gap or a limit, or could not be asked
+/// (#15278). The inventory's `grip_class` stays; `classification` carries
+/// check's class, or nothing when check could not run.
+fn disclose_check_reading(
+    disclosure: &mut StubGripDisclosure,
+    seam_id: &str,
+    reading: &crate::app::task_first::CheckReadingOfGrippedSeam,
+) {
+    use crate::app::task_first::CheckReadingOfGrippedSeam as Reading;
+    let warning = match reading {
+        Reading::Stands => return,
+        Reading::Open { class, .. } => {
+            disclosure.classification = Some(class.as_str());
+            format!(
+                "seam {seam_id} is strongly_gripped when ripr reads the whole spot, but `ripr check` reads your changed code there as {} ({}): existing tests do not clearly notice the change, so this stub is for that gap",
+                class.plain_label(),
+                class.as_str()
+            )
+        }
+        Reading::Unavailable => {
+            disclosure.classification = None;
+            format!(
+                "seam {seam_id} is strongly_gripped when ripr reads the whole spot, and your change touches it, but ripr could not run `ripr check` to confirm that existing tests notice the changed code"
+            )
+        }
+    };
+    let gripped = format!("seam {seam_id} is strongly_gripped:");
+    disclosure
+        .warnings
+        .retain(|existing| !existing.starts_with(&gripped));
+    disclosure.warnings.push(warning);
+}
+
 /// The stub path's omission wording names the real reason. For
 /// `strongly_gripped` the default `Off` seam severity is the agent-brief
 /// rendering policy, not something the user configured, so the packet/brief
@@ -533,12 +580,14 @@ mod tests {
                 "subject = Bucket::new(\"\u{1b}]0;owned\u{7}\"), as in the existing test `t`"
                     .to_string(),
             ),
+            input_setup: Some("s = \"\u{1b}[2J\", as in the existing test `t`".to_string()),
         };
         let lines = stub_detail_lines(&stub);
         assert_eq!(
             lines,
             vec![
-                "Inputs from the changed comparison: x = \"a\\u{202e}b\"".to_string(),
+                "Inputs from the changed code: x = \"a\\u{202e}b\"".to_string(),
+                "Other inputs: s = \"\\u{1b}[2J\", as in the existing test `t`".to_string(),
                 "Receiver: subject = Bucket::new(\"\\u{1b}]0;owned\\u{07}\"), as in the existing test `t`"
                     .to_string(),
                 "Fill in: expected \\u{1b}[2J value".to_string(),
@@ -903,6 +952,39 @@ weakly_gripped = "off"
         {
             return Err(format!(
                 "second write must not append a `_2` duplicate:\n{rewritten}"
+            ));
+        }
+        Ok(())
+    }
+
+    /// #8361: a stub for an owner named `actual` binds `let actual =
+    /// actual(..)`. That local cannot take the donor test's call, so a second
+    /// `--write` must still copy the donor's input, recognize its own stub
+    /// and leave the file byte-identical.
+    #[test]
+    fn second_write_keeps_copied_inputs_when_the_owner_is_named_actual() -> Result<(), String> {
+        const SOURCE: &str = "pub type Verdict = bool;\npub fn actual(amount: i64, rate: u32) -> Verdict {\n    if rate > 500 {\n        amount > 0\n    } else {\n        false\n    }\n}\n\n#[cfg(test)]\nmod tests {\n    use super::*;\n\n    #[test]\n    fn approves() {\n        assert!(actual(7, 900));\n    }\n}\n";
+        let root = scratch_crate("rewrite-actual", SOURCE)?;
+        stub_write_at(&root, "src/lib.rs:3", "predicate")
+            .map_err(|error| format!("first write must succeed: {error:?}"))?;
+        let first =
+            std::fs::read_to_string(root.join("src/lib.rs")).map_err(|error| error.to_string())?;
+        let second = stub_write_at(&root, "src/lib.rs:3", "predicate");
+        let rewritten =
+            std::fs::read_to_string(root.join("src/lib.rs")).map_err(|error| error.to_string())?;
+        let _ = std::fs::remove_dir_all(&root);
+        second.map_err(|error| format!("second write must stay ready: {error:?}"))?;
+        if !first.contains("let amount: i64 = 7;") || !first.contains("let actual = actual(") {
+            return Err(format!(
+                "fixture: the first write must copy `amount` and bind `actual`:\n{first}"
+            ));
+        }
+        if first.matches("fn actual_boundary_discriminator").count() != 1 {
+            return Err(format!("first write must add exactly one stub:\n{first}"));
+        }
+        if rewritten != first {
+            return Err(format!(
+                "second write must leave the file byte-identical:\n{rewritten}"
             ));
         }
         Ok(())

@@ -27,7 +27,7 @@ ripr first-pr \
   --base origin/main \
   --head HEAD \
   --gap-ledger fixtures/first_successful_pr/boundary-gap/inputs/reports/gap-decision-ledger.json \
-  --out-dir target/ripr/demo/boundary-gap
+  --output-dir target/ripr/demo/boundary-gap
 ```
 
 The root must be a Cargo workspace on a branch whose diff against

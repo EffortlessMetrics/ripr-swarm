@@ -1,0 +1,25 @@
+{
+  "subject_id": "authored-ts-stage-fallback",
+  "origin": "authored",
+  "version_label": "authored@12922",
+  "license": "MIT OR Apache-2.0",
+  "shared_corpus": null,
+  "retained_files": [
+    {
+      "path": "package.json",
+      "sha256": "b7c3a58a89895ed3ae2d3e729331168e1b3b66f52440c87ecf39a400335f8f51"
+    },
+    {
+      "path": "ripr.toml",
+      "sha256": "fd4bef0be0af8666a5f559a03d235c19c6ab225d5eb26a1c6ea5cf022bf00043"
+    },
+    {
+      "path": "src/price.ts",
+      "sha256": "902e10e83f149f21ed77dadcdad46b0c6ce8d1040f8276e39a78845a626be3fa"
+    },
+    {
+      "path": "test/price.test.ts",
+      "sha256": "c77418e56b75b0116e9696327291495d875acb63fac5a4d459f673a0db7f3967"
+    }
+  ]
+}

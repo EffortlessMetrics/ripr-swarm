@@ -1407,6 +1407,189 @@ fn python_status_after_pilot_names_the_gap_bound_start() -> Result<(), String> {
     decoy_untouched(&decoy)
 }
 
+/// #15902: an installed dependency tree that `.gitignore` does not cover is
+/// not unanalyzed source. `ripr check` keeps offering the repair start and
+/// stops advising `git add -N` for files no adapter would read. An untracked
+/// hand-written source file is the control and still withholds the start.
+/// When the unignored tree is too large for the edit cage to snapshot, the
+/// before phase names that cause and the ignore fix, and following that fix
+/// yields a scorable baseline; a small tree gets no such line. An untracked
+/// test under `docs/` stays disclosed, because the workspace walk reads it.
+#[cfg(feature = "lang-typescript")]
+#[test]
+fn typescript_unignored_dependency_tree_keeps_the_start_and_names_an_oversized_capture()
+-> Result<(), String> {
+    let write = |path: &Path, text: &str| -> Result<(), String> {
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent).map_err(|error| format!("mkdir: {error}"))?;
+        }
+        std::fs::write(path, text).map_err(|error| format!("write {}: {error}", path.display()))
+    };
+    let (_guard, root, decoy) =
+        materialize("blind_journey_installed_typescript", "head", "tsnm", None)?;
+    let root_arg = root.to_string_lossy().into_owned();
+    write(
+        &root.join("node_modules/dep/index.ts"),
+        "export const one = 1;\n",
+    )?;
+    write(
+        &root.join("node_modules/dep/lib/util.js"),
+        "exports.two = 2;\n",
+    )?;
+    let (ok, check) = ripr(&decoy, &["check", "--root", &root_arg, "--base", "HEAD~1"])?;
+    expect_exit(ok, true, "check with an unignored dependency tree")?;
+    let (gap, base) = gap_start_tokens(&check).ok_or_else(|| {
+        format!("an unignored dependency tree withheld the repair start:\n{check}")
+    })?;
+    if check.contains("git add -N") || check.contains("untracked:") {
+        return Err(format!(
+            "check named dependency files as unanalyzed source:\n{check}"
+        ));
+    }
+
+    // Small tree: the start is scorable and no oversized-capture line prints.
+    let (ok, start) = ripr(
+        &decoy,
+        &[
+            "agent", "repair", "--gap-id", &gap, "--base", &base, "--root", &root_arg, "--phase",
+            "before",
+        ],
+    )?;
+    expect_exit(ok, true, "start beside a small unignored dependency tree")?;
+    if start.contains("likely cause of the ambiguous baseline") || start.contains("ambiguous: true")
+    {
+        return Err(format!(
+            "a small dependency tree read as oversized:\n{start}"
+        ));
+    }
+
+    // Control: an untracked hand-written source file is still unanalyzed
+    // working-tree source, so the start stays withheld and the note stays.
+    let (_control_guard, control_root, control_decoy) = materialize(
+        "blind_journey_installed_typescript",
+        "head",
+        "tsnm-src",
+        None,
+    )?;
+    let control_arg = control_root.to_string_lossy().into_owned();
+    write(
+        &control_root.join("src/extra.ts"),
+        "export const extra = 1;\n",
+    )?;
+    let (ok, control) = ripr(
+        &control_decoy,
+        &["check", "--root", &control_arg, "--base", "HEAD~1"],
+    )?;
+    expect_exit(ok, true, "check with an untracked source file")?;
+    if gap_start_tokens(&control).is_some() || !control.contains("src/extra.ts") {
+        return Err(format!(
+            "an untracked source file no longer withholds the start or lost its note:\n{control}"
+        ));
+    }
+
+    // Control: an untracked test under `docs/` is skipped as changed scope
+    // but still indexed as test evidence, so it stays disclosed and the
+    // start stays withheld.
+    let (_docs_guard, docs_root, docs_decoy) = materialize(
+        "blind_journey_installed_typescript",
+        "head",
+        "tsnm-docs",
+        None,
+    )?;
+    let docs_arg = docs_root.to_string_lossy().into_owned();
+    write(
+        &docs_root.join("docs/pricing.test.ts"),
+        "import { test, expect } from \"vitest\";\ntest(\"one\", () => { expect(1).toBe(1); });\n",
+    )?;
+    let (ok, docs) = ripr(
+        &docs_decoy,
+        &["check", "--root", &docs_arg, "--base", "HEAD~1"],
+    )?;
+    expect_exit(ok, true, "check with an untracked docs test")?;
+    if gap_start_tokens(&docs).is_some() || !docs.contains("docs/pricing.test.ts") {
+        return Err(format!(
+            "an untracked docs test no longer withholds the start or lost its note:\n{docs}"
+        ));
+    }
+
+    // Oversized: one untracked file past the per-file capture budget (sparse,
+    // so the test writes no real data) makes the baseline ambiguous, and the
+    // before phase names the directory and the fix.
+    let (_big_guard, big_root, big_decoy) = materialize(
+        "blind_journey_installed_typescript",
+        "head",
+        "tsnm-big",
+        None,
+    )?;
+    let big_arg = big_root.to_string_lossy().into_owned();
+    let native = big_root.join("node_modules/dep/native.node");
+    write(&native, "")?;
+    std::fs::OpenOptions::new()
+        .write(true)
+        .open(&native)
+        .and_then(|file| file.set_len(16 * 1024 * 1024 + 1))
+        .map_err(|error| format!("grow {}: {error}", native.display()))?;
+    let (ok, big) = ripr(
+        &big_decoy,
+        &[
+            "agent", "repair", "--gap-id", &gap, "--base", &base, "--root", &big_arg, "--phase",
+            "before",
+        ],
+    )?;
+    expect_exit(
+        ok,
+        true,
+        "start beside an oversized unignored dependency tree",
+    )?;
+    for needle in [
+        "ambiguous: true",
+        "likely cause of the ambiguous baseline",
+        "`node_modules/`",
+        ".git/info/exclude",
+    ] {
+        need(&big, needle, "oversized unignored dependency tree")?;
+    }
+    if big.contains("or commit") && big.contains("those files") {
+        return Err(format!(
+            "the start advised committing files the snapshot would still refuse:\n{big}"
+        ));
+    }
+
+    // Follow the printed recovery in a fresh copy: with the directory in
+    // .git/info/exclude the same start gets a scorable baseline.
+    let (_fixed_guard, fixed_root, fixed_decoy) = materialize(
+        "blind_journey_installed_typescript",
+        "head",
+        "tsnm-fixed",
+        None,
+    )?;
+    let fixed_arg = fixed_root.to_string_lossy().into_owned();
+    let fixed_native = fixed_root.join("node_modules/dep/native.node");
+    write(&fixed_native, "")?;
+    std::fs::OpenOptions::new()
+        .write(true)
+        .open(&fixed_native)
+        .and_then(|file| file.set_len(16 * 1024 * 1024 + 1))
+        .map_err(|error| format!("grow {}: {error}", fixed_native.display()))?;
+    write(&fixed_root.join(".git/info/exclude"), "node_modules/\n")?;
+    let (ok, fixed) = ripr(
+        &fixed_decoy,
+        &[
+            "agent", "repair", "--gap-id", &gap, "--base", &base, "--root", &fixed_arg, "--phase",
+            "before",
+        ],
+    )?;
+    expect_exit(ok, true, "start after the printed recovery")?;
+    if fixed.contains("ambiguous: true") || fixed.contains("likely cause of the ambiguous baseline")
+    {
+        return Err(format!(
+            "the printed recovery did not yield a scorable baseline:\n{fixed}"
+        ));
+    }
+    decoy_untouched(&decoy)?;
+    decoy_untouched(&big_decoy)
+}
+
 /// #11136: a TypeScript finding whose test sits under a condition static
 /// analysis cannot evaluate leaves the run's analysis incomplete. The after
 /// phase refuses a before artifact like that, so `ripr check` must not print a
@@ -2328,7 +2511,7 @@ fn typescript_excluded_by_config_is_not_a_clean_result() -> Result<(), String> {
     need(&out, "analysis incomplete", "incomplete analysis")?;
     need(
         &out,
-        "enabled = [\"typescript\"]",
+        "enabled = [\"rust\", \"typescript\"]",
         "names the enabling config",
     )?;
     Ok(())
@@ -6019,6 +6202,158 @@ fn negated_typeof_guard_credits_only_as_the_first_body_statement() -> Result<(),
                 "{label}: expected exposed={exposed} (else weak), got:\n{check}\nso far: {outcomes:?}"
             ));
         }
+    }
+    Ok(())
+}
+
+/// A committed TypeScript edit, plus an optional dirty declaration at the same
+/// line. Both formats see precisely the same base and head through the real CLI.
+#[cfg(feature = "lang-typescript")]
+fn committed_typescript_edit(
+    before: &str,
+    after: &str,
+    dirty: &str,
+) -> Result<(String, serde_json::Value), String> {
+    let guard = temp_dir("ts-change-digest")?;
+    let root = &guard.0;
+    fixture_git_ok(root, &["init", "-q"])?;
+    fixture_git_ok(root, &["config", "user.name", "fixture"])?;
+    fixture_git_ok(root, &["config", "user.email", "fixture@example.invalid"])?;
+    let write =
+        |path: &str, body: &str| std::fs::write(root.join(path), body).map_err(|e| e.to_string());
+    write("package.json", r#"{"devDependencies":{"vitest":"1.0.0"}}"#)?;
+    write("ripr.toml", "[languages]\nenabled = [\"typescript\"]\n")?;
+    write(
+        "week.test.ts",
+        "import { expect, test } from 'vitest';\nimport { startOfWeek } from './week';\ntest('ordinary input', () => { expect(startOfWeek(1)).toBe(1); });\n",
+    )?;
+    write("week.ts", before)?;
+    fixture_git_ok(root, &["add", "."])?;
+    fixture_git_ok(root, &["commit", "-qm", "base"])?;
+    write("week.ts", after)?;
+    fixture_git_ok(root, &["commit", "-qam", "head"])?;
+    write("week.ts", dirty)?;
+    let check = |format: &str| -> Result<String, String> {
+        let output = ripr_output(
+            root,
+            &[
+                "check",
+                "--root",
+                ".",
+                "--base",
+                "HEAD~1",
+                "--committed",
+                "--format",
+                format,
+            ],
+        )?;
+        if !output.status.success() {
+            return Err(format!(
+                "check {format}: {}",
+                String::from_utf8_lossy(&output.stderr)
+            ));
+        }
+        String::from_utf8(output.stdout).map_err(|e| e.to_string())
+    };
+    Ok((
+        check("human")?,
+        serde_json::from_str(&check("json")?).map_err(|e| e.to_string())?,
+    ))
+}
+
+#[cfg(feature = "lang-typescript")]
+#[test]
+fn changed_default_digest_names_the_committed_binding() -> Result<(), String> {
+    for (source, changed_line, id) in [
+        (
+            "export function startOfWeek(input?: number) {\n  const weekStartsOn =\n    input ??\n    0;\n  return weekStartsOn;\n}\n",
+            "    1;",
+            "probe:week.ts:typescript_preview:a269513e",
+        ),
+        (
+            "export function startOfWeek(\n  weekStartsOn =\n    0,\n) {\n  return weekStartsOn;\n}\n",
+            "    1,",
+            "probe:week.ts:typescript_preview:f9916062",
+        ),
+    ] {
+        let after = source.replace('0', "1");
+        let (human, data) = committed_typescript_edit(
+            source,
+            &after,
+            &after.replace("weekStartsOn", "dirtyBinding"),
+        )?;
+        let findings = data["findings"].as_array().ok_or("missing findings")?;
+        assert_eq!(findings.len(), 1, "{data}");
+        assert_eq!(findings[0]["id"], id);
+        assert_eq!(findings[0]["probe"]["expression"], changed_line);
+        assert_eq!(findings[0]["related_tests"][0]["name"], "ordinary input");
+        assert_eq!(
+            findings[0]["probe"]["owner"],
+            "typescript:week.ts::startOfWeek"
+        );
+        assert!(
+            human
+                .lines()
+                .any(|line| line == "  Changed behavior: weekStartsOn = 1 (default was 0)"),
+            "{human}"
+        );
+        assert!(!human.contains("dirtyBinding"), "{human}");
+    }
+    Ok(())
+}
+
+#[cfg(feature = "lang-typescript")]
+#[test]
+fn unrelated_numeric_tail_keeps_its_own_text() -> Result<(), String> {
+    let before = "export function startOfWeek(input: number) {\n  const nearby = input ?? 4;\n  return nearby +\n    0;\n}\n";
+    let after = before.replace("0;", "1;");
+    let (human, _) = committed_typescript_edit(before, &after, &after)?;
+    assert!(
+        human.lines().any(|line| line == "  Changed behavior: 1;"),
+        "{human}"
+    );
+    Ok(())
+}
+
+#[cfg(feature = "lang-typescript")]
+#[test]
+fn newly_introduced_fallback_does_not_claim_a_previous_default() -> Result<(), String> {
+    let before = "export function startOfWeek(input: number) {\n  const weekStartsOn = input +\n    0;\n  return weekStartsOn;\n}\n";
+    let after = before.replace("input +", "input ??").replace("0;", "1;");
+    let (_, data) = committed_typescript_edit(before, &after, &after)?;
+    let findings = data["findings"].as_array().ok_or("missing findings")?;
+    let tail = findings
+        .iter()
+        .find(|f| f["probe"]["line"] == 3)
+        .ok_or("missing literal line")?;
+    let evidence = tail["evidence"].as_array().ok_or("missing evidence")?;
+    assert!(
+        evidence
+            .iter()
+            .any(|e| e == "typescript_default_context: weekStartsOn = 1 (default)"),
+        "{tail}"
+    );
+    assert!(!tail.to_string().contains("default was 0"), "{tail}");
+    Ok(())
+}
+
+#[cfg(feature = "lang-typescript")]
+#[test]
+fn ternary_advice_asks_whether_the_boundary_is_observable() -> Result<(), String> {
+    // At zero the sign flips in both edits. Only the first use masks it.
+    for result in ["amount === 0 ? 0 : sign", "sign"] {
+        let before = format!(
+            "export function startOfWeek(amount: number) {{\n  const sign = amount < 0 ? -1 : 1;\n  return {result};\n}}\n"
+        );
+        let after = before.replace("< 0", "<= 0");
+        let (_, data) = committed_typescript_edit(&before, &after, &after)?;
+        let findings = data["findings"].as_array().ok_or("missing findings")?;
+        assert_eq!(findings.len(), 1, "{data}");
+        let advice = findings[0]["recommended_next_step"]
+            .as_str()
+            .ok_or("missing next step")?;
+        assert!(advice.contains("may be behavior-preserving"), "{advice}");
+        assert!(advice.contains("assert that difference"), "{advice}");
     }
     Ok(())
 }

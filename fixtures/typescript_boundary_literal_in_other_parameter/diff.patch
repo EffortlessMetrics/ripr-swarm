@@ -1,0 +1,11 @@
+diff --git a/src/format.ts b/src/format.ts
+--- a/src/format.ts
++++ b/src/format.ts
+@@ -1,6 +1,6 @@
+ export function formatShort(ms: number, other: number = 0): string {
+   const msAbs = Math.abs(ms);
+-  if (msAbs > 3600000) {
++  if (msAbs >= 3600000) {
+     return "1h";
+   }
+   return "short";

@@ -1,0 +1,6 @@
+[package]
+name = "rust_trait_sibling_type_other_receiver_fixture"
+version = "0.1.0"
+edition = "2024"
+
+[workspace]

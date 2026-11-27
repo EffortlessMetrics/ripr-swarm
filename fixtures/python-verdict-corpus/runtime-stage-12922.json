@@ -1,0 +1,511 @@
+{
+  "issue": 12922,
+  "basis": "31f7c2c3d258b2384eb64d6f25856de34449ae6b",
+  "scope": "Authored source, original/edited baselines and independent mutants; assertion failures only. TypeScript alternates are supplementary, not corpus truth for behavior_change cases. No population or static adequacy claim.",
+  "inputs": {
+    "py-partial-arithmetic": {
+      "case_sha256": "7aeb3418bad2c0d67f7c4161c90fdcc24b9f03c2b765cadf68d4b7f48ac45b8c",
+      "diff_sha256": "1304f135cff1ab95db73df653ea1c71d7e39dfdb3835fe9e0d1fa6b1ea8e92eb",
+      "retained_files": [
+        {
+          "path": "partial/__init__.py",
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        {
+          "path": "partial/core.py",
+          "sha256": "fc29a269a6314bdbd646d0ad7843e1b029e722050c71b0ca6aca4cec1711edd3"
+        },
+        {
+          "path": "pyproject.toml",
+          "sha256": "a6552fdbe43fae4f33b999bbabf9e5c65a9d45bccc1197c97432723d63558d71"
+        },
+        {
+          "path": "tests/__init__.py",
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        {
+          "path": "tests/test_core.py",
+          "sha256": "b4e372a5c4c4a4998137a42cdae344abb86f75cdbc4c324b4104034485469532"
+        }
+      ]
+    },
+    "py-partial-boundary": {
+      "case_sha256": "ad5ce532887c98732f2316ec3de42db1294eb02cc0d9535df4ef0532ba7397a1",
+      "diff_sha256": "b7f5234b30ea91d7511016b61c9d2e4735acb2f2c3e9056d04c8c244f9f8e967",
+      "retained_files": [
+        {
+          "path": "partial/__init__.py",
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        {
+          "path": "partial/core.py",
+          "sha256": "275e5e60e89ea298419f2f64ed3aa50788fbc2c93ea01dd6162b18e148967a03"
+        },
+        {
+          "path": "pyproject.toml",
+          "sha256": "e700adfbc3a222a6a05fa79e2b2ce8a94e77c1549eb786385d29c5381d9165f9"
+        },
+        {
+          "path": "tests/__init__.py",
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        {
+          "path": "tests/test_core.py",
+          "sha256": "8b7734f1055030068ec9b3244f3ab5b0b2fae8418c820bb081ac015f92487d4c"
+        }
+      ]
+    },
+    "py-partial-constant": {
+      "case_sha256": "096c1935a1de7dbabcc6707de33de32d573ebaf761ec2fe7192132e6db881f28",
+      "diff_sha256": "484ea51f3e71cdfcda54d53916b774fec36118666ba2446309db90cd9c12b4df",
+      "retained_files": [
+        {
+          "path": "partial/__init__.py",
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        {
+          "path": "partial/core.py",
+          "sha256": "13de521b914b38dc04d00f1328553138614d41cfb4826e567c581332768040f5"
+        },
+        {
+          "path": "pyproject.toml",
+          "sha256": "20f5309c7ea6595a7c966ea74f4a382b2ea5f3f7447aeb446114bcf5992ac3c6"
+        },
+        {
+          "path": "tests/__init__.py",
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        {
+          "path": "tests/test_core.py",
+          "sha256": "adab5e15f822b539c5de8bc02beaa7d030b34b97db4f89169f1be3e4b664d0a9"
+        }
+      ]
+    },
+    "py-partial-dictionary": {
+      "case_sha256": "c9771fcfef154c060cd5ccd1bff74519bbc10b78ede7747f2d031495b23a6920",
+      "diff_sha256": "c84e6996c2065ee0afc19b00e3ddcc19d2a2031da6a0179d90ca147177c07193",
+      "retained_files": [
+        {
+          "path": "partial/__init__.py",
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        {
+          "path": "partial/core.py",
+          "sha256": "7e13c61dd9db5fe7c7334c3f737d79028fec382a75bd8c009516a54fc79c747d"
+        },
+        {
+          "path": "pyproject.toml",
+          "sha256": "aafcfc399c29e2e97cf941e8aac6a765e4b5f99b529255893020779c61a92255"
+        },
+        {
+          "path": "tests/__init__.py",
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        {
+          "path": "tests/test_core.py",
+          "sha256": "3525eaa1109d363e8ed920aa9ac6be57fbed8cb77781e519657a3198df067168"
+        }
+      ]
+    },
+    "py-partial-fallback": {
+      "case_sha256": "007a580d8571db962427d919462aaec2005776f02691f06517d19b900a5deaca",
+      "diff_sha256": "e38f7ca6a899064006ab63e5c45d917bc113e8efd70463fad65fff81476385f2",
+      "retained_files": [
+        {
+          "path": "partial/__init__.py",
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        {
+          "path": "partial/core.py",
+          "sha256": "f461c3d4423984454968bf9ee552bcde57a3c044524cb652135fff1785c640ed"
+        },
+        {
+          "path": "pyproject.toml",
+          "sha256": "401c68673276dc4e3ccf00801ae666d78aecfd87b514d7696e96a6019ad21058"
+        },
+        {
+          "path": "tests/__init__.py",
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        {
+          "path": "tests/test_core.py",
+          "sha256": "9d4e3883cffc2c62e2ccca7d647311dd3d706356b78c1909e47626af509955f5"
+        }
+      ]
+    },
+    "py-partial-list": {
+      "case_sha256": "9ac2a8ede15676701d99958186c45abf2f851cface219a4ea234cea1f9c10a26",
+      "diff_sha256": "9ed1398d635b85f530151ee759c331cc2bbce5ded8078afcf5b16f34557be6ef",
+      "retained_files": [
+        {
+          "path": "partial/__init__.py",
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        {
+          "path": "partial/core.py",
+          "sha256": "59f5d81336858b30ba21882a0c234f551847ef7487e5eadbad6111523977c0eb"
+        },
+        {
+          "path": "pyproject.toml",
+          "sha256": "7bf0551b01c00e6b873ccc877b330d5b54c0d84fa2a34311d051875a8739fccf"
+        },
+        {
+          "path": "tests/__init__.py",
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        {
+          "path": "tests/test_core.py",
+          "sha256": "5bd387bcc590dfac67eed67be84e14451453eb204826ace2dd91ac7b07eb79e0"
+        }
+      ]
+    },
+    "py-partial-prefix": {
+      "case_sha256": "ad766d7eeeb5420947b677b485eef1f5f9953736697839b226d44ea88f0d1ead",
+      "diff_sha256": "82830ce5441065821f6c35c383bace5179f37fc9cdfa91222bdae0e387e96508",
+      "retained_files": [
+        {
+          "path": "partial/__init__.py",
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        {
+          "path": "partial/core.py",
+          "sha256": "97b07d0bc9950a573b1f4113d0a010bddad762ba6c4c0d132eac35c61993b335"
+        },
+        {
+          "path": "pyproject.toml",
+          "sha256": "33e372c73bc203f85b39c56ad2ee14f5526405cf5759b8c9bd7aa2cb1dcbf3e1"
+        },
+        {
+          "path": "tests/__init__.py",
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        {
+          "path": "tests/test_core.py",
+          "sha256": "2537fe74a9bbca0514b82bb99a64537454358dc84523a3ad5565fcb9b5fa9fa5"
+        }
+      ]
+    },
+    "py-stage-fee": {
+      "case_sha256": "c68f0304abcbb101ab7486517f16a77dc7fe5994232f9165fc6b2c99142a8719",
+      "diff_sha256": "7e9112786bfd0cdec47ea41ccd40eb0a0c3cc478115260152581ff7a84fd4bc2",
+      "retained_files": [
+        {
+          "path": "pyproject.toml",
+          "sha256": "d546e0fbc2c85ec49ae71c46a1bdafe2f91bee6c8bd58b1d8249c74ce4bc6134"
+        },
+        {
+          "path": "src/__init__.py",
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        {
+          "path": "src/subject.py",
+          "sha256": "431a86aa7da32ac628ee159494c6d1e1d5d46c21245c55c323540337ba4131bf"
+        },
+        {
+          "path": "tests/__init__.py",
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        {
+          "path": "tests/test_subject.py",
+          "sha256": "b86f6cce3b60b995823b95b3d8104b816454e072c76dd944abe89d5491a9fcbb"
+        }
+      ]
+    },
+    "py-stage-largest": {
+      "case_sha256": "e7368b37cf3e1f63fc7207c796cacff7032d21dd5080612de229b03435dc5a1a",
+      "diff_sha256": "f97cbd8cc28d988d3489e70edcc7c38df25d488cdbca86ecfdea70b9464d0a82",
+      "retained_files": [
+        {
+          "path": "pyproject.toml",
+          "sha256": "291e7b75c7d909eed01ad196fb5f7d9ea69a9bbb4e1c3ce94485299906d100c2"
+        },
+        {
+          "path": "src/__init__.py",
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        {
+          "path": "src/subject.py",
+          "sha256": "6fc49e1d9e1338278bbb83b54272190c2cfaef7ace2b4dcbc1d032e4072e8f58"
+        },
+        {
+          "path": "tests/__init__.py",
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        {
+          "path": "tests/test_subject.py",
+          "sha256": "a5e870de9645a3f9a4b8f07696628f61f2fb026687f3e3e6f31b3843791d3051"
+        }
+      ]
+    },
+    "py-stage-peak": {
+      "case_sha256": "e322dc9b819d40b0c9eb74532e3884bb06c44079e1acbc28cf7cba44787c1146",
+      "diff_sha256": "ae6e4ef48254ec2df7328f197804397d35b9f67e2e7362c8964ba9e1b9b9f592",
+      "retained_files": [
+        {
+          "path": "pyproject.toml",
+          "sha256": "5d382f6d6d9680f27aee4b9b0c83b268ebe9a73f1ae0864e0bf0b01224b5a348"
+        },
+        {
+          "path": "src/__init__.py",
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        {
+          "path": "src/subject.py",
+          "sha256": "97d3c3deb5cd0c050e676d0b540bf323f6c3a4e89894a3dd22697690444173ab"
+        },
+        {
+          "path": "tests/__init__.py",
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        {
+          "path": "tests/test_subject.py",
+          "sha256": "45743bf2394294bd1a2d4e41d1668bc394f416a737e705dcdc7799ccd1a85d2d"
+        }
+      ]
+    },
+    "py-stage-rate": {
+      "case_sha256": "447323b55b3cee4b05a79104e74a9962a87578d4728f10bc95dd597908814ef6",
+      "diff_sha256": "bc908e008afe3180ea052a8985aa2fb390a1834e83af361b66b27f8ef592876a",
+      "retained_files": [
+        {
+          "path": "pyproject.toml",
+          "sha256": "220bcdb7af205cefe333396be788df81176843462eb33d0bad898c14753ddc34"
+        },
+        {
+          "path": "src/__init__.py",
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        {
+          "path": "src/subject.py",
+          "sha256": "44ca1f0b7aadb505fa75da61f25e9be362338c12df8744549a604b7a526accd4"
+        },
+        {
+          "path": "tests/__init__.py",
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        {
+          "path": "tests/test_subject.py",
+          "sha256": "c8a31bd29e5fb34c452cf6ed9db9b50f075947def6fcbecfac6cf4c52dd437db"
+        }
+      ]
+    }
+  },
+  "runs": [
+    {
+      "case": "py-partial-arithmetic",
+      "variant": "edited",
+      "exit": 0,
+      "output": "test_partial (test_core.TestPartial.test_partial) ... ok\n\n----------------------------------------------------------------------\nRan 1 test in 0.000s\n\nOK\n"
+    },
+    {
+      "case": "py-partial-arithmetic",
+      "variant": "kill",
+      "exit": 1,
+      "output": "test_partial (test_core.TestPartial.test_partial) ... FAIL\n\n======================================================================\nFAIL: test_partial (test_core.TestPartial.test_partial)\n----------------------------------------------------------------------\nTraceback (most recent call last):\n  File \"/tmp/12922-z9huye5e/tests/test_core.py\", line 7, in test_partial\n    self.assertGreater(value, 0)\nAssertionError: 0 not greater than 0\n\n----------------------------------------------------------------------\nRan 1 test in 0.000s\n\nFAILED (failures=1)\n"
+    },
+    {
+      "case": "py-partial-arithmetic",
+      "variant": "survive",
+      "exit": 0,
+      "output": "test_partial (test_core.TestPartial.test_partial) ... ok\n\n----------------------------------------------------------------------\nRan 1 test in 0.000s\n\nOK\n"
+    },
+    {
+      "case": "py-partial-constant",
+      "variant": "edited",
+      "exit": 0,
+      "output": "test_partial (test_core.TestPartial.test_partial) ... ok\n\n----------------------------------------------------------------------\nRan 1 test in 0.000s\n\nOK\n"
+    },
+    {
+      "case": "py-partial-constant",
+      "variant": "kill",
+      "exit": 1,
+      "output": "test_partial (test_core.TestPartial.test_partial) ... FAIL\n\n======================================================================\nFAIL: test_partial (test_core.TestPartial.test_partial)\n----------------------------------------------------------------------\nTraceback (most recent call last):\n  File \"/tmp/12922-r3v2dj52/tests/test_core.py\", line 7, in test_partial\n    self.assertGreater(value, 0)\nAssertionError: 0 not greater than 0\n\n----------------------------------------------------------------------\nRan 1 test in 0.000s\n\nFAILED (failures=1)\n"
+    },
+    {
+      "case": "py-partial-constant",
+      "variant": "survive",
+      "exit": 0,
+      "output": "test_partial (test_core.TestPartial.test_partial) ... ok\n\n----------------------------------------------------------------------\nRan 1 test in 0.000s\n\nOK\n"
+    },
+    {
+      "case": "py-partial-boundary",
+      "variant": "edited",
+      "exit": 0,
+      "output": "test_partial (test_core.TestPartial.test_partial) ... ok\n\n----------------------------------------------------------------------\nRan 1 test in 0.000s\n\nOK\n"
+    },
+    {
+      "case": "py-partial-boundary",
+      "variant": "kill",
+      "exit": 1,
+      "output": "test_partial (test_core.TestPartial.test_partial) ... FAIL\n\n======================================================================\nFAIL: test_partial (test_core.TestPartial.test_partial)\n----------------------------------------------------------------------\nTraceback (most recent call last):\n  File \"/tmp/12922-6qgovlau/tests/test_core.py\", line 7, in test_partial\n    self.assertTrue(value)\nAssertionError: False is not true\n\n----------------------------------------------------------------------\nRan 1 test in 0.000s\n\nFAILED (failures=1)\n"
+    },
+    {
+      "case": "py-partial-boundary",
+      "variant": "survive",
+      "exit": 0,
+      "output": "test_partial (test_core.TestPartial.test_partial) ... ok\n\n----------------------------------------------------------------------\nRan 1 test in 0.000s\n\nOK\n"
+    },
+    {
+      "case": "py-partial-prefix",
+      "variant": "edited",
+      "exit": 0,
+      "output": "test_partial (test_core.TestPartial.test_partial) ... ok\n\n----------------------------------------------------------------------\nRan 1 test in 0.000s\n\nOK\n"
+    },
+    {
+      "case": "py-partial-prefix",
+      "variant": "kill",
+      "exit": 1,
+      "output": "test_partial (test_core.TestPartial.test_partial) ... FAIL\n\n======================================================================\nFAIL: test_partial (test_core.TestPartial.test_partial)\n----------------------------------------------------------------------\nTraceback (most recent call last):\n  File \"/tmp/12922-4cvcvtgd/tests/test_core.py\", line 7, in test_partial\n    self.assertTrue(value.startswith(\"hello\"))\nAssertionError: False is not true\n\n----------------------------------------------------------------------\nRan 1 test in 0.000s\n\nFAILED (failures=1)\n"
+    },
+    {
+      "case": "py-partial-prefix",
+      "variant": "survive",
+      "exit": 0,
+      "output": "test_partial (test_core.TestPartial.test_partial) ... ok\n\n----------------------------------------------------------------------\nRan 1 test in 0.000s\n\nOK\n"
+    },
+    {
+      "case": "py-partial-list",
+      "variant": "edited",
+      "exit": 0,
+      "output": "test_partial (test_core.TestPartial.test_partial) ... ok\n\n----------------------------------------------------------------------\nRan 1 test in 0.000s\n\nOK\n"
+    },
+    {
+      "case": "py-partial-list",
+      "variant": "kill",
+      "exit": 1,
+      "output": "test_partial (test_core.TestPartial.test_partial) ... FAIL\n\n======================================================================\nFAIL: test_partial (test_core.TestPartial.test_partial)\n----------------------------------------------------------------------\nTraceback (most recent call last):\n  File \"/tmp/12922-mne6lhmt/tests/test_core.py\", line 7, in test_partial\n    self.assertIn(3, value)\nAssertionError: 3 not found in []\n\n----------------------------------------------------------------------\nRan 1 test in 0.000s\n\nFAILED (failures=1)\n"
+    },
+    {
+      "case": "py-partial-list",
+      "variant": "survive",
+      "exit": 0,
+      "output": "test_partial (test_core.TestPartial.test_partial) ... ok\n\n----------------------------------------------------------------------\nRan 1 test in 0.018s\n\nOK\n"
+    },
+    {
+      "case": "py-partial-dictionary",
+      "variant": "edited",
+      "exit": 0,
+      "output": "test_partial (test_core.TestPartial.test_partial) ... ok\n\n----------------------------------------------------------------------\nRan 1 test in 0.000s\n\nOK\n"
+    },
+    {
+      "case": "py-partial-dictionary",
+      "variant": "kill",
+      "exit": 1,
+      "output": "test_partial (test_core.TestPartial.test_partial) ... FAIL\n\n======================================================================\nFAIL: test_partial (test_core.TestPartial.test_partial)\n----------------------------------------------------------------------\nTraceback (most recent call last):\n  File \"/tmp/12922-gekby0jm/tests/test_core.py\", line 7, in test_partial\n    self.assertIn(\"first\", value)\nAssertionError: 'first' not found in {}\n\n----------------------------------------------------------------------\nRan 1 test in 0.000s\n\nFAILED (failures=1)\n"
+    },
+    {
+      "case": "py-partial-dictionary",
+      "variant": "survive",
+      "exit": 0,
+      "output": "test_partial (test_core.TestPartial.test_partial) ... ok\n\n----------------------------------------------------------------------\nRan 1 test in 0.000s\n\nOK\n"
+    },
+    {
+      "case": "py-partial-fallback",
+      "variant": "edited",
+      "exit": 0,
+      "output": "test_partial (test_core.TestPartial.test_partial) ... ok\n\n----------------------------------------------------------------------\nRan 1 test in 0.000s\n\nOK\n"
+    },
+    {
+      "case": "py-partial-fallback",
+      "variant": "kill",
+      "exit": 1,
+      "output": "test_partial (test_core.TestPartial.test_partial) ... FAIL\n\n======================================================================\nFAIL: test_partial (test_core.TestPartial.test_partial)\n----------------------------------------------------------------------\nTraceback (most recent call last):\n  File \"/tmp/12922-hnx1jw6c/tests/test_core.py\", line 7, in test_partial\n    self.assertGreater(value, 0)\nAssertionError: 0 not greater than 0\n\n----------------------------------------------------------------------\nRan 1 test in 0.000s\n\nFAILED (failures=1)\n"
+    },
+    {
+      "case": "py-partial-fallback",
+      "variant": "survive",
+      "exit": 0,
+      "output": "test_partial (test_core.TestPartial.test_partial) ... ok\n\n----------------------------------------------------------------------\nRan 1 test in 0.000s\n\nOK\n"
+    },
+    {
+      "case": "py-partial-arithmetic",
+      "variant": "original",
+      "exit": 0,
+      "output": "test_partial (test_core.TestPartial.test_partial) ... ok\n\n----------------------------------------------------------------------\nRan 1 test in 0.000s\n\nOK\n"
+    },
+    {
+      "case": "py-partial-boundary",
+      "variant": "original",
+      "exit": 0,
+      "output": "test_partial (test_core.TestPartial.test_partial) ... ok\n\n----------------------------------------------------------------------\nRan 1 test in 0.000s\n\nOK\n"
+    },
+    {
+      "case": "py-partial-constant",
+      "variant": "original",
+      "exit": 0,
+      "output": "test_partial (test_core.TestPartial.test_partial) ... ok\n\n----------------------------------------------------------------------\nRan 1 test in 0.000s\n\nOK\n"
+    },
+    {
+      "case": "py-partial-dictionary",
+      "variant": "original",
+      "exit": 0,
+      "output": "test_partial (test_core.TestPartial.test_partial) ... ok\n\n----------------------------------------------------------------------\nRan 1 test in 0.000s\n\nOK\n"
+    },
+    {
+      "case": "py-partial-fallback",
+      "variant": "original",
+      "exit": 0,
+      "output": "test_partial (test_core.TestPartial.test_partial) ... ok\n\n----------------------------------------------------------------------\nRan 1 test in 0.000s\n\nOK\n"
+    },
+    {
+      "case": "py-partial-list",
+      "variant": "original",
+      "exit": 0,
+      "output": "test_partial (test_core.TestPartial.test_partial) ... ok\n\n----------------------------------------------------------------------\nRan 1 test in 0.000s\n\nOK\n"
+    },
+    {
+      "case": "py-partial-prefix",
+      "variant": "original",
+      "exit": 0,
+      "output": "test_partial (test_core.TestPartial.test_partial) ... ok\n\n----------------------------------------------------------------------\nRan 1 test in 0.000s\n\nOK\n"
+    },
+    {
+      "case": "py-stage-rate",
+      "variant": "base",
+      "exit": 0,
+      "output": ".                                                                        [100%]\n1 passed in 0.49s\n"
+    },
+    {
+      "case": "py-stage-rate",
+      "variant": "edit",
+      "exit": 0,
+      "output": ".                                                                        [100%]\n1 passed in 0.38s\n"
+    },
+    {
+      "case": "py-stage-fee",
+      "variant": "base",
+      "exit": 0,
+      "output": ".                                                                        [100%]\n1 passed in 0.42s\n"
+    },
+    {
+      "case": "py-stage-fee",
+      "variant": "edit",
+      "exit": 0,
+      "output": ".                                                                        [100%]\n1 passed in 0.37s\n"
+    },
+    {
+      "case": "py-stage-largest",
+      "variant": "base",
+      "exit": 0,
+      "output": ".                                                                        [100%]\n1 passed in 0.37s\n"
+    },
+    {
+      "case": "py-stage-largest",
+      "variant": "edit",
+      "exit": 0,
+      "output": ".                                                                        [100%]\n1 passed in 0.38s\n"
+    },
+    {
+      "case": "py-stage-peak",
+      "variant": "base",
+      "exit": 0,
+      "output": ".                                                                        [100%]\n1 passed in 0.36s\n"
+    },
+    {
+      "case": "py-stage-peak",
+      "variant": "edit",
+      "exit": 0,
+      "output": ".                                                                        [100%]\n1 passed in 0.44s\n"
+    }
+  ]
+}

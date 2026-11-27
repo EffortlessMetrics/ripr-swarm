@@ -10,6 +10,9 @@ use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
+mod help_contract;
+#[cfg(test)]
+mod inventory_tests;
 mod producer;
 use producer::{InstallProducer, InstallToolchain};
 
@@ -20,6 +23,7 @@ pub(crate) struct AttributedArchive {
     path: PathBuf,
     bytes: Vec<u8>,
     inventory: BTreeMap<String, ArchiveFile>,
+    staged: bool,
 }
 
 struct ArchiveFile {
@@ -31,28 +35,32 @@ impl AttributedArchive {
     pub(crate) fn produce(source: AdmittedSource, owned_root: &Path) -> Result<Self, String> {
         source.revalidate()?;
         let target = owned_root.join("package-target");
-        let manifest = source.package_root().join("Cargo.toml");
+        // The published `ripr` is packaged from a publish stage (#14198), so
+        // the qualified archive is too (#15204): the stage is a clone of the
+        // admitted commit with inline test modules stripped, and the archive
+        // inventory below accepts only committed blobs or their exact strip.
+        let stage = publish_stage_for(&source, owned_root)?;
+        let workspace = stage.as_deref().unwrap_or_else(|| source.root());
+        let manifest = workspace.join("Cargo.toml");
         let config = owned_cargo_config(owned_root, "package", None)?;
-        let args = vec![
-            "--config".to_string(),
-            config.to_string_lossy().into_owned(),
-            "package".to_string(),
-            "--jobs".to_string(),
-            "2".to_string(),
-            "--locked".to_string(),
-            "--manifest-path".to_string(),
-            manifest.to_string_lossy().into_owned(),
-            "--target-dir".to_string(),
-            target.to_string_lossy().into_owned(),
-        ];
+        let args = package_args(
+            &config,
+            &manifest,
+            &target,
+            stage.is_some(),
+            &packaged_packages(&source)?,
+        );
         qualified_command(
             Path::new("cargo"),
             &args,
-            source.root(),
+            workspace,
             Duration::from_mins(15),
             "qualified cargo package",
         )?;
         source.revalidate()?;
+        if let Some(stage) = &stage {
+            crate::publish_stage::verify_stage(stage)?;
+        }
         let path = target.join("package").join(format!(
             "{}-{}.crate",
             source.package_name(),
@@ -60,12 +68,13 @@ impl AttributedArchive {
         ));
         let bytes =
             std::fs::read(&path).map_err(|error| format!("read produced archive: {error}"))?;
-        let inventory = archive_inventory(&bytes, &source)?;
+        let inventory = archive_inventory(&bytes, &ArchiveRules::of(&source)?)?;
         let archive = Self {
             source,
             path,
             bytes,
             inventory,
+            staged: stage.is_some(),
         };
         archive.revalidate()?;
         Ok(archive)
@@ -467,6 +476,8 @@ impl InstalledCandidate {
             "archive_sha256": format!("{:x}", Sha256::digest(&self.archive.bytes)),
             "executable_sha256": format!("{:x}", Sha256::digest(&self.executable_bytes)),
             "archive": self.archive.path, "executable": self.binary,
+            "archive_source": if self.archive.staged { "publish_stage" } else { "admitted_checkout" },
+            "archive_entry_contract": "ordinary entries are committed blobs, or for the stripped source root exactly the inline-test strip of one; a dirty Cargo VCS record requires the stage marker naming the admitted commit",
             "installed_executable": self.installed_binary,
             "compiler_artifact": self.producer.artifact,
             "compiler_installed_bytes_equal_at_capture": true,
@@ -560,15 +571,167 @@ fn qualified_command_with_environment(
     Ok(output)
 }
 
+/// Stage the admitted commit for packaging when its stripped source root holds
+/// inline test modules; otherwise package the admitted checkout itself.
+fn publish_stage_for(
+    source: &AdmittedSource,
+    owned_root: &Path,
+) -> Result<Option<PathBuf>, String> {
+    let root = format!("{}/", crate::publish_stage::STRIPPED_SOURCE_ROOT);
+    let mut strippable = false;
+    for (path, blob) in source.committed_blobs() {
+        if !(path.starts_with(&root) && path.ends_with(".rs")) {
+            continue;
+        }
+        let text = std::str::from_utf8(blob)
+            .map_err(|error| format!("committed {path} is not UTF-8: {error}"))?;
+        let stripped = crate::publish_stage::strip_inline_test_modules(text)
+            .map_err(|error| format!("committed {path}: {error}"))?;
+        strippable |= stripped.modules > 0;
+    }
+    if !strippable {
+        return Ok(None);
+    }
+    if source.package_prefix() != "crates/ripr/" {
+        return Err(format!(
+            "inline test modules under {root} belong to a package outside crates/ripr/"
+        ));
+    }
+    let stage = owned_root.join("publish-stage");
+    let report = crate::publish_stage::stage_workspace(source.root(), &stage)?;
+    if report.commit != source.source_sha()? {
+        return Err("publish stage commit differs from admitted source".to_string());
+    }
+    Ok(Some(stage))
+}
+
+/// The qualified `cargo package` arguments. Path dependencies such as
+/// `ripr-contract` are not on a registry before the release, so they are
+/// packaged in the same invocation and Cargo verifies the candidate against
+/// them. A publish stage is dirty by construction (the strip and the marker);
+/// `--allow-dirty` admits only that, because `verify_stage` and the archive
+/// inventory bound what the dirt may be.
+fn package_args(
+    config: &Path,
+    manifest: &Path,
+    target: &Path,
+    staged: bool,
+    packages: &[String],
+) -> Vec<String> {
+    let mut args = vec![
+        "--config".to_string(),
+        config.to_string_lossy().into_owned(),
+        "package".to_string(),
+        "--jobs".to_string(),
+        "2".to_string(),
+        "--locked".to_string(),
+        "--manifest-path".to_string(),
+        manifest.to_string_lossy().into_owned(),
+        "--target-dir".to_string(),
+        target.to_string_lossy().into_owned(),
+    ];
+    if staged {
+        args.push("--allow-dirty".to_string());
+    }
+    for package in packages {
+        args.push("--package".to_string());
+        args.push(package.clone());
+    }
+    args
+}
+
+/// The candidate package and its committed path dependencies, for one
+/// multi-package `cargo package`.
+fn packaged_packages(source: &AdmittedSource) -> Result<Vec<String>, String> {
+    let manifest_path = format!("{}Cargo.toml", source.package_prefix());
+    let manifest = source
+        .committed_file(&manifest_path)
+        .ok_or_else(|| "candidate source lacks committed package Cargo.toml".to_string())?;
+    packages_of_manifest(manifest, source.package_name())
+}
+
+fn packages_of_manifest(manifest: &[u8], package_name: &str) -> Result<Vec<String>, String> {
+    let manifest: toml::Value = toml::from_str(
+        std::str::from_utf8(manifest)
+            .map_err(|error| format!("package manifest UTF-8: {error}"))?,
+    )
+    .map_err(|error| format!("package manifest TOML: {error}"))?;
+    let mut packages = std::collections::BTreeSet::new();
+    let mut tables = vec![&manifest];
+    if let Some(targets) = manifest.get("target").and_then(toml::Value::as_table) {
+        tables.extend(targets.values());
+    }
+    let dependency_tables = tables.into_iter().flat_map(|table| {
+        ["dependencies", "build-dependencies"]
+            .into_iter()
+            .filter_map(move |name| table.get(name).and_then(toml::Value::as_table))
+    });
+    for dependencies in dependency_tables {
+        for (key, value) in dependencies {
+            if value.get("path").is_some() {
+                let name = value
+                    .get("package")
+                    .and_then(toml::Value::as_str)
+                    .unwrap_or(key);
+                packages.insert(name.to_string());
+            }
+        }
+    }
+    packages.insert(package_name.to_string());
+    Ok(packages.into_iter().collect())
+}
+
+/// What a produced archive may hold, taken only from the admitted source.
+struct ArchiveRules<'a> {
+    package_name: &'a str,
+    version: &'a str,
+    source_sha: &'a str,
+    package_prefix: &'a str,
+    blobs: &'a BTreeMap<String, Vec<u8>>,
+}
+
+impl<'a> ArchiveRules<'a> {
+    fn of(source: &'a AdmittedSource) -> Result<Self, String> {
+        Ok(Self {
+            package_name: source.package_name(),
+            version: source.version(),
+            source_sha: source.source_sha()?,
+            package_prefix: source.package_prefix(),
+            blobs: source.committed_blobs(),
+        })
+    }
+
+    fn committed(&self, path: &str) -> Option<&[u8]> {
+        self.blobs.get(path).map(Vec::as_slice)
+    }
+
+    /// The publish-stage strip of the committed blob at `committed_path`,
+    /// when it is under the stripped source root and removes a module.
+    fn committed_strip(&self, committed_path: &str) -> Option<String> {
+        let root = format!("{}/", crate::publish_stage::STRIPPED_SOURCE_ROOT);
+        if !(committed_path.starts_with(&root) && committed_path.ends_with(".rs")) {
+            return None;
+        }
+        let text = std::str::from_utf8(self.committed(committed_path)?).ok()?;
+        crate::publish_stage::strip_inline_test_modules(text)
+            .ok()
+            .filter(|stripped| stripped.modules > 0)
+            .map(|stripped| stripped.text)
+    }
+}
+
 fn archive_inventory(
     bytes: &[u8],
-    source: &AdmittedSource,
+    rules: &ArchiveRules<'_>,
 ) -> Result<BTreeMap<String, ArchiveFile>, String> {
     let decoder = flate2::read::GzDecoder::new(bytes);
     let mut archive = tar::Archive::new(decoder);
-    let prefix = format!("{}-{}", source.package_name(), source.version());
+    let prefix = format!("{}-{}", rules.package_name, rules.version);
     let expected_root = Path::new(&prefix);
     let mut inventory = BTreeMap::new();
+    let mut vcs_dirty = false;
+    let mut stripped_entries = 0_usize;
+    let mut unstripped_entries = 0_usize;
     for entry in archive
         .entries()
         .map_err(|error| format!("read produced archive entries: {error}"))?
@@ -606,31 +769,39 @@ fn archive_inventory(
         entry
             .read_to_end(&mut body)
             .map_err(|error| format!("read produced entry bytes: {error}"))?;
-        let committed_path = format!("{}{relative}", source.package_prefix());
+        let committed_path = format!("{}{relative}", rules.package_prefix);
         match relative.as_str() {
             ".cargo_vcs_info.json" => {
                 let vcs: serde_json::Value = serde_json::from_slice(&body)
                     .map_err(|error| format!("Cargo VCS info: {error}"))?;
-                // Cargo may omit false. A present dirty field must be the
-                // boolean false; absence is accepted, not a provenance claim.
-                let dirty_ok = vcs.pointer("/git/dirty").is_none()
-                    || vcs
-                        .pointer("/git/dirty")
-                        .and_then(serde_json::Value::as_bool)
-                        == Some(false);
+                // Cargo may omit false. A present dirty field must be a
+                // boolean; absence is accepted, not a provenance claim. A
+                // dirty record is accepted below only with the stage marker.
+                vcs_dirty = match vcs.pointer("/git/dirty") {
+                    None => false,
+                    Some(value) => value.as_bool().ok_or_else(|| {
+                        "produced Cargo VCS identity differs from admitted source".to_string()
+                    })?,
+                };
                 if vcs.pointer("/git/sha1").and_then(serde_json::Value::as_str)
-                    != Some(source.source_sha()?)
-                    || !dirty_ok
+                    != Some(rules.source_sha)
                     || vcs.get("path_in_vcs").and_then(serde_json::Value::as_str)
-                        != Some(source.package_prefix().trim_end_matches('/'))
+                        != Some(rules.package_prefix.trim_end_matches('/'))
                 {
                     return Err(
                         "produced Cargo VCS identity differs from admitted source".to_string()
                     );
                 }
             }
+            crate::publish_stage::PUBLISH_STAGE_MARKER => {
+                if body != format!("{}\n", rules.source_sha).as_bytes() {
+                    return Err(
+                        "publish-stage marker does not name the admitted commit".to_string()
+                    );
+                }
+            }
             "Cargo.toml.orig" => {
-                if source.committed_file(&format!("{}Cargo.toml", source.package_prefix()))
+                if rules.committed(&format!("{}Cargo.toml", rules.package_prefix))
                     != Some(body.as_slice())
                 {
                     return Err(
@@ -649,12 +820,12 @@ fn archive_inventory(
                     .get("package")
                     .and_then(|value| value.get("name"))
                     .and_then(toml::Value::as_str)
-                    != Some(source.package_name())
+                    != Some(rules.package_name)
                     || manifest
                         .get("package")
                         .and_then(|value| value.get("version"))
                         .and_then(toml::Value::as_str)
-                        != Some(source.version())
+                        != Some(rules.version)
                 {
                     return Err("Cargo normalized package identity mismatch".to_string());
                 }
@@ -674,10 +845,18 @@ fn archive_inventory(
                 }
             }
             _ => {
-                if source.committed_file(&committed_path) != Some(body.as_slice()) {
-                    return Err(format!(
-                        "packaged ordinary entry is not the committed source blob: {relative}"
-                    ));
+                let committed = rules.committed(&committed_path) == Some(body.as_slice());
+                match (committed, rules.committed_strip(&committed_path)) {
+                    (true, None) => {}
+                    (true, Some(_)) => unstripped_entries += 1,
+                    (false, Some(text)) if text.as_bytes() == body.as_slice() => {
+                        stripped_entries += 1;
+                    }
+                    (false, _) => {
+                        return Err(format!(
+                            "packaged ordinary entry is not the committed source blob: {relative}"
+                        ));
+                    }
                 }
             }
         }
@@ -697,6 +876,16 @@ fn archive_inventory(
         if !inventory.contains_key(required) {
             return Err(format!("produced archive lacks {required}"));
         }
+    }
+    // A publish-stage archive is exactly: a dirty record, the marker naming
+    // the admitted commit, and at least one stripped entry, with no
+    // strippable source left unstripped. Any part without the rest is refused.
+    let marked = inventory.contains_key(crate::publish_stage::PUBLISH_STAGE_MARKER);
+    if vcs_dirty != marked || marked != (stripped_entries > 0) || (marked && unstripped_entries > 0)
+    {
+        return Err(format!(
+            "produced archive is not a committed or publish-stage package: dirty={vcs_dirty}, marker={marked}, stripped entries={stripped_entries}, unstripped strippable entries={unstripped_entries}"
+        ));
     }
     Ok(inventory)
 }

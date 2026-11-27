@@ -1,0 +1,6 @@
+[[extend]]
+id = "RIPR-SPEC-0197"
+tests = [
+  "crates/ripr/src/analysis/classify/owner_pin/tests.rs::a_sibling_impl_on_another_named_type_does_not_defeat_the_pin",
+  "crates/ripr/src/analysis/classify/owner_pin/tests.rs::a_rival_that_may_take_the_owner_receiver_still_defeats_the_pin",
+]

@@ -2,7 +2,7 @@ ripr static RIPR exposure analysis
 mode: fast
 root: fixtures/inherent_receiver_foreign_helper/input
 
-Summary: 2 changed behaviors checked: 0 appear noticed by tests, 2 partly noticed, 0 reached but not noticed, 0 no test path. 2 found, 0 suppressed by your settings
+Summary: 2 changed behaviors checked: 0 appear noticed by tests, 2 partly noticed (2 through a test link ripr could not confirm), 0 reached but not noticed, 0 no test path. 2 found, 0 suppressed by your settings
 
 Analysis outcome: findings below (analysis complete)
   Counts: 1 changed file(s), 2 changed line(s), 1 candidate line(s), 2 changed behavior(s) checked, 2 finding(s)
@@ -21,8 +21,7 @@ Start here:
   Next step: Tests cannot close this static-analysis limitation: ripr cannot trace entry
     `read_as_object` -> owner `as_object` through a transitive Rust helper path. Inspect the named
     path and existing assertions through the public API; add a test only for an independently
-    confirmed gap. This limitation does not establish a missing test. Route analyzer work to
-    `analysis/rust-public-api-transitive-reach`
+    confirmed gap. This limitation does not establish a missing test
   Evidence: reach weak · infection yes · propagation yes · observation yes · assertion weak
     Stages (static evidence): reach = test path to changed owner; infection = inputs can activate change;
       propagation = changed effect reaches output; observation = related test/assertion evidence;

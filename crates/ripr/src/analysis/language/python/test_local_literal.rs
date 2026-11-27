@@ -21,6 +21,19 @@ pub(super) fn test_local_literal(
     name: &str,
     call_start: usize,
 ) -> Option<String> {
+    test_local_value(test, name, call_start, literal_value)
+}
+
+/// [`test_local_literal`] with the caller's reader for the bound value's
+/// text, for a rule that reads one literal form more than [`literal_value`]
+/// does (the match-alternative rule reads `1+2j`). Every other condition is
+/// the same.
+pub(super) fn test_local_value(
+    test: &PythonTest,
+    name: &str,
+    call_start: usize,
+    read: impl Fn(&str) -> Option<String>,
+) -> Option<String> {
     if !is_simple_python_identifier(name) {
         return None;
     }
@@ -55,7 +68,7 @@ pub(super) fn test_local_literal(
         let value = test.body_text.get(
             usize::from(assign.value.range().start())..usize::from(assign.value.range().end()),
         )?;
-        Some((target.range, literal_value(value.trim())?))
+        Some((target.range, read(value.trim())?))
     })?;
     if usize::from(binding_range.end()) >= call_start {
         return None;

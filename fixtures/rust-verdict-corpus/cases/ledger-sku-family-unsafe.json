@@ -9,7 +9,7 @@
   "edit_kind": "behavior_preserving_rewrite",
   "behavior_family": "static_unknown",
   "test_shape": "unit_test_assert_eq",
-  "hard_case": "unsafe block; ripr probes it as an unsafe boundary (static_unknown) beside a return_value probe",
+  "hard_case": "unsafe block on the edited line; ripr credits the return_value probe as exposed, and the enclosing block adds no second finding (#15348)",
   "truth": {
     "state": "discriminated",
     "method": "runtime_mutant_kill",
@@ -40,7 +40,7 @@
       "silent"
     ]
   },
-  "reasoning": "sku_family_is_the_text_before_the_first_dash asserts exact strings, so both slice changes fail it. ripr credits the return_value probe as exposed and marks the unsafe boundary static_unknown; credit outranks the limit, so the line is the ideal credit.",
+  "reasoning": "sku_family_is_the_text_before_the_first_dash asserts exact strings, so both slice changes fail it. ripr credits the return_value probe as exposed. The enclosing unsafe block, which once added a static_unknown finding on the same line, adds none beside a classified edit (#15348), so the line is the ideal credit.",
   "labeling_observation": {
     "ripr_commit": "62fb7aaa5",
     "full_checkout_verdict": "credited",

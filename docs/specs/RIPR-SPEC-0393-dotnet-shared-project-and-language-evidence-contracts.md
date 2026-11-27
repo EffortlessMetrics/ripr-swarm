@@ -2,6 +2,11 @@
 
 Status: accepted
 
+Implementation status: contract only. No .NET adapter, `LanguageId`, Cargo
+feature, or capability-registry cell exists yet; `accepted` here is the
+document disposition under [Spec Format](../SPEC_FORMAT.md), not a support
+claim. Do not read this spec as .NET support.
+
 Owner: product / language-adapters
 
 Created: 2026-11-02

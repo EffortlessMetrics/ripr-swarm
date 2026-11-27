@@ -1,0 +1,27 @@
+{
+  "id": "rust_repo_exposure_local_binder_named_like_owner_block_control",
+  "language": "rust",
+  "tier": "pure",
+  "source_report": "fixtures/evidence-promotion-honesty-corpus/reports/rust-repo-exposure-local-binder-named-like-owner-block-control.json",
+  "report_subject": "fixtures/evidence-promotion-honesty-corpus/repo-exposure-subjects/local-binder-named-like-owner-block-control",
+  "vector": "bare_owner_call_after_the_block_of_a_test_local_binder_of_its_name_keeps_direct_credit",
+  "assertions": [
+    {
+      "type": "expected_repo_seam_grip",
+      "owner": "src/lib.rs::discount",
+      "expression": "amount >= 100",
+      "grip_class": "weakly_gripped",
+      "reach": "yes"
+    },
+    {
+      "type": "expected_repo_seam_related_test",
+      "owner": "src/lib.rs::discount",
+      "expression": "amount >= 100",
+      "test": "local_binder_then_owner",
+      "file": "src/lib.rs",
+      "line": 10,
+      "oracle_strength": "strong",
+      "relation_reason": "direct_owner_call"
+    }
+  ]
+}

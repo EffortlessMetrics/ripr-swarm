@@ -247,6 +247,17 @@ jobs:
           if-no-files-found: warn
           retention-days: 5
 
+      # #14263: the Rust-only library lint that rust-gates.yml runs itself when
+      # it owns the tests. Shard 2 carries it here because the gates job is the
+      # required run's critical path and the shards finish well before it. It
+      # runs after the shard's results are uploaded, so a lint failure never
+      # costs test evidence, and still fails this job and the caller's result.
+      - name: Strict Rust-only ripr library Clippy
+        id: rust-only-clippy
+        if: ${{ matrix.shard == 2 && !cancelled() }}
+        timeout-minutes: 15
+        run: cargo clippy -p ripr --lib --locked --no-default-features --features lang-rust -- -D warnings
+
   rust-test-shards-verify:
     # Only this unprivileged consumer needs API artifact metadata. No App token,
     # writes or secrets; the caller already permits actions: read.

@@ -1,0 +1,8 @@
+# A `mod` behind a `#[cfg]` no build satisfies mounts nothing (#15877).
+[[extend]]
+id = "RIPR-SPEC-0153"
+tests = [
+  "crates/ripr/tests/cfg_disabled_module_mount.rs::a_mod_behind_a_cfg_no_build_satisfies_mounts_nothing",
+  "crates/ripr/tests/cfg_disabled_module_mount.rs::a_disabled_inline_module_mounts_none_of_its_children",
+  "crates/ripr/tests/cfg_disabled_module_mount.rs::a_test_file_behind_a_cfg_no_build_satisfies_credits_nothing",
+]

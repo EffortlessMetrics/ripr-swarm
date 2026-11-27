@@ -1,0 +1,7 @@
+diff --git a/src/lib.py b/src/lib.py
+--- a/src/lib.py
++++ b/src/lib.py
+@@ -1,2 +1,2 @@
+ def score(d):
+-    return d.get("k", 0) + 1
++    return d.get("k", 5) + 1

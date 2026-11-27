@@ -42,6 +42,12 @@ struct BaselineEntry {
     /// Copy of the report root on the entry itself, so one entry remains
     /// interpretable if the ledger is ever split or relocated (issue #1964).
     root: Option<String>,
+    /// #14898: the changed owner the gate decision names
+    /// (`repair_route.changed_owner`, a seam owner such as
+    /// `src/lib.rs::ready`). A delta matches it against the current side's
+    /// `owner_opt_outs`, since a seam id moves when the opt-out attribute
+    /// line is inserted. Rendered only when present.
+    changed_owner: Option<String>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -429,6 +435,7 @@ fn baseline_entry_from_decision(
             source: Some(source_report.to_string()),
         },
         root: root.map(ToOwned::to_owned),
+        changed_owner: string_field(value.pointer("/repair_route/changed_owner")),
     }))
 }
 
@@ -502,7 +509,7 @@ fn canonical_gap_id_from_value(value: &Value) -> Option<String> {
 }
 
 fn entry_json(entry: &BaselineEntry) -> Value {
-    json!({
+    let mut value = json!({
         "identity": {
             "canonical_gap_id": entry.identity.canonical_gap_id,
             "seam_id": entry.identity.seam_id,
@@ -532,7 +539,11 @@ fn entry_json(entry: &BaselineEntry) -> Value {
             "review_after": entry.review.review_after,
             "source": entry.review.source,
         }
-    })
+    });
+    if let (Some(owner), Some(object)) = (&entry.changed_owner, value.as_object_mut()) {
+        object.insert("changed_owner".to_string(), Value::String(owner.clone()));
+    }
+    value
 }
 
 fn skipped_json(skipped: &BaselineCreateSkipped) -> Value {

@@ -8,9 +8,11 @@ use std::sync::mpsc;
 use std::thread;
 use std::time::{Duration, Instant};
 
+mod cargo_output;
 mod command_diagnostic;
 #[cfg(all(test, target_os = "linux"))]
 mod test_session;
+pub(crate) use cargo_output::private_cargo_output_dir;
 pub(crate) use command_diagnostic::{
     CommandDiagnostic, DISCLOSURE as COMMAND_DIAGNOSTIC_DISCLOSURE,
 };
@@ -197,7 +199,7 @@ pub(crate) fn run_with_envs(
     args: &[&str],
     envs: &[(&str, &str)],
 ) -> Result<ExitStatus, String> {
-    run_with_envs_recorded(program, args, envs, None)
+    run_with_envs_recorded(program, args, envs, None, args)
 }
 
 pub(crate) fn run_diagnostic(
@@ -205,7 +207,20 @@ pub(crate) fn run_diagnostic(
     args: &[&str],
     diagnostics: &mut Vec<CommandDiagnostic>,
 ) -> Result<ExitStatus, String> {
-    run_with_envs_recorded(program, args, &[], Some(diagnostics))
+    run_with_envs_recorded(program, args, &[], Some(diagnostics), args)
+}
+
+/// [`run_diagnostic`] that may run more arguments than it reports. `args` is
+/// what runs; `reported` is what the echo, the diagnostic and a failure name,
+/// so a caller whose arguments list hundreds of paths passes a summary.
+pub(crate) fn run_summary(
+    program: &str,
+    args: &[&str],
+    envs: &[(&str, &str)],
+    diagnostics: Option<&mut Vec<CommandDiagnostic>>,
+    reported: &[&str],
+) -> Result<ExitStatus, String> {
+    run_with_envs_recorded(program, args, envs, diagnostics, reported)
 }
 
 fn run_with_envs_recorded(
@@ -213,6 +228,7 @@ fn run_with_envs_recorded(
     args: &[&str],
     envs: &[(&str, &str)],
     diagnostics: Option<&mut Vec<CommandDiagnostic>>,
+    reported: &[&str],
 ) -> Result<ExitStatus, String> {
     let env_text = envs
         .iter()
@@ -224,7 +240,7 @@ fn run_with_envs_recorded(
     } else {
         format!("{env_text} ")
     };
-    eprintln!("$ {env_prefix}{} {}", program, args.join(" "));
+    eprintln!("$ {env_prefix}{} {}", program, reported.join(" "));
     let started = Instant::now();
     let mut command = Command::new(program);
     command.args(args);
@@ -235,7 +251,7 @@ fn run_with_envs_recorded(
     if let Some(diagnostics) = diagnostics {
         diagnostics.push(CommandDiagnostic::inherited(
             program,
-            args,
+            reported,
             &native,
             started.elapsed(),
         ));
@@ -244,7 +260,10 @@ fn run_with_envs_recorded(
     if status.success() {
         Ok(status)
     } else {
-        Err(format!("{program} {} failed with {status}", args.join(" ")))
+        Err(format!(
+            "{program} {} failed with {status}",
+            reported.join(" ")
+        ))
     }
 }
 

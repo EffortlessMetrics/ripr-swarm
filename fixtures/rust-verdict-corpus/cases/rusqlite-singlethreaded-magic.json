@@ -33,7 +33,7 @@
       "silent"
     ]
   },
-  "reasoning": "Every Connection open runs ensure_safe_sqlite_threading_mode, so flipping the magic-value comparison fails the 133 of 170 lib tests that open one. Diff-mode ripr reports no_static_path with zero related tests plus static_unknown (limited), an acceptable abstention rather than the repo-mode gap; crediting would be ideal.",
+  "reasoning": "Every Connection open runs ensure_safe_sqlite_threading_mode, so flipping the magic-value comparison fails the 133 of 170 lib tests that open one. Diff-mode ripr reports no_static_path with zero related tests (limited), an acceptable abstention rather than the repo-mode gap; the unsafe block around the comparison adds no static_unknown finding beside that classified edit (#15348). Crediting would be ideal.",
   "labeling_observation": {
     "ripr_commit": "7a6d4b7a5",
     "full_checkout_verdict": "limited",
