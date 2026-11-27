@@ -526,55 +526,137 @@ fn replaced_line(source: &str, line: usize, new: &str, old: &str) -> Option<Stri
 }
 
 fn owner_header_at_line(owner: &PythonOwner, source: &str, line: usize) -> bool {
-    use rustpython_parser::ast::Fold;
-    let Some(text) = owner_source_slice(owner, source) else {
-        return false;
-    };
-    if !rustpython_parser::lexer::lex(&text, rustpython_parser::Mode::Module)
-        .any(|token| matches!(token, Err(_) | Ok((rustpython_parser::Tok::For, _))))
-    {
-        return false;
-    }
     let Some(local_line) = line
         .checked_sub(owner.start_line)
         .and_then(|line| line.checked_add(1))
     else {
         return false;
     };
+    with_owner_loop_headers(owner, source, |headers| match headers {
+        OwnerLoopHeaders::NoLoop => false,
+        OwnerLoopHeaders::Unparsed { mentions_for } => *mentions_for,
+        OwnerLoopHeaders::Spans(spans) => spans
+            .iter()
+            .any(|&(start, end)| (start..=end).contains(&local_line)),
+    })
+}
+
+/// What one owner span says about its loop headers, read once per owner and
+/// source instead of once per changed line (#16426): the owner of top-level
+/// statements is the whole module, so re-parsing it for every changed line
+/// cost O(changed lines x file).
+enum OwnerLoopHeaders {
+    /// No owner text, or no `for` token (and no lexical error) in it.
+    NoLoop,
+    /// The owner text does not parse; only the `for` spelling is known.
+    Unparsed { mentions_for: bool },
+    /// Owner-local 1-based line spans, from each `for` statement's first line
+    /// to the last line of its iterator.
+    Spans(Vec<(usize, usize)>),
+}
+
+fn owner_loop_headers(owner: &PythonOwner, source: &str) -> OwnerLoopHeaders {
+    use rustpython_parser::ast::Fold;
+    #[cfg(test)]
+    OWNER_LOOP_HEADER_READS.with(|reads| reads.set(reads.get() + 1));
+    let Some(text) = owner_source_slice(owner, source) else {
+        return OwnerLoopHeaders::NoLoop;
+    };
+    if !rustpython_parser::lexer::lex(&text, rustpython_parser::Mode::Module)
+        .any(|token| matches!(token, Err(_) | Ok((rustpython_parser::Tok::For, _))))
+    {
+        return OwnerLoopHeaders::NoLoop;
+    }
     let Ok(module) =
         super::source_facts::parse_module_result(std::path::Path::new("<range-loop-span>"), &text)
     else {
-        return text.contains("for");
+        return OwnerLoopHeaders::Unparsed {
+            mentions_for: text.contains("for"),
+        };
     };
-    HeaderLine {
+    let mut collector = HeaderSpans {
         source: super::source_utils::SourceText::new(&text),
-        line: local_line,
-    }
-    .fold_mod(module)
-    .is_err()
+        spans: Vec::new(),
+    };
+    let Ok(_) = collector.fold_mod(module);
+    OwnerLoopHeaders::Spans(collector.spans)
 }
 
-struct HeaderLine<'a> {
+// Owner span reads on this thread, so a test can pin one read per owner and
+// source rather than one per changed line (#16426).
+#[cfg(test)]
+thread_local! {
+    pub(super) static OWNER_LOOP_HEADER_READS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+/// Recently read owner spans. The key holds the exact source text, so an
+/// entry is reused only for byte-identical input; the result is a pure
+/// function of `(source, start_line, end_line)`. A diff walks its changed
+/// lines owner by owner against at most an old and a new source, so a few
+/// entries keep every reuse while bounding what a thread retains.
+struct LoopHeaderEntry {
+    start_line: usize,
+    end_line: usize,
+    source: String,
+    headers: OwnerLoopHeaders,
+}
+
+const LOOP_HEADER_MEMO_ENTRIES: usize = 4;
+
+thread_local! {
+    static LOOP_HEADER_MEMO: std::cell::RefCell<std::collections::VecDeque<LoopHeaderEntry>> =
+        const { std::cell::RefCell::new(std::collections::VecDeque::new()) };
+}
+
+fn with_owner_loop_headers<R>(
+    owner: &PythonOwner,
+    source: &str,
+    read: impl FnOnce(&OwnerLoopHeaders) -> R,
+) -> R {
+    LOOP_HEADER_MEMO.with(|memo| {
+        let mut memo = memo.borrow_mut();
+        let hit = memo.iter().position(|entry| {
+            entry.start_line == owner.start_line
+                && entry.end_line == owner.end_line
+                && entry.source == source
+        });
+        let entry = match hit.and_then(|index| memo.remove(index)) {
+            Some(entry) => entry,
+            None => LoopHeaderEntry {
+                start_line: owner.start_line,
+                end_line: owner.end_line,
+                source: source.to_string(),
+                headers: owner_loop_headers(owner, source),
+            },
+        };
+        let result = read(&entry.headers);
+        memo.push_front(entry);
+        memo.truncate(LOOP_HEADER_MEMO_ENTRIES);
+        result
+    })
+}
+
+struct HeaderSpans<'a> {
     source: super::source_utils::SourceText<'a>,
-    line: usize,
+    spans: Vec<(usize, usize)>,
 }
 
-impl rustpython_parser::ast::Fold<rustpython_parser::text_size::TextRange> for HeaderLine<'_> {
+impl rustpython_parser::ast::Fold<rustpython_parser::text_size::TextRange> for HeaderSpans<'_> {
     type TargetU = rustpython_parser::text_size::TextRange;
-    type Error = ();
+    type Error = std::convert::Infallible;
     type UserContext = ();
     fn will_map_user(&mut self, _: &rustpython_parser::text_size::TextRange) {}
     fn map_user(
         &mut self,
         range: rustpython_parser::text_size::TextRange,
         _: (),
-    ) -> Result<Self::TargetU, ()> {
+    ) -> Result<Self::TargetU, Self::Error> {
         Ok(range)
     }
     fn fold_stmt(
         &mut self,
         node: rustpython_parser::ast::Stmt,
-    ) -> Result<rustpython_parser::ast::Stmt, ()> {
+    ) -> Result<rustpython_parser::ast::Stmt, Self::Error> {
         use rustpython_parser::ast::{Ranged, Stmt};
         let iterator = match &node {
             Stmt::For(header) => Some(header.iter.as_ref()),
@@ -584,9 +666,7 @@ impl rustpython_parser::ast::Fold<rustpython_parser::text_size::TextRange> for H
         if let Some(iterator) = iterator {
             let start = super::source_utils::line_for_range_start(&self.source, node.range());
             let end = super::source_utils::line_for_range_end(&self.source, iterator.range());
-            if (start..=end).contains(&self.line) {
-                return Err(());
-            }
+            self.spans.push((start, end));
         }
         rustpython_parser::ast::fold::fold_stmt(self, node)
     }
