@@ -154,7 +154,8 @@ pub(in crate::analysis::classify) fn boxed_receiver_calls_impl(
 /// value's own type name for an exact immutable `let r: Box<dyn trait_name>
 /// = Box::new(Value(..));`, and `None` for a binding whose boxed type this
 /// cannot read (another spelling, a non-`dyn` shadow, a `mut` receiver, a
-/// parameter). The method runs on that value's vtable, so a `None` leaves
+/// parameter, a `for` or closure pattern in a test that spells the
+/// object). The method runs on that value's vtable, so a `None` leaves
 /// open which impl answers.
 pub(in crate::analysis::classify) fn trait_object_receiver_types<'t>(
     test: &'t TestSummary,
@@ -175,7 +176,12 @@ pub(in crate::analysis::classify) fn trait_object_receiver_types<'t>(
     if !is_plain_identifier(receiver) || masked_body[..start].trim_end().ends_with(['.', ':']) {
         return None;
     }
-    let bindings = receiver_let_bindings(test, receiver)?;
+    // A receiver ripr cannot tie to its `let` bindings (a `for` pattern, a
+    // closure or test parameter, a match arm) may hold any value the test
+    // spells as a `dyn trait_name` object, so its boxed type is unknown.
+    let Some(bindings) = receiver_let_bindings(test, receiver) else {
+        return spells_trait_object(&test.body, trait_name).then(|| vec![None]);
+    };
     if bindings.is_empty() {
         return super::parameter_annotation(test, receiver)
             .is_some_and(|annotation| spells_trait_object(&annotation, trait_name))

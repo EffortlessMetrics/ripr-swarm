@@ -22505,6 +22505,30 @@
       ]
     },
     {
+      "id": "rust_dyn_box_default_overridden_loop",
+      "language": "rust",
+      "tier": "pure",
+      "source_fixture": "fixtures/rust_dyn_box_default_overridden_loop",
+      "vector": "a_for_loop_over_box_dyn_trait_values_on_a_type_that_overrides_the_default_does_not_reach_the_changed_default",
+      "probe_family": "return_value",
+      "assertions": [
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "expected_finding_count",
+          "count": 1
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "expected_class",
+          "class": "reachable_unrevealed"
+        }
+      ]
+    },
+    {
       "id": "rust_dyn_box_default_not_overridden_box",
       "language": "rust",
       "tier": "pure",
