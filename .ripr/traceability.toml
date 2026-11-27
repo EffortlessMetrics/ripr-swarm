@@ -20149,6 +20149,9 @@ id = "RIPR-SPEC-0243"
 name = "TypeScript oracle and reach rules"
 spec = "docs/specs/RIPR-SPEC-0243-typescript-oracle-and-reach-rules.md"
 tests = [
+  "crates/ripr/src/analysis/language/typescript/tests/inline_new_getter_read_tests.rs::a_getter_read_on_a_fresh_instance_relates",
+  "crates/ripr/src/analysis/language/typescript/tests/inline_new_getter_read_tests.rs::other_reads_off_a_fresh_instance_stay_unrelated",
+  "crates/ripr/src/analysis/language/typescript/tests/inline_new_getter_read_tests.rs::a_bare_read_of_an_ordinary_method_stays_unrelated",
   "crates/ripr/src/analysis/language/typescript/tests/field_shadowed_method_tests.rs::a_method_shadowed_by_an_instance_field_relates_to_no_test",
   "crates/ripr/src/analysis/language/typescript/tests/field_shadowed_method_tests.rs::an_es_exported_class_method_shadowed_by_a_field_relates_to_no_test",
   "crates/ripr/src/analysis/language/typescript/tests/field_shadowed_method_tests.rs::a_static_method_shadowed_by_a_static_field_relates_to_no_test",
