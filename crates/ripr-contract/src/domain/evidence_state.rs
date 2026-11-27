@@ -6,25 +6,28 @@
 use serde::{Deserialize, Serialize};
 
 /// How a consumer should present one review gap. Serialized as the
-/// snake_case word that [`EvidenceState::as_str`] returns.
+/// `snake_case` word that [`EvidenceState::as_str`] returns. Each producer
+/// (the Rust evidence record, preview language adapters) chooses the state;
+/// only [`EvidenceState::Actionable`] marks a repair target.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum EvidenceState {
-    /// The gap carries concrete repair guidance. The only state that
+    /// The gap is a repair target consumers may act on. The only state that
     /// [`EvidenceState::is_actionable`] accepts.
     Actionable,
-    /// Related tests already grip the seam strongly (`strongly_gripped`).
+    /// Existing tests already observe the behavior. For Rust seams this is
+    /// the `strongly_gripped` grip class.
     AlreadyObserved,
-    /// The seam's grip class is `intentional`, so it is shown but is not a
-    /// repair target.
+    /// Shown for context but not a repair target. For Rust seams this is the
+    /// `intentional` grip class.
     InternalOnly,
-    /// The gap's actionability class is `static_limitation`: no concrete
-    /// repair can be offered. It covers analyzer limits and also real test
-    /// gaps with no proposed first-test target, such as a changed owner no
-    /// test reaches. Never actionable.
+    /// Not actionable: the producer cannot back a repair packet. This covers
+    /// analyzer limits, and also real gaps that name a test file or a missing
+    /// test but lack the verification, receipt or edit constraints a repair
+    /// needs.
     StaticLimitation,
-    /// No other state applies: no concrete guidance, and no strong or
-    /// intentional grip.
+    /// Not actionable, and no other state applies. A preview producer may
+    /// still attach a suggested test or assertion as advice.
     Unknown,
 }
 
