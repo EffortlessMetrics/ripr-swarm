@@ -99,10 +99,12 @@ impl Repo {
         std::fs::write(self.0.join(name), text).map_err(|e| e.to_string())
     }
 
-    /// The repository root as pilot spells it in a `git -C <root>` step.
+    /// The repository root as pilot spells it in a `git -C <root>` step:
+    /// canonical, with a Windows verbatim `\\?\` prefix folded and `/`
+    /// separators, the shell-friendly spelling `bound_root` prints.
     fn canonical_root(&self) -> Result<String, String> {
         std::fs::canonicalize(&self.0)
-            .map(|path| path.to_string_lossy().into_owned())
+            .map(|path| printed_root(&path.to_string_lossy()))
             .map_err(|e| e.to_string())
     }
 
@@ -2133,8 +2135,21 @@ fn pilot_names_the_commit_step_before_a_repair_start_that_would_refuse() -> Resu
     Ok(())
 }
 
+/// A root path in the printed spelling: a Windows verbatim prefix (`\\?\`
+/// or `\\?\UNC\`) folded and `\` separators as `/`, so a comparison holds
+/// on every host.
+fn printed_root(path: &str) -> String {
+    let path = path
+        .strip_prefix(r"\\?\UNC\")
+        .map(|rest| format!(r"\\{rest}"))
+        .unwrap_or_else(|| path.strip_prefix(r"\\?\").unwrap_or(path).to_string());
+    path.replace('\\', "/")
+}
+
 /// The `git -C <root> --literal-pathspecs commit -m "<message>" -- <files>`
 /// step a pilot screen prints: its `-C` value and its file list, in order.
+/// The temporary roots these tests use need no quoting, so the words split
+/// on whitespace; the root is returned in the [`printed_root`] spelling.
 fn printed_commit(screen: &str) -> Result<(String, Vec<String>), String> {
     let line = screen
         .lines()
@@ -2148,7 +2163,7 @@ fn printed_commit(screen: &str) -> Result<(String, Vec<String>), String> {
         .and_then(|(_, rest)| rest.split_whitespace().next())
         .ok_or_else(|| format!("the commit step names no -C root: {line}"))?;
     Ok((
-        root.to_string(),
+        printed_root(root),
         files.split_whitespace().map(str::to_string).collect(),
     ))
 }
@@ -2327,5 +2342,70 @@ fn pilot_commit_step_merges_the_dirty_inline_target() -> Result<(), String> {
         Some(0),
         "after the printed commit the start must start:\n{started}"
     );
+    Ok(())
+}
+
+/// #16381 review: a commit step whose file name needs quoting the PowerShell
+/// console reads differently prints its PowerShell form beside it on the
+/// terminal, as the repair start does.
+#[cfg(unix)]
+#[test]
+fn pilot_commit_step_prints_its_powershell_form_when_quoting_differs() -> Result<(), String> {
+    let repo = Repo::create_uncommitted(CONST_OLD, CONST_NEW, CONST_TEST)?;
+    repo.write("src/o'brien.rs", "pub fn extra() -> u8 {\n    1\n}\n")?;
+    repo.git(&["add", "src/o'brien.rs"])?;
+    repo.git(&["commit", "-q", "--no-gpg-sign", "-m", "extra"])?;
+    repo.write("src/o'brien.rs", "pub fn extra() -> u8 {\n    2\n}\n")?;
+    let pilot = repo.ripr(&["pilot", "--root", "."])?;
+    let next = pilot
+        .split_once("Next, in order:\n")
+        .map(|(_, next)| next)
+        .ok_or_else(|| format!("pilot must keep its ordered list:\n{pilot}"))?;
+    let mut lines = next.lines();
+    let commit_at = lines
+        .position(|line| line.contains("--literal-pathspecs commit -m \"<message>\" -- "))
+        .ok_or_else(|| format!("precondition, pilot prints the commit step:\n{pilot}"))?;
+    let commit = next.lines().nth(commit_at).unwrap_or_default();
+    assert!(
+        commit.contains(r"'src/o'\''brien.rs'"),
+        "precondition, the Bash form quotes the apostrophe:\n{pilot}"
+    );
+    let form = next.lines().nth(commit_at + 1).unwrap_or_default();
+    assert!(
+        form.trim_start().starts_with("(PowerShell) ") && form.contains("o''brien.rs"),
+        "the commit step's PowerShell form follows it:\n{pilot}"
+    );
+    Ok(())
+}
+
+/// #16381 review: a dirty production file whose name holds a line break would
+/// print a commit spanning lines that could close the Markdown command fence.
+/// Pilot prints no commit step for it on either surface.
+#[cfg(unix)]
+#[test]
+fn pilot_prints_no_commit_step_for_a_file_name_with_a_line_break() -> Result<(), String> {
+    let repo = Repo::create_uncommitted(CONST_OLD, CONST_NEW, CONST_TEST)?;
+    let name = "src/x\n```\necho forged\n.rs";
+    repo.write(name, "pub fn extra() -> u8 {\n    1\n}\n")?;
+    repo.git(&["add", "--", name])?;
+    repo.git(&["commit", "-q", "--no-gpg-sign", "-m", "extra"])?;
+    repo.write(name, "pub fn extra() -> u8 {\n    2\n}\n")?;
+    let pilot = repo.ripr(&["pilot", "--root", "."])?;
+    let markdown = std::fs::read_to_string(repo.0.join("target/ripr/pilot/pilot-summary.md"))
+        .map_err(|e| format!("{e}\n{pilot}"))?;
+    assert!(
+        pilot.contains("gap "),
+        "precondition, pilot ranks the gap:\n{pilot}"
+    );
+    for (surface, text) in [("terminal", &pilot), ("markdown", &markdown)] {
+        assert!(
+            !text.contains("--literal-pathspecs commit"),
+            "the {surface} must print no commit step:\n{text}"
+        );
+        assert!(
+            !text.lines().any(|line| line.trim() == "echo forged"),
+            "the {surface} must not show the name's tail as a command line:\n{text}"
+        );
+    }
     Ok(())
 }

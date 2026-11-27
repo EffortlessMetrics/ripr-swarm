@@ -1067,9 +1067,14 @@ fn render_pilot_terminal_unescaped(
         } else if let Some(command) = repair_command.as_deref() {
             // #16381: no runnable start ahead of the step it needs.
             match prerequisite.start_step {
-                Some(StartStep::Commit(commit)) => out.push_str(&format!(
-                    "  commit your production change first ({COMMIT_FIRST_REASON}): {commit}\n"
-                )),
+                Some(StartStep::Commit(commit)) => {
+                    out.push_str(&format!(
+                        "  commit your production change first ({COMMIT_FIRST_REASON}): {commit}\n"
+                    ));
+                    if let Some(form) = crate::output::markdown::powershell_text_variant(commit) {
+                        out.push_str(&format!("  (PowerShell) {form}\n"));
+                    }
+                }
                 Some(StartStep::Withheld(_)) | None => {}
             }
             out.push_str(&format!("  repair this gap: {command}\n"));
@@ -1199,6 +1204,9 @@ fn render_pilot_terminal_unescaped(
             out.push_str(&format!(
                 "  Before step 1, commit your production change ({COMMIT_FIRST_REASON}):\n     {commit}\n"
             ));
+            if let Some(form) = crate::output::markdown::powershell_text_variant(commit) {
+                out.push_str(&format!("     (PowerShell) {form}\n"));
+            }
         } else if let Some(file) = prerequisite.inline_target {
             out.push_str(&dirty_target_precondition(file));
             out.push('\n');

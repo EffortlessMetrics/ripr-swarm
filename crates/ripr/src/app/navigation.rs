@@ -91,8 +91,14 @@ impl RepairRoute {
 /// The command runs from any directory: `git -C <root>` anchors it at the
 /// analyzed root, `--literal-pathspecs` keeps names like `src/[ab].py`
 /// literal, and the files are shell-quoted and spelled relative to that root.
+/// `None` too when the root or a file name holds a line break: the shell
+/// quoting keeps a newline literal, so the printed command would span lines
+/// and could close a Markdown command fence, presenting the rest of the name
+/// as a separate command (#16381). The start's own refusal still names the
+/// files.
 pub(crate) fn commit_prerequisite_command(root_display: &str, files: &[String]) -> Option<String> {
-    if files.is_empty() {
+    let breaks_line = |text: &str| text.contains(['\n', '\r']);
+    if files.is_empty() || breaks_line(root_display) || files.iter().any(|file| breaks_line(file)) {
         return None;
     }
     let files = files
