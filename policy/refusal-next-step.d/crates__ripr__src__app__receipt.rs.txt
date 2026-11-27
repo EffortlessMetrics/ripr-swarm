@@ -1,0 +1,6 @@
+crates/ripr/src/app/receipt.rs|receipt at {} is malformed: `current_head` must be a string
+crates/ripr/src/app/receipt.rs|receipt at {} is malformed: `verify_status` must be a string
+crates/ripr/src/app/receipt.rs|receipt at {} is malformed: invalid JSON: {err}
+crates/ripr/src/app/receipt.rs|receipt at {} is malformed: invalid `current_head`: {err}
+crates/ripr/src/app/receipt.rs|receipt check --ledger {} is not a gap decision ledger: {err}
+crates/ripr/src/app/receipt.rs|receipt requires a Git repository with a resolvable HEAD: {err}

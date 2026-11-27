@@ -100,6 +100,7 @@ const ACTION_OPENERS: &[&str] = &[
     "fetch",
     "update",
     "regenerate",
+    "rebuild",
     "delete",
     "rename",
     "move ",
@@ -184,6 +185,14 @@ fn workspace_root() -> PathBuf {
     crate_dir().join("../..")
 }
 
+/// "..., then pass .." and "free memory, then save again": the second
+/// imperative of a sequence starts after `, then`. A bare "start then save"
+/// inside a failure sentence is not a sequence of steps.
+fn follows_then(prefix: &str) -> bool {
+    let trimmed = prefix.trim_end_matches(' ');
+    trimmed.len() != prefix.len() && (trimmed.ends_with(", then") || trimmed.ends_with("; then"))
+}
+
 fn is_clause_start(prefix: &str) -> bool {
     let trimmed = prefix.trim_end_matches(' ');
     if trimmed.is_empty() {
@@ -197,6 +206,26 @@ fn is_clause_start(prefix: &str) -> bool {
     }
 }
 
+/// The text the action cue is judged on: each literal is its own phrase (a
+/// next step passed as a separate format argument starts a clause), and a
+/// `\` line continuation drops the newline and the indentation after it, as
+/// the compiler does. The baseline key keeps the plain joined text.
+fn cue_text(parts: &[String]) -> String {
+    let mut out = String::new();
+    for part in parts {
+        if !out.is_empty() {
+            out.push_str("; ");
+        }
+        let mut rest = part.as_str();
+        while let Some(at) = rest.find("\\\n") {
+            out.push_str(&rest[..at]);
+            rest = rest[at + 2..].trim_start();
+        }
+        out.push_str(rest);
+    }
+    out.to_lowercase()
+}
+
 /// True when `text` (already lowercase) names an action the reader can take.
 fn has_action_cue(text: &str) -> bool {
     if ANYWHERE_CUES.iter().any(|cue| text.contains(cue)) {
@@ -207,7 +236,7 @@ fn has_action_cue(text: &str) -> bool {
         while let Some(found) = text[from..].find(opener) {
             let at = from + found;
             // A message opens with the failure, so a cue at offset 0 restates it.
-            if at != 0 && is_clause_start(&text[..at]) {
+            if at != 0 && (is_clause_start(&text[..at]) || follows_then(&text[..at])) {
                 return true;
             }
             from = at + opener.len();
@@ -359,24 +388,22 @@ fn lex_at(bytes: &[u8], at: usize) -> (Lexeme, usize) {
 }
 
 /// The string literals inside the call whose opening paren ends just before
-/// `start`, joined with spaces. The walk stops at the matching close paren, so
+/// `start`, one entry per literal (the baseline key joins them with spaces;
+/// the cue check reads each as its own phrase). The walk stops at the matching close paren, so
 /// a message in expression position (`Err("..".to_string())` as a match arm or
 /// tail expression) is judged on its own text and cannot borrow a cue from the
 /// next statement. `window` bounds a call that never closes.
-fn literals_from(source: &str, start: usize, window: usize) -> String {
+fn literal_parts(source: &str, start: usize, window: usize) -> Vec<String> {
     let bytes = source.as_bytes();
     let end = (start + window).min(bytes.len());
-    let mut out = String::new();
+    let mut out = Vec::new();
     let mut depth = 1usize;
     let mut at = start;
     while at < end {
         let (lexeme, next) = lex_at(bytes, at);
         match lexeme {
             Lexeme::Str(from, to) => {
-                if !out.is_empty() {
-                    out.push(' ');
-                }
-                out.push_str(&String::from_utf8_lossy(&bytes[from..to.min(bytes.len())]));
+                out.push(String::from_utf8_lossy(&bytes[from..to.min(bytes.len())]).to_string());
             }
             Lexeme::Skip => {}
             Lexeme::Code(b'(') => depth += 1,
@@ -475,8 +502,14 @@ fn message_follows(trigger: &str, after: &str) -> bool {
     let rest = if trigger == "map_err(" || trigger == "ok_or_else(" {
         // closures: `|error| format!(..)`, `|| "..".to_string()`
         match rest.strip_prefix('|') {
+            // A block body counts when the message is its first expression
+            // (`|error| { format!(..) }`): rustfmt picks that shape for a long
+            // message, and before #16394 the scan never read it.
             Some(inner) => match inner.find('|') {
-                Some(close) => inner[close + 1..].trim_start(),
+                Some(close) => {
+                    let body = inner[close + 1..].trim_start();
+                    body.strip_prefix('{').map_or(body, str::trim_start)
+                }
                 None => return false,
             },
             None => return false,
@@ -513,12 +546,13 @@ fn offenders_in_production(relative: &str, body: &str) -> BTreeSet<String> {
             if !message_follows(trigger, &body[from..]) {
                 continue;
             }
-            let text = literals_from(body, from, 2000);
+            let parts = literal_parts(body, from, 2000);
+            let text = parts.join(" ");
             if text.chars().count() < 12 {
                 continue;
             }
             let lower = text.to_lowercase();
-            if !has_reason_cue(&lower) || has_action_cue(&lower) {
+            if !has_reason_cue(&lower) || has_action_cue(&cue_text(&parts)) {
                 continue;
             }
             keys.insert(format!("{relative}|{}", text.trim_end().replace('\n', " ")));
@@ -1568,6 +1602,50 @@ fn load<'a,'b>(left: &'a str, right: &'b str) -> Result<&'a str, String> {
         offender_messages(source),
         vec!["{right} is not readable and no route is named".to_string()]
     );
+}
+
+#[test]
+fn scan_reads_a_message_inside_a_block_closure() {
+    // #16394: rustfmt wraps a long message as `|error| { format!(..) }`, and
+    // the scan used to stop at the `{`, so such messages were never judged.
+    let source = r#"
+fn load(path: &str) -> Result<String, String> {
+    std::fs::read_to_string(path).map_err(|error| {
+        format!("read the widget manifest {path} failed: {error}")
+    })?;
+    std::fs::read_to_string(path).map_err(|error| {
+        format!("read the gadget manifest {path} failed: {error}; pass a readable path")
+    })
+}
+"#;
+    assert_eq!(
+        offender_messages(source),
+        vec!["read the widget manifest {path} failed: {error}".to_string()]
+    );
+}
+
+#[test]
+fn action_cue_reads_continuations_separate_literals_and_then() {
+    // #16394: a `\` continuation keeps its next-line opener at a clause
+    // start, a next step passed as its own format argument starts a clause,
+    // and "free memory, then save again" names the second step after `then`.
+    let continued = "widget limit exceeded. \\\n              Pass `--limit` to raise it";
+    assert!(has_action_cue(&cue_text(&[continued.to_string()])));
+    assert!(has_action_cue(&cue_text(&[
+        "failed to read the widget: {}".to_string(),
+        "check that the path exists".to_string(),
+    ])));
+    assert!(has_action_cue(
+        "could not start the worker; free memory, then save again"
+    ));
+    assert!(!has_action_cue(
+        "the worker could not start then save failed"
+    ));
+    // A plain message still needs a cue of its own.
+    assert!(!has_action_cue(&cue_text(&[
+        "failed to read the widget: {}".to_string(),
+        "is not readable".to_string(),
+    ])));
 }
 
 #[test]
