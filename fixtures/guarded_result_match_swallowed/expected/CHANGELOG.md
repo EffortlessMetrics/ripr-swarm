@@ -614,3 +614,16 @@ Command:
 
 Updated:
 - `expected/human.txt`
+
+## Pending — guarded_result_match_swallowed (47)
+
+Reason:
+RIPR-SPEC-0224: inert row names the construct its refusals agree on (#15337)
+
+Command:
+`cargo xtask goldens bless guarded_result_match_swallowed --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`

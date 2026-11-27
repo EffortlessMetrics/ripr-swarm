@@ -2523,8 +2523,11 @@ fn source_build_rustc_command(
             format!("{selector} must name one nonempty Unicode executable; fix or unset {selector}")
         })?;
     let program = if program.contains(['/', '\\']) {
-        std::path::absolute(root.join(program))
-            .map_err(|error| format!("cannot resolve {selector} from the selected root: {error}"))?
+        std::path::absolute(root.join(program)).map_err(|error| {
+            format!(
+                "cannot resolve {selector} from the selected root: {error}; fix or unset {selector}"
+            )
+        })?
     } else {
         PathBuf::from(program)
     };

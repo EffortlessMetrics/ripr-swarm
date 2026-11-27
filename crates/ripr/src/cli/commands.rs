@@ -1733,7 +1733,7 @@ fn parse_pr_comments_plan_options(args: &[String]) -> Result<PrCommentsPlanOptio
     }
 
     if max_inline_comments == 0 {
-        return Err("pr-comments plan --max-inline-comments must be greater than zero".to_string());
+        return Err("pr-comments plan --max-inline-comments must be greater than zero; pass a whole number of 1 or more".to_string());
     }
 
     refuse_output_naming_input(
@@ -2251,7 +2251,7 @@ fn read_optional_manifest_for_report(
         Ok(text) => Some(Ok(text)),
         Err(err) if err.kind() == std::io::ErrorKind::NotFound => None,
         Err(err) => Some(Err(format!(
-            "read suppression manifest {} failed: {err}",
+            "read suppression manifest {} failed: {err}; check that the file is readable, or pass --manifest naming a readable manifest",
             output::suppression_health::display_path(&read_path)
         ))),
     }
@@ -5068,7 +5068,7 @@ language = "rust"
         );
         assert_eq!(
             parse_pr_comments_plan_options(&args(&["--max-inline-comments", "0"])),
-            Err("pr-comments plan --max-inline-comments must be greater than zero".to_string())
+            Err("pr-comments plan --max-inline-comments must be greater than zero; pass a whole number of 1 or more".to_string())
         );
         assert_eq!(
             parse_pr_comments_plan_options(&args(&["--bad"])),

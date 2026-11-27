@@ -231,3 +231,14 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human-full.txt`
+
+## Pending — rust_nested_use_cfg (19)
+
+Reason:
+RIPR-SPEC-0122: #15313 Summary names shared candidate lines and says No test gap when State reads no test gap found
+
+Command:
+`cargo xtask goldens bless rust_nested_use_cfg --reason "..."`
+
+Updated:
+- `expected/human.txt`

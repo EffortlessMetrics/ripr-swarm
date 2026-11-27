@@ -42,7 +42,9 @@
 //! names the method is not detected.
 
 mod call_term_fold;
+pub(super) mod closed_dispatch;
 pub(super) mod closure_adaptor;
+pub(super) mod dyn_box;
 mod exit_record_types;
 mod expected_binding;
 mod fallible_check;
@@ -480,6 +482,14 @@ pub(in crate::analysis) struct OwnerPinSyntax {
     glob_chain_by_file: SyncMemo<BTreeMap<PathBuf, bool>>,
     /// Files that may import from an ancestor beyond their immediate parent.
     glob_jump_by_file: SyncMemo<BTreeMap<PathBuf, bool>>,
+    /// #15277: per (trait name, method name), whether the workspace leaves
+    /// a `Box<dyn Trait>` receiver only the boxed value's vtable (see
+    /// `dyn_box`). Each verdict scans every file, once per run.
+    dyn_box_traits: SyncMemo<BTreeMap<(String, String), bool>>,
+    /// #15277: whether the indexed sources are the whole program a wrapper
+    /// receiver's call can resolve against (see `closed_dispatch`), a
+    /// whole-workspace verdict computed once per run.
+    receiver_dispatch_closed: OnceLock<bool>,
     /// #8255 test witness: full-index macro-site passes this run paid.
     #[cfg(test)]
     workspace_scan_passes: SyncMemo<u32>,
@@ -868,6 +878,14 @@ impl OwnerPinSyntax {
     /// The run's memo of a whole-index verdict that `compute` reads once.
     pub(in crate::analysis) fn iteration_closed(&self, compute: impl FnOnce() -> bool) -> bool {
         *self.iteration_closed.get_or_init(compute)
+    }
+
+    /// #15277: the run's memo of [`closed_dispatch::sources_closed`].
+    pub(in crate::analysis) fn receiver_dispatch_closed(
+        &self,
+        compute: impl FnOnce() -> bool,
+    ) -> bool {
+        *self.receiver_dispatch_closed.get_or_init(compute)
     }
 
     pub(in crate::analysis) fn field_projection_workspace_closed(
@@ -4273,6 +4291,16 @@ impl AssertionRefusal {
                 })
                 .collect(),
         )
+    }
+
+    /// The construct an assertion sits in that may keep it from running
+    /// (`a \`for\` loop, which may run zero times`), when that is the
+    /// refusal (#15337). Any other refusal names no construct.
+    pub(in crate::analysis) fn conditional_construct(&self) -> Option<&'static str> {
+        match self {
+            Self::Syntax(AssertionContextRefusal::ConditionalPath(construct)) => Some(construct),
+            _ => None,
+        }
     }
 
     /// One reader-facing clause: what blocked crediting the assertion.
@@ -7737,9 +7765,25 @@ impl OwnerReturnPin {
                             if bound_by_macro(&masked_body, receiver) {
                                 return false;
                             }
+                            // #15277: a `Box<dyn Trait>` binding calls the
+                            // owner's trait method on the boxed value. The
+                            // workspace gates scan every file, so they run
+                            // only for a test that spells `dyn` at all.
+                            let dyn_trait = trait_scope
+                                .as_ref()
+                                .filter(|_| contains_as_whole_word(&masked_body, "dyn"))
+                                .and_then(|scope| {
+                                    dyn_box::dyn_box_trait(
+                                        &scope.trait_name,
+                                        &self.name,
+                                        index,
+                                        syntax,
+                                    )
+                                });
                             test_receiver_type(
                                 test,
                                 receiver,
+                                dyn_trait,
                                 test_source,
                                 index,
                                 imports_foreign,
@@ -14504,13 +14548,21 @@ pub(super) fn builtin_type_unshadowed(
 /// The type the test binds `receiver` to: every `let` that binds the name
 /// is a simple `let [mut] receiver [: T] = ..;` whose type ripr can read,
 /// and all of them agree. Other uses of the binding (borrows, arguments,
-/// reassignments) cannot change a Rust binding's type; another binding of
+/// reassignments) cannot change a Rust binding's static type. The
+/// `Box<dyn Trait>` reading (`dyn_trait`, #15277) types the receiver by its
+/// boxed value, which a reassignment can replace, so it refuses a `mut`
+/// spelling of the receiver; another binding of
 /// the same name in a pattern ripr does not read (a closure parameter, a
 /// `for` or match-arm pattern, a destructuring `let`, a nested `fn`)
 /// leaves the type unestablished.
+#[allow(
+    clippy::too_many_arguments,
+    reason = "the binding reader's inputs plus the #15277 dyn trait; each call site has all of them"
+)]
 fn test_receiver_type(
     test: &TestSummary,
     receiver: &str,
+    dyn_trait: Option<&str>,
     test_source: Option<&str>,
     index: &RustIndex,
     imports_foreign: ForeignImport<'_>,
@@ -14543,8 +14595,13 @@ fn test_receiver_type(
     }
     let mut bound: Option<ReceiverType> = None;
     for binding in bindings {
+        // #15277: `let s: Box<dyn Trait> = Box::new(value);` types `s` as
+        // `value` for the caller's `Trait` method (see `dyn_box`).
+        let boxed = dyn_trait
+            .filter(|_| !dyn_box::binding_is_mut(&mask_comments_and_strings(&test.body), receiver))
+            .and_then(|name| dyn_box::dyn_box_value(binding, name));
         let receiver_type = binding_type(
-            binding,
+            &boxed.map_or_else(|| binding.to_string(), |value| format!("= {value}")),
             test,
             test_source,
             index,
@@ -17676,8 +17733,9 @@ impl UnitStructFacts {
 /// - the workspace declares it exactly once, as a non-generic unit struct
 ///   (`struct name;`), in the test's own file;
 /// - every other spelling of the name in the workspace is an `impl` header
-///   (`impl name {`, `impl Trait for name {`), a method call (`name.f(..)`)
-///   or a `let` initializer (`= name;`). An import, a type position, a raw
+///   (`impl name {`, `impl Trait for name {`), a method call (`name.f(..)`),
+///   a `let` initializer (`= name;`) or a boxed value (`Box::new(name)`,
+///   #15277). An import, a type position, a raw
 ///   identifier (`r#name`), a pattern, an enum variant, a macro argument or
 ///   any `const`, `static`, `fn`, `type` or `as` rename refuses;
 /// - no workspace `macro_rules!` matcher takes an `ident` or `tt` fragment,
@@ -17754,6 +17812,12 @@ pub(super) fn unit_struct_value(
                             && !before.ends_with("<=")
                             && !before.ends_with(">=")
                             && after.starts_with(';'))
+                        // #15277: the value boxed by `Box::new(name)`, as in
+                        // `let c: Box<dyn Trait> = Box::new(name);`.
+                        || (before
+                            .strip_suffix('(')
+                            .is_some_and(|call| call.trim_end().ends_with("Box::new"))
+                            && after.starts_with(')'))
                 }
                 _ => false,
             };
@@ -18121,6 +18185,7 @@ pub(in crate::analysis) fn test_receiver_named_type(
         test_receiver_type(
             test,
             receiver,
+            None,
             test_source,
             index,
             &imports_foreign,
@@ -19013,6 +19078,16 @@ fn matches_panic_diagnostic(test: &TestSummary, assertion: &OracleFact) -> Optio
         }
     }
     Some(())
+}
+
+/// The scrutinee and pinned value of a plain literal `matches!` assertion
+/// (`assert!(matches!(owner(..), Ok(5)))`), read by the same admission the
+/// RIPR-SPEC-0197 pin uses, so the same-value invisibility check (#15414)
+/// reads exactly the `matches!` shapes the pin would credit.
+pub(in crate::analysis) fn literal_matches_assertion_operands(text: &str) -> Option<[String; 2]> {
+    matches_pin_condition(text)
+        .as_deref()
+        .and_then(literal_matches_operands)
 }
 
 /// A success-only pattern over a direct owner call. Limit the arguments to

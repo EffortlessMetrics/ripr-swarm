@@ -776,6 +776,201 @@ fn audited_qualified_value_macro_wrapper_forwards_the_helper_result() -> Result<
 }
 
 #[test]
+fn imported_json_wrapper_forwards_unless_json_is_rebound() -> Result<(), String> {
+    const SERDE_JSON: &str = "serde_json = \"1\"";
+    const AUDITED: &[(&str, &str)] = &[("serde_json", "1.0.154")];
+    let wrapper = "    let _ = json!({ \"qty\": qty });\n    if is_bulk(qty) { 5 } else { 0 }";
+    let with_prelude = |prelude: &str| -> Result<(String, String, usize), String> {
+        let source = format!("{prelude}\n{}", bulk_source(wrapper, BOUNDARY_TESTS));
+        let first = source
+            .lines()
+            .position(|line| line.contains("10 <= qty"))
+            .ok_or("probe")?;
+        let diff = BULK_DIFF.replace("@@ -1,3 +1,3 @@", &format!("@@ -{0},3 +{0},3 @@", first));
+        Ok((source, diff, first + 1))
+    };
+    // `use serde_json::json;` with an audited locked release forwards, and
+    // so do the spellings that also import the crate itself under its own
+    // name, which rustfmt merges into one list (#16350).
+    for prelude in [
+        "use serde_json::json;",
+        "use serde_json::{self, json};",
+        "use serde_json::{self};\nuse serde_json::json;",
+        "use serde_json;\nuse serde_json::json;",
+    ] {
+        let (source, diff, line) = with_prelude(prelude)?;
+        for family in ["predicate", "return_value"] {
+            let finding = finding_with_dependencies(SERDE_JSON, AUDITED, &source, &diff, family)?;
+            assert_eq!(finding["probe"]["line"], line, "{prelude}\n{finding}");
+            assert_eq!(finding["classification"], "exposed", "{prelude}\n{finding}");
+        }
+    }
+    for (label, locked, prelude) in [
+        // A release outside the audit.
+        (
+            "unaudited",
+            &[("serde_json", "1.0.149")][..],
+            "use serde_json::json;",
+        ),
+        // Anything else that may bind `json`.
+        (
+            "local definition",
+            AUDITED,
+            "macro_rules! json { ($($t:tt)*) => { return 5 }; }",
+        ),
+        ("foreign import", AUDITED, "use other::json;"),
+        ("glob import", AUDITED, "use serde_json::*;"),
+        (
+            "macro_use",
+            AUDITED,
+            "#[macro_use]\nextern crate serde_json;",
+        ),
+        (
+            "grouped self import",
+            AUDITED,
+            "use serde_json::json;\nuse other::{serde_json::{self}};",
+        ),
+        (
+            "commented foreign path",
+            AUDITED,
+            "use serde_json::json;\nuse other::/* note */serde_json;",
+        ),
+        (
+            "namespace alias",
+            AUDITED,
+            "use serde_json::json;\nmod serde_json { macro_rules! json { ($($t:tt)*) => { return 5 }; } }",
+        ),
+    ] {
+        let (source, diff, line) = with_prelude(prelude)?;
+        for family in ["predicate", "return_value"] {
+            let finding = finding_with_dependencies(SERDE_JSON, locked, &source, &diff, family)?;
+            assert_eq!(finding["probe"]["line"], line, "{label}\n{finding}");
+            assert_ne!(finding["classification"], "exposed", "{label}\n{finding}");
+        }
+    }
+    Ok(())
+}
+
+#[test]
+fn imported_anyhow_wrapper_forwards_unless_anyhow_is_rebound() -> Result<(), String> {
+    const ANYHOW: &str = "anyhow = \"1\"";
+    const AUDITED: &[(&str, &str)] = &[("anyhow", "1.0.104")];
+    let wrapper = "    let _ = anyhow!(\"qty {qty}\");\n    if is_bulk(qty) { 5 } else { 0 }";
+    let with_prelude = |prelude: &str| -> Result<(String, String, usize), String> {
+        let source = format!("{prelude}\n{}", bulk_source(wrapper, BOUNDARY_TESTS));
+        let first = source
+            .lines()
+            .position(|line| line.contains("10 <= qty"))
+            .ok_or("probe")?;
+        let diff = BULK_DIFF.replace("@@ -1,3 +1,3 @@", &format!("@@ -{0},3 +{0},3 @@", first));
+        Ok((source, diff, first + 1))
+    };
+    // A verified `use anyhow::anyhow;` at an audited locked release forwards,
+    // alone or grouped with the crate's other items.
+    for prelude in [
+        "use anyhow::anyhow;",
+        "use anyhow::{anyhow, Result};",
+        "use ::anyhow::anyhow;",
+        "use anyhow;\nuse anyhow::anyhow;",
+    ] {
+        let (source, diff, line) = with_prelude(prelude)?;
+        for family in ["predicate", "return_value"] {
+            let finding = finding_with_dependencies(ANYHOW, AUDITED, &source, &diff, family)?;
+            assert_eq!(finding["probe"]["line"], line, "{prelude}\n{finding}");
+            assert_eq!(finding["classification"], "exposed", "{prelude}\n{finding}");
+        }
+    }
+    for (label, locked, prelude) in [
+        // A release outside the audit.
+        (
+            "unaudited",
+            &[("anyhow", "1.0.99")][..],
+            "use anyhow::anyhow;",
+        ),
+        // Anything else that may bind `anyhow`.
+        (
+            "local definition",
+            AUDITED,
+            "macro_rules! anyhow { ($($t:tt)*) => { return 5 }; }",
+        ),
+        ("foreign import", AUDITED, "use other::anyhow;"),
+        ("glob import", AUDITED, "use anyhow::*;"),
+        ("macro_use", AUDITED, "#[macro_use]\nextern crate anyhow;"),
+        (
+            "grouped self import",
+            AUDITED,
+            "use anyhow::anyhow;\nuse other::{anyhow::{self}};",
+        ),
+        (
+            "namespace alias",
+            AUDITED,
+            "use anyhow::anyhow;\nmod anyhow { macro_rules! anyhow { ($($t:tt)*) => { return 5 }; } }",
+        ),
+        (
+            "crate alias",
+            AUDITED,
+            "use anyhow::anyhow;\nextern crate other as anyhow;",
+        ),
+    ] {
+        let (source, diff, line) = with_prelude(prelude)?;
+        for family in ["predicate", "return_value"] {
+            let finding = finding_with_dependencies(ANYHOW, locked, &source, &diff, family)?;
+            assert_eq!(finding["probe"]["line"], line, "{label}\n{finding}");
+            assert_ne!(finding["classification"], "exposed", "{label}\n{finding}");
+        }
+    }
+    Ok(())
+}
+
+#[test]
+fn a_block_arm_that_reads_the_parameter_keeps_forwarding() -> Result<(), String> {
+    // #10357 item 4: rustfmt writes block arms without a trailing comma. One
+    // that only reads `qty` must not read as rebinding it for later arms.
+    let reads = "    let _tier = match qty % 3 {\n        0 => {\n            qty + 1\n        }\n        _ => 0,\n    };\n    if is_bulk(qty) { 5 } else { 0 }";
+    for family in ["predicate", "return_value"] {
+        let finding = family_finding(&bulk_source(reads, BOUNDARY_TESTS), BULK_DIFF, family)?;
+        assert_eq!(finding["classification"], "exposed", "{family}\n{finding}");
+    }
+    // #16406 review: an arrow inside a log string is not an arm, so the
+    // parsed reading still decides.
+    let logged = format!("    println!(\"qty => {{qty}}\");\n{reads}");
+    for family in ["predicate", "return_value"] {
+        let finding = family_finding(&bulk_source(&logged, BOUNDARY_TESTS), BULK_DIFF, family)?;
+        assert_eq!(finding["classification"], "exposed", "{family}\n{finding}");
+    }
+    // #16406 review: a raw-identifier parameter rebound by a raw-identifier
+    // arm pattern sends the arm's value, not the test's, to the helper.
+    let raw = bulk_source(
+        "    match Some(r#qty + 1) {\n        Some(r#qty) => if is_bulk(r#qty) { 5 } else { 0 },\n        None => 0,\n    }",
+        BOUNDARY_TESTS,
+    )
+    .replace("pub fn order_discount(qty: u32)", "pub fn order_discount(r#qty: u32)");
+    for family in ["predicate", "return_value"] {
+        let finding = family_finding(&raw, BULK_DIFF, family)?;
+        assert!(
+            !has_boundary_row(&finding, "qty == 10"),
+            "{family}\n{finding}"
+        );
+        assert_ne!(finding["classification"], "exposed", "{family}\n{finding}");
+    }
+    // Controls: an arm pattern that binds `qty`, after a block arm or not,
+    // and a macro whose tokens hold an arm the parser cannot read (the
+    // opaque-macro gate also refuses that one; the unit table pins the
+    // rebinding decision itself).
+    for rebinds in [
+        "    let _tier = match Some(qty) {\n        None => {\n            0\n        }\n        Some(qty) => qty,\n    };\n    if is_bulk(qty) { 5 } else { 0 }",
+        "    let _tier = match Some(1) {\n        Some(qty) => qty,\n        None => 0,\n    };\n    if is_bulk(qty) { 5 } else { 0 }",
+        "    let _tier = arms! { 0 => {\n            qty + 1\n        }\n        Some(qty) => 0 };\n    if is_bulk(qty) { 5 } else { 0 }",
+    ] {
+        for family in ["predicate", "return_value"] {
+            let finding = family_finding(&bulk_source(rebinds, BOUNDARY_TESTS), BULK_DIFF, family)?;
+            assert_ne!(finding["classification"], "exposed", "{rebinds}\n{finding}");
+        }
+    }
+    Ok(())
+}
+
+#[test]
 fn boolean_return_twin_does_not_borrow_other_calls_or_short_circuit_gates() -> Result<(), String> {
     let split = bulk_source(FORWARDING, "        let _ = order_discount(10);");
     let split = split.replace(

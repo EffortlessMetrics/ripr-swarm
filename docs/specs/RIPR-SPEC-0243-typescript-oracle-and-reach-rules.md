@@ -40,9 +40,14 @@ Linked issues:
 - #16252 (inline class expression as a CommonJS module's whole export)
 - #16261 (class method overwritten by a later same-key member; rule 26)
 - #16275 (class expression as a CommonJS named export; rule 27)
+- #16353 (getter read straight off `new Class(...)`)
 - #16306 (class method shadowed by a same-key field; rule 28)
 - #16314 (class method replaced by an assignment; rule 29)
 - #16349 (methods of an anonymous default-exported class; rule 19)
+- #16365 (TypeScript `export = Name;` and `import x = require()`; rule 19)
+- #16366 (a function beside a one-identifier CommonJS whole export; rule 19)
+- #16369 (a CommonJS export reaches the private helper it calls; rule 19)
+- #16370 (runner loaded with TypeScript `import x = require()`)
 - #9435 (exact oracle ignored on five changed-line shapes)
 - #9497 (skipped or unexercised tests credited as exposed; rules 17 and 18)
 - #11196 (start rate: a conditional assertion in an unconsulted test no longer
@@ -342,7 +347,11 @@ initializer: no assignment, update, `for` target or redeclaration, and no
 call, so a parenthesised, non-null, cast or destructuring assignment target,
 a `function`/`class` re-declaration and a `globalThis`/`this` member write all
 refuse. A nested-scope shadow such as a `test` parameter is refused too,
-fail-closed) and
+fail-closed; a value TypeScript `import x = require('<literal>')` is such a
+declaration too, because it compiles to a `const` binding TypeScript refuses
+to write, and it also declares a namespace that `const { test } = x` or
+`const test = x.test` picks from, #16370, while `import type x = require()`
+binds no value) and
 either ambient `require` syntax or an immutable loader created by a locally
 imported `node:module`/`module` `createRequire(import.meta.url)`. Mutable loaders
 or runner bindings and same-spelled helper factories remain uncredited.
@@ -933,8 +942,11 @@ Candidates come from the first non-empty tier:
      `expect(...)` actual, same file or through an import of the owner
      module;
    - method: `ReceiverOwnerCall`, a receiver bound by `new Class(...)` in
-     the body or in describe or `beforeEach` scope, a getter read, or a
-     constructor call;
+     the body or in describe or `beforeEach` scope, a getter read (on such a
+     receiver, or straight off `new Class(...)`, as in `expect(new
+     Cart(100).total)`, since #16353; like the inline call, a parenthesized
+     `(new Cart(100)).total` or an explicit `new Cart<T>(...)` is not read), or
+     a constructor call;
    - static method: `ClassMethodCall` through the class name or an import;
    - function, arrow or component, in order: an owner-module mock or a
      spy fabrication blocks every relation; then `DirectOwnerCall` (a
@@ -1940,6 +1952,61 @@ CommonJS form, and a named export beside the inline class stay unrelated).
 Before, both read `no_static_path`. Named property
 exports of a class expression (`exports.Name = class ...`) and `const Name =
 class ...; module.exports = Name;` are not read.
+Amended 2026-11-26 (#16365): TypeScript's CommonJS syntax reads as its
+compiled twin. `export = Name;` is `module.exports = Name;`: one such
+statement naming an identifier, with no ES export statement beside it, is the
+whole-export target, and every gate above applies unchanged except that the
+file must hold no `module.exports =` write (a file with both forms is
+refused). In a test, a value `import x = require("<literal>")` is `const x =
+require("<literal>")`: the same default-named namespace binding, under the
+same ambient-`require` and member-mutation gates, so a whole-export function
+or class relates through the local and a member is read off it
+(`x.name(...)`, `new x.Name()`). A type-only `import type x = require(...)`
+and the entity-name forms (`import x = Ns.y`) load nothing and record no
+import. An ES `import Name from` of an `export =` class stays refused, as for
+its `module.exports` twin. A CommonJS barrel (#15284) reads both forms the same
+way: `export = require('./x')`, or `export = local` of an `import local =
+require('./x')` or `const local = require('./x')`, forwards the whole module,
+and an `export =` beside a `module.exports =` write is a second whole write,
+which refuses every edge from that barrel. Before, both sides read `no_static_path`. An
+inline `export = class { ... }` or `export = function ...`, and a class
+merged with a same-named `namespace` (two file-level declarations of the
+name), are not read.
+Amended 2026-11-26 (#16366): when the whole export is one identifier
+(`module.exports = name;` or `export = name;`) and the file gate holds, every
+other top-level function of the file is no property of it unless the file
+adds one, so a named binding (`const { f } = require(...)`, `require(...).f`)
+or a namespace member (`lib.f`) of such a sibling reads `undefined` and is not
+related, as for a member of the export itself. The sibling keeps the named
+reading when the file may add the property: any `exports.` or `exports[`
+spelling, any ES export statement, a member written onto the export name or
+an `Object.assign` / `defineProperty` onto it, a second file-level
+declaration of the name (a merged `namespace`), any use of the name other than
+its declaration, a call or construction and the whole-export write (an alias
+may add the property), or an export that is not a declared function or a
+declared class without heritage, static member or static block (`const api =
+{ total }; module.exports = api;` carries the sibling from the start). Before,
+such a binding related as `exposed`.
+Amended 2026-11-27 (#16369): CommonJS export writes are same-module entries,
+as ES export statements are, so a test of an export that calls a private
+helper relates to the changed helper (`module_entry_call`, never more than
+`static_unknown`). An identifier-valued property of an object whole export
+(`module.exports = { other, run: other }`) is a named entry under its key;
+`exports.NAME = local` and `module.exports.NAME = local` are named entries
+when no whole write replaces the export, and `module.exports.NAME` written
+after the one whole write adds a property to it; `module.exports = local`,
+`export = local` and an inline `module.exports = function NAME() {}` or
+arrow are a whole-export entry, bound by `const x = require(...)`, kept only
+when the owner side proved that function is the whole export. A file with an
+ES export statement, more than one whole write, a `module.exports =` write
+the top-level statements do not account for, a computed `exports[key]` write,
+a spread or computed key in the object export, or the export object passed to
+a call (`Object.assign(exports, ...)`) has no CommonJS entries; a property
+written more than once (`exports.run = a; exports.run = b;`) and a local the
+file rebinds are no entry. A CommonJS export's own calls of imported bindings
+are never outbound edges of the cross-module graph, while a barrel that
+re-exports the module continues its entries as it does an ES module's. A
+method of a whole-export class is not an entry, as for an exported ES class.
 
 **Rule 21. A method decorator that passes the original result through
 lends `exposed` to the decorated method's tests (design decision, #10189).**
@@ -3087,6 +3154,16 @@ keys); do not take the next number.
   property, a changed `#private` method of either CommonJS class shape yields a
   finding, and the field and repeated-name guards key the class by the
   property.
+- #16353 (getter read off a fresh instance):
+  `crates/ripr/src/analysis/language/typescript/tests/inline_new_getter_read_tests.rs`
+  runs `analyze_diff` on a changed getter read as `new Cart(100).total`, through
+  `?.`, wrapped across lines and chained (`.total.toFixed(0)`): each relates,
+  as does the named-receiver control. A longer property (`.totalPrice`),
+  another class's same-named getter, the read inside a comment or string, a
+  spied getter, an assignment through the fresh instance and a `delete` of the
+  member (fresh instance or receiver; a `delete` does not run the getter) stay
+  unrelated, and so does a bare read of an ordinary method, which does not run
+  it.
 - #16306 (rule 28, field-shadowed class method):
   `crates/ripr/src/analysis/language/typescript/tests/field_shadowed_method_tests.rs`
   runs `analyze_diff` on a method shadowed by an instance field before or after
@@ -3133,6 +3210,53 @@ keys); do not take the next number.
   keys such a class by `default`, and two anonymous default classes in one file
   repeat that name. `commonjs_inline_class_tests.rs` now credits the anonymous
   inline class through a whole-module `require`.
+- #16365 (rule 19, TypeScript `export =` and `import x = require()`):
+  `crates/ripr/src/analysis/language/typescript/tests/export_equals_tests.rs`
+  runs `analyze_diff` on a changed line of an `export = Cart;` class and an
+  `export = total;` function: `import x = require(...)` and `const x =
+  require(...)` relate (and an ES default import of the function), as do
+  members read off an `import lib = require(...)` namespace (`lib.total(...)`
+  of `export = { total }`, `new m.Cart()` of a named export). An ES default
+  import of the class, another function as the export, a `module.exports`
+  write beside `export =`, a class rewritten after the export, a type-only
+  import and an import spelled only in a comment stay unrelated. A parse test
+  pins that only one identifier `export =` with no ES export beside it is a
+  target. Through a TypeScript barrel, `export =` of an import-equals local,
+  of a `require()` local or of an inline `require()` forwards to the owner,
+  while a barrel that also writes `module.exports` (a forward TypeScript's
+  trailing `export =` overwrites) or forwards another module does not.
+- #16366 (rule 19, sibling of a whole export):
+  `crates/ripr/src/analysis/language/typescript/tests/commonjs_unexported_sibling_tests.rs`
+  runs `analyze_diff` on a function beside `module.exports = other;` (and a
+  class export, and TypeScript `export = other;`): a named, member or
+  namespace binding of it stays unrelated, while `module.exports.total =
+  total`, `other.total = total`, `Object.assign(other, { total })`, an
+  object whole export, an object bound to the export name, a static field, a
+  class with heritage and a write through an alias keep the relation. Owner extraction marks the sibling
+  only without a named export or ES export statement.
+- #16369 (rule 19, CommonJS entries):
+  `crates/ripr/src/analysis/language/typescript/tests/commonjs_helper_reach_tests.rs`
+  runs `analyze_diff` on a private helper called by the module's export: the
+  ESM reference, an object whole export (named, namespace member and renamed
+  key), `exports.other`, a property after a whole write, a declared, inline
+  function and inline arrow whole export and TypeScript `export =` each relate
+  by `helper_owner_call` at `static_unknown`. A helper the export does not
+  call or shadows, an old key name, two or nested whole writes, a detached
+  `exports` write, a property replaced by a later whole write, a reassigned
+  whole export, a slot or object key written twice, a spread, an
+  `Object.assign` onto `exports`, a local rebound before its export and a
+  named binding of a whole function stay `no_static_path`. A parse test pins
+  which export shapes are read.
+- #16370 (runner bound by `import x = require()`):
+  `crates/ripr/src/analysis/language/typescript/tests/import_equals_runner_tests.rs`
+  runs `analyze_diff` on a TypeScript test file whose runner is
+  `import test = require('tape')`, or a `node:test` namespace bound by
+  `import runner = require('node:test')` and picked by destructuring or by
+  member: each reads `exposed` like its `const ... = require()` reference. A
+  file that declares its own `require`, a written namespace and an inactive
+  member pick stay `no_static_path`, and a renamed pick off a type-only
+  `import type runner = require()` registers nothing while its value twin
+  reads `exposed`.
 
 - #11196 (rule 11, object rows): `tests/object_row_tests.rs` pins the per-row
   literal assertions for the `for...of` and `test.each` object-row forms and

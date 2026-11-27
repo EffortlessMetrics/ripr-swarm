@@ -1,0 +1,12 @@
+# Independent no-promotion control for the parent collected-test shadow (#14083 A5).
+[[extend]]
+id = "RIPR-SPEC-0028"
+fixtures = [
+  "fixtures/python_parent_collected_test_shadow",
+]
+
+[[extend]]
+id = "RIPR-SPEC-0108"
+fixtures = [
+  "fixtures/python_parent_collected_test_shadow",
+]
