@@ -358,27 +358,25 @@ fn lex_at(bytes: &[u8], at: usize) -> (Lexeme, usize) {
     (Lexeme::Code(byte), at + 1)
 }
 
-/// The string literals inside the call whose opening paren ends just before
-/// `start`, joined with spaces. The walk stops at the matching close paren, so
-/// a message in expression position (`Err("..".to_string())` as a match arm or
-/// tail expression) is judged on its own text and cannot borrow a cue from the
-/// next statement. `window` bounds a call that never closes.
-fn literals_from(source: &str, start: usize, window: usize) -> String {
-    let bytes = source.as_bytes();
-    let end = (start + window).min(bytes.len());
+/// String literals inside the call, joined with spaces. For an incomplete
+/// call, `end` caps the original bytes passed to the lexer as well as the
+/// walk, so even a long string or comment cannot spill past the fallback.
+fn literals_from(source: &str, start: usize, end: usize) -> String {
+    let bytes = &source.as_bytes()[..end];
     let mut out = String::new();
     let mut depth = 1usize;
     let mut at = start;
     while at < end {
         let (lexeme, next) = lex_at(bytes, at);
         match lexeme {
-            Lexeme::Str(from, to) => {
+            // Do not use a possibly partial string at a fallback cut.
+            Lexeme::Str(from, to) if next < end || end == source.len() => {
                 if !out.is_empty() {
                     out.push(' ');
                 }
-                out.push_str(&String::from_utf8_lossy(&bytes[from..to.min(bytes.len())]));
+                out.push_str(&String::from_utf8_lossy(&bytes[from..to]));
             }
-            Lexeme::Skip => {}
+            Lexeme::Str(..) | Lexeme::Skip => {}
             Lexeme::Code(b'(') => depth += 1,
             Lexeme::Code(b')') => {
                 depth -= 1;
@@ -393,20 +391,44 @@ fn literals_from(source: &str, start: usize, window: usize) -> String {
     out
 }
 
-/// For each byte of `source`, whether it is code (not inside a string, char
-/// literal or comment).
-fn code_positions(source: &str) -> Vec<bool> {
+/// Discover code positions and balanced call ends in the same lexical pass.
+/// Delimiters in strings, chars and comments never participate.
+fn lexical_layout(source: &str) -> (Vec<bool>, BTreeMap<usize, usize>) {
     let bytes = source.as_bytes();
     let mut in_code = vec![false; bytes.len()];
+    let mut delimiters = Vec::new();
+    let mut call_ends = BTreeMap::new();
     let mut at = 0;
     while at < bytes.len() {
         let (lexeme, next) = lex_at(bytes, at);
-        if matches!(lexeme, Lexeme::Code(_)) {
+        if let Lexeme::Code(byte) = lexeme {
             in_code[at] = true;
+            match byte {
+                b'(' => delimiters.push((b')', at)),
+                b'[' => delimiters.push((b']', at)),
+                b'{' => delimiters.push((b'}', at)),
+                b')' | b']' | b'}' => {
+                    if let Some((close, open)) = delimiters.pop()
+                        && close == byte
+                    {
+                        if byte == b')'
+                            && TRIGGERS
+                                .iter()
+                                .any(|trigger| bytes[..=open].ends_with(trigger.as_bytes()))
+                        {
+                            call_ends.insert(open, next);
+                        }
+                    } else {
+                        // No unmatched opening delimiter can cross this error.
+                        delimiters.clear();
+                    }
+                }
+                _ => {}
+            }
         }
         at = next;
     }
-    in_code
+    (in_code, call_ends)
 }
 
 const TEST_ATTRIBUTE: &str = "#[cfg(test)]";
@@ -498,7 +520,8 @@ fn offenders_in(relative: &str, source: &str) -> BTreeSet<String> {
 }
 
 fn offenders_in_production(relative: &str, body: &str) -> BTreeSet<String> {
-    let in_code = code_positions(body);
+    const INCOMPLETE_CALL_LIMIT: usize = 2_000;
+    let (in_code, call_ends) = lexical_layout(body);
     let mut keys = BTreeSet::new();
     for trigger in TRIGGERS {
         let mut from = 0;
@@ -513,7 +536,11 @@ fn offenders_in_production(relative: &str, body: &str) -> BTreeSet<String> {
             if !message_follows(trigger, &body[from..]) {
                 continue;
             }
-            let text = literals_from(body, from, 2000);
+            let end = call_ends
+                .get(&(from - 1))
+                .copied()
+                .unwrap_or_else(|| (from + INCOMPLETE_CALL_LIMIT).min(body.len()));
+            let text = literals_from(body, from, end);
             if text.chars().count() < 12 {
                 continue;
             }
@@ -1143,6 +1170,59 @@ fn scan_distinguishes_uncued_messages_after_character_110() {
     assert_eq!(
         keys.difference(&accepted).collect::<Vec<_>>(),
         vec![&format!("x.rs|{second}")]
+    );
+}
+
+#[test]
+fn scan_distinguishes_uncued_arguments_after_byte_2000() {
+    let prefix = format!("widget is missing {}", "é".repeat(1_050));
+    let call = |label: &str| format!(r#"Err(format!("{prefix} {{}}", "{label}"))"#);
+    let first = call("alpha");
+    let second = call("beta");
+    assert!(first.find("alpha").is_some_and(|at| at > 2_000));
+    let fixture = |calls: &str| format!("fn live() -> Result<(), String> {{ {calls} }}");
+    let keys = offenders_in(
+        "x.rs",
+        &fixture(&format!("let _: Result<(), String> = {first}; {second}")),
+    );
+    let baselined = offenders_in("x.rs", &fixture(&first));
+    assert_eq!(keys.intersection(&baselined).count(), 1);
+    let full_prefix = format!("x.rs|{prefix} {{}} ");
+    let not_baselined: Vec<_> = keys
+        .difference(&baselined)
+        .map(|key| key.strip_prefix(&full_prefix))
+        .collect();
+    assert_eq!(not_baselined, [Some("beta")]);
+}
+
+#[test]
+fn scan_does_not_borrow_literals_from_the_next_statement() {
+    let source = r##"
+fn live() -> Result<(), String> {
+    let _: Result<(), String> =
+        Err(format!("widget is missing {}", /* ) */ [r#"widget (alpha)"#][0]));
+    let _ = "install the widget";
+    Ok(())
+}
+"##;
+    assert_eq!(
+        offender_messages(source),
+        ["widget is missing {} widget (alpha)"]
+    );
+}
+
+#[test]
+fn scan_bounds_an_incomplete_call_without_truncating_the_next_call() {
+    let long = format!("{}; install the widget", "é".repeat(1_050));
+    let source = format!(
+        r#"
+fn incomplete() {{ let _ = Err("widget is missing", "{long}"; }}
+fn following() -> Result<(), &'static str> {{ Err("other widget is missing") }}
+"#
+    );
+    assert_eq!(
+        offender_messages(&source),
+        ["other widget is missing", "widget is missing"]
     );
 }
 
