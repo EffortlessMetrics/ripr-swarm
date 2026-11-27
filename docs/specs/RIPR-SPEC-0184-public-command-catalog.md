@@ -94,6 +94,9 @@ children.
 - An unknown `help <topic>` refuses as a help topic in stderr and JSON, while
   a real topic still prints that command's help and a bare unknown command
   keeps the command wording (#16374).
+- From a workspace without repository documentation, the overview and detailed
+  `check` and `context` help point to hosted exit-code, analysis-mode, badge
+  adoption, and output schema documentation (#16442).
 - Real CLI tests bind the twelve bare examples from machine discovery to
   literal group identities and their rendered help. An invalid-config scratch
   workspace stays unchanged. Unknown subcommands, explicit leaves missing
