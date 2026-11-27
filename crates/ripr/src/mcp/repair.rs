@@ -1226,7 +1226,10 @@ fn durable_attempt_for_seam(
 }
 
 /// #15240: never mint (or replay) a ready transaction over source that
-/// changed after the snapshot captured it. The card's own shared
+/// changed after the snapshot captured it, as observed when this check
+/// reads the files (a point-in-time check, like the card's; the server does
+/// not lock the files, so an edit made after the check is caught only by a
+/// later call). The card's own shared
 /// consumed-source custody check decides, with the same typed
 /// `stale_snapshot` refusal; the server does not watch the worktree.
 /// The refusal precedes the ineligible (negative) documents too. An
@@ -3193,6 +3196,8 @@ pub(super) mod tests {
     #[test]
     fn not_ready_item_with_uncaptured_files_keeps_its_negative_document() -> Result<(), String> {
         let dir = unique_test_dir("not-ready-uncaptured")?;
+        // Created so cleanup succeeds; no file is written: the carrier is empty.
+        std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
         let build = |ready_finding: bool| -> Result<WorkspaceSession, String> {
             let mut finding = super::super::gaps::test_finding()?;
             if !ready_finding {

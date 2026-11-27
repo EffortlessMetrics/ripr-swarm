@@ -182,7 +182,9 @@ read-only and without execution authority (ADR 0022):
   call for the same current snapshot, item, and root returns the identical
   document and never creates a second transaction, except that a live
   durable attempt that appeared since (below) turns the replay into the
-  durable-attempt refusal. The transaction is
+  durable-attempt refusal, and a replay re-runs the consumed-source custody
+  check, so an edit to a checked file since the snapshot turns it into
+  `stale_snapshot`. The transaction is
   in-memory like the snapshot: a restart drops it.
 - Single attempt per seam (#15244): when the shared CLI rule
   (`reusable_awaiting_attempt`: an ordinary durable attempt for the item's

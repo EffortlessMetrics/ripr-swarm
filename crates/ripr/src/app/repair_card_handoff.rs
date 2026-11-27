@@ -447,7 +447,10 @@ pub(crate) fn evidence_probe_paths(entry: &ClassifiedSeam) -> Vec<std::path::Pat
     if task_for(entry) == TASK_WRITE_TARGETED_TEST {
         let recommended = recommended_test_for(entry);
         if recommended.file != "not_applicable" {
-            let recommended_path = std::path::PathBuf::from(&recommended.file);
+            // The recommendation carries rendered path text (`display_path`);
+            // the probe compares native spellings, so undo the stable-path
+            // encoding instead of probing a `%25` spelling (#15240).
+            let recommended_path = crate::analysis::decode_stable_path_text(&recommended.file);
             if !paths.contains(&recommended_path) {
                 paths.push(recommended_path);
             }
