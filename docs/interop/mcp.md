@@ -1079,8 +1079,8 @@ value, so the bounded detail keeps it); a well-formed identity
 that is not current stays `stale_snapshot` (resource reads keep their stale
 handling). Every caller-supplied value echoed into a failure `detail`
 (`canonical_id`, `class`, `language`, `snapshot_id`, `attempt_id`) goes through
-one escaping rule: control characters and bidi or zero-width format characters
-appear as visible escapes (`\n`, `\u{202e}`), and the echo is capped at 256
+one escaping rule: control characters, line and paragraph separators, and bidi
+or zero-width format characters appear as visible escapes (`\n`, `\u{202e}`), and the echo is capped at 256
 characters (32 for `class` and `language`).
 
 Unknown argument names are echoed exactly up to 128 Unicode scalar values.
@@ -1221,9 +1221,10 @@ malformed `initialize` names the offending field (`protocolVersion`,
 `capabilities` or `clientInfo`) instead, before or after a handshake. A
 `tools/call` without a string `name` or with non-object `arguments`, and a
 `resources/read` without a string `uri`, answer `-32602` saying what to pass.
-An `initialize`, `tools/call` or `resources/read` whose `params` is not an
-object (for example an array) stays `-32600` with its request id, and the
-message names the object shape to send.
+An `initialize`, `tools/call` or `resources/read` whose `params` is present,
+not `null` and not an object (for example an array) stays `-32600` with its
+request id, and the message names the object shape to send. `params: null`
+decodes as absent params and gets the `-32602` reply above.
 
 Incoming messages are capped at 256 KiB. The complete serialized JSON
 response is capped at 128 KiB, with its newline delimiter appended

@@ -17103,7 +17103,6 @@ tests = [
   "crates/ripr/tests/mcp_stdio.rs::empty_gap_pages_keep_structured_outcomes_at_the_response_bound",
   "crates/ripr/tests/mcp_stdio.rs::list_gaps_rejects_unknown_class_tokens_with_the_vocabulary",
   "crates/ripr/tests/mcp_stdio.rs::list_gaps_bounds_the_echoed_unknown_class_token",
-  "crates/ripr/tests/mcp_stdio.rs::error_text_names_the_fix_for_lifecycle_params_snapshot_and_limit_errors",
   "crates/ripr/tests/mcp_stdio.rs::long_request_ids_refuse_typed_before_the_wire_cap",
   "crates/ripr/tests/mcp_stdio.rs::window_sized_envelope_refuses_typed_instead_of_dropping_structured_content",
   "crates/ripr/tests/mcp_stdio.rs::oversized_request_id_is_rejected_with_null_id_and_the_session_survives",

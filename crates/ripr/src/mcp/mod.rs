@@ -41,6 +41,7 @@ pub(super) fn escape_echoed_argument(text: &str) -> String {
             '\u{061C}'
                 | '\u{200B}'..='\u{200F}'
                 | '\u{202A}'..='\u{202E}'
+                | '\u{2028}'..='\u{2029}'
                 | '\u{2060}'..='\u{2064}'
                 | '\u{2066}'..='\u{206F}'
                 | '\u{FEFF}'

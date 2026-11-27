@@ -2444,6 +2444,12 @@ async fn refresh_verify_route_follows_the_retained_snapshot_base() -> Result<(),
 fn echoed_arguments_escape_control_and_bidi_characters_and_stay_bounded() {
     let escaped = crate::mcp::escape_echoed_argument("a\u{1b}b\nc\u{202e}d\u{200b}e");
     assert_eq!(escaped, "a\\u{1b}b\\nc\\u{202e}d\\u{200b}e");
+    // Line and paragraph separators are not `is_control`, but render as line
+    // breaks: escaped so an echo cannot forge a line.
+    assert_eq!(
+        crate::mcp::escape_echoed_argument("a\u{2028}b\u{2029}c"),
+        "a\\u{2028}b\\u{2029}c"
+    );
     assert_eq!(
         crate::mcp::escape_echoed_argument("plain/id.rs:1 é"),
         "plain/id.rs:1 é"
