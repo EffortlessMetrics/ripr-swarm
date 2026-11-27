@@ -36,6 +36,37 @@ const CASES: &[Case] = &[
         stderr: "ripr: review-comments requires --head <sha>; pass the pull request's head commit, for example `--base origin/main --head HEAD`\n",
     },
     Case {
+        args: &[
+            "review-comments",
+            "--base",
+            "origin/main",
+            "--head",
+            "HEAD",
+            "--suppression-policy",
+            "",
+        ],
+        exit: 2,
+        stderr: "ripr: review-comments --suppression-policy requires a non-empty path; pass a path right after it (an empty value usually means an unset shell variable)\n",
+    },
+    Case {
+        args: &[
+            "review-comments",
+            "--base",
+            "origin/main",
+            "--head",
+            "HEAD",
+            "--out",
+            "",
+        ],
+        exit: 2,
+        stderr: "ripr: review-comments --out requires a non-empty path; pass a path right after it (an empty value usually means an unset shell variable)\n",
+    },
+    Case {
+        args: &["pr-comments", "plan", "--max-inline-comments", "0"],
+        exit: 2,
+        stderr: "ripr: pr-comments plan --max-inline-comments must be greater than zero; pass a whole number of 1 or more\n",
+    },
+    Case {
         args: &["receipt", "write"],
         exit: 2,
         stderr: "ripr: receipt write requires a canonical_gap_id; re-run with `--gap <canonical_gap_id>` (`ripr receipt --help` shows the full command)\n",
