@@ -621,11 +621,11 @@ impl CliProgressSink {
         }
         if !projection.visible
             && !projection.tty
-            && !stage_is_success_terminal(event.stage)
             && let Some(stage) = projection.last_active_stage
         {
-            // A held failure/cancel keeps its context: the stage in flight
-            // precedes the terminal line.
+            // A held run keeps its context: the stage in flight precedes the
+            // terminal line. That covers a failure or cancel inside the hold,
+            // and a success that crossed the hold between heartbeat ticks.
             let line = format_stage_line_with_units(
                 stage,
                 event.scope,
@@ -1734,6 +1734,31 @@ mod tests {
             buffer.text(),
             format!("{first}ripr progress: analyzing still active after 10s\n"),
             "heartbeats keep the 8s cadence"
+        );
+    }
+
+    #[test]
+    fn non_tty_success_past_the_hold_between_ticks_discloses_the_stage() {
+        // No heartbeat tick lands between crossing 2s and completing: the
+        // held stage still precedes `completed`.
+        let buffer = Buffer::new();
+        let (clock, now) = FakeClock::start();
+        let sink = CliProgressSink::with_writer_and_clock(
+            Box::new(buffer.clone()),
+            false,
+            ProgressPolicy::STANDARD,
+            now,
+        );
+        sink.hold_success_terminal();
+        sink.stop_heartbeat();
+        sink.emit(event(AnalysisProgressStage::Analyzing));
+        clock.advance_millis(2_001);
+        sink.emit(event(AnalysisProgressStage::Completed));
+        sink.commit_success();
+        drop(sink);
+        assert_eq!(
+            buffer.text(),
+            "ripr progress: analyzing [diff]\nripr progress: completed [diff]\n"
         );
     }
 

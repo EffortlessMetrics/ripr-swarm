@@ -1,8 +1,9 @@
 //! Refusals for a missing or broken input file name where a usable one comes
 //! from, not just the read error: `ripr pr-evidence --check`,
 //! `ripr impacted-evidence --check`, `ripr baseline update`,
-//! `ripr calibrate cargo-mutants`, `ripr check --suppression-policy` and the
-//! `ripr agent repair` attempt selectors. Each case runs the real binary in a
+//! `ripr calibrate cargo-mutants`, `ripr check --suppression-policy`,
+//! `ripr agent receipt --verify-json` and the `ripr agent repair` attempt
+//! selectors. Each case runs the real binary in a
 //! scratch directory and pins the next-step clause, so a regression that drops
 //! it fails here rather than only in the looser action-word floor
 //! (`refusal_next_step.rs`).
@@ -290,6 +291,40 @@ fn calibrate_refusal_names_the_snapshot_command() -> Result<(), String> {
                 "; pass a file written by `ripr check --format repo-exposure-json`",
             ],
         )?;
+    }
+    Ok(())
+}
+
+/// A verify JSON whose shape is not what `ripr agent verify` writes names
+/// that command, and a seam id it does not list says to pick one it does.
+#[test]
+fn agent_receipt_verify_json_refusals_name_the_producer() -> Result<(), String> {
+    let dir = committed_repo()?;
+    let receipt = [
+        "agent",
+        "receipt",
+        "--root",
+        ".",
+        "--verify-json",
+        "verify.json",
+        "--seam-id",
+        "seam-a",
+        "--json",
+    ];
+    let producer = "; pass the unedited JSON that `ripr agent verify` wrote as --verify-json";
+    for (verify, first) in [
+        (
+            r#"{"schema_version":"0.3"}"#,
+            "agent verify JSON is missing `inputs`",
+        ),
+        (
+            r#"{"schema_version":"0.3","inputs":{"before":"before.json"}}"#,
+            "agent verify inputs is missing string field `after`",
+        ),
+    ] {
+        std::fs::write(dir.0.join("verify.json"), verify)
+            .map_err(|error| format!("write verify.json: {error}"))?;
+        stderr_has_all(&refusal(&dir.0, &receipt)?, &[first, producer])?;
     }
     Ok(())
 }

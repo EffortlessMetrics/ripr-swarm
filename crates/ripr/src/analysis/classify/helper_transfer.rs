@@ -3523,8 +3523,8 @@ fn hops_forward_owner_result_with(
 /// change the forwarded value. Each is a parser-checked
 /// [`TRUSTED_MACRO_NAMES`](crate::analysis::syntax::TRUSTED_MACRO_NAMES)
 /// entry, so [`transparent_macro_name_rebound`] can establish its identity.
-/// The one non-standard name, `json`, has the same parser-checked binding
-/// candidates and a verified drop-in import route.
+/// The two non-standard names, `json` and `anyhow`, have the same
+/// parser-checked binding candidates and a verified drop-in import route.
 const TRANSPARENT_STD_MACROS: &[&str] = &[
     "assert",
     "assert_eq",
@@ -3572,14 +3572,27 @@ const TRANSPARENT_STD_MACROS: &[&str] = &[
     // reports any other import, glob, `#[macro_use]`, local definition or
     // `serde_json` namespace alias as a rebinding (#10357).
     "json",
+    // anyhow's `anyhow!` builds an `Error` from a message, format arguments
+    // or one error value, each evaluated once, with no `return`, `break`,
+    // `continue` or `?` of its own (audited for the same releases). The
+    // binding scan treats it like `json!`: only a verified
+    // `use anyhow::anyhow;` keeps it, and any other binding of `anyhow`, as a
+    // macro or as the crate's namespace, refuses it (#10357).
+    "anyhow",
 ];
 
 /// The [`TRANSPARENT_STD_MACROS`] names the binding scan reads only for a
 /// caller whose body mentions them, so that a rebinding of `env` or
 /// `include_str` elsewhere does not withhold credit from a wrapper that
 /// never reads it (#10357).
-const BODY_SCOPED_TRANSPARENT_MACROS: &[&str] =
-    &["env", "option_env", "include_str", "include_bytes", "json"];
+const BODY_SCOPED_TRANSPARENT_MACROS: &[&str] = &[
+    "env",
+    "option_env",
+    "include_str",
+    "include_bytes",
+    "json",
+    "anyhow",
+];
 
 /// Whether any indexed file binds a [`TRANSPARENT_STD_MACROS`] name to
 /// something other than the standard macro, by the parser-backed binding

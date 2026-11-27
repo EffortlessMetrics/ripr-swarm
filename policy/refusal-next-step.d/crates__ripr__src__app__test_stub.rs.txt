@@ -1,2 +1,0 @@
-crates/ripr/src/app/test_stub.rs|failed to create {}: {error}
-crates/ripr/src/app/test_stub.rs|failed to read {}: {error}

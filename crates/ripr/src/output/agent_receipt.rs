@@ -388,7 +388,7 @@ pub(crate) fn agent_receipt_input_paths_from_value(
 ) -> Result<AgentReceiptInputPaths, String> {
     let inputs = verify
         .get("inputs")
-        .ok_or_else(|| "agent verify JSON is missing `inputs`".to_string())?;
+        .ok_or_else(|| "agent verify JSON is missing `inputs`; pass the unedited JSON that `ripr agent verify` wrote as --verify-json".to_string())?;
     Ok(AgentReceiptInputPaths {
         before: required_string(inputs, "before", "agent verify inputs")?,
         after: required_string(inputs, "after", "agent verify inputs")?,
@@ -455,7 +455,7 @@ fn find_receipt_seam(verify: &Value, seam_id: &str) -> Result<AgentReceiptSeam, 
     }
 
     Err(format!(
-        "agent receipt seam_id {seam_id} was not found in agent verify JSON"
+        "agent receipt seam_id {seam_id} was not found in agent verify JSON; pass a --seam-id that the verify JSON lists"
     ))
 }
 
@@ -610,7 +610,7 @@ fn array_field<'a>(value: &'a Value, key: &str) -> Result<&'a Vec<Value>, String
     value
         .get(key)
         .and_then(Value::as_array)
-        .ok_or_else(|| format!("agent verify JSON is missing `{key}` array"))
+        .ok_or_else(|| format!("agent verify JSON is missing `{key}` array; pass the unedited JSON that `ripr agent verify` wrote as --verify-json"))
 }
 
 fn required_string(value: &Value, key: &str, context: &str) -> Result<String, String> {
@@ -618,7 +618,7 @@ fn required_string(value: &Value, key: &str, context: &str) -> Result<String, St
         .get(key)
         .and_then(Value::as_str)
         .map(str::to_string)
-        .ok_or_else(|| format!("{context} is missing string field `{key}`"))
+        .ok_or_else(|| format!("{context} is missing string field `{key}`; pass the unedited JSON that `ripr agent verify` wrote as --verify-json"))
 }
 
 fn required_usize(value: &Value, key: &str, context: &str) -> Result<usize, String> {
@@ -626,7 +626,7 @@ fn required_usize(value: &Value, key: &str, context: &str) -> Result<usize, Stri
         .get(key)
         .and_then(Value::as_u64)
         .and_then(|line| usize::try_from(line).ok())
-        .ok_or_else(|| format!("{context} is missing numeric field `{key}`"))
+        .ok_or_else(|| format!("{context} is missing numeric field `{key}`; pass the unedited JSON that `ripr agent verify` wrote as --verify-json"))
 }
 
 fn string_array_field(value: &Value, key: &str) -> Vec<String> {
@@ -1186,7 +1186,7 @@ mod tests {
                 &[],
                 fixed_provenance(),
             ),
-            Err("agent receipt seam_id missing was not found in agent verify JSON".to_string())
+            Err("agent receipt seam_id missing was not found in agent verify JSON; pass a --seam-id that the verify JSON lists".to_string())
         );
     }
 

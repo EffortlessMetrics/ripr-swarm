@@ -633,7 +633,15 @@ impl ClassifiedProbeEvidence {
             ProbeFamily::Predicate | ProbeFamily::ReturnValue
         ) && crate::analysis::classify::macro_names_rebound(
             context.index,
-            &["assert", "debug_assert", "assert_eq", "assert_ne"],
+            // #15414: the invisible-change reading also reads the operands of
+            // a nested literal `matches!`, so a rebound `matches` refuses too.
+            &[
+                "assert",
+                "debug_assert",
+                "assert_eq",
+                "assert_ne",
+                "matches",
+            ],
         );
         let infect = infection_evidence_for_owner(
             context.probe,
