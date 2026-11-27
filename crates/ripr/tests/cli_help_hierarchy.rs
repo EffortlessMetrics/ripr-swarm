@@ -1043,11 +1043,11 @@ fn help_route_typos_name_the_route_that_works() -> Result<(), String> {
             &["workflow"][..],
             "ripr: unknown command \"workflow\". Did you mean `ripr help workflow`? Run `ripr --help`.",
         ),
-        // Controls: a command typo and a top-level flag slip keep their own
-        // suggestions after `help`.
+        // A command typo after `help` is a help-topic refusal that keeps its
+        // suggestion (#16374); a top-level flag slip keeps its own.
         (
             &["help", "chekc"][..],
-            "ripr: unknown command \"chekc\". Did you mean `check`? Run `ripr --help`.",
+            "ripr: unknown help topic \"chekc\". Did you mean `ripr help check`? Run `ripr help` to list commands, or `ripr help workflow` to list workflows.",
         ),
         (
             &["help", "--hlep"][..],
