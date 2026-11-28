@@ -942,3 +942,59 @@ fn a_wrapped_bool_payload_over_mixed_parameter_widths_is_not_read_as_the_same_va
     assert!(!same_value(finding), "{finding:?}");
     Ok(())
 }
+
+#[test]
+fn an_unsigned_wrapped_bool_payload_that_underflows_is_not_read_as_the_same_value()
+-> Result<(), String> {
+    // `0u32 - 1` underflows, so the current version panics in a debug build
+    // where the baseline returns `Some(false)`.
+    let findings = findings(
+        "pub fn check(x: u32) -> Option<bool> {\n    Some(x - 1 > 0)\n}\n",
+        "    Some(x > 0)",
+        "use invisible::check;\n\n#[test]\nfn zero() {\n    assert_eq!(check(0), Some(false));\n}\n",
+    )?;
+    let finding = return_value(&findings)?;
+    assert!(!same_value(finding), "{finding:?}");
+    Ok(())
+}
+
+#[test]
+fn a_tuple_bool_component_that_overflows_its_operand_width_is_not_read_as_the_same_value()
+-> Result<(), String> {
+    // `a + 1` overflows `i32` at `i32::MAX` in the bool component.
+    let findings = findings(
+        "pub fn pair(a: i32) -> (i32, bool) {\n    (a, a + 1 > 0)\n}\n",
+        "    (a, a > 0)",
+        "use invisible::pair;\n\n#[test]\nfn max() {\n    assert_eq!(pair(2147483647), (2147483647, true));\n}\n",
+    )?;
+    let finding = return_value(&findings)?;
+    assert!(!same_value(finding), "{finding:?}");
+    Ok(())
+}
+
+#[test]
+fn a_peeled_tuple_bool_component_that_overflows_is_not_read_as_the_same_value()
+-> Result<(), String> {
+    let findings = findings(
+        "pub fn pair(a: i32) -> Option<(i32, bool)> {\n    Some((a, a + 1 > 0))\n}\n",
+        "    Some((a, a > 0))",
+        "use invisible::pair;\n\n#[test]\nfn max() {\n    assert_eq!(pair(2147483647), Some((2147483647, true)));\n}\n",
+    )?;
+    let finding = return_value(&findings)?;
+    assert!(!same_value(finding), "{finding:?}");
+    Ok(())
+}
+
+#[test]
+fn a_tuple_bool_component_within_its_operand_width_is_read_as_the_same_value()
+-> Result<(), String> {
+    // Control: `5 + 1 > 0` and `5 > 0` agree, and nothing overflows.
+    let findings = findings(
+        "pub fn pair(a: i32) -> (i32, bool) {\n    (a, a + 1 > 0)\n}\n",
+        "    (a, a > 0)",
+        "use invisible::pair;\n\n#[test]\nfn five() {\n    assert_eq!(pair(5), (5, true));\n}\n",
+    )?;
+    let finding = return_value(&findings)?;
+    assert!(same_value(finding), "{finding:?}");
+    Ok(())
+}
