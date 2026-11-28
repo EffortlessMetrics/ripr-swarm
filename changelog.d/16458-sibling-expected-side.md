@@ -1,0 +1,2 @@
+<!-- section: Fixed -->
+- A TypeScript or JavaScript test that pins the changed boundary (`expect(discount(100)).toBe(100)`) now reads `exposed` even when a later assertion on the same call compares it with another call of the function (`expect(discount(100)).toBeLessThan(discount(200))` or `.toBe(discount(99))`). Only an assertion's own expected side can cancel its credit, so an assertion such as `expect(discount(100)).toBe(discount(100))` still never counts (#16458).

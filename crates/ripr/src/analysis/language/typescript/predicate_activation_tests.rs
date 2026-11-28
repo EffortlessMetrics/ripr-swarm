@@ -76,6 +76,13 @@ const OWNER_SOURCE: &str = concat!(
     "export function resolveValue(input: unknown): unknown {\n",
     "  return typeof input !== \"function\" ? (input as any)() : input;\n",
     "}\n",
+    "\n",
+    "export function label(total: number): string {\n",
+    "  if (total >= 100) {\n",
+    "    return \"label(100)\";\n",
+    "  }\n",
+    "  return \"default\";\n",
+    "}\n",
 );
 
 /// A changed line of `OWNER_SOURCE`, with the owner it belongs to.
@@ -88,6 +95,11 @@ struct Change {
 const DISCOUNT: Change = Change {
     owner: "applyDiscount",
     line: 5,
+    text: "  if (total >= 100) {",
+};
+const LABEL: Change = Change {
+    owner: "label",
+    line: 64,
     text: "  if (total >= 100) {",
 };
 const FEE: Change = Change {
@@ -392,6 +404,69 @@ fn wrapped_or_nested_owner_call_does_not_witness() -> Result<(), String> {
         "a wrapped boundary assertion first does not veto the whole call"
     );
     assert!(evaluated.witnessed);
+    Ok(())
+}
+
+/// #16458: only an assertion's own expected side can veto its witness. A
+/// sibling with the same observed call and an owner-calling matcher
+/// (`toBeLessThan(applyDiscount(200))`, or a tautology) leaves the pinned
+/// assertion witnessed; an assertion whose own matcher calls the owner never
+/// witnesses, and a quoted expectation that spells a call is not one.
+#[test]
+fn only_the_assertions_own_expected_side_vetoes_its_witness() -> Result<(), String> {
+    for (title, body) in [
+        (
+            "sibling ordering matcher",
+            "  expect(applyDiscount(100)).toBe(100);\n  expect(applyDiscount(100)).toBeLessThan(applyDiscount(200));",
+        ),
+        (
+            "sibling tautology",
+            "  expect(applyDiscount(100)).toBe(90);\n  expect(applyDiscount(100)).toBe(applyDiscount(99));",
+        ),
+    ] {
+        let evaluated = evaluate(&DISCOUNT, &one_test(title, IMPORT_DISCOUNT, body), true)?;
+        assert_eq!(evaluated.activation(title)?, A::Witnessed, "{title}");
+        assert!(evaluated.witnessed, "{title}");
+    }
+
+    let title = "own expected side";
+    let source = one_test(
+        title,
+        IMPORT_DISCOUNT,
+        "  expect(applyDiscount(100)).toBe(applyDiscount(99));",
+    );
+    let tests = extract_tests(Path::new(TEST_FILE), &source);
+    assert_eq!(
+        tests
+            .iter()
+            .flat_map(|test| test.assertions.iter())
+            .map(|assertion| assertion.dynamic_expected_text.clone())
+            .collect::<Vec<_>>(),
+        vec![Some("applyDiscount(99)".to_string())],
+        "the extractor must carry the assertion's own expected side"
+    );
+    let evaluated = evaluate(&DISCOUNT, &source, true)?;
+    assert_ne!(evaluated.activation(title)?, A::Witnessed);
+    assert!(!evaluated.witnessed);
+
+    // A quoted expectation that spells an owner call is a string, not a
+    // call: it pins the boundary branch's return and keeps the witness.
+    for (title, imports, body) in [
+        (
+            "quoted expectation",
+            "import { label } from '../src/pricing';",
+            "  expect(label(100)).toBe(\"label(100)\");",
+        ),
+        (
+            "node assert quoted expectation",
+            "import assert from 'node:assert';\nimport { label } from '../src/pricing';",
+            "  assert.strictEqual(label(100), \"label(100)\");",
+        ),
+    ] {
+        let evaluated = evaluate(&LABEL, &one_test(title, imports, body), true)?;
+        assert_eq!(evaluated.activation(title)?, A::Witnessed, "{title}");
+        assert!(evaluated.witnessed, "{title}");
+    }
     Ok(())
 }
 

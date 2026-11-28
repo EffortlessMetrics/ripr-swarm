@@ -396,6 +396,17 @@ fn a_generator_loop_bound_is_credited_by_the_drained_sequence() -> Result<(), St
         &range_test("Array.from(range(3))", "[0, 1, 2]"),
     )?;
     assert_credited(&finding, "Array.from(range(3)) observes it too");
+    // #16458: only the assertion's own expected side can veto it. A sibling
+    // tautology does not, and a comment that spells a call is not one.
+    let test = vitest(
+        "import { range } from \"../src/range\";",
+        "it(\"drains the range\", () => {\n  expect([...range(3)]).toEqual([0, 1, 2 /* range(3) */]);\n  expect([...range(3)]).toEqual([...range(3)]);\n});",
+    );
+    let finding = finding_for_edit("loop-bound-sibling", "range", RANGE, 2, old, &test)?;
+    assert_credited(
+        &finding,
+        "a sibling tautology does not veto the drained pin",
+    );
     // Counting down.
     let down = "export function* countdown(n: number): Generator<number> {\n  for (let i = 5; i >= n; i--) {\n    yield i;\n  }\n}\n";
     let test = vitest(
@@ -437,6 +448,17 @@ fn a_generator_loop_bound_keeps_its_fallbacks() -> Result<(), String> {
         &range_test("[...range(-1)]", "[]"),
     )?;
     assert_not_credited(&finding, "range(-1) runs no iteration on either version");
+    // #16458: an assertion whose own expected side drains the owner again is
+    // a tautology.
+    let finding = finding_for_edit(
+        "loop-bound-tautology",
+        "range",
+        RANGE,
+        2,
+        old,
+        &range_test("[...range(3)]", "[...range(3)]"),
+    )?;
+    assert_not_credited(&finding, "a drained tautology passes on both versions");
     // Not a generator: the extra iteration need not change the result.
     let sum = "export function sum(n: number): number {\n  let t = 0;\n  for (let i = 0; i <= n; i++) {\n    t += 1;\n  }\n  return t;\n}\n";
     let test = vitest(
