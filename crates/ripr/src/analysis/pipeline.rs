@@ -477,7 +477,7 @@ fn committed_paths_missing_disclosure(paths: &[String]) -> Option<String> {
     let mut named = paths
         .iter()
         .take(MAX_NAMED_PATHS)
-        .cloned()
+        .map(|path| crate::terminal_text::prose_path_text(path))
         .collect::<Vec<_>>();
     if paths.len() > MAX_NAMED_PATHS {
         named.push(format!("{} more", paths.len() - MAX_NAMED_PATHS));
@@ -851,14 +851,16 @@ fn non_source_disclosure_message(changed_files: &[diff::ChangedFile]) -> Option<
     // genuinely non-source file.
     let mut truncated_paths = std::collections::BTreeSet::new();
     for file in changed_files {
-        let display = file.path.to_string_lossy().replace('\\', "/");
+        // A line break in a name must not split the note (#16455).
+        let display =
+            crate::terminal_text::prose_path_text(&file.path.to_string_lossy().replace('\\', "/"));
         match file.path.extension().and_then(|ext| ext.to_str()) {
             Some("") => {
                 truncated_paths.insert(display.clone());
                 named_paths.insert(display);
             }
             Some(ext) => {
-                extensions.insert(format!(".{ext}"));
+                extensions.insert(format!(".{}", crate::terminal_text::prose_path_text(ext)));
             }
             None => {
                 named_paths.insert(display);
@@ -1002,10 +1004,11 @@ fn unanalyzed_source_language_limitation(
             by_language.len() - MAX_NAMED_LANGUAGES
         ));
     }
+    // A line break in a name must not split the limitation line (#16455).
     let mut listed = paths
         .iter()
         .take(MAX_NAMED_PATHS)
-        .cloned()
+        .map(|path| crate::terminal_text::prose_path_text(path))
         .collect::<Vec<_>>()
         .join(", ");
     if paths.len() > MAX_NAMED_PATHS {
@@ -1014,7 +1017,8 @@ fn unanalyzed_source_language_limitation(
     // The detail text is bounded; a long path shortens the listing, never
     // fails the analysis.
     if listed.chars().count() > 160 {
-        listed = format!("{}…", listed.chars().take(159).collect::<String>());
+        let kept = listed.chars().take(159).collect::<String>();
+        listed = format!("{}…", kept.trim_end_matches('\\'));
     }
     Ok(Some(
         AnalysisLimitation::new(
@@ -1198,7 +1202,12 @@ struct OutOfScopeFiles {
 
 impl OutOfScopeFiles {
     fn listing(&self) -> String {
-        let shown = self.sample.iter().take(3).cloned().collect::<Vec<_>>();
+        let shown = self
+            .sample
+            .iter()
+            .take(3)
+            .map(|path| crate::terminal_text::prose_path_text(path))
+            .collect::<Vec<_>>();
         let more = self.count.saturating_sub(shown.len());
         let listed = if more > 0 {
             format!("{} and {more} more", shown.join(", "))

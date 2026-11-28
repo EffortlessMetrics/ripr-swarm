@@ -134,6 +134,10 @@ to this change is not established`, so the Summary and the finding under it
 cannot disagree (#15295); a bucket with no such finding is unchanged. A
 finding withheld by a suppression policy or an owner opt-out has left its
 bucket and is not counted in the note either.
+A file name that holds a line break, carriage return or tab is spelled with
+`\n`, `\r` or `\t` wherever a limitation line, its recovery text or a path
+listing names it, so the name stays on that one line and its tail can never
+print as a line of its own (#16455). Structured path fields keep the raw name.
 Limitation lines on this
 surface likewise drop their parenthesized kind/stage and recovery tokens; a
 `language_adapter_unavailable` limitation renders as one `Not analyzed:` pointer

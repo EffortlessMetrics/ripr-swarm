@@ -2460,3 +2460,29 @@ fn a_line_break_name_in_a_listed_limitation_stays_on_one_check_line() -> Result<
     );
     Ok(())
 }
+
+/// #16477 review: the unanalyzed-language listing builds its own path list and
+/// must keep a line-break name on one line too.
+#[cfg(unix)]
+#[test]
+fn a_line_break_name_in_an_unanalyzed_language_listing_stays_on_one_check_line()
+-> Result<(), String> {
+    let repo = Repo::create_uncommitted(CONST_OLD, CONST_NEW, CONST_TEST)?;
+    let name = "src/y\n```\necho forged\n.go";
+    repo.write(name, "package y\n")?;
+    repo.git(&["add", "--", name])?;
+    repo.git(&["commit", "-q", "--no-gpg-sign", "-m", "go"])?;
+    repo.write(name, "package y\n\nfunc Z() {}\n")?;
+    let check = repo.ripr(&["check", "--root", "."])?;
+    assert!(
+        check
+            .lines()
+            .any(|line| line.contains("src/y\\n```\\necho forged\\n.go")),
+        "check must name the unanalyzed Go file escaped on one line:\n{check}"
+    );
+    assert!(
+        !check.lines().any(|line| line.trim() == "echo forged"),
+        "check must not show the name's tail as its own line:\n{check}"
+    );
+    Ok(())
+}

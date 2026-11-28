@@ -1,0 +1,9 @@
+# A line-break file name stays on one escaped limitation line in human check
+# output (#16455).
+[[extend]]
+id = "RIPR-SPEC-0122"
+tests = [
+  "crates/ripr/tests/check_repair_agree.rs::a_file_name_with_a_line_break_withholds_the_start_on_pilot_and_check",
+  "crates/ripr/tests/check_repair_agree.rs::a_line_break_name_in_a_listed_limitation_stays_on_one_check_line",
+  "crates/ripr/tests/check_repair_agree.rs::a_line_break_name_in_an_unanalyzed_language_listing_stays_on_one_check_line",
+]
