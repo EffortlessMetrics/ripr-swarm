@@ -3432,8 +3432,14 @@ fn observed_has_other_call(observed: &str, owner_name: &str) -> bool {
 /// argument list holds an owner call (#16458): `Math.max(owner(100), 100)`.
 /// An owner call is a bare spelling, or a member call whose receiver is one
 /// of that spelling's owner-module receivers; `Math.max` stays a wrapper
-/// even when the owner is named `max`. String literals are skipped.
-fn observed_wraps_owner_call(observed: &str, call_spellings: &[(&str, &[String])]) -> bool {
+/// even when the owner is named `max`. `Promise.resolve`/`Promise.reject`
+/// and the test file's identity helpers carry the value unchanged and are
+/// not wrappers. String literals are skipped.
+fn observed_wraps_owner_call(
+    observed: &str,
+    call_spellings: &[(&str, &[String])],
+    identity_helpers: &[&str],
+) -> bool {
     let bytes = observed.as_bytes();
     let mut i = 0;
     while i < bytes.len() {
@@ -3455,7 +3461,15 @@ fn observed_wraps_owner_call(observed: &str, call_spellings: &[(&str, &[String])
                             .iter()
                             .any(|receiver| *receiver == receiver_before_dot(before)))
             });
-            if is_owner_call {
+            // `Promise.resolve(owner(100))` with a `.resolves` matcher, and a
+            // verified test-local identity helper (`wrap(owner(100))`), assert
+            // the owner value itself: the wrapper carries it unchanged.
+            let value_preserving = if member {
+                matches!(name, "resolve" | "reject") && receiver_before_dot(before) == "Promise"
+            } else {
+                identity_helpers.contains(&name)
+            };
+            if is_owner_call || value_preserving {
                 continue;
             }
             let Some(after_open) = observed[i..].trim_start().strip_prefix('(') else {
@@ -3816,7 +3830,13 @@ pub(crate) fn ts_predicate_boundary_row_activation(
             // owner, but this assertion does not discriminate it. A helper
             // inside the owner's own arguments (`owner(100, getTier())`) is
             // not a wrapper: the asserted value is still the owner result.
-            if observed_wraps_owner_call(observed, &call_spellings) {
+            let identity_helpers: Vec<&str> = candidate
+                .test
+                .identity_helpers_in_file
+                .iter()
+                .map(String::as_str)
+                .collect();
+            if observed_wraps_owner_call(observed, &call_spellings, &identity_helpers) {
                 reached = true;
                 continue;
             }
