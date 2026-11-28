@@ -4,9 +4,10 @@ use super::model::*;
 
 /// Canonical portable semantic digest for a qualification receipt.
 ///
-/// Volatile fields such as `semantic_digest` and checkout-local path hints in
-/// limitation messages prefixed with `locator:` are excluded. Layer order is
-/// normalized by `layer_id` and nested list fields are sorted for portability.
+/// Volatile content is excluded: the `semantic_digest` field itself, and any
+/// checkout-local `|locator:` suffix (and everything after it) in a
+/// limitation message. Layer order is normalized by `layer_id` and nested
+/// list fields are sorted for portability.
 pub fn adapter_substrate_qualification_semantic_digest(
     qualification: &AdapterSubstrateQualificationV1,
 ) -> Result<String, AdapterSubstrateQualificationErrorV1> {
