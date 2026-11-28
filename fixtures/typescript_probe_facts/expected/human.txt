@@ -56,7 +56,7 @@ Hidden:
     - src/view.jsx:2 (weak); kind: side_effect; reason: Only heuristic TypeScript test links were found for the component `StatusView`; verify the suggested test location or render `<StatusView .../>` in a Jest/Vitest test with an…
     - src/widget.tsx:4 (weak); kind: field_construction; reason: Only heuristic TypeScript test links were found for `PriceBadge`; verify the suggested test location or add a direct Jest/Vitest owner call with an exact-value assertion.
   Hidden classes:
-    weak = tests reach it but check it only loosely
+    weak = linked to a test, with only weak evidence of a check
   Full evidence: rerun with --format human-full
   Machine data: rerun with --format json
 

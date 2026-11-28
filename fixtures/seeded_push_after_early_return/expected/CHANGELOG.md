@@ -351,3 +351,14 @@ Command:
 
 Updated:
 - `expected/human-full.txt`
+
+## Pending — seeded_push_after_early_return (28)
+
+Reason:
+RIPR-SPEC-0122: describe the Hidden and removed-code test evidence without assuming owner reach (#16456)
+
+Command:
+`cargo xtask goldens bless seeded_push_after_early_return --reason "..."`
+
+Updated:
+- `expected/human.txt`

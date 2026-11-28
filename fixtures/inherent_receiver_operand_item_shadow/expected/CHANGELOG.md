@@ -236,3 +236,14 @@ Command:
 
 Updated:
 - `expected/human-full.txt`
+
+## Pending — inherent_receiver_operand_item_shadow (20)
+
+Reason:
+RIPR-SPEC-0122: describe the Hidden and removed-code test evidence without assuming owner reach (#16456)
+
+Command:
+`cargo xtask goldens bless inherent_receiver_operand_item_shadow --reason "..."`
+
+Updated:
+- `expected/human.txt`

@@ -57,7 +57,7 @@ Hidden:
     - ./src/lib.rs:31 (weak); kind: return_value; reason: same as above
     - ./src/lib.rs:34 (unknown: static analysis limited); kind: return_value; reason: A related Rust test calls this code and pins its whole result with an exact `assert_eq!`, but the change sits in a closure the call runs, a statement acting on the returned value,…
   Hidden classes:
-    weak = tests reach it but check it only loosely
+    weak = linked to a test, with only weak evidence of a check
     unknown: static analysis limited = reading the code was not enough for ripr to judge (analysis limited, not a verdict)
   Full evidence: rerun with --format human-full
   Machine data: rerun with --format json

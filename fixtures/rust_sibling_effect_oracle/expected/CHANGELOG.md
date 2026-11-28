@@ -386,3 +386,14 @@ Command:
 
 Updated:
 - `expected/human-full.txt`
+
+## Pending — rust_sibling_effect_oracle (30)
+
+Reason:
+RIPR-SPEC-0122: describe the Hidden and removed-code test evidence without assuming owner reach (#16456)
+
+Command:
+`cargo xtask goldens bless rust_sibling_effect_oracle --reason "..."`
+
+Updated:
+- `expected/human.txt`

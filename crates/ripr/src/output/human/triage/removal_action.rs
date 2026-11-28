@@ -91,8 +91,7 @@ pub(super) fn removal_only_rows(root: &std::path::Path, omitted: &[&Finding]) ->
 fn removed_class_words(class: &ExposureClass) -> &'static str {
     match class {
         ExposureClass::Exposed => "a related test appears to check this behavior",
-        ExposureClass::WeaklyExposed => "tests reach it but check it only loosely",
-        ExposureClass::ReachableUnrevealed => "tests reach it but none appears to check it",
+        ExposureClass::WeaklyExposed | ExposureClass::ReachableUnrevealed => class.plain_gloss(),
         ExposureClass::NoStaticPath => "no test path was found",
         ExposureClass::InfectionUnknown
         | ExposureClass::PropagationUnknown
@@ -210,9 +209,41 @@ mod tests {
         assert_eq!(
             rows.as_deref(),
             Some(
-                "  Removed code (static evidence on the old lines, not a test result; each location is where the code stood in the current file):\n    - src/lib.rs:2 `if percent < 0:` (kind: unclear): tests reach it but check it only loosely\n    - src/lib.rs:3 `raise ValueError(\"negative\")` (kind: unclear): tests reach it but none appears to check it\n    - src/lib.rs:9 (kind: unclear): ripr could not tell whether a test checks it (analysis limited, not a verdict)\n"
+                "  Removed code (static evidence on the old lines, not a test result; each location is where the code stood in the current file):\n    - src/lib.rs:2 `if percent < 0:` (kind: unclear): linked to a test, with only weak evidence of a check\n    - src/lib.rs:3 `raise ValueError(\"negative\")` (kind: unclear): linked to a test, with no apparent check\n    - src/lib.rs:9 (kind: unclear): ripr could not tell whether a test checks it (analysis limited, not a verdict)\n"
             )
         );
+    }
+
+    #[test]
+    fn removed_row_reach_wording_is_independent_of_finding_reach() {
+        use crate::domain::{CALLEE_ONLY_REACH_PREFIX, StageState};
+        for (class, gloss) in [
+            (
+                ExposureClass::WeaklyExposed,
+                "linked to a test, with only weak evidence of a check",
+            ),
+            (
+                ExposureClass::ReachableUnrevealed,
+                "linked to a test, with no apparent check",
+            ),
+        ] {
+            for (state, summary) in [
+                (StageState::Yes, "A test calls the changed owner"),
+                (StageState::Unknown, "Reach is unknown"),
+                (StageState::Yes, CALLEE_ONLY_REACH_PREFIX),
+            ] {
+                let mut finding = removed_at(2, "removed()", class.clone());
+                finding.ripr.reach.state = state;
+                finding.ripr.reach.summary = summary.to_string();
+                let rows = removal_only_rows(std::path::Path::new("."), &[&finding]);
+                assert!(
+                    rows.is_some_and(
+                        |rows| rows.ends_with(&format!("`removed()` (kind: unclear): {gloss}\n"))
+                    ),
+                    "{class:?}, {summary}"
+                );
+            }
+        }
     }
 
     #[test]

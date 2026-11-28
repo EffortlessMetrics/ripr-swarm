@@ -59,7 +59,7 @@ Hidden:
     - src/shop.py:10 (weak); kind: return_value; reason: A strong Python oracle reaches `boxed_area`, but numeric table rows agree under factor reordering; static evidence cannot confirm the changed operand is discriminated. Add a table…
     - src/shop.py:14 (weak); kind: return_value; reason: A strong Python oracle reaches `hashed_area`, but numeric table rows agree under factor reordering; static evidence cannot confirm the changed operand is discriminated. Add a…
   Hidden classes:
-    weak = tests reach it but check it only loosely
+    weak = linked to a test, with only weak evidence of a check
   Full evidence: rerun with --format human-full
   Machine data: rerun with --format json
 

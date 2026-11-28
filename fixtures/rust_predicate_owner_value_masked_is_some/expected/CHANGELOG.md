@@ -45,3 +45,14 @@ Command:
 
 Updated:
 - `expected/human-full.txt`
+
+## Pending — rust_predicate_owner_value_masked_is_some (5)
+
+Reason:
+RIPR-SPEC-0122: describe the Hidden and removed-code test evidence without assuming owner reach (#16456)
+
+Command:
+`cargo xtask goldens bless rust_predicate_owner_value_masked_is_some --reason "..."`
+
+Updated:
+- `expected/human.txt`

@@ -48,7 +48,7 @@ Hidden:
     - ./src/lib.rs:3 (weak); kind: return_value; reason: No strong assertion was detected
     - ./src/lib.rs:5 (unknown: propagation unclear); kind: return_value; reason: No clear propagation path from changed behavior to an observable sink
   Hidden classes:
-    weak = tests reach it but check it only loosely
+    weak = linked to a test, with only weak evidence of a check
     unknown: propagation unclear = ripr could not follow the change through an opaque boundary
   Full evidence: rerun with --format human-full
   Machine data: rerun with --format json

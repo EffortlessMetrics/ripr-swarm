@@ -649,3 +649,14 @@ Command:
 
 Updated:
 - `expected/human-full.txt`
+
+## Pending — guarded_result_match_swallowed (50)
+
+Reason:
+RIPR-SPEC-0122: describe the Hidden and removed-code test evidence without assuming owner reach (#16456)
+
+Command:
+`cargo xtask goldens bless guarded_result_match_swallowed --reason "..."`
+
+Updated:
+- `expected/human.txt`

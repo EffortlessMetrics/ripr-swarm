@@ -154,3 +154,14 @@ Command:
 
 Updated:
 - `expected/human.txt`
+
+## Pending — ts_boundary_local_constant_refused (14)
+
+Reason:
+RIPR-SPEC-0122: describe the Hidden and removed-code test evidence without assuming owner reach (#16456)
+
+Command:
+`cargo xtask goldens bless ts_boundary_local_constant_refused --reason "..."`
+
+Updated:
+- `expected/human.txt`

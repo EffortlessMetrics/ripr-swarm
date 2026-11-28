@@ -54,6 +54,6 @@ Hidden:
         ripr agent stub --root <cwd>/fixtures/rust_predicate_appended_char_arm_old_input/input --seam-id f645d28cf0fdd14c
         ripr agent stub --root <cwd>/fixtures/rust_predicate_appended_char_arm_old_input/input --seam-id f642cc8cf0fb9143
   Hidden classes:
-    weak = tests reach it but check it only loosely
+    weak = linked to a test, with only weak evidence of a check
   Full evidence: rerun with --format human-full
   Machine data: rerun with --format json

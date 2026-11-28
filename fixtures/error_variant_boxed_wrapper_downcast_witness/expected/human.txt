@@ -58,7 +58,7 @@ Hidden:
     - ./src/lib.rs:123 (unrevealed); kind: return_value; reason: No detected assertion observes the changed value, error, field, or effect
   Hidden classes:
     exposed = tests appear to notice the change
-    weak = tests reach it but check it only loosely
-    unrevealed = tests reach it but nothing appears to notice a change
+    weak = linked to a test, with only weak evidence of a check
+    unrevealed = linked to a test, with no apparent check
   Full evidence: rerun with --format human-full
   Machine data: rerun with --format json

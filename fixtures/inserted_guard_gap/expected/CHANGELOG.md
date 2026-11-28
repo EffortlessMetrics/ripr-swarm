@@ -96,3 +96,14 @@ Command:
 
 Updated:
 - `expected/human-full.txt`
+
+## Pending — inserted_guard_gap (9)
+
+Reason:
+RIPR-SPEC-0122: describe the Hidden and removed-code test evidence without assuming owner reach (#16456)
+
+Command:
+`cargo xtask goldens bless inserted_guard_gap --reason "..."`
+
+Updated:
+- `expected/human.txt`

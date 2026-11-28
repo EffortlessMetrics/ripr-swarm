@@ -524,3 +524,14 @@ Command:
 
 Updated:
 - `expected/human.txt`
+
+## Pending — propagate_log_message (35)
+
+Reason:
+RIPR-SPEC-0122: describe the Hidden and removed-code test evidence without assuming owner reach (#16456)
+
+Command:
+`cargo xtask goldens bless propagate_log_message --reason "..."`
+
+Updated:
+- `expected/human.txt`

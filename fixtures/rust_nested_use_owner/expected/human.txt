@@ -49,7 +49,7 @@ Hidden:
     - ./src/internal.rs:2 (unknown: propagation unclear, base-side); kind: predicate; reason: Missing check value: x == 100
     - ./src/internal.rs:2 (weak, lower-priority candidate); kind: return_value; reason: No strong assertion was detected
   Hidden classes:
-    weak = tests reach it but check it only loosely
+    weak = linked to a test, with only weak evidence of a check
     unknown: propagation unclear = ripr could not follow the change through an opaque boundary
   Full evidence: rerun with --format human-full
   Machine data: rerun with --format json

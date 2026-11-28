@@ -332,3 +332,14 @@ Command:
 
 Updated:
 - `expected/human.txt`
+
+## Pending — owner_return_pin_json_shadowed_assertion (28)
+
+Reason:
+RIPR-SPEC-0122: describe the Hidden and removed-code test evidence without assuming owner reach (#16456)
+
+Command:
+`cargo xtask goldens bless owner_return_pin_json_shadowed_assertion --reason "..."`
+
+Updated:
+- `expected/human.txt`

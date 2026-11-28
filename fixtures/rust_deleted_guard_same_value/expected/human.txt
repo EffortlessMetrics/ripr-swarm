@@ -12,7 +12,7 @@ Start here:
   Safe next action: the diff removes code, and removed code is never an edit target, so nothing is selected for repair; static evidence on the removed code: 1 appear noticed by tests, 1 partly noticed, 2 unclear. Rerun with --format human-full for the evidence on each removed line
   Removed code (static evidence on the old lines, not a test result; each location is where the code stood in the current file):
     - ./src/lib.rs:4 `if x == 0 { return Vec::new(); }` (kind: predicate): ripr could not tell whether a test checks it (analysis limited, not a verdict)
-    - ./src/lib.rs:4 `if x == 0 { return Vec::new(); }` (kind: return_value): tests reach it but check it only loosely
+    - ./src/lib.rs:4 `if x == 0 { return Vec::new(); }` (kind: return_value): linked to a test, with only weak evidence of a check
     - ./src/lib.rs:8 `if x == 0 { return Vec::new(); }` (kind: predicate): ripr could not tell whether a test checks it (analysis limited, not a verdict)
     - 1 more: rerun with --format human-full
 
@@ -24,7 +24,7 @@ Hidden:
     - ./src/lib.rs:8 (exposed); kind: return_value; reason: Strong oracle found: exact value or pattern assertion
   Hidden classes:
     exposed = tests appear to notice the change
-    weak = tests reach it but check it only loosely
+    weak = linked to a test, with only weak evidence of a check
     unknown: propagation unclear = ripr could not follow the change through an opaque boundary
   Full evidence: rerun with --format human-full
   Machine data: rerun with --format json
