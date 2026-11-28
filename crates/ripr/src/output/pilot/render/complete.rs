@@ -365,7 +365,8 @@ enum StartStep {
 /// start, the premise was not observed, or the preflight names no file. The
 /// preflight names deleted files and dirty files carrying an inline
 /// `#[cfg(test)]` module other than the held target too (#16408), so the
-/// commit clears every dirty production file the start refuses over.
+/// commit also clears those files; symlinks, oversized or unreadable files
+/// and out-of-surface test files stay outside the preflight.
 fn repair_start_prerequisite(
     root: &std::path::Path,
     entry: &ClassifiedSeam,

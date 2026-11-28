@@ -193,12 +193,12 @@ authoritative.
   the unstaged case, running the printed commit lets the printed start begin.
 - `pilot_commit_step_merges_the_dirty_inline_target` covers a dirty inline
   target merged, once, into the commit for another dirty production file.
+  Running that commit lets the start begin.
 - `commit_step_names_deleted_and_inline_test_files_the_start_refuses_over`
   covers a deleted file with and without another dirty file, and a dirty
   inline-test file that is not the target beside a dirty plain file: pilot's
   and check's commit name the whole set, running it lets the printed start
   begin, and the same files committed print no commit step (#16408).
-  Running that commit lets the start begin.
 - `pilot_at_a_subdirectory_root_prints_no_commit_step_and_no_runnable_start`
   covers five cases. A subdirectory root with a dirty sibling outside it only;
   the same root with dirty files on both sides; both sides dirty at a nested
