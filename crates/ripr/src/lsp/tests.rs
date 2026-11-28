@@ -6605,6 +6605,142 @@ fn repair_start_is_inert_with_the_commit_step_while_production_is_uncommitted() 
     Ok(())
 }
 
+/// #16381: a dirty production file whose name holds a line break can be named
+/// in no printed commit, and the repair start refuses until it is committed.
+/// The editor offers no start (enabled, inert or copied) and the hover says
+/// why without echoing the name. Committing the file restores the normal
+/// start on the same snapshot. Unix only: Windows file names cannot hold a
+/// line break.
+#[cfg(unix)]
+#[test]
+fn repair_start_is_withheld_while_a_line_break_named_file_is_uncommitted() -> Result<(), String> {
+    let fixture = unique_lsp_test_root("repair-start-line-break")?;
+    let root = fixture.path().to_path_buf();
+    let odd = "src/odd\nname.rs";
+    fs::create_dir_all(root.join("src")).map_err(|err| format!("create src: {err}"))?;
+    fs::create_dir_all(root.join("tests")).map_err(|err| format!("create tests: {err}"))?;
+    fs::write(root.join("src/pricing.rs"), "pub fn discount() {}\n")
+        .map_err(|err| format!("write production: {err}"))?;
+    fs::write(root.join(odd), "pub fn odd() {}\n")
+        .map_err(|err| format!("write odd production: {err}"))?;
+    fs::write(root.join("tests/pricing.rs"), "#[test]\nfn t() {}\n")
+        .map_err(|err| format!("write test: {err}"))?;
+    run_lsp_scope_git(&root, &["init", "-q"])?;
+    run_lsp_scope_git(&root, &["add", "-A"])?;
+    let commit_all = |message: &str| {
+        run_lsp_scope_git(
+            &root,
+            &[
+                "-c",
+                "user.email=ripr-test@example.com",
+                "-c",
+                "user.name=ripr-test",
+                "-c",
+                "commit.gpgSign=false",
+                "commit",
+                "-qam",
+                message,
+            ],
+        )
+    };
+    commit_all("base")?;
+    fs::write(root.join(odd), "pub fn odd() { let _ = 1; }\n")
+        .map_err(|err| format!("dirty odd production: {err}"))?;
+    // The hover sentence below is reachable only through the line-break
+    // refusal, so it also asserts that the fixture built a dirty odd name.
+
+    let seam = sample_classified_seam();
+    assert!(repair_packet_eligibility(&seam).eligible());
+    let diagnostic = diagnostic_for_classified_seam(&root, &seam)
+        .ok_or_else(|| "expected seam diagnostic".to_string())?;
+    let uri = crate::lsp::uri::file_uri_for_path(&root.join("src/pricing.rs"))?;
+    let mut snapshot = sample_analysis_snapshot(
+        root.clone(),
+        uri.clone(),
+        vec![diagnostic.clone()],
+        Vec::new(),
+    );
+    snapshot.classified_seams = vec![seam.clone()];
+    let params =
+        code_action_params_for(uri, diagnostic.range.start.line, vec![diagnostic.clone()])?;
+    let commands = vscode_advertised_client_commands()?;
+    let borrowed = commands.iter().map(String::as_str).collect::<Vec<_>>();
+    let disabled_client = client_features_with_disabled_support(&borrowed)?;
+    let legacy_client = vscode_client_features()?;
+    let start_title = "Start repair: copy repair command";
+    let hover_for =
+        || match classified_seam_hover_response(&seam, &diagnostic, Some(&snapshot)).contents {
+            HoverContents::Markup(markup) => Ok(markup.value),
+            other => Err(format!("expected markdown hover, got {other:?}")),
+        };
+
+    // Dirty line-break name: no start for either client, packet kept.
+    for (case, client) in [("disabled", &disabled_client), ("legacy", &legacy_client)] {
+        super::actions::forget_recent_premise();
+        let actions = code_action_response(&params, Some(&snapshot), client);
+        let literals = code_action_literals(&actions)?;
+        assert!(
+            literals.iter().all(|action| action.title != start_title),
+            "{case}: no start may be offered: {literals:?}"
+        );
+        let listed = code_action_commands(&actions)?;
+        assert!(
+            listed.iter().all(|(_, command, arguments)| {
+                command != COPY_AGENT_REPAIR_COMMAND
+                    && !arguments.iter().any(|argument| {
+                        argument["command"]
+                            .as_str()
+                            .is_some_and(|value| value.starts_with("ripr agent repair"))
+                    })
+            }),
+            "{case}: no repair command may be copied: {listed:?}"
+        );
+        assert!(
+            listed
+                .iter()
+                .any(|(_, command, _)| command == COPY_AGENT_PACKET_COMMAND),
+            "{case}: the rest of the agent loop stays: {listed:?}"
+        );
+    }
+    super::actions::forget_recent_premise();
+    let hover = hover_for()?;
+    assert!(
+        hover.contains(
+            "- repair: no start offered while a dirty file whose name holds a line break is uncommitted"
+        ),
+        "the hover must say why:\n{hover}"
+    );
+    assert!(
+        !hover.contains("ripr agent repair")
+            && !hover.contains("commit first")
+            && !hover.contains("odd")
+            && !hover.contains("name.rs"),
+        "the hover must print no start, commit or raw name:\n{hover}"
+    );
+
+    // Committed: the same snapshot offers the normal enabled start again.
+    commit_all("change")?;
+    super::actions::forget_recent_premise();
+    let restored = code_action_response(&params, Some(&snapshot), &disabled_client);
+    let literals = code_action_literals(&restored)?;
+    let start = literals
+        .iter()
+        .find(|action| action.title == start_title)
+        .ok_or_else(|| format!("the start must be listed again: {literals:?}"))?;
+    assert!(
+        start.disabled.is_none() && start.command.is_some(),
+        "{start:?}"
+    );
+    super::actions::forget_recent_premise();
+    let hover = hover_for()?;
+    assert!(
+        hover.contains("- repair (start here): `ripr agent repair ")
+            && !hover.contains("no start offered"),
+        "{hover}"
+    );
+    Ok(())
+}
+
 /// A Rust seam that is route-ready but fails the repair-packet flip: its
 /// related tests include a Rust test and a TypeScript file, so the oracle
 /// path is cross-language unresolved while the Rust-side target is known.

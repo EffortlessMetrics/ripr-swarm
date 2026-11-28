@@ -126,8 +126,8 @@ pub(crate) use explain::{
 pub use explain::{explain_finding, explain_finding_with_input};
 pub(crate) use navigation::{
     CheckDiffProvenance, CheckRepairRoute, FindingDrillIn, FindingNavigation, GapRepairRoute,
-    RepairRoute, RepairRouteRefusal, commit_prerequisite_command, finding_navigation,
-    finding_navigation_with_worktree,
+    RepairRoute, RepairRouteRefusal, SeamStartPremise, commit_prerequisite_command,
+    finding_navigation, finding_navigation_with_worktree, seam_start_premise,
 };
 pub(crate) use progress::{
     AnalysisProgressEvent, AnalysisProgressScope, AnalysisProgressSink, AnalysisProgressStage,

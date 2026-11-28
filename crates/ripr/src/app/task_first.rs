@@ -3401,8 +3401,10 @@ fn dirty_paths_outside_surface(
     policy: &crate::edit_cage::EditCagePolicy,
 ) -> Result<Vec<String>, String> {
     let head = crate::agent::artifact::current_git_head(root).map_err(|e| e.to_string())?;
-    crate::app::repair_attempt::trusted_head_surface_violations(root, policy, &[], &head)
-        .map_err(|e| e.to_string())
+    let paths =
+        crate::app::repair_attempt::trusted_head_surface_violations(root, policy, &[], &head)
+            .map_err(|e| e.to_string())?;
+    crate::app::repair_attempt::refuse_line_break_paths(paths)
 }
 
 /// The gap-bound start the default human `ripr check` would print for this
@@ -3716,6 +3718,17 @@ pub(crate) fn check_repair_route(
     // module and starts only from the committed file. Ask the edit cage's own
     // predicate so the check screen never offers a start the attempt refuses.
     let uncommitted_target = held_inline_target(root, &repair_packet_eligibility(entry).readiness);
+    // #16381: a held target whose name breaks a line cannot be named in a
+    // printed commit, and the start refuses until it is committed, so no
+    // start is offered.
+    if uncommitted_target
+        .as_deref()
+        .is_some_and(crate::app::repair_attempt::breaks_line)
+    {
+        return CheckRepairRoute::Refused(RepairRouteRefusal::SeamRouteUnavailable {
+            reason: "could not validate the prerequisites for the repair start",
+        });
+    }
     // #13636: the before phase refuses a dirty production premise ("commit
     // first ... Nothing was started"). Ask its own preflight so the screen
     // names that commit before the start; an unreadable premise offers no

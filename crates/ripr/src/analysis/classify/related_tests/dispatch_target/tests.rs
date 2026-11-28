@@ -1,4 +1,5 @@
 use super::super::owner_call_is_direct;
+use super::{ReceiverKind, receiver_kind};
 use crate::analysis::RustIndex;
 use crate::analysis::facts::{FunctionContainer, FunctionFact};
 use crate::analysis::syntax::{RaRustSyntaxAdapter, RustSyntaxAdapter};
@@ -452,5 +453,134 @@ fn a_workspace_trait_providing_the_constructor_keeps_the_relation() -> Result<()
     );
     assert!(direct(&provided, TRAIT_AREA, body)?);
     assert!(!direct(&by_value_twin(), TRAIT_AREA, body)?);
+    Ok(())
+}
+
+/// #16352: a typed `self: &Self`, `self: &mut Self` or `self: Self` is the
+/// same receiver as `&self`, `&mut self` or `self`, and a generic bound's
+/// `FnMut(&u32) -> u32` is not the parameter list. The shorthand spellings
+/// read as before.
+#[test]
+fn the_receiver_is_read_from_the_parameter_list() {
+    for (signature, kind) in [
+        ("fn area(self) -> u32 {}", ReceiverKind::Value),
+        ("fn area(mut self) -> u32 {}", ReceiverKind::Value),
+        ("fn area(&self) -> u32 {}", ReceiverKind::Shared),
+        ("fn area<'a>(&'a self) -> u32 {}", ReceiverKind::Shared),
+        (
+            "fn area<'a>(&'a mut self) -> u32 {}",
+            ReceiverKind::Exclusive,
+        ),
+        ("fn into_iter(self: &Self) -> u32 {}", ReceiverKind::Shared),
+        (
+            "fn into_iter<'a>(self: &'a Self) -> u32 {}",
+            ReceiverKind::Shared,
+        ),
+        (
+            "fn into_iter(self: &mut Self) -> u32 {}",
+            ReceiverKind::Exclusive,
+        ),
+        (
+            "fn into_iter(self: &'a mut Self) {}",
+            ReceiverKind::Exclusive,
+        ),
+        ("fn into_iter(self: Self) -> u32 {}", ReceiverKind::Value),
+        (
+            "fn into_iter(mut self: Self) -> u32 {}",
+            ReceiverKind::Value,
+        ),
+        (
+            "fn map<F: FnMut(&u32) -> u32>(&self, f: F) {}",
+            ReceiverKind::Shared,
+        ),
+        (
+            "fn map<F: FnMut(&u32) -> u32>(&mut self, f: F) {}",
+            ReceiverKind::Exclusive,
+        ),
+        (
+            "fn map<F: FnOnce(Self) -> Vec<u8>>(self, f: F) {}",
+            ReceiverKind::Value,
+        ),
+        (
+            "fn map<const N: usize = { 1 > 0 } >(&self) {}",
+            ReceiverKind::Shared,
+        ),
+        ("fn r#type(&self) {}", ReceiverKind::Shared),
+        // A comment between the signature's tokens hides nothing (#16419).
+        (
+            "fn area /* units */ (&self) -> u32 {}",
+            ReceiverKind::Shared,
+        ),
+        ("fn /* note */ area(&mut self) {}", ReceiverKind::Exclusive),
+        ("fn area // units\n(self) {}", ReceiverKind::Value),
+        (
+            "fn map<F /* f */: FnMut(&u32) -> u32>(/* recv */ &self) {}",
+            ReceiverKind::Shared,
+        ),
+        // A name with a combining mark is read whole.
+        ("fn cafe\u{301}(&self) {}", ReceiverKind::Shared),
+        // A char literal's bracket closes nothing; a lifetime stays code
+        // (#16419 review).
+        (
+            "fn area<T: Marker<'>'>>(&self, value: T) {}",
+            ReceiverKind::Shared,
+        ),
+        (
+            "fn area<T: Marker<'\\''>, 'a>(&'a self, value: T) {}",
+            ReceiverKind::Shared,
+        ),
+        (
+            "fn area<T: Marker<'\\u{3e}'>>(&mut self, value: T) {}",
+            ReceiverKind::Exclusive,
+        ),
+        (
+            "fn area<'a, T: 'a>(&'a self, value: T) {}",
+            ReceiverKind::Shared,
+        ),
+    ] {
+        assert_eq!(receiver_kind(signature), Some(kind), "{signature}");
+    }
+}
+
+/// A smart-pointer receiver is none of the three probing steps, and a
+/// signature this cannot read (unbalanced generics, no parameter list, a
+/// non-`self` first parameter) reads as no receiver.
+#[test]
+fn a_smart_pointer_or_unreadable_receiver_is_not_read() {
+    for signature in [
+        "fn into_iter(self: Box<Self>) {}",
+        "fn into_iter(self: Rc<Self>) {}",
+        "fn into_iter(self: Arc<Self>) {}",
+        "fn into_iter(self: Pin<&mut Self>) {}",
+        "fn into_iter(self: &Box<Self>) {}",
+        "fn map<F: FnMut(&u32) -> u32(&self) {}",
+        "fn map<F: FnMut(&u32) -> u32>(f: F) {}",
+        "fn area() -> u32 {}",
+        "fn area(other: &Self) -> u32 {}",
+        "struct Area(u32);",
+        "fn area /* unterminated (&self) {}",
+    ] {
+        assert_eq!(receiver_kind(signature), None, "{signature}");
+    }
+}
+
+/// #16352 on the owner-call path: an inherent twin spelled `self: &Self`
+/// takes `Square(3).area()` like `&self` does, and one behind a generic
+/// bound's parentheses does too; a `self: Box<Self>` twin keeps the
+/// relation.
+#[test]
+fn a_typed_or_generic_twin_receiver_is_read_on_the_owner_call_path() -> Result<(), String> {
+    let body = "assert_eq!(Square(3).area(), 9);";
+    for twin in [
+        "pub fn area(self: &Self)",
+        "pub fn area<F: FnMut(&u32) -> u32>(&self)",
+    ] {
+        let production = SHAPE.replace("pub fn area(&self)", twin);
+        assert!(production.contains(twin), "{twin}");
+        assert!(!direct(&production, TRAIT_AREA, body)?, "{twin}");
+    }
+    let boxed = SHAPE.replace("pub fn area(&self)", "pub fn area(self: Box<Self>)");
+    assert!(boxed.contains("self: Box<Self>"));
+    assert!(direct(&boxed, TRAIT_AREA, body)?);
     Ok(())
 }

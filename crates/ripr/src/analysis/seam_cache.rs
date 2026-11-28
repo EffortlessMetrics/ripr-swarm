@@ -842,8 +842,14 @@ pub(crate) struct CachedSeamLimitInfo {
 /// with distinct typed failure outcomes in the provider identity (#10864).
 /// `1.217`: a rootless grouped drop-in import is verified by its own
 /// root, and body-scoped macro names join the scan only when invoked bare (#16388).
-/// `1.218`: compose history-sync import (1.205) with protected swarm main (1.217) and public 352f9d796f (#16016).
-pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.218";
+/// `1.218`: an owner's receiver kind is read from its parameter list after
+/// the generics, including typed `self: &Self` receivers (#16352); the
+/// history-sync branch independently used `1.218` for composing its import
+/// (1.205) with protected swarm main (1.217) and public 352f9d796f (#16016).
+/// `1.222`: join both `1.218` meanings — the history-sync import composition
+/// and receiver-kind reading after generics — with swarm main through
+/// b1b9ee158a (#16016); 1.219–1.221 are claimed by concurrent lanes.
+pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.222";
 /// `0.2` → `0.3`: same semantic transition as the outer cache (#3273 /
 /// #3286) — sharded entries derive from the same facts and cannot bypass
 /// the outer generation bump.
@@ -1103,8 +1109,11 @@ pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.218";
 /// `0.217`: same json item-macro refusal as full `1.215` (#16388).
 /// `0.218`: same provider-failure limitation as full `1.216` (#10864).
 /// `0.219`: same rootless-group and body-scope reading as full `1.217` (#16388).
-/// `0.220`: match full `1.218` for composed history-sync import + protected swarm main (#16016).
-const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.220";
+/// `0.220`: same receiver kind reading after generics as full `1.218`
+/// (#16352); the history-sync branch independently used `0.220` to match
+/// its composed-import full `1.218` (#16016).
+/// `0.224`: match joined full `1.222` (#16016).
+const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.224";
 
 /// Compact-classified seam cache schema. This cache stores the same
 /// `ClassifiedSeam` envelope shape as the full repo exposure cache, but
@@ -1366,8 +1375,11 @@ const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.220";
 /// `0.217`: same json item-macro refusal as full `1.215` (#16388).
 /// `0.218`: same provider-failure limitation as full `1.216` (#10864).
 /// `0.219`: same rootless-group and body-scope reading as full `1.217` (#16388).
-/// `0.220`: match full `1.218` for composed history-sync import + protected swarm main (#16016).
-pub(crate) const COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.220";
+/// `0.220`: same receiver kind reading after generics as full `1.218`
+/// (#16352); the history-sync branch independently used `0.220` to match
+/// its composed-import full `1.218` (#16016).
+/// `0.224`: match joined full `1.222` (#16016).
+pub(crate) const COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.224";
 
 /// Compact class-count cache used by repo badge rendering. It keys off
 /// the same workspace state as the full fact cache, but stores only
@@ -6068,8 +6080,10 @@ mod tests {
         // 1.214 -> 1.215: item macros naming serde_json refuse json! credit (#16388).
         // 1.215 -> 1.216: source-bound failed property verification is an opaque repo limit (#10864).
         // 1.216 -> 1.217: rootless groups and bare-invocation body scoping (#16388).
-        // 1.217 -> 1.218: compose history-sync import (1.205) with protected swarm main (1.217) (#16016).
-        assert_eq!(CACHE_SCHEMA_VERSION, "1.218");
+        // 1.217 -> 1.218: receiver kinds read after generics (#16352);
+        // the history-sync branch independently composed its import at 1.218.
+        // 1.218 -> 1.222: join both 1.218 meanings with swarm main (#16016).
+        assert_eq!(CACHE_SCHEMA_VERSION, "1.222");
         // 1.168 -> 1.169: plain `assert_eq!` literal withhold in the audit (#13005).
         // 0.12 -> 0.13 through 0.14 / 0.15 / 0.16 / 0.17 / 0.18: same
         // #3731 semantic transition as the outer classified-seam cache,
@@ -6266,9 +6280,11 @@ mod tests {
         // 0.216 -> 0.217: same json item-macro refusal as full 1.215 (#16388).
         // 0.217 -> 0.218: same provider-failure limitation as full 1.216 (#10864).
         // 0.218 -> 0.219: same rootless-group and body-scope reading as full 1.217 (#16388).
-        // 0.219 -> 0.220: match full 1.218 for composed history-sync import + protected swarm main (#16016).
-        assert_eq!(SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.220");
-        assert_eq!(COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.220");
+        // 0.219 -> 0.220: same receiver kind reading after generics as full 1.218 (#16352);
+        // the history-sync branch independently matched its composed import at 0.220.
+        // 0.220 -> 0.224: match joined full 1.222 (#16016).
+        assert_eq!(SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.224");
+        assert_eq!(COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.224");
         // 0.170 -> 0.171: same plain `assert_eq!` literal withhold as full 1.169 (#13005).
     }
 
@@ -6792,6 +6808,9 @@ mod tests {
             ("protected-main-std-rooted-import", "1.189", "0.191"),
             ("pre-attribute-macro-scope-composition", "1.203", "0.205"),
             ("pre-std-rooted-import-composition", "1.204", "0.206"),
+            // Both colliding 1.218/0.220 meanings must miss the joined 1.222.
+            ("history-sync-composition", "1.218", "0.220"),
+            ("receiver-kind-after-generics", "1.218", "0.220"),
         ] {
             for compact in [false, true] {
                 for sharded in [false, true] {

@@ -22,11 +22,18 @@ pub struct DiagnosticResultId(String);
 #[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub struct ContinuationId(String);
 
+/// Why a value was refused as one of the execution identities in this module.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum AnalysisExecutionIdentityParseError {
+    /// The value was blank after trimming, or was `snapshot:` with no
+    /// generation.
     Empty,
+    /// The value has the wrong shape for the requested identity, often
+    /// because it is another identity class.
     WrongClass {
+        /// The trimmed value that was refused.
         value: String,
+        /// The identity or field the parser expected, for the message.
         expected: &'static str,
     },
 }
@@ -70,10 +77,13 @@ fn is_completed_snapshot_handle(value: &str) -> bool {
 }
 
 impl AnalysisAttemptId {
+    /// Builds the `snapshot:<generation>` id for a refresh generation.
     pub fn from_refresh_generation(generation: u64) -> Self {
         Self(format!("snapshot:{generation}"))
     }
 
+    /// Parses a `snapshot_id` echoed by an agent. The trimmed value must be
+    /// `snapshot:` followed by a `u64` generation.
     pub fn parse_agent_snapshot_id(
         value: &str,
     ) -> Result<Self, AnalysisExecutionIdentityParseError> {
@@ -96,12 +106,17 @@ impl AnalysisAttemptId {
         Ok(Self(trimmed))
     }
 
+    /// The trimmed id string.
     pub fn as_str(&self) -> &str {
         &self.0
     }
 }
 
 impl CompletedAnalysisSnapshotId {
+    /// Parses a completed snapshot handle: a trimmed `snapshot:` value with
+    /// at least two colons, such as `snapshot:sha256:...` or
+    /// `snapshot:input:...`. A refresh-generation echo (`snapshot:<digits>`)
+    /// is refused.
     pub fn parse(value: &str) -> Result<Self, AnalysisExecutionIdentityParseError> {
         let trimmed = nonempty_trimmed(value, "CompletedAnalysisSnapshotId")?;
         if !is_completed_snapshot_handle(&trimmed) {
@@ -113,12 +128,15 @@ impl CompletedAnalysisSnapshotId {
         Ok(Self(trimmed))
     }
 
+    /// The trimmed id string.
     pub fn as_str(&self) -> &str {
         &self.0
     }
 }
 
 impl DiagnosticResultId {
+    /// Parses a diagnostic result id: `ripr-document-diagnostics-v2` or
+    /// `ripr-workspace-diagnostics-v2`, a colon, and 16 hex digits.
     pub fn from_producer_id(value: &str) -> Result<Self, AnalysisExecutionIdentityParseError> {
         let trimmed = nonempty_trimmed(value, "DiagnosticResultId")?;
         let Some((prefix, digest)) = trimmed.split_once(':') else {
@@ -141,16 +159,22 @@ impl DiagnosticResultId {
         Ok(Self(trimmed))
     }
 
+    /// The trimmed id string.
     pub fn as_str(&self) -> &str {
         &self.0
     }
 }
 
 impl ContinuationId {
+    /// Parses a request's `continuation_id`. Any nonblank value is accepted
+    /// unless it starts with another identity's prefix (`snapshot:`, `gap:`,
+    /// `action:`, `instruction-`, or a diagnostic result prefix).
     pub fn parse_request(value: &str) -> Result<Self, AnalysisExecutionIdentityParseError> {
         Self::parse_shared(value, "continuation_id")
     }
 
+    /// Parses a success response's `continuation_identity` alias, with the
+    /// same rules as [`Self::parse_request`].
     pub fn parse_success_alias(value: &str) -> Result<Self, AnalysisExecutionIdentityParseError> {
         Self::parse_shared(value, "continuation_identity")
     }
@@ -175,6 +199,7 @@ impl ContinuationId {
         Ok(Self(trimmed))
     }
 
+    /// The trimmed id string.
     pub fn as_str(&self) -> &str {
         &self.0
     }

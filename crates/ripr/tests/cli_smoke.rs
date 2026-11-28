@@ -21251,9 +21251,59 @@ fn pilot_inline_only_stdout(label: &str, extra_source: &str) -> Result<String, S
     Ok(stdout)
 }
 
+/// A copy of the tracked files under `fixture` (relative to the workspace
+/// root) as the single commit of a fresh Git repository, so a pilot or check
+/// run there sees a clean premise at the exact Git top-level whatever the
+/// enclosing checkout holds. Returns the canonical root.
+fn clean_fixture_repo(label: &str, fixture: &str) -> Result<PathBuf, String> {
+    let source = workspace_root().join(fixture);
+    let root = unique_temp_workspace(label);
+    std::fs::create_dir_all(&root).map_err(|e| format!("create {}: {e}", root.display()))?;
+    let tracked = common::fixture_git::fixture_git_output(
+        &workspace_root(),
+        &["ls-files", "-z", "--", fixture],
+    )?;
+    for path in tracked.split('\0').filter(|path| !path.is_empty()) {
+        let relative = Path::new(path)
+            .strip_prefix(fixture)
+            .map_err(|e| format!("{path} is not under {fixture}: {e}"))?;
+        let target = root.join(relative);
+        if let Some(parent) = target.parent() {
+            std::fs::create_dir_all(parent)
+                .map_err(|e| format!("create {}: {e}", parent.display()))?;
+        }
+        std::fs::copy(source.join(relative), &target).map_err(|e| format!("copy {path}: {e}"))?;
+    }
+    run_git(&root, &["-c", "init.templateDir=", "init", "-q"])?;
+    std::fs::create_dir_all(root.join(".git/info"))
+        .map_err(|e| format!("create .git/info: {e}"))?;
+    std::fs::write(root.join(".git/info/exclude"), "/target/\n")
+        .map_err(|e| format!("write exclude: {e}"))?;
+    run_git(&root, &["add", "-A"])?;
+    run_git(
+        &root,
+        &[
+            "-c",
+            "user.name=RIPR test",
+            "-c",
+            "user.email=ripr@example.invalid",
+            "-c",
+            "commit.gpgSign=false",
+            "commit",
+            "-q",
+            "-m",
+            "fixture",
+        ],
+    )?;
+    std::fs::canonicalize(&root).map_err(|e| format!("canonicalize {}: {e}", root.display()))
+}
+
 #[test]
 fn pilot_writes_default_packet_outputs_for_boundary_gap_fixture() -> Result<(), String> {
-    let root = workspace_root().join("fixtures/boundary_gap/input");
+    // A clean repository of its own (#16381): inside this checkout the
+    // fixture's repair start depends on the developer's uncommitted edits,
+    // which pilot names as a dirty premise below a subdirectory root.
+    let root = clean_fixture_repo("pilot-boundary-gap", "fixtures/boundary_gap/input")?;
     let out_dir = unique_temp_workspace("pilot");
     let output = run_ripr(&[
         "pilot",
@@ -21364,7 +21414,7 @@ fn pilot_writes_default_packet_outputs_for_boundary_gap_fixture() -> Result<(), 
     );
     assert_eq!(
         flag_value("--root").map(|value| value.replace('\\', "/")),
-        Some(root.display().to_string().replace('\\', "/")),
+        Some(printed_path(&root).replace('\\', "/")),
         "the repair command must name the analyzed root: {repair_line}"
     );
 
@@ -21399,6 +21449,7 @@ fn pilot_writes_default_packet_outputs_for_boundary_gap_fixture() -> Result<(), 
     );
 
     ignore_remove_dir_all(&out_dir);
+    ignore_remove_dir_all(&root);
     Ok(())
 }
 
