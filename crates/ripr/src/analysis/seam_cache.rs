@@ -840,6 +840,7 @@ pub(crate) struct CachedSeamLimitInfo {
 /// name as its standard macro unless an indexed file binds it (#16462).
 /// `1.220`: a match arm whose selecting input no visible test passes reads
 /// activation unknown instead of strongly gripped (#15359).
+/// `1.224`: expect-test fallback comparisons require their macro receiver (#7878).
 /// `1.225`: repo-seam reach stages carry the producer-owned typed
 /// `unresolved_reach_limit` through classified-seam cache round trips (#5492).
 pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.225";
@@ -1100,6 +1101,7 @@ pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.225";
 /// `0.221`: same transparent-context scan as full `1.219` (#16462).
 /// `0.222`: same unselected match-arm activation reading as full `1.220`
 /// (#15359).
+/// `0.226`: same expect-test fallback classification as full `1.224` (#7878).
 /// `0.227`: same producer-owned reach `unresolved_reach_limit` as full `1.225` (#5492).
 const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.227";
 
@@ -1361,6 +1363,7 @@ const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.227";
 /// `0.221`: same transparent-context scan as full `1.219` (#16462).
 /// `0.222`: same unselected match-arm activation reading as full `1.220`
 /// (#15359).
+/// `0.226`: same expect-test fallback classification as full `1.224` (#7878).
 /// `0.227`: same producer-owned reach `unresolved_reach_limit` as full `1.225` (#5492).
 pub(crate) const COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.227";
 
@@ -1606,7 +1609,10 @@ pub(crate) const COUNT_CACHE_SCHEMA_VERSION: &str = "0.2";
 /// scan skip a file whose macro may alias the root.
 /// `1.70`: unresolved property macro facts record `binding_only_identifiers`
 /// (#10864); earlier entries read an empty set and keep over-withholding.
-pub(crate) const FILE_FACT_CACHE_SCHEMA_VERSION: &str = "1.70";
+/// `1.71`: stored test assertions admit single-bracket and spaced expect-test
+/// comparisons only with their parsed macro receiver, outside closures (#7878);
+/// `1.70` facts keep the old snapshot oracle kinds.
+pub(crate) const FILE_FACT_CACHE_SCHEMA_VERSION: &str = "1.71";
 
 /// Keep the best-effort classified-seam cache from turning a successful live
 /// analysis into an unbounded post-analysis stall on large repos. Larger live
@@ -5795,7 +5801,8 @@ mod tests {
         // 1.67 -> 1.68: `anyhow` binding candidates (#10357).
         // 1.68 -> 1.69: item macros naming `serde_json` (#16388).
         // 1.69 -> 1.70: property macro binding-only identifiers (#10864).
-        assert_eq!(FILE_FACT_CACHE_SCHEMA_VERSION, "1.70");
+        // 1.70 -> 1.71: expect-test fallback assertions require their receiver (#7878).
+        assert_eq!(FILE_FACT_CACHE_SCHEMA_VERSION, "1.71");
         // 1.4 -> 1.5: metadata-sourced harness validation (#3634) flips
         // verdicts for workspaces the manifest emulation approximated.
         // 1.5 -> 1.6: the #3636 reachability authority excludes
@@ -6040,7 +6047,8 @@ mod tests {
         // 1.217 -> 1.218: receiver kinds read after generics (#16352).
         // 1.218 -> 1.219: verified calls of unrequested names stay known (#16462).
         // 1.219 -> 1.220: an unselected match arm reads activation unknown (#15359).
-        // 1.220 -> 1.225: producer-owned reach limit survives cache round trip (#5492).
+        // 1.223 -> 1.224: expect-test fallback comparisons require their macro receiver (#7878).
+        // 1.224 -> 1.225: producer-owned reach limit survives cache round trip (#5492).
         assert_eq!(CACHE_SCHEMA_VERSION, "1.225");
         // 1.168 -> 1.169: plain `assert_eq!` literal withhold in the audit (#13005).
         // 0.12 -> 0.13 through 0.14 / 0.15 / 0.16 / 0.17 / 0.18: same
@@ -6238,7 +6246,8 @@ mod tests {
         // 0.219 -> 0.220: same receiver kind reading after generics as full 1.218 (#16352).
         // 0.220 -> 0.221: same transparent-context scan as full 1.219 (#16462).
         // 0.221 -> 0.222: same unselected match-arm reading as full 1.220 (#15359).
-        // 0.222 -> 0.227: same producer-owned reach limit as full 1.225 (#5492).
+        // 0.225 -> 0.226: same expect-test fallback classification as full 1.224 (#7878).
+        // 0.226 -> 0.227: same producer-owned reach limit as full 1.225 (#5492).
         assert_eq!(SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.227");
         assert_eq!(COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.227");
         // 0.170 -> 0.171: same plain `assert_eq!` literal withhold as full 1.169 (#13005).

@@ -280,7 +280,9 @@ pub(crate) fn generated_rust_recovery(skipped: &[PathBuf], naming_only: &[PathBu
     let mut listed = paths
         .iter()
         .take(3)
-        .map(|path| path.to_string_lossy().replace('\\', "/"))
+        .map(|path| {
+            crate::terminal_text::prose_path_text(&path.to_string_lossy().replace('\\', "/"))
+        })
         .collect::<Vec<_>>()
         .join(", ");
     if paths.len() > 3 {

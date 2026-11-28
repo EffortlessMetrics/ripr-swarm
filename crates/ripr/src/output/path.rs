@@ -474,6 +474,11 @@ pub(crate) fn display_path_text(path: &str) -> String {
     path.replace('\\', "/")
 }
 
+/// The one-line path spelling for human prose (#16455), defined beside the
+/// terminal escape so the analysis producers that write recovery prose can use
+/// it without importing the output layer.
+pub(crate) use crate::terminal_text::prose_path_text;
+
 /// Compare output destinations after collapsing `.` / `..` so `--out ./a.json`
 /// and `--out-jsonl a.json` are treated as the same file.
 pub(crate) fn same_output_leaf(left: &Path, right: &Path) -> bool {
@@ -583,8 +588,8 @@ mod tests {
 
     use super::{
         CheckoutAnchor, display_path, display_path_for_host, display_path_on, display_path_text,
-        human_path_text, repository_display_path, repository_relative_path_text_on,
-        same_output_leaf,
+        human_path_text, prose_path_text, repository_display_path,
+        repository_relative_path_text_on, same_output_leaf,
     };
 
     #[test]
@@ -691,6 +696,17 @@ mod tests {
         let expected = if cfg!(unix) { "a%5Cb%5Cc" } else { "a/b/c" };
         assert_eq!(display_path(Path::new("a\\b\\c")), expected);
         assert_eq!(display_path_on(Path::new("a\\b\\c"), true), "a/b/c");
+    }
+
+    #[test]
+    fn prose_path_text_keeps_one_line_and_ordinary_paths() {
+        assert_eq!(prose_path_text("src/lib.rs"), "src/lib.rs");
+        assert_eq!(prose_path_text("src/a\\b.rs"), "src/a\\b.rs");
+        assert_eq!(
+            prose_path_text("src/x\n```\necho forged\r\t.rs"),
+            "src/x\\n```\\necho forged\\r\\t.rs"
+        );
+        assert!(!prose_path_text("a\nb\rc").contains(['\n', '\r']));
     }
 
     #[test]

@@ -180,8 +180,13 @@ nothing else) against source:
   hints, standard derives), and there is no file module (`mod deeper;`) or
   macro invocation or definition. A `cfg_attr`, `#[path]`, attribute macro,
   non-standard derive or other test attribute (such as `#[tokio::test]`)
-  could change which tests exist, so it refuses the whole selector. The same
-  attribute rule applies to the modules along the path.
+  could change which tests exist, so it refuses the whole selector. The one
+  accepted `cfg_attr` is lint-only: its condition is one the resolver
+  evaluates, and every attribute it applies is a lint level with arguments
+  (`allow`, `expect`, `warn`, `deny` or `forbid`), such as the library root's
+  `#![cfg_attr(not(test), deny(missing_docs))]`. A lint level never changes
+  which items are built. The same attribute rule applies to the modules along
+  the path, including the library root.
   A test or module whose `cfg` is false on this host is left out, as the
   build on this host leaves it out.
   Inner attributes (`#![cfg(..)]`) of a module file or inline module are
