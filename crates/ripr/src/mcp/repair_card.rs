@@ -260,6 +260,82 @@ pub(crate) fn gather_seam_inventory(
     })
 }
 
+/// Re-verify, at request time, the captured consumed-source digests of only
+/// the files one card's evidence is bound to. The refresh-time probe and
+/// custody are not re-run per read, and the server does not watch the
+/// worktree, so a source edit after the refresh would otherwise ride a card
+/// (or a prepared repair transaction) labeled current. The shared custody
+/// owner decides; this adapter reads bytes only. Both `ripr_get_repair_card`
+/// and `ripr_prepare_repair` call this one check and refuse with the same
+/// typed `stale_snapshot` failure (#15240).
+pub(super) fn verify_consumed_source_custody(
+    root: &Path,
+    snapshot: &Snapshot,
+    item: &GapItem,
+    producers: &SnapshotCardProducers,
+    entry: &ClassifiedSeam,
+    surface: &str,
+) -> Result<(), AttemptFailure> {
+    let evidence_paths = crate::app::repair_card_handoff::evidence_probe_paths(entry);
+    verify_consumed_paths(root, snapshot, item, producers, &evidence_paths, surface)
+}
+
+/// The native repo-relative path a rendered item or fix-site spelling names,
+/// in the spelling the captured digests are keyed by (the inventory records
+/// the native relative path it read). Rendered text is stable path text with
+/// a `./` prefix on item locations, so the leading `./` (repeated `./` and
+/// `.//` included) is dropped and the `%XX` layer is decoded: on Unix a
+/// literal backslash is a file-name byte the renderer spells `%5C`, and it
+/// decodes back to that byte rather than to a separator (#15908). Only on
+/// Windows is a backslash a separator, so only there is it unified to `/`
+/// before the prefix is stripped. Absolute and `..` paths are left as written
+/// so they stay uncapturable.
+pub(super) fn native_item_path(rendered: &str) -> PathBuf {
+    let unified = if cfg!(windows) {
+        rendered.replace('\\', "/")
+    } else {
+        rendered.to_string()
+    };
+    let mut rest = unified.as_str();
+    while let Some(stripped) = rest.strip_prefix("./") {
+        rest = stripped.trim_start_matches('/');
+    }
+    crate::analysis::decode_stable_path_text(rest)
+}
+
+/// The same digest comparison over an explicit set of native repo-relative
+/// paths (#15240): the caller names the files in their native spelling (seam
+/// evidence paths as recorded, rendered item paths through
+/// [`native_item_path`]); nothing here rewrites a path, the shared custody
+/// owner decides, and the typed `stale_snapshot` refusal is identical.
+pub(super) fn verify_consumed_paths(
+    root: &Path,
+    snapshot: &Snapshot,
+    item: &GapItem,
+    producers: &SnapshotCardProducers,
+    paths: &[PathBuf],
+    surface: &str,
+) -> Result<(), AttemptFailure> {
+    if let Some(drift) = producers
+        .consumed_sources
+        .first_drift(paths.iter().map(PathBuf::as_path), |relative| {
+            std::fs::read(root.join(relative)).ok()
+        })
+    {
+        return Err(AttemptFailure::new(
+            CODE_STALE_SNAPSHOT,
+            format!(
+                "{surface} for canonical item {} is unavailable: {}; the snapshot no longer describes the files on disk",
+                item.canonical_id,
+                drift.describe()
+            ),
+            "run ripr_refresh again to analyze the current source, then retry",
+        )
+        .with_data(json!({ "current_snapshot_id": snapshot.snapshot_id })));
+    }
+    Ok(())
+}
+
 /// Bind the repair-card producers into one committing snapshot from the
 /// refresh's seam inventory: each owner-discriminated binding records its
 /// evidence-scope currentness probe. Any failure fails the attempt: the
@@ -602,29 +678,7 @@ impl WorkspaceSession {
                 "restart the server with `ripr mcp --stdio --root <repository>` and retry",
             ));
         };
-        // The refresh-time probe and custody are not re-run per read, so a
-        // source edit after the refresh (the server does not watch the
-        // worktree) would otherwise ride a card labeled current. Re-verify the
-        // captured digests of only the files this card's evidence is bound to
-        // (the shared custody owner decides; this adapter reads bytes only).
-        let evidence_paths = crate::app::repair_card_handoff::evidence_probe_paths(entry);
-        if let Some(drift) = producers
-            .consumed_sources
-            .first_drift(evidence_paths.iter().map(PathBuf::as_path), |relative| {
-                std::fs::read(root.join(relative)).ok()
-            })
-        {
-            return Err(AttemptFailure::new(
-                CODE_STALE_SNAPSHOT,
-                format!(
-                    "repair card for canonical item {} is unavailable: {}; the snapshot no longer describes the files on disk",
-                    item.canonical_id,
-                    drift.describe()
-                ),
-                "run ripr_refresh again to analyze the current source, then retry",
-            )
-            .with_data(json!({ "current_snapshot_id": snapshot.snapshot_id })));
-        }
+        verify_consumed_source_custody(root, snapshot, item, producers, entry, "repair card")?;
         // The shared per-item admission (`ripr_list_gaps` / `ripr_prepare_repair`)
         // holds a start whose inline test target has uncommitted changes
         // (#11397). The card reads that same verdict from the committed item,
@@ -1525,6 +1579,219 @@ mod tests {
             if failure.detail.is_empty() || failure.recovery.is_empty() {
                 return Err("typed failures must carry detail and recovery".to_string());
             }
+        }
+        Ok(())
+    }
+
+    /// #15240: the rendered recommendation is stable path text, so a selected
+    /// test named `tests/pric%ing.rs` renders as `tests/pric%25ing.rs`. The
+    /// custody list must hold the native spelling only: an edit to an
+    /// unrelated captured file literally named `tests/pric%25ing.rs` is not a
+    /// drift (control), while an edit to the selected test is.
+    #[test]
+    fn custody_paths_decode_a_percent_named_recommendation() -> Result<(), String> {
+        use crate::output::agent_seam_packets::{
+            TASK_WRITE_TARGETED_TEST, recommended_test_for, task_for,
+        };
+        let selected = "tests/pric%ing.rs";
+        let unrelated = "tests/pric%25ing.rs";
+        let mut entry = weakly_gripped_entry();
+        // Make the seam actionable, the shape the packet producer's own
+        // targeted-test fixture uses: a free owner call, a passing
+        // discriminate stage with an observed value, and one missing
+        // equality-boundary discriminator.
+        entry.seam = entry
+            .seam
+            .clone()
+            .with_owner_call(crate::analysis::seams::OwnerCallShape::Free);
+        entry.evidence.discriminate = stage(crate::domain::StageState::Yes);
+        entry.evidence.observed_values = vec![
+            crate::domain::ValueFact {
+                line: 12,
+                text: "discounted_total(50, 100)".to_string(),
+                value: "50".to_string(),
+                context: crate::domain::ValueContext::FunctionArgument,
+            }
+            .into(),
+        ];
+        entry.evidence.missing_discriminators = vec![crate::domain::MissingDiscriminatorFact {
+            value: "discount_threshold (equality boundary)".to_string(),
+            reason: "observed values do not include the equality-boundary case".to_string(),
+            flow_sink: None,
+            shape: crate::domain::DiscriminatorShape::Other,
+            drafted_boundary: None,
+        }];
+        let grip = entry
+            .evidence
+            .related_tests
+            .first_mut()
+            .and_then(Arc::get_mut)
+            .ok_or("fixture related test must be uniquely owned")?;
+        grip.file = PathBuf::from(selected);
+        grip.test_target = Some(TestTargetEvidence::fixture(
+            "discounted_total_boundary",
+            Path::new(selected),
+            12,
+        ));
+        // Preconditions: the recommendation branch runs and renders the
+        // encoded spelling, so the collision this test guards is real.
+        if task_for(&entry) != TASK_WRITE_TARGETED_TEST {
+            return Err(format!(
+                "fixture must route a targeted test, got {}",
+                task_for(&entry)
+            ));
+        }
+        let rendered = recommended_test_for(&entry).file;
+        if rendered != unrelated {
+            return Err(format!(
+                "fixture recommendation must render {unrelated}, got {rendered}"
+            ));
+        }
+        let paths = crate::app::repair_card_handoff::evidence_probe_paths(&entry);
+        let expected = vec![PathBuf::from("src/pricing.rs"), PathBuf::from(selected)];
+        if paths != expected {
+            return Err(format!(
+                "custody paths must keep native spellings, got {paths:?}"
+            ));
+        }
+        let mut consumed = crate::analysis::consumed_source::ConsumedRustSources::default();
+        consumed.record(Path::new("src/pricing.rs"), Some(b"fn a() {}\n"));
+        consumed.record(Path::new(selected), Some(b"fn t() {}\n"));
+        consumed.record(Path::new(unrelated), Some(b"fn u() {}\n"));
+        fn read(edited: &'static str) -> impl FnMut(&Path) -> Option<Vec<u8>> {
+            move |path: &Path| {
+                let text = path.to_str()?;
+                Some(match text {
+                    "src/pricing.rs" => b"fn a() {}\n".to_vec(),
+                    _ if text == edited => b"edited\n".to_vec(),
+                    "tests/pric%ing.rs" => b"fn t() {}\n".to_vec(),
+                    "tests/pric%25ing.rs" => b"fn u() {}\n".to_vec(),
+                    _ => return None,
+                })
+            }
+        }
+        if let Some(drift) =
+            consumed.first_drift(paths.iter().map(PathBuf::as_path), read(unrelated))
+        {
+            return Err(format!(
+                "an edit to the unrelated file must not block the card: {}",
+                drift.describe()
+            ));
+        }
+        if consumed
+            .first_drift(paths.iter().map(PathBuf::as_path), read(selected))
+            .is_none()
+        {
+            return Err("an edit to the selected test must be a custody drift".to_string());
+        }
+        Ok(())
+    }
+
+    /// #15240: preparing a bound item also checks the item's own file and its
+    /// fix-site file, which the seam's evidence files need not include. Here
+    /// the fix site (`tests/checkout.rs`) is not one of the seam's evidence
+    /// files (`src/pricing.rs`, `tests/pricing.rs`); unchanged bytes prepare
+    /// the ready transaction (control), changed bytes are refused as stale.
+    #[test]
+    fn prepare_checks_a_bound_item_fix_site_outside_the_seam_evidence() -> Result<(), String> {
+        let dir = temp_root()?;
+        std::fs::create_dir_all(dir.join("src")).map_err(|error| error.to_string())?;
+        std::fs::create_dir_all(dir.join("tests")).map_err(|error| error.to_string())?;
+        std::fs::write(dir.join("src/lib.rs"), b"fn a() {}\n")
+            .map_err(|error| error.to_string())?;
+        let fix = dir.join("tests/checkout.rs");
+        std::fs::write(&fix, b"fn t() {}\n").map_err(|error| error.to_string())?;
+        let entry = weakly_gripped_entry();
+        if crate::app::repair_card_handoff::evidence_probe_paths(&entry)
+            .iter()
+            .any(|path| path == Path::new("tests/checkout.rs"))
+        {
+            return Err("fixture fix site must lie outside the seam evidence".to_string());
+        }
+        let mut session = crate::mcp::repair::tests::session_with(
+            &[super::super::gaps::test_finding()?],
+            "root:sha256:a",
+        )?;
+        let snapshot = session
+            .last_good
+            .as_mut()
+            .and_then(Arc::get_mut)
+            .ok_or("fixture snapshot must be uniquely owned")?;
+        let fix_site = snapshot
+            .require_item("gap:test:1")
+            .map_err(|failure| failure.detail)?
+            .repair_readiness
+            .fix_site
+            .as_ref()
+            .map(|site| site.file.clone());
+        if fix_site.as_deref() != Some("tests/checkout.rs") {
+            return Err(format!("fixture fix site moved: {fix_site:?}"));
+        }
+        // The item file is captured too: a bound item's own file with no
+        // digest is refused as not verifiable, which would mask the control.
+        let mut consumed = crate::analysis::consumed_source::ConsumedRustSources::default();
+        consumed.record(Path::new("src/lib.rs"), Some(b"fn a() {}\n"));
+        consumed.record(Path::new("tests/checkout.rs"), Some(b"fn t() {}\n"));
+        snapshot.card_producers = Some(SnapshotCardProducers {
+            config: RiprConfig::default(),
+            consumed_sources: consumed,
+            repository_head: "abc123".to_string(),
+            bindings: vec![binding_for(&entry, "gap:test:1")],
+            candidate_seams: vec![entry.clone()],
+            completeness: crate::mcp::repair_admission::InventoryCompleteness::Complete,
+        });
+        let prepare = |session: &mut WorkspaceSession| {
+            session.prepare_repair("gap:test:1", None, Some("root:sha256:a"), Some(&dir))
+        };
+        // Control: the unchanged tree mints the ready transaction.
+        let control = prepare(&mut session)
+            .map_err(|failure| format!("unchanged bound item must prepare: {}", failure.detail))?;
+        if control.pointer("/repair_packet_ready") != Some(&serde_json::Value::Bool(true))
+            || control.pointer("/attempt/attempt_id").is_none()
+        {
+            return Err(format!("unchanged bound item must be ready: {control}"));
+        }
+        std::fs::write(&fix, b"fn changed() {}\n").map_err(|error| error.to_string())?;
+        let result = prepare(&mut session);
+        std::fs::remove_dir_all(&dir).map_err(|error| error.to_string())?;
+        match result {
+            Err(failure)
+                if failure.code == CODE_STALE_SNAPSHOT
+                    && failure.detail.contains("tests/checkout.rs") =>
+            {
+                Ok(())
+            }
+            other => Err(format!("changed bound fix site must be stale: {other:?}")),
+        }
+    }
+
+    /// #15908/#15240: a rendered item or fix-site spelling converts to the
+    /// native digest key without folding a Unix file-name backslash into a
+    /// separator; `%5C` decodes to that byte, and a `./` prefix is dropped.
+    #[test]
+    fn native_item_path_keeps_a_unix_backslash_file_name_byte() -> Result<(), String> {
+        let cases: [(&str, &str); 3] = [
+            ("./src/lib.rs", "src/lib.rs"),
+            (
+                "src/a%5Cb.rs",
+                if cfg!(windows) {
+                    "src/a/b.rs"
+                } else {
+                    "src/a\\b.rs"
+                },
+            ),
+            ("src/discount%25.rs", "src/discount%.rs"),
+        ];
+        for (rendered, native) in cases {
+            if native_item_path(rendered) != Path::new(native) {
+                return Err(format!(
+                    "{rendered}: expected {native}, got {}",
+                    native_item_path(rendered).display()
+                ));
+            }
+        }
+        if cfg!(unix) && native_item_path("src\\lib.rs") == Path::new("src/lib.rs") {
+            return Err("a Unix backslash must stay a file-name byte".to_string());
         }
         Ok(())
     }

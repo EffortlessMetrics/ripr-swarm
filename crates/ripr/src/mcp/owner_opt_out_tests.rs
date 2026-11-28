@@ -291,7 +291,7 @@ fn gap_list_serves_only_the_plain_function_and_discloses_the_opt_out() -> Result
     }
     let mut session = session;
     expect_owner_opt_out(
-        session.prepare_repair(&withheld_canonical, None, Some(ROOT_IDENTITY)),
+        session.prepare_repair(&withheld_canonical, None, Some(ROOT_IDENTITY), None),
         "ripr_prepare_repair",
         "limit",
     )?;
@@ -713,7 +713,7 @@ fn owner_opt_out_results_validate_against_the_advertised_output_schemas() -> Res
                 PREPARE_REPAIR_TOOL_NAME,
                 super::repair::REPAIR_PACKET_SCHEMA_VERSION,
                 session
-                    .prepare_repair(&withheld, None, Some(ROOT_IDENTITY))
+                    .prepare_repair(&withheld, None, Some(ROOT_IDENTITY), None)
                     .err(),
             ),
         ];

@@ -8444,6 +8444,259 @@ fn refresh_source_worktree_discloses_untracked_input_and_the_intent_to_add_remed
     Ok(())
 }
 
+/// #15240: `ripr_prepare_repair` re-verifies the consumed-source custody the
+/// repair card re-verifies, so it never mints a ready transaction over source
+/// that changed (edited source, edited test, deleted file) after the snapshot
+/// captured it. Each case first prepares a ready transaction over the same
+/// unchanged tree (negative control), then mutates and must see the card and
+/// the prepare agree on the typed `stale_snapshot` refusal. The first case
+/// also covers a never-prepared item: a stale first prepare mints no attempt
+/// (the gap's `repair_attempt` link stays null before and after), and the
+/// restored bytes then prepare and bind the matching live attempt link.
+#[cfg(feature = "lang-rust")]
+#[test]
+fn prepare_repair_refuses_source_changed_after_the_snapshot() -> Result<(), String> {
+    const TIMEOUT: Duration = Duration::from_mins(3);
+    let root = install_b4_repair_ready_fixture()?;
+    let _cleanup = FixtureGuard { root: root.clone() };
+    std::fs::write(root.join(".gitignore"), "/target/\n").map_err(|error| error.to_string())?;
+    commit_fixture(&root, "ignore generated analysis artifacts")?;
+    let mut session = SequentialStdio::spawn(&root)?;
+    session.call("discover", "server/discover", json!({}), TIMEOUT)?;
+    let mut ready_id: Option<String> = None;
+    let cases: [(&str, &str, Option<&str>); 3] = [
+        (
+            "source-edit",
+            "src/lib.rs",
+            Some("\n// edited after the snapshot\n"),
+        ),
+        (
+            "test-edit",
+            "tests/pricing.rs",
+            Some("\n// edited after the snapshot\n"),
+        ),
+        ("deleted", "src/lib.rs", None),
+    ];
+    for (label, file, appended) in cases {
+        let path = root.join(file);
+        let original = std::fs::read(&path).map_err(|error| error.to_string())?;
+        let reply = session.call_tool(
+            &format!("{label}-refresh"),
+            "ripr_refresh",
+            json!({}),
+            TIMEOUT,
+        )?;
+        structured_tool_success(&reply, "ripr_refresh")?;
+        if ready_id.is_none() {
+            let listed = session.call_tool("list", "ripr_list_gaps", json!({}), TIMEOUT)?;
+            let listed = structured_tool_success(&listed, "ripr_list_gaps")?;
+            ready_id = listed["items"]
+                .as_array()
+                .ok_or("list omitted items")?
+                .iter()
+                .find(|item| item["repair_packet_ready"] == true)
+                .and_then(|item| item["canonical_id"].as_str())
+                .map(str::to_string);
+        }
+        let id = ready_id
+            .clone()
+            .ok_or("control must yield a repair-ready item")?;
+        if label == "source-edit" {
+            // The other cases exercise stale replay. This fresh item has not
+            // been prepared at all, so check the live link before and after.
+            let require_no_attempt = |session: &mut SequentialStdio, call_id: &str| {
+                let reply = session.call_tool(
+                    call_id,
+                    "ripr_get_gap",
+                    json!({ "canonical_id": id }),
+                    TIMEOUT,
+                )?;
+                let gap = structured_tool_success(&reply, "ripr_get_gap")?;
+                if gap.pointer("/item/links/repair_attempt") != Some(&Value::Null) {
+                    return Err(format!("expected an explicit null attempt link: {gap}"));
+                }
+                Ok::<(), String>(())
+            };
+            require_no_attempt(&mut session, "first-mint-before")?;
+            let mut changed = original.clone();
+            changed.extend_from_slice(b"\n// changed before first prepare\n");
+            std::fs::write(&path, changed).map_err(|error| error.to_string())?;
+            let stale = session.call_tool(
+                "first-mint-stale",
+                "ripr_prepare_repair",
+                json!({ "canonical_id": id }),
+                TIMEOUT,
+            )?;
+            if stale.pointer("/result/isError") != Some(&json!(true))
+                || stale.pointer("/result/structuredContent/failure/code")
+                    != Some(&json!("stale_snapshot"))
+                || stale
+                    .pointer("/result/structuredContent/repair_packet_ready")
+                    .is_some()
+                || stale
+                    .pointer("/result/structuredContent/failure/detail")
+                    .and_then(Value::as_str)
+                    .is_none_or(|detail| !detail.contains("changed on disk"))
+            {
+                return Err(format!("stale first prepare must refuse: {stale}"));
+            }
+            require_no_attempt(&mut session, "first-mint-after")?;
+            std::fs::write(&path, &original).map_err(|error| error.to_string())?;
+        }
+        // Negative control: the unchanged tree still prepares.
+        let control = session.call_tool(
+            &format!("{label}-control"),
+            "ripr_prepare_repair",
+            json!({ "canonical_id": id }),
+            TIMEOUT,
+        )?;
+        let control = structured_prepare_document(&control, "unchanged prepare")?;
+        if control.get("repair_packet_ready") != Some(&json!(true)) {
+            return Err(format!("{label}: unchanged tree must prepare: {control}"));
+        }
+        if label == "source-edit" {
+            let attempt_id = control
+                .pointer("/attempt/attempt_id")
+                .and_then(Value::as_str)
+                .ok_or("restored bytes did not establish a live attempt ID")?;
+            let reply = session.call_tool(
+                "first-mint-restored",
+                "ripr_get_gap",
+                json!({ "canonical_id": id }),
+                TIMEOUT,
+            )?;
+            let gap = structured_tool_success(&reply, "ripr_get_gap")?;
+            let expected_uri = format!("ripr://repair-attempt/{attempt_id}");
+            if gap
+                .pointer("/item/links/repair_attempt")
+                .and_then(Value::as_str)
+                != Some(expected_uri.as_str())
+            {
+                return Err(format!(
+                    "restored bytes did not bind the attempt link: {gap}"
+                ));
+            }
+        }
+        match appended {
+            Some(extra) => {
+                let mut changed = original.clone();
+                changed.extend_from_slice(extra.as_bytes());
+                std::fs::write(&path, changed).map_err(|error| error.to_string())?;
+            }
+            None => std::fs::remove_file(&path).map_err(|error| error.to_string())?,
+        }
+        for (tool, call_id) in [
+            ("ripr_get_repair_card", "card"),
+            ("ripr_prepare_repair", "prepare"),
+        ] {
+            let reply = session.call_tool(
+                &format!("{label}-{call_id}"),
+                tool,
+                json!({ "canonical_id": id }),
+                TIMEOUT,
+            )?;
+            let result = reply.get("result").ok_or("reply lost its result")?;
+            if result.pointer("/isError") != Some(&json!(true))
+                || result.pointer("/structuredContent/failure/code")
+                    != Some(&json!("stale_snapshot"))
+                || result
+                    .pointer("/structuredContent/repair_packet_ready")
+                    .is_some()
+                || result
+                    .pointer("/structuredContent/failure/detail")
+                    .and_then(Value::as_str)
+                    .is_none_or(|detail| !detail.contains("changed on disk"))
+            {
+                return Err(format!(
+                    "{label}: {tool} must refuse changed source as stale_snapshot: {reply}"
+                ));
+            }
+        }
+        std::fs::write(&path, original).map_err(|error| error.to_string())?;
+    }
+    Ok(())
+}
+
+/// #15240/#15908: on Unix a backslash is a file-name byte. With the library
+/// root named `src/a\b.rs`, the captured digest is keyed by that native
+/// name, so `ripr_prepare_repair` must re-verify that same file: the
+/// unchanged tree prepares (control) and an edit to `src/a\b.rs` is refused
+/// as `stale_snapshot`, exactly as the repair card refuses it, instead of the
+/// path being folded to `src/a/b.rs` and silently skipped.
+#[cfg(all(unix, feature = "lang-rust"))]
+#[test]
+fn prepare_repair_refuses_an_edited_backslash_named_source_file() -> Result<(), String> {
+    const TIMEOUT: Duration = Duration::from_mins(3);
+    const LIB: &str = "src/a\\b.rs";
+    let root = install_b4_repair_ready_fixture()?;
+    let _cleanup = FixtureGuard { root: root.clone() };
+    std::fs::write(root.join(".gitignore"), "/target/\n").map_err(|error| error.to_string())?;
+    std::fs::write(
+        root.join("Cargo.toml"),
+        "[package]\nname = \"mcp-journey-fixture\"\nversion = \"0.0.0\"\nedition = \"2024\"\n\n[lib]\nname = \"mcp_journey_fixture\"\npath = \"src/a\\\\b.rs\"\n\n[workspace]\n",
+    )
+    .map_err(|error| error.to_string())?;
+    std::fs::rename(root.join("src/lib.rs"), root.join(LIB)).map_err(|error| error.to_string())?;
+    commit_fixture(&root, "library root with a backslash in its file name")?;
+    if !root.join(LIB).is_file() || root.join("src/a").exists() {
+        return Err("fixture must hold one file named `a\\b.rs` inside `src/`".to_string());
+    }
+    let mut session = SequentialStdio::spawn(&root)?;
+    session.call("discover", "server/discover", json!({}), TIMEOUT)?;
+    let reply = session.call_tool("refresh", "ripr_refresh", json!({}), TIMEOUT)?;
+    structured_tool_success(&reply, "ripr_refresh")?;
+    let listed = session.call_tool("list", "ripr_list_gaps", json!({}), TIMEOUT)?;
+    let listed = structured_tool_success(&listed, "ripr_list_gaps")?;
+    let ready = listed["items"]
+        .as_array()
+        .ok_or("list omitted items")?
+        .iter()
+        .find(|item| item["repair_packet_ready"] == true)
+        .cloned()
+        .ok_or_else(|| format!("control must yield a repair-ready item: {listed}"))?;
+    let id = ready["canonical_id"]
+        .as_str()
+        .ok_or("ready item lost its canonical id")?
+        .to_string();
+    // Negative control: the unchanged tree prepares a ready transaction.
+    let control = session.call_tool(
+        "control",
+        "ripr_prepare_repair",
+        json!({ "canonical_id": id }),
+        TIMEOUT,
+    )?;
+    let control = structured_prepare_document(&control, "unchanged prepare")?;
+    if control.get("repair_packet_ready") != Some(&json!(true)) {
+        return Err(format!("unchanged tree must prepare: {control}"));
+    }
+    let path = root.join(LIB);
+    let mut changed = std::fs::read(&path).map_err(|error| error.to_string())?;
+    changed.extend_from_slice(b"\n// edited after the snapshot\n");
+    std::fs::write(&path, changed).map_err(|error| error.to_string())?;
+    for (tool, call_id) in [
+        ("ripr_get_repair_card", "card"),
+        ("ripr_prepare_repair", "prepare"),
+    ] {
+        let reply = session.call_tool(call_id, tool, json!({ "canonical_id": id }), TIMEOUT)?;
+        let result = reply.get("result").ok_or("reply lost its result")?;
+        if result.pointer("/isError") != Some(&json!(true))
+            || result.pointer("/structuredContent/failure/code") != Some(&json!("stale_snapshot"))
+            || result
+                .pointer("/structuredContent/repair_packet_ready")
+                .is_some()
+            || result
+                .pointer("/structuredContent/failure/detail")
+                .and_then(Value::as_str)
+                .is_none_or(|detail| !detail.contains("changed on disk"))
+        {
+            return Err(format!(
+                "{tool} must refuse the edited backslash-named file as stale_snapshot: {reply}"
+            ));
+        }
+    }
+    Ok(())
+}
+
 /// Worktree repair cards and readiness (#7357): with established producer
 /// custody the saved-worktree refresh serves the same repair-ready item, card
 /// and attempt the committed refresh serves for the same input, and a dirty
