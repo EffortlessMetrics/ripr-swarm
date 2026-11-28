@@ -3312,7 +3312,13 @@ fn file_is_eol_only_churn(file: &diff::ChangedFile, raw_line1_bom_paths: &[PathB
 }
 
 pub(crate) fn bounded_path_listing(paths: &[String]) -> String {
-    let shown = paths.iter().take(3).cloned().collect::<Vec<_>>().join(", ");
+    // A line break in a name must not split the limitation line (#16455).
+    let shown = paths
+        .iter()
+        .take(3)
+        .map(|path| crate::terminal_text::prose_path_text(path))
+        .collect::<Vec<_>>()
+        .join(", ");
     let more = paths.len().saturating_sub(3);
     let listed = if more > 0 {
         format!("{shown} and {more} more")
@@ -3320,7 +3326,9 @@ pub(crate) fn bounded_path_listing(paths: &[String]) -> String {
         shown
     };
     if listed.chars().count() > 160 {
-        format!("{}…", listed.chars().take(159).collect::<String>())
+        let kept = listed.chars().take(159).collect::<String>();
+        // A cut must not leave half of a `\n` escape behind.
+        format!("{}…", kept.trim_end_matches('\\'))
     } else {
         listed
     }

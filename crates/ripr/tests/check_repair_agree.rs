@@ -2434,3 +2434,29 @@ fn a_file_name_with_a_line_break_withholds_the_start_on_pilot_and_check() -> Res
     }
     Ok(())
 }
+
+/// #16477 review: limitation text built by the shared path listing (here the
+/// EOL-only churn disclosure) must also keep a line-break name on one line.
+#[cfg(unix)]
+#[test]
+fn a_line_break_name_in_a_listed_limitation_stays_on_one_check_line() -> Result<(), String> {
+    let repo = Repo::create_uncommitted(CONST_OLD, CONST_NEW, CONST_TEST)?;
+    let name = "src/x\n```\necho forged\n.rs";
+    repo.write(name, "pub fn extra() -> u8 {\n    1\n}\n")?;
+    repo.git(&["add", "--", name])?;
+    repo.git(&["commit", "-q", "--no-gpg-sign", "-m", "extra"])?;
+    repo.write(name, "pub fn extra() -> u8 {\r\n    1\r\n}\r\n")?;
+    let check = repo.ripr(&["check", "--root", "."])?;
+    assert!(
+        check
+            .lines()
+            .any(|line| line.contains("changed only in line endings")
+                && line.contains("src/x\\n```\\necho forged\\n.rs")),
+        "check must name the EOL-only file escaped on its limitation line:\n{check}"
+    );
+    assert!(
+        !check.lines().any(|line| line.trim() == "echo forged"),
+        "check must not show the name's tail as its own line:\n{check}"
+    );
+    Ok(())
+}
