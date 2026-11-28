@@ -146,6 +146,26 @@ fn an_unreadable_mention_beside_a_selecting_call_keeps_the_selection() -> Result
     Ok(())
 }
 
+/// #15359 review: a test that rebinds the owner's name (a closure or
+/// another function under the same name) may run that binding instead, so
+/// a selecting call after it does not show the owner's arm runs.
+#[test]
+fn a_rebound_owner_name_does_not_credit_a_selecting_call() -> Result<(), String> {
+    for rebind in [
+        "    let price_cents = |_s: Size| 450;",
+        "    let price_cents = other::price_cents;",
+    ] {
+        let body = format!("{rebind}\n    assert_eq!(price_cents(Size::Medium), 450);");
+        let (full, compact, class) = arm_evidence(&body, "Size::Medium")?;
+        for evidence in [&full, &compact] {
+            assert_ne!(evidence.activate.state, StageState::Yes, "{rebind}: {evidence:?}");
+        }
+        assert_ne!(class[0], SeamGripClass::StronglyGripped, "{rebind}: {full:?}");
+        assert_ne!(class[1], SeamGripClass::StronglyGripped, "{rebind}: {compact:?}");
+    }
+    Ok(())
+}
+
 #[test]
 fn an_input_the_reading_cannot_resolve_leaves_the_arm_unnamed_and_its_activation_unknown()
 -> Result<(), String> {

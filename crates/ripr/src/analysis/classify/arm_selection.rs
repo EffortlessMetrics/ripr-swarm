@@ -1226,10 +1226,18 @@ impl ArmSelector {
     /// selects this arm. Unlike `observed_inputs`, a mention it cannot read
     /// on another line does not cancel the answer: such a use may select any
     /// arm, so it never proves an arm unselected, but it cannot undo a call
-    /// whose input does select it (#15359 review).
+    /// whose input does select it (#15359 review). A mention that is neither
+    /// a call nor a plain value use may rebind the name
+    /// (`let price_cents = |s| 450;`), so then no call is credited.
     pub(in crate::analysis) fn some_call_selects(&self, test: &TestSummary) -> bool {
         let masked = mask_comments_and_strings(&test.body);
         let mentions = whole_word_offsets(&masked, &self.owner);
+        if !mentions
+            .iter()
+            .all(|offset| is_call_or_plain_value_use(&masked, *offset, &self.owner))
+        {
+            return false;
+        }
         line_starts_of(&test.body, &mentions)
             .into_iter()
             .any(|line_start| {
@@ -3402,6 +3410,25 @@ fn whole_word_offsets(text: &str, word: &str) -> Vec<usize> {
 }
 
 /// The distinct line starts of the lines holding `offsets`, in order.
+/// Whether the owner name at `offset` is a call (`name(`, `.name(`) or a
+/// plain value use: an operand right after `=`, `(`, `,`, `&` or `[` that
+/// ends at `;`, `)`, `,` or `]`. Anything else (a `let`/`fn`/`use`
+/// binding, a closure parameter, a pattern, a path segment) may rebind or
+/// shadow the name, so the reading cannot trust a call that follows it.
+fn is_call_or_plain_value_use(masked: &str, offset: usize, name: &str) -> bool {
+    let after = masked[offset + name.len()..].trim_start();
+    if after.starts_with('(') {
+        return true;
+    }
+    let before = masked[..offset].trim_end();
+    let value_position = before.ends_with(['(', ',', '&', '['])
+        || (before.ends_with('=')
+            && !["==", "!=", "<=", ">="]
+                .iter()
+                .any(|operator| before.ends_with(operator)));
+    value_position && (after.starts_with([';', ')', ',', ']']))
+}
+
 fn line_starts_of(text: &str, offsets: &[usize]) -> Vec<usize> {
     let mut starts = offsets
         .iter()
