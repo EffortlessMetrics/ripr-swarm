@@ -32,6 +32,24 @@ fn compact_windows_round_trip_payload_fallback_and_exact_requests() -> Result<()
 }
 
 #[test]
+fn compact_windows_suppressed_store_writes_nothing() -> Result<(), String> {
+    let dir = isolated_dir("compact-windows-suppressed");
+    let cache = RepoSeamFactCache::at_dir(dir.clone());
+    let key = empty_key();
+    let _suppressed = crate::atomic_file::CacheMutationSuppressed::under(&cache.dir);
+    let status = cache.store_compact_classified_windows(&key, 3, &[], 2, |_| {
+        Err("producer must not run under suppression".into())
+    })?;
+    assert_eq!(status.label, "skipped_cache_read_only");
+    assert!(
+        !cache.sharded_entry_dir(&key).exists(),
+        "a suppressed windows store must not create generation directories"
+    );
+    ignore_remove_dir_all(&dir);
+    Ok(())
+}
+
+#[test]
 fn compact_windows_failed_or_declined_replacements_preserve_prior_entries() -> Result<(), String> {
     for prior_limit in [1, 8] {
         let dir = isolated_dir("compact-windows-preserve");

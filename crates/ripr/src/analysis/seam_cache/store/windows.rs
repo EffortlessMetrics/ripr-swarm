@@ -32,6 +32,14 @@ pub(in crate::analysis::seam_cache) fn publish_compact_windows(
             byte_ceiling,
         );
     }
+    // A read-only caller (#13945) must not take the publication lock, create
+    // generation directories, or sweep and park entries.
+    if crate::atomic_file::cache_mutation_suppressed(&cache.dir) {
+        return Ok(CacheStoreStatus {
+            label: CACHE_READ_ONLY_LABEL.to_string(),
+            advisory: None,
+        });
+    }
     crate::analysis::cancellation::checkpoint()?;
     let _publication_lock = match acquire_publication_lock(cache, key)? {
         PublicationLock::Held(lock) => Some(lock),
