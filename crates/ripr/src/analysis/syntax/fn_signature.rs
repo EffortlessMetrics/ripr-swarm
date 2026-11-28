@@ -997,6 +997,53 @@ pub(crate) fn single_comparison(expression: &str) -> Option<ComparisonFact> {
     })
 }
 
+/// Parse `expression` and return its operands when the whole expression is
+/// exactly one `&&` or `||` (an optional leading `if` is ignored). A chain
+/// (`a && b && c`, `a || b && c`) returns `None`: which of its operators
+/// changed is not recoverable from the text. Parenthesized operands are kept
+/// whole.
+pub(crate) fn single_logical(expression: &str) -> Option<ComparisonFact> {
+    let trimmed = expression.trim();
+    let condition = trimmed.strip_prefix("if ").unwrap_or(trimmed).trim();
+    let wrapped = format!("fn ripr_probe() {{ let _ = {condition}; }}");
+    let parse = parse_clean_source_file(&wrapped)?;
+    let let_stmt = parse
+        .tree()
+        .syntax()
+        .descendants()
+        .find_map(ast::LetStmt::cast)?;
+    // `if (in_stock || paid)` is the same connective behind parentheses.
+    let mut initializer = let_stmt.initializer()?;
+    while let ast::Expr::ParenExpr(paren) = initializer {
+        initializer = paren.expr()?;
+    }
+    let ast::Expr::BinExpr(binary) = initializer else {
+        return None;
+    };
+    let is_logical = |binary: &ast::BinExpr| {
+        binary
+            .op_token()
+            .is_some_and(|token| matches!(token.text(), "&&" | "||"))
+    };
+    if !is_logical(&binary) {
+        return None;
+    }
+    let (lhs, rhs) = (binary.lhs()?, binary.rhs()?);
+    // A `let` operand (`if let Some(x) = y && z`) is a pattern binding, not a
+    // free boolean, so "exactly one is true" would not describe it.
+    if [&lhs, &rhs].iter().any(|operand| {
+        matches!(operand, ast::Expr::LetExpr(_))
+            || matches!(operand, ast::Expr::BinExpr(inner) if is_logical(inner))
+    }) {
+        return None;
+    }
+    Some(ComparisonFact {
+        lhs: lhs.syntax().text().to_string(),
+        op: binary.op_token()?.text().to_string(),
+        rhs: rhs.syntax().text().to_string(),
+    })
+}
+
 /// One argument of a call's argument list, as the parser split it.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct CallArgumentFact {
@@ -1492,6 +1539,30 @@ mod tests {
         );
         assert_eq!(single_comparison("a > 1 && b < 2"), None);
         assert_eq!(single_comparison("is_ready(x)"), None);
+    }
+
+    #[test]
+    fn single_logical_accepts_one_connective_and_refuses_chains() {
+        assert_eq!(
+            single_logical("in_stock && paid").map(|fact| (fact.lhs, fact.op, fact.rhs)),
+            Some(("in_stock".to_string(), "&&".to_string(), "paid".to_string()))
+        );
+        assert_eq!(
+            single_logical("if x > 0 || (a && b)").map(|fact| (fact.op, fact.rhs)),
+            Some(("||".to_string(), "(a && b)".to_string()))
+        );
+        assert_eq!(single_logical("a && b && c"), None);
+        assert_eq!(single_logical("a || b && c"), None);
+        assert_eq!(single_logical("a >= b"), None);
+        assert_eq!(single_logical("if let Some(x) = y && z"), None);
+        assert_eq!(
+            single_logical("if (in_stock || paid)").map(|fact| (fact.lhs, fact.op, fact.rhs)),
+            Some(("in_stock".to_string(), "||".to_string(), "paid".to_string()))
+        );
+        assert_eq!(
+            single_logical("!a || x > 0").map(|fact| (fact.lhs, fact.rhs)),
+            Some(("!a".to_string(), "x > 0".to_string()))
+        );
     }
 
     #[test]

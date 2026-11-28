@@ -91,6 +91,10 @@ impl RepairRoute {
 /// The command runs from any directory: `git -C <root>` anchors it at the
 /// analyzed root, `--literal-pathspecs` keeps names like `src/[ab].py`
 /// literal, and the files are shell-quoted and spelled relative to that root.
+/// A file name holding a line break never reaches it: the dirty-premise
+/// sources refuse such a name
+/// ([`super::repair_attempt::refuse_line_break_paths`]), so the route is
+/// withheld rather than offered without its commit (#16381).
 pub(crate) fn commit_prerequisite_command(root_display: &str, files: &[String]) -> Option<String> {
     if files.is_empty() {
         return None;
@@ -104,6 +108,66 @@ pub(crate) fn commit_prerequisite_command(root_display: &str, files: &[String]) 
         "git -C {} --literal-pathspecs commit -m \"<message>\" -- {files}",
         shell_arg(root_display)
     ))
+}
+
+/// What a surface that prints a seam repair start may print before it, from
+/// the before phase's own dirty-premise preflight (#16381). `ripr pilot`
+/// observes it once per run through [`seam_start_premise`], in `ripr check`'s
+/// order (`seam_route` in `task_first`), so the two screens cannot disagree
+/// about whether the printed start can begin.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) enum SeamStartPremise {
+    /// The tracked production files the preflight names, all inside the
+    /// root. Empty when it names none; that
+    /// does not promise the start begins (the preflight skips deleted files
+    /// and files carrying an inline `#[cfg(test)]` module, which the full
+    /// before-phase check may still refuse).
+    Dirty(Vec<String>),
+    /// No start may be printed: `ripr check`'s one-line advisory for the same
+    /// state (an unreadable premise, or a root whose start refuses whatever
+    /// is committed, #15488).
+    Withheld(String),
+}
+
+/// The [`SeamStartPremise`] at `root`: an unreadable premise offers no start
+/// ("could not validate the prerequisites"), as `ripr check` does. A clean
+/// premise below a subdirectory root that check's gate withholds, or a dirty
+/// premise at any root that is not the exact Git top-level (where the
+/// attempt refuses whatever is committed), names that top-level with check's
+/// subdirectory advisory instead of a commit step and start. Otherwise the
+/// premise is returned as is.
+pub(crate) fn seam_start_premise(root: &Path) -> SeamStartPremise {
+    let Ok(files) = super::repair_attempt::seam_start_dirty_premise(root) else {
+        return SeamStartPremise::Withheld(
+            RepairRouteRefusal::SeamRouteUnavailable {
+                reason: "could not validate the prerequisites for the repair start",
+            }
+            .advisory(""),
+        );
+    };
+    // A clean premise prints no commit step, so it takes check's own gate
+    // (`enclosing_git_top_level_above`): a plain subdirectory root withholds
+    // the start as check does, and a standalone nested Cargo project keeps it
+    // as check does (#15488; that start's disagreement with the attempt is
+    // #16428). A commit step instead promises that the start runs after it,
+    // and the attempt refuses every root that is not the exact Git top-level
+    // with no standalone exception, so a dirty premise asks the attempt's
+    // own check: no commit spelled from such a root clears it, whether the
+    // dirty files sit inside the root or outside it (`../...`, #13962).
+    let top = if files.is_empty() {
+        crate::edit_cage::enclosing_git_top_level_above(root)
+    } else {
+        crate::edit_cage::exact_git_top_level_above(root)
+    };
+    if let Some(top) = top {
+        return SeamStartPremise::Withheld(
+            RepairRouteRefusal::SubdirectoryRoot {
+                top_level: root_path_display(&top),
+            }
+            .advisory(""),
+        );
+    }
+    SeamStartPremise::Dirty(files)
 }
 
 /// The gap-bound repair start the check pipeline computed for a TypeScript

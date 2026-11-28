@@ -297,6 +297,8 @@ pub const TYPESCRIPT_PROJECT_MARKERS: &[&str] = &[
     "deno.json",
     "deno.jsonc",
 ];
+/// Root directories that no-config detection searches for TypeScript
+/// source.
 #[cfg(any(feature = "lang-typescript", test))]
 pub const TYPESCRIPT_SOURCE_DIR_MARKERS: &[&str] = &["src", "tests"];
 
@@ -338,6 +340,8 @@ pub fn detect_javascript_led_root(root: &Path) -> bool {
 /// identity so they cannot drift from the detector.
 #[cfg(any(feature = "lang-typescript", test))]
 pub const JAVASCRIPT_LED_MANIFESTS: &[&str] = &["package.json"];
+/// Source directories that `detect_javascript_led_root` reads below a
+/// package-led root. Beside a `Cargo.toml`, only `src` counts.
 #[cfg(any(feature = "lang-typescript", test))]
 pub const JAVASCRIPT_LED_SOURCE_DIRS: &[&str] = &["src", "test", "tests"];
 
@@ -358,6 +362,10 @@ pub fn javascript_led_source_dir_marker_name(name: &str) -> Option<&'static str>
     canonical_marker_name(JAVASCRIPT_LED_SOURCE_DIRS, name)
 }
 
+/// Whether a file name counts as package source for package-led detection:
+/// detectable TypeScript source or a non-generated JavaScript file, and in
+/// either case not a tooling config (a dotfile or a `*.config.*` name such as
+/// `eslint.config.js` or `vite.config.ts`).
 #[cfg(any(feature = "lang-typescript", test))]
 pub fn is_detectable_package_source_name(name: &str) -> bool {
     let is_javascript = Path::new(name)
