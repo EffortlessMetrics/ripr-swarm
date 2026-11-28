@@ -486,7 +486,7 @@ mod tests {
             format!("lib.rs lint cfg_attr: {tests:?}"),
         )?;
         let file_level =
-            format!("#![cfg_attr(unix, allow(dead_code), warn(clippy::pedantic))]\n{INNER}");
+            format!("#![cfg_attr(unix, forbid(dead_code), warn(clippy::pedantic))]\n{INNER}");
         let workspace = layout("lint-cfg-attr-file", &file_level)?;
         let tests = resolve_in_source(workspace.root(), SELECTOR);
         require(tests == expected, format!("file lint cfg_attr: {tests:?}"))?;
