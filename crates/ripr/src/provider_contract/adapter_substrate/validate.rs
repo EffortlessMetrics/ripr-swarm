@@ -9,10 +9,10 @@ const SYNTAX_ONLY_FALLBACKS: &[&str] = &["syntax_only_in_process"];
 
 impl AdapterSubstrateQualificationV1 {
     /// Checks every rule this contract states: the schema version, nonblank
-    /// identity fields, a current ADR reference, contained and current safety
-    /// references, unique list keys, input-behavior and packaging
-    /// dispositions, dependency and layer integrity, the substrate-class rules,
-    /// and the claim ceilings. When `semantic_digest` is present it must match
+    /// identity fields, an ADR reference that is not stale, safety references
+    /// that are not stale and establish all four containment flags, unique
+    /// list keys, input-behavior and packaging dispositions, dependency and
+    /// layer integrity, the substrate-class rules, and the claim ceilings. When `semantic_digest` is present it must match
     /// the recomputed digest. Returns the first failure.
     ///
     /// It does not open referenced ADRs or safety receipts; their

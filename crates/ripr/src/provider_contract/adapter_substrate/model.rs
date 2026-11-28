@@ -13,16 +13,19 @@ pub enum AdapterSubstrateClassV1 {
     /// Parser linked into the `ripr` process; may not expose a
     /// compiler-resolved layer under a syntax-facts-only ceiling.
     InProcessParser,
-    /// Parser generated at build time; requires a `build_script` and a
-    /// `generated_code` disposition other than `none`.
+    /// Generated parser, whether generated at build time or checked in as
+    /// tables. Requires a nonblank `build_script` disposition (`none` is
+    /// accepted, for checked-in tables) and a `generated_code` disposition
+    /// other than `none`.
     GeneratedParser,
     /// Compiler or language-server index service.
     CompilerIndexService,
     /// Separate helper process; requires a registered syntax-only
     /// `required_fallback` for when the helper is unavailable.
     ExternalHelper,
-    /// Exchanges evidence packets with an external producer; claims are
-    /// limited to packet facts or no local semantic authority.
+    /// Exchanges evidence packets with an external producer. The receipt
+    /// ceiling and every layer ceiling must be `PacketFactsOnly` or
+    /// `NoLocalSemanticAuthority`, and every layer must be syntax-only.
     PacketProducerConsumer,
     /// Reads project build metadata.
     ProjectBuildMetadataReader,
@@ -107,8 +110,9 @@ pub enum PackageInclusionDispositionV1 {
 pub enum SemanticClaimCeilingV1 {
     /// Syntax facts only.
     SyntaxFactsOnly,
-    /// Compiler facts, falling back to syntax; requires a compiler-resolved,
-    /// semantic or hybrid layer, and no syntax-only layer may carry it.
+    /// Compiler facts, falling back to syntax. As the receipt ceiling it
+    /// requires at least one compiler-resolved, semantic or hybrid layer. A
+    /// syntax-only layer may not use it as its own ceiling.
     CompilerFactsWithFallback,
     /// Only facts carried by external packets.
     PacketFactsOnly,
@@ -291,8 +295,9 @@ pub struct SubstrateSupersessionRecordV1 {
 /// Versioned receipt recording how one language adapter's substrate was
 /// qualified and the strongest claims it may support.
 ///
-/// Deserializing performs no checks; call [`Self::validate`] before relying
-/// on a receipt.
+/// Deserializing checks only the shape and rejects unknown fields. Call
+/// [`Self::validate`] for the qualification rules before relying on a
+/// receipt.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct AdapterSubstrateQualificationV1 {
@@ -317,6 +322,7 @@ pub struct AdapterSubstrateQualificationV1 {
     pub substrate_class: AdapterSubstrateClassV1,
     /// When TypeScript and JavaScript share one implementation, both receipts
     /// must repeat the same family id while keeping distinct `language` cells.
+    /// Nonblank when present.
     pub shared_adapter_family_id: Option<String>,
     /// Substrate layers; must be nonempty.
     pub layers: Vec<AdapterSubstrateLayerV1>,
