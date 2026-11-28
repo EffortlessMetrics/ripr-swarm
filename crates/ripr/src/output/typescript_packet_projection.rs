@@ -50,6 +50,12 @@ pub(crate) enum TargetAssertionShape {
         observed_call: String,
         discriminator: String,
     },
+    /// The borrowed expression nests same-callee calls. Boundary evidence
+    /// binds individual positions, not the validity of either call shape.
+    UnverifiedNestedOwner {
+        shape: String,
+        discriminator: String,
+    },
     /// The discriminator's boundary operand is a named constant
     /// (`amount == DISCOUNT_THRESHOLD`) that this projection cannot resolve
     /// to a concrete value, so no observed literal input can be shown to hit
@@ -236,6 +242,7 @@ impl TargetAssertionShape {
         match self {
             Self::Observed { shape } => shape,
             Self::Unreachable { shape, .. }
+            | Self::UnverifiedNestedOwner { shape, .. }
             | Self::UnresolvedBoundary { shape, .. }
             | Self::UnboundOperand { shape, .. }
             | Self::DerivedBoundary { shape, .. }
@@ -249,6 +256,10 @@ impl TargetAssertionShape {
     fn packet_ineligibility_reason(&self) -> Option<String> {
         match self {
             Self::Observed { .. } | Self::DerivedBoundary { .. } | Self::KindInput { .. } => None,
+            Self::UnverifiedNestedOwner { discriminator, .. } => Some(format!(
+                "do not replay the nested call; find a direct owner call with matching arguments \
+                 that reaches `{discriminator}`"
+            )),
             Self::Unreachable {
                 observed_call,
                 discriminator,
@@ -318,6 +329,10 @@ impl TargetAssertionShape {
                  the missing discriminator `{discriminator}` is met by a value whose typeof is \
                  \"{kind}\", written as that value in the call (a type assertion is allowed, \
                  a variable is not). Pass it at the position of the parameter the guard reads."
+            )),
+            Self::UnverifiedNestedOwner { discriminator, .. } => Some(format!(
+                "Do not replay the nested call; find a direct owner call with arguments that \
+                 match its parameters and reach `{discriminator}`."
             )),
             Self::Unreachable { discriminator, .. } => Some(format!(
                 "Do not reuse the observed call input; it cannot reach the missing \
@@ -453,6 +468,21 @@ pub(crate) fn typescript_target_assertion_shape_with_boundary_facts(
     else {
         return observed_shape;
     };
+    let call = parse_static_call_expression(observed)
+        .filter(|call| call_callee_is_owner(&call.callee, owner_name));
+    // #16458: a literal at the boundary does not validate a nested inner or
+    // outer call's argument list. The current finding has no signature proof
+    // for repairing either shape. Never hand off a rewrite of that call.
+    if matches!(family, crate::domain::ProbeFamily::Predicate)
+        && let Some(callee) = unverified_nested_owner_callee(observed, owner_name, call.as_ref())
+    {
+        return TargetAssertionShape::UnverifiedNestedOwner {
+            shape: format!(
+                "expect({callee}(/* boundary input for {discriminator} */)){expected_clause}"
+            ),
+            discriminator: discriminator.to_string(),
+        };
+    }
     // A `typeof` kind test is met by a value of that kind at the guard's
     // parameter, whatever the observed oracle looks like (#11196).
     if let Some(kind) = typeof_kind_of_discriminator(discriminator)
@@ -468,12 +498,9 @@ pub(crate) fn typescript_target_assertion_shape_with_boundary_facts(
             kind: kind.to_string(),
         };
     }
-    let Some(call) = parse_static_call_expression(observed) else {
+    let Some(call) = call else {
         return observed_shape;
     };
-    if !call_callee_is_owner(&call.callee, owner_name) {
-        return observed_shape;
-    }
     let Some(comparison) = parse_static_comparison(discriminator, boundary_parameters) else {
         // A member-path operand (mutable object property, enum member) is
         // never resolved to a value here, so the observed call is not shown
@@ -662,6 +689,186 @@ fn wrapped_owner_call_argument(observed: &str, owner_name: Option<&str>) -> Opti
         parse_static_call_expression(argument)
             .is_some_and(|inner| call_callee_is_owner(&inner.callee, owner_name))
     })
+}
+
+/// Check the whole observation before relying on the positional parser, whose
+/// plain-call grammar excludes type arguments, trivia, and parentheses.
+/// A repeated spelling is only a refusal signal, without a signature claim.
+fn unverified_nested_owner_callee(
+    _observed: &str,
+    _owner_name: Option<&str>,
+    fallback: Option<&StaticCall>,
+) -> Option<String> {
+    #[cfg(feature = "lang-typescript")]
+    {
+        use oxc_allocator::Allocator;
+        use oxc_parser::Parser;
+        use oxc_span::SourceType;
+
+        let allocator = Allocator::default();
+        if let Ok(expression) =
+            Parser::new(&allocator, _observed, SourceType::ts()).parse_expression()
+        {
+            return parsed_nested_owner_callee(&expression, _owner_name);
+        }
+    }
+    // Keep the bounded lexical check when the TypeScript parser is unavailable
+    // or cannot read the observation as an expression.
+    let call = fallback?;
+    call.args
+        .iter()
+        .any(|argument| mentions_same_callee_call(argument, &call.callee))
+        .then(|| call.callee.clone())
+}
+
+#[cfg(feature = "lang-typescript")]
+fn parsed_nested_owner_callee(
+    observed: &oxc_ast::ast::Expression<'_>,
+    owner_name: Option<&str>,
+) -> Option<String> {
+    use oxc_ast::ast::{ArrowFunctionExpression, CallExpression, Expression, Function};
+    use oxc_ast_visit::{Visit, walk};
+    use oxc_syntax::scope::ScopeFlags;
+
+    fn callee_spelling(expression: &Expression<'_>) -> Option<String> {
+        match expression.get_inner_expression() {
+            Expression::Identifier(identifier) => Some(identifier.name.to_string()),
+            Expression::StaticMemberExpression(member) => Some(format!(
+                "{}.{}",
+                callee_spelling(&member.object)?,
+                member.property.name
+            )),
+            _ => None,
+        }
+    }
+
+    struct NestedCall<'s> {
+        callee: &'s str,
+        found: bool,
+    }
+
+    impl<'a> Visit<'a> for NestedCall<'_> {
+        fn visit_call_expression(&mut self, call: &CallExpression<'a>) {
+            self.found |= callee_spelling(&call.callee).as_deref() == Some(self.callee);
+            if self.found {
+                return;
+            }
+            // A function expression used directly as a callee runs now.
+            // Merely constructing a function value (also inside an object or
+            // array) leaves its body and parameter initializers deferred.
+            match call.callee.get_inner_expression() {
+                Expression::ArrowFunctionExpression(arrow) => {
+                    walk::walk_arrow_function_expression(self, arrow);
+                }
+                Expression::FunctionExpression(function) if !function.generator => {
+                    walk::walk_function(self, function, ScopeFlags::Function);
+                }
+                _ => {}
+            }
+            if !self.found {
+                walk::walk_call_expression(self, call);
+            }
+        }
+
+        fn visit_arrow_function_expression(&mut self, _: &ArrowFunctionExpression<'a>) {}
+
+        fn visit_function(&mut self, _: &Function<'a>, _: ScopeFlags) {}
+    }
+
+    fn repeats_callee(call: &CallExpression<'_>, callee: &str) -> bool {
+        let mut nested = NestedCall {
+            callee,
+            found: false,
+        };
+        for argument in &call.arguments {
+            nested.visit_argument(argument);
+            if nested.found {
+                return true;
+            }
+        }
+        false
+    }
+
+    let Expression::CallExpression(outer) = observed.get_inner_expression() else {
+        return None;
+    };
+    let callee = callee_spelling(&outer.callee)?;
+    let outer_matches_owner = call_callee_is_owner(&callee, owner_name);
+    // A repeated bare spelling also makes a borrowed alias shape unsafe.
+    // This refusal does not establish what the bare name resolves to.
+    if (outer_matches_owner || !callee.contains('.')) && repeats_callee(outer, &callee) {
+        return Some(callee);
+    }
+    if outer_matches_owner {
+        return None;
+    }
+    // Follow the existing one-direct-argument wrapper boundary. For a
+    // qualified wrapper, also withhold a repeated bare spelling without
+    // claiming it resolves to the owner. Do not treat an ordinary bare
+    // alias call's nested helper as a borrowed wrapper argument.
+    let qualified_wrapper = callee.contains('.');
+    outer.arguments.iter().find_map(|argument| {
+        let Expression::CallExpression(inner) = argument.as_expression()?.get_inner_expression()
+        else {
+            return None;
+        };
+        let callee = callee_spelling(&inner.callee)?;
+        let borrowed_callee = call_callee_is_owner(&callee, owner_name)
+            || (qualified_wrapper && !callee.contains('.'));
+        (borrowed_callee && repeats_callee(inner, &callee)).then_some(callee)
+    })
+}
+
+/// Look for same-spelled calls inside arguments when syntax is unavailable.
+fn mentions_same_callee_call(argument: &str, callee: &str) -> bool {
+    let mut quote = None;
+    let mut escaped = false;
+    let mut skip_until = 0;
+    for (index, ch) in argument.char_indices() {
+        if index < skip_until {
+            continue;
+        }
+        if let Some(current) = quote {
+            if escaped {
+                escaped = false;
+            } else if ch == '\\' {
+                escaped = true;
+            } else if ch == current {
+                quote = None;
+            }
+            continue;
+        }
+        if matches!(ch, '\'' | '"' | '\u{60}') {
+            quote = Some(ch);
+            continue;
+        }
+        let rest = &argument[index..];
+        if let Some(comment) = rest.strip_prefix("/*") {
+            skip_until = comment
+                .find("*/")
+                .map_or(argument.len(), |end| index + end + 4);
+            continue;
+        }
+        if let Some(comment) = rest.strip_prefix("//") {
+            skip_until = comment
+                .find('\n')
+                .map_or(argument.len(), |end| index + end + 2);
+            continue;
+        }
+        let Some(tail) = rest.strip_prefix(callee).map(str::trim_start) else {
+            continue;
+        };
+        let prefix = &argument[..index];
+        let attached = prefix
+            .chars()
+            .next_back()
+            .is_some_and(|ch| ch.is_alphanumeric() || matches!(ch, '_' | '$'))
+            || prefix.trim_end().ends_with('.');
+        if !attached && (tail.starts_with('(') || tail.starts_with("?.(")) {
+            return true;
+        }
+    }
+    false
 }
 
 /// Split call arguments on top-level commas, respecting nesting and quotes.
@@ -2932,6 +3139,119 @@ pub(crate) mod tests {
                 shape: "expect(format(total)).toBe(expected)".to_string(),
             }
         );
+    }
+
+    #[test]
+    fn nested_owner_packet_withholds_without_callable_shape_evidence() -> Result<(), String> {
+        for call in [
+            // The inner hits the first slot but could be missing later
+            // required arguments. The outer can instead supply extra args.
+            "discount(90, discount(100))",
+            // The outer hits the first slot but its extra argument might
+            // not belong to the owner. Keep this non-ready as well.
+            "discount(100, discount(90))",
+            "discount(unknown, discount(100))",
+            "discount(getTotal(), discount(100))",
+            "discount(90, getTier(), discount(100))",
+            "discount(90, discount(100), discount(100))",
+            "discount(90, discount(100), wrapper(discount(100)))",
+            "discount(90, wrapper(discount(100)))",
+            "discount(90, (discount(100)))",
+            #[cfg(feature = "lang-typescript")]
+            "discount<number>(90, discount(100))",
+            #[cfg(feature = "lang-typescript")]
+            "discount /* outer */ (90, discount(100))",
+            #[cfg(feature = "lang-typescript")]
+            "(discount)(90, discount(100))",
+            #[cfg(feature = "lang-typescript")]
+            "(discount(90, discount(100)))",
+            #[cfg(feature = "lang-typescript")]
+            "discount(90, (() => discount(100))())",
+            #[cfg(feature = "lang-typescript")]
+            "price(90, price(100))",
+            #[cfg(feature = "lang-typescript")]
+            "Math.max(discount<number>(90, discount(100)), 90)",
+            #[cfg(feature = "lang-typescript")]
+            "discount(90, { immediate: (function () { return discount(100); })() })",
+        ] {
+            let mut finding = boundary_finding(call, "90", "total == 100");
+            finding.probe.owner = Some(SymbolId("typescript:src/price.ts::discount".to_string()));
+            finding
+                .evidence
+                .push(boundary_input_fact("total", 0, "100", 100));
+            let record = typescript_gap_record_for(&finding)
+                .ok_or_else(|| "preview record must project".to_string())?;
+            let callee = if call.starts_with("price(") {
+                "price"
+            } else {
+                "discount"
+            };
+            let placeholder =
+                format!("expect({callee}(/* boundary input for total == 100 */)).toBe(expected)");
+            assert_eq!(
+                record
+                    .repair_route
+                    .as_ref()
+                    .and_then(|route| route.assertion_shape.as_deref()),
+                Some(placeholder.as_str()),
+                "{call}"
+            );
+            let error = validate_agent_gap_record_packet(&record)
+                .err()
+                .ok_or_else(|| {
+                    "an unverified nested call must not produce a ready packet".to_string()
+                })?;
+            assert!(error.contains("do not replay the nested call"), "{error}");
+            assert!(error.contains("total == 100"), "{error}");
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn nested_owner_packet_guard_leaves_ordinary_multi_argument_calls_alone() {
+        let fact = TypeScriptBoundaryInputFact {
+            parameter: "total".to_string(),
+            index: 0,
+            operand: "100".to_string(),
+            value: 100,
+        };
+        for (call, expected) in [
+            ("discount(90, getTier())", "discount(100, getTier())"),
+            #[cfg(feature = "lang-typescript")]
+            (
+                "discount(90, () => discount(100))",
+                "discount(100, () => discount(100))",
+            ),
+            #[cfg(feature = "lang-typescript")]
+            (
+                "discount(90, { deferred: () => discount(100) })",
+                "discount(100, { deferred: () => discount(100) })",
+            ),
+            #[cfg(feature = "lang-typescript")]
+            (
+                "discount(90, [() => discount(100)])",
+                "discount(100, [() => discount(100)])",
+            ),
+            (
+                "discount(90, other.discount(100))",
+                "discount(100, other.discount(100))",
+            ),
+            (
+                "discount(90, wrapper('discount(100)'))",
+                "discount(100, wrapper('discount(100)'))",
+            ),
+            ("Math.max(discount(100), 100)", "discount(100)"),
+        ] {
+            let target = typescript_target_assertion_shape_with_boundary_input(
+                &ProbeFamily::Predicate,
+                call,
+                Some("total == 100"),
+                Some("discount"),
+                Some(&fact),
+            );
+            assert_eq!(target.shape(), format!("expect({expected}).toBe(expected)"));
+            assert!(target.packet_ineligibility_reason().is_none(), "{target:?}");
+        }
     }
 
     #[test]

@@ -23,7 +23,10 @@ Analyze the committed change in `diff.patch` with the TypeScript adapter.
 
 The finding stays `weakly_exposed`. The boundary input reaches the owner, but
 no assertion observes the owner call that receives it, so neither assertion
-witnesses the changed comparison.
+witnesses the changed comparison. The advisory packet is not ready: do not
+replay the nested call. Find a direct call with arguments that match the
+owner's signature and reach `total == 100`. The observed argument positions
+are not proof of the complete signature.
 
 The honesty corpus independently rejects promotion to `exposed`, even if the
 golden report is regenerated. The adapter test

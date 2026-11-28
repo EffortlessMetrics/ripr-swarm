@@ -1,0 +1,11 @@
+[[extend]]
+id = "RIPR-SPEC-0224"
+tests = [
+  "crates/ripr/src/output/typescript_packet_projection.rs::nested_owner_packet_withholds_without_callable_shape_evidence",
+  "crates/ripr/src/output/typescript_packet_projection.rs::nested_owner_packet_guard_leaves_ordinary_multi_argument_calls_alone",
+  "crates/ripr/tests/cli_smoke/typescript_nested_owner_packet.rs::nested_owner_packet_refuses_unverified_calls",
+  "fixtures/typescript_vitest_wrapped_owner_call_boundary",
+]
+code = [
+  "crates/ripr/src/output/typescript_packet_projection.rs",
+]
