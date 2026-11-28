@@ -1064,6 +1064,72 @@ fn macro_binding_ambiguities(
     .0
 }
 
+/// The binding sites of `trusted` in `source`, reading a call of any
+/// `context` name as that standard macro unless this file binds it (#16462).
+/// [`trusted_macro_binding_sites`] reads only `trusted` calls that way, so a
+/// verified `anyhow!(format!(..))` elsewhere looks opaque to a query that
+/// does not ask about `anyhow`, and its `format` token reads as a binding.
+/// The `context` names' own sites decide which of their calls stay opaque;
+/// they are not reported.
+pub(crate) fn trusted_macro_binding_sites_in_context(
+    source: &str,
+    packages: &BTreeSet<String>,
+    trusted: &[&str],
+    context: &[&str],
+    module_resolved: &dyn Fn(usize, &str) -> bool,
+    drop_in_verified: &dyn Fn(&str) -> bool,
+) -> Vec<(String, MacroBindingSite)> {
+    let extra: Vec<&str> = context
+        .iter()
+        .copied()
+        .filter(|name| !trusted.contains(name))
+        .collect();
+    if extra.is_empty() || !macro_binding_scan_needed(source, trusted) {
+        return trusted_macro_binding_sites(
+            source,
+            packages,
+            trusted,
+            module_resolved,
+            drop_in_verified,
+        );
+    }
+    let Some(parse) = parse_clean_source_file(source) else {
+        return trusted_macro_binding_sites(
+            source,
+            packages,
+            trusted,
+            module_resolved,
+            drop_in_verified,
+        );
+    };
+    let binding_free = BindingFreeFileIndex::collect(parse.tree().syntax());
+    let scan = |names: &[&str], known: &[&str], known_bound: &BoundNames| {
+        macro_binding_sites_in_tree(
+            source,
+            packages,
+            &ScanNames {
+                trusted: names,
+                known,
+                known_bound,
+            },
+            &BTreeSet::new(),
+            module_resolved,
+            drop_in_verified,
+            &binding_free,
+        )
+    };
+    let mut extra_bound = BoundNames::default();
+    if macro_binding_scan_needed(source, &extra) {
+        for (name, site) in scan(&extra, &extra, &BoundNames::default()) {
+            if !confined_pass_through_site(&site) {
+                extra_bound.insert(&name, site.scope_bytes);
+            }
+        }
+    }
+    let known: Vec<&str> = trusted.iter().copied().chain(extra).collect();
+    scan(trusted, &known, &extra_bound)
+}
+
 /// Returns the admission union and per-name disclosure queries. Their trust
 /// contexts differ; only the parse and binding-free wrapper index are shared.
 pub(crate) fn trusted_macro_binding_site_sets(

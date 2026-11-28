@@ -846,9 +846,11 @@ pub(crate) struct CachedSeamLimitInfo {
 /// the generics, including typed `self: &Self` receivers (#16352); the
 /// history-sync branch independently used `1.218` for composing its import
 /// (1.205) with protected swarm main (1.217) and public 352f9d796f (#16016).
+/// `1.219`: the transparent rebinding scan reads every transparent
+/// name as its standard macro unless an indexed file binds it (#16462).
 /// `1.222`: join both `1.218` meanings — the history-sync import composition
 /// and receiver-kind reading after generics — with swarm main through
-/// b1b9ee158a (#16016); 1.219–1.221 are claimed by concurrent lanes.
+/// eb93827b32 (#16016); 1.220–1.221 are claimed by concurrent lanes.
 pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.222";
 /// `0.2` → `0.3`: same semantic transition as the outer cache (#3273 /
 /// #3286) — sharded entries derive from the same facts and cannot bypass
@@ -1112,6 +1114,7 @@ pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.222";
 /// `0.220`: same receiver kind reading after generics as full `1.218`
 /// (#16352); the history-sync branch independently used `0.220` to match
 /// its composed-import full `1.218` (#16016).
+/// `0.221`: same transparent-context scan as full `1.219` (#16462).
 /// `0.224`: match joined full `1.222` (#16016).
 const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.224";
 
@@ -1378,6 +1381,7 @@ const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.224";
 /// `0.220`: same receiver kind reading after generics as full `1.218`
 /// (#16352); the history-sync branch independently used `0.220` to match
 /// its composed-import full `1.218` (#16016).
+/// `0.221`: same transparent-context scan as full `1.219` (#16462).
 /// `0.224`: match joined full `1.222` (#16016).
 pub(crate) const COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.224";
 
@@ -6082,7 +6086,8 @@ mod tests {
         // 1.216 -> 1.217: rootless groups and bare-invocation body scoping (#16388).
         // 1.217 -> 1.218: receiver kinds read after generics (#16352);
         // the history-sync branch independently composed its import at 1.218.
-        // 1.218 -> 1.222: join both 1.218 meanings with swarm main (#16016).
+        // 1.218 -> 1.219: verified calls of unrequested names stay known (#16462).
+        // 1.219 -> 1.222: join both 1.218 meanings with swarm main (#16016).
         assert_eq!(CACHE_SCHEMA_VERSION, "1.222");
         // 1.168 -> 1.169: plain `assert_eq!` literal withhold in the audit (#13005).
         // 0.12 -> 0.13 through 0.14 / 0.15 / 0.16 / 0.17 / 0.18: same
@@ -6282,7 +6287,8 @@ mod tests {
         // 0.218 -> 0.219: same rootless-group and body-scope reading as full 1.217 (#16388).
         // 0.219 -> 0.220: same receiver kind reading after generics as full 1.218 (#16352);
         // the history-sync branch independently matched its composed import at 0.220.
-        // 0.220 -> 0.224: match joined full 1.222 (#16016).
+        // 0.220 -> 0.221: same transparent-context scan as full 1.219 (#16462).
+        // 0.221 -> 0.224: match joined full 1.222 (#16016).
         assert_eq!(SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.224");
         assert_eq!(COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.224");
         // 0.170 -> 0.171: same plain `assert_eq!` literal withhold as full 1.169 (#13005).
@@ -6811,6 +6817,7 @@ mod tests {
             // Both colliding 1.218/0.220 meanings must miss the joined 1.222.
             ("history-sync-composition", "1.218", "0.220"),
             ("receiver-kind-after-generics", "1.218", "0.220"),
+            ("transparent-context-scan", "1.219", "0.221"),
         ] {
             for compact in [false, true] {
                 for sharded in [false, true] {
