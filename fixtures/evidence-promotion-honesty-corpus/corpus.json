@@ -3303,6 +3303,62 @@
       ]
     },
     {
+      "id": "typescript_vitest_barrel_alias_boundary",
+      "language": "typescript",
+      "tier": "pure",
+      "source_fixture": "fixtures/typescript_vitest_barrel_alias_boundary",
+      "vector": "barrel_alias_local_witnesses_pinned_boundary_control",
+      "probe_family": "predicate",
+      "assertions": [
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "expected_finding_count",
+          "count": 1
+        },
+        {
+          "type": "must_promote"
+        },
+        {
+          "type": "expected_class",
+          "class": "exposed"
+        },
+        {
+          "type": "expected_finding_owner",
+          "owner": "typescript:src/price.ts::discount"
+        }
+      ]
+    },
+    {
+      "id": "typescript_vitest_renamed_reexport_boundary",
+      "language": "typescript",
+      "tier": "pure",
+      "source_fixture": "fixtures/typescript_vitest_renamed_reexport_boundary",
+      "vector": "renamed_reexport_local_witnesses_pinned_boundary_control",
+      "probe_family": "predicate",
+      "assertions": [
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "expected_finding_count",
+          "count": 1
+        },
+        {
+          "type": "must_promote"
+        },
+        {
+          "type": "expected_class",
+          "class": "exposed"
+        },
+        {
+          "type": "expected_finding_owner",
+          "owner": "typescript:src/price.ts::discount"
+        }
+      ]
+    },
+    {
       "id": "typescript_floating_promise_propagation_static_unknown",
       "language": "typescript",
       "tier": "pure",

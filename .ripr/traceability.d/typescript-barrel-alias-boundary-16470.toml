@@ -1,0 +1,15 @@
+[[extend]]
+id = "RIPR-SPEC-0224"
+tests = [
+  "crates/ripr/src/analysis/language/typescript/reexport_boundary_witness_tests.rs::a_barrel_alias_witnesses_the_exact_boundary",
+  "crates/ripr/src/analysis/language/typescript/reexport_boundary_witness_tests.rs::a_renamed_reexport_witnesses_the_exact_boundary",
+  "crates/ripr/src/analysis/language/typescript/reexport_boundary_witness_tests.rs::a_two_hop_star_chain_alias_witnesses_the_exact_boundary",
+  "crates/ripr/src/analysis/language/typescript/reexport_boundary_witness_tests.rs::a_barrel_alias_keeps_the_boundary_guards",
+  "crates/ripr/src/analysis/language/typescript/reexport_boundary_witness_tests.rs::a_destructured_shadow_of_a_barrel_local_is_not_related",
+  "fixtures/typescript_vitest_barrel_alias_boundary",
+  "fixtures/typescript_vitest_renamed_reexport_boundary",
+]
+code = [
+  "crates/ripr/src/analysis/language/typescript/classifier.rs",
+  "crates/ripr/src/analysis/language/typescript/related_tests.rs",
+]

@@ -1,0 +1,2 @@
+<!-- section: Fixed -->
+- A TypeScript or JavaScript test that pins the changed boundary now reads `exposed` when it calls the function through a barrel under another name (`import { discount as d } from '../src'`) or through a renamed re-export (`export { discount as applyDiscount } from './price'`). It read `weakly_exposed` before. A destructuring inside the test (`const { d } = helpers`) now hides a name imported through a barrel, so that test is no longer linked to the function (#16470).

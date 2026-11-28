@@ -3165,46 +3165,9 @@ pub(crate) fn owner_call_relation(
     // (fail-closed). The index also carries the owner file's OWN rename exports
     // (`export { ownerName as alias }`), so `import { alias } from
     // './owner-file'` resolves back to the owner name (#4104-B).
-    if test.imports_in_file.iter().any(|import| {
-        if import.namespace {
-            return false; // namespace imports don't map cleanly to a single exported name
-        }
-        let Some(imported_name) = import.imported.as_deref() else {
-            return false;
-        };
-        if imported_name == "default"
-            && (!owner.exported_as_default || owner.commonjs_default_export)
-        {
-            return false;
-        }
-        // The local alias in the test is what gets called; check the call site.
-        let local = &import.local;
-        if !contains_call_name(&test.body_text, local) {
-            return false;
-        }
-        // Shadow guard (#4102): a test-body declaration of the local name
-        // reaches the shadow, not the re-exported owner.
-        if local_identifier_declared_in_test_body(&test.body_text, local)
-            || (imported_name == "default"
-                && (local_destructured_in_test_body(&test.body_text, local)
-                    || body_declares_class_named(&test.body_text, local)))
-        {
-            return false;
-        }
-        // An enclosing `describe`/`beforeEach` binding of the local name
-        // shadows the import for every test in that scope.
-        if enclosing_scope_shadows(test, local) {
-            return false;
-        }
-        reexport_index.resolve_to_owner(
-            test,
-            &import.source,
-            imported_name,
-            owner,
-            alias_map,
-            workspace_root,
-        )
-    }) {
+    if !reexport_owner_call_locals(test, owner, reexport_index, alias_map, workspace_root)
+        .is_empty()
+    {
         return Some(TypeScriptRelationKind::ReExportChainFollowed);
     }
     // ES namespace import of a barrel, `lib.owner(...)` (#15923).
@@ -3228,6 +3191,68 @@ pub(crate) fn owner_call_relation(
         return Some(TypeScriptRelationKind::ReExportChainFollowed);
     }
     None
+}
+
+/// The locals of every named or default import that reaches `owner` through a
+/// bounded re-export chain (RIPR-SPEC-0095): a barrel (`export { owner } from`,
+/// `export * from`, a directory `index`), a renamed re-export (`export { owner
+/// as alias } from`), or the owner file's own rename export. Each local is
+/// called as `local(` in the body and not shadowed. These calls give the test
+/// its `ReExportChainFollowed` relation, and the predicate boundary witness
+/// reads the same locals as owner spellings (#16470): one binding rule.
+pub(crate) fn reexport_owner_call_locals<'t>(
+    test: &'t TypeScriptTest,
+    owner: &TypeScriptOwner,
+    reexport_index: &ReExportIndex,
+    alias_map: Option<&TsAliasMap>,
+    workspace_root: Option<&Path>,
+) -> Vec<&'t str> {
+    test.imports_in_file
+        .iter()
+        .filter(|import| {
+            if import.namespace {
+                return false; // namespace imports don't map cleanly to a single exported name
+            }
+            let Some(imported_name) = import.imported.as_deref() else {
+                return false;
+            };
+            if imported_name == "default"
+                && (!owner.exported_as_default || owner.commonjs_default_export)
+            {
+                return false;
+            }
+            // The local alias in the test is what gets called; check the call site.
+            let local = &import.local;
+            if !contains_call_name(&test.body_text, local) {
+                return false;
+            }
+            // Shadow guard (#4102): a test-body declaration of the local name
+            // reaches the shadow, not the re-exported owner.
+            // A body-local destructuring that names the local (`const { d }
+            // = helpers`) shadows it too, for a named import as for a default
+            // one (#16470).
+            if local_identifier_declared_in_test_body(&test.body_text, local)
+                || local_destructured_in_test_body(&test.body_text, local)
+                || (imported_name == "default" && body_declares_class_named(&test.body_text, local))
+            {
+                return false;
+            }
+            // An enclosing `describe`/`beforeEach` binding of the local name
+            // shadows the import for every test in that scope.
+            if enclosing_scope_shadows(test, local) {
+                return false;
+            }
+            reexport_index.resolve_to_owner(
+                test,
+                &import.source,
+                imported_name,
+                owner,
+                alias_map,
+                workspace_root,
+            )
+        })
+        .map(|import| import.local.as_str())
+        .collect()
 }
 
 /// Whether the test calls an exported name of the owner's module that reaches
