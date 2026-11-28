@@ -1,0 +1,9 @@
+[[extend]]
+id = "RIPR-SPEC-0224"
+tests = [
+  "crates/ripr/src/analysis/language/typescript/predicate_activation_tests.rs::only_the_assertions_own_expected_side_vetoes_its_witness",
+  "fixtures/typescript_vitest_sibling_expected_side_boundary",
+]
+code = [
+  "crates/ripr/src/analysis/language/typescript/classifier.rs",
+]

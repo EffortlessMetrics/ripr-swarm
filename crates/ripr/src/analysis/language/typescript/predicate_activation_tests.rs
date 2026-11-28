@@ -395,6 +395,50 @@ fn wrapped_or_nested_owner_call_does_not_witness() -> Result<(), String> {
     Ok(())
 }
 
+/// #16458: only an assertion's own expected side can veto its witness. A
+/// sibling with the same observed call and an owner-calling matcher
+/// (`toBeLessThan(applyDiscount(200))`, or a tautology) leaves the pinned
+/// assertion witnessed; an assertion whose own matcher calls the owner never
+/// witnesses.
+#[test]
+fn only_the_assertions_own_expected_side_vetoes_its_witness() -> Result<(), String> {
+    for (title, body) in [
+        (
+            "sibling ordering matcher",
+            "  expect(applyDiscount(100)).toBe(100);\n  expect(applyDiscount(100)).toBeLessThan(applyDiscount(200));",
+        ),
+        (
+            "sibling tautology",
+            "  expect(applyDiscount(100)).toBe(90);\n  expect(applyDiscount(100)).toBe(applyDiscount(99));",
+        ),
+    ] {
+        let evaluated = evaluate(&DISCOUNT, &one_test(title, IMPORT_DISCOUNT, body), true)?;
+        assert_eq!(evaluated.activation(title)?, A::Witnessed, "{title}");
+        assert!(evaluated.witnessed, "{title}");
+    }
+
+    let title = "own expected side";
+    let source = one_test(
+        title,
+        IMPORT_DISCOUNT,
+        "  expect(applyDiscount(100)).toBe(applyDiscount(99));",
+    );
+    let tests = extract_tests(Path::new(TEST_FILE), &source);
+    assert_eq!(
+        tests
+            .iter()
+            .flat_map(|test| test.assertions.iter())
+            .map(|assertion| assertion.dynamic_expected_text.clone())
+            .collect::<Vec<_>>(),
+        vec![Some("applyDiscount(99)".to_string())],
+        "the extractor must carry the assertion's own expected side"
+    );
+    let evaluated = evaluate(&DISCOUNT, &source, true)?;
+    assert_ne!(evaluated.activation(title)?, A::Witnessed);
+    assert!(!evaluated.witnessed);
+    Ok(())
+}
+
 /// A body-local `ns` at the boundary is not an owner call. The real owner
 /// pin is off the boundary, but `const ns = fakePricing()` keeps the body
 /// from a definite miss, so the row stays unresolved rather than witnessed.
