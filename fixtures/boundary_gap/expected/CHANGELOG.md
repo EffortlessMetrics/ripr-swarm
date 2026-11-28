@@ -1,16 +1,15 @@
 # Golden Output Changes
 
-## Pending — corpus cache generation 1.221 for qualified pins and peeled bool payloads (#16400)
+## Pending — corpus cache generation 1.220 for unselected match arms (#15359)
 
-A path-qualified pin such as `mycrate::fee(4)` is now read as unpinned, and a
-bool payload peeled from `Some`, `Ok` or `Err` is now compared, which changes
-classified output for those shapes and bumps the analyzer cache schema to
-1.221. Move the portable unchanged-attempt snapshots to 1.221, recompute the
+A match arm whose selecting input no visible test passes now reads activation
+unknown instead of strongly gripped, which bumps the analyzer cache schema to
+1.220. Move the portable
+unchanged-attempt snapshots to 1.220, recompute the
 `raw_json_placeholder_v1` artifact content commitment, then the dependent
 verify commitments and receipt byte hashes. Weak grip, unchanged movement,
-historical currentness, incomplete receipt status and fail-closed
-first-action routing remain the same. No other fixture output is
-regenerated.
+historical currentness, incomplete receipt status and fail-closed first-action
+routing remain unchanged. No other fixture output is regenerated.
 
 ## Pending — corpus cache generation 1.219 for verified calls outside the rebinding query (#16462)
 

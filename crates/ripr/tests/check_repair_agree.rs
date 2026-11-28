@@ -988,9 +988,9 @@ fn sibling_err_variant_pin_leaves_the_return_value_seam_weak() -> Result<(), Str
 }
 
 /// #15278: the regex `is_word_byte` shape. Tests elsewhere in the repository
-/// pin the whole match seam, so the seam inventory reads it as already gripped,
-/// while `ripr check` reads the changed arm as weak (no test input selects the
-/// changed digit range). Bare repair must not say "the existing tests already
+/// pin the whole match seam, so the seam inventory used to read the arm as
+/// already gripped, while `ripr check` reads the changed arm as weak (no test
+/// input selects the changed digit range). Bare repair must not say "the existing tests already
 /// check it, and `ripr check` reports the same" while check reports a gap.
 const WORD_OLD: &str = "pub fn is_word_byte(c: u8) -> bool {\n    match c {\n        b'_' | b'0'..=b'9' | b'a'..=b'z' | b'A'..=b'Z' => true,\n        _ => false,\n    }\n}\n\n#[cfg(test)]\nmod tests {\n    use super::*;\n\n    #[test]\n    fn word_byte() {\n        assert!(is_word_byte(b'a'));\n        assert!(!is_word_byte(b'-'));\n    }\n}\n";
 const WORD_TEST: &str = "use ar::is_word_byte;\n\n#[test]\nfn pins() {\n    assert_eq!(is_word_byte(b'a'), true);\n    assert_eq!(is_word_byte(b'-'), false);\n}\n";
@@ -1012,10 +1012,14 @@ fn repair_never_says_check_reports_the_same_while_check_reports_a_weak_gap() -> 
             && !repair.contains("already check it"),
         "repair must not call a change check reads as weak already checked:\n{repair}"
     );
+    // Since #15359 no test input is read as selecting the changed arm, so the
+    // arm is no longer read as gripped and repair names the missing evidence
+    // instead of contradicting check.
     assert!(
-        repair.contains("`ripr check` reads this changed code as weak")
-            && repair.contains("write or strengthen the test by hand"),
-        "repair must name check's reading and the by-hand next step:\n{repair}"
+        repair.contains("repair route not ready")
+            && repair.contains("a test input that reaches the changed code")
+            && repair.contains("Check by hand"),
+        "repair must name the missing evidence and the by-hand next step:\n{repair}"
     );
     Ok(())
 }
