@@ -356,8 +356,10 @@ fn a_macro_that_may_write_the_method_withholds_the_relation() -> Result<(), Stri
 fn a_raw_trait_declaration_counts_with_its_plain_namesake() -> Result<(), String> {
     let raw = BUF.replacen("pub trait BufMut", "pub trait r#BufMut", 1);
     assert_ne!(raw, BUF, "the fixture must declare the raw trait");
-    let namesake = "pub mod other {\n    pub trait BufMut {\n        forward!();\n    }\n}\n\
-        macro_rules! forward {\n    () => {\n        fn advance_mut(self, _cnt: usize) {}\n    };\n}\n";
+    // `forward!` is defined before its use and writes a default that
+    // compiles in a trait body, so the namesake could really supply one.
+    let namesake = "macro_rules! forward {\n    () => {\n        fn advance_mut(&mut self, _cnt: usize) {}\n    };\n}\n\
+        pub mod other {\n    pub trait BufMut {\n        forward!();\n    }\n}\n";
     assert!(direct(&raw, BYTES_MUT_ADVANCE, TYPED_CALL)?);
     for root in [BUF, raw.as_str()] {
         assert!(
