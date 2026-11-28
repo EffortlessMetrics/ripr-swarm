@@ -525,7 +525,8 @@ impl MacroVisibility {
             {
                 true
             }
-            // `src/bin/build.rs` is a binary named `build`.
+            // `src/bin/build.rs` is a binary (Cargo needs an explicit
+            // `[[bin]]` name for it, since `build` is reserved).
             Some("build.rs") => {
                 file.parent().is_some_and(is_root_directory)
                     || !file

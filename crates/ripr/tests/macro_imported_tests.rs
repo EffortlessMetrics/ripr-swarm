@@ -358,9 +358,14 @@ fn a_table_from_a_binary_roots_macro_use_module_reads_like_the_hand_written_test
     assert_ne!(misplaced.class, ExposureClass::Exposed, "{misplaced:?}");
 
     // The path route needs the binary to be its own crate root, also for
-    // `src/bin/build.rs`, a binary named `build` rather than a build script.
-    for root in ["src/bin/tool.rs", "src/bin/build.rs"] {
-        let by_path = TempRepo::create(&[
+    // `src/bin/build.rs`. Cargo forbids a binary named `build`, so that file
+    // is a binary only through an explicit `[[bin]]` with another name.
+    let builder_manifest = "[package]\nname = \"macro-imported-tests\"\nversion = \"0.0.0\"\nedition = \"2024\"\n\n[[bin]]\nname = \"builder\"\npath = \"src/bin/build.rs\"\n\n[workspace]\n";
+    for (root, manifest) in [
+        ("src/bin/tool.rs", None),
+        ("src/bin/build.rs", Some(builder_manifest)),
+    ] {
+        let mut files = vec![
             (
                 root,
                 format!(
@@ -368,8 +373,11 @@ fn a_table_from_a_binary_roots_macro_use_module_reads_like_the_hand_written_test
                 ),
             ),
             ("src/bin/common/mod.rs", exported_table()),
-        ])?
-        .predicate()?;
+        ];
+        if let Some(manifest) = manifest {
+            files.push(("Cargo.toml", manifest.to_string()));
+        }
+        let by_path = TempRepo::create(&files)?.predicate()?;
         assert_eq!(by_path.class, ExposureClass::Exposed, "{root}: {by_path:?}");
     }
     Ok(())

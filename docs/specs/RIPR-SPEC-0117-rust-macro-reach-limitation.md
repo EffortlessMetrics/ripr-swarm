@@ -358,7 +358,7 @@ lines (a multi-line string literal) is left out, a file that does not parse
 cleanly resolves nothing, and only a file that spells `name!` for a macro whose
 definition mentions `test` is resolved at all. `build.rs`, `main.rs`,
 `lib.rs` and a file directly in `src/bin/` (including `src/bin/build.rs`, a
-binary rather than a build script) are crate roots (#10298). Parents are followed up to four modules, and
+binary under an explicit `[[bin]]` name rather than a build script) are crate roots (#10298). Parents are followed up to four modules, and
 `#[macro_use]` modules down to about four.
 
 A text precheck may avoid the generator-call parse only when it cannot hide
