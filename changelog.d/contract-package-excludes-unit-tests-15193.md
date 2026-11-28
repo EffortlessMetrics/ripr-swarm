@@ -1,0 +1,2 @@
+<!-- section: Internal / CI -->
+- The published `ripr-contract` package now excludes out-of-line unit-test files (`src/**/tests.rs`, `src/**/tests/**`, `src/**/*_tests.rs`), matching `ripr`. Two contract test modules move out of line, and `cargo xtask check-architecture` refuses any new inline `#[cfg(test)]` module in either published crate, against per-file ceilings in `policy/inline-test-modules.txt` (#15193).

@@ -17,6 +17,40 @@ spec -> test -> code
 See [Spec-test-code traceability](SPEC_TEST_CODE.md) for the expected mapping.
 See [Test taxonomy](TEST_TAXONOMY.md) for required proof levels by change type.
 
+## Where unit tests live
+
+Unit tests in the published crates (`crates/ripr/src`, `crates/ripr-contract/src`)
+live in owner-local out-of-line modules, not inline in the production file:
+
+```rust
+// crates/ripr/src/output/foo.rs
+#[cfg(test)]
+mod tests;
+```
+
+The body goes in the file Rust resolves for that declaration,
+`crates/ripr/src/output/foo/tests.rs` (`<dir>/tests.rs` for a `mod.rs`). The
+module path (`output::foo::tests::name`), `use super::*;` and private access are
+the same as an inline module. A module with another name uses
+`#[path = "<name>_tests.rs"]` so its file matches the manifest exclusions.
+
+Cargo packages whole files, so an inline `mod tests { .. }` ships in the
+`.crate` even though no ordinary build compiles it. Both manifests leave out
+`src/**/tests.rs`, `src/**/tests/**` and `src/**/*_tests.rs` (#15193):
+`ripr-contract` through `exclude`, `ripr` through negated `include` patterns
+that re-include the production modules whose names end in `_tests.rs`. In an
+out-of-line test file, relative `include_str!` paths resolve from the test
+file's directory, one level below the owner.
+
+A module gated `cfg(any(test, feature = ..))`, such as the `test-fixtures`
+support in `ripr-contract`, also compiles outside tests. Its file must keep a
+name the manifest packages, or a feature build of the published crate fails.
+
+`cargo xtask check-architecture` refuses a new inline test module. Existing ones
+are counted per file in `policy/inline-test-modules.txt`, and the count only
+falls: after moving a module out of line, lower or remove its entry. The check
+refuses inline bodies only; choosing an excluded file name is up to the move.
+
 Prepare the pinned fallible owner-return fixture before offline analyzer tests
 or fixture/golden checks. Its anyhow 1.0.100 dependency is separate from the
 workspace dependency graph; a workspace build does not fetch it. Cargo performs
