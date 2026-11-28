@@ -1539,6 +1539,206 @@ fn owners_behind_a_non_test_cfg_are_refused() -> Result<(), String> {
 }
 
 #[test]
+fn logical_connective_names_the_inputs_that_split_and_from_or() -> Result<(), String> {
+    // #15281: `in_stock && paid` -> `in_stock || paid`. Both operands true
+    // satisfies the changed predicate and passes under either connective; the
+    // discriminating inputs make exactly one operand true.
+    const SOURCE: &str = "pub fn can_ship(in_stock: bool, paid: bool) -> bool {
+    in_stock || paid
+}
+";
+    let seam = seam_at(
+        "src/lib.rs",
+        SOURCE,
+        "in_stock || paid",
+        SeamKind::PredicateBoundary,
+        boundary("in_stock || paid"),
+    )?;
+    let stub = rust_test_stub(&seam, None, SOURCE, None).map_err(|r| r.reason().to_string())?;
+    let split = "exactly one of `in_stock` and `paid` is true (where `||` and `&&` differ)";
+    assert!(
+        stub.text
+            .contains(&format!("choose `in_stock` so that {split}")),
+        "{}",
+        stub.text
+    );
+    assert!(
+        stub.text
+            .contains(&format!("choose `paid` so that {split}")),
+        "{}",
+        stub.text
+    );
+    assert!(
+        stub.text.contains(&format!("when {split}")),
+        "{}",
+        stub.text
+    );
+    assert!(
+        !stub.text.contains("so that in_stock || paid"),
+        "inputs satisfying the changed predicate itself do not separate `||` from `&&`: {}",
+        stub.text
+    );
+
+    // A chain keeps the plain description: which connective changed is not
+    // recoverable from its text.
+    const CHAIN: &str = "pub fn can_ship(a: bool, b: bool, c: bool) -> bool {
+    a && b && c
+}
+";
+    let seam = seam_at(
+        "src/lib.rs",
+        CHAIN,
+        "a && b && c",
+        SeamKind::PredicateBoundary,
+        boundary("a && b && c"),
+    )?;
+    let stub = rust_test_stub(&seam, None, CHAIN, None).map_err(|r| r.reason().to_string())?;
+    assert!(
+        stub.text.contains("choose `a` so that a && b && c"),
+        "{}",
+        stub.text
+    );
+    assert!(!stub.text.contains("exactly one of"), "{}", stub.text);
+    Ok(())
+}
+
+#[test]
+fn relational_boundary_over_receiver_state_names_the_receiver_state() -> Result<(), String> {
+    // #15281: `Buf::new()` builds `len == 0`; filling only the expected value
+    // never reaches `len == MAX`, where `>=` and `>` differ.
+    const SOURCE: &str = "pub const MAX: usize = 8;
+
+pub struct Buf {
+    pub len: usize,
+}
+
+impl Buf {
+    pub fn new() -> Self {
+        Buf { len: 0 }
+    }
+
+    pub fn is_full(&self) -> bool {
+        self.len > MAX
+    }
+}
+";
+    let seam = seam_at(
+        "src/lib.rs",
+        SOURCE,
+        "self.len > MAX",
+        SeamKind::PredicateBoundary,
+        boundary("self.len > MAX"),
+    )?;
+    let stub = rust_test_stub(&seam, None, SOURCE, None).map_err(|r| r.reason().to_string())?;
+    assert!(
+        stub.text.contains("let subject: Buf = Buf::new();"),
+        "{}",
+        stub.text
+    );
+    assert!(
+        stub.text
+            .contains("change it if this case needs another state; for this case, set it so `subject.len == MAX`"),
+        "{}",
+        stub.text
+    );
+
+    // Without a constructor the receiver is a fill-in, and its label names
+    // the state (escaped for the `todo!` format string).
+    const NO_CONSTRUCTOR: &str = "pub const MAX: usize = 8;
+
+pub struct Buf {
+    pub len: usize,
+}
+
+impl Buf {
+    pub fn is_full(&self) -> bool {
+        self.len > MAX
+    }
+}
+";
+    let seam = seam_at(
+        "src/lib.rs",
+        NO_CONSTRUCTOR,
+        "self.len > MAX",
+        SeamKind::PredicateBoundary,
+        boundary("self.len > MAX"),
+    )?;
+    let stub =
+        rust_test_stub(&seam, None, NO_CONSTRUCTOR, None).map_err(|r| r.reason().to_string())?;
+    assert!(
+        stub.text.contains(
+            "let subject: Buf = todo!(\"ripr: build the `Buf` that `is_full` runs on; for this case, set it so `subject.len == MAX`\");"
+        ),
+        "{}",
+        stub.text
+    );
+
+    // A parameter that shares the field's name is not read by `self.len`, so
+    // the receiver note stays; a `self::` module path is not respelled.
+    const SHARED_NAME: &str = "pub const MAX: usize = 8;
+
+pub struct Buf {
+    pub len: usize,
+}
+
+impl Buf {
+    pub fn new() -> Self {
+        Buf { len: 0 }
+    }
+
+    pub fn can_fit(&self, len: usize) -> bool {
+        self.len > self::MAX && len > 0
+    }
+}
+";
+    let seam = seam_at(
+        "src/lib.rs",
+        SHARED_NAME,
+        "self.len > self::MAX",
+        SeamKind::PredicateBoundary,
+        boundary("self.len > self::MAX"),
+    )?;
+    let stub =
+        rust_test_stub(&seam, None, SHARED_NAME, None).map_err(|r| r.reason().to_string())?;
+    assert!(
+        stub.text
+            .contains("for this case, set it so `subject.len == self::MAX`"),
+        "{}",
+        stub.text
+    );
+
+    // A boundary that reads only arguments adds no receiver note.
+    const ARGUMENT: &str = "pub struct Buf {
+    pub len: usize,
+}
+
+impl Buf {
+    pub fn new() -> Self {
+        Buf { len: 0 }
+    }
+
+    pub fn fits(&self, n: usize) -> bool {
+        n > 8
+    }
+}
+";
+    let seam = seam_at(
+        "src/lib.rs",
+        ARGUMENT,
+        "n > 8",
+        SeamKind::PredicateBoundary,
+        boundary("n > 8"),
+    )?;
+    let stub = rust_test_stub(&seam, None, ARGUMENT, None).map_err(|r| r.reason().to_string())?;
+    assert!(
+        !stub.text.contains("for this case, set it so"),
+        "{}",
+        stub.text
+    );
+    Ok(())
+}
+
+#[test]
 fn relational_boundary_over_a_field_names_the_equal_inputs() -> Result<(), String> {
     const SOURCE: &str = "pub struct Bucket {
     tokens: u32,

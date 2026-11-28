@@ -152,7 +152,9 @@ impl ConfidenceCap {
 /// `summary`. Shared by check, explain and context so the shape is one.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ConfidenceBasisEntry {
+    /// The stable code of the capping reason.
     pub code: &'static str,
+    /// The plain-English summary of the reason.
     pub summary: String,
 }
 

@@ -14,7 +14,9 @@ pub const JAVASCRIPT_SOURCE_EXTENSIONS: &[&str] = &["js", "jsx", "mjs", "cjs"];
 /// belongs to. `.mts`/`.cts` are TypeScript; `.mjs`/`.cjs` are JavaScript.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum TsJsSourceKind {
+    /// One of [`TYPESCRIPT_SOURCE_EXTENSIONS`].
     TypeScript,
+    /// One of [`JAVASCRIPT_SOURCE_EXTENSIONS`].
     JavaScript,
 }
 

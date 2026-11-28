@@ -1,0 +1,8 @@
+# Stub fill-in guidance names the discriminating input for `&&`/`||` and receiver-state boundaries (#15281).
+[[extend]]
+id = "RIPR-SPEC-0288"
+tests = [
+  "crates/ripr/src/analysis/test_stub/tests.rs::logical_connective_names_the_inputs_that_split_and_from_or",
+  "crates/ripr/src/analysis/test_stub/tests.rs::relational_boundary_over_receiver_state_names_the_receiver_state",
+  "crates/ripr/src/analysis/syntax/fn_signature.rs::tests::single_logical_accepts_one_connective_and_refuses_chains",
+]

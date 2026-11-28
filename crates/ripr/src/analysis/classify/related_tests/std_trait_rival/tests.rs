@@ -333,3 +333,25 @@ fn only_every_borrowed_receiver_counts() {
         );
     }
 }
+
+/// #16352: the owner's typed `self: &Self` and `self: &mut Self` are the
+/// `&self` and `&mut self` steps, so the by-value `IntoIterator::into_iter`
+/// still takes the call first; a `self: Box<Self>` owner is not read and
+/// keeps the relation.
+#[test]
+fn a_typed_owner_receiver_is_read_as_its_probing_step() -> Result<(), String> {
+    let owner = "impl Peeky for Foo::into_iter";
+    let body = "let _ = Foo::new(5).into_iter();";
+    for receiver in ["self: &Self", "self: &mut Self"] {
+        let peeky = production(receiver, "into_iter");
+        assert!(peeky.contains(receiver), "{receiver}");
+        assert!(withheld(&peeky, owner, body)?, "{receiver}");
+        assert!(!direct(&peeky, owner, body)?, "{receiver}");
+    }
+    assert!(!withheld(
+        &production("self: Box<Self>", "into_iter"),
+        owner,
+        body
+    )?);
+    Ok(())
+}

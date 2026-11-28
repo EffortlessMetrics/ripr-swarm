@@ -1,11 +1,12 @@
 # Golden Output Changes
 
-## Pending — corpus cache generation 1.221 for qualified pins and peeled bool payloads (#16400)
+## Pending — corpus cache generation 1.218 for receiver kinds read after generics (#16352)
 
-A path-qualified pin such as `mycrate::fee(4)` is now read as unpinned, and a
-bool payload peeled from `Some`, `Ok` or `Err` is now compared, which changes
-classified output for those shapes and bumps the analyzer cache schema to
-1.221. Move the portable unchanged-attempt snapshots to 1.221, recompute the
+An owner's receiver kind is now read from its parameter list after the
+generics, and typed `self: Self`, `self: &Self` and `self: &mut Self`
+receivers are read, which can move a relation from a direct owner call to a
+name-only match and bumps the analyzer cache schema to 1.218. Move the
+portable unchanged-attempt snapshots to 1.218, recompute the
 `raw_json_placeholder_v1` artifact content commitment, then the dependent
 verify commitments and receipt byte hashes. Weak grip, unchanged movement,
 historical currentness, incomplete receipt status and fail-closed
