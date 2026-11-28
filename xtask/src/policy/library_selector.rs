@@ -168,12 +168,19 @@ fn is_inert_attribute(text: &str) -> bool {
 }
 
 /// Splits a whitespace-free attribute argument list at its top-level commas,
-/// or returns `None` when its parentheses or quotes do not balance.
+/// dropping one trailing comma, or returns `None` when its parentheses or
+/// quotes do not balance. A backslash inside a string escapes the next
+/// character, so `\"` does not end the string.
 fn split_top_level(list: &str) -> Option<Vec<&str>> {
     let mut parts = Vec::new();
-    let (mut depth, mut quoted, mut start) = (0usize, false, 0usize);
+    let (mut depth, mut quoted, mut escaped, mut start) = (0usize, false, false, 0usize);
     for (index, ch) in list.char_indices() {
+        if escaped {
+            escaped = false;
+            continue;
+        }
         match ch {
+            '\\' if quoted => escaped = true,
             '"' => quoted = !quoted,
             '(' if !quoted => depth += 1,
             ')' if !quoted => depth = depth.checked_sub(1)?,
@@ -187,7 +194,10 @@ fn split_top_level(list: &str) -> Option<Vec<&str>> {
     if depth != 0 || quoted {
         return None;
     }
-    parts.push(&list[start..]);
+    let last = &list[start..];
+    if !(last.is_empty() && !parts.is_empty()) {
+        parts.push(last);
+    }
     Some(parts)
 }
 
@@ -499,6 +509,17 @@ mod tests {
         require(
             tests == expected,
             format!("module lint cfg_attr: {tests:?}"),
+        )?;
+        // A trailing comma and an escaped quote in a lint reason are valid
+        // Rust and still lint-only.
+        let punctuated = format!(
+            "#![cfg_attr(unix, deny(missing_docs),)]\n#![cfg_attr(not(windows), expect(unused, reason = \"a \\\") b\"))]\n{INNER}"
+        );
+        let workspace = layout("lint-cfg-attr-punctuated", &punctuated)?;
+        let tests = resolve_in_source(workspace.root(), SELECTOR);
+        require(
+            tests == expected,
+            format!("punctuated lint cfg_attr: {tests:?}"),
         )
     }
 
@@ -532,6 +553,8 @@ mod tests {
         let mixed_cfg_attr = "#![cfg_attr(unix, deny(missing_docs), path = \"x.rs\")]\n#[cfg(test)]\nmod tests {\n    #[test]\n    fn always() {}\n}\n";
         let feature_cfg_attr = "#![cfg_attr(feature = \"x\", deny(missing_docs))]\n#[cfg(test)]\nmod tests {\n    #[test]\n    fn always() {}\n}\n";
         let bare_cfg_attr = "#![cfg_attr(unix, deny)]\n#[cfg(test)]\nmod tests {\n    #[test]\n    fn always() {}\n}\n";
+        let empty_cfg_attr =
+            "#![cfg_attr(unix,)]\n#[cfg(test)]\nmod tests {\n    #[test]\n    fn always() {}\n}\n";
         // An inner attribute at the top of the module file itself.
         let file_inner_feature = "#![cfg(feature = \"x\")]\n#[cfg(test)]\nmod tests {\n    #[test]\n    fn always() {}\n}\n";
         // An attribute macro can remove or rename the test it sits on, or
@@ -561,6 +584,7 @@ mod tests {
             ("mixed-cfg-attr", mixed_cfg_attr),
             ("feature-cfg-attr", feature_cfg_attr),
             ("bare-cfg-attr", bare_cfg_attr),
+            ("empty-cfg-attr", empty_cfg_attr),
             ("file-inner-feature", file_inner_feature),
         ] {
             let workspace = layout(label, inner)?;

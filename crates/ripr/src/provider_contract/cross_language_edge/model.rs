@@ -414,8 +414,10 @@ impl std::error::Error for CrossLanguageEdgeRegistryErrorV1 {}
 #[derive(Clone, Copy, Debug, Deserialize, Eq, Hash, Ord, PartialEq, PartialOrd, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum CrossLanguageEdgeMovementKindV1 {
-    /// The edge exists only on head. A stale, unresolved or unsupported-family
-    /// head edge is reported with the matching `*OnHead` kind instead.
+    /// The edge exists only on head. A stale, unresolved-leg or
+    /// unsupported-family head edge, or a positive head edge whose positive
+    /// relation the head currentness analysis withdraws, is reported with the
+    /// matching `*OnHead` kind instead.
     HeadOnlyAdded,
     /// The edge exists only on base.
     BaseOnlyDeleted,
