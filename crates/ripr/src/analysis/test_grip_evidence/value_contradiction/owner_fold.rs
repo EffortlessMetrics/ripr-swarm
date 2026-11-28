@@ -358,7 +358,9 @@ pub(super) fn literal_receiver_call(
 
 #[cfg(test)]
 mod tests {
-    use super::{Folded, OwnerFold, Value, literal_receiver_call, tuple_tail_components};
+    use super::{
+        Folded, OwnerFold, TupleComponent, Value, literal_receiver_call, tuple_tail_components,
+    };
     use std::collections::BTreeMap;
 
     fn receiver(fields: &[(&str, i128)]) -> BTreeMap<String, i128> {
