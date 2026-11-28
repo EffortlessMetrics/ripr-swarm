@@ -1,17 +1,27 @@
 # Golden Output Changes
 
-## Pending — corpus cache generation 1.223 for binary crate roots in macro visibility (#10298)
+## Pending — corpus cache generation 1.226 for binary crate roots in macro visibility (#10298)
 
 Macro visibility now reads a file directly in `src/bin/` as a binary crate
 root, so a test-table generator that `src/bin/<name>.rs` imports with
 `#[macro_use] mod common;` from `src/bin/common/mod.rs` reaches its rows,
-which bumps the analyzer cache schema to 1.223 (1.221 and 1.222 are
-claimed in flight). Move the portable unchanged-attempt snapshots to 1.223, recompute
+which bumps the analyzer cache schema to 1.226 (1.225 is claimed in
+flight). Move the portable unchanged-attempt snapshots to 1.226, recompute
 the `raw_json_placeholder_v1` artifact content commitment, then the
 dependent verify commitments and receipt byte hashes. Weak grip, unchanged
 movement, historical currentness, incomplete receipt status and
 fail-closed first-action routing remain the same. No other fixture output
 is regenerated.
+
+## Pending — corpus cache generation 1.224 for expect-test fallback receivers (#7878)
+
+Expect-test fallback comparisons now require their macro receiver, which bumps
+the analyzer cache schema to 1.224. Move the portable unchanged-attempt
+snapshots to 1.224, recompute the `raw_json_placeholder_v1` artifact content
+commitment, then the dependent verify commitments and receipt byte hashes. Weak
+grip, unchanged movement, historical currentness, incomplete receipt status and
+fail-closed first-action routing remain unchanged. No other fixture output is
+regenerated.
 
 ## Pending — corpus cache generation 1.220 for unselected match arms (#15359)
 

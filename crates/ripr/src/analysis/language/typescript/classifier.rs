@@ -3568,6 +3568,10 @@ pub(crate) struct TsBoundaryRowContext<'a> {
     /// comparison (#12281): every input that reaches it takes the other
     /// branch, so a `typeof` guard is flipped by an input of any kind.
     pub(crate) equality_negation: bool,
+    /// The bounded re-export index, so a barrel or renamed re-export local
+    /// (`import { discount as d } from '../src'`) witnesses as the owner's
+    /// relation reads it (#16470). `None` reads no re-export spelling.
+    pub(crate) reexport_index: Option<&'a ReExportIndex>,
 }
 
 /// One related test's activation of the changed predicate boundary (#5527).
@@ -3648,6 +3652,7 @@ pub(crate) fn ts_predicate_boundary_row_activation(
         workspace_root,
         pin_facts,
         equality_negation,
+        reexport_index,
     } = *context;
     let (left, right, nullish_boundary) = match boundary {
         TsPredicateBoundary::NotPredicate => return TypeScriptPredicateActivation::NotApplicable,
@@ -3675,7 +3680,20 @@ pub(crate) fn ts_predicate_boundary_row_activation(
     // aliases are the ones that give a test its `ImportAliasOwnerCall`
     // relation: one binding-identity rule, so a body-local, destructured or
     // enclosing-scope shadow of the alias never witnesses (#16452).
-    let alias_locals = import_alias_owner_locals(candidate.test, owner, alias_map, workspace_root);
+    let mut alias_locals =
+        import_alias_owner_locals(candidate.test, owner, alias_map, workspace_root);
+    // #16470: a local that reaches the owner through a barrel or a renamed
+    // re-export is the same binding the `ReExportChainFollowed` relation
+    // credits, with the same shadow guards.
+    if let Some(index) = reexport_index {
+        for local in
+            reexport_owner_call_locals(candidate.test, owner, index, alias_map, workspace_root)
+        {
+            if local != owner.name && !alias_locals.contains(&local) {
+                alias_locals.push(local);
+            }
+        }
+    }
     let no_receivers: &[String] = &[];
     let call_spellings: Vec<(&str, &[String])> =
         std::iter::once((owner.name.as_str(), owner_receivers.as_slice()))
@@ -3733,16 +3751,21 @@ pub(crate) fn ts_predicate_boundary_row_activation(
         // outer call's arguments count: matches come in source order, so the
         // whole-call check makes the first one the outer call, and a nested
         // `d(90, d(100))` must not witness through its inner call.
-        argument_lists.extend(
-            alias_locals
-                .iter()
-                .filter(|alias| observed_is_one_owner_call_spelling(observed, alias, no_receivers))
-                .filter_map(|alias| {
-                    owner_call_arguments(observed, alias, no_receivers)
-                        .into_iter()
-                        .next()
-                }),
-        );
+        //
+        // When the whole asserted value is one alias call, the owner-name
+        // calls found above sit inside its arguments (`d(90, discount(100))`),
+        // so they are dropped: the outer call alone is asserted.
+        if let Some(outer_alias_arguments) = alias_locals
+            .iter()
+            .filter(|alias| observed_is_one_owner_call_spelling(observed, alias, no_receivers))
+            .find_map(|alias| {
+                owner_call_arguments(observed, alias, no_receivers)
+                    .into_iter()
+                    .next()
+            })
+        {
+            argument_lists = vec![outer_alias_arguments];
+        }
         // #4104-E1: the canonical `const result = owner(...);
         // expect(result).toBe(...)` idiom observes the owner call through
         // a one-hop local binding. When the bare local carries no owner
@@ -9661,6 +9684,7 @@ pub(crate) fn classify_resolved_owner(
             workspace_root,
             pin_facts: Some(&pin_facts),
             equality_negation: boundary_is_equality_negation,
+            reexport_index: Some(reexport_index),
         };
         ts_predicate_boundary_row_activation(&context, candidate)
     };
