@@ -64,6 +64,10 @@ pub(crate) struct MacroVisibility {
     /// first ask, parsing only the files whose text can spell such a
     /// declaration.
     attributed: SyncMemo<BTreeMap<String, Arc<Vec<PathBuf>>>>,
+    /// File name to the files (the first two found suffice) whose text
+    /// spells it as the end of a string next to `path`, so a
+    /// `#[path = "tool.rs"] mod other;` may mount it under another name.
+    path_mounts: SyncMemo<BTreeMap<String, Arc<Vec<PathBuf>>>>,
     /// Generator name to every file that defines a macro of that name, with
     /// the definition when it is a plain `#[macro_export]`; files that spell
     /// `macro_export` somewhere unlisted. Built on first use.
@@ -135,6 +139,7 @@ impl Clone for MacroVisibility {
             generators: self.generators.clone(),
             scopes: SyncMemo::default(),
             attributed: SyncMemo::default(),
+            path_mounts: SyncMemo::default(),
             exports: OnceLock::new(),
             fn_nested_calls: self.fn_nested_calls,
         }
@@ -361,6 +366,7 @@ impl MacroVisibility {
             generators,
             scopes: SyncMemo::default(),
             attributed: SyncMemo::default(),
+            path_mounts: SyncMemo::default(),
             exports: OnceLock::new(),
             fn_nested_calls: false,
         }
@@ -738,6 +744,35 @@ impl MacroVisibility {
         declarers.iter().any(|candidate| candidate != file)
     }
 
+    /// Whether a file other than `file` may name it in a `#[path]`
+    /// attribute, under any module name: its text spells `path = "…<file
+    /// name>"`. A superset of the real mounts, read without parsing. Each
+    /// file name is answered once per run.
+    fn path_mounted_elsewhere(&self, file: &Path) -> bool {
+        let Some(file_name) = file.file_name().and_then(|name| name.to_str()) else {
+            return true;
+        };
+        let cached = self.path_mounts.borrow().get(file_name).cloned();
+        let mounts = cached.unwrap_or_else(|| {
+            let needle = format!("{file_name}\"");
+            let mut found = Vec::new();
+            for (path, source) in &self.sources {
+                if spells_path_value_ending_in(source, &needle) {
+                    found.push(path.clone());
+                    if found.len() == 2 {
+                        break;
+                    }
+                }
+            }
+            let found = Arc::new(found);
+            self.path_mounts
+                .borrow()
+                .insert(file_name.to_string(), found.clone());
+            found
+        });
+        mounts.iter().any(|candidate| candidate != file)
+    }
+
     /// Files whose `mod name;` could resolve into `location`.
     fn declarer_candidates(&self, location: &Path) -> Vec<PathBuf> {
         let mut candidates = BTreeSet::new();
@@ -776,6 +811,11 @@ impl MacroVisibility {
             return false;
         };
         if self.attributed_elsewhere(&name, file) {
+            return true;
+        }
+        // A file directly in a root directory is confirmed as a crate root
+        // only when no `#[path]` can mount it under a different name either.
+        if file.parent().is_some_and(is_root_directory) && self.path_mounted_elsewhere(file) {
             return true;
         }
         self.declarer_candidates(&location)
@@ -832,6 +872,27 @@ impl MacroVisibility {
             .then(|| found.into_iter().next())
             .flatten()
     }
+}
+
+/// Whether `source` spells `path = "…"` (raw strings and whitespace
+/// included) with a value ending in `needle`, which is a file name followed
+/// by its closing `"`. A comment or a non-ASCII byte before the `=` counts as
+/// a maybe.
+fn spells_path_value_ending_in(source: &str, needle: &str) -> bool {
+    source.match_indices(needle).any(|(end, _)| {
+        let Some(open) = source[..end].rfind('"') else {
+            return false;
+        };
+        let before = source[..open]
+            .trim_end_matches('#')
+            .trim_end_matches('r')
+            .trim_end_matches(is_lexer_whitespace);
+        let Some(before) = before.strip_suffix('=') else {
+            return ends_in_comment_or_unicode(before, false);
+        };
+        let before = before.trim_end_matches(is_lexer_whitespace);
+        before.ends_with("path") || ends_in_comment_or_unicode(before, false)
+    })
 }
 
 /// `tests/`, `benches/` or `examples/` of a package, or its `src/bin/`, whose
@@ -1371,6 +1432,27 @@ mod tests {
             ("tests/cases.rs", "t!(a);\n"),
         ];
         assert_eq!(imported(&files, "tests/cases.rs"), "");
+    }
+
+    #[test]
+    fn a_path_value_ending_in_the_file_name_may_mount_it() {
+        let needle = "tool.rs\"";
+        for source in [
+            "#[path = \"tool.rs\"]\nmod mounted;\n",
+            "#[path=\"../bin/tool.rs\"]\nmod mounted;\n",
+            "#[path = r\"tool.rs\"]\nmod mounted;\n",
+            "#[path = r#\"tool.rs\"#]\nmod mounted;\n",
+            "#[path /* x */ = \"tool.rs\"]\nmod mounted;\n",
+        ] {
+            assert!(spells_path_value_ending_in(source, needle), "{source}");
+        }
+        for source in [
+            "const NAME: &str = \"tool.rs\";\n",
+            "#[doc = \"tool.rs\"]\nfn f() {}\n",
+            "#[path = \"tool.rs.bak\"]\nmod mounted;\n",
+        ] {
+            assert!(!spells_path_value_ending_in(source, needle), "{source}");
+        }
     }
 
     #[test]

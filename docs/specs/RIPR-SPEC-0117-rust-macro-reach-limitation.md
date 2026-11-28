@@ -394,8 +394,9 @@ attribute-free `use crate::name;` (or a group `use crate::{a, b};` of plain
 names, each resolved on its own) at the top level, and in the file's crate
 (the crate root its `mod` declarations lead up to: `lib.rs`, `main.rs`,
 `build.rs`, or a file directly in `tests`, `benches`, `examples` or `src/bin`
-that no other file declares, plainly or with an attribute; two declarers or a
-`#[path]` one leave the crate unknown) exactly one macro of that name exists and it carries a
+that no other file declares, plainly or with an attribute, and that no
+`#[path]` value elsewhere names; two declarers or a `#[path]` one, under any
+module name, leave the crate unknown) exactly one macro of that name exists and it carries a
 plain `#[macro_export]` (only `doc`, `allow`, `warn` or `deny` besides it).
 ripr hoists that definition like the others and blanks the `use` so the
 expander does not read the import as a second source of the name. In a group

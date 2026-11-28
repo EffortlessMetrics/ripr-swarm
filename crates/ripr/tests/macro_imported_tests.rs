@@ -354,6 +354,19 @@ fn a_table_from_a_binary_roots_macro_use_module_reads_like_the_hand_written_test
                 ("src/bin/cases/mod.rs", path_cases.clone()),
             ],
         ),
+        // A `#[path]` mount under another module name also includes it.
+        (
+            "renamed path mount",
+            vec![
+                ("src/bin/tool.rs", path_tool.clone()),
+                (
+                    "src/bin/other.rs",
+                    "#[path = \"tool.rs\"]\nmod mounted;\nfn main() {}\n".to_string(),
+                ),
+                ("src/bin/common/mod.rs", exported_table()),
+                ("src/bin/cases/mod.rs", path_cases.clone()),
+            ],
+        ),
         // `autobins = false` with no `[[bin]]`: Cargo builds no binary
         // from `src/bin/tool.rs`, so its rows are no test of the gate.
         (
