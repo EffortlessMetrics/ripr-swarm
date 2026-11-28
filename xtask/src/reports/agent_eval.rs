@@ -843,11 +843,9 @@ fn gaps_header_count(agent_report: &str) -> Option<u64> {
         .and_then(|value| value.parse().ok())
 }
 
-/// Whether the report ends the documented loop in DONE: `verify=complete|`
-/// or `verify=complete_with_limits|` (#14821). Matched by the exact record
-/// names, so a future `verify=complete...` variant does not read as DONE.
+/// Whether the final report line starts with a documented completion record.
 fn verify_complete(agent_report: &str) -> bool {
-    agent_report.lines().any(|line| {
+    agent_report.lines().next_back().is_some_and(|line| {
         line.starts_with("verify=complete|") || line.starts_with("verify=complete_with_limits|")
     })
 }
@@ -1772,12 +1770,36 @@ verify=refused|outcome=complete_with_findings\n";
         assert_eq!(missed_and_extra(&[5, 7], &[5]), (1, 0));
         assert_eq!(missed_and_extra(&[], &[3]), (0, 1));
         assert_eq!(gaps_header_count(report), Some(2));
-        assert!(!verify_complete(report));
-        assert!(verify_complete("verify=complete|outcome=x\n"));
-        assert!(verify_complete(
-            "verify=complete_with_limits|outcome=x|limits=static_unknown:1\n"
-        ));
-        assert!(!verify_complete("verify=completed|outcome=x\n"));
+    }
+
+    #[test]
+    fn verify_requires_completion_on_the_last_report_line() {
+        let complete = "verify=complete|outcome=complete_no_findings|findings=0|exposed=0";
+        let limited = "verify=complete_with_limits|outcome=complete_with_findings|findings=1|exposed=0|limits=infection_unknown:1";
+        let refused = "verify=refused|outcome=complete_with_findings|findings=1|exposed=0|reason=unexposed_findings_remain";
+
+        for terminal in [complete, limited] {
+            assert!(verify_complete(&format!(
+                "#ripr agent static-advisory\n{terminal}\n"
+            )));
+            assert!(verify_complete(&format!("{refused}\r\n{terminal}\r\n")));
+
+            for later in [
+                refused,
+                "verify=completed|outcome=x",
+                "unrecognized",
+                "",
+                " ",
+            ] {
+                let report = format!("{terminal}\n{later}\n");
+                assert!(!verify_complete(&report), "{report:?}");
+            }
+            assert!(!verify_complete(&format!("{terminal}\nunterminated text")));
+        }
+
+        assert!(!verify_complete(""));
+        assert!(!verify_complete(refused));
+        assert!(!verify_complete("verify=complete\n"));
     }
 
     #[test]
