@@ -414,7 +414,8 @@ impl std::error::Error for CrossLanguageEdgeRegistryErrorV1 {}
 #[derive(Clone, Copy, Debug, Deserialize, Eq, Hash, Ord, PartialEq, PartialOrd, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum CrossLanguageEdgeMovementKindV1 {
-    /// The edge exists only on head.
+    /// The edge exists only on head. A stale, unresolved or unsupported-family
+    /// head edge is reported with the matching `*OnHead` kind instead.
     HeadOnlyAdded,
     /// The edge exists only on base.
     BaseOnlyDeleted,
@@ -422,16 +423,19 @@ pub enum CrossLanguageEdgeMovementKindV1 {
     /// not consulted, so an unchanged edge that a new head anomaly demotes is
     /// still reported here.
     Unchanged,
-    /// The same `edge_id` now names a different relationship slot.
+    /// The same `edge_id` now names a different relationship slot. Refined
+    /// to an `*OnHead` kind like `HeadOnlyAdded`.
     Moved,
-    /// Same relationship slot, different content.
+    /// Same relationship slot, different content. Refined to an `*OnHead`
+    /// kind like `HeadOnlyAdded`.
     Replaced,
-    /// Changed, and the head edge is stale.
+    /// Present on head (added, moved or replaced), and the head edge is stale.
     StaleOnHead,
-    /// Changed, and the head edge has an unresolved leg or its positive
-    /// relation is not available.
+    /// Present on head (added, moved or replaced), and the head edge has an
+    /// unresolved leg or its positive relation is not available.
     InvalidOnHead,
-    /// Changed, and the head edge's family is unsupported.
+    /// Present on head (added, moved or replaced), and the head edge's family
+    /// is unsupported.
     UnsupportedFamilyOnHead,
 }
 
