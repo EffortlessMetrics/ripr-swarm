@@ -167,14 +167,70 @@ fn is_inert_attribute(text: &str) -> bool {
     }
 }
 
+/// Splits a whitespace-free attribute argument list at its top-level commas,
+/// or returns `None` when its parentheses or quotes do not balance.
+fn split_top_level(list: &str) -> Option<Vec<&str>> {
+    let mut parts = Vec::new();
+    let (mut depth, mut quoted, mut start) = (0usize, false, 0usize);
+    for (index, ch) in list.char_indices() {
+        match ch {
+            '"' => quoted = !quoted,
+            '(' if !quoted => depth += 1,
+            ')' if !quoted => depth = depth.checked_sub(1)?,
+            ',' if !quoted && depth == 0 => {
+                parts.push(&list[start..index]);
+                start = index + 1;
+            }
+            _ => {}
+        }
+    }
+    if depth != 0 || quoted {
+        return None;
+    }
+    parts.push(&list[start..]);
+    Some(parts)
+}
+
+/// Whether a whitespace-free `#[cfg_attr(..)]` only sets lint levels under a
+/// predicate [`host_cfg_value`] understands, such as
+/// `#![cfg_attr(not(test), deny(missing_docs))]`. A lint level cannot add,
+/// remove or rename items, so whichever way the predicate goes the build sees
+/// the same items. Any other payload, including another inert attribute such
+/// as `must_use`, is not treated as inert: only lint levels are admitted.
+fn is_lint_only_cfg_attr(text: &str) -> bool {
+    let Some(body) = text
+        .strip_prefix("#[cfg_attr(")
+        .and_then(|rest| rest.strip_suffix(")]"))
+    else {
+        return false;
+    };
+    let Some((predicate, payload)) = split_top_level(body).and_then(|parts| {
+        let (predicate, payload) = parts.split_first()?;
+        Some((*predicate, payload.to_vec()))
+    }) else {
+        return false;
+    };
+    host_cfg_value(predicate).is_some()
+        && !payload.is_empty()
+        && payload.iter().all(|attribute| {
+            let name = attribute.split('(').next().unwrap_or_default();
+            matches!(name, "allow" | "expect" | "warn" | "deny" | "forbid")
+                && attribute.len() > name.len()
+        })
+}
+
 /// Whether an item is present in a test build on this host: `Some(true)` or
 /// `Some(false)` when every `cfg` on it is understood (see
 /// [`host_cfg_value`]) and every other attribute is inert (see
-/// [`is_inert_attribute`]); `None` otherwise, including for a `cfg_attr`, a
-/// `#[path]` or an attribute macro, which can change what is built.
+/// [`is_inert_attribute`] and [`is_lint_only_cfg_attr`]); `None` otherwise,
+/// including for any other `cfg_attr`, a `#[path]` or an attribute macro,
+/// which can change what is built.
 fn presence_in_test_build<T: HasAttrs>(item: &T) -> Option<bool> {
     let mut present = true;
     for text in item.attrs().map(|attr| attribute_text(&attr)) {
+        if is_lint_only_cfg_attr(&text) {
+            continue;
+        }
         if text.starts_with("#[cfg_attr") || text.starts_with("#[path") {
             return None;
         }
@@ -410,6 +466,42 @@ mod tests {
         )
     }
 
+    /// A lint-level `cfg_attr`, such as the crate-level missing-docs deny, does
+    /// not change which items are built, so it does not stop a selector from
+    /// resolving: in `lib.rs`, in the module file, or on the tests module.
+    #[test]
+    fn a_lint_only_cfg_attr_does_not_block_resolution() -> Result<(), String> {
+        let expected = Some(vec![
+            "outer::inner::tests::first".to_string(),
+            "outer::inner::tests::nested::second".to_string(),
+        ]);
+        let workspace = layout("lint-cfg-attr-lib", INNER)?;
+        workspace.write(
+            "crates/a/src/lib.rs",
+            "#![forbid(unsafe_code)]\n#![cfg_attr(not(test), deny(missing_docs))]\npub mod outer;\n",
+        )?;
+        let tests = resolve_in_source(workspace.root(), SELECTOR);
+        require(
+            tests == expected,
+            format!("lib.rs lint cfg_attr: {tests:?}"),
+        )?;
+        let file_level =
+            format!("#![cfg_attr(unix, allow(dead_code), warn(clippy::pedantic))]\n{INNER}");
+        let workspace = layout("lint-cfg-attr-file", &file_level)?;
+        let tests = resolve_in_source(workspace.root(), SELECTOR);
+        require(tests == expected, format!("file lint cfg_attr: {tests:?}"))?;
+        let on_module = INNER.replace(
+            "#[cfg(test)]\nmod tests {",
+            "#[cfg(test)]\n#[cfg_attr(windows, expect(unused))]\nmod tests {",
+        );
+        let workspace = layout("lint-cfg-attr-module", &on_module)?;
+        let tests = resolve_in_source(workspace.root(), SELECTOR);
+        require(
+            tests == expected,
+            format!("module lint cfg_attr: {tests:?}"),
+        )
+    }
+
     /// Each of these is a stale or not-understood pointer. None may resolve:
     /// the caller then builds and lists, which reports the real state.
     #[test]
@@ -434,6 +526,12 @@ mod tests {
         // Inner attributes of the selected inline module: the build decides.
         let inner_feature = "#[cfg(test)]\nmod tests {\n    #![cfg(feature = \"x\")]\n    #[test]\n    fn always() {}\n}\n";
         let inner_cfg_attr = "#[cfg(test)]\nmod tests {\n    #![cfg_attr(unix, must_use)]\n    #[test]\n    fn always() {}\n}\n";
+        // A lint level beside a non-lint payload, a lint level under a
+        // predicate not understood here, and a bare lint name are not
+        // lint-only `cfg_attr`s.
+        let mixed_cfg_attr = "#![cfg_attr(unix, deny(missing_docs), path = \"x.rs\")]\n#[cfg(test)]\nmod tests {\n    #[test]\n    fn always() {}\n}\n";
+        let feature_cfg_attr = "#![cfg_attr(feature = \"x\", deny(missing_docs))]\n#[cfg(test)]\nmod tests {\n    #[test]\n    fn always() {}\n}\n";
+        let bare_cfg_attr = "#![cfg_attr(unix, deny)]\n#[cfg(test)]\nmod tests {\n    #[test]\n    fn always() {}\n}\n";
         // An inner attribute at the top of the module file itself.
         let file_inner_feature = "#![cfg(feature = \"x\")]\n#[cfg(test)]\nmod tests {\n    #[test]\n    fn always() {}\n}\n";
         // An attribute macro can remove or rename the test it sits on, or
@@ -460,6 +558,9 @@ mod tests {
             ("foreign-derive", foreign_derive),
             ("inner-feature", inner_feature),
             ("inner-cfg-attr", inner_cfg_attr),
+            ("mixed-cfg-attr", mixed_cfg_attr),
+            ("feature-cfg-attr", feature_cfg_attr),
+            ("bare-cfg-attr", bare_cfg_attr),
             ("file-inner-feature", file_inner_feature),
         ] {
             let workspace = layout(label, inner)?;
