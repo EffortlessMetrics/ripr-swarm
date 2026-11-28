@@ -9,6 +9,7 @@ tests = [
   "crates/ripr/tests/check_repair_agree.rs::pilot_names_the_commit_step_before_a_repair_start_that_would_refuse",
   "crates/ripr/tests/check_repair_agree.rs::pilot_commit_step_merges_the_dirty_inline_target",
   "crates/ripr/tests/check_repair_agree.rs::pilot_at_a_subdirectory_root_prints_no_commit_step_and_no_runnable_start",
+  "crates/ripr/tests/check_repair_agree.rs::commit_step_names_deleted_and_inline_test_files_the_start_refuses_over",
   "crates/ripr/src/output/pilot/tests.rs::pilot_premise_probe_runs_only_when_a_repair_start_is_printed",
 ]
 code = [
@@ -17,4 +18,6 @@ code = [
   "crates/ripr/src/output/pilot/render/complete.rs",
   "crates/ripr/src/cli/commands/pilot.rs",
   "crates/ripr/src/edit_cage/mod.rs",
+  "crates/ripr/src/app/task_first.rs",
+  "crates/ripr/src/lsp/actions.rs",
 ]

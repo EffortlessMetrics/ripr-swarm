@@ -5857,29 +5857,63 @@ pub(crate) fn conservative_dirty_premise_violations(
     store: Option<&Path>,
     attempt_id: Option<&RepairAttemptId>,
 ) -> Result<Vec<String>, String> {
+    dirty_premise_paths(root, head, store, attempt_id, |path| {
+        dirty_path_cannot_be_repair_target(root, path)
+    })
+}
+
+/// Tracked dirty paths at `head`, outside the operational write subtrees,
+/// that `keep` holds: the one inventory both the before phase's early
+/// preflight and the printed-start premise read.
+fn dirty_premise_paths(
+    root: &Path,
+    head: &str,
+    store: Option<&Path>,
+    attempt_id: Option<&RepairAttemptId>,
+    keep: impl Fn(&str) -> bool,
+) -> Result<Vec<String>, String> {
     let operational = operational_write_rules(root, store, attempt_id)?;
     Ok(tracked_dirty_paths(root, head)?
         .into_iter()
-        .filter(|path| {
-            !operational.iter().any(|rule| rule.matches(path))
-                && dirty_path_cannot_be_repair_target(root, path)
-        })
+        .filter(|path| !operational.iter().any(|rule| rule.matches(path)) && keep(path))
         .collect())
 }
 
-/// The dirty production premise a seam start would refuse right now
-/// (#13636): [`conservative_dirty_premise_violations`] at the current HEAD
-/// with the default store, the same policy-free preflight the before phase
-/// applies before any inventory. Consumers that print a repair start (the
-/// `ripr check` route) ask this instead of re-deriving dirtiness. Paths are
-/// relative to `root` (outside it as `../...`, #13962). Being a subset of the
-/// exact before-phase check, a non-empty answer means the start refuses; an
-/// empty one does not promise it starts.
-pub(crate) fn seam_start_dirty_premise(root: &Path) -> Result<Vec<String>, String> {
+/// The dirty production premise a seam start refuses over right now
+/// (#13636, #16408), for a surface that prints a commit step before the
+/// start (`ripr check`, `ripr pilot`, the editor): the same tracked inventory
+/// and operational subtrees as [`conservative_dirty_premise_violations`] at
+/// the current HEAD with the default store, plus two kinds of path that
+/// preflight defers to the exact check so it never pre-empts that check's
+/// more specific refusal:
+///
+/// - a deleted tracked file outside the test surface: no confined target can
+///   be absent, so the exact check refuses it as a dirty premise;
+/// - a dirty file carrying an inline `#[cfg(test)]` module, other than
+///   `held_target`. Only the seam's own confined target may pass the exact
+///   check, and a dirty confined target is refused as well
+///   (`require_inline_target_at_head`), so every such file must be committed
+///   before the start begins. The caller passes its seam's held inline
+///   target, which it reports and merges into the commit itself; `None`
+///   counts every such file, which only widens the commit step.
+///
+/// Symlinks, other non-regular entries, oversized and unreadable files still
+/// defer. Paths are relative to `root` (outside it as `../...`, #13962). A
+/// non-empty answer means the start refuses; an empty one does not promise
+/// it starts (a dirty test file outside the packet's surface can still
+/// refuse).
+pub(crate) fn seam_start_dirty_premise(
+    root: &Path,
+    held_target: Option<&str>,
+) -> Result<Vec<String>, String> {
     let head = crate::agent::artifact::current_git_head(root)?;
-    refuse_line_break_paths(conservative_dirty_premise_violations(
-        root, &head, None, None,
-    )?)
+    refuse_line_break_paths(dirty_premise_paths(root, &head, None, None, |path| {
+        match dirty_path_sniff(root, path) {
+            DirtyPathSniff::Production | DirtyPathSniff::Deleted => true,
+            DirtyPathSniff::InlineTestModule => held_target != Some(path),
+            DirtyPathSniff::MayBeTestSurface | DirtyPathSniff::Deferred => false,
+        }
+    })?)
 }
 
 /// A dirty-premise answer a screen can print a commit step from: an error
@@ -6017,6 +6051,27 @@ fn file_content_contains_plain_test_gate(content: &str) -> bool {
 }
 
 fn dirty_path_cannot_be_repair_target(root: &Path, path: &str) -> bool {
+    dirty_path_sniff(root, path) == DirtyPathSniff::Production
+}
+
+/// What the dirty-premise content sniff learned about one dirty path.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum DirtyPathSniff {
+    /// Test-surface or test-routing naming: a packet may target it.
+    MayBeTestSurface,
+    /// Absent from the working tree: a deleted tracked file (#16408).
+    Deleted,
+    /// Carries the governed inline `#[cfg(test)]` marker, or text too
+    /// ambiguous to rule it out: it may be a seam's confined target.
+    InlineTestModule,
+    /// A symlink or other non-regular entry, an oversized or unreadable
+    /// file, or a name that is not UTF-8: left to the exact check.
+    Deferred,
+    /// A readable production file no repair can target.
+    Production,
+}
+
+fn dirty_path_sniff(root: &Path, path: &str) -> DirtyPathSniff {
     // Canonical test-surface recognition first: the policy constructor
     // admits only `is_test_surface_path` targets (or the confined #5210
     // target below), so anything the analyzer calls test surface can be a
@@ -6024,7 +6079,7 @@ fn dirty_path_cannot_be_repair_target(root: &Path, path: &str) -> bool {
     // (`*.test.*`, `*.spec.*`, `test-*`, `*.test-d.*`, `*.cy.*`, `__tests__`)
     // without forking that taxonomy here.
     if crate::analysis::is_test_surface(root, path) {
-        return false;
+        return DirtyPathSniff::MayBeTestSurface;
     }
     let candidate = Path::new(path);
     if candidate.components().any(|part| {
@@ -6033,10 +6088,10 @@ fn dirty_path_cannot_be_repair_target(root: &Path, path: &str) -> bool {
             Some("tests" | "test" | "__tests__")
         )
     }) {
-        return false;
+        return DirtyPathSniff::MayBeTestSurface;
     }
     let Some(name) = candidate.file_name().and_then(|name| name.to_str()) else {
-        return false;
+        return DirtyPathSniff::Deferred;
     };
     let lower = name.to_ascii_lowercase();
     let stem = lower.split('.').next().unwrap_or(&lower);
@@ -6044,7 +6099,7 @@ fn dirty_path_cannot_be_repair_target(root: &Path, path: &str) -> bool {
         // pytest fixture support is test routing, never a production seam
         // target; matching the stem keeps every `conftest.*` spelling on the
         // same fall-through path.
-        return false;
+        return DirtyPathSniff::MayBeTestSurface;
     }
     // #5210 confined target: a production Rust file carrying the governed
     // inline test module is the allowed edit region, so any file containing
@@ -6054,18 +6109,27 @@ fn dirty_path_cannot_be_repair_target(root: &Path, path: &str) -> bool {
     // follow: defer it to the later checks, which can name the more specific
     // cause (for example unavailable analysis context) instead of reporting
     // it as a dirty production edit. `symlink_metadata` does not follow links.
-    if std::fs::symlink_metadata(&candidate_path)
-        .map(|metadata| {
-            !metadata.file_type().is_file()
-                || metadata.len() > DIRTY_PREMISE_PREFLIGHT_MAX_SNIFF_BYTES
-        })
-        .unwrap_or(true)
-    {
-        return false;
+    // An absent tracked path is a deleted file (#16408); any other metadata
+    // error defers.
+    match std::fs::symlink_metadata(&candidate_path) {
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            return DirtyPathSniff::Deleted;
+        }
+        Err(_) => return DirtyPathSniff::Deferred,
+        Ok(metadata)
+            if !metadata.file_type().is_file()
+                || metadata.len() > DIRTY_PREMISE_PREFLIGHT_MAX_SNIFF_BYTES =>
+        {
+            return DirtyPathSniff::Deferred;
+        }
+        Ok(_) => {}
     }
     match std::fs::read_to_string(&candidate_path) {
-        Ok(content) => !file_content_contains_plain_test_gate(&content),
-        Err(_) => false,
+        Ok(content) if file_content_contains_plain_test_gate(&content) => {
+            DirtyPathSniff::InlineTestModule
+        }
+        Ok(_) => DirtyPathSniff::Production,
+        Err(_) => DirtyPathSniff::Deferred,
     }
 }
 

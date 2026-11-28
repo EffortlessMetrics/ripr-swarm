@@ -2820,7 +2820,7 @@ fn pilot_premise_probe_runs_only_when_a_repair_start_is_printed() -> Result<(), 
     let probe = with - without;
     let single = {
         let before = crate::git::test_process_spawns();
-        let _ = crate::app::seam_start_premise(context.root);
+        let _ = crate::app::seam_start_premise(context.root, None);
         crate::git::test_process_spawns() - before
     };
     assert_eq!(probe, single, "both surfaces share one probe");
