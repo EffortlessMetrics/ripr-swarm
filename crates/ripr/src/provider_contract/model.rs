@@ -13,7 +13,8 @@ pub const RIPR_ANALYSIS_RECEIPT_SCHEMA_VERSION: &str = "ripr_analysis_receipt.v1
 /// The exact claim-boundary text that capability descriptors and receipts must
 /// carry.
 pub const RIPR_PROVIDER_CLAIM_BOUNDARY: &str = "Static RIPR evidence for one exact source snapshot and selected seam; no runtime test execution, mutation adequacy, semantic correctness, or merge-readiness claim.";
-/// The claims every descriptor and receipt must exclude, each exactly once.
+/// The claims every descriptor and receipt must exclude: exactly this set,
+/// each claim once.
 pub const RIPR_REQUIRED_EXCLUDED_CLAIMS: [&str; 4] = [
     "runtime_test_execution",
     "mutation_adequacy",
@@ -61,7 +62,8 @@ pub struct RiprProviderCapabilityDescriptorV1 {
     pub supported_receipt_schema: String,
     /// Must be [`RIPR_PROVIDER_CLAIM_BOUNDARY`].
     pub claim_boundary: String,
-    /// Must hold each of [`RIPR_REQUIRED_EXCLUDED_CLAIMS`] exactly once.
+    /// Must be exactly [`RIPR_REQUIRED_EXCLUDED_CLAIMS`]: each claim once, in
+    /// any order, and nothing else.
     pub excluded_claims: Vec<String>,
 }
 
@@ -272,9 +274,10 @@ pub struct RiprAnalysisReceiptV1 {
     pub schema_version: String,
     /// The request this receipt answers, validated with it.
     pub request: RiprAnalysisRequestV1,
-    /// Nonblank provider version.
+    /// Nonblank provider version. Validation checks only that it is nonblank.
     pub provider_version: String,
-    /// `sha256:<64 hex>` digest of the RIPR binary.
+    /// `sha256:<64 hex>` digest of the RIPR binary. Validation checks only the
+    /// format, not that it matches the binary that produced the receipt.
     pub binary_digest: String,
     /// Must equal the request's `analyzer_generation`.
     pub analyzer_generation: String,
@@ -290,11 +293,12 @@ pub struct RiprAnalysisReceiptV1 {
     pub summary: Option<RiprProviderEvidenceSummaryV1>,
     /// Diagnostics about the run.
     pub diagnostics: Vec<RiprProviderDiagnosticV1>,
-    /// Stated limitations of the result.
+    /// Stated limitations of the result; each entry nonblank.
     pub limitations: Vec<String>,
     /// Must be [`RIPR_PROVIDER_CLAIM_BOUNDARY`].
     pub claim_boundary: String,
-    /// Must hold each of [`RIPR_REQUIRED_EXCLUDED_CLAIMS`] exactly once.
+    /// Must be exactly [`RIPR_REQUIRED_EXCLUDED_CLAIMS`]: each claim once, in
+    /// any order, and nothing else.
     pub excluded_claims: Vec<String>,
 }
 

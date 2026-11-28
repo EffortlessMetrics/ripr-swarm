@@ -158,10 +158,12 @@ impl RiprAnalysisRequestV1 {
 }
 
 impl RiprAnalysisReceiptV1 {
-    /// Checks the schema version, the request, the provider and binary
-    /// identity, that the analyzer generation matches the request, the claim
-    /// boundary and excluded claims, the diagnostics, and that the result
-    /// class agrees with completeness, truncation, status and summary.
+    /// Checks the schema version, the request, a nonblank provider version and
+    /// a `sha256:` binary digest (format only, not against the producing
+    /// binary), that the analyzer generation matches the request, the claim
+    /// boundary and excluded claims, the limitations and diagnostics, and that
+    /// the result class agrees with completeness, truncation, status and
+    /// summary.
     pub fn validate(&self) -> Result<(), RiprProviderContractErrorV1> {
         if self.schema_version != RIPR_ANALYSIS_RECEIPT_SCHEMA_VERSION {
             return Err(error(
