@@ -152,9 +152,10 @@ fn import_then_export_through_two_barrels_reaches_the_owner() -> Result<(), Stri
     )
 }
 
-/// A renamed barrel export reads `weakly_exposed` on main for `export { f as
-/// g } from` too: the classifier does not read a call of the renamed local as
-/// the owner call. The relation is what these rows pin.
+/// A renamed barrel export, written as `export { f as g } from` or as an
+/// import-then-export, reaches the owner the same way, and the boundary
+/// witness reads a call of the renamed local as the owner call (#16470), so
+/// the exact boundary pin reads `exposed`.
 #[test]
 fn renamed_import_then_export_relates_like_a_renamed_reexport() -> Result<(), String> {
     let renamed_call = test_file(
@@ -180,7 +181,7 @@ fn renamed_import_then_export_relates_like_a_renamed_reexport() -> Result<(), St
             label,
             &[("src/discount.ts", OWNER), ("src/index.ts", index)],
             &renamed_call,
-            ExposureClass::WeaklyExposed,
+            ExposureClass::Exposed,
         )?;
     }
     Ok(())

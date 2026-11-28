@@ -159,6 +159,8 @@ mod owners;
 mod package;
 #[cfg(test)]
 mod predicate_activation_tests;
+#[cfg(test)]
+mod reexport_boundary_witness_tests;
 mod value_hiding_guard;
 pub(crate) use package::detect_framework_for_root;
 #[cfg(test)]
