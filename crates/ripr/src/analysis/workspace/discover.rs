@@ -199,7 +199,7 @@ pub(crate) fn worktree_regular_source_file(root: &Path, relative: &Path) -> Opti
     None
 }
 
-fn is_regular_source_below_root(root: &Path, relative: &Path) -> bool {
+pub(crate) fn is_regular_source_below_root(root: &Path, relative: &Path) -> bool {
     // The selected root may itself be an alias. Below that boundary, match
     // discovery's no-follow semantics for both directory and source entries.
     // Inspecting only the leaf would still follow a symlinked parent directory.

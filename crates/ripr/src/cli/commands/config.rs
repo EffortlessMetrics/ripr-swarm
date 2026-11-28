@@ -79,6 +79,7 @@ fn validate_config(root: &Path) -> Result<String, String> {
                 Some(path) => format!("✓ ripr.toml valid ({})", human_path(path)),
                 None => "✓ no ripr.toml found; built-in defaults apply".to_string(),
             };
+            validate_declared_paths(root, &config)?;
             Ok(match validate_suppressions_manifest(root, &config)? {
                 Some(manifest_line) => format!("{config_line}\n{manifest_line}"),
                 None => config_line,
@@ -104,6 +105,71 @@ fn validate_config(root: &Path) -> Result<String, String> {
     }
 }
 
+/// #15495: exact-path keys name one repository file each. A path that is
+/// not a file under the root is a typo or a moved file, and every consumer
+/// would otherwise treat the setting as off without a word. Every missing
+/// entry is listed so one run reports all of them. Existence uses the same
+/// no-follow check as workspace discovery, so a linked leaf or parent, which
+/// analysis would skip, counts as missing too.
+fn validate_declared_paths(root: &Path, config: &RiprConfig) -> Result<(), String> {
+    let analysis = config.analysis();
+    let languages = config.languages();
+    let mut declared: Vec<(String, String)> = Vec::new();
+    for target in analysis.production_like_targets() {
+        declared.push((
+            "analysis.production_like_targets".to_string(),
+            target.to_string_lossy().into_owned(),
+        ));
+    }
+    for (index, harness) in analysis.test_harnesses().iter().enumerate() {
+        declared.push((
+            format!("analysis.test_harnesses[{index}].target"),
+            harness.target.to_string_lossy().into_owned(),
+        ));
+    }
+    for (key, files) in [
+        (
+            "languages.rust.handwritten_files",
+            &languages.rust.handwritten_files,
+        ),
+        (
+            "languages.python.handwritten_files",
+            &languages.python.handwritten_files,
+        ),
+        (
+            "languages.typescript.handwritten_files",
+            &languages.typescript.handwritten_files,
+        ),
+    ] {
+        for file in files {
+            declared.push((key.to_string(), file.clone()));
+        }
+    }
+    let missing: Vec<String> = declared
+        .into_iter()
+        .filter(|(_, path)| !crate::analysis::is_regular_source_below_root(root, Path::new(path)))
+        .map(|(key, path)| format!("- {key}: `{path}`"))
+        .collect();
+    if missing.is_empty() {
+        return Ok(());
+    }
+    Err(format!(
+        "ripr.toml names {} path{} that {} not a file under {}:\n{}\nLinks are not followed. Create the file, fix the path, or remove the entry.",
+        missing.len(),
+        if missing.len() == 1 { "" } else { "s" },
+        if missing.len() == 1 { "is" } else { "are" },
+        human_path(root),
+        missing.join("\n")
+    ))
+}
+
+fn uninspectable_manifest(display: &str, root: &Path, error: &std::io::Error) -> String {
+    format!(
+        "[suppressions] path `{display}` cannot be inspected under {}: {error}; fix the path or its permissions, then re-run `ripr config validate`",
+        human_path(root),
+    )
+}
+
 /// #15308: the suppressions manifest the config selects is part of the
 /// config. A configured file that does not exist is a typo or an uncommitted
 /// file, and every consumer would otherwise read it as an empty manifest
@@ -116,23 +182,33 @@ fn validate_suppressions_manifest(
     let relative = config.suppressions().path();
     let display = config.suppressions().display_path();
     let manifest = root.join(relative);
-    if crate::config::config_entry_present(&manifest) && !manifest.exists() {
+    // Only a confirmed absence is the silent default case; a permission or
+    // other metadata error must not read as "no manifest".
+    match std::fs::symlink_metadata(&manifest) {
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            if config.suppressions().is_default() {
+                return Ok(None);
+            }
+            return Err(format!(
+                "[suppressions] path `{display}` does not exist under {}; create the file, fix the path in ripr.toml, or remove the key to use the default `{}`",
+                human_path(root),
+                crate::config::DEFAULT_SUPPRESSIONS_PATH,
+            ));
+        }
+        Err(error) => return Err(uninspectable_manifest(&display, root, &error)),
+        Ok(_) => {}
+    }
+    match std::fs::metadata(&manifest) {
+        Ok(_) => {}
         // A dangling link is an entry the loader would read as an empty
         // manifest without a word, at the default path too.
-        return Err(format!(
-            "[suppressions] path `{display}` is a link that names no file under {}; fix or remove the link, then re-run `ripr config validate`",
-            human_path(root),
-        ));
-    }
-    if !manifest.exists() {
-        if config.suppressions().is_default() {
-            return Ok(None);
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            return Err(format!(
+                "[suppressions] path `{display}` is a link that names no file under {}; fix or remove the link, then re-run `ripr config validate`",
+                human_path(root),
+            ));
         }
-        return Err(format!(
-            "[suppressions] path `{display}` does not exist under {}; create the file, fix the path in ripr.toml, or remove the key to use the default `{}`",
-            human_path(root),
-            crate::config::DEFAULT_SUPPRESSIONS_PATH,
-        ));
+        Err(error) => return Err(uninspectable_manifest(&display, root, &error)),
     }
     match load_suppressions_for_root_at(root, relative) {
         // The path is repository text that reaches stdout through a plain
@@ -515,3 +591,7 @@ path = ".ripr/suppressions\u0000.toml"
 #[cfg(test)]
 #[path = "config/suppressions_manifest_tests.rs"]
 mod suppressions_manifest_tests;
+
+#[cfg(test)]
+#[path = "config/declared_paths_tests.rs"]
+mod declared_paths_tests;

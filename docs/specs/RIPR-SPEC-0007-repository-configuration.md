@@ -63,6 +63,12 @@ The configuration layer should:
   its violations fail validation; an absent default
   `.ripr/suppressions.toml` stays silent; a valid manifest is named on its
   own line with its entry count;
+- have `ripr config validate` fail when an exact-path key
+  (`analysis.production_like_targets`, `analysis.test_harnesses[].target`,
+  `languages.*.handwritten_files`) names no regular file under the root
+  (#15495), naming every offending key and value; existence uses workspace
+  discovery's no-follow check, so a path reached through a link counts as
+  missing; glob keys are not checked;
 - keep output schemas stable unless a later scoped PR explicitly adds config
   metadata.
 

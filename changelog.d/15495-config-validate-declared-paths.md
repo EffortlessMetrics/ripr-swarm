@@ -1,0 +1,2 @@
+<!-- section: Fixed -->
+- `ripr config validate` now fails when an exact-path key (`analysis.production_like_targets`, `analysis.test_harnesses[].target`, `languages.*.handwritten_files`) names no regular file under the root (a path reached through a link counts as missing, as analysis skips it), listing every missing entry with its key; analysis had treated each such typo as a setting that matched nothing (#15495).

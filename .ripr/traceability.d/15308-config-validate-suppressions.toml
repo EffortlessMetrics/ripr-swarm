@@ -12,4 +12,5 @@ tests = [
   "crates/ripr/src/cli/commands/config/suppressions_manifest_tests.rs::a_dangling_default_manifest_link_fails",
   "crates/ripr/src/cli/commands/config/suppressions_manifest_tests.rs::a_dangling_configured_manifest_link_fails",
   "crates/ripr/src/cli/commands/config/suppressions_manifest_tests.rs::a_manifest_link_to_a_real_file_is_read",
+  "crates/ripr/src/cli/commands/config/suppressions_manifest_tests.rs::an_untraversable_manifest_directory_fails_instead_of_reading_as_absent",
 ]
