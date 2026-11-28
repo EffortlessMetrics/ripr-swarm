@@ -834,6 +834,8 @@ pub(crate) struct CachedSeamLimitInfo {
 /// with distinct typed failure outcomes in the provider identity (#10864).
 /// `1.217`: a rootless grouped drop-in import is verified by its own
 /// root, and body-scoped macro names join the scan only when invoked bare (#16388).
+/// `1.218`: an owner's receiver kind is read from its parameter list after
+/// the generics, including typed `self: &Self` receivers (#16352).
 /// `1.220`: a match arm whose selecting input no visible test passes reads
 /// activation unknown instead of strongly gripped (#15359; `1.218` and
 /// `1.219` are held by concurrent lanes).
@@ -1091,6 +1093,7 @@ pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.220";
 /// `0.217`: same json item-macro refusal as full `1.215` (#16388).
 /// `0.218`: same provider-failure limitation as full `1.216` (#10864).
 /// `0.219`: same rootless-group and body-scope reading as full `1.217` (#16388).
+/// `0.220`: same receiver kind reading after generics as full `1.218` (#16352).
 /// `0.222`: same unselected match-arm activation reading as full `1.220`
 /// (#15359; `0.220` and `0.221` are held by concurrent lanes).
 const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.222";
@@ -1349,6 +1352,7 @@ const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.222";
 /// `0.217`: same json item-macro refusal as full `1.215` (#16388).
 /// `0.218`: same provider-failure limitation as full `1.216` (#10864).
 /// `0.219`: same rootless-group and body-scope reading as full `1.217` (#16388).
+/// `0.220`: same receiver kind reading after generics as full `1.218` (#16352).
 /// `0.222`: same unselected match-arm activation reading as full `1.220`
 /// (#15359; `0.220` and `0.221` are held by concurrent lanes).
 pub(crate) const COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.222";

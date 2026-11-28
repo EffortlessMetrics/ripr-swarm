@@ -3,9 +3,11 @@ mod render_helpers;
 mod timeout;
 mod unreadable;
 
-pub(crate) use complete::{render_pilot_human_summaries, render_pilot_summary_json};
 #[cfg(test)]
-pub(crate) use complete::{render_pilot_summary_md, render_pilot_terminal};
+pub(crate) use complete::{
+    render_pilot_human_summaries, render_pilot_summary_md, render_pilot_terminal,
+};
+pub(crate) use complete::{render_pilot_human_summaries_with_premise, render_pilot_summary_json};
 pub(crate) use timeout::{
     render_pilot_timeout_summary_json, render_pilot_timeout_summary_md,
     render_pilot_timeout_terminal,

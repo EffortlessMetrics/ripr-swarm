@@ -597,7 +597,13 @@ pub(in crate::cli) fn pilot(args: &[String]) -> Result<(), String> {
     )?;
 
     let summary_json = output::pilot::render_pilot_summary_json(&classified, context);
-    let (summary_md, terminal) = output::pilot::render_pilot_human_summaries(&classified, context);
+    // #16381: observe the before phase's own dirty-premise preflight (in
+    // `ripr check`'s order) for both human surfaces, so a printed repair
+    // start is preceded by the commit it needs, or withheld with check's
+    // advisory where no commit can clear it. The renderer asks it once, and
+    // only when a start will be printed.
+    let (summary_md, terminal) =
+        output::pilot::render_pilot_human_summaries_with_premise(&classified, context, true);
     write_pilot_file(&artifacts.pilot_summary_json, &summary_json)?;
     write_pilot_file(&artifacts.pilot_summary_md, summary_md)?;
     timings.record("write_artifacts", write_started, Some(classified.len()));

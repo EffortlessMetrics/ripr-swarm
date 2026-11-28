@@ -150,6 +150,29 @@ module files, benches, examples and build scripts, a registered target ripr
 cannot name, a non-Rust file, a non-identifier test name, or a file outside
 any package. JSON output is unchanged.
 
+### Fill-in guidance names the discriminating input (#15281)
+
+A fill-in label for a predicate seam names the inputs where the changed
+predicate and its likely neighbor disagree. It does not restate the predicate.
+Inputs that merely satisfy the changed predicate pass under both spellings.
+
+- A seam whose whole expression is one `&&` or `||`, optionally inside outer
+  parentheses, names the split, for
+  example `exactly one of `in_stock` and `paid` is true (where `||` and `&&`
+  differ)`. A chain such as `a && b && c` keeps the plain description, because
+  which connective changed cannot be recovered from its text.
+- A relational boundary that reads receiver state (`self.len > MAX`) names that
+  state on the receiver binding with the same receiver note a match-arm stub
+  uses: `; for this case, set it so `subject.len == MAX``. The note goes on the
+  constructed receiver's comment or on the fill-in receiver's label. A boundary
+  that reads a parameter (`self.tokens > n`) adds no receiver note, because that
+  parameter's own fill-in already reaches the boundary. A field that shares a
+  parameter's name (`self.len` with a `len` parameter) is not a parameter read,
+  and only receiver paths (`self.`) are respelled, so `self::MAX` stays as
+  written.
+
+These change the emitted stub text only. Classifier credit rules are unchanged.
+
 ## Required Evidence
 
 - A second `--write` for the same seam leaves the file with exactly one
@@ -179,6 +202,9 @@ any package. JSON output is unchanged.
 - `crates/ripr/src/app/test_stub.rs::tests::focused_test_run_command_keeps_a_literal_backslash_unix_root`
 - `crates/ripr/src/cli/commands/agent.rs::tests::human_stdout_names_the_focused_test_command_when_known`
 - `crates/ripr/tests/cli_smoke/agent_output_budget.rs::agent_repair_start_prints_one_next_command_inside_a_line_budget`
+- `crates/ripr/src/analysis/test_stub/tests.rs::logical_connective_names_the_inputs_that_split_and_from_or`
+- `crates/ripr/src/analysis/test_stub/tests.rs::relational_boundary_over_receiver_state_names_the_receiver_state`
+- `crates/ripr/src/analysis/syntax/fn_signature.rs::tests::single_logical_accepts_one_connective_and_refuses_chains`
 - `crates/ripr/tests/agent_stub_at_disclosure.rs::off_line_predicate_note_precedes_the_grip_class_warning`
   (ordering pin; the grip warning wording it pins is the new reasoned
   form)

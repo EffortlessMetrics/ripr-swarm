@@ -2784,6 +2784,49 @@ fn pilot_repair_line_follows_the_canonical_pilot_decision() -> Result<(), String
     Ok(())
 }
 
+/// #16381 review: the CLI's dirty-premise probe runs only when the top seam's
+/// repair start will be printed. A seam with no start keeps its old (zero)
+/// spawn count with the probe enabled; a seam with a start pays for the
+/// probe once, though both surfaces render from it.
+#[test]
+fn pilot_premise_probe_runs_only_when_a_repair_start_is_printed() -> Result<(), String> {
+    let artifacts = pilot_artifacts();
+    let context = pilot_context(&artifacts);
+    let spawns = |entry: &ClassifiedSeam, observe: bool| {
+        let entries = std::slice::from_ref(entry);
+        let before = crate::git::test_process_spawns();
+        let _ = render_pilot_human_summaries_with_premise(entries, context, observe);
+        crate::git::test_process_spawns() - before
+    };
+    let ineligible = route_ready_entry(&["tests/pricing.rs", "tests/pricing.test.ts"]);
+    assert_eq!(
+        commands::repair_start_command(context.root, &ineligible),
+        None
+    );
+    assert_eq!(spawns(&ineligible, false), 0);
+    assert_eq!(spawns(&ineligible, true), 0, "no start, so no probe");
+
+    let eligible = route_ready_entry(&["tests/pricing.rs"]);
+    if commands::repair_start_command(context.root, &eligible).is_none() {
+        return Err("fixture seam must offer a repair start".to_string());
+    }
+    let without = spawns(&eligible, false);
+    let with = spawns(&eligible, true);
+    assert!(
+        with > without,
+        "a printed start is probed: {without} -> {with}"
+    );
+    // One observation: a second probe would at least double the delta.
+    let probe = with - without;
+    let single = {
+        let before = crate::git::test_process_spawns();
+        let _ = crate::app::seam_start_premise(context.root);
+        crate::git::test_process_spawns() - before
+    };
+    assert_eq!(probe, single, "both surfaces share one probe");
+    Ok(())
+}
+
 /// The repair start refuses only an inline-module target file that differs
 /// from HEAD (worktree or index), so the precondition appears exactly when the
 /// target file's own state is uncommitted and the repair targets an inline

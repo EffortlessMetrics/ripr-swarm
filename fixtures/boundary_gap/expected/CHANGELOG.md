@@ -11,6 +11,19 @@ verify commitments and receipt byte hashes. Weak grip, unchanged movement,
 historical currentness, incomplete receipt status and fail-closed first-action
 routing remain unchanged. No other fixture output is regenerated.
 
+## Pending — corpus cache generation 1.218 for receiver kinds read after generics (#16352)
+
+An owner's receiver kind is now read from its parameter list after the
+generics, and typed `self: Self`, `self: &Self` and `self: &mut Self`
+receivers are read, which can move a relation from a direct owner call to a
+name-only match and bumps the analyzer cache schema to 1.218. Move the
+portable unchanged-attempt snapshots to 1.218, recompute the
+`raw_json_placeholder_v1` artifact content commitment, then the dependent
+verify commitments and receipt byte hashes. Weak grip, unchanged movement,
+historical currentness, incomplete receipt status and fail-closed
+first-action routing remain the same. No other fixture output is
+regenerated.
+
 ## Pending — corpus cache generation 1.217 for rootless grouped imports and body-scoped macro names (#16388)
 
 A rootless grouped drop-in import (`use {anyhow::anyhow, ..};`) is now
