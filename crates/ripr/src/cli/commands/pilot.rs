@@ -1249,15 +1249,18 @@ where
     let mut on_extend = Some(on_extend);
     loop {
         let elapsed = started.elapsed();
-        let remaining = Duration::from_millis(total_budget_ms).saturating_sub(elapsed);
-        if remaining.is_zero() {
-            break;
-        }
+        // Announce the extension before the budget check: one wait that
+        // overshoots both boundaries (a descheduled thread on a loaded host,
+        // #16104) must still report that the run entered its extension.
         if extension_ms.is_some()
             && elapsed >= Duration::from_millis(timeout_ms)
             && let Some(callback) = on_extend.take()
         {
             callback();
+        }
+        let remaining = Duration::from_millis(total_budget_ms).saturating_sub(elapsed);
+        if remaining.is_zero() {
+            break;
         }
         let mut wait = remaining.min(PILOT_DEADLINE_POLL);
         if on_extend.is_some() {
@@ -1966,12 +1969,38 @@ mod tests {
     }
 
     #[test]
+    fn pilot_extension_notice_fires_when_one_wait_crosses_both_boundaries() {
+        // A zero-length extension puts both boundaries at the same instant,
+        // the shape of a wait that overshoots the whole budget at once
+        // (#16104). The notice must still fire before the run times out.
+        let extension_notice = std::cell::Cell::new(false);
+        let result = run_pilot_analysis_with_timeout::<(), _>(
+            20,
+            Some(0),
+            || extension_notice.set(true),
+            || {
+                loop {
+                    if crate::analysis::cancellation::checkpoint().is_err() {
+                        return Err("analysis cancelled".to_string());
+                    }
+                    std::thread::sleep(Duration::from_millis(5));
+                }
+            },
+        );
+        assert!(matches!(result, Ok(PilotAnalysisResult::TimedOut)));
+        assert!(extension_notice.get());
+    }
+
+    #[test]
     fn pilot_extension_notice_fires_at_first_phase_boundary() -> Result<(), String> {
         // Negative control for a single long recv through the whole budget:
         // the extension callback must fire at the first-phase boundary, not
-        // only after the combined budget elapses (#5322).
+        // only after the combined budget elapses (#5322). The extension is
+        // long so the two outcomes stay hundreds of milliseconds apart: a
+        // loaded runner delayed a correct notice to 81 ms against a 60 ms
+        // bound (#16104), while the regression fires only after 640 ms.
         const FIRST_MS: u64 = 40;
-        const EXTENSION_MS: u64 = 60;
+        const EXTENSION_MS: u64 = 600;
         let started = Instant::now();
         let notice_at = std::cell::Cell::new(None::<Duration>);
         let result = run_pilot_analysis_with_timeout::<(), _>(
@@ -1992,7 +2021,7 @@ mod tests {
             "default-plus-extension run must emit the extension notice".to_string()
         })?;
         assert!(
-            notice <= Duration::from_millis(FIRST_MS + 20),
+            notice < Duration::from_millis(FIRST_MS + EXTENSION_MS / 2),
             "extension notice must fire at the first-phase boundary, not after the whole budget; got {notice:?}"
         );
         assert!(

@@ -1398,7 +1398,9 @@ mod tests {
         Ok(())
     }
 
-    #[cfg(unix)]
+    // APFS and HFS+ refuse a file name that is not valid UTF-8 (EILSEQ,
+    // #16104), so the stimulus cannot exist on an Apple host.
+    #[cfg(all(unix, not(target_vendor = "apple")))]
     #[test]
     fn path_dependency_edges_skip_non_utf8_manifest_with_explicit_limitation() -> Result<(), String>
     {

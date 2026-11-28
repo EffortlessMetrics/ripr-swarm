@@ -1133,10 +1133,17 @@ mod tests {
             _ => None,
         };
         let Some(expected_unit) = expected_unit else {
-            return Err(format!(
+            // Every other host (macOS included, #16104) is documented as
+            // unsupported and must say so, not report a number.
+            assert_eq!(
+                observe_cpu_cost(),
+                CpuCost::Unavailable {
+                    reason: ResourceUnavailableReason::PlatformNotSupported
+                },
                 "{} has no wired per-process source",
                 std::env::consts::OS
-            ));
+            );
+            return Ok(());
         };
         let CpuCost::Observed { source_unit, .. } = observe_cpu_cost() else {
             return Err(format!(
@@ -1169,7 +1176,8 @@ mod tests {
     }
 
     /// The live observation must agree with the platform it ran on. A wired
-    /// host must really produce numbers here.
+    /// host must really produce numbers here; an unwired host must name
+    /// `PlatformNotSupported` for both.
     #[test]
     fn live_observation_matches_this_host() -> Result<(), String> {
         burn_cpu_briefly();
@@ -1179,6 +1187,24 @@ mod tests {
         assert_eq!(observation.observer_pid, std::process::id());
         assert_eq!(observation.host_os, std::env::consts::OS);
 
+        if !matches!(std::env::consts::OS, "linux" | "windows") {
+            // An unwired host (macOS included, #16104) names the documented
+            // reason for both numbers rather than reporting a value.
+            let unsupported = ResourceUnavailableReason::PlatformNotSupported;
+            assert_eq!(
+                observation.cpu,
+                CpuCost::Unavailable {
+                    reason: unsupported
+                }
+            );
+            assert_eq!(
+                observation.peak_resident_bytes,
+                ResourceMeasurement::Unavailable {
+                    reason: unsupported
+                }
+            );
+            return Ok(());
+        }
         let CpuCost::Observed {
             user_source,
             system_source,

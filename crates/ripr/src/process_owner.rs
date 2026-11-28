@@ -35,7 +35,9 @@
 //! and reaps the direct child even on panic unwinding. Unix MCP attempts opt
 //! into process-group containment through their captured cancellation token.
 //! Other callers retain their prepared process-group configuration. Group
-//! cleanup precedes the OS reap, which releases PID custody.
+//! cleanup precedes the OS reap, which releases PID custody. On Darwin a
+//! group whose leader exited and which answers `EPERM` is reported settled;
+//! that does not prove no member remains (see [`OwnedProcess::terminate_tree`]).
 
 use std::process::{ChildStderr, ChildStdin, ChildStdout, Command, ExitStatus};
 use std::time::{Duration, Instant};
@@ -236,6 +238,10 @@ pub struct OwnedProcess {
     /// signaling a group that reused the number (#9895 review).
     #[cfg(all(unix, not(windows)))]
     group_settled: bool,
+    /// The group was settled on Darwin's `EPERM` for an exited leader, so
+    /// no signal was delivered; reports must not say one was (#16104).
+    #[cfg(all(unix, not(windows)))]
+    group_settled_without_signal: bool,
     #[cfg(target_os = "linux")]
     group_cleanup_error: Option<String>,
     #[cfg(target_os = "linux")]
@@ -357,6 +363,7 @@ impl OwnedProcess {
             group_owned,
             custody_lost: false,
             group_settled: false,
+            group_settled_without_signal: false,
             #[cfg(target_os = "linux")]
             group_cleanup_error: None,
             #[cfg(target_os = "linux")]
@@ -557,14 +564,33 @@ impl OwnedProcess {
                 {
                     self.test_group_kills += 1;
                 }
-                match rustix::process::kill_process_group(pid, rustix::process::Signal::KILL) {
-                    Ok(()) | Err(rustix::io::Errno::SRCH) => {
+                let mut refused = false;
+                let signalled =
+                    match rustix::process::kill_process_group(pid, rustix::process::Signal::KILL) {
+                        Ok(()) => Ok(()),
+                        Err(error) => {
+                            refused = error == rustix::io::Errno::PERM;
+                            // Re-observe only for EPERM: the leader may have
+                            // exited between the first observation and the
+                            // signal. Other answers keep their old meaning.
+                            let leader_exited =
+                                error == rustix::io::Errno::PERM && self.observe_owned_exit()?;
+                            group_signal_outcome(
+                                error,
+                                leader_exited,
+                                ZOMBIE_ONLY_GROUP_SIGNAL_IS_EPERM,
+                            )
+                        }
+                    };
+                match signalled {
+                    Ok(()) => {
                         #[cfg(target_os = "linux")]
                         {
                             self.group_settlement_deadline =
                                 Some(Instant::now() + FALLBACK_REAP_BUDGET);
                         }
                         self.group_settled = true;
+                        self.group_settled_without_signal = refused;
                         return Ok(());
                     }
                     Err(error) => return Err(error.into()),
@@ -577,9 +603,13 @@ impl OwnedProcess {
     /// Terminate the whole owned tree and reap the direct child before
     /// returning. Windows: one termination request kills every process in
     /// the job. Unix: one `SIGKILL` to the child's process group reaches
-    /// every descendant, including pipe-inheriting grandchildren, and — per
-    /// the PID-custody contract — that group signal is always issued BEFORE
-    /// the primary is reaped: an unreaped leader pins its pgid, so the
+    /// every descendant this owner may signal, including pipe-inheriting
+    /// grandchildren. On Darwin an exited leader whose group answers `EPERM`
+    /// is reported settled; that answer does not rule out a live member that
+    /// changed to a user id this owner may not signal (see
+    /// `group_signal_outcome`), so `Ok` there is not proof that no member
+    /// remains. Per the PID-custody contract, that group signal is always
+    /// issued BEFORE the primary is reaped: an unreaped leader pins its pgid, so the
     /// signal can only reach this owner's tree; after the reap the number
     /// becomes recyclable and later release paths stay disarmed. Other
     /// platforms: the direct child kill and reap.
@@ -621,6 +651,12 @@ impl OwnedProcess {
             }
             return if self.reap_within(FALLBACK_REAP_BUDGET) {
                 Ok(())
+            } else if self.group_settled_without_signal {
+                Err(
+                    "owned group answered EPERM after its leader exited, so no signal was \
+                     delivered, and the primary reap exceeded its budget"
+                        .to_string(),
+                )
             } else {
                 Err("owned group was signalled but primary reap exceeded its budget".to_string())
             };
@@ -665,7 +701,9 @@ impl OwnedProcess {
     /// child but cannot certify that every descendant stopped, so the
     /// caller always receives the `incomplete tree cleanup` error carrying
     /// the fallback evidence — never a plain termination failure and never
-    /// an `Ok` that would imply confirmed containment.
+    /// an `Ok` from this fallback. A successful group settlement is a
+    /// different path; [`OwnedProcess::terminate_tree`] says what its `Ok`
+    /// does and does not establish on Darwin.
     fn failed_termination_fallback(&mut self, termination_err: String) -> String {
         let fallback_kill = self.kill().map_err(|err| err.to_string());
         let reaped = match &fallback_kill {
@@ -827,6 +865,44 @@ fn wait_for_linux_group_quiescence(group: u32, deadline: Instant) -> std::io::Re
         std::thread::sleep(
             Duration::from_millis(1).min(deadline.saturating_duration_since(Instant::now())),
         );
+    }
+}
+
+/// Whether this kernel answers a group signal with `EPERM` when every
+/// remaining member is a zombie. Darwin's `kill(2)` skips zombies while it
+/// walks the group and reports `EPERM` when it found no member to signal;
+/// Linux delivers the signal to the zombie and succeeds, and answers `ESRCH`
+/// only once the group is gone. Our unreaped leader is exactly such a zombie
+/// once it has exited, so on Darwin an exited childless tree returns `EPERM`
+/// (#16104).
+#[cfg(unix)]
+const ZOMBIE_ONLY_GROUP_SIGNAL_IS_EPERM: bool = cfg!(target_vendor = "apple");
+
+/// Classify a refused `SIGKILL` to the owned process group.
+///
+/// `ESRCH` means no member remains: the group is settled. `EPERM` is the
+/// same answer on a kernel that reports a zombie-only group that way, but
+/// only when the owned leader is observed exited: a live leader is always
+/// signallable by its owner, so `EPERM` with a live leader is a real
+/// refusal and stays an error. Every other error is returned unchanged.
+///
+/// Limitation: Darwin gives the same `EPERM` when the leader has exited and
+/// every live member left is one this owner may not signal, which needs a
+/// descendant that changed its real and saved user id (a setuid program
+/// alone keeps the caller's real id and stays signallable). That group is
+/// reported settled while such a member may still run. The two cases cannot
+/// be told apart without enumerating the group, which this crate does not
+/// do on Darwin, and no signal from this owner could stop that member.
+#[cfg(unix)]
+fn group_signal_outcome(
+    error: rustix::io::Errno,
+    leader_exited: bool,
+    zombie_only_group_is_eperm: bool,
+) -> Result<(), rustix::io::Errno> {
+    match error {
+        rustix::io::Errno::SRCH => Ok(()),
+        rustix::io::Errno::PERM if zombie_only_group_is_eperm && leader_exited => Ok(()),
+        error => Err(error),
     }
 }
 
@@ -1986,6 +2062,85 @@ mod tests {
         assert!(owned.terminate_tree().is_err());
         assert_eq!(owned.test_group_kills, 1, "no signal after leader reap");
         Ok(())
+    }
+
+    /// The kernel premise behind `ZOMBIE_ONLY_GROUP_SIGNAL_IS_EPERM`, read
+    /// from the real kernel rather than the classifier table (#16104): a
+    /// group whose only member is our exited, unreaped leader answers
+    /// `SIGKILL` with `EPERM` on Darwin and with success on Linux.
+    #[cfg(any(target_os = "linux", target_vendor = "apple"))]
+    #[test]
+    fn kernel_answers_a_zombie_only_group_signal_as_the_constant_says() -> Result<(), String> {
+        use std::os::unix::process::CommandExt as _;
+        let mut command = Command::new("sh");
+        command.args(["-c", "exit 0"]).process_group(0);
+        let mut child = command.spawn().map_err(|error| error.to_string())?;
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while !observe_unreaped_exit(&child).map_err(|error| error.to_string())? {
+            if Instant::now() >= deadline {
+                let _ = child.kill();
+                let _ = child.wait();
+                return Err("fixture leader did not exit".to_string());
+            }
+            std::thread::sleep(Duration::from_millis(1));
+        }
+        let pid = checked_child_pid(&child).map_err(|error| error.to_string())?;
+        // The leader is unreaped, so the pgid cannot have been recycled.
+        let answer = rustix::process::kill_process_group(pid, rustix::process::Signal::KILL);
+        child.wait().map_err(|error| error.to_string())?;
+        if ZOMBIE_ONLY_GROUP_SIGNAL_IS_EPERM {
+            assert_eq!(answer, Err(rustix::io::Errno::PERM));
+        } else {
+            assert_eq!(answer, Ok(()));
+        }
+        Ok(())
+    }
+
+    /// On the Darwin settle-without-signal path the owner records that no
+    /// signal was delivered; everywhere else a settled exited group was
+    /// signalled (#16104).
+    #[cfg(any(target_os = "linux", target_vendor = "apple"))]
+    #[test]
+    fn exited_childless_group_records_whether_a_signal_was_delivered() -> Result<(), String> {
+        let mut owned = successful_group_command()?;
+        let status = owned.wait().map_err(|error| error.to_string())?;
+        assert_eq!(status.code(), Some(7));
+        assert!(owned.group_settled);
+        assert_eq!(
+            owned.group_settled_without_signal,
+            ZOMBIE_ONLY_GROUP_SIGNAL_IS_EPERM
+        );
+        Ok(())
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn group_signal_outcome_reads_eperm_as_settled_only_for_an_exited_darwin_leader() {
+        use rustix::io::Errno;
+        // ESRCH is settled on every kernel, whatever the leader observation.
+        for (leader_exited, darwin) in [(false, false), (true, false), (false, true), (true, true)]
+        {
+            assert_eq!(
+                group_signal_outcome(Errno::SRCH, leader_exited, darwin),
+                Ok(())
+            );
+        }
+        // Darwin answers a zombie-only group with EPERM (#16104).
+        assert_eq!(group_signal_outcome(Errno::PERM, true, true), Ok(()));
+        // A live leader is always signallable by its owner: EPERM is real.
+        assert_eq!(
+            group_signal_outcome(Errno::PERM, false, true),
+            Err(Errno::PERM)
+        );
+        // Linux reports a zombie-only group as ESRCH, so EPERM is real there.
+        assert_eq!(
+            group_signal_outcome(Errno::PERM, true, false),
+            Err(Errno::PERM)
+        );
+        assert_eq!(
+            group_signal_outcome(Errno::INVAL, true, true),
+            Err(Errno::INVAL)
+        );
     }
 
     #[cfg(unix)]

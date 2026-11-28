@@ -25386,6 +25386,33 @@ struct QuarantineFixture {
     uri_b: tower_lsp_server::ls_types::Uri,
 }
 
+/// Give a fixture its own repository with a local `main`, so the opening
+/// refresh resolves a base without inheriting whichever checkout encloses the
+/// temp directory. Under `TMPDIR=target` in a shallow CI checkout with no base
+/// branch, that refresh failed as `base_unresolvable` and the failure marker
+/// replaced the cause under test (#16104).
+fn init_fixture_repository(root: &Path) -> Result<(), String> {
+    for args in [
+        &["init", "-q", "-b", "main"][..],
+        &[
+            "-c",
+            "user.name=ripr",
+            "-c",
+            "user.email=ripr@example.invalid",
+            "-c",
+            "commit.gpgsign=false",
+            "commit",
+            "-q",
+            "--allow-empty",
+            "-m",
+            "base",
+        ][..],
+    ] {
+        run_lsp_scope_git(root, args)?;
+    }
+    Ok(())
+}
+
 fn quarantine_fixture(name: &str) -> Result<QuarantineFixture, String> {
     let temp = unique_lsp_test_root(name)?;
     let root = temp.path().to_path_buf();
@@ -26027,6 +26054,7 @@ async fn out_of_root_document_names_the_root_instead_of_save_then_refresh() -> R
     // The served marker must name the out-of-root cause and its route, while
     // a never-analyzed file inside the root keeps the save-then-refresh route.
     let fixture = quarantine_fixture("out-of-root-marker")?;
+    init_fixture_repository(&fixture.root)?;
     let other = unique_lsp_test_root("out-of-root-marker-other")?;
     let other_file = other.path().join("lib.rs");
     std::fs::write(&other_file, QUARANTINE_TEXT_B)
@@ -26178,6 +26206,7 @@ async fn unanalyzed_hover_text(
     commit_snapshot: bool,
 ) -> Result<String, String> {
     let fixture = quarantine_fixture(name)?;
+    init_fixture_repository(&fixture.root)?;
     let (service, socket) = LspService::new(|client| Backend::new(client, fixture.root.clone()));
     drop(socket);
     let backend = service.inner();
@@ -26209,6 +26238,15 @@ async fn unanalyzed_hover_text(
     }
     if !settled {
         return Err("the opening refresh did not settle".to_string());
+    }
+    // The untouched-state case reads whatever the opening refresh left, so a
+    // failed opening refresh would turn it into the failed case (#16104).
+    if state.is_none() && backend.analysis_attempt_state_for_test() == AnalysisAttemptState::Failed
+    {
+        return Err(format!(
+            "the opening refresh must not fail: {:?}",
+            backend.analysis_failure_for_test()
+        ));
     }
     // `c.rs` is on disk but no analysis read it.
     let path_c = fixture.root.join("src").join("c.rs");
