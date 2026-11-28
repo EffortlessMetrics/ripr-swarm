@@ -3452,11 +3452,11 @@ fn in_binding_pattern(masked: &str, start: usize, end: usize) -> bool {
     let bytes = rest.as_bytes();
     let binds = bytes.iter().enumerate().any(|(index, byte)| {
         *byte == b'='
-            && !index
+            && index
                 .checked_sub(1)
                 .and_then(|previous| bytes.get(previous))
-                .is_some_and(|previous| matches!(previous, b'=' | b'!' | b'<' | b'>'))
-            && !bytes.get(index + 1).is_some_and(|next| *next == b'=')
+                .is_none_or(|previous| !matches!(previous, b'=' | b'!' | b'<' | b'>'))
+            && bytes.get(index + 1).is_none_or(|next| *next != b'=')
     });
     binds || rest.split_whitespace().any(|word| word == "in")
 }
