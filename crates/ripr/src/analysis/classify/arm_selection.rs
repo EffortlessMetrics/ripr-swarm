@@ -1222,6 +1222,44 @@ impl ArmSelector {
         Some(ObservedArmInputs { inputs, selection })
     }
 
+    /// Whether some direct owner call this module can read in a test body
+    /// selects this arm. Unlike `observed_inputs`, a mention it cannot read
+    /// on another line does not cancel the answer: such a use may select any
+    /// arm, so it never proves an arm unselected, but it cannot undo a call
+    /// whose input does select it (#15359 review). A mention that is neither
+    /// a call nor a plain value use may rebind the name
+    /// (`let price_cents = |s| 450;`), so then no call is credited.
+    pub(in crate::analysis) fn some_call_selects(&self, test: &TestSummary) -> bool {
+        let masked = mask_comments_and_strings(&test.body);
+        let mentions = whole_word_offsets(&masked, &self.owner);
+        if !mentions
+            .iter()
+            .all(|offset| is_call_or_plain_value_use(&masked, *offset, &self.owner))
+        {
+            return false;
+        }
+        line_starts_of(&test.body, &mentions)
+            .into_iter()
+            .any(|line_start| {
+                let line_end = test.body[line_start..]
+                    .find('\n')
+                    .map_or(test.body.len(), |offset| line_start + offset);
+                let line = &test.body[line_start..line_end];
+                let calls = owner_calls_in(line, &self.owner, self.method, &self.local_roots);
+                let line_mentions = mentions
+                    .iter()
+                    .filter(|offset| (line_start..line_end).contains(*offset))
+                    .count();
+                calls.len() == line_mentions
+                    && calls.iter().any(|call| {
+                        self.call_input(call).is_some_and(|input| {
+                            !self.input_import_ambiguous(test, input)
+                                && self.judge(input) == ArmSelection::Selects
+                        })
+                    })
+            })
+    }
+
     fn call_input<'a>(&self, call: &OwnerCall<'a>) -> Option<&'a str> {
         let input = match self.binding {
             ScrutineeBinding::Receiver => call.receiver,
@@ -3372,6 +3410,54 @@ fn whole_word_offsets(text: &str, word: &str) -> Vec<usize> {
 }
 
 /// The distinct line starts of the lines holding `offsets`, in order.
+/// Whether the owner name at `offset` is a call (`name(`, `.name(`) or a
+/// plain value use: an operand right after `=`, `(`, `,`, `&` or `[` that
+/// ends at `;`, `)`, `,` or `]` and does not sit in a pattern. Anything else
+/// (a `let`/`fn`/`use` binding, a closure parameter, a tuple or variant
+/// pattern such as `let (price_cents, _) = ..`, a path segment) may rebind
+/// or shadow the name, so the reading cannot trust a call that follows it.
+fn is_call_or_plain_value_use(masked: &str, offset: usize, name: &str) -> bool {
+    let after = masked[offset + name.len()..].trim_start();
+    if after.starts_with('(') {
+        return true;
+    }
+    let before = masked[..offset].trim_end();
+    let value_position = before.ends_with(['(', ',', '&', '['])
+        || (before.ends_with('=')
+            && !["==", "!=", "<=", ">="]
+                .iter()
+                .any(|operator| before.ends_with(operator)));
+    value_position
+        && after.starts_with([';', ')', ',', ']'])
+        && !in_binding_pattern(masked, offset, offset + name.len())
+}
+
+/// Whether the word spanning `start..end` may sit in a binding pattern. The
+/// reading is deliberately coarse, since withholding credit is the safe
+/// direction: a single `|` since the previous `;` may open closure
+/// parameters, and a plain `=`, a `=>` or an ` in ` before the next `;`,
+/// at any brace depth, may end a `let`, `if let`, `match` arm or `for`
+/// pattern (`let (a, S { b }) = ..`, `S { a: (b, _), .. } => ..`).
+fn in_binding_pattern(masked: &str, start: usize, end: usize) -> bool {
+    let statement_start = masked[..start].rfind(';').map_or(0, |index| index + 1);
+    let prefix = &masked[statement_start..start];
+    if prefix.replace("||", "").contains('|') {
+        return true;
+    }
+    let rest = &masked[end..];
+    let rest = &rest[..rest.find(';').unwrap_or(rest.len())];
+    let bytes = rest.as_bytes();
+    let binds = bytes.iter().enumerate().any(|(index, byte)| {
+        *byte == b'='
+            && index
+                .checked_sub(1)
+                .and_then(|previous| bytes.get(previous))
+                .is_none_or(|previous| !matches!(previous, b'=' | b'!' | b'<' | b'>'))
+            && bytes.get(index + 1).is_none_or(|next| *next != b'=')
+    });
+    binds || rest.split_whitespace().any(|word| word == "in")
+}
+
 fn line_starts_of(text: &str, offsets: &[usize]) -> Vec<usize> {
     let mut starts = offsets
         .iter()
