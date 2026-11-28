@@ -570,9 +570,9 @@ fn is_executable(path: &Path) -> bool {
     }
 }
 
-/// [`plan`] over one parsed `cargo metadata --no-deps` document read from
-/// `current_dir`, with cargo-fmt's package scoping for `cargo fmt` without
-/// `--all`.
+/// Build rustfmt invocations for [`plan_with`] from one parsed
+/// `cargo metadata --no-deps` document read from `current_dir`. Apply
+/// cargo-fmt's package scoping for `cargo fmt` without `--all`.
 fn invocations(
     metadata: &Value,
     check: bool,
