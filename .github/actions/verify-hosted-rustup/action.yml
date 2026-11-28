@@ -1,0 +1,46 @@
+name: Verify hosted Rustup
+description: Bind the hosted cache lookup and primary build to the sole installed job toolchain
+inputs:
+  toolchain:
+    description: Exact Rust release requested by the toolchain setup
+    required: true
+runs:
+  using: composite
+  steps:
+    - shell: bash
+      env:
+        EXPECTED_TOOLCHAIN: ${{ inputs.toolchain }}
+      run: |
+        set -euo pipefail
+
+        fail() {
+          printf 'Hosted Rust toolchain: %s\n' "$*" >&2
+          exit 1
+        }
+
+        [[ "${RUNNER_TEMP:?}" = /* ]] || fail 'RUNNER_TEMP must be absolute'
+        job_home="$RUNNER_TEMP/ripr-rustup"
+        expected="${EXPECTED_TOOLCHAIN:?}"
+        [[ "${RUSTUP_HOME:-}" == "$job_home" ]] || fail 'Rustup home is outside the job directory'
+
+        # Inspect what setup installed before the checkout can trigger Rustup's
+        # implicit toolchain or component installation.
+        installed=$(cd -- "$job_home" && rustup toolchain list --quiet)
+        [[ "$installed" == "$expected"-* && "$installed" != *$'\n'* ]] ||
+          fail "expected only Rust $expected, found: $installed"
+        for tool in rustc cargo; do
+          selected=$(rustup which "$tool")
+          [[ "$selected" == "$job_home/toolchains/$installed/bin/$tool" ]] ||
+            fail "$tool resolves outside the installed Rust $expected toolchain"
+          version=$("$tool" -vV)
+          expected_version=$("$selected" -vV)
+          [[ "$version" == "$expected_version" ]] || fail "$tool selects a different version"
+          if [[ "$tool" == rustc ]]; then
+            grep -Fxq "release: $expected" <<< "$version" ||
+              fail "rustc does not report release $expected"
+          fi
+        done
+
+        # A later worktree can declare another Rust version. Keep cache lookup and
+        # builds on the verified job toolchain when moving between worktrees.
+        printf 'RUSTUP_TOOLCHAIN=%s\n' "$installed" >> "${GITHUB_ENV:?}"
