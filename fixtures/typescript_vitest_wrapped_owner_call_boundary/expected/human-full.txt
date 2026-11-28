@@ -1,0 +1,105 @@
+ripr static RIPR exposure analysis
+mode: fast
+root: fixtures/typescript_vitest_wrapped_owner_call_boundary/input
+config: <cwd>/fixtures/typescript_vitest_wrapped_owner_call_boundary/input/ripr.toml
+
+Summary: 1 changed behavior(s) checked: 0 exposed, 1 weakly_exposed, 0 reachable_unrevealed, 0 no_static_path, 0 infection_unknown, 0 propagation_unknown, 0 static_unknown; 1 of 1 finding(s) unsuppressed
+Terms: exposed = tests appear to notice the change; weakly_exposed = linked to a test, but checked
+  only loosely; reachable_unrevealed = linked to a test, but nothing appears to notice a change
+  (both can rest on a test link ripr could not confirm; the reach stage says which); no_static_path
+  = no test path found; infection_unknown, propagation_unknown, static_unknown = ripr could not tell
+  from the code (analysis limited, not a verdict); finding = one reported gap; unsuppressed = not
+  hidden by your suppression policy
+
+Changed file(s) by language: typescript = 1
+
+Analysis outcome: findings below (analysis complete; complete_with_findings)
+  Counts: 1 changed file(s), 2 changed line(s), 1 candidate line(s), 1 changed behavior(s) checked, 1 finding(s)
+
+WARNING src/price.ts:2
+  id: probe:src_price.ts:typescript_preview:9795f3c2
+
+Changed
+  after:    if (total >= 100) {
+
+Change type
+  a condition or comparison changed
+  family: predicate
+  delta:  control (changes which code path runs)
+  owner:  typescript:src/price.ts::discount
+
+Language
+  language: typescript
+  status: preview
+  owner kind: function
+
+Preview actionability
+  authority: preview_advisory_only
+  gap state: actionable
+  category: complete_repair_packet
+  repair packet ready: true
+  why actionable: complete repair packet — package root, runner, owner, oracle target, verify, receipt, and edit cage all resolved; delegatable (advisory)
+  repair action: add a focused assertion for the missing check `total == 100` in the related test, shaped like `expect(discount(100, discount(100))).toBe(expected)`
+  raw evidence: src/price.ts:2 (typescript_preview_probe) source=probe:src_price.ts:typescript_preview:9795f3c2 owner=discount
+
+Static exposure
+  weakly_exposed (warning, confidence 0.40)
+  Why capped: preview adapter: infection/propagation not modeled (TypeScript); syntax-first, no type or import resolution; no observed call supplies the changed boundary input. Preview score, not on the same scale as Rust confidence.
+
+Evidence
+  - reach yes: 2 related test(s) found for owner `discount`
+  - infection unknown: TypeScript preview adapter does not yet model infection
+  - propagation unknown: TypeScript preview adapter does not yet model propagation
+  - observation weak: Strongest extracted oracle kind: `exact_value` (rank 5)
+  - discriminator weak: TypeScript preview adapter: strong oracle found but no strong assertion observes an owner call at the changed predicate boundary; missing proof: `total == 100`
+  - related test test/price.test.ts:5 discount never drops a 100 order below 100 uses strong exact value oracle: expect(...).toBe(...); unconfirmed: the preview adapter could not confirm that this assertion observes the changed behavior
+  - related test test/price.test.ts:9 discount discounts through a nested call uses strong exact value oracle: expect(...).toBe(...); unconfirmed: the preview adapter could not confirm that this assertion observes the changed behavior
+
+Weakness
+  - Related tests reach `discount` with a strong oracle, but no strong assertion observes a `discount(...)` call at the changed predicate boundary `total == 100`; inputs on one side of the boundary do not discriminate the changed comparison
+  - missing discriminator total == 100: changed TypeScript equality-boundary at line 2 lacks a concrete preview discriminator
+
+TypeScript preview card (advisory)
+  card version: typescript_preview_card.v1
+  authority: preview_advisory_only (typescript/preview)
+  owner: discount
+  owner kind: function
+  changed behavior: predicate changed at src/price.ts:2: `if (total >= 100) {`
+  related test: test/price.test.ts:5 discount never drops a 100 order below 100
+  oracle: exact_value (strong)
+  missing discriminator: total == 100
+  suggested assertion shape: Exact-value evidence is present; verify it targets the changed discriminator.
+  verify: npx --no-install vitest run test/price.test.ts
+  repair packet ready: true
+  why actionable: complete repair packet — package root, runner, owner, oracle target, verify, receipt, and edit cage all resolved; delegatable (advisory)
+  repair action: add a focused assertion for the missing check `total == 100` in the related test, shaped like `expect(discount(100, discount(100))).toBe(expected)`
+  limits:
+    - Syntax-first TypeScript/JavaScript preview evidence only.
+    - No tsc, tsserver, package graph, Jest/Vitest runtime, mutation execution, generated tests, provider calls, source edits, gate authority, or badge authority.
+    - This card is an advisory summary; the complete repair packet is projected separately and is also advisory.
+
+TypeScript repair packet (advisory)
+  canonical gap: gap:typescript:typescript_preview:9795f3c2
+  source: discount at src/price.ts:2
+  related test: test/price.test.ts::discount never drops a 100 order below 100
+  oracle: expect(discount(100, discount(100))).toBe(expected)
+  edit surface: test/price.test.ts
+  verify: npx --no-install vitest run test/price.test.ts
+  receipt: ripr receipt write --gap gap:typescript:typescript_preview:9795f3c2 --verify-command 'npx --no-install vitest run test/price.test.ts' --status not_run --out target/ripr/receipts/gap-typescript-typescript_preview-9795f3c2.json
+  must not change:
+    - Do not edit production code unless the focused proof exposes a real product defect.
+    - Do not broaden the change beyond this GapRecord and its repair route.
+    - Do not treat static evidence as runtime mutation, coverage, or correctness proof.
+    - Do not generate tests or call external providers from this packet.
+    - Do not treat preview-language evidence as gate authority.
+  why actionable: complete-contract TypeScript finding — package root, runner, owner, oracle all resolved; no blocking limitation
+  authority: preview_advisory_only
+
+Next step
+  TypeScript preview advisory: add or strengthen a focused assertion for the missing check `total == 100`; the repair packet is complete (advisory: `ripr context --at <finding-id>` prints it; `ripr repair` covers Rust files only)
+Drill in:
+  (finding id, for explain/context)
+  ripr explain --root <cwd>/fixtures/typescript_vitest_wrapped_owner_call_boundary/input --diff <cwd>/fixtures/typescript_vitest_wrapped_owner_call_boundary/diff.patch --mode fast probe:src_price.ts:typescript_preview:9795f3c2
+  ripr context --root <cwd>/fixtures/typescript_vitest_wrapped_owner_call_boundary/input --diff <cwd>/fixtures/typescript_vitest_wrapped_owner_call_boundary/diff.patch --mode fast --at probe:src_price.ts:typescript_preview:9795f3c2
+
+Note: 1 TypeScript file analyzed under preview support — preview evidence is advisory and may be incomplete. Treat its findings as advisory, not Rust-grade.

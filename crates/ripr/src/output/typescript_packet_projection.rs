@@ -434,6 +434,12 @@ pub(crate) fn typescript_target_assertion_shape_with_boundary_facts(
     boundary_input: Option<&TypeScriptBoundaryInputFact>,
     boundary_parameters: Option<&TypeScriptBoundaryParametersFact>,
 ) -> TargetAssertionShape {
+    // #16458: a wrapper around the owner call (`Math.max(owner(100), 100)`)
+    // is the observation the classifier refused as a discriminator; a packet
+    // repeating it would hand an agent the same non-discriminating shape.
+    // Project from the wrapped direct owner call instead.
+    let unwrapped = wrapped_owner_call_argument(observed, owner_name);
+    let observed = unwrapped.as_deref().unwrap_or(observed);
     let expected_clause = match family {
         crate::domain::ProbeFamily::ErrorPath => ".toThrow(expected)",
         _ => ".toBe(expected)",
@@ -641,6 +647,20 @@ fn parse_static_call_expression(expr: &str) -> Option<StaticCall> {
     Some(StaticCall {
         callee: callee.to_string(),
         args,
+    })
+}
+
+/// The first argument of a non-owner call that is itself one direct owner
+/// call (#16458): `owner(100)` for `Math.max(owner(100), 100)`. `None` when
+/// `observed` is not a call, already calls the owner, or wraps no owner call.
+fn wrapped_owner_call_argument(observed: &str, owner_name: Option<&str>) -> Option<String> {
+    let call = parse_static_call_expression(observed)?;
+    if call_callee_is_owner(&call.callee, owner_name) {
+        return None;
+    }
+    call.args.into_iter().find(|argument| {
+        parse_static_call_expression(argument)
+            .is_some_and(|inner| call_callee_is_owner(&inner.callee, owner_name))
     })
 }
 
@@ -2867,6 +2887,49 @@ pub(crate) mod tests {
             shape,
             TargetAssertionShape::Observed {
                 shape: "expect(limit(3)).toBe(expected)".to_string(),
+            }
+        );
+    }
+
+    /// #16458: the classifier refuses a wrapper around the owner call as a
+    /// discriminator, so the packet projects the wrapped direct owner call
+    /// rather than repeating the wrapper. A call with no owner inside keeps
+    /// its observed shape.
+    #[test]
+    fn target_shape_unwraps_a_wrapper_around_the_owner_call() {
+        let hit = typescript_target_assertion_shape(
+            &ProbeFamily::Predicate,
+            "Math.max(limit(3), 3)",
+            Some("amount == 3"),
+            Some("limit"),
+        );
+        assert_eq!(
+            hit,
+            TargetAssertionShape::Observed {
+                shape: "expect(limit(3)).toBe(expected)".to_string(),
+            }
+        );
+        let miss = typescript_target_assertion_shape(
+            &ProbeFamily::Predicate,
+            "Math.max(limit(5), 3)",
+            Some("amount == 3"),
+            Some("limit"),
+        );
+        assert!(
+            matches!(&miss, TargetAssertionShape::Unreachable { observed_call, .. } if observed_call == "limit(5)"),
+            "{miss:?}"
+        );
+        assert!(!miss.shape().contains("Math.max"), "{miss:?}");
+        let unrelated = typescript_target_assertion_shape(
+            &ProbeFamily::Predicate,
+            "format(total)",
+            Some("amount == 3"),
+            Some("limit"),
+        );
+        assert_eq!(
+            unrelated,
+            TargetAssertionShape::Observed {
+                shape: "expect(format(total)).toBe(expected)".to_string(),
             }
         );
     }

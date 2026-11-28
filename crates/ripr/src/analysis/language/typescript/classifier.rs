@@ -3428,6 +3428,78 @@ fn observed_has_other_call(observed: &str, owner_name: &str) -> bool {
     false
 }
 
+/// Whether `observed` has a call to something other than the owner whose
+/// argument list holds an owner call (#16458): `Math.max(owner(100), 100)`.
+/// An owner call is a bare spelling, or a member call whose receiver is one
+/// of that spelling's owner-module receivers; `Math.max` stays a wrapper
+/// even when the owner is named `max`. `Promise.resolve`/`Promise.reject`
+/// and the test file's identity helpers carry the value unchanged and are
+/// not wrappers. String literals are skipped.
+fn observed_wraps_owner_call(
+    observed: &str,
+    call_spellings: &[(&str, &[String])],
+    identity_helpers: &[&str],
+) -> bool {
+    let bytes = observed.as_bytes();
+    let mut i = 0;
+    while i < bytes.len() {
+        let b = bytes[i];
+        if b.is_ascii_alphabetic() || b == b'_' || b == b'$' {
+            let start = i;
+            while i < bytes.len()
+                && (bytes[i].is_ascii_alphanumeric() || bytes[i] == b'_' || bytes[i] == b'$')
+            {
+                i += 1;
+            }
+            let name = &observed[start..i];
+            let before = &observed[..start];
+            let member = before.trim_end().ends_with('.');
+            let is_owner_call = call_spellings.iter().any(|(spelling, receivers)| {
+                *spelling == name
+                    && (!member
+                        || receivers
+                            .iter()
+                            .any(|receiver| *receiver == receiver_before_dot(before)))
+            });
+            // `Promise.resolve(owner(100))` with a `.resolves` matcher, and a
+            // verified test-local identity helper (`wrap(owner(100))`), assert
+            // the owner value itself: the wrapper carries it unchanged.
+            let value_preserving = if member {
+                matches!(name, "resolve" | "reject") && receiver_before_dot(before) == "Promise"
+            } else {
+                identity_helpers.contains(&name)
+            };
+            if is_owner_call || value_preserving {
+                continue;
+            }
+            let Some(after_open) = observed[i..].trim_start().strip_prefix('(') else {
+                continue;
+            };
+            let Some(close) = balanced_close_offset(after_open) else {
+                continue;
+            };
+            let arguments = &after_open[..close];
+            if call_spellings.iter().any(|(spelling, receivers)| {
+                !owner_call_arguments(arguments, spelling, receivers).is_empty()
+            }) {
+                return true;
+            }
+        } else if b == b'"' || b == b'\'' || b == b'`' {
+            i += 1;
+            while i < bytes.len() && bytes[i] != b {
+                if bytes[i] == b'\\' {
+                    i += 1;
+                }
+                i += 1;
+            }
+            i += 1;
+        } else {
+            i += 1;
+        }
+    }
+    false
+}
+
 /// The expression of a complete one-line `return <expression>;`.
 fn returned_line_expression(line_text: &str) -> Option<&str> {
     let expression = line_text
@@ -3648,6 +3720,12 @@ pub(crate) fn ts_predicate_boundary_row_activation(
             continue;
         }
         let mut argument_lists = owner_call_arguments(observed, &owner.name, &owner_receivers);
+        // #16458: when the asserted value is one whole owner call, only its
+        // own arguments count. A nested `owner(90, owner(100))` asserts the
+        // outer result, which the inner call's boundary input need not move.
+        if observed_is_one_owner_call_spelling(observed, &owner.name, &owner_receivers) {
+            argument_lists.truncate(1);
+        }
         // A renamed import witnesses only when the asserted value is the
         // whole alias call (`expect(d(100))`): a wrapper such as
         // `Math.max(d(100), 100)` may map both sides of the boundary to one
@@ -3658,7 +3736,7 @@ pub(crate) fn ts_predicate_boundary_row_activation(
         argument_lists.extend(
             alias_locals
                 .iter()
-                .filter(|alias| observed_is_one_whole_call(observed, alias))
+                .filter(|alias| observed_is_one_owner_call_spelling(observed, alias, no_receivers))
                 .filter_map(|alias| {
                     owner_call_arguments(observed, alias, no_receivers)
                         .into_iter()
@@ -3744,6 +3822,22 @@ pub(crate) fn ts_predicate_boundary_row_activation(
                 })
             };
             if !witnessed {
+                continue;
+            }
+            // #16458: a wrapper call around the owner (`Math.max(owner(100),
+            // 100)`) may map both sides of the boundary to one value, and
+            // nothing here models its effect: the boundary input reached the
+            // owner, but this assertion does not discriminate it. A helper
+            // inside the owner's own arguments (`owner(100, getTier())`) is
+            // not a wrapper: the asserted value is still the owner result.
+            let identity_helpers: Vec<&str> = candidate
+                .test
+                .identity_helpers_in_file
+                .iter()
+                .map(String::as_str)
+                .collect();
+            if observed_wraps_owner_call(observed, &call_spellings, &identity_helpers) {
+                reached = true;
                 continue;
             }
             // Expected-side guards (#4102): a self-comparing expectation
@@ -4364,13 +4458,32 @@ fn row_boundary_input_activation(
     }
 }
 
-/// `true` when `observed` is exactly one call of `name`: the name, an
-/// argument list, and nothing before or after it (#16452).
-fn observed_is_one_whole_call(observed: &str, name: &str) -> bool {
-    let Some(after_name) = observed.trim().strip_prefix(name) else {
+/// `true` when `observed` is exactly one owner call (#16458): the owner
+/// name, bare or behind one of its owner-module receivers, optional type
+/// arguments, one argument list, and nothing before or after it.
+fn observed_is_one_owner_call_spelling(
+    observed: &str,
+    name: &str,
+    owner_receivers: &[String],
+) -> bool {
+    let observed = observed.trim();
+    let callee = owner_receivers
+        .iter()
+        .find_map(|receiver| {
+            observed
+                .strip_prefix(receiver.as_str())
+                .and_then(|rest| rest.trim_start().strip_prefix('.'))
+                .map(str::trim_start)
+        })
+        .unwrap_or(observed);
+    if !callee.starts_with(name) {
         return false;
-    };
-    let Some(after_open) = after_name.trim_start().strip_prefix('(') else {
+    }
+    let after_name = callee[name.len()..].trim_start();
+    let Some(after_open) = after_name
+        .strip_prefix('(')
+        .or_else(|| generic_owner_argument_list(callee, name)?.strip_prefix('('))
+    else {
         return false;
     };
     balanced_close_offset(after_open).is_some_and(|close| after_open[close + 1..].trim().is_empty())
