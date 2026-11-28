@@ -1,0 +1,23 @@
+# Path-qualified pins on a value neither version returns, and peeled boolean payloads, get the invisible-change withhold (#16400).
+[[extend]]
+id = "RIPR-SPEC-0197"
+tests = [
+  "crates/ripr/tests/invisible_change.rs::a_path_qualified_pin_neither_version_returns_does_not_expose_the_change",
+  "crates/ripr/tests/invisible_change.rs::a_crate_rooted_pin_neither_version_returns_does_not_expose_the_change",
+  "crates/ripr/tests/invisible_change.rs::a_bare_pin_neither_version_returns_does_not_expose_the_change",
+  "crates/ripr/tests/invisible_change.rs::a_path_qualified_pin_on_the_current_value_keeps_the_credit",
+  "crates/ripr/tests/invisible_change.rs::a_wrapped_bool_pin_at_an_agreeing_input_does_not_expose_the_change",
+  "crates/ripr/tests/invisible_change.rs::a_wrapped_bool_equality_at_an_agreeing_input_does_not_expose_the_change",
+  "crates/ripr/tests/invisible_change.rs::a_wrapped_bool_pin_at_the_separating_input_keeps_the_credit",
+  "crates/ripr/tests/invisible_change.rs::a_wrapped_bool_payload_that_overflows_its_operand_width_is_not_read_as_the_same_value",
+  "crates/ripr/tests/invisible_change.rs::a_wrapped_bool_payload_whose_product_overflows_is_not_read_as_the_same_value",
+  "crates/ripr/tests/invisible_change.rs::a_wrapped_bool_payload_within_its_operand_width_is_read_as_the_same_value",
+  "crates/ripr/tests/invisible_change.rs::a_wrapped_bool_payload_over_mixed_parameter_widths_is_not_read_as_the_same_value",
+  "crates/ripr/tests/invisible_change.rs::an_unsigned_wrapped_bool_payload_that_underflows_is_not_read_as_the_same_value",
+  "crates/ripr/tests/invisible_change.rs::a_tuple_bool_component_that_overflows_its_operand_width_is_not_read_as_the_same_value",
+  "crates/ripr/tests/invisible_change.rs::a_peeled_tuple_bool_component_that_overflows_is_not_read_as_the_same_value",
+  "crates/ripr/tests/invisible_change.rs::a_tuple_bool_component_within_its_operand_width_is_read_as_the_same_value",
+  "crates/ripr/tests/invisible_change.rs::a_wrapped_bool_payload_with_a_suffixed_literal_is_not_read_as_the_same_value",
+  "crates/ripr/tests/invisible_change.rs::a_tuple_bool_range_membership_at_an_agreeing_input_is_read_as_the_same_value",
+  "crates/ripr/tests/invisible_change.rs::a_tuple_bool_range_membership_at_the_separating_input_keeps_the_credit",
+]

@@ -1,0 +1,7 @@
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -1,3 +1,3 @@
+ pub fn check(x: i32) -> Option<bool> {
+-    Some(x >= 0)
++    Some(x > 0)
+ }

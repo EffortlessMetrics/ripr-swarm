@@ -783,3 +783,266 @@ fn a_rebound_matches_macro_is_not_read_as_the_same_value() -> Result<(), String>
     assert!(!same_value(finding), "{finding:?}");
     Ok(())
 }
+
+const FEE: &str = "pub fn fee(x: u32) -> u32 {\n    x * 3\n}\n";
+const FEE_OLD: &str = "    x * 2";
+
+#[test]
+fn a_path_qualified_pin_neither_version_returns_does_not_expose_the_change() -> Result<(), String> {
+    // #16400: `fee(4)` is 8 before and 12 after, so a pin on 99 fails on both
+    // versions; the path-qualified spelling must not earn the credit the bare
+    // call is already refused.
+    let findings = findings(
+        FEE,
+        FEE_OLD,
+        "#[test]\nfn four() {\n    assert_eq!(invisible::fee(4), 99);\n}\n",
+    )?;
+    let finding = return_value(&findings)?;
+    assert_ne!(finding.class, ExposureClass::Exposed, "{finding:?}");
+    Ok(())
+}
+
+#[test]
+fn a_crate_rooted_pin_neither_version_returns_does_not_expose_the_change() -> Result<(), String> {
+    let findings = findings(
+        FEE,
+        FEE_OLD,
+        "#[test]\nfn four() {\n    assert_eq!(::invisible::fee(4), 99);\n}\n",
+    )?;
+    let finding = return_value(&findings)?;
+    assert_ne!(finding.class, ExposureClass::Exposed, "{finding:?}");
+    Ok(())
+}
+
+#[test]
+fn a_bare_pin_neither_version_returns_does_not_expose_the_change() -> Result<(), String> {
+    // Baseline for the qualified twins above (#12716).
+    let findings = findings(
+        FEE,
+        FEE_OLD,
+        "use invisible::fee;\n\n#[test]\nfn four() {\n    assert_eq!(fee(4), 99);\n}\n",
+    )?;
+    let finding = return_value(&findings)?;
+    assert_ne!(finding.class, ExposureClass::Exposed, "{finding:?}");
+    Ok(())
+}
+
+#[test]
+fn a_path_qualified_pin_on_the_current_value_keeps_the_credit() -> Result<(), String> {
+    // Control: `invisible::fee(4)` is 12 now and 8 before.
+    let findings = findings(
+        FEE,
+        FEE_OLD,
+        "#[test]\nfn four() {\n    assert_eq!(invisible::fee(4), 12);\n}\n",
+    )?;
+    let finding = return_value(&findings)?;
+    assert_eq!(finding.class, ExposureClass::Exposed, "{finding:?}");
+    Ok(())
+}
+
+const SOME_CHECK: &str = "pub fn check(x: i32) -> Option<bool> {\n    Some(x > 0)\n}\n";
+const SOME_CHECK_OLD: &str = "    Some(x >= 0)";
+
+#[test]
+fn a_wrapped_bool_pin_at_an_agreeing_input_does_not_expose_the_change() -> Result<(), String> {
+    // #16400: `Some(5 >= 0)` and `Some(5 > 0)` are both `Some(true)`.
+    let findings = findings(
+        SOME_CHECK,
+        SOME_CHECK_OLD,
+        "#[test]\nfn five() {\n    assert!(matches!(invisible::check(5), Some(true)));\n}\n",
+    )?;
+    let finding = return_value(&findings)?;
+    assert_ne!(finding.class, ExposureClass::Exposed, "{finding:?}");
+    assert!(same_value(finding), "{finding:?}");
+    Ok(())
+}
+
+#[test]
+fn a_wrapped_bool_equality_at_an_agreeing_input_does_not_expose_the_change() -> Result<(), String> {
+    let findings = findings(
+        SOME_CHECK,
+        SOME_CHECK_OLD,
+        "use invisible::check;\n\n#[test]\nfn five() {\n    assert_eq!(check(5), Some(true));\n}\n",
+    )?;
+    let finding = return_value(&findings)?;
+    assert_ne!(finding.class, ExposureClass::Exposed, "{finding:?}");
+    assert!(same_value(finding), "{finding:?}");
+    Ok(())
+}
+
+#[test]
+fn a_wrapped_bool_pin_at_the_separating_input_keeps_the_credit() -> Result<(), String> {
+    // Control: `Some(0 >= 0)` is `Some(true)`, `Some(0 > 0)` is `Some(false)`.
+    let findings = findings(
+        SOME_CHECK,
+        SOME_CHECK_OLD,
+        "#[test]\nfn zero() {\n    assert!(matches!(invisible::check(0), Some(false)));\n}\n",
+    )?;
+    let finding = return_value(&findings)?;
+    assert_eq!(finding.class, ExposureClass::Exposed, "{finding:?}");
+    assert!(!same_value(finding), "{finding:?}");
+    Ok(())
+}
+
+#[test]
+fn a_wrapped_bool_payload_that_overflows_its_operand_width_is_not_read_as_the_same_value()
+-> Result<(), String> {
+    // `x + 1` overflows `i32` at `i32::MAX`, so the current version panics in
+    // a debug build where the baseline returns `Some(true)`: the pin can tell
+    // the versions apart, and exact arithmetic must not fold them equal.
+    let findings = findings(
+        "pub fn check(x: i32) -> Option<bool> {\n    Some(x + 1 > 0)\n}\n",
+        "    Some(x > 0)",
+        "use invisible::check;\n\n#[test]\nfn max() {\n    assert_eq!(check(2147483647), Some(true));\n}\n",
+    )?;
+    let finding = return_value(&findings)?;
+    assert!(!same_value(finding), "{finding:?}");
+    Ok(())
+}
+
+#[test]
+fn a_wrapped_bool_payload_whose_product_overflows_is_not_read_as_the_same_value()
+-> Result<(), String> {
+    // `3_000_000 * 1000` does not fit `i32`.
+    let findings = findings(
+        "pub fn check(x: i32) -> Option<bool> {\n    Some(x * 1000 > 5000)\n}\n",
+        "    Some(x > 0)",
+        "use invisible::check;\n\n#[test]\nfn big() {\n    assert_eq!(check(3000000), Some(true));\n}\n",
+    )?;
+    let finding = return_value(&findings)?;
+    assert!(!same_value(finding), "{finding:?}");
+    Ok(())
+}
+
+#[test]
+fn a_wrapped_bool_payload_within_its_operand_width_is_read_as_the_same_value() -> Result<(), String>
+{
+    // Control: `3000 * 1000` fits `i32`, so both versions are `Some(true)`.
+    let findings = findings(
+        "pub fn check(x: i32) -> Option<bool> {\n    Some(x * 1000 > 5000)\n}\n",
+        "    Some(x > 0)",
+        "use invisible::check;\n\n#[test]\nfn big() {\n    assert_eq!(check(3000), Some(true));\n}\n",
+    )?;
+    let finding = return_value(&findings)?;
+    assert!(same_value(finding), "{finding:?}");
+    Ok(())
+}
+
+#[test]
+fn a_wrapped_bool_payload_over_mixed_parameter_widths_is_not_read_as_the_same_value()
+-> Result<(), String> {
+    // No one operand width covers `i32` and `i64` parameters, so the peeled
+    // boolean stays unread.
+    let findings = findings(
+        "pub fn check(x: i32, y: i64) -> Option<bool> {\n    Some(x > 1)\n}\n",
+        "    Some(x > 0)",
+        "use invisible::check;\n\n#[test]\nfn five() {\n    assert_eq!(check(5, 0), Some(true));\n}\n",
+    )?;
+    let finding = return_value(&findings)?;
+    assert!(!same_value(finding), "{finding:?}");
+    Ok(())
+}
+
+#[test]
+fn an_unsigned_wrapped_bool_payload_that_underflows_is_not_read_as_the_same_value()
+-> Result<(), String> {
+    // `0u32 - 1` underflows, so the current version panics in a debug build
+    // where the baseline returns `Some(false)`.
+    let findings = findings(
+        "pub fn check(x: u32) -> Option<bool> {\n    Some(x - 1 > 0)\n}\n",
+        "    Some(x > 0)",
+        "use invisible::check;\n\n#[test]\nfn zero() {\n    assert_eq!(check(0), Some(false));\n}\n",
+    )?;
+    let finding = return_value(&findings)?;
+    assert!(!same_value(finding), "{finding:?}");
+    Ok(())
+}
+
+#[test]
+fn a_tuple_bool_component_that_overflows_its_operand_width_is_not_read_as_the_same_value()
+-> Result<(), String> {
+    // `a + 1` overflows `i32` at `i32::MAX` in the bool component.
+    let findings = findings(
+        "pub fn pair(a: i32) -> (i32, bool) {\n    (a, a + 1 > 0)\n}\n",
+        "    (a, a > 0)",
+        "use invisible::pair;\n\n#[test]\nfn max() {\n    assert_eq!(pair(2147483647), (2147483647, true));\n}\n",
+    )?;
+    let finding = return_value(&findings)?;
+    assert!(!same_value(finding), "{finding:?}");
+    Ok(())
+}
+
+#[test]
+fn a_peeled_tuple_bool_component_that_overflows_is_not_read_as_the_same_value() -> Result<(), String>
+{
+    let findings = findings(
+        "pub fn pair(a: i32) -> Option<(i32, bool)> {\n    Some((a, a + 1 > 0))\n}\n",
+        "    Some((a, a > 0))",
+        "use invisible::pair;\n\n#[test]\nfn max() {\n    assert_eq!(pair(2147483647), Some((2147483647, true)));\n}\n",
+    )?;
+    let finding = return_value(&findings)?;
+    assert!(!same_value(finding), "{finding:?}");
+    Ok(())
+}
+
+#[test]
+fn a_tuple_bool_component_within_its_operand_width_is_read_as_the_same_value() -> Result<(), String>
+{
+    // Control: `5 + 1 > 0` and `5 > 0` agree, and nothing overflows.
+    let findings = findings(
+        "pub fn pair(a: i32) -> (i32, bool) {\n    (a, a + 1 > 0)\n}\n",
+        "    (a, a > 0)",
+        "use invisible::pair;\n\n#[test]\nfn five() {\n    assert_eq!(pair(5), (5, true));\n}\n",
+    )?;
+    let finding = return_value(&findings)?;
+    assert!(same_value(finding), "{finding:?}");
+    Ok(())
+}
+
+#[test]
+fn a_wrapped_bool_payload_with_a_suffixed_literal_is_not_read_as_the_same_value()
+-> Result<(), String> {
+    // `255u8 + 1` overflows `u8` in the baseline at `check(2)`, though it
+    // fits the `i32` parameter width; the suffix names a narrower type than
+    // the guard, so the fold must not read the versions as agreeing.
+    let findings = findings(
+        "pub fn check(x: i32) -> Option<bool> {\n    Some(x > 0)\n}\n",
+        "    Some((if x == 2 { 255u8 } else { 0 }) + 1 > 0)",
+        "use invisible::check;\n\n#[test]\nfn two() {\n    assert_eq!(check(2), Some(true));\n}\n",
+    )?;
+    let finding = return_value(&findings)?;
+    assert!(!same_value(finding), "{finding:?}");
+    Ok(())
+}
+
+const PAIR_RANGE: &str =
+    "pub fn pair(x: i32) -> (i32, bool) {\n    (x, (0..=10).contains(&x))\n}\n";
+const PAIR_RANGE_OLD: &str = "    (x, (0..=9).contains(&x))";
+
+#[test]
+fn a_tuple_bool_range_membership_at_an_agreeing_input_is_read_as_the_same_value()
+-> Result<(), String> {
+    // Membership cannot overflow and the bounds do no arithmetic, so the
+    // guarded tuple component still reads `5` as inside both ranges.
+    let findings = findings(
+        PAIR_RANGE,
+        PAIR_RANGE_OLD,
+        "use invisible::pair;\n\n#[test]\nfn five() {\n    assert_eq!(pair(5), (5, true));\n}\n",
+    )?;
+    let finding = return_value(&findings)?;
+    assert!(same_value(finding), "{finding:?}");
+    Ok(())
+}
+
+#[test]
+fn a_tuple_bool_range_membership_at_the_separating_input_keeps_the_credit() -> Result<(), String> {
+    // Control: `10` is inside `0..=10` and outside `0..=9`.
+    let findings = findings(
+        PAIR_RANGE,
+        PAIR_RANGE_OLD,
+        "use invisible::pair;\n\n#[test]\nfn ten() {\n    assert_eq!(pair(10), (10, true));\n}\n",
+    )?;
+    let finding = return_value(&findings)?;
+    assert!(!same_value(finding), "{finding:?}");
+    Ok(())
+}

@@ -1,0 +1,20 @@
+{
+  "id": "rust_qualified_pin_on_a_value_neither_version_returns",
+  "language": "rust",
+  "tier": "pure",
+  "source_fixture": "fixtures/rust_qualified_pin_neither_version",
+  "vector": "path_qualified_owner_pin_on_a_value_neither_version_returns",
+  "probe_family": "return_value",
+  "assertions": [
+    {
+      "type": "must_not_report_clean"
+    },
+    {
+      "type": "must_not_promote"
+    },
+    {
+      "type": "expected_class",
+      "class": "weakly_exposed"
+    }
+  ]
+}

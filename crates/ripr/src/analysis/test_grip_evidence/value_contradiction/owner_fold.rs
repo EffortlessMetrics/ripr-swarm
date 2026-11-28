@@ -16,7 +16,9 @@
 //! the callers leave a differing receiver call or tuple unread, so the
 //! readings can withhold credit and cannot grant it.
 
-use super::{Value, fold_expression, fold_function_value, strip_parens};
+use super::{
+    Value, bool_payload_operand_range, fold_expression, fold_function_value_within, strip_parens,
+};
 use crate::analysis::syntax::parse_clean_source_file;
 use crate::analysis::syntax::parse_clean_source_file_memoized;
 use ra_ap_syntax::{
@@ -60,8 +62,12 @@ pub(super) struct OwnerFold {
     receiver_fields: Option<Vec<String>>,
     /// The owner's own parameter count, the receiver aside.
     parameters: usize,
-    /// One free function per component of a tuple tail, read on first use.
-    components: OnceCell<Option<Vec<String>>>,
+    /// One free function per component of a tuple tail, read on first use,
+    /// with the operand width a `bool` component's fold is held to.
+    components: OnceCell<Option<Vec<TupleComponent>>>,
+    /// The width every integer the fold produces must fit when the return
+    /// type names none (a peeled `bool` payload, #16400); `None` otherwise.
+    operand_range: Option<(i128, i128)>,
 }
 
 impl OwnerFold {
@@ -84,6 +90,7 @@ impl OwnerFold {
                 receiver_fields: None,
                 parameters,
                 components: OnceCell::new(),
+                operand_range: None,
             });
         };
         // `&mut self` and `mut self` may write a field before reading it, and
@@ -146,7 +153,17 @@ impl OwnerFold {
             receiver_fields: Some(fields),
             parameters,
             components: OnceCell::new(),
+            operand_range: None,
         })
+    }
+
+    /// This fold with its intermediates held to `operand_range`; see
+    /// [`fold_function_value_within`].
+    pub(super) fn with_operand_range(self, operand_range: Option<(i128, i128)>) -> Self {
+        Self {
+            operand_range,
+            ..self
+        }
     }
 
     /// The owner's value at `arguments`, called on a receiver whose fields
@@ -168,14 +185,20 @@ impl OwnerFold {
             _ => return None,
         }
         values.extend_from_slice(arguments);
-        if let Some(value) = fold_function_value(&self.text, &values) {
+        if let Some(value) = fold_function_value_within(&self.text, &values, self.operand_range) {
             return Some(Folded::Scalar(value));
         }
         self.components
             .get_or_init(|| tuple_tail_components(&self.text))
             .as_ref()?
             .iter()
-            .map(|component| fold_function_value(component, &values))
+            .map(|component| {
+                fold_function_value_within(
+                    &component.text,
+                    &values,
+                    component.operand_range.or(self.operand_range),
+                )
+            })
             .collect::<Option<Vec<_>>>()
             .map(Folded::Tuple)
     }
@@ -212,12 +235,26 @@ fn apply_edits(text: &str, mut edits: Vec<(TextRange, String)>) -> Option<String
     Some(out)
 }
 
+/// One component of a tuple tail as its own function.
+#[derive(Debug, PartialEq, Eq)]
+struct TupleComponent {
+    text: String,
+    /// For a `bool` component, the parameters' shared declared width its
+    /// intermediates must fit (#16400); `None` for an integer component,
+    /// whose own return width guards it.
+    operand_range: Option<(i128, i128)>,
+}
+
 /// One function text per component when the function's tail is a tuple of
 /// two or more components and its declared return type is a tuple of the
 /// same arity: the tail and the return type are each replaced by the
 /// component's. Statements ahead of the tail stay, so a `return` among them
-/// fails the component's fold rather than being skipped.
-fn tuple_tail_components(text: &str) -> Option<Vec<String>> {
+/// fails the component's fold rather than being skipped. A `bool` component
+/// names no integer width, so it is held to the parameters' one shared
+/// declared width; without one the whole tuple is not read, since exact
+/// arithmetic could fold an overflowing version equal to one that does not
+/// overflow (#16400).
+fn tuple_tail_components(text: &str) -> Option<Vec<TupleComponent>> {
     let parse = parse_clean_source_file(text)?;
     let function = parse
         .tree()
@@ -239,7 +276,7 @@ fn tuple_tail_components(text: &str) -> Option<Vec<String>> {
         .iter()
         .zip(&types)
         .map(|(value, ty)| {
-            apply_edits(
+            let text = apply_edits(
                 text,
                 vec![
                     (
@@ -251,7 +288,16 @@ fn tuple_tail_components(text: &str) -> Option<Vec<String>> {
                         value.syntax().text().to_string(),
                     ),
                 ],
-            )
+            )?;
+            let operand_range = if ty.syntax().text().to_string().trim() == "bool" {
+                Some(bool_payload_operand_range(&text)?)
+            } else {
+                None
+            };
+            Some(TupleComponent {
+                text,
+                operand_range,
+            })
         })
         .collect()
 }
@@ -312,7 +358,9 @@ pub(super) fn literal_receiver_call(
 
 #[cfg(test)]
 mod tests {
-    use super::{Folded, OwnerFold, Value, literal_receiver_call, tuple_tail_components};
+    use super::{
+        Folded, OwnerFold, TupleComponent, Value, literal_receiver_call, tuple_tail_components,
+    };
     use std::collections::BTreeMap;
 
     fn receiver(fields: &[(&str, i128)]) -> BTreeMap<String, i128> {
@@ -412,9 +460,22 @@ mod tests {
         assert_eq!(
             tuple_tail_components(text),
             Some(vec![
-                "fn pair(a: i32) -> i32 { a }".to_string(),
-                "fn pair(a: i32) -> bool { a >= 0 }".to_string(),
+                TupleComponent {
+                    text: "fn pair(a: i32) -> i32 { a }".to_string(),
+                    operand_range: None,
+                },
+                // A `bool` component is held to the shared `i32` width.
+                TupleComponent {
+                    text: "fn pair(a: i32) -> bool { a >= 0 }".to_string(),
+                    operand_range: Some((i128::from(i32::MIN), i128::from(i32::MAX))),
+                },
             ])
+        );
+        // No shared parameter width: the `bool` component, and so the
+        // tuple, is not read (#16400).
+        assert_eq!(
+            tuple_tail_components("fn pair(a: i32, b: i64) -> (i64, bool) { (b, a >= 0) }"),
+            None
         );
         // The component keeps its declared width: 200 + 100 is no `u8`.
         let narrow = OwnerFold::read("fn wide(a: u8) -> (u8, u8) { (a, a + 100) }")

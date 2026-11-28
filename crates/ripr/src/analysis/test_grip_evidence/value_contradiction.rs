@@ -473,8 +473,22 @@ pub(in crate::analysis) fn change_is_invisible_to_every_assertion(
     // payload (`Ok(x * 2)` to `Ok(x * 3)`) returns equal values exactly when
     // the payloads are equal, so the equality reading folds the payloads
     // (#15414). Relational assertions keep the unpeeled bodies.
-    let (current_value, baseline_value) = shared_constructor_payloads(current, &baseline)
-        .unwrap_or_else(|| (current.to_string(), baseline.clone()));
+    let peeled = shared_constructor_payloads(current, &baseline);
+    // #16400: a peeled boolean payload (`Some(x >= 0)` to `Some(x > 0)`) is
+    // read like any other payload: equal payloads under the one shared
+    // constructor are equal values. An unwrapped bare boolean result stays
+    // unread below.
+    // The rebuilt `-> bool` names no integer width, so the peeled payload's
+    // intermediates are held to the parameters' one shared declared width;
+    // without one the peeled boolean stays unread like a bare one.
+    let bool_operand_range = peeled
+        .as_ref()
+        .and_then(|(current_payload, baseline_payload)| {
+            let range = bool_payload_operand_range(current_payload)?;
+            (bool_payload_operand_range(baseline_payload) == Some(range)).then_some(range)
+        });
+    let (current_value, baseline_value) =
+        peeled.unwrap_or_else(|| (current.to_string(), baseline.clone()));
     // An equivalent rewrite (`x * 3` to `3 * x`) is invisible to every test
     // too, but "no input reaches a difference" would send the reader after a
     // test that cannot exist. The change must differ somewhere: a small input
@@ -483,6 +497,10 @@ pub(in crate::analysis) fn change_is_invisible_to_every_assertion(
     // through the receiver's fields, and a tuple tail per component.
     let (current_fold, baseline_fold) =
         OwnerFold::read(&current_value).zip(OwnerFold::read(&baseline_value))?;
+    let (current_fold, baseline_fold) = (
+        current_fold.with_operand_range(bool_operand_range),
+        baseline_fold.with_operand_range(bool_operand_range),
+    );
     if !versions_differ_on_small_inputs(&current_fold, &baseline_fold) {
         return None;
     }
@@ -595,8 +613,10 @@ pub(in crate::analysis) fn change_is_invisible_to_every_assertion(
                 current_fold.at(receiver.as_ref(), &values),
                 baseline_fold.at(receiver.as_ref(), &values),
             ) {
-                // A bare boolean result stays unread here, as before.
-                (Some(Folded::Scalar(Value::Bool(_))), _) => false,
+                // A bare boolean result stays unread here, as before; a
+                // peeled boolean payload is read only under its parameters'
+                // shared width guard (#16400).
+                (Some(Folded::Scalar(Value::Bool(_))), _) if bool_operand_range.is_none() => false,
                 (Some(changed), Some(unchanged)) => changed == unchanged,
                 _ => false,
             }
@@ -1253,12 +1273,41 @@ fn invisibility_operands(oracle_text: &str, test_body: &str) -> Vec<ResolvedOper
 /// a different constructor on either side (`Ok(x)` to `Err(x)`) or any
 /// statement, generic or receiver refuses, so a peeled fold can only say two
 /// values are equal when the real ones are (#15414). The rebuilt function
-/// returns the payload's declared type, so the fold keeps its width guard;
-/// a return type that does not spell it (an alias) refuses.
+/// returns the payload's declared type, so an integer payload keeps its
+/// return-width guard; a return type that does not spell it (an alias)
+/// refuses. A `bool` payload names no width: its caller guards it with
+/// [`bool_payload_operand_range`] or leaves it unread (#16400).
 fn shared_constructor_payloads(current: &str, baseline: &str) -> Option<(String, String)> {
     let (current_constructor, current_payload) = constructor_payload_function(current)?;
     let (baseline_constructor, baseline_payload) = constructor_payload_function(baseline)?;
     (current_constructor == baseline_constructor).then_some((current_payload, baseline_payload))
+}
+
+/// The one declared integer width every parameter of a rebuilt `-> bool`
+/// payload function shares, which its intermediates must fit (#16400). A
+/// non-`bool` return, no parameter, a parameter of no recognized integer
+/// width, or parameters of two widths is `None`: no single width then bounds
+/// the arithmetic, and the peeled boolean stays unread.
+fn bool_payload_operand_range(function_text: &str) -> Option<(i128, i128)> {
+    let parse = parse_clean_source_file(function_text)?;
+    let function = parse
+        .tree()
+        .syntax()
+        .descendants()
+        .find_map(ast::Fn::cast)?;
+    let return_type = function.ret_type()?.ty()?.syntax().text().to_string();
+    if return_type.trim() != "bool" {
+        return None;
+    }
+    let mut shared = None;
+    for param in function.param_list()?.params() {
+        let width = declared_integer_range(&param.ty()?.syntax().text().to_string())?;
+        if shared.is_some_and(|range| range != width) {
+            return None;
+        }
+        shared = Some(width);
+    }
+    shared
 }
 
 /// One function text's constructor name and its payload-returning rewrite;
@@ -2078,10 +2127,27 @@ fn fold_function_text(body: &str, arguments: &[i128]) -> Option<i128> {
 /// every changed line it holds, and re-reading the body each time made a
 /// long owner cost its length squared (#11738).
 fn fold_function_value(body: &str, arguments: &[i128]) -> Option<Value> {
+    fold_function_value_within(body, arguments, None)
+}
+
+/// [`fold_function_value`], with every arithmetic result the body computes
+/// also held to `operand_range` when the return type names no integer width.
+/// A peeled boolean payload (`Some(x + 1 > 0)` read as `-> bool`) or a `bool`
+/// tuple component has no return width to guard its intermediates, so its
+/// caller passes the parameters' shared declared width: a result outside it
+/// is one the real owner overflows on, and the fold is `None` instead of an
+/// exact-arithmetic answer (#16400). A range-shaped tail, whose bounds are
+/// read without a width check, is refused under the guard. Integer literals
+/// are not checked against it.
+fn fold_function_value_within(
+    body: &str,
+    arguments: &[i128],
+    operand_range: Option<(i128, i128)>,
+) -> Option<Value> {
     let plan = run_memo::memoize(Product::OwnerFoldPlan, 0, body, || {
         Rc::new(FoldPlan::read(body))
     });
-    plan.as_ref().as_ref()?.fold(arguments)
+    plan.as_ref().as_ref()?.fold(arguments, operand_range)
 }
 
 /// The argument-independent reading of one function text for the fold.
@@ -2090,6 +2156,11 @@ struct FoldPlan {
     widths: Vec<Option<(i128, i128)>>,
     fold_range: Option<(i128, i128)>,
     block: FoldPlanBlock,
+    /// Whether the token block holds a decimal integer literal with a type
+    /// suffix (`255u8`). The tokenizer drops the suffix, so under the
+    /// operand-width guard such a literal could compute in a narrower type
+    /// than the guard checks, and a guarded fold refuses (#16400).
+    suffixed_literal: bool,
 }
 
 /// What the owner's block folds through: its range-shaped tail when it is
@@ -2150,6 +2221,7 @@ impl FoldPlan {
             .ret_type()
             .and_then(|ret| declared_integer_range(&ret.syntax().text().to_string()));
         let block = function.body()?;
+        let mut suffixed_literal = false;
         let block = match RangeTail::of_block(&block) {
             Some(tail) => FoldPlanBlock::Tail(tail),
             None => {
@@ -2159,6 +2231,7 @@ impl FoldPlan {
                 let masked = crate::analysis::extract::mask_comments_and_strings(
                     &block.syntax().text().to_string(),
                 );
+                suffixed_literal = has_suffixed_decimal_literal(&masked);
                 FoldPlanBlock::Tokens(tokenize(&masked)?)
             }
         };
@@ -2167,10 +2240,11 @@ impl FoldPlan {
             widths,
             fold_range,
             block,
+            suffixed_literal,
         })
     }
 
-    fn fold(&self, arguments: &[i128]) -> Option<Value> {
+    fn fold(&self, arguments: &[i128], operand_range: Option<(i128, i128)>) -> Option<Value> {
         if self.names.len() != arguments.len() {
             return None;
         }
@@ -2187,13 +2261,23 @@ impl FoldPlan {
             .cloned()
             .zip(arguments.iter().copied())
             .collect();
+        // The operand guard stands in only where no return width does. Of the
+        // range-shaped tails only membership is read under it: its endpoints
+        // are one literal or one parameter each, and a membership test cannot
+        // overflow. A reduction or match tail computes a value the guard does
+        // not check, so a guarded fold refuses it. A suffixed literal may
+        // compute in a narrower type than the guard, so it refuses too.
+        let guarded = self.fold_range.is_none() && operand_range.is_some();
+        let range = self.fold_range.or(operand_range);
         match &self.block {
+            FoldPlanBlock::Tail(tail) if guarded && !tail.is_membership() => None,
+            FoldPlanBlock::Tokens(_) if guarded && self.suffixed_literal => None,
             FoldPlanBlock::Tail(tail) => tail.fold(&environment, self.fold_range),
             FoldPlanBlock::Tokens(tokens) => {
                 let uniform = self
                     .fold_range
                     .filter(|range| self.widths.iter().all(|width| *width == Some(*range)));
-                fold_block(tokens, &environment, self.fold_range, uniform)
+                fold_block(tokens, &environment, range, uniform)
             }
         }
     }
@@ -2363,6 +2447,11 @@ impl TailRange {
 }
 
 impl RangeTail {
+    /// Whether this tail is a membership test (`(lo..hi).contains(&x)`).
+    fn is_membership(&self) -> bool {
+        matches!(self, Self::Contains { .. })
+    }
+
     fn of_block(block: &ast::BlockExpr) -> Option<Self> {
         let list = block.stmt_list()?;
         if list.statements().next().is_some() {
@@ -2578,6 +2667,45 @@ const INTEGER_SUFFIXES: [&str; 12] = [
     "u8", "u16", "u32", "u64", "u128", "usize", "i8", "i16", "i32", "i64", "i128", "isize",
 ];
 
+/// Whether `text` holds a decimal integer literal followed by a type
+/// suffix (`255u8`, `1_000i64`). Digits inside a name (`x1`) and radix
+/// literals, whose suffix the tokenizer already refuses, do not count.
+fn has_suffixed_decimal_literal(text: &str) -> bool {
+    let bytes = text.as_bytes();
+    let mut index = 0usize;
+    while index < bytes.len() {
+        let byte = bytes[index];
+        if byte.is_ascii_alphabetic() || byte == b'_' {
+            while index < bytes.len()
+                && (bytes[index].is_ascii_alphanumeric() || bytes[index] == b'_')
+            {
+                index += 1;
+            }
+            continue;
+        }
+        if byte.is_ascii_digit() {
+            if byte == b'0' && matches!(bytes.get(index + 1), Some(b'x' | b'b' | b'o')) {
+                index += 2;
+                while index < bytes.len()
+                    && (bytes[index].is_ascii_alphanumeric() || bytes[index] == b'_')
+                {
+                    index += 1;
+                }
+                continue;
+            }
+            while index < bytes.len() && (bytes[index].is_ascii_digit() || bytes[index] == b'_') {
+                index += 1;
+            }
+            if index < bytes.len() && bytes[index].is_ascii_alphabetic() {
+                return true;
+            }
+            continue;
+        }
+        index += 1;
+    }
+    false
+}
+
 /// Tokenize masked Rust expression text. Any byte the fold grammar cannot
 /// mean (`?`, `|`, `.`, `:`), a non-suffix identifier glued to a number, or
 /// a non-ASCII byte fails the whole fold.
@@ -2717,10 +2845,12 @@ struct Parser<'a> {
     /// #13037: `bool` bindings, read only by the strict return-seam reach
     /// fold. Every other fold binds integers alone and leaves this empty.
     bools: Option<&'a BTreeMap<String, bool>>,
-    /// The owner return type's declared width, when recognized. Every
-    /// integer produced inside the body must fit it: release builds wrap at
-    /// the declared width, so a mathematical value outside the range does
-    /// not describe a value the owner can return.
+    /// The owner return type's declared width when recognized, else the
+    /// parameters' shared operand width a `bool`-valued fold is held to
+    /// (#16400). Every arithmetic result inside the body must fit it: release
+    /// builds wrap at the declared width and debug builds panic, so a
+    /// mathematical value outside the range does not describe a value the
+    /// owner can return.
     range: Option<(i128, i128)>,
     /// The shared declared range when every parameter and the return type
     /// are the same recognized integer type. The shifts and the saturating
@@ -3914,7 +4044,8 @@ fn fold_condition(text: &str, environment: &BTreeMap<String, i128>) -> Option<bo
 }
 
 /// Fold a `{ .. }` block with `environment` as the parameter bindings and
-/// `range` as the return type's declared width (no width when `None`).
+/// `range` as the return type's declared width or, for a `bool`-valued fold,
+/// the parameters' shared operand width (no width when `None`).
 fn fold_block(
     tokens: &[Token],
     environment: &BTreeMap<String, i128>,
