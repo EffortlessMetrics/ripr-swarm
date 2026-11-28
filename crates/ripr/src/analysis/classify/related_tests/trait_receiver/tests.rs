@@ -347,6 +347,27 @@ fn a_macro_that_may_write_the_method_withholds_the_relation() -> Result<(), Stri
     Ok(())
 }
 
+/// A raw-identifier declaration (`pub trait r#BufMut`) and a nested plain
+/// namesake (`other::BufMut`) are two traits of one name, so the namesake's
+/// trait-body macro that may write `advance_mut` withholds the relation, with
+/// no other rival in the workspace (#16338). The raw declaration alone keeps
+/// it.
+#[test]
+fn a_raw_trait_declaration_counts_with_its_plain_namesake() -> Result<(), String> {
+    let raw = BUF.replacen("pub trait BufMut", "pub trait r#BufMut", 1);
+    assert_ne!(raw, BUF, "the fixture must declare the raw trait");
+    let namesake = "pub mod other {\n    pub trait BufMut {\n        forward!();\n    }\n}\n\
+        macro_rules! forward {\n    () => {\n        fn advance_mut(self, _cnt: usize) {}\n    };\n}\n";
+    assert!(direct(&raw, BYTES_MUT_ADVANCE, TYPED_CALL)?);
+    for root in [BUF, raw.as_str()] {
+        assert!(
+            !direct(&format!("{root}{namesake}"), BYTES_MUT_ADVANCE, TYPED_CALL)?,
+            "{root}"
+        );
+    }
+    Ok(())
+}
+
 /// A standard trait's provided method is written nowhere in the workspace,
 /// and `Iterator::count(self)` takes an owned `Shelf` before a workspace
 /// `fn count(&self)` does. The name alone withholds the relation, also for
