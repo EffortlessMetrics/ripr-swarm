@@ -1103,6 +1103,11 @@ pub(crate) fn trusted_macro_binding_sites_in_context(
         );
     };
     let binding_free = BindingFreeFileIndex::collect(parse.tree().syntax());
+    let inline_globs = RootInlineGlobIndex::collect(parse.tree().syntax(), packages);
+    let indexes = MacroBindingTreeIndexes {
+        binding_free: &binding_free,
+        inline_globs: &inline_globs,
+    };
     let scan = |names: &[&str], known: &[&str], known_bound: &BoundNames| {
         macro_binding_sites_in_tree(
             source,
@@ -1115,7 +1120,7 @@ pub(crate) fn trusted_macro_binding_sites_in_context(
             &BTreeSet::new(),
             module_resolved,
             drop_in_verified,
-            &binding_free,
+            &indexes,
         )
     };
     let mut extra_bound = BoundNames::default();
