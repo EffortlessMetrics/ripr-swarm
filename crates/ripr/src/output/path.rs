@@ -474,6 +474,20 @@ pub(crate) fn display_path_text(path: &str) -> String {
     path.replace('\\', "/")
 }
 
+/// Spell a path for one line of human prose (#16455): a line break or tab in
+/// a tracked file name renders as `\\r`, `\\n` or `\\t`, so the name's tail
+/// cannot print as its own line that reads like `ripr` output or a command.
+/// Every other character, including `\\` on Unix, is kept, so an ordinary path
+/// renders byte for byte. Machine formats keep the raw value.
+pub(crate) fn prose_path_text(path: &str) -> String {
+    if !path.contains(['\r', '\n', '\t']) {
+        return path.to_string();
+    }
+    path.replace('\r', "\\r")
+        .replace('\n', "\\n")
+        .replace('\t', "\\t")
+}
+
 /// Compare output destinations after collapsing `.` / `..` so `--out ./a.json`
 /// and `--out-jsonl a.json` are treated as the same file.
 pub(crate) fn same_output_leaf(left: &Path, right: &Path) -> bool {
@@ -583,8 +597,8 @@ mod tests {
 
     use super::{
         CheckoutAnchor, display_path, display_path_for_host, display_path_on, display_path_text,
-        human_path_text, repository_display_path, repository_relative_path_text_on,
-        same_output_leaf,
+        human_path_text, prose_path_text, repository_display_path,
+        repository_relative_path_text_on, same_output_leaf,
     };
 
     #[test]
@@ -691,6 +705,17 @@ mod tests {
         let expected = if cfg!(unix) { "a%5Cb%5Cc" } else { "a/b/c" };
         assert_eq!(display_path(Path::new("a\\b\\c")), expected);
         assert_eq!(display_path_on(Path::new("a\\b\\c"), true), "a/b/c");
+    }
+
+    #[test]
+    fn prose_path_text_keeps_one_line_and_ordinary_paths() {
+        assert_eq!(prose_path_text("src/lib.rs"), "src/lib.rs");
+        assert_eq!(prose_path_text("src/a\\b.rs"), "src/a\\b.rs");
+        assert_eq!(
+            prose_path_text("src/x\n```\necho forged\r\t.rs"),
+            "src/x\\n```\\necho forged\\r\\t.rs"
+        );
+        assert!(!prose_path_text("a\nb\rc").contains(['\n', '\r']));
     }
 
     #[test]

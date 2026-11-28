@@ -2399,6 +2399,14 @@ fn a_file_name_with_a_line_break_withholds_the_start_on_pilot_and_check() -> Res
         "precondition, pilot ranks the gap:\n{pilot}"
     );
     let check = repo.ripr(&["check", "--root", "."])?;
+    // #16455: check still names the file, escaped onto its limitation line.
+    assert!(
+        check
+            .lines()
+            .any(|line| line.trim_start().starts_with("Limitation: ")
+                && line.contains("; file: src/x\\n```\\necho forged\\n.rs;")),
+        "check must name the file escaped on its limitation line:\n{check}"
+    );
     for (surface, text) in [
         ("pilot terminal", &pilot),
         ("pilot markdown", &markdown),
@@ -2408,10 +2416,9 @@ fn a_file_name_with_a_line_break_withholds_the_start_on_pilot_and_check() -> Res
             !text.contains("--literal-pathspecs commit"),
             "the {surface} must print no commit step:\n{text}"
         );
-        // Check's limitation prose still prints the name raw (#16455); the
-        // pilot surfaces carry no copy of it.
+        // Check's limitation prose escapes the name onto one line (#16455).
         assert!(
-            surface == "check" || !text.lines().any(|line| line.trim() == "echo forged"),
+            !text.lines().any(|line| line.trim() == "echo forged"),
             "the {surface} must not show the name's tail as a command line:\n{text}"
         );
         // Fail closed: the start would refuse this dirty premise, so it is
