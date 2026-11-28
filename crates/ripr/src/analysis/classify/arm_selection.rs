@@ -3412,9 +3412,10 @@ fn whole_word_offsets(text: &str, word: &str) -> Vec<usize> {
 /// The distinct line starts of the lines holding `offsets`, in order.
 /// Whether the owner name at `offset` is a call (`name(`, `.name(`) or a
 /// plain value use: an operand right after `=`, `(`, `,`, `&` or `[` that
-/// ends at `;`, `)`, `,` or `]`. Anything else (a `let`/`fn`/`use`
-/// binding, a closure parameter, a pattern, a path segment) may rebind or
-/// shadow the name, so the reading cannot trust a call that follows it.
+/// ends at `;`, `)`, `,` or `]` and does not sit in a pattern. Anything else
+/// (a `let`/`fn`/`use` binding, a closure parameter, a tuple or variant
+/// pattern such as `let (price_cents, _) = ..`, a path segment) may rebind
+/// or shadow the name, so the reading cannot trust a call that follows it.
 fn is_call_or_plain_value_use(masked: &str, offset: usize, name: &str) -> bool {
     let after = masked[offset + name.len()..].trim_start();
     if after.starts_with('(') {
@@ -3426,7 +3427,38 @@ fn is_call_or_plain_value_use(masked: &str, offset: usize, name: &str) -> bool {
             && !["==", "!=", "<=", ">="]
                 .iter()
                 .any(|operator| before.ends_with(operator)));
-    value_position && (after.starts_with([';', ')', ',', ']']))
+    value_position
+        && after.starts_with([';', ')', ',', ']'])
+        && !in_binding_pattern(masked, offset, offset + name.len())
+}
+
+/// Whether the word spanning `start..end` may sit in a binding pattern:
+/// inside closure parameters (an odd count of single `|` since the
+/// statement began), or before a `=`, `=>` or ` in ` that ends the
+/// statement's pattern (`let (a, _) = ..`, `if let Some(a) = ..`,
+/// `(a, _) => ..`, `for (a, _) in ..`). The statement is bounded by the
+/// nearest `;`, `{` or `}` on each side.
+fn in_binding_pattern(masked: &str, start: usize, end: usize) -> bool {
+    let statement_start = masked[..start]
+        .rfind([';', '{', '}'])
+        .map_or(0, |index| index + 1);
+    let prefix = &masked[statement_start..start];
+    let single_pipes = prefix.replace("||", "").matches('|').count();
+    if single_pipes % 2 == 1 {
+        return true;
+    }
+    let rest = &masked[end..];
+    let rest = &rest[..rest.find([';', '{', '}']).unwrap_or(rest.len())];
+    let bytes = rest.as_bytes();
+    let binds = bytes.iter().enumerate().any(|(index, byte)| {
+        *byte == b'='
+            && !index
+                .checked_sub(1)
+                .and_then(|previous| bytes.get(previous))
+                .is_some_and(|previous| matches!(previous, b'=' | b'!' | b'<' | b'>'))
+            && !bytes.get(index + 1).is_some_and(|next| *next == b'=')
+    });
+    binds || rest.split_whitespace().any(|word| word == "in")
 }
 
 fn line_starts_of(text: &str, offsets: &[usize]) -> Vec<usize> {

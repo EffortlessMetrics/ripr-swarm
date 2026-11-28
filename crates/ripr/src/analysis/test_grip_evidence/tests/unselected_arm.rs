@@ -154,6 +154,9 @@ fn a_rebound_owner_name_does_not_credit_a_selecting_call() -> Result<(), String>
     for rebind in [
         "    let price_cents = |_s: Size| 450;",
         "    let price_cents = other::price_cents;",
+        "    let (price_cents, _) = (|_s: Size| 450, ());",
+        "    if let Some(price_cents) = Some(|_s: Size| 450) {}",
+        "    let _f = |(price_cents, _x): (u32, u32)| price_cents;",
     ] {
         let body = format!("{rebind}\n    assert_eq!(price_cents(Size::Medium), 450);");
         let (full, compact, class) = arm_evidence(&body, "Size::Medium")?;
