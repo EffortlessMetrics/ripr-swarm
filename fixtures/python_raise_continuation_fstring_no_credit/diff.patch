@@ -1,0 +1,12 @@
+diff --git a/src/levels.py b/src/levels.py
+index 1111111..2222222 100644
+--- a/src/levels.py
++++ b/src/levels.py
+@@ -1,6 +1,6 @@
+ def parse(text, limit):
+     if len(text) > limit:
+         raise ValueError(
+-            f"Invalid level: {text!r} is longer than {limit}"
++            f"Bad level: {text!r} is longer than {limit}"
+         )
+     return text.upper()

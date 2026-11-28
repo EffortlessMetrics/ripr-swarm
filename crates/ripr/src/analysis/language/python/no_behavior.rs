@@ -298,7 +298,9 @@ fn enclosing_statement(
 /// The whole statement a bare-string continuation line belongs to, joined
 /// onto one line, so its probe shape is the statement's (#13875): a message
 /// string inside `raise E(` is an error path, inside `return f(` a returned
-/// value. `None` when the line is not a bare string, or the span or source
+/// value. Any line inside a multi-line `raise` resolves too (#15246).
+/// `None` when the line is blank, when it is neither a bare string, a
+/// literal keyword argument nor inside a `raise`, or when the span or source
 /// is unknown.
 pub(super) fn bare_string_statement_text(
     line_text: &str,
@@ -306,16 +308,10 @@ pub(super) fn bare_string_statement_text(
     source: Option<&str>,
 ) -> Option<String> {
     let (open, close) = continuation.span?;
-    // Inside brackets a trailing comma separates arguments, so `"msg",` is
-    // the same bare string argument as `"msg"`; a trailing `# comment` is not
-    // part of it either.
-    let bare = without_trailing_comment(line_text)?.trim_end();
-    let bare = bare.strip_suffix(',').unwrap_or(bare);
-    if bare.trim().is_empty() {
-        return None;
-    }
-    let keyword = !is_python_no_behavior_line_at(bare, false);
-    if keyword && !is_literal_keyword_argument(bare) {
+    // A blank line has no shape. A comment line is kept: it reaches here only
+    // when the other side had code (a pure comment edit is a no-op upstream),
+    // so a raise argument commented out is the raise's error path too.
+    if line_text.trim().is_empty() {
         return None;
     }
     let source = source?;
@@ -328,6 +324,31 @@ pub(super) fn bare_string_statement_text(
         .skip(skip)
         .take(close.checked_sub(open)? + 1)
         .collect();
+    // Any changed line of a multi-line `raise E(` (an f-string, `msg % x`, a
+    // name) resolves to the raise (#15246): classified alone it fell to the
+    // predicate default and any success test's exact value oracle credited
+    // it. The line may not lex on its own, for example `f"msg {x}")` closing
+    // the call, so the raise is read before inspecting that line. Other
+    // statements keep classifying a non-literal line alone.
+    let bracketed_raise =
+        continuation.explicit_bytes.is_none() && raw.first()?.trim_start().starts_with("raise ");
+    let keyword = if bracketed_raise {
+        false
+    } else {
+        // Inside brackets a trailing comma separates arguments, so `"msg",`
+        // is the same bare string argument as `"msg"`; a trailing
+        // `# comment` is not part of it either.
+        let bare = without_trailing_comment(line_text)?.trim_end();
+        let bare = bare.strip_suffix(',').unwrap_or(bare);
+        if bare.trim().is_empty() {
+            return None;
+        }
+        let keyword = !is_python_no_behavior_line_at(bare, false);
+        if keyword && !is_literal_keyword_argument(bare) {
+            return None;
+        }
+        keyword
+    };
     // A keyword line's statement drops each line's own `# comment`, so a
     // comment after the closing `)` does not hide the call.
     let raw = if keyword {
