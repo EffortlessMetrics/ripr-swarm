@@ -998,3 +998,52 @@ fn a_tuple_bool_component_within_its_operand_width_is_read_as_the_same_value() -
     assert!(same_value(finding), "{finding:?}");
     Ok(())
 }
+
+#[test]
+fn a_wrapped_bool_payload_with_a_suffixed_literal_is_not_read_as_the_same_value()
+-> Result<(), String> {
+    // `255u8 + 1` overflows `u8` in the baseline at `check(2)`, though it
+    // fits the `i32` parameter width; the suffix names a narrower type than
+    // the guard, so the fold must not read the versions as agreeing.
+    let findings = findings(
+        "pub fn check(x: i32) -> Option<bool> {\n    Some(x > 0)\n}\n",
+        "    Some((if x == 2 { 255u8 } else { 0 }) + 1 > 0)",
+        "use invisible::check;\n\n#[test]\nfn two() {\n    assert_eq!(check(2), Some(true));\n}\n",
+    )?;
+    let finding = return_value(&findings)?;
+    assert!(!same_value(finding), "{finding:?}");
+    Ok(())
+}
+
+const PAIR_RANGE: &str =
+    "pub fn pair(x: i32) -> (i32, bool) {\n    (x, (0..=10).contains(&x))\n}\n";
+const PAIR_RANGE_OLD: &str = "    (x, (0..=9).contains(&x))";
+
+#[test]
+fn a_tuple_bool_range_membership_at_an_agreeing_input_is_read_as_the_same_value()
+-> Result<(), String> {
+    // Membership cannot overflow and the bounds do no arithmetic, so the
+    // guarded tuple component still reads `5` as inside both ranges.
+    let findings = findings(
+        PAIR_RANGE,
+        PAIR_RANGE_OLD,
+        "use invisible::pair;\n\n#[test]\nfn five() {\n    assert_eq!(pair(5), (5, true));\n}\n",
+    )?;
+    let finding = return_value(&findings)?;
+    assert!(same_value(finding), "{finding:?}");
+    Ok(())
+}
+
+#[test]
+fn a_tuple_bool_range_membership_at_the_separating_input_keeps_the_credit()
+-> Result<(), String> {
+    // Control: `10` is inside `0..=10` and outside `0..=9`.
+    let findings = findings(
+        PAIR_RANGE,
+        PAIR_RANGE_OLD,
+        "use invisible::pair;\n\n#[test]\nfn ten() {\n    assert_eq!(pair(10), (10, true));\n}\n",
+    )?;
+    let finding = return_value(&findings)?;
+    assert!(!same_value(finding), "{finding:?}");
+    Ok(())
+}
