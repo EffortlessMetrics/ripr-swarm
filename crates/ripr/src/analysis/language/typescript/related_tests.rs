@@ -3165,46 +3165,9 @@ pub(crate) fn owner_call_relation(
     // (fail-closed). The index also carries the owner file's OWN rename exports
     // (`export { ownerName as alias }`), so `import { alias } from
     // './owner-file'` resolves back to the owner name (#4104-B).
-    if test.imports_in_file.iter().any(|import| {
-        if import.namespace {
-            return false; // namespace imports don't map cleanly to a single exported name
-        }
-        let Some(imported_name) = import.imported.as_deref() else {
-            return false;
-        };
-        if imported_name == "default"
-            && (!owner.exported_as_default || owner.commonjs_default_export)
-        {
-            return false;
-        }
-        // The local alias in the test is what gets called; check the call site.
-        let local = &import.local;
-        if !contains_call_name(&test.body_text, local) {
-            return false;
-        }
-        // Shadow guard (#4102): a test-body declaration of the local name
-        // reaches the shadow, not the re-exported owner.
-        if local_identifier_declared_in_test_body(&test.body_text, local)
-            || (imported_name == "default"
-                && (local_destructured_in_test_body(&test.body_text, local)
-                    || body_declares_class_named(&test.body_text, local)))
-        {
-            return false;
-        }
-        // An enclosing `describe`/`beforeEach` binding of the local name
-        // shadows the import for every test in that scope.
-        if enclosing_scope_shadows(test, local) {
-            return false;
-        }
-        reexport_index.resolve_to_owner(
-            test,
-            &import.source,
-            imported_name,
-            owner,
-            alias_map,
-            workspace_root,
-        )
-    }) {
+    if !reexport_owner_call_locals(test, owner, reexport_index, alias_map, workspace_root)
+        .is_empty()
+    {
         return Some(TypeScriptRelationKind::ReExportChainFollowed);
     }
     // ES namespace import of a barrel, `lib.owner(...)` (#15923).
@@ -3228,6 +3191,68 @@ pub(crate) fn owner_call_relation(
         return Some(TypeScriptRelationKind::ReExportChainFollowed);
     }
     None
+}
+
+/// The locals of every named or default import that reaches `owner` through a
+/// bounded re-export chain (RIPR-SPEC-0095): a barrel (`export { owner } from`,
+/// `export * from`, a directory `index`), a renamed re-export (`export { owner
+/// as alias } from`), or the owner file's own rename export. Each local is
+/// called as `local(` in the body and not shadowed. These calls give the test
+/// its `ReExportChainFollowed` relation, and the predicate boundary witness
+/// reads the same locals as owner spellings (#16470): one binding rule.
+pub(crate) fn reexport_owner_call_locals<'t>(
+    test: &'t TypeScriptTest,
+    owner: &TypeScriptOwner,
+    reexport_index: &ReExportIndex,
+    alias_map: Option<&TsAliasMap>,
+    workspace_root: Option<&Path>,
+) -> Vec<&'t str> {
+    test.imports_in_file
+        .iter()
+        .filter(|import| {
+            if import.namespace {
+                return false; // namespace imports don't map cleanly to a single exported name
+            }
+            let Some(imported_name) = import.imported.as_deref() else {
+                return false;
+            };
+            if imported_name == "default"
+                && (!owner.exported_as_default || owner.commonjs_default_export)
+            {
+                return false;
+            }
+            // The local alias in the test is what gets called; check the call site.
+            let local = &import.local;
+            if !contains_call_name(&test.body_text, local) {
+                return false;
+            }
+            // Shadow guard (#4102): a test-body declaration of the local name
+            // reaches the shadow, not the re-exported owner.
+            // A body-local destructuring that names the local (`const { d }
+            // = helpers`) shadows it too, for a named import as for a default
+            // one (#16470).
+            if local_identifier_declared_in_test_body(&test.body_text, local)
+                || local_destructured_in_test_body(&test.body_text, local)
+                || (imported_name == "default" && body_declares_class_named(&test.body_text, local))
+            {
+                return false;
+            }
+            // An enclosing `describe`/`beforeEach` binding of the local name
+            // shadows the import for every test in that scope.
+            if enclosing_scope_shadows(test, local) {
+                return false;
+            }
+            reexport_index.resolve_to_owner(
+                test,
+                &import.source,
+                imported_name,
+                owner,
+                alias_map,
+                workspace_root,
+            )
+        })
+        .map(|import| import.local.as_str())
+        .collect()
 }
 
 /// Whether the test calls an exported name of the owner's module that reaches
@@ -5679,7 +5704,8 @@ pub(crate) fn import_alias_owner_locals<'t>(
 /// `const { a: cost } = h`, `let [cost] = fns`) names `local` anywhere in
 /// its pattern, read from the opening bracket to its match so a pattern
 /// spread over several lines or holding a default initializer
-/// (`const { cost = fallback } = h`) is read whole. Any mention counts as a shadow: a renamed import local
+/// (`const { cost = fallback } = h`) is read whole, in every declarator of
+/// the statement. Any mention counts as a shadow: a renamed import local
 /// (`import { owner as local }`, `import local from`) has no destructuring
 /// that could re-anchor it to the owner, so this reads more widely than the
 /// owner-name check and fails closed.
@@ -5687,32 +5713,88 @@ fn local_destructured_in_test_body(body: &str, local: &str) -> bool {
     let masked = ts_mask_literals_and_comments(body);
     ["const", "let", "var"].into_iter().any(|keyword| {
         identifier_offsets(&masked, keyword).into_iter().any(|at| {
-            let after_keyword = &masked[at + keyword.len()..];
-            let pattern = after_keyword.trim_start();
-            // The binding pattern runs from its opening `{` or `[` to the
-            // matching close, across lines, so a default initializer
-            // (`{ cost = fallback }`) and a multi-line pattern stay inside it.
-            if !pattern.starts_with(['{', '[']) {
-                return false;
-            }
-            let mut depth = 0usize;
-            let mut end = pattern.len();
-            for (offset, c) in pattern.char_indices() {
-                match c {
-                    '{' | '[' | '(' => depth += 1,
-                    '}' | ']' | ')' => {
-                        depth = depth.saturating_sub(1);
-                        if depth == 0 {
-                            end = offset + 1;
-                            break;
-                        }
-                    }
-                    _ => {}
-                }
-            }
-            ts_references_identifier(&pattern[..end], local)
+            declarator_patterns(&masked[at + keyword.len()..])
+                .any(|pattern| ts_references_identifier(pattern, local))
         })
     })
+}
+
+/// The destructuring patterns of one declaration statement, read from the
+/// text after its `const`/`let`/`var` keyword: every declarator that opens
+/// with `{` or `[`, not only the first, so `const h = make(), { d } = h`
+/// yields `{ d }` (#16470). Each pattern runs from its opening bracket to the
+/// matching close, across lines, so a default initializer (`{ cost =
+/// fallback }`) and a multi-line pattern stay inside it. A comma inside a
+/// type annotation's `<...>` does not start a declarator. The statement ends
+/// at a top-level `;`, at a closing bracket of the enclosing block, or at a
+/// top-level line break that follows none of `,`, `=` or `:`.
+fn declarator_patterns(declaration: &str) -> impl Iterator<Item = &str> {
+    let mut patterns = Vec::new();
+    let mut depth = 0usize;
+    // A type annotation (`: Map<string, { d: number }>`) runs from a
+    // top-level `:` to the declarator's `=`; its `<...>` commas never start
+    // a declarator.
+    let mut in_type = false;
+    let mut angle_depth = 0usize;
+    let mut declarator_start = true;
+    let mut last_significant = ' ';
+    for (offset, c) in declaration.char_indices() {
+        if depth == 0 && declarator_start && !c.is_whitespace() {
+            declarator_start = false;
+            if matches!(c, '{' | '[') {
+                patterns.push(balanced_pattern(&declaration[offset..]));
+            }
+        }
+        match c {
+            '{' | '[' | '(' => depth += 1,
+            '}' | ']' | ')' => {
+                if depth == 0 {
+                    break;
+                }
+                depth -= 1;
+            }
+            ':' if depth == 0 && !in_type => in_type = true,
+            '<' if depth == 0 && in_type => angle_depth += 1,
+            '>' if depth == 0 && in_type => angle_depth = angle_depth.saturating_sub(1),
+            '=' if depth == 0 && angle_depth == 0 => in_type = false,
+            ',' if depth == 0 && angle_depth == 0 => {
+                declarator_start = true;
+                in_type = false;
+            }
+            ';' if depth == 0 => break,
+            '\n' if depth == 0
+                && !declarator_start
+                && angle_depth == 0
+                && !matches!(last_significant, ',' | '=' | ':') =>
+            {
+                break;
+            }
+            _ => {}
+        }
+        if !c.is_whitespace() {
+            last_significant = c;
+        }
+    }
+    patterns.into_iter()
+}
+
+/// `text` from its opening `{` or `[` to the matching close (the whole rest
+/// when unbalanced).
+fn balanced_pattern(text: &str) -> &str {
+    let mut depth = 0usize;
+    for (offset, c) in text.char_indices() {
+        match c {
+            '{' | '[' | '(' => depth += 1,
+            '}' | ']' | ')' => {
+                depth = depth.saturating_sub(1);
+                if depth == 0 {
+                    return &text[..offset + 1];
+                }
+            }
+            _ => {}
+        }
+    }
+    text
 }
 
 /// The locals of every default import (`import local from "./owner"`) of
