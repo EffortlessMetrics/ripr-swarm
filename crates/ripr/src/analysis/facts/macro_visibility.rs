@@ -500,7 +500,11 @@ impl MacroVisibility {
             // by `mod build;` is a module, not a crate root.
             match self.parent(&current) {
                 Some((parent, _)) => current = parent,
-                None if self.is_crate_root(&current) => return Some(current),
+                // No unique parent is not proof of a root: an ambiguous
+                // or attributed declaration leaves ownership unknown.
+                None if self.is_crate_root(&current) && !self.may_be_declared(&current) => {
+                    return Some(current);
+                }
                 None => return None,
             }
         }
@@ -753,14 +757,19 @@ impl MacroVisibility {
         candidates.into_iter().collect()
     }
 
-    /// Whether another file that could hold `file` as a module declares
-    /// its name with a plain `mod`, whichever file that declaration
-    /// resolves to. Declarations are read, not resolved, so the answer
-    /// never recurses through `child_file`.
+    /// Whether some file may hold `file` as a module: another file that
+    /// could hold it declares its name with a plain `mod`, whichever file
+    /// that declaration resolves to, or any file declares the name with a
+    /// `#[path]` or other attribute. Declarations are read, not resolved,
+    /// so the answer never recurses through `child_file`. Only `false`
+    /// confirms a root-directory file as a crate root.
     fn may_be_declared(&self, file: &Path) -> bool {
         let Some((name, location)) = module_identity(file) else {
             return false;
         };
+        if self.attributed_elsewhere(&name, file) {
+            return true;
+        }
         self.declarer_candidates(&location)
             .into_iter()
             .filter(|candidate| candidate != file)

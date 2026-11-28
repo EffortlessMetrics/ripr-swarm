@@ -294,6 +294,8 @@ fn a_table_from_a_binary_roots_macro_use_module_reads_like_the_hand_written_test
         );
     }
 
+    let path_tool =
+        format!("mod common;\n{USE_GATE}use crate::gate_table;\nfn main() {{}}\n{BOUNDARY_ROWS}");
     for (label, files) in [
         // No `#[macro_use]`: the generator stays inside `common`.
         (
@@ -322,6 +324,29 @@ fn a_table_from_a_binary_roots_macro_use_module_reads_like_the_hand_written_test
                 ("src/bin/tool.rs", tool.replace("mod common;", "mod common;\nmod other;")),
                 ("src/bin/other.rs", "mod tool;\n".to_string()),
                 ("src/bin/common/mod.rs", TABLE.to_string()),
+            ],
+        ),
+        // The path route needs a confirmed crate root. Two other binaries
+        // declare `mod tool;`, so which crate `crate::` names is ambiguous.
+        (
+            "ambiguous declarers",
+            vec![
+                ("src/bin/tool.rs", path_tool.clone()),
+                ("src/bin/first.rs", "mod tool;\nfn main() {}\n".to_string()),
+                ("src/bin/second.rs", "mod tool;\nfn main() {}\n".to_string()),
+                ("src/bin/common/mod.rs", exported_table()),
+            ],
+        ),
+        // A `#[path]` declaration can include the file in another crate.
+        (
+            "attributed declarer",
+            vec![
+                ("src/bin/tool.rs", path_tool.clone()),
+                (
+                    "src/bin/other.rs",
+                    "#[path = \"tool.rs\"]\nmod tool;\nfn main() {}\n".to_string(),
+                ),
+                ("src/bin/common/mod.rs", exported_table()),
             ],
         ),
         // `autobins = false` with no `[[bin]]`: Cargo builds no binary
