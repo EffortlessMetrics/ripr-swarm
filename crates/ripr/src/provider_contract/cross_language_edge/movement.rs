@@ -12,7 +12,10 @@ const MOVEMENT_REPORT_SCHEMA: &str = "ripr_cross_language_edge_movement_report.v
 /// Edges are paired first by `edge_id`, then by semantic key. A changed head
 /// edge that is stale, has an unsupported family or is no longer positive
 /// after the head's currentness analysis is reported with the matching
-/// `*OnHead` kind.
+/// `*OnHead` kind. An edge with identical content on both sides is reported
+/// `Unchanged` without that refinement. Use
+/// [`analyze_cross_language_edge_registry_currentness`](super::analyze_cross_language_edge_registry_currentness)
+/// on the head for its current positive status.
 pub fn compare_cross_language_edge_registries(
     base: &LoadedCrossLanguageEdgeRegistryV1,
     head: &LoadedCrossLanguageEdgeRegistryV1,

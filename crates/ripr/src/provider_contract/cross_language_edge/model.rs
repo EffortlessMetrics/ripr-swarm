@@ -276,7 +276,9 @@ pub struct CrossLanguageEdgeProducerRegistrationV1 {
     pub supported_families: Vec<BoundaryFamilyV1>,
 }
 
-/// One typed, producer-owned relation between subjects in two languages.
+/// One typed, producer-owned relation between two distinct subjects. A
+/// positive registered edge must join two different languages; other
+/// dispositions may join subjects in the same language.
 ///
 /// Validation requires distinct source and target subjects and a boundary
 /// family the registry supports, and caps `declared_strength`,
@@ -416,7 +418,9 @@ pub enum CrossLanguageEdgeMovementKindV1 {
     HeadOnlyAdded,
     /// The edge exists only on base.
     BaseOnlyDeleted,
-    /// Same relationship slot and content on both sides.
+    /// Same relationship slot and content on both sides. Head currentness is
+    /// not consulted, so an unchanged edge that a new head anomaly demotes is
+    /// still reported here.
     Unchanged,
     /// The same `edge_id` now names a different relationship slot.
     Moved,
@@ -439,8 +443,9 @@ pub enum CrossLanguageEdgeRegistryAnomalyKindV1 {
     DuplicateSemanticEdge,
     /// Two edges share a relationship slot with different content.
     ConflictingEdge,
-    /// Two positive edges of one family claim the same endpoint pair in
-    /// opposite orientations.
+    /// Two positive edges of one family claim the same endpoint pair, in
+    /// either orientation. Identical same-direction duplicates are flagged
+    /// too, so both lose their positive relation.
     ReversedEdge,
     /// A positive bidirectional edge claims a propagation ceiling of
     /// `PropagationLimited` or more.
