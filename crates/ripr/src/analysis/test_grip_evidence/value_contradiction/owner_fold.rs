@@ -16,7 +16,9 @@
 //! the callers leave a differing receiver call or tuple unread, so the
 //! readings can withhold credit and cannot grant it.
 
-use super::{Value, fold_expression, fold_function_value_within, strip_parens};
+use super::{
+    Value, bool_payload_operand_range, fold_expression, fold_function_value_within, strip_parens,
+};
 use crate::analysis::syntax::parse_clean_source_file;
 use crate::analysis::syntax::parse_clean_source_file_memoized;
 use ra_ap_syntax::{
@@ -60,8 +62,9 @@ pub(super) struct OwnerFold {
     receiver_fields: Option<Vec<String>>,
     /// The owner's own parameter count, the receiver aside.
     parameters: usize,
-    /// One free function per component of a tuple tail, read on first use.
-    components: OnceCell<Option<Vec<String>>>,
+    /// One free function per component of a tuple tail, read on first use,
+    /// with the operand width a `bool` component's fold is held to.
+    components: OnceCell<Option<Vec<TupleComponent>>>,
     /// The width every integer the fold produces must fit when the return
     /// type names none (a peeled `bool` payload, #16400); `None` otherwise.
     operand_range: Option<(i128, i128)>,
@@ -189,7 +192,13 @@ impl OwnerFold {
             .get_or_init(|| tuple_tail_components(&self.text))
             .as_ref()?
             .iter()
-            .map(|component| fold_function_value_within(component, &values, self.operand_range))
+            .map(|component| {
+                fold_function_value_within(
+                    &component.text,
+                    &values,
+                    component.operand_range.or(self.operand_range),
+                )
+            })
             .collect::<Option<Vec<_>>>()
             .map(Folded::Tuple)
     }
@@ -226,12 +235,25 @@ fn apply_edits(text: &str, mut edits: Vec<(TextRange, String)>) -> Option<String
     Some(out)
 }
 
+/// One component of a tuple tail as its own function.
+struct TupleComponent {
+    text: String,
+    /// For a `bool` component, the parameters' shared declared width its
+    /// intermediates must fit (#16400); `None` for an integer component,
+    /// whose own return width guards it.
+    operand_range: Option<(i128, i128)>,
+}
+
 /// One function text per component when the function's tail is a tuple of
 /// two or more components and its declared return type is a tuple of the
 /// same arity: the tail and the return type are each replaced by the
 /// component's. Statements ahead of the tail stay, so a `return` among them
-/// fails the component's fold rather than being skipped.
-fn tuple_tail_components(text: &str) -> Option<Vec<String>> {
+/// fails the component's fold rather than being skipped. A `bool` component
+/// names no integer width, so it is held to the parameters' one shared
+/// declared width; without one the whole tuple is not read, since exact
+/// arithmetic could fold an overflowing version equal to one that does not
+/// overflow (#16400).
+fn tuple_tail_components(text: &str) -> Option<Vec<TupleComponent>> {
     let parse = parse_clean_source_file(text)?;
     let function = parse
         .tree()
@@ -253,7 +275,7 @@ fn tuple_tail_components(text: &str) -> Option<Vec<String>> {
         .iter()
         .zip(&types)
         .map(|(value, ty)| {
-            apply_edits(
+            let text = apply_edits(
                 text,
                 vec![
                     (
@@ -265,7 +287,16 @@ fn tuple_tail_components(text: &str) -> Option<Vec<String>> {
                         value.syntax().text().to_string(),
                     ),
                 ],
-            )
+            )?;
+            let operand_range = if ty.syntax().text().to_string().trim() == "bool" {
+                Some(bool_payload_operand_range(&text)?)
+            } else {
+                None
+            };
+            Some(TupleComponent {
+                text,
+                operand_range,
+            })
         })
         .collect()
 }

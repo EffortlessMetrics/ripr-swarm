@@ -2130,12 +2130,15 @@ fn fold_function_value(body: &str, arguments: &[i128]) -> Option<Value> {
     fold_function_value_within(body, arguments, None)
 }
 
-/// [`fold_function_value`], with every integer the body produces also held
-/// to `operand_range` when the return type names no integer width. A peeled
-/// boolean payload (`Some(x + 1 > 0)` read as `-> bool`) has no return width
-/// to guard its intermediates, so its caller passes the parameters' shared
-/// declared width: a value outside it is one the real owner overflows on,
-/// and the fold is `None` instead of an exact-arithmetic answer (#16400).
+/// [`fold_function_value`], with every arithmetic result the body computes
+/// also held to `operand_range` when the return type names no integer width.
+/// A peeled boolean payload (`Some(x + 1 > 0)` read as `-> bool`) or a `bool`
+/// tuple component has no return width to guard its intermediates, so its
+/// caller passes the parameters' shared declared width: a result outside it
+/// is one the real owner overflows on, and the fold is `None` instead of an
+/// exact-arithmetic answer (#16400). A range-shaped tail, whose bounds are
+/// read without a width check, is refused under the guard. Integer literals
+/// are not checked against it.
 fn fold_function_value_within(
     body: &str,
     arguments: &[i128],
@@ -2786,10 +2789,12 @@ struct Parser<'a> {
     /// #13037: `bool` bindings, read only by the strict return-seam reach
     /// fold. Every other fold binds integers alone and leaves this empty.
     bools: Option<&'a BTreeMap<String, bool>>,
-    /// The owner return type's declared width, when recognized. Every
-    /// integer produced inside the body must fit it: release builds wrap at
-    /// the declared width, so a mathematical value outside the range does
-    /// not describe a value the owner can return.
+    /// The owner return type's declared width when recognized, else the
+    /// parameters' shared operand width a `bool`-valued fold is held to
+    /// (#16400). Every arithmetic result inside the body must fit it: release
+    /// builds wrap at the declared width and debug builds panic, so a
+    /// mathematical value outside the range does not describe a value the
+    /// owner can return.
     range: Option<(i128, i128)>,
     /// The shared declared range when every parameter and the return type
     /// are the same recognized integer type. The shifts and the saturating
@@ -3983,7 +3988,8 @@ fn fold_condition(text: &str, environment: &BTreeMap<String, i128>) -> Option<bo
 }
 
 /// Fold a `{ .. }` block with `environment` as the parameter bindings and
-/// `range` as the return type's declared width (no width when `None`).
+/// `range` as the return type's declared width or, for a `bool`-valued fold,
+/// the parameters' shared operand width (no width when `None`).
 fn fold_block(
     tokens: &[Token],
     environment: &BTreeMap<String, i128>,

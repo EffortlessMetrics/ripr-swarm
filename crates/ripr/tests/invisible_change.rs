@@ -973,8 +973,8 @@ fn a_tuple_bool_component_that_overflows_its_operand_width_is_not_read_as_the_sa
 }
 
 #[test]
-fn a_peeled_tuple_bool_component_that_overflows_is_not_read_as_the_same_value()
--> Result<(), String> {
+fn a_peeled_tuple_bool_component_that_overflows_is_not_read_as_the_same_value() -> Result<(), String>
+{
     let findings = findings(
         "pub fn pair(a: i32) -> Option<(i32, bool)> {\n    Some((a, a + 1 > 0))\n}\n",
         "    Some((a, a > 0))",
@@ -986,8 +986,8 @@ fn a_peeled_tuple_bool_component_that_overflows_is_not_read_as_the_same_value()
 }
 
 #[test]
-fn a_tuple_bool_component_within_its_operand_width_is_read_as_the_same_value()
--> Result<(), String> {
+fn a_tuple_bool_component_within_its_operand_width_is_read_as_the_same_value() -> Result<(), String>
+{
     // Control: `5 + 1 > 0` and `5 > 0` agree, and nothing overflows.
     let findings = findings(
         "pub fn pair(a: i32) -> (i32, bool) {\n    (a, a + 1 > 0)\n}\n",
