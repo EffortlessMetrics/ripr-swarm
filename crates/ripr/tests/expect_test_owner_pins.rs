@@ -119,13 +119,67 @@ fn incomplete_source_ignores_expect_comparisons_inside_block_comments() -> Resul
     for test in [
         "let actual = render(4);\n    /*\n    expect![\"w12\"].assert_eq(&actual);\n    */",
         "let actual = render(4);\n    /* the old snapshot:\n    expect![[\"w12\"]].assert_eq(&actual);\n    expect![\"w12\"]\n        .assert_eq(&actual);\n    */",
-        "let actual = render(4);\n    let note = \"\n    expect![\\\"w12\\\"].assert_eq(&actual);\n    \";",
+        "let actual = render(4);\n    let note = r#\"\n    expect![\"w12\"].assert_eq(&actual);\n    \"#;",
     ] {
         let finding = render_finding(OLD, NEW, EXPECT_TEST, imports, "", test)?;
         assert_eq!(
             finding["classification"], "reachable_unrevealed",
             "{test}: {finding}"
         );
+    }
+    Ok(())
+}
+
+#[test]
+fn incomplete_source_refuses_expect_comparisons_in_a_closure_body_opened_earlier()
+-> Result<(), String> {
+    let imports = "use expect_test::expect;\nfn broken() { let = ; }";
+    let live = "let check = 1;\n    expect![\"w12\"].assert_eq(&render(4));\n    let _ = check;";
+    let finding = render_finding(OLD, NEW, EXPECT_TEST, imports, "", live)?;
+    assert_eq!(finding["oracle_kind"], "snapshot", "{finding}");
+    assert_eq!(finding["oracle_strength"], "medium", "{finding}");
+    for test in [
+        "let check = || {\n        expect![\"w12\"].assert_eq(&render(4));\n    };\n    let _ = check;",
+        "let check = move |x: u32| {\n        expect![[\"w12\"]].assert_eq(&render(x));\n    };\n    let _ = check;",
+        "let check = |x: u32| -> () {\n        expect![\"w12\"]\n            .assert_eq(&render(x));\n    };\n    let _ = check;",
+    ] {
+        let finding = render_finding(OLD, NEW, EXPECT_TEST, imports, "", test)?;
+        assert_ne!(finding["oracle_kind"], "snapshot", "{test}: {finding}");
+        assert_ne!(
+            finding["classification"], "weakly_exposed",
+            "{test}: {finding}"
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn incomplete_source_reads_the_live_part_of_a_comment_closing_row() -> Result<(), String> {
+    let imports = "use expect_test::expect;\nfn broken() { let = ; }";
+    let dead = "let actual = render(4);\n    /*\n    expect![\"w12\"].assert_eq(&actual); // */ let marker = 0;";
+    let finding = render_finding(OLD, NEW, EXPECT_TEST, imports, "", dead)?;
+    assert_eq!(
+        finding["classification"], "reachable_unrevealed",
+        "{finding}"
+    );
+    let live = "let actual = render(4);\n    /* the old snapshot\n    */ expect![\"w12\"].assert_eq(&actual);";
+    let finding = render_finding(OLD, NEW, EXPECT_TEST, imports, "", live)?;
+    assert_eq!(finding["oracle_kind"], "snapshot", "{finding}");
+    assert_eq!(finding["oracle_strength"], "medium", "{finding}");
+    Ok(())
+}
+
+#[test]
+fn incomplete_source_commits_an_expect_comparison_complete_after_its_receiver_rows()
+-> Result<(), String> {
+    let imports = "use expect_test::expect;\nfn broken() { let = ; }";
+    for test in [
+        "expect![[\n        \"w12\"\n    ]].assert_eq(&render(4));",
+        "expect![[\n        \"w12\"\n    ]].assert_eq(&render(4));\n    let after = 1;\n    let _ = after;",
+    ] {
+        let finding = render_finding(OLD, NEW, EXPECT_TEST, imports, "", test)?;
+        assert_eq!(finding["oracle_kind"], "snapshot", "{test}: {finding}");
+        assert_eq!(finding["oracle_strength"], "medium", "{test}: {finding}");
     }
     Ok(())
 }

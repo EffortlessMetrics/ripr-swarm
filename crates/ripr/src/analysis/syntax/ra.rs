@@ -2541,15 +2541,23 @@ fn ident_name(spelling: &str) -> &str {
 /// an expected value (`assert_eq`, `assert_debug_eq`, or `assert_json_eq`),
 /// including single-bracket and harmlessly spaced spellings (#7878).
 pub(crate) fn is_expect_test_comparison_line(line: &str) -> bool {
+    !expect_test_comparison_receiver_offsets(line).is_empty()
+}
+
+/// The byte offset in `line` where the receiver of each comparison
+/// [`is_expect_test_comparison_line`] accepts begins, so a caller holding the
+/// enclosing body can check that receiver's lexical context (#7878).
+pub(crate) fn expect_test_comparison_receiver_offsets(line: &str) -> Vec<usize> {
     let normalized: String = line.chars().filter(|ch| !ch.is_whitespace()).collect();
     if !(normalized.contains("expect![") || normalized.contains("expect_file![")) {
-        return false;
+        return Vec::new();
     }
-    let wrapped = format!("fn __ripr_snapshot_check() {{\n{line}\n}}");
+    const PREFIX: &str = "fn __ripr_snapshot_check() {\n";
+    let wrapped = format!("{PREFIX}{line}\n}}");
     let Some(parse) = parse_clean_source_file(&wrapped) else {
-        return false;
+        return Vec::new();
     };
-    parse.tree().syntax().descendants().filter_map(ast::MethodCallExpr::cast).any(|call| {
+    let accepted = parse.tree().syntax().descendants().filter_map(ast::MethodCallExpr::cast).filter(|call| {
         let supported_method = call.name_ref().is_some_and(|name| {
             matches!(name.text(), "assert_eq" | "assert_debug_eq" | "assert_json_eq")
         });
@@ -2557,8 +2565,14 @@ pub(crate) fn is_expect_test_comparison_line(line: &str) -> bool {
             if receiver.macro_call().and_then(|mac| mac.token_tree()).is_some_and(|tree|
                 tree.syntax().first_token().is_some_and(|token| token.kind() == SyntaxKind::L_BRACK)));
         let in_closure = call.syntax().ancestors().any(|node| ast::ClosureExpr::cast(node).is_some());
-        supported_method && bracket_receiver && !in_closure && expect_test_receiver(&call).is_some()
-    })
+        supported_method && bracket_receiver && !in_closure && expect_test_receiver(call).is_some()
+    });
+    accepted
+        .filter_map(|call| {
+            let start = usize::from(call.receiver()?.syntax().text_range().start());
+            start.checked_sub(PREFIX.len())
+        })
+        .collect()
 }
 
 /// Bare `Unit` in `fn run() -> Unit`, with no qualifier, turbofish, or `Self`.
