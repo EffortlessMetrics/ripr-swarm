@@ -112,3 +112,14 @@ Command:
 
 Updated:
 - `expected/human.txt`
+
+## Pending — match_arm_proximity_other_function_not_credited (11)
+
+Reason:
+RIPR-SPEC-0311: untied-spot count retained when match-arm owner identity is unestablished (#12241)(#16016)
+
+Command:
+`cargo xtask goldens bless match_arm_proximity_other_function_not_credited --reason "..."`
+
+Updated:
+- `expected/human.txt`

@@ -2025,3 +2025,14 @@ Command:
 
 Updated:
 - `expected/human.txt`
+
+## Pending — boundary_gap (43)
+
+Reason:
+RIPR-SPEC-0108: cache generation 1.222/0.224 joins history-sync import with receiver-kind reading after generics (#16016)
+
+Command:
+`cargo xtask goldens bless boundary_gap --reason "..."`
+
+Updated:
+- `expected/human.txt`

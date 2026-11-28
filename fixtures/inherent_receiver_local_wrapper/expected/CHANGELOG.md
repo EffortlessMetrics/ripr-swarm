@@ -223,3 +223,14 @@ Command:
 
 Updated:
 - `expected/human-full.txt`
+
+## Pending — inherent_receiver_local_wrapper (19)
+
+Reason:
+RIPR-SPEC-0311: untied-spot count retained when match-arm owner identity is unestablished (#12241)(#16016)
+
+Command:
+`cargo xtask goldens bless inherent_receiver_local_wrapper --reason "..."`
+
+Updated:
+- `expected/human.txt`
