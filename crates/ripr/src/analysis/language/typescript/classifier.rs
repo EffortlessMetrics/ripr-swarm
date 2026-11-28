@@ -2,6 +2,7 @@
 
 use super::inline_new_receiver::{INLINE_NEW_RECEIVER, rewrite_inline_new_receivers};
 use super::local_constant::{BodyConstant, test_body_integer_constant, test_file_integer_constant};
+use super::whole_owner_value::{observed_asserts_whole_owner_value, observed_without_comments};
 use super::*;
 
 // ── Observation guard (RIPR-SPEC-0098) ───────────────────────────────────────
@@ -3767,7 +3768,9 @@ pub(crate) fn ts_predicate_boundary_row_activation(
         if !inline_new_constructors.is_empty() && written_observed.contains(INLINE_NEW_RECEIVER) {
             continue;
         }
-        let observed_text = rewrite_inline_new_receivers(written_observed, inline_new_constructors);
+        // #16496: a call spelled only inside a comment supplies no arguments.
+        let uncommented = observed_without_comments(written_observed);
+        let observed_text = rewrite_inline_new_receivers(&uncommented, inline_new_constructors);
         let observed = observed_text.as_ref();
         let mut argument_lists = owner_call_arguments(observed, &owner.name, &owner_receivers);
         // #16458: when the asserted value is one whole owner call, only its
@@ -3813,6 +3816,9 @@ pub(crate) fn ts_predicate_boundary_row_activation(
         {
             argument_lists = vec![outer_alias_arguments];
         }
+        // The arguments above come from the asserted text itself; the one-hop
+        // local below reads them from its initializer instead.
+        let arguments_from_asserted_text = !argument_lists.is_empty();
         // #4104-E1: the canonical `const result = owner(...);
         // expect(result).toBe(...)` idiom observes the owner call through
         // a one-hop local binding. When the bare local carries no owner
@@ -3907,6 +3913,19 @@ pub(crate) fn ts_predicate_boundary_row_activation(
                 .map(String::as_str)
                 .collect();
             if observed_wraps_owner_call(observed, &call_spellings, &identity_helpers) {
+                reached = true;
+                continue;
+            }
+            // #16496: the asserted value must be the whole owner call, or a
+            // modeled value-preserving form of it. A comparison
+            // (`discount(100) > 0`), arithmetic or a ternary around the call
+            // can map both sides of the boundary to one passing value: the
+            // input reached the owner, but this assertion does not
+            // discriminate it. Renamed imports and method receivers follow the
+            // same rule above.
+            if arguments_from_asserted_text
+                && !observed_asserts_whole_owner_value(observed, &call_spellings, &identity_helpers)
+            {
                 reached = true;
                 continue;
             }
@@ -4532,7 +4551,7 @@ fn row_boundary_input_activation(
 /// `true` when `observed` is exactly one owner call (#16458): the owner
 /// name, bare or behind one of its owner-module receivers, optional type
 /// arguments, one argument list, and nothing before or after it.
-fn observed_is_one_owner_call_spelling(
+pub(super) fn observed_is_one_owner_call_spelling(
     observed: &str,
     name: &str,
     owner_receivers: &[String],
