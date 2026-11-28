@@ -392,3 +392,88 @@ fn dependent_or_replaced_expected_bindings_keep_conservative_credit() -> Result<
     classification(&helper, false, "helper_field_from_owner")?;
     Ok(())
 }
+
+/// The repo-exposure grip class of `build`'s `retries:` field seam, read
+/// through the built binary with no diff (#7894 review).
+fn repo_field_grip(source: &str, label: &str) -> Result<String, String> {
+    let scratch = Scratch::create()?;
+    std::fs::create_dir(scratch.0.join("src")).map_err(|error| error.to_string())?;
+    std::fs::write(scratch.0.join("Cargo.toml"), MANIFEST).map_err(|error| error.to_string())?;
+    std::fs::write(scratch.0.join("src/lib.rs"), source).map_err(|error| error.to_string())?;
+    let mut command = Command::new(env!("CARGO_BIN_EXE_ripr"));
+    command
+        .args(["check", "--root"])
+        .arg(&scratch.0)
+        .args([
+            "--mode",
+            "draft",
+            "--format",
+            "repo-exposure-json",
+            "--quiet",
+        ])
+        .env("RIPR_CACHE_DIR", scratch.0.join("cache"));
+    let output = run_bounded(command, &scratch.0, "repo_exposure", Duration::from_mins(2))?;
+    if !matches!(output.status.code(), Some(0 | 1)) {
+        return Err(format!(
+            "{label}: instrument: ripr exited {:?}: {}",
+            output.status,
+            String::from_utf8_lossy(&output.stderr)
+        ));
+    }
+    let json: serde_json::Value =
+        serde_json::from_slice(&output.stdout).map_err(|error| error.to_string())?;
+    let seams = json["seams"].as_array().ok_or("missing seams")?;
+    let mut found = seams.iter().filter(|seam| {
+        seam["kind"] == "field_construction"
+            && seam["owner"]
+                .as_str()
+                .is_some_and(|owner| owner.ends_with("build"))
+            && seam["expression"]
+                .as_str()
+                .is_some_and(|text| text.starts_with("retries:"))
+    });
+    let (Some(seam), None) = (found.next(), found.next()) else {
+        return Err(format!(
+            "{label}: premise: exactly one retries seam: {json}"
+        ));
+    };
+    Ok(seam["grip_class"]
+        .as_str()
+        .ok_or("missing grip class")?
+        .to_string())
+}
+
+#[test]
+fn repo_field_seam_withholds_a_pinned_value_the_owner_does_not_compute() -> Result<(), String> {
+    let pinned = |value: u32| {
+        source(&format!(
+            "let c = build(3);\nlet e = Config {{ retries: {value}, name: \"x\".into() }};\nassert_eq!(c, e);"
+        ))
+    };
+    // The owner computes `retries: 4` for `build(3)`: the adjacent binding
+    // passes and kills each mutant, and the repo seam grips strongly.
+    let correct = pinned(4)?;
+    runtime(&correct, false, "repo_correct")?;
+    for value in ["n + 2", "n"] {
+        let mutant = correct.replacen("retries: 1 + n,", &format!("retries: {value},"), 1);
+        assert_ne!(mutant, correct);
+        runtime(&mutant, true, "repo_correct")?;
+    }
+    assert_eq!(
+        repo_field_grip(&correct, "repo_correct")?,
+        "strongly_gripped"
+    );
+    // A pinned value the current owner does not compute does not pass on the
+    // code as it stands, so it is no discriminator for the field.
+    for value in [5, 99] {
+        let label = format!("repo_wrong_{value}");
+        let wrong = pinned(value)?;
+        runtime(&wrong, true, &label)?;
+        let grip = repo_field_grip(&wrong, &label)?;
+        assert_ne!(grip, "strongly_gripped", "{label}");
+        // The supplied-diff reading refuses the same pin: neither version
+        // of the changed initializer computes the pinned value.
+        classification(&wrong, false, &label)?;
+    }
+    Ok(())
+}

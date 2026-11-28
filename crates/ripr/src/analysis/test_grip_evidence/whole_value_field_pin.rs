@@ -39,7 +39,13 @@ impl<'a> WholeValueFieldPin<'a> {
             owner: Some(owner.id.clone()),
             family: ProbeFamily::FieldConstruction,
             delta: DeltaKind::Unknown,
-            before: None,
+            // A repo seam has no diff, so the current initializer stands in
+            // for both versions (as `ClosedChange::current` does for the
+            // repo-wide scalar audit, #12394 item 3). The #12394 item 5 check
+            // then refuses a pinned field value the current owner provably
+            // does not compute for the call's literal arguments: such a test
+            // does not pass on the code as it stands.
+            before: Some(seam.expression().to_string()),
             before_condition: None,
             after: Some(seam.expression().to_string()),
             expression: seam.expression().to_string(),

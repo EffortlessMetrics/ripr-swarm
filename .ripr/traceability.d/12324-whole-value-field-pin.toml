@@ -1,0 +1,13 @@
+# Repo field_construction seams reuse the bounded whole-value field pin, and
+# withhold a pinned field value the current owner provably does not compute
+# (#7894, RIPR-SPEC-0225).
+[[extend]]
+id = "RIPR-SPEC-0225"
+tests = [
+  "crates/ripr/src/analysis/test_grip_evidence/tests/whole_value_field_pin.rs::adjacent_expected_binding_strongly_grips_the_changed_field_seam",
+  "crates/ripr/src/analysis/test_grip_evidence/tests/whole_value_field_pin.rs::self_derived_expected_binding_stays_weak_on_the_field_seam",
+  "crates/ripr/tests/whole_value_expected_binding.rs::repo_field_seam_withholds_a_pinned_value_the_owner_does_not_compute",
+]
+code = [
+  "crates/ripr/src/analysis/test_grip_evidence/whole_value_field_pin.rs",
+]
