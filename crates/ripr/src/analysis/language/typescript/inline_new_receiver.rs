@@ -58,39 +58,21 @@ pub(super) fn rewrite_inline_new_receivers<'a>(
 }
 
 /// For each byte of `text`, `true` when it is code: outside a quoted string,
-/// a template literal and a comment. A template's `${...}` holes count as
-/// text too, which can only withhold a rewrite.
+/// a template literal, a regex literal and a comment. A byte counts as code
+/// only when both shared masks agree, the regex-aware one and the one that
+/// reads every `/` as division, so a regex holding a quote (`/"/`) cannot
+/// expose a string argument to the rewrite. Text a mask does not map byte
+/// for byte reads as all text, which can only withhold a rewrite.
 fn code_bytes(text: &str) -> Vec<bool> {
-    let bytes = text.as_bytes();
-    let mut code = vec![true; bytes.len()];
-    let mut at = 0;
-    while at < bytes.len() {
-        let start = at;
-        let end = match bytes[at] {
-            quote @ (b'"' | b'\'' | b'`') => {
-                at += 1;
-                while at < bytes.len() && bytes[at] != quote {
-                    at += if bytes[at] == b'\\' { 2 } else { 1 };
-                }
-                (at + 1).min(bytes.len())
-            }
-            b'/' if bytes.get(at + 1) == Some(&b'/') => text[at..]
-                .find('\n')
-                .map_or(bytes.len(), |line_end| at + line_end),
-            b'/' if bytes.get(at + 1) == Some(&b'*') => text[at + 2..]
-                .find("*/")
-                .map_or(bytes.len(), |close| at + 2 + close + 2),
-            _ => {
-                at += 1;
-                continue;
-            }
-        };
-        for flag in &mut code[start..end] {
-            *flag = false;
-        }
-        at = end;
+    let lexical = super::classifier::ts_mask_literals_and_comments(text);
+    let division = super::classifier::ts_mask_literals_and_comments_division_only(text);
+    if lexical.len() != text.len() || division.len() != text.len() {
+        return vec![false; text.len()];
     }
-    code
+    text.bytes()
+        .zip(lexical.bytes().zip(division.bytes()))
+        .map(|(byte, (left, right))| byte == left && byte == right)
+        .collect()
 }
 
 /// The byte offset just past the member dot of an inline `new C(...)`

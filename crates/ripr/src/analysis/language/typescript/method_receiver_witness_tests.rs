@@ -61,17 +61,27 @@ fn evaluate_owner(
     let index = ReExportIndex::build(&workspace_files, &sources, Path::new(""), None, |path| {
         path.starts_with("tests")
     });
-    let owner = extract_owners(Path::new(OWNER_FILE), owner_source)
-        .into_iter()
+    let owners = extract_owners(Path::new(OWNER_FILE), owner_source);
+    let owner = owners
+        .iter()
         .find(|owner| owner.name == "discount")
+        .cloned()
         .ok_or("fixture owner `discount` not extracted")?;
     if owner_source.lines().nth(2) != Some(CHANGED_LINE) {
         return Err("fixture changed line moved".to_string());
     }
-    let tests = extract_tests(Path::new(TEST_FILE), test_source);
+    let mut tests = extract_tests(Path::new(TEST_FILE), test_source);
     if tests.len() != 1 {
         return Err(format!("expected one parsed test, got {}", tests.len()));
     }
+    // A class imported through a barrel reads as the direct import of its
+    // declaring module, as the production pass rewrites it (#13592 B3).
+    index.rewrite_class_barrel_imports(
+        &mut tests,
+        &related_tests::ExportedClasses::from_owners(&owners),
+        None,
+        None,
+    );
     let relation_index = RelationIndex::build(&tests, &index);
     let candidates = related_test_candidates(&owner, &tests, None, &index, None, &relation_index);
     let Some(candidate) = candidates.first() else {
@@ -123,6 +133,10 @@ fn an_inline_and_a_bound_receiver_witness_the_exact_boundary() -> Result<(), Str
         (
             "bound",
             "  const c = new Cart();\n  expect(c.discount(100)).toBe(90);",
+        ),
+        (
+            "bound without a semicolon",
+            "  const c = new Cart()\n  expect(c.discount(100)).toBe(90);",
         ),
         (
             "bound result",
@@ -207,6 +221,12 @@ fn a_method_receiver_keeps_the_boundary_guards() -> Result<(), String> {
             "comma initializer",
             "  const c = (new Cart(), { discount: (_n: number) => 90 });\n  new Cart().discount(1);\n  expect(c.discount(100)).toBe(90);",
         ),
+        // The initializer continues on the next line, so `c` is not the
+        // constructed instance.
+        (
+            "continued initializer",
+            "  const c = new Cart()\n    .replacement;\n  new Cart().discount(1);\n  expect(c.discount(100)).toBe(90);",
+        ),
         // A test that spells the placeholder receiver names its own object.
         (
             "placeholder spelling",
@@ -287,6 +307,11 @@ fn the_inline_rewrite_keeps_the_method_arguments() {
             &constructors
         ),
         format!("{INLINE_NEW_RECEIVER}.discount(\"new Cart().x\" /* new Cart().y */)")
+    );
+    // A regex literal holding a quote does not expose a later string argument.
+    assert_eq!(
+        rewrite_inline_new_receivers("new Cart().discount(/\"/, \"new Cart().x\")", &constructors),
+        format!("{INLINE_NEW_RECEIVER}.discount(/\"/, \"new Cart().x\")")
     );
     for unchanged in [
         "new CartX().discount(100)",

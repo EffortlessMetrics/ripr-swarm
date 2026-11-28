@@ -3961,14 +3961,41 @@ fn declared_by_direct_construction(body: &str, name: &str, constructors: &[Strin
                 };
                 super::classifier::balanced_close_offset(arguments).is_some_and(|close| {
                     let tail = arguments[close + 1..].trim_start_matches([' ', '\t']);
-                    tail.is_empty()
-                        || tail.starts_with(';')
-                        || tail.starts_with('\n')
-                        || tail.starts_with("\r\n")
+                    if tail.is_empty() || tail.starts_with(';') {
+                        return true;
+                    }
+                    if !(tail.starts_with('\n') || tail.starts_with("\r\n")) {
+                        return false;
+                    }
+                    // A newline ends the statement only when the next line
+                    // cannot continue the expression (`new Cart()\n  .other`).
+                    next_line_starts_a_statement(tail.trim_start())
                 })
             })
         })
     })
+}
+
+/// `true` when `rest`, the text after a line break that follows a complete
+/// initializer, starts a new statement rather than continuing the expression:
+/// the end of the body, a `;` or `}`, or a word that is not an infix keyword.
+/// A member access, call, index, operator, template or anything else on the
+/// next line reads as a continuation, which can only withhold a witness.
+fn next_line_starts_a_statement(rest: &str) -> bool {
+    let Some(first) = rest.chars().next() else {
+        return true;
+    };
+    if first == ';' || first == '}' {
+        return true;
+    }
+    if !(first.is_alphabetic() || first == '_' || first == '$') {
+        return false;
+    }
+    let word: String = rest
+        .chars()
+        .take_while(|ch| is_javascript_identifier_char(*ch))
+        .collect();
+    !matches!(word.as_str(), "instanceof" | "in" | "as" | "satisfies")
 }
 
 /// How many `const`, `let` or `var` declarations of `name` the body text
