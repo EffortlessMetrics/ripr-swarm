@@ -13,15 +13,56 @@
 
 use std::borrow::Cow;
 
-use super::classifier::{balanced_close_offset, observed_is_one_owner_call_spelling};
+use std::path::Path;
 
-/// `observed` without `//` and `/* */` comments outside quotes. Unchanged
-/// when it holds no comment opener.
+use super::classifier::{balanced_close_offset, observed_is_one_owner_call_spelling};
+use super::parse::parse_on_worker;
+use super::{Parser, SourceType};
+
+/// `observed` with each `//` and `/* */` comment replaced by spaces. The
+/// parser finds the comments, so a `//` or `/*` inside a string, a template
+/// or a regex literal (`/https?:\/\//`) stays as written. Unchanged when the
+/// text holds no comment opener, or when it does not parse as one expression,
+/// which keeps the text as written.
 pub(super) fn observed_without_comments(observed: &str) -> Cow<'_, str> {
     if !observed.contains("//") && !observed.contains("/*") {
         return Cow::Borrowed(observed);
     }
-    Cow::Owned(super::guard_entry_guard::strip_comments(observed))
+    const PREFIX: &str = "(\n";
+    let source = format!("{PREFIX}{observed}\n);\n");
+    let spans = parse_on_worker(
+        Path::new("observed_comments.ts"),
+        &source,
+        |_, source, allocator| {
+            let parsed = Parser::new(allocator, source, SourceType::ts()).parse();
+            (parsed.errors.is_empty() && !parsed.panicked).then(|| {
+                parsed
+                    .program
+                    .comments
+                    .iter()
+                    .map(|comment| (comment.span.start as usize, comment.span.end as usize))
+                    .collect::<Vec<_>>()
+            })
+        },
+    )
+    .ok()
+    .flatten();
+    let Some(spans) = spans.filter(|spans| !spans.is_empty()) else {
+        return Cow::Borrowed(observed);
+    };
+    let mut out = observed.to_string();
+    for (start, end) in spans {
+        let (Some(start), Some(end)) = (
+            start.checked_sub(PREFIX.len()),
+            end.checked_sub(PREFIX.len()),
+        ) else {
+            continue;
+        };
+        if end <= out.len() && out.is_char_boundary(start) && out.is_char_boundary(end) {
+            out.replace_range(start..end, &" ".repeat(end - start));
+        }
+    }
+    Cow::Owned(out)
 }
 
 /// Whether the asserted value is one whole owner call, for any of
@@ -34,7 +75,9 @@ pub(super) fn observed_without_comments(observed: &str) -> Cow<'_, str> {
 ///   `.resolves` or `.rejects` matcher reads back unchanged;
 /// - a verified test-local identity helper, `wrap(owner(100))`;
 /// - a thunk for a throw matcher, `() => owner(100)` or
-///   `() => { owner(100); }`.
+///   `() => { owner(100); }`;
+/// - a type-only suffix the compiler erases: `owner(100)!`,
+///   `owner(100) as number`, `owner(100) satisfies number`.
 ///
 /// Anything else around the call, an operator, a member read, a template or
 /// another call, is not modeled, so it is not the whole owner value.
@@ -73,6 +116,9 @@ fn unwrap_value_preserving<'a>(value: &'a str, identity_helpers: &[&str]) -> Opt
     if let Some(body) = thunk_body(value) {
         return Some(body);
     }
+    if let Some(inner) = type_only_suffix_removed(value) {
+        return Some(inner);
+    }
     let promise = ["Promise.resolve", "Promise.reject"]
         .into_iter()
         .find_map(|wrapper| single_argument_of(value, wrapper));
@@ -99,8 +145,74 @@ fn whole_parenthesized(value: &str) -> Option<&str> {
 /// form the wrapper is read as.
 fn single_argument_of<'a>(value: &'a str, callee: &str) -> Option<&'a str> {
     let rest = value.strip_prefix(callee)?.trim_start();
-    let inner = whole_parenthesized(rest)?;
-    (!has_top_level_comma(inner)).then_some(inner)
+    // Explicit type arguments (`Promise.resolve<number>(...)`) are erased.
+    let rest = match rest.strip_prefix('<') {
+        Some(after) => after[type_arguments_close(after)? + 1..].trim_start(),
+        None => rest,
+    };
+    let inner = whole_parenthesized(rest)?.trim();
+    // A trailing comma adds no argument.
+    let inner = inner.strip_suffix(',').map_or(inner, str::trim_end);
+    (!inner.is_empty() && !inner.starts_with("...") && !has_top_level_comma(inner)).then_some(inner)
+}
+
+/// The offset of the `>` that closes a type argument list whose `<` was just
+/// consumed, or `None` when the list does not close.
+fn type_arguments_close(after_open: &str) -> Option<usize> {
+    let mut depth = 1usize;
+    for (offset, c) in after_open.char_indices() {
+        match c {
+            '<' => depth += 1,
+            '>' => {
+                depth -= 1;
+                if depth == 0 {
+                    return Some(offset);
+                }
+            }
+            '(' | ')' | ';' => return None,
+            _ => {}
+        }
+    }
+    None
+}
+
+/// `value` without a TypeScript-only suffix the compiler erases: a non-null
+/// assertion (`owner(100)!`), or `as T` / `satisfies T` with a plain type.
+fn type_only_suffix_removed(value: &str) -> Option<&str> {
+    if let Some(inner) = value.strip_suffix('!')
+        && !inner.ends_with(['!', '='])
+    {
+        return Some(inner);
+    }
+    ["as", "satisfies"].into_iter().find_map(|keyword| {
+        let (inner, ty) = value.rsplit_once(&format!(" {keyword} "))?;
+        let ty = ty.trim();
+        let plain_type = !ty.is_empty()
+            && ty.chars().all(|c| {
+                c.is_ascii_alphanumeric()
+                    || matches!(
+                        c,
+                        '_' | '$' | '.' | '<' | '>' | '[' | ']' | '|' | '&' | ' ' | ','
+                    )
+            });
+        (plain_type && !has_top_level_comma(inner) && balanced(inner)).then_some(inner)
+    })
+}
+
+/// Whether every bracket in `text` closes in order.
+fn balanced(text: &str) -> bool {
+    let mut depth = 0usize;
+    for c in text.chars() {
+        match c {
+            '(' | '[' | '{' => depth += 1,
+            ')' | ']' | '}' => match depth.checked_sub(1) {
+                Some(next) => depth = next,
+                None => return false,
+            },
+            _ => {}
+        }
+    }
+    depth == 0
 }
 
 /// The body of `() => <expression>`, `async () => <expression>` or

@@ -117,6 +117,27 @@ fn the_whole_call_and_its_value_preserving_forms_witness() -> Result<(), String>
             "  expect(d.discount(100)).toBe(100);",
         ),
         (
+            "typed promise with a trailing comma",
+            NAMED_IMPORT,
+            "  await expect(Promise.resolve<number>(discount(100),)).resolves.toBe(100);",
+        ),
+        (
+            "non-null assertion",
+            NAMED_IMPORT,
+            "  expect(discount(100)!).toBe(100);",
+        ),
+        (
+            "type assertion",
+            NAMED_IMPORT,
+            "  expect(discount(100) as number).toBe(100);",
+        ),
+        // A `//` inside a regex literal is not a comment (review of #16501).
+        (
+            "regex argument",
+            NAMED_IMPORT,
+            "  expect(discount(100, /https?:\\/\\//)).toBe(100);",
+        ),
+        (
             "comment beside the call",
             NAMED_IMPORT,
             "  expect(discount(100) /* boundary */).toBe(100);",
