@@ -152,11 +152,11 @@ lane = "Rust-only feature lane"
 class = "wall-clock-growth"
 status = "open"
 issue = 11238
-timing_dependent = true
+timing_dependent = false
 first_seen = "2026-10-30"
-evidence = ["run 41107186754 (PR #11130)"]
+evidence = ["run 41107186754 (PR #11130)", "run 44715080418 (job 136217086545)"]
 symptom = "deep shared-start chains: growth exceeded 3x plus 10ms: 123 ms -> 421 ms, on a PR that does not touch the probe code."
-root_cause = "Wall-clock growth bound on a loaded shared runner; linearity of the algorithm is not yet confirmed. Migrate to an injected clock (assert_growth_with_clock) or operation counts."
+root_cause = "The guard compared elapsed batches, including fixture setup. On the November 20 retry the retained baseline produced 3.38x, while the two retry samples gave 2.38x. The shared-start guard now bounds sort-key reads, group visits and suffix characters for both fixtures."
 
 [[flake]]
 id = "added-run-start-growth"

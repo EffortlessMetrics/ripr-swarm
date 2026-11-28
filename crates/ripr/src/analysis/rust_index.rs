@@ -395,26 +395,39 @@ pub(in crate::analysis) fn summarize_file(path: PathBuf, text: String) -> FileFa
     }
 }
 
-// Counts examined shape pairs/search comparisons only while a focused test enables it.
-// Sorting and source-byte scans are deliberately outside this counter.
+// The shared-start guard observes the work inside the sort, group searches and
+// suffix predicates. Other twin fixtures can exercise different relations.
 #[cfg(test)]
 thread_local! {
-    static TWIN_WORK: std::cell::Cell<Option<usize>> = const { std::cell::Cell::new(None) };
+    static TWIN_WORK: std::cell::Cell<Option<TwinWork>> = const { std::cell::Cell::new(None) };
+}
+
+#[cfg(test)]
+#[derive(Clone, Copy, Debug, Default)]
+pub(crate) struct TwinWork {
+    pub(crate) sort_keys: usize,
+    pub(crate) visits: usize,
+    pub(crate) suffix_chars: usize,
 }
 
 #[cfg(test)]
 pub(crate) fn twin_work_start() {
-    TWIN_WORK.set(Some(0));
+    TWIN_WORK.set(Some(TwinWork::default()));
 }
 #[cfg(test)]
-pub(crate) fn twin_work_finish() -> usize {
+pub(crate) fn twin_work_finish() -> TwinWork {
     TWIN_WORK.replace(None).unwrap_or_default()
 }
 
 macro_rules! twin_work {
-    () => {
+    ($field:ident) => {
         #[cfg(test)]
-        TWIN_WORK.with(|counter| counter.update(|count| count.map(|n| n + 1)));
+        TWIN_WORK.with(|counter| {
+            if let Some(mut work) = counter.get() {
+                work.$field += 1;
+                counter.set(Some(work));
+            }
+        });
     };
 }
 
@@ -450,7 +463,10 @@ pub(crate) fn error_path_twins(shapes: &[ProbeShapeFact], source: &str) -> Vec<b
         .enumerate()
         .filter(|(_, shape)| shape.kind == ProbeShapeKind::ErrorPath)
         .collect();
-    errors.sort_by_key(|(_, shape)| (shape.start_byte, shape.end_byte));
+    errors.sort_by_key(|(_, shape)| {
+        twin_work!(sort_keys);
+        (shape.start_byte, shape.end_byte)
+    });
     let groups: Vec<_> = errors
         .chunk_by(|(_, a), (_, b)| a.start_byte == b.start_byte)
         .collect();
@@ -629,7 +645,7 @@ fn mark_returns(
 ) {
     for &(outer_index, outer) in outers {
         let inside = inners.partition_point(|(_, inner)| {
-            twin_work!();
+            twin_work!(visits);
             inner.end_byte <= outer.end_byte
         });
         let Some(&(_, inner)) = inside.checked_sub(1).and_then(|last| inners.get(last)) else {
@@ -638,7 +654,10 @@ fn mark_returns(
         let closes = source
             .get(inner.end_byte()..outer.end_byte())
             .is_some_and(|suffix| {
-                let rest = suffix.trim_start_matches(|c: char| c == ')' || c.is_whitespace());
+                let rest = suffix.trim_start_matches(|c: char| {
+                    twin_work!(suffix_chars);
+                    c == ')' || c.is_whitespace()
+                });
                 // `..` after the constructor is a range, not a method chain.
                 rest.is_empty()
                     || (inner_is_err
@@ -734,11 +753,11 @@ fn mark_payloads(
 ) {
     for &(inner_index, inner) in inners {
         let first = outers.partition_point(|(_, outer)| {
-            twin_work!();
+            twin_work!(visits);
             outer.end_byte < inner.end_byte
         });
         for (_, outer) in outers.get(first..).unwrap_or_default() {
-            twin_work!();
+            twin_work!(visits);
             let Some(suffix) = source.get(inner.end_byte()..outer.end_byte()) else {
                 break;
             };
@@ -794,7 +813,13 @@ enum Closing {
 /// Whether `suffix` closes `opening` parentheses, ignoring whitespace and
 /// one leading comma (rustfmt's vertical layout leaves `Err(\n    payload,\n)`).
 fn err_call_closing(suffix: &str, opening: usize) -> Closing {
-    let mut closers = suffix.chars().filter(|c| !c.is_whitespace()).peekable();
+    let mut closers = suffix
+        .chars()
+        .filter(|c| {
+            twin_work!(suffix_chars);
+            !c.is_whitespace()
+        })
+        .peekable();
     closers.next_if_eq(&',');
     let mut count = 0_usize;
     for c in closers {
