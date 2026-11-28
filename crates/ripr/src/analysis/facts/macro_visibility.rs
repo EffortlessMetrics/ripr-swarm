@@ -745,20 +745,18 @@ impl MacroVisibility {
     }
 
     /// Whether a file other than `file` may name it in a `#[path]`
-    /// attribute, under any module name: its text spells `path = "…<file
-    /// name>"`. A superset of the real mounts, read without parsing. Each
-    /// file name is answered once per run.
+    /// attribute, under any module name (see `may_mount_file_named`). A
+    /// superset of the real mounts, read without parsing. Each file name is
+    /// answered once per run.
     fn path_mounted_elsewhere(&self, file: &Path) -> bool {
         let Some(file_name) = file.file_name().and_then(|name| name.to_str()) else {
             return true;
         };
         let cached = self.path_mounts.borrow().get(file_name).cloned();
         let mounts = cached.unwrap_or_else(|| {
-            let needle = format!("{file_name}\"");
             let mut found = Vec::new();
             for (path, source) in &self.sources {
-                if spells_path_value_ending_in(source, &needle) || spells_escaped_path_value(source)
-                {
+                if source.contains("path") && may_mount_file_named(source, file_name) {
                     found.push(path.clone());
                     if found.len() == 2 {
                         break;
@@ -875,47 +873,109 @@ impl MacroVisibility {
     }
 }
 
-/// Whether `source` spells `path = "…"` (raw strings and whitespace
-/// included) with a value ending in `needle`, which is a file name followed
-/// by its closing `"`. A comment or a non-ASCII byte before the `=` counts as
-/// a maybe.
-fn spells_path_value_ending_in(source: &str, needle: &str) -> bool {
-    source.match_indices(needle).any(|(end, _)| {
-        let Some(open) = source[..end].rfind('"') else {
+/// Whether `source` may hold a `path = …` attribute argument that names a
+/// file called `file_name`, under any module name. Comments may sit
+/// between the tokens. A plain or raw string value names the file when it
+/// is the file name or ends in `/` and the file name. A cooked string with
+/// an escape (`"\x74ool.rs"`), trivia this does not skip, or a non-string
+/// value right after `#[path` can name any file, so each counts as a mount.
+fn may_mount_file_named(source: &str, file_name: &str) -> bool {
+    let bytes = source.as_bytes();
+    let is_ident = |byte: u8| byte == b'_' || byte.is_ascii_alphanumeric();
+    source.match_indices("path").any(|(start, word)| {
+        let end = start + word.len();
+        if start > 0 && is_ident(bytes[start - 1]) {
+            return false;
+        }
+        if bytes.get(end).is_some_and(|&byte| is_ident(byte)) {
+            return false;
+        }
+        // Attribute argument position: `#[path`, or `path` after `(` or `,`
+        // as in `cfg_attr(test, path = …)`.
+        let before = source[..start].trim_end_matches(is_lexer_whitespace);
+        let direct = before.ends_with('[') || ends_in_comment_or_unicode(before, true);
+        if !direct && !before.ends_with(['(', ',']) {
+            return false;
+        }
+        let Some(after) = skip_trivia(&source[end..]) else {
+            return true;
+        };
+        let Some(after) = after.strip_prefix('=') else {
             return false;
         };
-        let before = source[..open]
-            .trim_end_matches('#')
-            .trim_end_matches('r')
-            .trim_end_matches(is_lexer_whitespace);
-        let Some(before) = before.strip_suffix('=') else {
-            return ends_in_comment_or_unicode(before, false);
+        let Some(value) = skip_trivia(after) else {
+            return true;
         };
-        let before = before.trim_end_matches(is_lexer_whitespace);
-        before.ends_with("path") || ends_in_comment_or_unicode(before, false)
+        match string_literal_value(value) {
+            Some(Some(text)) => {
+                text == file_name
+                    || text
+                        .strip_suffix(file_name)
+                        .is_some_and(|parent| parent.ends_with('/'))
+            }
+            // An escape the scan does not decode.
+            Some(None) => true,
+            // Not a string: a macro fragment such as `$file` after `#[path`.
+            None => direct,
+        }
     })
 }
 
-/// Whether `source` spells `path = "…"` with an escape (`\`) in the value,
-/// such as `"\x74ool.rs"`: the decoded name can be any file, so the value
-/// counts as a mount of every file name.
-fn spells_escaped_path_value(source: &str) -> bool {
-    source.match_indices("path").any(|(start, word)| {
-        let rest = source[start + word.len()..].trim_start_matches(is_lexer_whitespace);
-        let Some(rest) = rest.strip_prefix('=') else {
-            return false;
-        };
-        let Some(value) = rest
-            .trim_start_matches(is_lexer_whitespace)
-            .strip_prefix('"')
-        else {
-            return false;
-        };
-        value
-            .split('"')
-            .next()
-            .is_some_and(|text| text.contains('\\'))
-    })
+/// `text` past leading whitespace and comments, or `None` when a comment
+/// is unterminated or a non-ASCII character (possibly whitespace) comes
+/// first.
+fn skip_trivia(mut text: &str) -> Option<&str> {
+    loop {
+        text = text.trim_start_matches(is_lexer_whitespace);
+        if let Some(rest) = text.strip_prefix("//") {
+            text = rest.split_once('\n').map_or("", |(_, next)| next);
+        } else if text.starts_with("/*") {
+            let mut depth = 0usize;
+            let mut index = 0;
+            let bytes = text.as_bytes();
+            loop {
+                match (bytes.get(index), bytes.get(index + 1)) {
+                    (Some(b'/'), Some(b'*')) => {
+                        depth += 1;
+                        index += 2;
+                    }
+                    (Some(b'*'), Some(b'/')) => {
+                        depth -= 1;
+                        index += 2;
+                        if depth == 0 {
+                            break;
+                        }
+                    }
+                    (Some(_), _) => index += 1,
+                    (None, _) => return None,
+                }
+            }
+            text = text.get(index..)?;
+        } else if text.chars().next().is_some_and(|c| !c.is_ascii()) {
+            return None;
+        } else {
+            return Some(text);
+        }
+    }
+}
+
+/// The value of the string literal `text` starts with: `Some(Some(value))`
+/// for a raw string or a cooked one without escapes, `Some(None)` for a
+/// cooked string with an escape or an unterminated literal, and `None` when
+/// `text` does not start with a string literal.
+fn string_literal_value(text: &str) -> Option<Option<&str>> {
+    if let Some(raw) = text.strip_prefix('r') {
+        let hashes = raw.len() - raw.trim_start_matches('#').len();
+        let body = raw[hashes..].strip_prefix('"')?;
+        let close = format!("\"{}", "#".repeat(hashes));
+        return Some(body.find(close.as_str()).map(|end| &body[..end]));
+    }
+    let body = text.strip_prefix('"')?;
+    let Some(end) = body.find('"') else {
+        return Some(None);
+    };
+    let value = &body[..end];
+    Some((!value.contains('\\')).then_some(value))
 }
 
 /// `tests/`, `benches/` or `examples/` of a package, or its `src/bin/`, whose
@@ -1459,28 +1519,29 @@ mod tests {
 
     #[test]
     fn a_path_value_ending_in_the_file_name_may_mount_it() {
-        let needle = "tool.rs\"";
         for source in [
             "#[path = \"tool.rs\"]\nmod mounted;\n",
             "#[path=\"../bin/tool.rs\"]\nmod mounted;\n",
             "#[path = r\"tool.rs\"]\nmod mounted;\n",
             "#[path = r#\"tool.rs\"#]\nmod mounted;\n",
             "#[path /* x */ = \"tool.rs\"]\nmod mounted;\n",
+            "#[path = \"\\x74ool.rs\"]\nmod mounted;\n",
+            "#[path /* x */ = \"\\x74ool.rs\"]\nmod mounted;\n",
+            "#[path // x\n= \"\\x74ool.rs\"]\nmod mounted;\n",
+            "#[cfg_attr(test, path = \"tool.rs\")]\nmod mounted;\n",
+            "macro_rules! m { ($f:literal) => { #[path = $f] mod mounted; }; }\n",
         ] {
-            assert!(spells_path_value_ending_in(source, needle), "{source}");
+            assert!(may_mount_file_named(source, "tool.rs"), "{source}");
         }
-        assert!(spells_escaped_path_value(
-            "#[path = \"\\x74ool.rs\"]\nmod mounted;\n"
-        ));
-        assert!(!spells_escaped_path_value(
-            "#[path = \"tool.rs\"]\nmod mounted;\n"
-        ));
         for source in [
             "const NAME: &str = \"tool.rs\";\n",
+            "let path = \"tool.rs\";\n",
             "#[doc = \"tool.rs\"]\nfn f() {}\n",
             "#[path = \"tool.rs.bak\"]\nmod mounted;\n",
+            "#[path = \"mytool.rs\"]\nmod mounted;\n",
+            "#[serde(path = some::module)]\nstruct S;\n",
         ] {
-            assert!(!spells_path_value_ending_in(source, needle), "{source}");
+            assert!(!may_mount_file_named(source, "tool.rs"), "{source}");
         }
     }
 
