@@ -2,8 +2,9 @@
 - The repo seam view (`agent brief`, `repair`, repo exposure, editor hover)
   no longer calls a match arm strongly gripped just because a related test
   calls its function. A call runs the `match`, not every arm, so an arm now
-  needs a related test whose input is read as selecting it (a literal, a
-  constant table row, or a typed receiver for a method). Without one, its
+  needs a related test whose input is read as selecting it (a literal or a
+  constant table row; a method call also needs a receiver of the method's own
+  type). Without one, its
   activation reads unknown. When the shared arm reading establishes that
   every related test calls the function with inputs selecting other arms,
   activation reads weak instead and the arm's pattern is named as the
