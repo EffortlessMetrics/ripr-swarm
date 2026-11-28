@@ -1501,30 +1501,43 @@ fn machine_format_on_a_pipe_is_silent_by_default() -> Result<(), String> {
     Ok(())
 }
 
-/// A human format on a piped stderr holds its progress for the first 2s: a
-/// fast run (an agent's shell tool, a CI log) prints no `ripr progress:` line
-/// at all, `RIPR_PROGRESS=1` restores the immediate stream, and `--quiet` /
-/// `RIPR_QUIET` still win over it (supersedes the #11598 "human keeps
-/// progress on a pipe" negative, which only the machine-format default flipped).
+/// The progress sink's fake-clock tests cover the two-second success hold.
+/// An artifact failure exercises the default human-format pipe wiring at
+/// any speed because failure discloses the held stage and terminal line.
 #[test]
-fn human_format_on_a_pipe_is_silent_when_the_run_finishes_fast() -> Result<(), String> {
+fn human_format_on_a_pipe_discloses_failure_and_respects_overrides() -> Result<(), String> {
     let fixture = DiffFixture::new()?;
-    let human = run_check_as(ripr_default(), &fixture, &[])?;
-    assert!(human.status.success(), "{}", stderr_text(&human));
+    let dir = fixture.0.join("artifact-dir");
+    std::fs::create_dir(&dir).map_err(|error| format!("create artifact dir: {error}"))?;
+    let dir_arg = dir.display().to_string();
+    let failed = run_check_as(ripr_default(), &fixture, &["--write-artifact", &dir_arg])?;
+    let stderr = stderr_text(&failed);
     assert!(
-        !stderr_text(&human).contains("ripr progress:"),
-        "a fast human run on a pipe prints no progress: {}",
-        stderr_text(&human)
+        !failed.status.success(),
+        "writing onto a directory must fail"
     );
-    let forced = run_check_as(ripr(), &fixture, &[])?;
+    let mut stages = stderr
+        .lines()
+        .filter(|line| line.starts_with("ripr progress:"));
     assert!(
-        stderr_text(&forced).contains("ripr progress: completed [diff]"),
-        "RIPR_PROGRESS=1 forces the stream (control): {}",
-        stderr_text(&forced)
+        stages.any(|line| line == "ripr progress: building_output [diff]")
+            && stages.any(|line| line == "ripr progress: failed [diff]"),
+        "the default human stream reports the stage before the failure: {stderr}"
+    );
+    assert!(!stderr.contains("ripr progress: completed"), "{stderr}");
+
+    let forced = run_check_as(ripr(), &fixture, &[])?;
+    let stderr = stderr_text(&forced);
+    assert!(forced.status.success(), "{stderr}");
+    assert!(
+        stderr.contains("ripr progress: loading_input [diff]")
+            && stderr.contains("ripr progress: completed [diff]"),
+        "RIPR_PROGRESS=1 forces the stream from its first stage: {stderr}"
     );
     let mut quiet = ripr();
     quiet.env("RIPR_QUIET", "1");
     let quiet = run_check_as(quiet, &fixture, &[])?;
+    assert!(quiet.status.success(), "{}", stderr_text(&quiet));
     assert!(
         !stderr_text(&quiet).contains("ripr progress:"),
         "RIPR_QUIET beats RIPR_PROGRESS: {}",
@@ -1584,8 +1597,7 @@ fn context_on_a_pipe_is_silent_by_default() -> Result<(), String> {
 /// `ripr explain --format agent` is the compact report a coding agent reads,
 /// and the agent loop follows `ripr check`'s printed `next=ripr explain ...`
 /// line, which carries no `--quiet`. On a piped stderr it is silent by default
-/// like `check --format agent`; the human explain keeps its progress (negative
-/// control) and `RIPR_PROGRESS=1` restores the stream.
+/// like `check --format agent`, and `RIPR_PROGRESS=1` restores the stream.
 #[test]
 fn explain_agent_format_on_a_pipe_is_silent_by_default() -> Result<(), String> {
     let fixture = DiffFixture::new()?;
@@ -1600,18 +1612,18 @@ fn explain_agent_format_on_a_pipe_is_silent_by_default() -> Result<(), String> {
         .to_string();
     let root = fixture.0.display().to_string();
     let diff = fixture.0.join("change.diff").display().to_string();
-    let human = [
+    let agent = [
         "explain",
         "--root",
         root.as_str(),
         "--diff",
         diff.as_str(),
         finding_id.as_str(),
+        "--format",
+        "agent",
     ];
-    let mut agent = human.to_vec();
-    agent.extend_from_slice(&["--format", "agent"]);
     let default = ripr_default()
-        .args(&agent)
+        .args(agent)
         .output()
         .map_err(|error| format!("run ripr explain --format agent: {error}"))?;
     assert!(default.status.success(), "{}", stderr_text(&default));
@@ -1626,7 +1638,7 @@ fn explain_agent_format_on_a_pipe_is_silent_by_default() -> Result<(), String> {
         stderr_text(&default)
     );
     let forced = ripr()
-        .args(&agent)
+        .args(agent)
         .output()
         .map_err(|error| format!("run ripr explain --format agent: {error}"))?;
     assert!(
@@ -1635,15 +1647,6 @@ fn explain_agent_format_on_a_pipe_is_silent_by_default() -> Result<(), String> {
         stderr_text(&forced)
     );
     assert_eq!(default.stdout, forced.stdout);
-    let human_default = ripr_default()
-        .args(human)
-        .output()
-        .map_err(|error| format!("run ripr explain: {error}"))?;
-    assert!(
-        !stderr_text(&human_default).contains("ripr progress:"),
-        "a fast human explain on a pipe prints no progress: {}",
-        stderr_text(&human_default)
-    );
     Ok(())
 }
 

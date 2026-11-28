@@ -385,6 +385,15 @@ fn capture_aware_stderr_writer() -> Box<dyn Write + Send> {
 #[cfg(test)]
 struct CaptureAwareStderr;
 
+// A test can freeze the next stderr sink's elapsed time without changing its
+// caller-selected policy. The closure carries that instant into workers.
+#[cfg(test)]
+thread_local! {
+    static FROZEN_STDERR_CLOCK: std::cell::Cell<Option<Instant>> = const {
+        std::cell::Cell::new(None)
+    };
+}
+
 #[cfg(test)]
 impl Write for CaptureAwareStderr {
     fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
@@ -401,7 +410,20 @@ impl CliProgressSink {
     pub(crate) fn for_stderr(tty: bool, policy: ProgressPolicy) -> Self {
         let policy =
             policy_with_progress_env(policy, tty, std::env::var(PROGRESS_ENV).ok().as_deref());
-        let sink = Self::with_writer(capture_aware_stderr_writer(), tty, policy);
+        let writer = capture_aware_stderr_writer();
+        #[cfg(not(test))]
+        let sink = Self::with_writer(writer, tty, policy);
+        #[cfg(test)]
+        let sink = match FROZEN_STDERR_CLOCK.take() {
+            Some(instant) => {
+                assert!(
+                    !tty,
+                    "a piped command must select the non-TTY progress sink"
+                );
+                Self::with_writer_and_clock(writer, tty, policy, Arc::new(move || instant))
+            }
+            None => Self::with_writer(writer, tty, policy),
+        };
         sink.hold_success_terminal();
         sink.install_as_stderr_notice_owner();
         sink
@@ -1682,13 +1704,13 @@ mod tests {
 
     #[test]
     fn non_tty_fast_run_prints_no_progress_including_completed() {
-        let text = held_run(300, AnalysisProgressStage::Completed);
+        let text = held_run(1_999, AnalysisProgressStage::Completed);
         assert_eq!(text, "", "a sub-threshold non-TTY run must be silent");
     }
 
     #[test]
     fn non_tty_run_past_the_hold_still_prints_stage_and_completed() {
-        let text = held_run(2_100, AnalysisProgressStage::Completed);
+        let text = held_run(2_000, AnalysisProgressStage::Completed);
         assert_eq!(
             text, "ripr progress: analyzing [diff]\nripr progress: completed [diff]\n",
             "the current stage appears once the hold elapses, no doubled heartbeat"
@@ -1752,13 +1774,20 @@ mod tests {
         sink.hold_success_terminal();
         sink.stop_heartbeat();
         sink.emit(event(AnalysisProgressStage::Analyzing));
-        clock.advance_millis(2_001);
+        clock.advance_millis(1_999);
+        sink.emit(event(AnalysisProgressStage::BuildingOutput));
+        assert_eq!(
+            buffer.text(),
+            "",
+            "building output is still inside the hold"
+        );
+        clock.advance_millis(2);
         sink.emit(event(AnalysisProgressStage::Completed));
         sink.commit_success();
         drop(sink);
         assert_eq!(
             buffer.text(),
-            "ripr progress: analyzing [diff]\nripr progress: completed [diff]\n"
+            "ripr progress: building_output [diff]\nripr progress: completed [diff]\n"
         );
     }
 
@@ -2227,6 +2256,96 @@ mod tests {
         sink.emit(event(AnalysisProgressStage::Failed));
     }
 
+    fn progress_probe(test: &str) -> Result<std::process::Command, String> {
+        let harness = std::env::current_exe()
+            .map_err(|err| format!("resolve the current test harness: {err}"))?;
+        let mut command = std::process::Command::new(&harness);
+        command
+            .args(["--exact", test, "--test-threads=1"])
+            .env_remove("RUST_TEST_NOCAPTURE");
+        Ok(command)
+    }
+
+    /// RIPR-SPEC-0185: default human commands on a pipe wire a non-TTY
+    /// sink and keep successful runs silent inside the hold.
+    #[test]
+    fn fast_human_pipe_holds_check_and_explain_progress() -> Result<(), Box<dyn std::error::Error>>
+    {
+        const TEST: &str = "cli::progress::tests::fast_human_pipe_holds_check_and_explain_progress";
+        const CHILD: &str = "RIPR_TEST_HUMAN_PROGRESS_CHILD";
+        const COMPLETED: &str = "human check and explain completed with a frozen progress clock";
+        if std::env::var_os(CHILD).is_none() {
+            let output = progress_probe(TEST)?
+                .arg("--nocapture")
+                .env(CHILD, "1")
+                .env_remove(QUIET_ENV)
+                .env_remove(PROGRESS_ENV)
+                .env_remove(VERBOSE_ENV)
+                .output()?;
+            let stdout = String::from_utf8_lossy(&output.stdout);
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            assert!(
+                output.status.success() && stdout.lines().any(|line| line == COMPLETED),
+                "both commands must finish in the piped child: {stdout}\n{stderr}"
+            );
+            assert!(
+                !stderr.contains(PROGRESS_PREFIX) && !stdout.contains(PROGRESS_PREFIX),
+                "the real commands must hold all progress at zero elapsed time: {stdout}\n{stderr}"
+            );
+            return Ok(());
+        }
+
+        assert!(!io::IsTerminal::is_terminal(&io::stderr()));
+        let fixture = tempfile::tempdir()?;
+        let root = fixture.path();
+        std::fs::create_dir(root.join("src"))?;
+        std::fs::write(
+            root.join("Cargo.toml"),
+            "[package]\nname = \"progress-fixture\"\nversion = \"0.1.0\"\nedition = \"2024\"\n[workspace]\n",
+        )?;
+        std::fs::write(
+            root.join("src/lib.rs"),
+            "pub fn over_threshold(amount: i32, threshold: i32) -> bool {\n    amount >= threshold\n}\n",
+        )?;
+        let diff = root.join("change.diff");
+        std::fs::write(
+            &diff,
+            "diff --git a/src/lib.rs b/src/lib.rs\n--- a/src/lib.rs\n+++ b/src/lib.rs\n@@ -1,3 +1,3 @@\n pub fn over_threshold(amount: i32, threshold: i32) -> bool {\n-    amount > threshold\n+    amount >= threshold\n }\n",
+        )?;
+        let root_arg = root.display().to_string();
+        let diff_arg = diff.display().to_string();
+        let run = |command, extra: &[&str]| {
+            let args = ["ripr", command, "--root", &root_arg, "--diff", &diff_arg]
+                .into_iter()
+                .chain(extra.iter().copied())
+                .map(str::to_owned)
+                .collect();
+            FROZEN_STDERR_CLOCK.set(Some(Instant::now()));
+            let result = crate::cli::run(args);
+            let used_clock = FROZEN_STDERR_CLOCK.take().is_none();
+            result?;
+            assert!(
+                used_clock,
+                "{command} must wire its default human progress sink"
+            );
+            Ok::<(), crate::cli::CommandError>(())
+        };
+        let artifact = root.join("check.json");
+        run(
+            "check",
+            &["--write-artifact", &artifact.display().to_string()],
+        )?;
+        let report: crate::app::check_artifact::CheckArtifactV2 =
+            serde_json::from_slice(&std::fs::read(artifact)?)?;
+        let finding = report
+            .findings
+            .first()
+            .ok_or("check fixture has no findings")?;
+        run("explain", &[&finding.id])?;
+        println!("{COMPLETED}");
+        Ok(())
+    }
+
     // The fail-closed windows-advisory summarizer parses `test NAME ... ok`
     // rows out of the streamed cargo log, where cargo merges the harness's
     // stdout and stderr (#9272). libtest intercepts only the macro output
@@ -2242,13 +2361,7 @@ mod tests {
     #[test]
     fn stderr_progress_is_captured_in_test_builds() -> Result<(), String> {
         const PROBE: &str = "cli::progress::tests::stderr_capture_probe_projects_progress";
-        let harness = std::env::current_exe()
-            .map_err(|err| format!("resolve the current test harness: {err}"))?;
-        let output = std::process::Command::new(&harness)
-            .args(["--exact", PROBE, "--test-threads=1"])
-            // An ambient nocapture switch would print the probe's lines
-            // through the macro route and false-fail the pin.
-            .env_remove("RUST_TEST_NOCAPTURE")
+        let output = progress_probe(PROBE)?
             .output()
             .map_err(|err| format!("spawn capture child harness: {err}"))?;
         let stdout = String::from_utf8_lossy(&output.stdout);

@@ -1,0 +1,5 @@
+[[extend]]
+id = "RIPR-SPEC-0185"
+tests = [
+  "crates/ripr/src/cli/progress.rs::tests::fast_human_pipe_holds_check_and_explain_progress",
+]
