@@ -1004,7 +1004,11 @@ fn render_analysis_outcome_disclosure(out: &mut String, output: &CheckOutput, pl
             ));
         }
         if let Some(path) = &limitation.path {
-            out.push_str(&format!("; file: {path}"));
+            // #16455: a line break in the name must not split the line.
+            out.push_str(&format!(
+                "; file: {}",
+                crate::output::path::prose_path_text(path)
+            ));
         }
         if let Some(count) = limitation.affected_items {
             out.push_str(&format!("; affected items: {count}"));
