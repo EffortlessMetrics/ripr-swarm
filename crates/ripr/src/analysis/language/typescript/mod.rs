@@ -113,6 +113,8 @@ mod fact_prefetch_tests;
 mod fact_store_tests;
 mod field_update_guard;
 mod fixture_receivers;
+#[cfg(test)]
+mod free_function_whole_call_tests;
 mod function_replacement;
 mod gap_reach;
 mod guard_entry_guard;
@@ -210,6 +212,7 @@ mod typeof_kind;
 #[cfg(test)]
 mod typeof_kind_tests;
 mod unused_default_guard;
+mod whole_owner_value;
 // Declared here, not in `tests.rs`, so #7813/#7815 do not collide with #8476.
 mod assertion_helper;
 mod boolean_pin_guard;

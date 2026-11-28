@@ -1,0 +1,12 @@
+[[extend]]
+id = "RIPR-SPEC-0224"
+tests = [
+  "crates/ripr/src/analysis/language/typescript/free_function_whole_call_tests.rs::the_whole_call_and_its_value_preserving_forms_witness",
+  "crates/ripr/src/analysis/language/typescript/free_function_whole_call_tests.rs::an_operator_around_the_call_does_not_witness",
+  "crates/ripr/src/analysis/language/typescript/free_function_whole_call_tests.rs::a_call_written_only_in_a_comment_does_not_witness",
+  "fixtures/typescript_vitest_compared_owner_call_boundary",
+]
+code = [
+  "crates/ripr/src/analysis/language/typescript/classifier.rs",
+  "crates/ripr/src/analysis/language/typescript/whole_owner_value.rs",
+]

@@ -478,7 +478,7 @@ fn is_identifier_char(c: char) -> bool {
 }
 
 /// Remove `//` and `/* */` comments (outside quotes) from condition text.
-fn strip_comments(text: &str) -> String {
+pub(super) fn strip_comments(text: &str) -> String {
     let chars: Vec<char> = text.chars().collect();
     let mut out = String::new();
     let mut quote: Option<char> = None;
