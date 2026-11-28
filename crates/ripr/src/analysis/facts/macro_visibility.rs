@@ -752,6 +752,30 @@ impl MacroVisibility {
         candidates.into_iter().collect()
     }
 
+    /// Whether another file that could hold `file` as a module declares
+    /// its name with a plain `mod`, whichever file that declaration
+    /// resolves to. Declarations are read, not resolved, so the answer
+    /// never recurses through `child_file`.
+    fn may_be_declared(&self, file: &Path) -> bool {
+        let Some((name, location)) = module_identity(file) else {
+            return false;
+        };
+        self.declarer_candidates(&location)
+            .into_iter()
+            .filter(|candidate| candidate != file)
+            .any(|candidate| {
+                self.sources
+                    .get(&candidate)
+                    .is_some_and(|source| may_declare_module_named(source, &name, false))
+                    && self.scope(&candidate).is_some_and(|scope| {
+                        scope
+                            .modules
+                            .iter()
+                            .any(|module| module.plain && module.name == name)
+                    })
+            })
+    }
+
     /// The one file `mod name;` in `declarer` resolves to, over every
     /// anchor the declarer could have. Zero or several candidates is
     /// unresolved.
@@ -764,8 +788,10 @@ impl MacroVisibility {
         );
         let in_root_directory = is_root_directory(directory);
         // A file in a root directory that no module declares is a crate
-        // root, whose children rustc reads only beside it (#10298).
-        let crate_root_here = in_root_directory && !root_like && self.parent(declarer).is_none();
+        // root, whose children rustc reads only beside it (#10298). The
+        // check reads declarations without resolving them, since `parent`
+        // itself resolves through `child_file`.
+        let crate_root_here = in_root_directory && !root_like && !self.may_be_declared(declarer);
         let mut bases = Vec::new();
         if root_like || in_root_directory {
             bases.push(directory.to_path_buf());

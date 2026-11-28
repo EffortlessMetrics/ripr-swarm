@@ -314,6 +314,16 @@ fn a_table_from_a_binary_roots_macro_use_module_reads_like_the_hand_written_test
                 ("bin/common/mod.rs", TABLE.to_string()),
             ],
         ),
+        // Two flat binaries that declare each other form a module cycle
+        // with no crate root: the answer is unknown, not a crate root.
+        (
+            "cyclic flat binaries",
+            vec![
+                ("src/bin/tool.rs", tool.replace("mod common;", "mod common;\nmod other;")),
+                ("src/bin/other.rs", "mod tool;\n".to_string()),
+                ("src/bin/common/mod.rs", TABLE.to_string()),
+            ],
+        ),
         // `autobins = false` with no `[[bin]]`: Cargo builds no binary
         // from `src/bin/tool.rs`, so its rows are no test of the gate.
         (
