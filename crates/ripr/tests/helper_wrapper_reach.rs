@@ -1127,6 +1127,81 @@ fn a_body_scoped_name_in_a_string_leaves_its_rebinding_unread() -> Result<(), St
     Ok(())
 }
 
+/// #16462: a verified `anyhow!` call elsewhere reads as that macro even for
+/// a wrapper that never invokes it, so the `format!` in its arguments is no
+/// binding and a wrapper that logs through `println!` keeps forwarding. An
+/// unverified import leaves the call opaque, and its arguments still refuse.
+#[test]
+fn a_verified_drop_in_call_elsewhere_does_not_rebind_its_arguments() -> Result<(), String> {
+    const ANYHOW: &str = "anyhow = \"1\"";
+    let prelude = "use anyhow::anyhow;\npub fn bad_quantity(qty: u32) -> anyhow::Error {\n    anyhow!(format!(\"bad quantity: {qty}\"))\n}";
+    let wrapper = "    println!(\"order {qty}\");\n    if is_bulk(qty) { 5 } else { 0 }";
+    let source = format!("{prelude}\n{}", bulk_source(wrapper, BOUNDARY_TESTS));
+    let first = source
+        .lines()
+        .position(|line| line.contains("10 <= qty"))
+        .ok_or("probe")?;
+    let diff = BULK_DIFF.replace("@@ -1,3 +1,3 @@", &format!("@@ -{0},3 +{0},3 @@", first));
+    for (locked, exposed) in [
+        (&[("anyhow", "1.0.104")][..], true),
+        (&[("anyhow", "1.0.99")][..], false),
+    ] {
+        for family in ["predicate", "return_value"] {
+            let finding = finding_with_dependencies(ANYHOW, locked, &source, &diff, family)?;
+            assert_eq!(finding["probe"]["line"], first + 1, "{locked:?}\n{finding}");
+            assert_eq!(
+                finding["classification"] == "exposed",
+                exposed,
+                "{locked:?}\n{finding}"
+            );
+        }
+    }
+    Ok(())
+}
+
+#[test]
+fn an_inherited_macro_definition_keeps_its_arguments_opaque() -> Result<(), String> {
+    // #16473 review: a parent's `macro_rules! anyhow` reaches the
+    // out-of-line child, so the child's `anyhow!` call may define `json!`
+    // and the wrapper's `json!` may return before the helper runs.
+    const DEPENDENCIES: &str = "anyhow = \"1\"\nserde_json = \"1\"";
+    const LOCKED: &[(&str, &str)] = &[("anyhow", "1.0.104"), ("serde_json", "1.0.154")];
+    let prelude = "use anyhow::anyhow;\nuse serde_json::json;\nanyhow! { macro_rules! json { ($qty:expr) => { return if $qty >= 10 { 5 } else { 0 } }; } }";
+    let wrapper = "    let _ = json!(qty);\n    if is_bulk(qty) { 5 } else { 0 }";
+    let child = format!("{prelude}\n{}", bulk_source(wrapper, BOUNDARY_TESTS));
+    let first = child
+        .lines()
+        .position(|line| line.contains("10 <= qty"))
+        .ok_or("probe")?;
+    let diff = BULK_DIFF
+        .replace("src/lib.rs", "src/pricing.rs")
+        .replace("@@ -1,3 +1,3 @@", &format!("@@ -{0},3 +{0},3 @@", first));
+    for (root, exposed) in [
+        ("mod pricing;\n", true),
+        (
+            "macro_rules! anyhow { ($($t:tt)*) => { $($t)* }; }\nmod pricing;\n",
+            false,
+        ),
+    ] {
+        for family in ["predicate", "return_value"] {
+            let finding = finding_in_files(
+                DEPENDENCIES,
+                LOCKED,
+                &[("src/lib.rs", root), ("src/pricing.rs", &child)],
+                &diff,
+                family,
+            )?;
+            assert_eq!(finding["probe"]["line"], first + 1, "{root}\n{finding}");
+            assert_eq!(
+                finding["classification"] == "exposed",
+                exposed,
+                "{root}\n{finding}"
+            );
+        }
+    }
+    Ok(())
+}
+
 #[test]
 fn a_block_arm_that_reads_the_parameter_keeps_forwarding() -> Result<(), String> {
     // #10357 item 4: rustfmt writes block arms without a trailing comma. One
