@@ -2587,6 +2587,7 @@ fn known_static_limit_kind(kind: &str) -> bool {
         StaticLimitKind::CrossLanguageOracleVisibilityUnresolved,
         StaticLimitKind::RustTransitiveReachUnresolved,
         StaticLimitKind::RustIntegrationPublicApiPathUnresolved,
+        StaticLimitKind::RustTraitDispatchUnresolved,
         StaticLimitKind::RustMacroReachUnresolved,
         StaticLimitKind::RustMacroWrappedTestCallUnresolved,
         StaticLimitKind::RustMacroWrappedAssertionUnresolved,

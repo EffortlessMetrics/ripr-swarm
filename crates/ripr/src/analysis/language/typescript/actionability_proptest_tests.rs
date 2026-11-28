@@ -61,7 +61,7 @@ fn config() -> Config {
 /// step by the exhaustive match in `static_limit_kind_ordinal`: a new variant
 /// fails to compile there, and a variant added to the match but not to this
 /// array fails `static_limit_kind_list_is_complete_and_ordered`.
-const STATIC_LIMIT_KINDS: [StaticLimitKind; 37] = [
+const STATIC_LIMIT_KINDS: [StaticLimitKind; 38] = [
     StaticLimitKind::DynamicDispatch,
     StaticLimitKind::Metaprogramming,
     StaticLimitKind::MissingImportGraph,
@@ -74,6 +74,7 @@ const STATIC_LIMIT_KINDS: [StaticLimitKind; 37] = [
     StaticLimitKind::CrossLanguageOracleVisibilityUnresolved,
     StaticLimitKind::RustTransitiveReachUnresolved,
     StaticLimitKind::RustIntegrationPublicApiPathUnresolved,
+    StaticLimitKind::RustTraitDispatchUnresolved,
     StaticLimitKind::RustMacroReachUnresolved,
     StaticLimitKind::RustMacroWrappedTestCallUnresolved,
     StaticLimitKind::RustMacroWrappedAssertionUnresolved,
@@ -115,37 +116,38 @@ fn static_limit_kind_ordinal(kind: StaticLimitKind) -> usize {
         StaticLimitKind::CrossLanguageOracleVisibilityUnresolved => 9,
         StaticLimitKind::RustTransitiveReachUnresolved => 10,
         StaticLimitKind::RustIntegrationPublicApiPathUnresolved => 11,
-        StaticLimitKind::RustMacroReachUnresolved => 12,
-        StaticLimitKind::RustMacroWrappedTestCallUnresolved => 13,
-        StaticLimitKind::RustMacroWrappedAssertionUnresolved => 14,
-        StaticLimitKind::RustValuePropagationUnresolved => 15,
-        StaticLimitKind::RustFieldMatchSelectorUnresolved => 16,
-        StaticLimitKind::RustSubprocessBinaryReachUnresolved => 17,
-        StaticLimitKind::WrapperErrorBindingUnresolved => 18,
-        StaticLimitKind::PythonTransitiveReachUnresolved => 19,
-        StaticLimitKind::RustAssertionContextUnresolved => 20,
-        StaticLimitKind::RustLogCaptureUnresolved => 21,
-        StaticLimitKind::RustPanicOutcomeUnresolved => 22,
-        StaticLimitKind::RustDebugAssertionProfileUnresolved => 23,
-        StaticLimitKind::RustCallFactBudget => 24,
-        StaticLimitKind::RustFrameworkOracleUnresolved => 25,
-        StaticLimitKind::RustPinnedShapeUnresolved => 26,
-        StaticLimitKind::RustImplicitCallUnresolved => 27,
-        StaticLimitKind::RustIndirectOwnerCallUnresolved => 28,
-        StaticLimitKind::RustCallerLoopSelectorUnresolved => 29,
-        StaticLimitKind::ProofHarnessNotEvaluated => 30,
-        StaticLimitKind::RustInherentReceiverUnestablished => 31,
-        StaticLimitKind::TypescriptWorkspaceDiscoveryTruncated => 32,
-        StaticLimitKind::TypescriptWorkspaceReadLimited => 33,
-        StaticLimitKind::RustFutureNeverPolled => 34,
-        StaticLimitKind::ActivationBoundaryInputUnresolved => 35,
-        StaticLimitKind::RustGatedDoctestUnread => 36,
+        StaticLimitKind::RustTraitDispatchUnresolved => 12,
+        StaticLimitKind::RustMacroReachUnresolved => 13,
+        StaticLimitKind::RustMacroWrappedTestCallUnresolved => 14,
+        StaticLimitKind::RustMacroWrappedAssertionUnresolved => 15,
+        StaticLimitKind::RustValuePropagationUnresolved => 16,
+        StaticLimitKind::RustFieldMatchSelectorUnresolved => 17,
+        StaticLimitKind::RustSubprocessBinaryReachUnresolved => 18,
+        StaticLimitKind::WrapperErrorBindingUnresolved => 19,
+        StaticLimitKind::PythonTransitiveReachUnresolved => 20,
+        StaticLimitKind::RustAssertionContextUnresolved => 21,
+        StaticLimitKind::RustLogCaptureUnresolved => 22,
+        StaticLimitKind::RustPanicOutcomeUnresolved => 23,
+        StaticLimitKind::RustDebugAssertionProfileUnresolved => 24,
+        StaticLimitKind::RustCallFactBudget => 25,
+        StaticLimitKind::RustFrameworkOracleUnresolved => 26,
+        StaticLimitKind::RustPinnedShapeUnresolved => 27,
+        StaticLimitKind::RustImplicitCallUnresolved => 28,
+        StaticLimitKind::RustIndirectOwnerCallUnresolved => 29,
+        StaticLimitKind::RustCallerLoopSelectorUnresolved => 30,
+        StaticLimitKind::ProofHarnessNotEvaluated => 31,
+        StaticLimitKind::RustInherentReceiverUnestablished => 32,
+        StaticLimitKind::TypescriptWorkspaceDiscoveryTruncated => 33,
+        StaticLimitKind::TypescriptWorkspaceReadLimited => 34,
+        StaticLimitKind::RustFutureNeverPolled => 35,
+        StaticLimitKind::ActivationBoundaryInputUnresolved => 36,
+        StaticLimitKind::RustGatedDoctestUnread => 37,
     }
 }
 
 /// The largest ordinal `static_limit_kind_ordinal` assigns. Keep it equal to
 /// the last arm; the test below checks the array reaches it.
-const MAX_STATIC_LIMIT_KIND_ORDINAL: usize = 36;
+const MAX_STATIC_LIMIT_KIND_ORDINAL: usize = 37;
 
 #[test]
 fn static_limit_kind_list_is_complete_and_ordered() {
