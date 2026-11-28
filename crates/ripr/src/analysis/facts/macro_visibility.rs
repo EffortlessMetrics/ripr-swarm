@@ -25,6 +25,7 @@ use crate::analysis::sync_memo::SyncMemo;
 use crate::analysis::syntax::{
     ImportedMacros, MacroScope, first_macro_call, generator_calls, macro_scope,
 };
+use std::borrow::Cow;
 use std::collections::HashMap;
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
@@ -876,9 +877,10 @@ impl MacroVisibility {
 /// Whether `source` may hold a `path = …` attribute argument that names a
 /// file called `file_name`, under any module name. Comments may sit
 /// between the tokens. A plain or raw string value names the file when it
-/// is the file name or ends in `/` and the file name. A cooked string with
-/// an escape (`"\x74ool.rs"`), trivia this does not skip, or a non-string
-/// value right after `#[path` can name any file, so each counts as a mount.
+/// is the file name or ends in `/` and the file name, after decoding
+/// escapes such as `"\x74ool.rs"`. An escape that does not decode, trivia
+/// this does not skip, or a non-string value right after `#[path` (a macro
+/// fragment) can name any file, so each counts as a mount.
 fn may_mount_file_named(source: &str, file_name: &str) -> bool {
     let bytes = source.as_bytes();
     let is_ident = |byte: u8| byte == b'_' || byte.is_ascii_alphanumeric();
@@ -913,7 +915,7 @@ fn may_mount_file_named(source: &str, file_name: &str) -> bool {
                         .strip_suffix(file_name)
                         .is_some_and(|parent| parent.ends_with('/'))
             }
-            // An escape the scan does not decode.
+            // An escape or literal the scan cannot decode.
             Some(None) => true,
             // Not a string: a macro fragment such as `$file` after `#[path`.
             None => direct,
@@ -960,22 +962,94 @@ fn skip_trivia(mut text: &str) -> Option<&str> {
 }
 
 /// The value of the string literal `text` starts with: `Some(Some(value))`
-/// for a raw string or a cooked one without escapes, `Some(None)` for a
-/// cooked string with an escape or an unterminated literal, and `None` when
-/// `text` does not start with a string literal.
-fn string_literal_value(text: &str) -> Option<Option<&str>> {
+/// for a raw string or a cooked one whose escapes decode, `Some(None)` for
+/// an escape this does not decode or an unterminated literal, and `None`
+/// when `text` does not start with a string literal.
+fn string_literal_value(text: &str) -> Option<Option<Cow<'_, str>>> {
     if let Some(raw) = text.strip_prefix('r') {
         let hashes = raw.len() - raw.trim_start_matches('#').len();
         let body = raw[hashes..].strip_prefix('"')?;
         let close = format!("\"{}", "#".repeat(hashes));
-        return Some(body.find(close.as_str()).map(|end| &body[..end]));
+        return Some(
+            body.find(close.as_str())
+                .map(|end| Cow::Borrowed(&body[..end])),
+        );
     }
     let body = text.strip_prefix('"')?;
-    let Some(end) = body.find('"') else {
-        return Some(None);
+    let mut value = String::new();
+    let mut escaped = false;
+    let mut chars = body.char_indices();
+    while let Some((index, c)) = chars.next() {
+        match c {
+            '"' if escaped => return Some(Some(Cow::Owned(value))),
+            '"' => return Some(Some(Cow::Borrowed(&body[..index]))),
+            '\\' => {
+                escaped = true;
+                match decode_escape(&mut chars) {
+                    Some(Some(decoded)) => value.push(decoded),
+                    Some(None) => {}
+                    None => return Some(None),
+                }
+            }
+            other => value.push(other),
+        }
+    }
+    Some(None)
+}
+
+/// The character a cooked-string escape (after its `\`) stands for:
+/// `Some(None)` for a line continuation, `None` when it is not one of the
+/// escapes Rust accepts in a string literal.
+fn decode_escape(chars: &mut std::str::CharIndices<'_>) -> Option<Option<char>> {
+    let decoded = match chars.next()?.1 {
+        'n' => '\n',
+        'r' => '\r',
+        't' => '\t',
+        '0' => '\0',
+        '\\' => '\\',
+        '\'' => '\'',
+        '"' => '"',
+        'x' => {
+            let high = chars.next()?.1.to_digit(8)?;
+            let low = chars.next()?.1.to_digit(16)?;
+            char::from_u32(high * 16 + low)?
+        }
+        'u' => {
+            if chars.next()?.1 != '{' {
+                return None;
+            }
+            let mut code = 0u32;
+            let mut digits = 0;
+            loop {
+                match chars.next()?.1 {
+                    '}' if digits > 0 => break,
+                    '_' if digits > 0 => {}
+                    digit => {
+                        code = code.checked_mul(16)? + digit.to_digit(16)?;
+                        digits += 1;
+                        if digits > 6 {
+                            return None;
+                        }
+                    }
+                }
+            }
+            char::from_u32(code)?
+        }
+        '\n' => {
+            // Line continuation: the newline and the whitespace after it
+            // are dropped. Peek without consuming the next character.
+            let mut ahead = chars.clone();
+            while ahead
+                .next()
+                .is_some_and(|(_, c)| matches!(c, ' ' | '\t' | '\n' | '\r'))
+            {
+                *chars = ahead.clone();
+            }
+            return Some(None);
+        }
+        _ => return None,
     };
-    let value = &body[..end];
-    Some((!value.contains('\\')).then_some(value))
+    Some(Some(decoded))
 }
 
 /// `tests/`, `benches/` or `examples/` of a package, or its `src/bin/`, whose
@@ -1528,6 +1602,9 @@ mod tests {
             "#[path = \"\\x74ool.rs\"]\nmod mounted;\n",
             "#[path /* x */ = \"\\x74ool.rs\"]\nmod mounted;\n",
             "#[path // x\n= \"\\x74ool.rs\"]\nmod mounted;\n",
+            "#[path = \"\\u{74}o\\u{6F}l.rs\"]\nmod mounted;\n",
+            "#[path = \"../bin/\\\n    tool.rs\"]\nmod mounted;\n",
+            "#[path = \"\\q.rs\"]\nmod mounted;\n",
             "#[cfg_attr(test, path = \"tool.rs\")]\nmod mounted;\n",
             "macro_rules! m { ($f:literal) => { #[path = $f] mod mounted; }; }\n",
         ] {
@@ -1540,8 +1617,25 @@ mod tests {
             "#[path = \"tool.rs.bak\"]\nmod mounted;\n",
             "#[path = \"mytool.rs\"]\nmod mounted;\n",
             "#[serde(path = some::module)]\nstruct S;\n",
+            "#[path = \"\\x6Fther.rs\"]\nmod mounted;\n",
+            "#[path = \"a\\\"tool.rs\"]\nmod mounted;\n",
         ] {
             assert!(!may_mount_file_named(source, "tool.rs"), "{source}");
+        }
+    }
+
+    #[test]
+    fn only_a_mount_that_decodes_to_the_file_name_unseats_a_binary_root() {
+        let tool = ("src/bin/tool.rs", "fn main() {}\n");
+        for (sibling, root) in [
+            ("#[path = \"helpers/\\x78.rs\"]\nmod helper;\n", true),
+            ("#[path = \"\\x6Fther_tool.rs\"]\nmod helper;\n", true),
+            ("#[path = \"\\x74ool.rs\"]\nmod mounted;\n", false),
+            ("#[path = \"\\u{74}ool.rs\"]\nmod mounted;\n", false),
+        ] {
+            let v = visibility(&[tool, ("src/bin/other.rs", sibling)]);
+            let found = v.crate_root(Path::new("src/bin/tool.rs"));
+            assert_eq!(found.is_some(), root, "{sibling}");
         }
     }
 
