@@ -3897,8 +3897,15 @@ pub(crate) fn method_call_receivers(
             // A name declared more than once in the body (`const cart = new
             // Cart()`, then `{ const cart = new Other(); ... }`) may name a
             // different object at the asserted call, so it witnesses nothing.
+            // A body declaration witnesses only when its whole initializer is
+            // one `new C(...)`: `(new Cart(), new Other())` holds an `Other`.
+            // A receiver bound outside the body keeps the relation's reading.
             let mut bound = constructed_method_receivers(test, &constructors);
-            bound.retain(|name| body_declaration_count(&test.body_text, name) <= 1);
+            bound.retain(|name| match body_declaration_count(&test.body_text, name) {
+                0 => true,
+                1 => declared_by_direct_construction(&test.body_text, name, &constructors),
+                _ => false,
+            });
             Some(MethodCallReceivers {
                 bound,
                 constructors,
@@ -3910,6 +3917,58 @@ pub(crate) fn method_call_receivers(
         }),
         _ => None,
     }
+}
+
+/// `true` when the body's one declaration of `name` (`const name = ...`,
+/// also with a type annotation) has an initializer that is exactly one
+/// `new C(<args>)` for a constructor in `constructors`, followed by the end of
+/// the statement. Anything else, such as a comma expression, a conditional or
+/// a chained call, withholds the witness.
+fn declared_by_direct_construction(body: &str, name: &str, constructors: &[String]) -> bool {
+    ["const", "let", "var"].iter().any(|keyword| {
+        body.match_indices(keyword).any(|(at, _)| {
+            let rest = &body[at + keyword.len()..];
+            let Some(after_name) = rest.trim_start().strip_prefix(name) else {
+                return false;
+            };
+            if body[..at]
+                .chars()
+                .next_back()
+                .is_some_and(is_javascript_identifier_char)
+                || after_name
+                    .chars()
+                    .next()
+                    .is_some_and(is_javascript_identifier_char)
+            {
+                return false;
+            }
+            let Some((_, initializer)) = after_name.split_once('=') else {
+                return false;
+            };
+            let Some(after_new) = initializer.trim_start().strip_prefix("new") else {
+                return false;
+            };
+            let after_new_trimmed = after_new.trim_start();
+            if after_new_trimmed.len() == after_new.len() {
+                return false;
+            }
+            constructors.iter().any(|constructor| {
+                let Some(arguments) = after_new_trimmed
+                    .strip_prefix(constructor.as_str())
+                    .and_then(|rest| rest.trim_start().strip_prefix('('))
+                else {
+                    return false;
+                };
+                super::classifier::balanced_close_offset(arguments).is_some_and(|close| {
+                    let tail = arguments[close + 1..].trim_start_matches([' ', '\t']);
+                    tail.is_empty()
+                        || tail.starts_with(';')
+                        || tail.starts_with('\n')
+                        || tail.starts_with("\r\n")
+                })
+            })
+        })
+    })
 }
 
 /// How many `const`, `let` or `var` declarations of `name` the body text

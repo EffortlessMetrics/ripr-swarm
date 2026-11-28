@@ -3762,6 +3762,11 @@ pub(crate) fn ts_predicate_boundary_row_activation(
         if assertion_is_self_comparing(assertion, written_observed) {
             continue;
         }
+        // The placeholder receiver stands only for a rewritten `new C(...)`:
+        // a test that spells the placeholder itself names some other object.
+        if !inline_new_constructors.is_empty() && written_observed.contains(INLINE_NEW_RECEIVER) {
+            continue;
+        }
         let observed_text = rewrite_inline_new_receivers(written_observed, inline_new_constructors);
         let observed = observed_text.as_ref();
         let mut argument_lists = owner_call_arguments(observed, &owner.name, &owner_receivers);

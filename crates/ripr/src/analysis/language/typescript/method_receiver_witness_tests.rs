@@ -201,6 +201,17 @@ fn a_method_receiver_keeps_the_boundary_guards() -> Result<(), String> {
             "call in a comment",
             "  expect(new Cart().discount(50) /* new Cart().discount(100) */ + 40).toBe(90);",
         ),
+        // The initializer must be one `new Cart(...)`: a comma expression
+        // leaves `c` holding the last value.
+        (
+            "comma initializer",
+            "  const c = (new Cart(), { discount: (_n: number) => 90 });\n  new Cart().discount(1);\n  expect(c.discount(100)).toBe(90);",
+        ),
+        // A test that spells the placeholder receiver names its own object.
+        (
+            "placeholder spelling",
+            "  new Cart().discount(1);\n  const $riprNew$ = { discount: (_n: number) => 90 };\n  expect($riprNew$.discount(100)).toBe(90);",
+        ),
         (
             "unrelated receiver",
             "  const c = new Cart();\n  c.discount(1);\n  const o = { discount: (_n: number) => 90 };\n  expect(o.discount(100)).toBe(90);",
@@ -269,6 +280,14 @@ fn the_inline_rewrite_keeps_the_method_arguments() {
     let constructors = vec!["Cart".to_string()];
     let rewritten = rewrite_inline_new_receivers("new Cart(1, f(2)).discount(100)", &constructors);
     assert_eq!(rewritten, format!("{INLINE_NEW_RECEIVER}.discount(100)"));
+    // Constructor text inside a string or a comment argument is not a receiver.
+    assert_eq!(
+        rewrite_inline_new_receivers(
+            "new Cart().discount(\"new Cart().x\" /* new Cart().y */)",
+            &constructors
+        ),
+        format!("{INLINE_NEW_RECEIVER}.discount(\"new Cart().x\" /* new Cart().y */)")
+    );
     for unchanged in [
         "new CartX().discount(100)",
         "x.new Cart().discount(100)",
