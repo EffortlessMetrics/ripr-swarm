@@ -1,5 +1,18 @@
 # Golden Output Changes
 
+## Pending — corpus cache generation 1.221 for binary crate roots in macro visibility (#10298)
+
+Macro visibility now reads a file directly in `src/bin/` as a binary crate
+root, so a test-table generator that `src/bin/<name>.rs` imports with
+`#[macro_use] mod common;` from `src/bin/common/mod.rs` reaches its rows,
+which bumps the analyzer cache schema to 1.221 (1.220 is claimed in
+flight). Move the portable unchanged-attempt snapshots to 1.221, recompute
+the `raw_json_placeholder_v1` artifact content commitment, then the
+dependent verify commitments and receipt byte hashes. Weak grip, unchanged
+movement, historical currentness, incomplete receipt status and
+fail-closed first-action routing remain the same. No other fixture output
+is regenerated.
+
 ## Pending — corpus cache generation 1.219 for verified calls outside the rebinding query (#16462)
 
 The transparent-macro rebinding scan now reads a call of any transparent

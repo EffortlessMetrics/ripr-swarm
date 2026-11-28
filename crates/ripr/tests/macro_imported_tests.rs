@@ -258,6 +258,83 @@ fn a_module_the_resolver_cannot_name_exactly_adds_no_test() -> Result<(), String
     Ok(())
 }
 
+#[test]
+fn a_table_from_a_binary_roots_macro_use_module_reads_like_the_hand_written_test()
+-> Result<(), String> {
+    // #10298: `src/bin/tool.rs` is a crate root, so its `mod common;` is
+    // `src/bin/common/mod.rs`, as it is for `src/bin/tool/main.rs` and
+    // `src/bin/tool/common.rs`.
+    let tool = format!("#[macro_use]\nmod common;\n{USE_GATE}fn main() {{}}\n{BOUNDARY_ROWS}");
+    for (label, files) in [
+        (
+            "flat binary root",
+            vec![
+                ("src/bin/tool.rs", tool.clone()),
+                ("src/bin/common/mod.rs", TABLE.to_string()),
+            ],
+        ),
+        (
+            "binary directory root",
+            vec![
+                ("src/bin/tool/main.rs", tool.clone()),
+                ("src/bin/tool/common.rs", TABLE.to_string()),
+            ],
+        ),
+    ] {
+        let credited = TempRepo::create(&files)?.predicate()?;
+        assert_eq!(
+            credited.class,
+            ExposureClass::Exposed,
+            "{label}: {credited:?}"
+        );
+        assert_eq!(
+            related_names(&credited),
+            vec!["nine_is_closed", "ten_is_open"],
+            "{label}: {credited:?}"
+        );
+    }
+
+    for (label, files) in [
+        // No `#[macro_use]`: the generator stays inside `common`.
+        (
+            "no macro_use",
+            vec![
+                (
+                    "src/bin/tool.rs",
+                    format!("mod common;\n{USE_GATE}fn main() {{}}\n{BOUNDARY_ROWS}"),
+                ),
+                ("src/bin/common/mod.rs", TABLE.to_string()),
+            ],
+        ),
+        // A `bin/` outside `src/` holds no crate roots of its own.
+        (
+            "bin outside src",
+            vec![
+                ("bin/tool.rs", tool.clone()),
+                ("bin/common/mod.rs", TABLE.to_string()),
+            ],
+        ),
+    ] {
+        let refused = TempRepo::create(&files)?.predicate()?;
+        assert!(refused.related_tests.is_empty(), "{label}: {refused:?}");
+        assert_ne!(
+            refused.class,
+            ExposureClass::Exposed,
+            "{label}: {refused:?}"
+        );
+    }
+
+    // A crate root's child lives beside it, not under `src/bin/tool/`; rustc
+    // rejects this layout, so it must not read exposed.
+    let misplaced = TempRepo::create(&[
+        ("src/bin/tool.rs", tool),
+        ("src/bin/tool/common/mod.rs", TABLE.to_string()),
+    ])?
+    .predicate()?;
+    assert_ne!(misplaced.class, ExposureClass::Exposed, "{misplaced:?}");
+    Ok(())
+}
+
 fn exported_table() -> String {
     format!("#[macro_export]\n{TABLE}")
 }

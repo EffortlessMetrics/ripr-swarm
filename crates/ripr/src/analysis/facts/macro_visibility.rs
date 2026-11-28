@@ -509,7 +509,7 @@ impl MacroVisibility {
 
     /// A root file nothing declares: `lib.rs`, `main.rs`, `build.rs` (not
     /// inside a `src` tree, where it is a module), or a file directly in
-    /// `tests`, `benches` or `examples`.
+    /// `tests`, `benches`, `examples` or `src/bin`.
     fn is_crate_root(&self, file: &Path) -> bool {
         match file.file_name().and_then(|name| name.to_str()) {
             // `src/lib.rs`, `src/main.rs` and `src/bin/<name>/main.rs`; a
@@ -782,17 +782,21 @@ impl MacroVisibility {
     }
 }
 
-/// `tests/`, `benches/` or `examples/` of a package. A `src/tests/` is an
-/// ordinary module directory.
+/// `tests/`, `benches/` or `examples/` of a package, or its `src/bin/`, whose
+/// files are binary crate roots (#10298). A `src/tests/` is an ordinary
+/// module directory, and so is a `bin/` outside `src/`.
 fn is_root_directory(directory: &Path) -> bool {
-    directory
-        .file_name()
-        .and_then(|name| name.to_str())
-        .is_some_and(|name| ROOT_DIRECTORIES.contains(&name))
-        && directory
-            .parent()
-            .and_then(Path::file_name)
-            .is_none_or(|parent| parent != "src")
+    let Some(name) = directory.file_name().and_then(|name| name.to_str()) else {
+        return false;
+    };
+    let in_src = directory
+        .parent()
+        .and_then(Path::file_name)
+        .is_some_and(|parent| parent == "src");
+    if name == "bin" {
+        return in_src;
+    }
+    ROOT_DIRECTORIES.contains(&name) && !in_src
 }
 
 /// State of one resolution walk.

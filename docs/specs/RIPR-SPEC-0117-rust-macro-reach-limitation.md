@@ -356,8 +356,8 @@ second definition of the same name anywhere in the file makes the name
 ambiguous and indexes nothing. A definition containing a token that spans
 lines (a multi-line string literal) is left out, a file that does not parse
 cleanly resolves nothing, and only a file that spells `name!` for a macro whose
-definition mentions `test` is resolved at all. `build.rs`, `main.rs` and
-`lib.rs` are crate roots. Parents are followed up to four modules, and
+definition mentions `test` is resolved at all. `build.rs`, `main.rs`,
+`lib.rs` and a file directly in `src/bin/` are crate roots (#10298). Parents are followed up to four modules, and
 `#[macro_use]` modules down to about four.
 
 A text precheck may avoid the generator-call parse only when it cannot hide
@@ -374,7 +374,7 @@ and distinguish absent names, incidental hits and real calls on identical inputs
 
 A module resolves only to one file: `name.rs` or `name/mod.rs` under the
 declaring file's anchor (a crate root, `mod.rs`, or a file directly in
-`tests`, `benches` or `examples` has its children beside it; any other file
+`tests`, `benches`, `examples` or `src/bin` has its children beside it; any other file
 has them under `<stem>/`; a file in a root directory is tried under both).
 Nothing is resolved, and the invocation indexes nothing, when the
 declaration has a `#[path]` or any attribute other than `macro_use`,
@@ -390,8 +390,8 @@ A third route names the generator by path (#10298). The file spells an
 attribute-free `use crate::name;` (or a group `use crate::{a, b};` of plain
 names, each resolved on its own) at the top level, and in the file's crate
 (the crate root its `mod` declarations lead up to: `lib.rs`, `main.rs`,
-`build.rs`, or a file directly in `tests`, `benches` or `examples` that no
-other module declares) exactly one macro of that name exists and it carries a
+`build.rs`, or a file directly in `tests`, `benches`, `examples` or `src/bin`
+that no other module declares) exactly one macro of that name exists and it carries a
 plain `#[macro_export]` (only `doc`, `allow`, `warn` or `deny` besides it).
 ripr hoists that definition like the others and blanks the `use` so the
 expander does not read the import as a second source of the name. In a group

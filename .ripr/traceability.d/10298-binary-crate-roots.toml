@@ -1,0 +1,8 @@
+[[extend]]
+id = "RIPR-SPEC-0117"
+tests = [
+  "crates/ripr/tests/macro_imported_tests.rs::a_table_from_a_binary_roots_macro_use_module_reads_like_the_hand_written_test",
+]
+code = [
+  "crates/ripr/src/analysis/facts/macro_visibility.rs",
+]
