@@ -314,6 +314,19 @@ fn a_table_from_a_binary_roots_macro_use_module_reads_like_the_hand_written_test
                 ("bin/common/mod.rs", TABLE.to_string()),
             ],
         ),
+        // `autobins = false` with no `[[bin]]`: Cargo builds no binary
+        // from `src/bin/tool.rs`, so its rows are no test of the gate.
+        (
+            "autobins disabled",
+            vec![
+                (
+                    "Cargo.toml",
+                    "[package]\nname = \"macro-imported-tests\"\nversion = \"0.0.0\"\nedition = \"2024\"\nautobins = false\n\n[workspace]\n".to_string(),
+                ),
+                ("src/bin/tool.rs", tool.clone()),
+                ("src/bin/common/mod.rs", TABLE.to_string()),
+            ],
+        ),
     ] {
         let refused = TempRepo::create(&files)?.predicate()?;
         assert!(refused.related_tests.is_empty(), "{label}: {refused:?}");
