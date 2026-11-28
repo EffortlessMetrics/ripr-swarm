@@ -764,7 +764,15 @@ impl MacroVisibility {
     /// so the answer never recurses through `child_file`. Only `false`
     /// confirms a root-directory file as a crate root.
     fn may_be_declared(&self, file: &Path) -> bool {
-        let Some((name, location)) = module_identity(file) else {
+        // `src/bin/build.rs` or `src/bin/main.rs` has no module identity of
+        // its own, but a sibling's `mod build;` can still name it.
+        let Some((name, location)) = module_identity(file).or_else(|| {
+            let directory = file
+                .parent()
+                .filter(|directory| is_root_directory(directory))?;
+            let stem = file.file_stem()?.to_str()?;
+            Some((stem.to_string(), directory.to_path_buf()))
+        }) else {
             return false;
         };
         if self.attributed_elsewhere(&name, file) {
