@@ -609,7 +609,9 @@ mod recent_premise {
         {
             return Ok(files.clone());
         }
-        let files = crate::app::repair_attempt::seam_start_dirty_premise(root)?;
+        // No held target is excluded: the editor reports none separately,
+        // and a dirty inline target refuses the start too (#16408).
+        let files = crate::app::repair_attempt::seam_start_dirty_premise(root, None)?;
         if let Ok(mut guard) = RECENT.lock() {
             *guard = Some((root.to_path_buf(), Instant::now(), files.clone()));
         }

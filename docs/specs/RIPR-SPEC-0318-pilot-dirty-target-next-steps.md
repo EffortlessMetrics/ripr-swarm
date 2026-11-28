@@ -154,12 +154,18 @@ reports, including one it did not rank (a dirty `Cargo.toml` inside the
 root), because the start refuses over each of them. The refusal itself and the pilot summary JSON are
 unchanged.
 
-The commit clears only the files the preflight names. The preflight skips
-deleted files, and files carrying an inline `#[cfg(test)]` module other than
-a held inline target, while the full before-phase check may still refuse
-them. A start can therefore still refuse after the printed commit; that
-refusal stays authoritative and names the remaining files. Closing this gap
-belongs to the shared preflight, not to pilot.
+The premise names every dirty production file the start refuses over
+(#16408): a deleted tracked file outside the test surface, and a dirty file
+carrying an inline `#[cfg(test)]` module other than the held inline target,
+are named as any dirty production file is. The held target is excluded from
+the premise because pilot and check report it separately and merge it into
+the commit. Running the printed commit therefore clears the start's
+dirty-premise refusal. The before phase's own early preflight, and its
+refusal text, are unchanged: it still defers those two kinds of path to the
+exact check, so a start run before the commit can name only part of the set.
+Symlinks, oversized and unreadable files still defer, and a dirty test file
+outside the packet's surface can still refuse; that refusal stays
+authoritative.
 
 ## Required Evidence
 
@@ -188,6 +194,11 @@ belongs to the shared preflight, not to pilot.
 - `pilot_commit_step_merges_the_dirty_inline_target` covers a dirty inline
   target merged, once, into the commit for another dirty production file.
   Running that commit lets the start begin.
+- `commit_step_names_deleted_and_inline_test_files_the_start_refuses_over`
+  covers a deleted file with and without another dirty file, and a dirty
+  inline-test file that is not the target beside a dirty plain file: pilot's
+  and check's commit name the whole set, running it lets the printed start
+  begin, and the same files committed print no commit step (#16408).
 - `pilot_at_a_subdirectory_root_prints_no_commit_step_and_no_runnable_start`
   covers five cases. A subdirectory root with a dirty sibling outside it only;
   the same root with dirty files on both sides; both sides dirty at a nested
@@ -233,7 +244,8 @@ belongs to the shared preflight, not to pilot.
 - `crates/ripr/tests/check_repair_agree.rs`:
   `pilot_names_the_commit_step_before_a_repair_start_that_would_refuse`,
   `pilot_commit_step_merges_the_dirty_inline_target`,
-  `pilot_at_a_subdirectory_root_prints_no_commit_step_and_no_runnable_start`.
+  `pilot_at_a_subdirectory_root_prints_no_commit_step_and_no_runnable_start`,
+  `commit_step_names_deleted_and_inline_test_files_the_start_refuses_over`.
 - `crates/ripr/src/output/pilot/tests.rs`:
   `pilot_premise_probe_runs_only_when_a_repair_start_is_printed`.
 - `crates/ripr/src/output/pilot/render/complete.rs`:

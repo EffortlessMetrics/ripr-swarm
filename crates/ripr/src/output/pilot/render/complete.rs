@@ -301,7 +301,7 @@ pub(crate) fn render_pilot_human_summaries_with_premise(
     let premise = terminal_top
         .first()
         .filter(|entry| observe_premise && repair_start_command(context.root, entry).is_some())
-        .map(|_| crate::app::seam_start_premise(context.root));
+        .map(|_| crate::app::seam_start_premise(context.root, target.as_deref()));
     let step = terminal_top.first().and_then(|entry| {
         repair_start_prerequisite(context.root, entry, premise.as_ref(), target.as_deref())
     });
@@ -363,9 +363,10 @@ enum StartStep {
 /// withholds the start (`app::seam_start_premise`); should one reach here,
 /// no commit naming it is printed. `None` when pilot offers no
 /// start, the premise was not observed, or the preflight names no file. The
-/// commit clears the files the preflight names; the full before-phase check
-/// can still refuse files the preflight skips (deleted files, files carrying
-/// an inline `#[cfg(test)]` module other than the held target).
+/// preflight names deleted files and dirty files carrying an inline
+/// `#[cfg(test)]` module other than the held target too (#16408), so the
+/// commit also clears those files; symlinks, oversized or unreadable files
+/// and out-of-surface test files stay outside the preflight.
 fn repair_start_prerequisite(
     root: &std::path::Path,
     entry: &ClassifiedSeam,

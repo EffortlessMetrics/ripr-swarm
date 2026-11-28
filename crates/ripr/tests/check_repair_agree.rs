@@ -68,6 +68,18 @@ impl Repo {
         test: &str,
         commit_change: bool,
     ) -> Result<Self, String> {
+        Self::create_with_base_files(old_src, new_src, test, commit_change, &[])
+    }
+
+    /// [`Self::create_with`] with extra (relative path, text) files committed
+    /// in the base commit alongside `src/lib.rs` and `tests/t.rs`.
+    fn create_with_base_files(
+        old_src: &str,
+        new_src: &str,
+        test: &str,
+        commit_change: bool,
+        base_files: &[(&str, &str)],
+    ) -> Result<Self, String> {
         static SEQUENCE: AtomicU64 = AtomicU64::new(0);
         let root = std::env::temp_dir().join(format!(
             "ripr-check-repair-agree-{}-{}",
@@ -82,6 +94,9 @@ impl Repo {
         repo.write("Cargo.toml", CARGO_TOML)?;
         repo.write("src/lib.rs", old_src)?;
         repo.write("tests/t.rs", test)?;
+        for (name, text) in base_files {
+            repo.write(name, text)?;
+        }
         repo.git(&["-c", "init.templateDir=", "init", "-q"])?;
         repo.git(&["config", "user.email", "t@example.com"])?;
         repo.git(&["config", "user.name", "t"])?;
@@ -2136,6 +2151,151 @@ fn pilot_names_the_commit_step_before_a_repair_start_that_would_refuse() -> Resu
         !pilot_md(&test_dirty)?.contains("--literal-pathspecs commit"),
         "a dirty test file adds no Markdown commit step"
     );
+    Ok(())
+}
+
+/// #16408: the commit step pilot and check print before a repair start names
+/// every dirty file the start then refuses over, so running it and then the
+/// printed start begins the repair. A deleted tracked file (repros a, b) and a
+/// dirty file carrying an inline `#[cfg(test)]` module that is not this
+/// seam's target (repro e3) hold the premise as any dirty production file
+/// does; a committed tree with the same files prints no commit step.
+#[test]
+fn commit_step_names_deleted_and_inline_test_files_the_start_refuses_over() -> Result<(), String> {
+    const OTHER: &str = "pub fn other() -> u32 {\n    1\n}\n\n#[cfg(test)]\nmod tests {\n    #[test]\n    fn other_is_one() {\n        assert_eq!(super::other(), 1);\n    }\n}\n";
+    const PLAIN: &str = "pub fn plain() -> u32 {\n    2\n}\n";
+    const OLD: &str = "pub fn old() -> u32 {\n    3\n}\n";
+    let base = [
+        ("src/old.rs", OLD),
+        ("src/other.rs", OTHER),
+        ("src/plain.rs", PLAIN),
+    ];
+    let create = |commit_change: bool| {
+        Repo::create_with_base_files(CONST_OLD, CONST_NEW, CONST_TEST, commit_change, &base)
+    };
+
+    // Clean control: the same files, all committed, print no commit step.
+    let clean = create(true)?;
+    let pilot = clean.ripr(&["pilot", "--root", "."])?;
+    assert!(
+        pilot.contains("Next, in order:\n  1. ripr agent repair --root ")
+            && !pilot.contains("--literal-pathspecs commit"),
+        "precondition, a committed tree starts the repair first:\n{pilot}"
+    );
+    let check = clean.ripr(&["check"])?;
+    assert!(
+        !check.contains("--literal-pathspecs commit"),
+        "a committed tree's check prints no commit step:\n{check}"
+    );
+
+    // (a) a deleted file plus the uncommitted lib.rs change.
+    let deleted_and_edited = create(false)?;
+    std::fs::remove_file(deleted_and_edited.0.join("src/old.rs")).map_err(|e| e.to_string())?;
+    // (b) only a deleted file.
+    let deleted_only = create(true)?;
+    std::fs::remove_file(deleted_only.0.join("src/old.rs")).map_err(|e| e.to_string())?;
+    // (e3) a dirty inline-test file that is not the target, plus a dirty
+    // plain production file.
+    let inline_and_plain = create(true)?;
+    inline_and_plain.write("src/other.rs", &format!("{OTHER}// edited\n"))?;
+    inline_and_plain.write("src/plain.rs", &format!("{PLAIN}// edited\n"))?;
+    // (e3 + lib) the same beside the uncommitted lib.rs change, so check
+    // prints its start too.
+    let inline_plain_and_edited = create(false)?;
+    inline_plain_and_edited.write("src/other.rs", &format!("{OTHER}// edited\n"))?;
+    inline_plain_and_edited.write("src/plain.rs", &format!("{PLAIN}// edited\n"))?;
+
+    for (case, repo, expected) in [
+        ("a", &deleted_and_edited, vec!["src/lib.rs", "src/old.rs"]),
+        ("b", &deleted_only, vec!["src/old.rs"]),
+        (
+            "e3",
+            &inline_and_plain,
+            vec!["src/other.rs", "src/plain.rs"],
+        ),
+        (
+            "e3+lib",
+            &inline_plain_and_edited,
+            vec!["src/lib.rs", "src/other.rs", "src/plain.rs"],
+        ),
+    ] {
+        let pilot = repo.ripr(&["pilot", "--root", "."])?;
+        let heading_at = pilot
+            .find("Next, in order:\n")
+            .ok_or_else(|| format!("{case}: pilot must keep its ordered list:\n{pilot}"))?;
+        let next = &pilot[heading_at..];
+        let start_at = next
+            .find("  1. ripr agent repair --root ")
+            .ok_or_else(|| format!("{case}: pilot must name the repair start:\n{pilot}"))?;
+        let start = next[start_at + "  1. ".len()..]
+            .lines()
+            .next()
+            .unwrap_or_default()
+            .to_string();
+        let args: Vec<&str> = start.split_whitespace().skip(1).collect();
+
+        // The printed start refuses today, naming dirty files (its early
+        // preflight may name only part of the set; the late check names the
+        // rest after a partial commit).
+        let (code, repair) = repo.ripr_status(&args)?;
+        assert_eq!(code, Some(2), "{case}: the start must refuse:\n{repair}");
+        let refused = refused_uncommitted(&repair)?;
+
+        // Pilot's commit step names every dirty file the start refuses over,
+        // before the start.
+        let (commit_root, pilot_files) = printed_commit(next)?;
+        let mut sorted = pilot_files.clone();
+        sorted.sort();
+        assert_eq!(
+            sorted, expected,
+            "{case}: pilot's commit names every dirty file the start refuses over:\n{pilot}\n{repair}"
+        );
+        assert!(
+            refused.iter().all(|file| sorted.contains(file)),
+            "{case}: pilot's commit covers the start's refusal:\n{pilot}\n{repair}"
+        );
+        let commit_at = next
+            .find(" --literal-pathspecs commit -m")
+            .unwrap_or(usize::MAX);
+        assert!(
+            commit_at < start_at,
+            "{case}: the commit step comes before the start:\n{pilot}"
+        );
+
+        // `ripr check` prints the same commit set before any seam start it
+        // prints. Check analyzes the working-tree diff, so with the lib.rs
+        // change committed (b, e3) it has no finding and prints no start at
+        // all, which cannot refuse; a and e3+lib keep check's commit step on
+        // the deleted and the inline-test paths.
+        let check = repo.ripr(&["check"])?;
+        if check.contains("ripr repair ") || check.contains("--seam-id") {
+            let (_, check_files) = printed_commit(&check)?;
+            let mut check_sorted = check_files;
+            check_sorted.sort();
+            assert_eq!(
+                check_sorted, expected,
+                "{case}: check's commit names every dirty file the start refuses over:\n{check}"
+            );
+        } else {
+            assert!(
+                case == "b" || case == "e3",
+                "{case}: check must print the seam start:\n{check}"
+            );
+        }
+
+        // Running the printed commit clears the dirty premise.
+        run_printed_commit(repo, &commit_root, &pilot_files)?;
+        let (code, started) = repo.ripr_status(&args)?;
+        assert!(
+            !started.contains("ripr repair needs your source changes committed first"),
+            "{case}: after the printed commit the start must not refuse the premise:\n{started}"
+        );
+        assert_eq!(
+            code,
+            Some(0),
+            "{case}: after the printed commit the start must start:\n{started}"
+        );
+    }
     Ok(())
 }
 

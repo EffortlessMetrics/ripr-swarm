@@ -6553,6 +6553,104 @@ fn repair_start_is_inert_with_the_commit_step_while_production_is_uncommitted() 
     Ok(())
 }
 
+/// #16408: a deleted tracked file and a dirty file carrying an inline
+/// `#[cfg(test)]` module that is not this seam's target both make the repair
+/// start refuse, so the editor's inert start names both in its commit step.
+/// Running that commit restores the enabled start on the same snapshot.
+#[test]
+fn repair_start_commit_step_names_deleted_and_inline_test_files() -> Result<(), String> {
+    let fixture = unique_lsp_test_root("repair-start-deleted-inline")?;
+    let root = fixture.path().to_path_buf();
+    fs::create_dir_all(root.join("src")).map_err(|err| format!("create src: {err}"))?;
+    fs::create_dir_all(root.join("tests")).map_err(|err| format!("create tests: {err}"))?;
+    fs::write(root.join("src/pricing.rs"), "pub fn discount() {}\n")
+        .map_err(|err| format!("write production: {err}"))?;
+    fs::write(root.join("src/old.rs"), "pub fn old() {}\n")
+        .map_err(|err| format!("write old: {err}"))?;
+    let other = "pub fn other() -> u8 {\n    1\n}\n\n#[cfg(test)]\nmod tests {\n    #[test]\n    fn one() {\n        assert_eq!(super::other(), 1);\n    }\n}\n";
+    fs::write(root.join("src/other.rs"), other).map_err(|err| format!("write other: {err}"))?;
+    fs::write(root.join("tests/pricing.rs"), "#[test]\nfn t() {}\n")
+        .map_err(|err| format!("write test: {err}"))?;
+    run_lsp_scope_git(&root, &["init", "-q"])?;
+    run_lsp_scope_git(&root, &["add", "-A"])?;
+    let commit_all = |message: &str| {
+        run_lsp_scope_git(
+            &root,
+            &[
+                "-c",
+                "user.email=ripr-test@example.com",
+                "-c",
+                "user.name=ripr-test",
+                "-c",
+                "commit.gpgSign=false",
+                "commit",
+                "-qam",
+                message,
+            ],
+        )
+    };
+    commit_all("base")?;
+    fs::remove_file(root.join("src/old.rs")).map_err(|err| format!("delete old: {err}"))?;
+    fs::write(root.join("src/other.rs"), format!("{other}// edited\n"))
+        .map_err(|err| format!("dirty other: {err}"))?;
+
+    let seam = sample_classified_seam();
+    assert!(repair_packet_eligibility(&seam).eligible());
+    let diagnostic = diagnostic_for_classified_seam(&root, &seam)
+        .ok_or_else(|| "expected seam diagnostic".to_string())?;
+    let uri = crate::lsp::uri::file_uri_for_path(&root.join("src/pricing.rs"))?;
+    let mut snapshot = sample_analysis_snapshot(
+        root.clone(),
+        uri.clone(),
+        vec![diagnostic.clone()],
+        Vec::new(),
+    );
+    snapshot.classified_seams = vec![seam];
+    let params =
+        code_action_params_for(uri, diagnostic.range.start.line, vec![diagnostic.clone()])?;
+    let commands = vscode_advertised_client_commands()?;
+    let borrowed = commands.iter().map(String::as_str).collect::<Vec<_>>();
+    let disabled_client = client_features_with_disabled_support(&borrowed)?;
+    let start_title = "Start repair: copy repair command";
+    let bound = crate::agent::loop_commands::bound_root(&root.to_string_lossy());
+    let commit = crate::app::commit_prerequisite_command(
+        &bound,
+        &["src/old.rs".to_string(), "src/other.rs".to_string()],
+    )
+    .ok_or("commit step for two files")?;
+
+    super::actions::forget_recent_premise();
+    let actions = code_action_response(&params, Some(&snapshot), &disabled_client);
+    let literals = code_action_literals(&actions)?;
+    let start = literals
+        .iter()
+        .find(|action| action.title == start_title)
+        .ok_or_else(|| format!("the inert start must be listed: {literals:?}"))?;
+    let reason = start
+        .disabled
+        .as_ref()
+        .map(|disabled| disabled.reason.as_str())
+        .ok_or_else(|| format!("the start must be disabled: {start:?}"))?;
+    assert!(
+        start.command.is_none() && reason.ends_with(&format!("Commit command: {commit}")),
+        "the commit names the deleted and the inline-test file: {start:?}"
+    );
+
+    commit_all("commit the premise")?;
+    super::actions::forget_recent_premise();
+    let actions = code_action_response(&params, Some(&snapshot), &disabled_client);
+    let literals = code_action_literals(&actions)?;
+    let start = literals
+        .iter()
+        .find(|action| action.title == start_title)
+        .ok_or_else(|| format!("the start must be listed: {literals:?}"))?;
+    assert!(
+        start.disabled.is_none() && start.command.is_some(),
+        "after the commit the start is enabled again: {start:?}"
+    );
+    Ok(())
+}
+
 /// #16381: a dirty production file whose name holds a line break can be named
 /// in no printed commit, and the repair start refuses until it is committed.
 /// The editor offers no start (enabled, inert or copied) and the hover says

@@ -118,10 +118,10 @@ pub(crate) fn commit_prerequisite_command(root_display: &str, files: &[String]) 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) enum SeamStartPremise {
     /// The tracked production files the preflight names, all inside the
-    /// root. Empty when it names none; that
-    /// does not promise the start begins (the preflight skips deleted files
-    /// and files carrying an inline `#[cfg(test)]` module, which the full
-    /// before-phase check may still refuse).
+    /// root, including deleted files and dirty files carrying an inline
+    /// `#[cfg(test)]` module other than the held target (#16408). Empty when
+    /// it names none; that does not promise the start begins (a dirty test
+    /// file outside the packet's surface can still refuse).
     Dirty(Vec<String>),
     /// No start may be printed: `ripr check`'s one-line advisory for the same
     /// state (an unreadable premise, or a root whose start refuses whatever
@@ -129,15 +129,16 @@ pub(crate) enum SeamStartPremise {
     Withheld(String),
 }
 
-/// The [`SeamStartPremise`] at `root`: an unreadable premise offers no start
+/// The [`SeamStartPremise`] at `root` for a seam whose dirty held inline
+/// target is `held_target` (reported separately by the caller): an unreadable premise offers no start
 /// ("could not validate the prerequisites"), as `ripr check` does. A clean
 /// premise below a subdirectory root that check's gate withholds, or a dirty
 /// premise at any root that is not the exact Git top-level (where the
 /// attempt refuses whatever is committed), names that top-level with check's
 /// subdirectory advisory instead of a commit step and start. Otherwise the
 /// premise is returned as is.
-pub(crate) fn seam_start_premise(root: &Path) -> SeamStartPremise {
-    let Ok(files) = super::repair_attempt::seam_start_dirty_premise(root) else {
+pub(crate) fn seam_start_premise(root: &Path, held_target: Option<&str>) -> SeamStartPremise {
+    let Ok(files) = super::repair_attempt::seam_start_dirty_premise(root, held_target) else {
         return SeamStartPremise::Withheld(
             RepairRouteRefusal::SeamRouteUnavailable {
                 reason: "could not validate the prerequisites for the repair start",

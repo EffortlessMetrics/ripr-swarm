@@ -3696,7 +3696,8 @@ pub(crate) fn check_repair_route(
     // first ... Nothing was started"). Ask its own preflight so the screen
     // names that commit before the start; an unreadable premise offers no
     // start rather than one that may refuse.
-    let Ok(uncommitted_files) = seam_start_uncommitted_files(root) else {
+    let Ok(uncommitted_files) = seam_start_uncommitted_files(root, uncommitted_target.as_deref())
+    else {
         return CheckRepairRoute::Refused(RepairRouteRefusal::SeamRouteUnavailable {
             reason: "could not validate the prerequisites for the repair start",
         });
@@ -3741,13 +3742,18 @@ fn seam_commit_step_refusal(
 }
 
 /// The dirty production files the seam start refuses today (#13636): every
-/// path the shared before-phase preflight reports, none dropped. The
+/// path the shared before-phase preflight reports, none dropped, including
+/// deleted files and dirty inline-test files other than the held target
+/// (#16408). The
 /// preflight already spells them relative to the analyzed `root` (paths
 /// outside it as `../...`, #13962), which is where the user runs the printed
 /// commit step. A non-empty list means the start refuses; an empty one means
 /// the preflight found no dirty premise.
-fn seam_start_uncommitted_files(root: &Path) -> Result<Vec<String>, String> {
-    crate::app::repair_attempt::seam_start_dirty_premise(root)
+fn seam_start_uncommitted_files(
+    root: &Path,
+    held_target: Option<&str>,
+) -> Result<Vec<String>, String> {
+    crate::app::repair_attempt::seam_start_dirty_premise(root, held_target)
 }
 
 fn ineligible_repair_item(root: &Path, item: &str, seam_id: &str, reason: &str) -> String {
