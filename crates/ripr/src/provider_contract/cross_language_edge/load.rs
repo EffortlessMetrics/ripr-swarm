@@ -20,6 +20,7 @@ pub fn load_cross_language_edge_registry_from_json(
 }
 
 impl LoadedCrossLanguageEdgeRegistryV1 {
+    /// The registered producer with this id, if any.
     pub fn producer_registration(
         &self,
         producer_id: &str,
