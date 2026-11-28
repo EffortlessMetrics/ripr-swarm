@@ -3432,23 +3432,20 @@ fn is_call_or_plain_value_use(masked: &str, offset: usize, name: &str) -> bool {
         && !in_binding_pattern(masked, offset, offset + name.len())
 }
 
-/// Whether the word spanning `start..end` may sit in a binding pattern:
-/// inside closure parameters (an odd count of single `|` since the
-/// statement began), or before a `=`, `=>` or ` in ` that ends the
-/// statement's pattern (`let (a, _) = ..`, `if let Some(a) = ..`,
-/// `(a, _) => ..`, `for (a, _) in ..`). The statement is bounded by the
-/// nearest `;`, `{` or `}` on each side.
+/// Whether the word spanning `start..end` may sit in a binding pattern. The
+/// reading is deliberately coarse, since withholding credit is the safe
+/// direction: a single `|` since the previous `;` may open closure
+/// parameters, and a plain `=`, a `=>` or an ` in ` before the next `;`,
+/// at any brace depth, may end a `let`, `if let`, `match` arm or `for`
+/// pattern (`let (a, S { b }) = ..`, `S { a: (b, _), .. } => ..`).
 fn in_binding_pattern(masked: &str, start: usize, end: usize) -> bool {
-    let statement_start = masked[..start]
-        .rfind([';', '{', '}'])
-        .map_or(0, |index| index + 1);
+    let statement_start = masked[..start].rfind(';').map_or(0, |index| index + 1);
     let prefix = &masked[statement_start..start];
-    let single_pipes = prefix.replace("||", "").matches('|').count();
-    if single_pipes % 2 == 1 {
+    if prefix.replace("||", "").contains('|') {
         return true;
     }
     let rest = &masked[end..];
-    let rest = &rest[..rest.find([';', '{', '}']).unwrap_or(rest.len())];
+    let rest = &rest[..rest.find(';').unwrap_or(rest.len())];
     let bytes = rest.as_bytes();
     let binds = bytes.iter().enumerate().any(|(index, byte)| {
         *byte == b'='
