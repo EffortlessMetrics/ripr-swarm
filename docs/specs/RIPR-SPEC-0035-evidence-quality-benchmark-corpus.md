@@ -421,6 +421,12 @@ calls the owner and differs from the owner side at most in owner-call
 arguments, order or grouping). A same-named local, a field, a struct literal or
 a value built by another receiver keeps its credit.
 
+The scalar self-computed cap maps Strong and Medium to Weak and preserves
+Weak, Smoke, None and Unknown exactly. An independent assertion keeps its
+original strength. The exact-variant contract and its bounded proof are in
+[SPEC-0371](RIPR-SPEC-0371-kani-bounded-model-checking-lane.md#exact-self-computed-oracle-cap-12109);
+that proof does not establish source detection or call-relation soundness.
+
 Given a changed presentation text constant, the benchmark expects one
 evidence-quality item for the declaration and literal, records visibility and
 actionability, and prevents RIPR from treating text alone as user test debt or
@@ -436,6 +442,15 @@ affinity.
 
 ## Test Mapping
 
+- `analysis::classify::reveal::cap_contract::tests::self_computed_cap_matches_every_literal_case`
+  checks all strength/Boolean pairs against literal expected variants.
+- `analysis::classify::reveal::cap_contract::tests::self_computed_none_mutant_passes_rank_laws_but_fails_exact_contract`
+  retains a wrong implementation that distinguishes exact mapping from the
+  original rank-only properties.
+- `analysis::classify::reveal::tests::self_computed_cap::self_computed_reveal_uses_exact_cap_for_credited_and_uncredited_rows`
+  exercises both real cap call sites over nonempty related assertion rows.
+- `analysis::classify::reveal::tests::self_computed_cap::self_computed_detection_does_not_confuse_text_or_independent_values_with_owner_calls`
+  pins bounded direct-call detector controls separately from the scalar proof.
 - `xtask/src/fixture_contracts/benchmark_oracles/tests.rs` contains synthetic
   contract tests for absent/unreviewed status, corrected/original polarity,
   independent basis, exact weak-test removal, complete pairing, input fences,
