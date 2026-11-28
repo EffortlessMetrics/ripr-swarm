@@ -1,5 +1,6 @@
 //! Change classifier for the TypeScript preview adapter.
 
+use super::inline_new_receiver::{INLINE_NEW_RECEIVER, rewrite_inline_new_receivers};
 use super::local_constant::{BodyConstant, test_body_integer_constant, test_file_integer_constant};
 use super::*;
 
@@ -3694,9 +3695,33 @@ pub(crate) fn ts_predicate_boundary_row_activation(
             }
         }
     }
+    // #16482: a method is called through a receiver the relation resolved:
+    // a local bound to `new C()`, the class itself for a static, or an inline
+    // `new C(...)`, which the assertion loop rewrites to one placeholder
+    // receiver. The receiver rule is the relation's own, so a rebound,
+    // replaced, spied or mocked method names no receiver here.
+    let method_receivers = super::related_tests::method_call_receivers(
+        candidate.test,
+        owner,
+        alias_map,
+        workspace_root,
+    );
+    let mut witness_receivers = owner_receivers.clone();
+    let mut inline_new_constructors: &[String] = &[];
+    if let Some(receivers) = method_receivers.as_ref() {
+        for receiver in &receivers.bound {
+            if !witness_receivers.contains(receiver) {
+                witness_receivers.push(receiver.clone());
+            }
+        }
+        if !receivers.constructors.is_empty() {
+            inline_new_constructors = &receivers.constructors;
+            witness_receivers.push(INLINE_NEW_RECEIVER.to_string());
+        }
+    }
     let no_receivers: &[String] = &[];
     let call_spellings: Vec<(&str, &[String])> =
-        std::iter::once((owner.name.as_str(), owner_receivers.as_slice()))
+        std::iter::once((owner.name.as_str(), witness_receivers.as_slice()))
             .chain(alias_locals.iter().map(|alias| (*alias, no_receivers)))
             .collect();
     // #4104-E3: a constant-shaped boundary operand reads its value from
@@ -3723,7 +3748,7 @@ pub(crate) fn ts_predicate_boundary_row_activation(
         {
             continue;
         }
-        let Some(observed) = assertion.observed_expression.as_deref() else {
+        let Some(written_observed) = assertion.observed_expression.as_deref() else {
             continue;
         };
         // Expected-side guard (#4102): a dynamically resolved expected
@@ -3734,15 +3759,37 @@ pub(crate) fn ts_predicate_boundary_row_activation(
         // Expected-side guard (#4102): a self-comparing expectation
         // (`toBe(applyDiscount(100))`) is a tautology that discriminates
         // nothing.
-        if assertion_is_self_comparing(assertion, observed) {
+        if assertion_is_self_comparing(assertion, written_observed) {
             continue;
         }
+        // The placeholder receiver stands only for a rewritten `new C(...)`:
+        // a test that spells the placeholder itself names some other object.
+        if !inline_new_constructors.is_empty() && written_observed.contains(INLINE_NEW_RECEIVER) {
+            continue;
+        }
+        let observed_text = rewrite_inline_new_receivers(written_observed, inline_new_constructors);
+        let observed = observed_text.as_ref();
         let mut argument_lists = owner_call_arguments(observed, &owner.name, &owner_receivers);
         // #16458: when the asserted value is one whole owner call, only its
         // own arguments count. A nested `owner(90, owner(100))` asserts the
         // outer result, which the inner call's boundary input need not move.
         if observed_is_one_owner_call_spelling(observed, &owner.name, &owner_receivers) {
             argument_lists.truncate(1);
+        }
+        // #16482: a method receiver witnesses only when the asserted value is
+        // the whole method call (`expect(cart.discount(100))`), as a renamed
+        // import does below. A comparison (`cart.discount(100) > 0`), an
+        // arithmetic wrapper or a call spelled only in a comment can map both
+        // sides of the boundary to one passing value. Only the outer call's
+        // arguments count.
+        if witness_receivers.len() > owner_receivers.len()
+            && observed_is_one_owner_call_spelling(observed, &owner.name, &witness_receivers)
+            && let Some(outer_method_arguments) =
+                owner_call_arguments(observed, &owner.name, &witness_receivers)
+                    .into_iter()
+                    .next()
+        {
+            argument_lists = vec![outer_method_arguments];
         }
         // A renamed import witnesses only when the asserted value is the
         // whole alias call (`expect(d(100))`): a wrapper such as

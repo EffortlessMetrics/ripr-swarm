@@ -125,6 +125,7 @@ mod identifier_write_scale_tests;
 mod infection_shape;
 #[cfg(test)]
 mod infection_shape_tests;
+mod inline_new_receiver;
 mod instance_class_guard;
 mod instance_factories;
 mod jsx_render;
@@ -140,6 +141,8 @@ mod local_constant_tests;
 mod lookup_table_guard;
 mod loop_bound_guard;
 mod match_object_guard;
+#[cfg(test)]
+mod method_receiver_witness_tests;
 mod method_replacement_guard;
 mod mock_payload_guard;
 mod module_class_nodes;
