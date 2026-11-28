@@ -50,97 +50,12 @@
       "reason": "the typed missing-discriminator shape (#12414) adds a field the regeneration guard does not judge; this capture's judged seams are unchanged and are held at its recorded generation until the next corpus recapture"
     },
     {
-      "report": "fixtures/evidence-promotion-honesty-corpus/reports/rust-repo-exposure-same-named-call-kinds.json",
-      "cache_schema_version": "1.167",
-      "reason": "the typed missing-discriminator shape (#12414) adds a field the regeneration guard does not judge; this capture's judged seams are unchanged and are held at its recorded generation until the next corpus recapture"
-    },
-    {
       "report": "fixtures/evidence-promotion-honesty-corpus/reports/rust-repo-exposure-uncalled-sibling.json",
       "cache_schema_version": "1.167",
       "reason": "the typed missing-discriminator shape (#12414) adds a field the regeneration guard does not judge; this capture's judged seams are unchanged and are held at its recorded generation until the next corpus recapture"
     },
     {
-      "report": "fixtures/evidence-promotion-honesty-corpus/reports/rust-inherent-async-fn-activated-unsupported.json",
-      "cache_schema_version": "1.176",
-      "reason": "the claims field-construction pin (#12394, #12864) and the multiline Python receiver rebind rule (#9992) judge none of this Rust capture's seams; its judged seams are unchanged and it is held at its recorded generation until the next corpus recapture"
-    },
-    {
-      "report": "fixtures/evidence-promotion-honesty-corpus/reports/rust-inherent-async-fn-entry.json",
-      "cache_schema_version": "1.176",
-      "reason": "the claims field-construction pin (#12394, #12864) and the multiline Python receiver rebind rule (#9992) judge none of this Rust capture's seams; its judged seams are unchanged and it is held at its recorded generation until the next corpus recapture"
-    },
-    {
-      "report": "fixtures/evidence-promotion-honesty-corpus/reports/rust-inherent-async-fn-intermediate.json",
-      "cache_schema_version": "1.176",
-      "reason": "the claims field-construction pin (#12394, #12864) and the multiline Python receiver rebind rule (#9992) judge none of this Rust capture's seams; its judged seams are unchanged and it is held at its recorded generation until the next corpus recapture"
-    },
-    {
-      "report": "fixtures/evidence-promotion-honesty-corpus/reports/rust-inherent-async-fn-last-hop.json",
-      "cache_schema_version": "1.176",
-      "reason": "the claims field-construction pin (#12394, #12864) and the multiline Python receiver rebind rule (#9992) judge none of this Rust capture's seams; its judged seams are unchanged and it is held at its recorded generation until the next corpus recapture"
-    },
-    {
-      "report": "fixtures/evidence-promotion-honesty-corpus/reports/rust-inherent-async-fn-method-entry.json",
-      "cache_schema_version": "1.176",
-      "reason": "the claims field-construction pin (#12394, #12864) and the multiline Python receiver rebind rule (#9992) judge none of this Rust capture's seams; its judged seams are unchanged and it is held at its recorded generation until the next corpus recapture"
-    },
-    {
-      "report": "fixtures/evidence-promotion-honesty-corpus/reports/rust-inherent-async-fn-method-last-hop.json",
-      "cache_schema_version": "1.176",
-      "reason": "the claims field-construction pin (#12394, #12864) and the multiline Python receiver rebind rule (#9992) judge none of this Rust capture's seams; its judged seams are unchanged and it is held at its recorded generation until the next corpus recapture"
-    },
-    {
-      "report": "fixtures/evidence-promotion-honesty-corpus/reports/rust-inherent-async-fn-operand.json",
-      "cache_schema_version": "1.176",
-      "reason": "the claims field-construction pin (#12394, #12864) and the multiline Python receiver rebind rule (#9992) judge none of this Rust capture's seams; its judged seams are unchanged and it is held at its recorded generation until the next corpus recapture"
-    },
-    {
-      "report": "fixtures/evidence-promotion-honesty-corpus/reports/rust-inherent-receiver-async-operand-helper.json",
-      "cache_schema_version": "1.176",
-      "reason": "the claims field-construction pin (#12394, #12864) and the multiline Python receiver rebind rule (#9992) judge none of this Rust capture's seams; its judged seams are unchanged and it is held at its recorded generation until the next corpus recapture"
-    },
-    {
-      "report": "fixtures/evidence-promotion-honesty-corpus/reports/rust-inherent-receiver-async-operand.json",
-      "cache_schema_version": "1.176",
-      "reason": "the claims field-construction pin (#12394, #12864) and the multiline Python receiver rebind rule (#9992) judge none of this Rust capture's seams; its judged seams are unchanged and it is held at its recorded generation until the next corpus recapture"
-    },
-    {
-      "report": "fixtures/evidence-promotion-honesty-corpus/reports/rust-inherent-receiver-dormant-body.json",
-      "cache_schema_version": "1.176",
-      "reason": "the claims field-construction pin (#12394, #12864) and the multiline Python receiver rebind rule (#9992) judge none of this Rust capture's seams; its judged seams are unchanged and it is held at its recorded generation until the next corpus recapture"
-    },
-    {
-      "report": "fixtures/evidence-promotion-honesty-corpus/reports/rust-inherent-receiver-foreign-helper.json",
-      "cache_schema_version": "1.176",
-      "reason": "the claims field-construction pin (#12394, #12864) and the multiline Python receiver rebind rule (#9992) judge none of this Rust capture's seams; its judged seams are unchanged and it is held at its recorded generation until the next corpus recapture"
-    },
-    {
-      "report": "fixtures/evidence-promotion-honesty-corpus/reports/rust-inherent-receiver-free-helper-identity.json",
-      "cache_schema_version": "1.176",
-      "reason": "the claims field-construction pin (#12394, #12864) and the multiline Python receiver rebind rule (#9992) judge none of this Rust capture's seams; its judged seams are unchanged and it is held at its recorded generation until the next corpus recapture"
-    },
-    {
-      "report": "fixtures/evidence-promotion-honesty-corpus/reports/rust-inherent-receiver-helper-type-parameter.json",
-      "cache_schema_version": "1.176",
-      "reason": "the claims field-construction pin (#12394, #12864) and the multiline Python receiver rebind rule (#9992) judge none of this Rust capture's seams; its judged seams are unchanged and it is held at its recorded generation until the next corpus recapture"
-    },
-    {
-      "report": "fixtures/evidence-promotion-honesty-corpus/reports/rust-inherent-receiver-local-wrapper.json",
-      "cache_schema_version": "1.176",
-      "reason": "the claims field-construction pin (#12394, #12864) and the multiline Python receiver rebind rule (#9992) judge none of this Rust capture's seams; its judged seams are unchanged and it is held at its recorded generation until the next corpus recapture"
-    },
-    {
-      "report": "fixtures/evidence-promotion-honesty-corpus/reports/rust-inherent-receiver-module-type-shadow.json",
-      "cache_schema_version": "1.176",
-      "reason": "the claims field-construction pin (#12394, #12864) and the multiline Python receiver rebind rule (#9992) judge none of this Rust capture's seams; its judged seams are unchanged and it is held at its recorded generation until the next corpus recapture"
-    },
-    {
       "report": "fixtures/evidence-promotion-honesty-corpus/reports/rust-repo-exposure-identical-inline-arms.json",
-      "cache_schema_version": "1.176",
-      "reason": "the claims field-construction pin (#12394, #12864) and the multiline Python receiver rebind rule (#9992) judge none of this Rust capture's seams; its judged seams are unchanged and it is held at its recorded generation until the next corpus recapture"
-    },
-    {
-      "report": "fixtures/evidence-promotion-honesty-corpus/reports/rust-repo-exposure-proximity-other-function.json",
       "cache_schema_version": "1.176",
       "reason": "the claims field-construction pin (#12394, #12864) and the multiline Python receiver rebind rule (#9992) judge none of this Rust capture's seams; its judged seams are unchanged and it is held at its recorded generation until the next corpus recapture"
     },
@@ -223,7 +138,8 @@
     "fixtures/evidence-promotion-honesty-corpus/reports/rust-repo-exposure-unasserted-predicate-boundary.json",
     "fixtures/evidence-promotion-honesty-corpus/reports/rust-repo-exposure-rebound-assert-eq-match-arms.json",
     "fixtures/evidence-promotion-honesty-corpus/reports/rust-repo-exposure-late-assert-eq-definition-match-arms.json",
-    "fixtures/evidence-promotion-honesty-corpus/reports/rust-repo-exposure-rebound-read-macro-unselected-arm.json"
+    "fixtures/evidence-promotion-honesty-corpus/reports/rust-repo-exposure-rebound-read-macro-unselected-arm.json",
+    "fixtures/evidence-promotion-honesty-corpus/reports/rust-repo-exposure-tuple-rebound-owner-unselected-arm.json"
   ],
   "cases": [
     {
@@ -1063,11 +979,25 @@
       "vector": "count_does_not_pin_changed_argument",
       "probe_family": "side_effect",
       "assertions": [
-        {"type": "must_not_report_clean"},
-        {"type": "expected_finding_count", "count": 1},
-        {"type": "must_not_promote"},
-        {"type": "expected_class", "class": "weakly_exposed"},
-        {"type": "expected_oracle", "kind": "exact_value", "strength": "strong"}
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "expected_finding_count",
+          "count": 1
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "expected_class",
+          "class": "weakly_exposed"
+        },
+        {
+          "type": "expected_oracle",
+          "kind": "exact_value",
+          "strength": "strong"
+        }
       ]
     },
     {
@@ -13742,10 +13672,18 @@
       "id": "rust_repo_exposure_late_assert_eq_definition_match_arms_keeps_credit",
       "language": "rust",
       "tier": "pure",
+      "reason": "#15183 owns the Small and Large rows only: an assert_eq defined after the assertions does not rebind them, so they keep the standard macro's strong oracle. No test selects the Size::Medium arm and the late macro is never invoked; it used to read strongly_gripped (#15233), and since #15359 an arm needs a related test input read as selecting it, so it reads activation_unknown.",
       "source_report": "fixtures/evidence-promotion-honesty-corpus/reports/rust-repo-exposure-late-assert-eq-definition-match-arms.json",
       "report_subject": "fixtures/evidence-promotion-honesty-corpus/repo-exposure-subjects/late-assert-eq-definition-match-arms",
       "vector": "repo_exposure_an_assert_eq_defined_after_the_assertions_does_not_rebind_them",
       "assertions": [
+        {
+          "type": "expected_repo_seam_grip",
+          "owner": "src/lib.rs::price_cents",
+          "expression": "Size::Medium =>",
+          "grip_class": "activation_unknown",
+          "reach": "yes"
+        },
         {
           "type": "expected_repo_seam_grip",
           "owner": "src/lib.rs::price_cents",
@@ -13758,13 +13696,6 @@
           "owner": "src/lib.rs::price_cents",
           "expression": "Size::Large =>",
           "grip_class": "strongly_gripped",
-          "reach": "yes"
-        },
-        {
-          "type": "expected_repo_seam_grip",
-          "owner": "src/lib.rs::price_cents",
-          "expression": "Size::Medium =>",
-          "grip_class": "activation_unknown",
           "reach": "yes"
         },
         {
@@ -13785,6 +13716,23 @@
       "source_report": "fixtures/evidence-promotion-honesty-corpus/reports/rust-repo-exposure-rebound-read-macro-unselected-arm.json",
       "report_subject": "fixtures/evidence-promotion-honesty-corpus/repo-exposure-subjects/rebound-read-macro-unselected-arm",
       "vector": "repo_exposure_inputs_read_through_a_rebound_read_macro_cannot_activate_an_arm_they_do_not_select",
+      "assertions": [
+        {
+          "type": "expected_repo_seam_grip",
+          "owner": "src/lib.rs::price_cents",
+          "expression": "Size::Medium =>",
+          "grip_class": "activation_unknown",
+          "reach": "yes"
+        }
+      ]
+    },
+    {
+      "id": "rust_repo_exposure_tuple_rebound_owner_unselected_arm_not_promoted",
+      "language": "rust",
+      "tier": "pure",
+      "source_report": "fixtures/evidence-promotion-honesty-corpus/reports/rust-repo-exposure-tuple-rebound-owner-unselected-arm.json",
+      "report_subject": "fixtures/evidence-promotion-honesty-corpus/repo-exposure-subjects/tuple-rebound-owner-unselected-arm",
+      "vector": "repo_exposure_a_call_through_an_owner_name_rebound_in_a_tuple_pattern_cannot_activate_the_arm",
       "assertions": [
         {
           "type": "expected_repo_seam_grip",
@@ -13869,7 +13817,7 @@
           "type": "expected_repo_seam_grip",
           "owner": "src/lib.rs::impl JsonValue::as_object",
           "expression": "Self::Object(value) =>",
-          "grip_class": "opaque",
+          "grip_class": "activation_unknown",
           "reach": "weak"
         },
         {
@@ -13883,7 +13831,7 @@
           "type": "expected_repo_seam_grip",
           "owner": "src/lib.rs::impl JsonValue::as_object",
           "expression": "_ =>",
-          "grip_class": "opaque",
+          "grip_class": "activation_unknown",
           "reach": "weak"
         },
         {
@@ -13914,7 +13862,7 @@
           "type": "expected_repo_seam_grip",
           "owner": "src/lib.rs::impl JsonValue::as_object",
           "expression": "Self::Object(value) =>",
-          "grip_class": "weakly_gripped",
+          "grip_class": "activation_unknown",
           "reach": "weak"
         },
         {
@@ -13928,7 +13876,7 @@
           "type": "expected_repo_seam_grip",
           "owner": "src/lib.rs::impl JsonValue::as_object",
           "expression": "_ =>",
-          "grip_class": "weakly_gripped",
+          "grip_class": "activation_unknown",
           "reach": "weak"
         },
         {
@@ -13959,7 +13907,7 @@
           "type": "expected_repo_seam_grip",
           "owner": "src/lib.rs::impl JsonValue::as_object",
           "expression": "Self::Object(value) =>",
-          "grip_class": "opaque",
+          "grip_class": "activation_unknown",
           "reach": "weak"
         },
         {
@@ -13973,7 +13921,7 @@
           "type": "expected_repo_seam_grip",
           "owner": "src/lib.rs::impl JsonValue::as_object",
           "expression": "_ =>",
-          "grip_class": "opaque",
+          "grip_class": "activation_unknown",
           "reach": "weak"
         },
         {
@@ -14025,7 +13973,7 @@
           "type": "expected_repo_seam_grip",
           "owner": "src/lib.rs::impl JsonValue::as_object",
           "expression": "Self::Object(value) =>",
-          "grip_class": "opaque",
+          "grip_class": "activation_unknown",
           "reach": "weak"
         },
         {
@@ -14039,7 +13987,7 @@
           "type": "expected_repo_seam_grip",
           "owner": "src/lib.rs::impl JsonValue::as_object",
           "expression": "_ =>",
-          "grip_class": "opaque",
+          "grip_class": "activation_unknown",
           "reach": "weak"
         },
         {
@@ -14084,7 +14032,7 @@
           "type": "expected_repo_seam_grip",
           "owner": "src/lib.rs::impl JsonValue::as_object",
           "expression": "Self::Object(value) =>",
-          "grip_class": "weakly_gripped",
+          "grip_class": "activation_unknown",
           "reach": "weak"
         },
         {
@@ -14098,7 +14046,7 @@
           "type": "expected_repo_seam_grip",
           "owner": "src/lib.rs::impl JsonValue::as_object",
           "expression": "_ =>",
-          "grip_class": "weakly_gripped",
+          "grip_class": "activation_unknown",
           "reach": "weak"
         },
         {
@@ -14129,7 +14077,7 @@
           "type": "expected_repo_seam_grip",
           "owner": "src/lib.rs::impl JsonValue::as_object",
           "expression": "Self::Object(value) =>",
-          "grip_class": "opaque",
+          "grip_class": "activation_unknown",
           "reach": "weak"
         },
         {
@@ -14143,7 +14091,7 @@
           "type": "expected_repo_seam_grip",
           "owner": "src/lib.rs::impl JsonValue::as_object",
           "expression": "_ =>",
-          "grip_class": "opaque",
+          "grip_class": "activation_unknown",
           "reach": "weak"
         },
         {
@@ -14188,7 +14136,7 @@
           "type": "expected_repo_seam_grip",
           "owner": "src/lib.rs::impl JsonValue::as_object",
           "expression": "Self::Object(value) =>",
-          "grip_class": "opaque",
+          "grip_class": "activation_unknown",
           "reach": "weak"
         },
         {
@@ -14202,7 +14150,7 @@
           "type": "expected_repo_seam_grip",
           "owner": "src/lib.rs::impl JsonValue::as_object",
           "expression": "_ =>",
-          "grip_class": "opaque",
+          "grip_class": "activation_unknown",
           "reach": "weak"
         },
         {
@@ -14233,7 +14181,7 @@
           "type": "expected_repo_seam_grip",
           "owner": "src/lib.rs::impl JsonValue::as_object",
           "expression": "Self::Object(value) =>",
-          "grip_class": "opaque",
+          "grip_class": "activation_unknown",
           "reach": "weak"
         },
         {
@@ -14247,7 +14195,7 @@
           "type": "expected_repo_seam_grip",
           "owner": "src/lib.rs::impl JsonValue::as_object",
           "expression": "_ =>",
-          "grip_class": "opaque",
+          "grip_class": "activation_unknown",
           "reach": "weak"
         },
         {
@@ -14278,7 +14226,7 @@
           "type": "expected_repo_seam_grip",
           "owner": "src/lib.rs::impl JsonValue::as_object",
           "expression": "Self::Object(value) =>",
-          "grip_class": "opaque",
+          "grip_class": "activation_unknown",
           "reach": "weak"
         },
         {
@@ -14292,7 +14240,7 @@
           "type": "expected_repo_seam_grip",
           "owner": "src/lib.rs::impl JsonValue::as_object",
           "expression": "_ =>",
-          "grip_class": "opaque",
+          "grip_class": "activation_unknown",
           "reach": "weak"
         }
       ]
@@ -14316,7 +14264,7 @@
           "type": "expected_repo_seam_grip",
           "owner": "src/lib.rs::impl JsonValue::as_object",
           "expression": "Self::Object(value) =>",
-          "grip_class": "opaque",
+          "grip_class": "activation_unknown",
           "reach": "weak"
         },
         {
@@ -14330,7 +14278,7 @@
           "type": "expected_repo_seam_grip",
           "owner": "src/lib.rs::impl JsonValue::as_object",
           "expression": "_ =>",
-          "grip_class": "opaque",
+          "grip_class": "activation_unknown",
           "reach": "weak"
         }
       ]
@@ -14354,7 +14302,7 @@
           "type": "expected_repo_seam_grip",
           "owner": "src/lib.rs::impl JsonValue::as_object",
           "expression": "Self::Object(value) =>",
-          "grip_class": "opaque",
+          "grip_class": "activation_unknown",
           "reach": "weak"
         },
         {
@@ -14368,7 +14316,7 @@
           "type": "expected_repo_seam_grip",
           "owner": "src/lib.rs::impl JsonValue::as_object",
           "expression": "_ =>",
-          "grip_class": "opaque",
+          "grip_class": "activation_unknown",
           "reach": "weak"
         },
         {
@@ -14406,7 +14354,7 @@
           "type": "expected_repo_seam_grip",
           "owner": "src/lib.rs::impl JsonValue::as_object",
           "expression": "Self::Object(value) =>",
-          "grip_class": "opaque",
+          "grip_class": "activation_unknown",
           "reach": "weak"
         },
         {
@@ -14420,7 +14368,7 @@
           "type": "expected_repo_seam_grip",
           "owner": "src/lib.rs::impl JsonValue::as_object",
           "expression": "_ =>",
-          "grip_class": "opaque",
+          "grip_class": "activation_unknown",
           "reach": "weak"
         },
         {
@@ -14535,7 +14483,7 @@
           "type": "expected_repo_seam_grip",
           "owner": "src/lib.rs::impl JsonValue::as_object",
           "expression": "Self::Object(value) =>",
-          "grip_class": "opaque",
+          "grip_class": "activation_unknown",
           "reach": "weak"
         },
         {
@@ -14549,7 +14497,7 @@
           "type": "expected_repo_seam_grip",
           "owner": "src/lib.rs::impl JsonValue::as_object",
           "expression": "_ =>",
-          "grip_class": "opaque",
+          "grip_class": "activation_unknown",
           "reach": "weak"
         },
         {
@@ -14594,7 +14542,7 @@
           "type": "expected_repo_seam_grip",
           "owner": "src/lib.rs::impl JsonValue::as_object",
           "expression": "Self::Object(value) =>",
-          "grip_class": "strongly_gripped",
+          "grip_class": "activation_unknown",
           "reach": "yes"
         },
         {
@@ -14608,7 +14556,7 @@
           "type": "expected_repo_seam_grip",
           "owner": "src/lib.rs::impl JsonValue::as_object",
           "expression": "_ =>",
-          "grip_class": "strongly_gripped",
+          "grip_class": "activation_unknown",
           "reach": "yes"
         },
         {
@@ -14713,7 +14661,7 @@
           "type": "expected_repo_seam_grip",
           "owner": "src/lib.rs::impl JsonValue::as_object",
           "expression": "Self::Object(value) =>",
-          "grip_class": "opaque",
+          "grip_class": "activation_unknown",
           "reach": "weak"
         },
         {
@@ -14727,7 +14675,7 @@
           "type": "expected_repo_seam_grip",
           "owner": "src/lib.rs::impl JsonValue::as_object",
           "expression": "_ =>",
-          "grip_class": "opaque",
+          "grip_class": "activation_unknown",
           "reach": "weak"
         }
       ]
