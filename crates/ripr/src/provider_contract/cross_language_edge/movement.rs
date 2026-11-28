@@ -7,6 +7,12 @@ use super::model::*;
 
 const MOVEMENT_REPORT_SCHEMA: &str = "ripr_cross_language_edge_movement_report.v1";
 
+/// Classifies how each relationship moved between a base and a head registry.
+///
+/// Edges are paired first by `edge_id`, then by semantic key. A changed head
+/// edge that is stale, has an unsupported family or is no longer positive
+/// after the head's currentness analysis is reported with the matching
+/// `*OnHead` kind.
 pub fn compare_cross_language_edge_registries(
     base: &LoadedCrossLanguageEdgeRegistryV1,
     head: &LoadedCrossLanguageEdgeRegistryV1,
@@ -163,6 +169,7 @@ fn movement_record(
 }
 
 impl CrossLanguageEdgeMovementKindV1 {
+    /// The snake_case name used in serialized reports.
     pub fn as_str(self) -> &'static str {
         match self {
             Self::HeadOnlyAdded => "head_only_added",

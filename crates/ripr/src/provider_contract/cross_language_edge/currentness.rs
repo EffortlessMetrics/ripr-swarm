@@ -8,6 +8,13 @@ const CURRENTNESS_REPORT_SCHEMA: &str = "ripr_cross_language_edge_currentness_re
 const MAX_ANOMALIES: usize = 32;
 const MAX_GUIDANCE: usize = 8;
 
+/// Reports each edge's effective disposition, plus registry anomalies and
+/// recovery guidance.
+///
+/// A positive edge is demoted when its producer is not registered or does not
+/// admit its family, when its facts are stale, when it has an unresolved leg,
+/// or when any anomaly makes it untrustworthy. Demotion uses the full anomaly
+/// set, before the report caps the list.
 pub fn analyze_cross_language_edge_registry_currentness(
     loaded: &LoadedCrossLanguageEdgeRegistryV1,
 ) -> Result<CrossLanguageEdgeRegistryCurrentnessReportV1, CrossLanguageEdgeRegistryErrorV1> {
@@ -94,6 +101,12 @@ pub fn analyze_cross_language_edge_registry_currentness(
     })
 }
 
+/// Returns `true` when an edge connecting the two subjects, in either
+/// orientation, keeps a positive relation after the currentness analysis.
+///
+/// This is stricter than
+/// [`subjects_related_by_registered_edge`](super::subjects_related_by_registered_edge),
+/// which trusts the declared disposition.
 pub fn subjects_related_by_effective_registered_edge(
     left: &CrossLanguageSubjectV1,
     right: &CrossLanguageSubjectV1,
