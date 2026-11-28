@@ -241,6 +241,9 @@ mod typescript_finally_completion;
 #[path = "cli_smoke/typescript_generator_promise.rs"]
 mod typescript_generator_promise;
 #[cfg(feature = "lang-typescript")]
+#[path = "cli_smoke/typescript_nested_owner_packet.rs"]
+mod typescript_nested_owner_packet;
+#[cfg(feature = "lang-typescript")]
 #[path = "cli_smoke/typescript_partial_star.rs"]
 mod typescript_partial_star;
 #[cfg(feature = "lang-typescript")]

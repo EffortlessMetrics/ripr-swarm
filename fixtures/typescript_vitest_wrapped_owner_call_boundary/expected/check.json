@@ -48,8 +48,8 @@
       "evidence_path": ["reach yes: 2 related test(s) found for owner `discount`", "infection unknown: TypeScript preview adapter does not yet model infection.", "propagation unknown: TypeScript preview adapter does not yet model propagation.", "observation weak: Strongest extracted oracle kind: `exact_value` (rank 5)", "discriminator weak: TypeScript preview adapter: strong oracle found but no strong assertion observes an owner call at the changed predicate boundary; missing proof: `total == 100`.", "related test test/price.test.ts:5 discount never drops a 100 order below 100 uses strong exact value oracle: expect(...).toBe(...)", "related test test/price.test.ts:9 discount discounts through a nested call uses strong exact value oracle: expect(...).toBe(...)", "missing discriminator total == 100: changed TypeScript equality-boundary at line 2 lacks a concrete preview discriminator"],
       "flow_sinks": [
       ],
-      "evidence": ["owner: discount", "missing_discriminator: total == 100", "typescript_boundary_input: parameter=total;index=0;operand=100;value=100", "typescript_oracle_observed: discount(90, discount(100))", "typescript_oracle_expected: 90", "typescript_oracle_confidence: high", "typescript_oracle_evidence_ref: test/price.test.ts:10", "gap_state: actionable", "actionability_category: complete_repair_packet", "why_actionable: complete repair packet — package root, runner, owner, oracle target, verify, receipt, and edit cage all resolved; delegatable (advisory)", "repair_action: add a focused assertion for the missing check `total == 100` in the related test, shaped like `expect(discount(100, discount(100))).toBe(expected)`", "raw_evidence_ref: file=src/price.ts;line=2;kind=typescript_preview_probe;source_id=probe:src_price.ts:typescript_preview:9795f3c2;owner=discount", "typescript_package_root: .", "typescript_workspace_root: .", "typescript_framework_hint: vitest", "typescript_test_runner: vitest", "typescript_package_confidence: medium", "typescript_package_limitation: typescript_package_manager_unresolved", "typescript_verify_command: npx --no-install vitest run test/price.test.ts"],
-      "missing": ["Related tests reach `discount` with a strong oracle, but no strong assertion observes a `discount(...)` call at the changed predicate boundary `total == 100`; inputs on one side of the boundary do not discriminate the changed comparison."],
+      "evidence": ["owner: discount", "missing_discriminator: total == 100", "typescript_boundary_input: parameter=total;index=0;operand=100;value=100", "typescript_oracle_observed: discount(90, discount(100))", "typescript_oracle_expected: 90", "typescript_oracle_confidence: high", "typescript_oracle_evidence_ref: test/price.test.ts:10", "gap_state: unknown", "actionability_category: incomplete_repair_packet", "why_not_actionable: TypeScript preview has owner, related-test, oracle, and probe evidence but lacks a complete repair packet contract", "repair_route: project canonical TypeScript repair packet fields only after verify, receipt, evidence refs, and edit boundaries are available", "missing_actionability_fields: canonical_gap_id, repair_kind, target_test_shape, related_test_or_observer, receipt_command, must_not_change, allowed_edit_surface, raw_evidence_refs", "evidence_needed_to_promote: canonical gap identity, repair kind, target test shape, related observer, verify command, receipt command, raw evidence refs, and edit constraints", "raw_evidence_ref: file=src/price.ts;line=2;kind=typescript_preview_probe;source_id=probe:src_price.ts:typescript_preview:9795f3c2;owner=discount", "typescript_package_root: .", "typescript_workspace_root: .", "typescript_framework_hint: vitest", "typescript_test_runner: vitest", "typescript_package_confidence: medium", "typescript_package_limitation: typescript_package_manager_unresolved", "typescript_verify_command: npx --no-install vitest run test/price.test.ts"],
+      "missing": ["Related tests reach `discount` with a strong oracle, but no strong assertion observes a `discount(...)` call at the changed predicate boundary `total == 100`; inputs on one side of the boundary do not discriminate the changed comparison.", "TypeScript preview actionability `unknown` / `incomplete_repair_packet`: TypeScript preview has owner, related-test, oracle, and probe evidence but lacks a complete repair packet contract. Repair route: project canonical TypeScript repair packet fields only after verify, receipt, evidence refs, and edit boundaries are available"],
       "assertion_texts": {
       },
       "activation": {
@@ -109,7 +109,7 @@
         "limits": [
           "Syntax-first TypeScript/JavaScript preview evidence only.",
           "No tsc, tsserver, package graph, Jest/Vitest runtime, mutation execution, generated tests, provider calls, source edits, gate authority, or badge authority.",
-          "This card is an advisory summary; the complete repair packet is projected separately and is also advisory."
+          "This card is advisory and is not a repair packet."
         ],
         "missing_discriminator": "total == 100",
         "oracle_kind": "exact_value",
@@ -122,53 +122,31 @@
           "line": 5,
           "name": "discount never drops a 100 order below 100"
         },
-        "repair_packet_ready": true,
-        "repair_route": "add a focused assertion for the missing check `total == 100` in the related test, shaped like `expect(discount(100, discount(100))).toBe(expected)`",
+        "repair_packet_ready": false,
+        "repair_route": "project canonical TypeScript repair packet fields only after verify, receipt, evidence refs, and edit boundaries are available",
         "source": "check_typescript_preview",
         "static_limits": [],
         "suggested_assertion_shape": "Exact-value evidence is present; verify it targets the changed discriminator.",
         "verify": {
           "command": "npx --no-install vitest run test/price.test.ts"
         },
-        "why_not_actionable": "complete repair packet — package root, runner, owner, oracle target, verify, receipt, and edit cage all resolved; delegatable (advisory)"
-      },
-      "typescript_repair_packet": {
-        "allowed_edit_surface": [
-          "test/price.test.ts"
-        ],
-        "assertion_shape": "expect(discount(100, discount(100))).toBe(expected)",
-        "authority_boundary": "preview_advisory_only",
-        "canonical_gap_id": "gap:typescript:typescript_preview:9795f3c2",
-        "file": "src/price.ts",
-        "forbidden_files": [
-          "src/price.ts"
-        ],
-        "gap_id": "probe:src_price.ts:typescript_preview:9795f3c2",
-        "language": "typescript",
-        "language_status": "preview",
-        "line": 2,
-        "missing_discriminator": "total == 100",
-        "must_not_change": [
-          "Do not edit production code unless the focused proof exposes a real product defect.",
-          "Do not broaden the change beyond this GapRecord and its repair route.",
-          "Do not treat static evidence as runtime mutation, coverage, or correctness proof.",
-          "Do not generate tests or call external providers from this packet.",
-          "Do not treat preview-language evidence as gate authority."
-        ],
-        "owner": "discount",
-        "receipt_command": "ripr receipt write --gap gap:typescript:typescript_preview:9795f3c2 --verify-command 'npx --no-install vitest run test/price.test.ts' --status not_run --out target/ripr/receipts/gap-typescript-typescript_preview-9795f3c2.json",
-        "repair_kind": "AddBoundaryAssertion",
-        "schema_version": "0.5",
-        "source": "typescript_preview_projection",
-        "target_test": "test/price.test.ts::discount never drops a 100 order below 100",
-        "verify_command": "npx --no-install vitest run test/price.test.ts"
+        "why_not_actionable": "TypeScript preview has owner, related-test, oracle, and probe evidence but lacks a complete repair packet contract; validator: is not agent-packet eligible: do not replay the nested call; find a direct owner call with matching arguments that reaches `total == 100`"
       },
       "preview_actionability": {
-        "actionability_category": "complete_repair_packet",
+        "actionability_category": "incomplete_repair_packet",
         "authority_boundary": "preview_advisory_only",
-        "evidence_needed_to_promote": "",
-        "gap_state": "actionable",
-        "missing_actionability_fields": [],
+        "evidence_needed_to_promote": "canonical gap identity, repair kind, target test shape, related observer, verify command, receipt command, raw evidence refs, and edit constraints",
+        "gap_state": "unknown",
+        "missing_actionability_fields": [
+          "canonical_gap_id",
+          "repair_kind",
+          "target_test_shape",
+          "related_test_or_observer",
+          "receipt_command",
+          "must_not_change",
+          "allowed_edit_surface",
+          "raw_evidence_refs"
+        ],
         "missing_graph_legs": [],
         "raw_evidence_refs": [
           {
@@ -182,16 +160,16 @@
             "source_id": "probe:src_price.ts:typescript_preview:9795f3c2"
           }
         ],
-        "repair_packet_ready": true,
-        "repair_route": "add a focused assertion for the missing check `total == 100` in the related test, shaped like `expect(discount(100, discount(100))).toBe(expected)`",
+        "repair_packet_ready": false,
+        "repair_route": "project canonical TypeScript repair packet fields only after verify, receipt, evidence refs, and edit boundaries are available",
         "unlock_condition": null,
-        "why_not_actionable": "complete repair packet — package root, runner, owner, oracle target, verify, receipt, and edit cage all resolved; delegatable (advisory)"
+        "why_not_actionable": "TypeScript preview has owner, related-test, oracle, and probe evidence but lacks a complete repair packet contract; validator: is not agent-packet eligible: do not replay the nested call; find a direct owner call with matching arguments that reaches `total == 100`"
       },
       "stop_reasons": [],
       "oracle_kind": "exact_value",
       "oracle_strength": "strong",
-      "recommended_next_step": "TypeScript preview advisory: add or strengthen a focused assertion for the missing check `total == 100`; the repair packet is complete (advisory: `ripr context --at <finding-id>` prints it; `ripr repair` covers Rust files only).",
-      "suggested_next_action": "TypeScript preview advisory: add or strengthen a focused assertion for the missing check `total == 100`; the repair packet is complete (advisory: `ripr context --at <finding-id>` prints it; `ripr repair` covers Rust files only).",
+      "recommended_next_step": "TypeScript preview advisory: add or strengthen a focused assertion for the missing check `total == 100`; no actionable repair packet is emitted until verify, receipt, and edit-boundary fields are available.",
+      "suggested_next_action": "TypeScript preview advisory: add or strengthen a focused assertion for the missing check `total == 100`; no actionable repair packet is emitted until verify, receipt, and edit-boundary fields are available.",
       "language": "typescript",
       "language_status": "preview",
       "owner_kind": "function",
@@ -209,5 +187,5 @@
       "why": "preview adapter; advisory; may be incomplete; empty result is not Rust-grade clean"
     }
   ],
-  "source_subject": {"digest_algorithm":"sha256","files":[{"path":"src/price.ts","digest":"sha256:e4860b85ffd6ad18b80485139c586cf9844eafba8951de87b9d0d656e7e0084c"},{"path":"test/price.test.ts","digest":"sha256:2c02c76573e2e5dadf4c533594e267e2ea4dc4208f6190e0dd22007c31b6eff4"}]}
+  "source_subject": {"digest_algorithm":"sha256","files":[{"path":"src/price.ts","digest":"sha256:e4860b85ffd6ad18b80485139c586cf9844eafba8951de87b9d0d656e7e0084c"}]}
 }
