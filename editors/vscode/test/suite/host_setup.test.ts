@@ -1,8 +1,11 @@
 import * as assert from 'assert';
+import { createHash } from 'crypto';
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
-import { main, type TestHostRuntime } from '../runTest';
+import { main, runGit, type TestHostRuntime } from '../runTest';
+import { assertResolvedRepairStartServer, inspectRepairStartCard, REPAIR_START_ADMISSION, REPAIR_START_EVIDENCE,
+  REPAIR_START_GAP, REPAIR_START_OBSERVATION, REPAIR_START_TARGET, type RepairStartRun } from '../repairStartObservation';
 
 // Exercise the retained runner with real workspace staging and failure
 // finalization. Only the host/producer/process-exit boundaries are substituted;
@@ -14,6 +17,8 @@ suite('VS Code test host setup', () => {
     'RIPR_TEST_MULTIROOT_ONLY', 'RIPR_TEST_ACTIONABLE_QUEUE_ROOT',
     'RIPR_TEST_BASE_REF', 'RIPR_TEST_CLIPBOARD_CAPTURE_PATH',
     'RIPR_TEST_SERVER_PATH', 'RIPR_TEST_PACKAGED_SERVER_PATH',
+    'RIPR_TEST_PACKAGED_SERVER_SHA256', 'RIPR_TEST_REPAIR_START_CASE',
+    'RIPR_TEST_REPAIR_START_WORKSPACE', 'RIPR_TEST_REPAIR_START_HEAD', 'RIPR_REPO_EXPOSURE_SEAM_LIMIT',
     'RIPR_TEST_REQUIRE_RAN', 'RIPR_TEST_MULTIROOT', 'RIPR_TEST_GREP',
     'RIPR_TEST_MULTIROOT_PATH', 'RIPR_TEST_MULTIROOT_RECEIPT',
   ];
@@ -40,7 +45,7 @@ suite('VS Code test host setup', () => {
     fs.mkdirSync(templatePath);
     fs.writeFileSync(path.join(templatePath, 'Cargo.toml'),
       '[package]\nname = "boundary_gap_fixture"\nversion = "0.1.0"\nedition = "2024"\n');
-    const serverPath = path.join(root, 'ripr-server');
+    const serverPath = path.join(root, 'ripr-server.exe');
     fs.writeFileSync(serverPath, 'not executed by these setup controls\n');
     vscodeExecutablePath = path.join(root, 'vscode-host');
     queueRoot = path.join(root, 'producer-queue');
@@ -104,6 +109,208 @@ suite('VS Code test host setup', () => {
     assert.strictEqual(retention.retained_because, 'test_host_failure');
     assert.strictEqual(retention.error.message, message);
   }
+
+  test('a focused repair Start run requires an explicit packaged server', async () => {
+    process.env.RIPR_TEST_REPAIR_START_CASE = 'called';
+    await main(runtime);
+    assert.deepStrictEqual(events, []);
+    assertFailure('repair Start proof requires a trusted isolated profile, staged fixture HEAD, supplied extension and digest-pinned server');
+  });
+
+  function configureRepairStartRun() {
+    const fixture = path.join(root, 'fixture');
+    const extension = path.join(root, 'extension');
+    fs.mkdirSync(fixture);
+    fs.mkdirSync(extension);
+    runGit(fixture, ['init', '--initial-branch', 'main']);
+    runGit(fixture, ['config', 'user.name', 'RIPR fixture']);
+    runGit(fixture, ['config', 'user.email', 'fixture@ripr.invalid']);
+    runGit(fixture, ['config', 'commit.gpgSign', 'false']);
+    runGit(fixture, ['commit', '--allow-empty', '-m', 'base']);
+    runGit(fixture, ['checkout', '-b', 'feature']);
+    fs.writeFileSync(path.join(fixture, 'sentinel'), 'pre-staged fixture');
+    runGit(fixture, ['add', 'sentinel']);
+    runGit(fixture, ['commit', '-m', 'fixture']);
+    process.env.RIPR_TEST_REPAIR_START_CASE = 'uncalled';
+    process.env.RIPR_TEST_REPAIR_START_WORKSPACE = fixture;
+    process.env.RIPR_TEST_REPAIR_START_HEAD = runGit(fixture, ['rev-parse', 'HEAD']);
+    process.env.RIPR_TEST_EXTENSION_PATH = extension;
+    process.env.RIPR_TEST_PACKAGED_SERVER_PATH = process.env.RIPR_TEST_SERVER_PATH;
+    const serverBytes = fs.readFileSync(process.env.RIPR_TEST_SERVER_PATH!);
+    process.env.RIPR_TEST_PACKAGED_SERVER_SHA256 = createHash('sha256').update(serverBytes).digest('hex');
+    return { fixture, extension };
+  }
+
+  function simulatedObservation(run: RepairStartRun) {
+    return { nonce: run.nonce, evidence: REPAIR_START_EVIDENCE, package_admission: REPAIR_START_ADMISSION,
+      case: run.case, fixture_root: run.workspace, repository_head: run.head, repository_base: run.base,
+      extension_path: run.extension, server: run.server, server_sha256: run.serverSha256,
+      server_version: 'simulated', extension_version: 'simulated', vscode_version: 'simulated', node_version: 'simulated',
+      platform: process.platform, arch: process.arch,
+      gap: REPAIR_START_GAP, target: REPAIR_START_TARGET, seam: 'seam-id', target_kind: 'proposed', currentness: 'current',
+      enabled_start: 1, copied_start: 'ripr agent repair --root fixture --seam-id seam-id --phase before' };
+  }
+
+  test('a bad-digest retry refuses a prior repair observation without deleting it', async () => {
+    configureRepairStartRun();
+    process.env.RIPR_TEST_PACKAGED_SERVER_SHA256 = '0'.repeat(64);
+    fs.mkdirSync(artifactRoot);
+    const observation = path.join(artifactRoot, REPAIR_START_OBSERVATION);
+    fs.writeFileSync(observation, '{"nonce":"prior success"}');
+    await main(runtime);
+    assert.deepStrictEqual(events, []);
+    assert.strictEqual(fs.readFileSync(observation, 'utf8'), '{"nonce":"prior success"}');
+    assertFailure('repair Start artifact root already contains an observation; use a fresh root');
+  });
+
+  test('a focused repair Start run refuses a path the resolver would trim', async () => {
+    configureRepairStartRun();
+    const configured = `${process.env.RIPR_TEST_SERVER_PATH} `;
+    if (process.platform !== 'win32') {
+      // On POSIX this points to another file with the claimed digest.
+      fs.writeFileSync(configured, 'different executable spelling');
+      process.env.RIPR_TEST_PACKAGED_SERVER_SHA256 = createHash('sha256').update(fs.readFileSync(configured)).digest('hex');
+    }
+    process.env.RIPR_TEST_SERVER_PATH = configured;
+    process.env.RIPR_TEST_PACKAGED_SERVER_PATH = configured;
+    await main(runtime);
+    assert.deepStrictEqual(events, []);
+    assertFailure('repair Start server path must be unchanged by configured-path normalization');
+  });
+
+  test('a focused repair Start run refuses a missing server with input-specific context', async () => {
+    configureRepairStartRun();
+    const missing = process.env.RIPR_TEST_SERVER_PATH!;
+    fs.unlinkSync(missing);
+    await main(runtime);
+    assert.deepStrictEqual(events, []);
+    assertFailure(`repair Start could not read the supplied server executable ${JSON.stringify(missing)}`);
+  });
+
+  for (const change of ['stale HEAD', 'dirty fixture']) {
+    test(`a focused repair Start run refuses a ${change}`, async () => {
+      const { fixture } = configureRepairStartRun();
+      if (change === 'stale HEAD') {
+        process.env.RIPR_TEST_REPAIR_START_HEAD = runGit(fixture, ['rev-parse', 'HEAD^']);
+      } else {
+        fs.writeFileSync(path.join(fixture, 'untracked'), 'dirty fixture');
+      }
+      await main(runtime);
+      assert.deepStrictEqual(events, []);
+      assertFailure('repair Start fixture must be clean and at the supplied staged HEAD');
+    });
+  }
+
+  for (const mode of ['missing', 'stale nonce', 'moved fixture', 'missing version', 'unproven admission']) {
+    test(`a simulated zero-exit host with ${mode} publishes no repair observation`, async () => {
+      const { fixture } = configureRepairStartRun();
+      runtime.downloadVSCode = async () => vscodeExecutablePath;
+      runtime.runTests = async (options) => {
+        events.push('host');
+        const rawRun = options.extensionTestsEnv?.RIPR_TEST_REPAIR_START_RUN;
+        assert.ok(rawRun);
+        const run: RepairStartRun = JSON.parse(rawRun);
+        if (mode !== 'missing') {
+          let observation: Partial<ReturnType<typeof simulatedObservation>> = simulatedObservation(run);
+          if (mode === 'stale nonce') {
+            observation.nonce = 'old nonce';
+          } else if (mode === 'missing version') {
+            delete observation.server_version;
+          } else if (mode === 'unproven admission') {
+            observation = { ...observation, package_admission: 'passed' as typeof REPAIR_START_ADMISSION };
+          } else if (mode === 'moved fixture') {
+            runGit(fixture, ['commit', '--allow-empty', '-m', 'moved during run']);
+          }
+          fs.writeFileSync(run.output, JSON.stringify(observation));
+        }
+        return 0;
+      };
+      await main(runtime);
+      assert.deepStrictEqual(events, ['host']);
+      assert.deepStrictEqual(exits, [1]);
+      assert.ok(!fs.existsSync(path.join(artifactRoot, REPAIR_START_OBSERVATION)));
+    });
+  }
+
+  test('the repair Start caller rejects copied cards with an existing target or stale HEAD', async () => {
+    const run = { case: 'called', head: 'expected' } as RepairStartRun;
+    const copy = (targetKind: string, head: string) => async () => JSON.stringify({
+      subject: { canonical_gap_id: REPAIR_START_GAP, seam_id: 'seam' },
+      snapshot: { currentness: 'current', repository_head: head },
+      selected_target: { kind: targetKind, file: REPAIR_START_TARGET },
+      instruction: { state: 'static_limitation' }, next_action: null,
+    });
+    await assert.rejects(inspectRepairStartCard(run, copy('existing', 'expected')), /must expose a proposed test target/);
+    await assert.rejects(inspectRepairStartCard(run, copy('proposed', 'stale')), /must describe the staged fixture HEAD/);
+    assert.deepStrictEqual(await inspectRepairStartCard(run, copy('proposed', 'expected')),
+      { seam: 'seam', targetKind: 'proposed' });
+  });
+
+  test('the repair Start caller rejects a different resolved executable even with matching bytes', async () => {
+    configureRepairStartRun();
+    const server = fs.realpathSync(process.env.RIPR_TEST_SERVER_PATH!);
+    const alternate = path.join(root, 'other.exe');
+    fs.copyFileSync(server, alternate);
+    const run = { server, serverSha256: process.env.RIPR_TEST_PACKAGED_SERVER_SHA256 } as RepairStartRun;
+    await assert.rejects(assertResolvedRepairStartServer(run, { source: 'configured', command: alternate }, true),
+      /must resolve to the pinned executable/);
+    await assertResolvedRepairStartServer(run, { source: 'configured', command: server }, true);
+  });
+
+  test('a focused repair Start run refuses the wrong server digest before launching the host', async () => {
+    configureRepairStartRun();
+    process.env.RIPR_TEST_PACKAGED_SERVER_SHA256 = '0'.repeat(64);
+    const staleSetup = path.join(artifactRoot, 'setup-editor-host.json');
+    const staleLog = path.join(artifactRoot, 'vscode-test-user-data', 'logs', 'old-host.log');
+    fs.mkdirSync(path.dirname(staleLog), { recursive: true });
+    fs.writeFileSync(staleSetup, '{"status":"pass","nonce":"old"}');
+    fs.writeFileSync(staleLog, 'old host proof');
+    await main(runtime);
+    assert.deepStrictEqual(events, []);
+    assert.ok(!fs.existsSync(staleSetup));
+    assert.ok(!fs.existsSync(staleLog));
+    assertFailure('repair Start proof server does not match the supplied SHA-256');
+  });
+
+  test('a focused repair Start run uses only the supplied fixture and required suite', async () => {
+    const { fixture, extension } = configureRepairStartRun();
+    runtime.downloadVSCode = async (_cache, selectedExtension) => {
+      assert.strictEqual(selectedExtension, fs.realpathSync(extension));
+      return vscodeExecutablePath;
+    };
+    runtime.runTests = async (options) => {
+      events.push('host');
+      assert.strictEqual(options.extensionDevelopmentPath, fs.realpathSync(extension));
+      assert.strictEqual(options.launchArgs?.[1], fs.realpathSync(fixture));
+      assert.strictEqual(process.env.RIPR_TEST_GREP, '^Packaged Repair Start ');
+      assert.strictEqual(process.env.RIPR_TEST_REQUIRE_RAN,
+        'Packaged Repair Start distinguishes inspection from an enabled Start for the current gap');
+      const rawRun = options.extensionTestsEnv?.RIPR_TEST_REPAIR_START_RUN;
+      assert.ok(rawRun);
+      const run: RepairStartRun = JSON.parse(rawRun);
+      const settings = JSON.parse(fs.readFileSync(path.join(path.dirname(run.output), 'vscode-test-user-data',
+        'User', 'settings.json'), 'utf8'));
+      assert.strictEqual(settings['ripr.server.path'], fs.realpathSync(process.env.RIPR_TEST_PACKAGED_SERVER_PATH!));
+      assert.strictEqual(settings['ripr.server.autoDownload'], false);
+      assert.strictEqual(settings['ripr.baseRef'], 'main');
+      assert.strictEqual(settings['ripr.check.mode'], 'deep');
+      assert.strictEqual(settings['ripr.diagnosticProfile'], 'full');
+      assert.strictEqual(process.env.RIPR_REPO_EXPOSURE_SEAM_LIMIT, '0');
+      assert.strictEqual(run.head, runGit(fixture, ['rev-parse', 'HEAD']));
+      assert.strictEqual(run.base, runGit(fixture, ['rev-parse', 'main']));
+      fs.writeFileSync(run.output, JSON.stringify(simulatedObservation(run)));
+      return 0;
+    };
+
+    await main(runtime);
+    assert.deepStrictEqual(events, ['host']);
+    assert.deepStrictEqual(exits, []);
+    assert.strictEqual(fs.readFileSync(path.join(fixture, 'sentinel'), 'utf8'), 'pre-staged fixture');
+    assert.ok(!fs.existsSync(path.join(artifactRoot, 'workspace')));
+    const observation = JSON.parse(fs.readFileSync(path.join(artifactRoot, REPAIR_START_OBSERVATION), 'utf8'));
+    assert.strictEqual(observation.evidence, 'source_harness_observation');
+    assert.strictEqual(observation.package_admission, 'not_established');
+  });
 
   test('a rejected host download invokes zero producers and retains the original failure', async () => {
     fs.mkdirSync(artifactRoot);

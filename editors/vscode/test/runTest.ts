@@ -1,18 +1,48 @@
 import * as path from 'path';
 import * as fs from 'fs';
 import { execFileSync, spawn } from 'child_process';
+import { createHash, randomUUID } from 'crypto';
 import { runTests } from '@vscode/test-electron';
 import { downloadVSCodeWithRetry, requireEditorDisplay, resetEditorSetupEvidence, verifyHostPrerequisites } from './hostPrerequisites';
 import { stageGenuineActionableQueue } from './actionableQueueFixture';
-import { REQUIRED_TITLE_SEPARATOR, requiredJourneyTitles } from './requiredJourneys';
+import { fullTitle, PACKAGED_REPAIR_START, REQUIRED_TITLE_SEPARATOR, requiredJourneyTitles } from './requiredJourneys';
 import { finalizeHostRun, resetHostLogDir, resolveUserDataDir } from './hostDiagnostics';
+import { REPAIR_START_OBSERVATION, type RepairStartRun, validateRepairStartObservation } from './repairStartObservation';
 
-function runGit(workspacePath: string, args: string[]): string {
+export function runGit(workspacePath: string, args: string[]): string {
   return execFileSync('git', args, {
     cwd: workspacePath,
     encoding: 'utf8',
     stdio: ['ignore', 'pipe', 'pipe']
   }).trim();
+}
+
+function assertRepairStartFixture(workspace: string, head: string, base?: string): string {
+  if (fs.realpathSync(runGit(workspace, ['rev-parse', '--show-toplevel'])) !== workspace
+    || runGit(workspace, ['rev-parse', 'HEAD']) !== head
+    || runGit(workspace, ['status', '--porcelain', '--untracked-files=all']) !== '') {
+    throw new Error('repair Start fixture must be clean and at the supplied staged HEAD');
+  }
+  const currentBase = runGit(workspace, ['rev-parse', '--verify', 'refs/heads/main']);
+  if (currentBase !== (base ?? runGit(workspace, ['rev-parse', 'HEAD^']))) {
+    throw new Error('repair Start fixture base must match the staged main commit');
+  }
+  return currentBase;
+}
+
+function assertRepairStartServer(server: string, digest: string): void {
+  let bytes: Buffer;
+  try {
+    if (!fs.statSync(server).isFile()) {
+      throw new Error('expected a regular executable file');
+    }
+    bytes = fs.readFileSync(server);
+  } catch (error) {
+    throw new Error(`repair Start could not read the supplied server executable ${JSON.stringify(server)}`, { cause: error });
+  }
+  if (createHash('sha256').update(bytes).digest('hex') !== digest) {
+    throw new Error('repair Start proof server does not match the supplied SHA-256');
+  }
 }
 
 function stageIntegrationWorkspace(templatePath: string, workspacePath: string): string {
@@ -199,14 +229,60 @@ export async function main(runtime: TestHostRuntime = defaultTestHostRuntime) {
     process.env.RIPR_TEST_ARTIFACT_ROOT ??
       path.resolve(__dirname, '../../../../target/ripr')
   );
-  const userDataPath = resolveUserDataDir(artifactRoot);
+  let userDataPath = resolveUserDataDir(artifactRoot);
   let matrixDiagnostics: { userDataDir: string; receiptPath: string } | undefined;
   let error: unknown;
   try {
+    const repairStartCase = process.env.RIPR_TEST_REPAIR_START_CASE;
+    const repairStart = repairStartCase !== undefined;
+    const observationPath = path.join(artifactRoot, REPAIR_START_OBSERVATION);
+    if (repairStart && fs.lstatSync(observationPath, { throwIfNoEntry: false })) {
+      throw new Error('repair Start artifact root already contains an observation; use a fresh root');
+    }
     resetEditorSetupEvidence(artifactRoot);
     resetHostLogDir(userDataPath);
+    let testServerPath = process.env.RIPR_TEST_SERVER_PATH;
+    const packagedServerPath = process.env.RIPR_TEST_PACKAGED_SERVER_PATH;
+    const workspaceTrustMode = parseWorkspaceTrustMode(process.env.RIPR_TEST_WORKSPACE_TRUST);
+    const repairWorkspace = process.env.RIPR_TEST_REPAIR_START_WORKSPACE;
+    const suppliedExtension = process.env.RIPR_TEST_EXTENSION_PATH;
+    let repairRun: RepairStartRun | undefined;
+    if (repairStart) {
+      const serverDigest = process.env.RIPR_TEST_PACKAGED_SERVER_SHA256 ?? '';
+      const fixtureHead = process.env.RIPR_TEST_REPAIR_START_HEAD ?? '';
+      if (repairStartCase !== 'called' && repairStartCase !== 'uncalled') {
+        throw new Error('RIPR_TEST_REPAIR_START_CASE must be called or uncalled');
+      }
+      if (workspaceTrustMode !== 'trusted' || process.env.RIPR_TEST_MULTIROOT_ONLY === '1'
+        || !process.env.RIPR_TEST_ARTIFACT_ROOT || !repairWorkspace || !path.isAbsolute(repairWorkspace)
+        || !suppliedExtension || !path.isAbsolute(suppliedExtension) || !testServerPath
+        || !path.isAbsolute(testServerPath) || testServerPath !== packagedServerPath
+        || !/^[a-f0-9]{40}$/.test(fixtureHead)
+        || !/^[a-f0-9]{64}$/.test(serverDigest)) {
+        throw new Error('repair Start proof requires a trusted isolated profile, staged fixture HEAD, supplied extension and digest-pinned server');
+      }
+      if (testServerPath !== testServerPath.trim()) {
+        throw new Error('repair Start server path must be unchanged by configured-path normalization');
+      }
+      assertRepairStartServer(testServerPath, serverDigest);
+      testServerPath = fs.realpathSync(testServerPath);
+      if (testServerPath !== testServerPath.trim()
+        || (process.platform === 'win32' && !/\.exe$/i.test(testServerPath))) {
+        throw new Error('repair Start requires a canonical direct executable path');
+      }
+      assertRepairStartServer(testServerPath, serverDigest);
+      const workspace = fs.realpathSync(repairWorkspace);
+      const base = assertRepairStartFixture(workspace, fixtureHead);
+      const extension = fs.realpathSync(suppliedExtension);
+      fs.mkdirSync(artifactRoot, { recursive: true });
+      const attemptDir = fs.mkdtempSync(path.join(artifactRoot, 'repair-start-attempt-'));
+      userDataPath = resolveUserDataDir(attemptDir);
+      repairRun = { case: repairStartCase, nonce: randomUUID(), output: path.join(attemptDir, REPAIR_START_OBSERVATION),
+        workspace, head: fixtureHead, base, extension, server: testServerPath, serverSha256: serverDigest };
+      process.env.RIPR_REPO_EXPOSURE_SEAM_LIMIT = '0';
+    }
     const extensionDevelopmentPath = path.resolve(
-      process.env.RIPR_TEST_EXTENSION_PATH ?? path.resolve(__dirname, '../../')
+      repairRun?.extension ?? suppliedExtension ?? path.resolve(__dirname, '../../')
     );
     const extensionTestsPath = path.resolve(__dirname, './suite/index');
     const templatePath = path.resolve(
@@ -214,11 +290,10 @@ export async function main(runtime: TestHostRuntime = defaultTestHostRuntime) {
         path.resolve(__dirname, '../../test-fixtures/workspace')
     );
     const cachePath = path.join(artifactRoot, 'vscode-test-cache');
-    const runId = String(process.pid);
+    const runId = repairRun?.nonce ?? String(process.pid);
     const extensionsPath = path.join(artifactRoot, 'vscode-test-extensions', runId);
-    const workspacePath = path.join(artifactRoot, 'workspace');
-    const baseRef = stageIntegrationWorkspace(templatePath, workspacePath);
-    const workspaceTrustMode = parseWorkspaceTrustMode(process.env.RIPR_TEST_WORKSPACE_TRUST);
+    const workspacePath = repairRun?.workspace ?? path.join(artifactRoot, 'workspace');
+    const baseRef = repairStart ? 'main' : stageIntegrationWorkspace(templatePath, workspacePath);
     process.env.RIPR_TEST_BASE_REF = baseRef;
     fs.mkdirSync(cachePath, { recursive: true });
     fs.mkdirSync(extensionsPath, { recursive: true });
@@ -232,7 +307,7 @@ export async function main(runtime: TestHostRuntime = defaultTestHostRuntime) {
     runtime.requireEditorDisplay(process.platform, process.env);
     const vscodeExecutablePath = await runtime.downloadVSCode(cachePath, extensionDevelopmentPath);
     await runtime.verifyHostPrerequisites(vscodeExecutablePath, artifactRoot);
-    if (workspaceTrustMode === 'trusted' && process.env.RIPR_TEST_MULTIROOT_ONLY !== '1'
+    if (!repairStart && workspaceTrustMode === 'trusted' && process.env.RIPR_TEST_MULTIROOT_ONLY !== '1'
       && !process.env.RIPR_TEST_ACTIONABLE_QUEUE_ROOT) {
       process.env.RIPR_TEST_ACTIONABLE_QUEUE_ROOT = await runtime.stageGenuineActionableQueue(
         path.resolve(__dirname, '../../../../'), path.join(artifactRoot, `actionable-queue-${runId}`)
@@ -251,7 +326,6 @@ export async function main(runtime: TestHostRuntime = defaultTestHostRuntime) {
       '--user-data-dir',
       userDataPath,
     ];
-    const testServerPath = process.env.RIPR_TEST_SERVER_PATH;
     if (testServerPath) {
       const userSettingsPath = path.join(userDataPath, 'User');
       fs.mkdirSync(userSettingsPath, { recursive: true });
@@ -261,19 +335,22 @@ export async function main(runtime: TestHostRuntime = defaultTestHostRuntime) {
           'ripr.server.path': testServerPath,
           'ripr.server.autoDownload': false,
           'ripr.baseRef': baseRef,
-          'ripr.check.mode': 'draft',
+          'ripr.check.mode': repairStart ? 'deep' : 'draft',
           'ripr.seamDiagnostics': true,
-          'ripr.diagnosticProfile': 'actionable',
+          'ripr.diagnosticProfile': repairStart ? 'full' : 'actionable',
           'security.workspace.trust.enabled': workspaceTrustMode !== 'trusted',
         }, null, 2)}\n`
       );
     }
 
-    if (process.env.RIPR_TEST_MULTIROOT_ONLY !== '1') {
+    if (repairStart) {
+      process.env.RIPR_TEST_GREP = `^${PACKAGED_REPAIR_START.suite} `;
+      process.env.RIPR_TEST_REQUIRE_RAN = fullTitle(PACKAGED_REPAIR_START);
+    } else if (process.env.RIPR_TEST_MULTIROOT_ONLY !== '1') {
       process.env.RIPR_TEST_REQUIRE_RAN = requiredJourneyTitles(
         workspaceTrustMode,
         testServerPath,
-        process.env.RIPR_TEST_PACKAGED_SERVER_PATH
+        packagedServerPath
       ).join(
         REQUIRED_TITLE_SEPARATOR
       );
@@ -281,18 +358,32 @@ export async function main(runtime: TestHostRuntime = defaultTestHostRuntime) {
     if (workspaceTrustMode === 'untrusted') {
       await runtime.runUntrustedTests(vscodeExecutablePath, extensionDevelopmentPath, extensionTestsPath, launchArgs);
     } else if (process.env.RIPR_TEST_MULTIROOT_ONLY !== '1') {
-      await runtime.runTests({
+      const exitCode = await runtime.runTests({
         vscodeExecutablePath,
         extensionDevelopmentPath,
         extensionTestsPath,
         launchArgs,
+        extensionTestsEnv: repairRun ? { RIPR_TEST_REPAIR_START_RUN: JSON.stringify(repairRun) } : undefined,
       });
+      if (repairRun) {
+        if (exitCode !== 0 || !fs.existsSync(repairRun.output)) {
+          throw new Error('repair Start host did not produce a fresh observation with a successful exit');
+        }
+        const observation = JSON.parse(fs.readFileSync(repairRun.output, 'utf8'));
+        validateRepairStartObservation(repairRun, observation);
+        assertRepairStartFixture(repairRun.workspace, repairRun.head, repairRun.base);
+        assertRepairStartServer(repairRun.server, repairRun.serverSha256);
+        // Publish only a complete observation from this successful invocation.
+        // An older receipt (including one written by a race) cannot be replaced.
+        fs.linkSync(repairRun.output, observationPath);
+        fs.unlinkSync(repairRun.output);
+      }
     }
 
     // The multi-root host greps a different suite, so the main host's required
     // journeys are not registered there.
     delete process.env.RIPR_TEST_REQUIRE_RAN;
-    if (workspaceTrustMode === 'trusted') {
+    if (!repairStart && workspaceTrustMode === 'trusted') {
       // Same test-host lane, separate empty profile: other suites open files,
       // mutate configuration and restart servers, which would mask ambiguity.
       if (!testServerPath || !fs.existsSync(testServerPath)) {
