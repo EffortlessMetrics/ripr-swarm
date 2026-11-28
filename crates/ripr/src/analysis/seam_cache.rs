@@ -841,7 +841,9 @@ pub(crate) struct CachedSeamLimitInfo {
 /// `1.220`: a match arm whose selecting input no visible test passes reads
 /// activation unknown instead of strongly gripped (#15359).
 /// `1.224`: expect-test fallback comparisons require their macro receiver (#7878).
-pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.224";
+/// `1.225`: repo-seam reach stages carry the producer-owned typed
+/// `unresolved_reach_limit` through classified-seam cache round trips (#5492).
+pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.225";
 /// `0.2` → `0.3`: same semantic transition as the outer cache (#3273 /
 /// #3286) — sharded entries derive from the same facts and cannot bypass
 /// the outer generation bump.
@@ -1100,7 +1102,8 @@ pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.224";
 /// `0.222`: same unselected match-arm activation reading as full `1.220`
 /// (#15359).
 /// `0.226`: same expect-test fallback classification as full `1.224` (#7878).
-const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.226";
+/// `0.227`: same producer-owned reach `unresolved_reach_limit` as full `1.225` (#5492).
+const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.227";
 
 /// Compact-classified seam cache schema. This cache stores the same
 /// `ClassifiedSeam` envelope shape as the full repo exposure cache, but
@@ -1361,7 +1364,8 @@ const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.226";
 /// `0.222`: same unselected match-arm activation reading as full `1.220`
 /// (#15359).
 /// `0.226`: same expect-test fallback classification as full `1.224` (#7878).
-pub(crate) const COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.226";
+/// `0.227`: same producer-owned reach `unresolved_reach_limit` as full `1.225` (#5492).
+pub(crate) const COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.227";
 
 /// Compact class-count cache used by repo badge rendering. It keys off
 /// the same workspace state as the full fact cache, but stores only
@@ -6044,7 +6048,8 @@ mod tests {
         // 1.218 -> 1.219: verified calls of unrequested names stay known (#16462).
         // 1.219 -> 1.220: an unselected match arm reads activation unknown (#15359).
         // 1.223 -> 1.224: expect-test fallback comparisons require their macro receiver (#7878).
-        assert_eq!(CACHE_SCHEMA_VERSION, "1.224");
+        // 1.224 -> 1.225: producer-owned reach limit survives cache round trip (#5492).
+        assert_eq!(CACHE_SCHEMA_VERSION, "1.225");
         // 1.168 -> 1.169: plain `assert_eq!` literal withhold in the audit (#13005).
         // 0.12 -> 0.13 through 0.14 / 0.15 / 0.16 / 0.17 / 0.18: same
         // #3731 semantic transition as the outer classified-seam cache,
@@ -6242,8 +6247,9 @@ mod tests {
         // 0.220 -> 0.221: same transparent-context scan as full 1.219 (#16462).
         // 0.221 -> 0.222: same unselected match-arm reading as full 1.220 (#15359).
         // 0.225 -> 0.226: same expect-test fallback classification as full 1.224 (#7878).
-        assert_eq!(SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.226");
-        assert_eq!(COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.226");
+        // 0.226 -> 0.227: same producer-owned reach limit as full 1.225 (#5492).
+        assert_eq!(SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.227");
+        assert_eq!(COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.227");
         // 0.170 -> 0.171: same plain `assert_eq!` literal withhold as full 1.169 (#13005).
     }
 
@@ -7145,6 +7151,7 @@ mod tests {
             seam_id: seam.id().clone(),
             related_tests: Vec::new(),
             reach: StageEvidence::new(StageState::Yes, Confidence::High, "reach"),
+            unresolved_reach_limit: None,
             activate: StageEvidence::new(StageState::Unknown, Confidence::Medium, "activate"),
             propagate: StageEvidence::new(StageState::Unknown, Confidence::Medium, "propagate"),
             observe: StageEvidence::new(StageState::Weak, Confidence::Low, "observe"),
@@ -7882,6 +7889,136 @@ mod tests {
                 CacheLoad::CorruptIgnored { reason } => {
                     let bounded_reason: String = reason.chars().take(512).collect();
                     return Err(format!("large warm envelope was corrupt: {bounded_reason}"));
+                }
+            }
+        }
+        Ok(())
+    }
+
+    /// One minor generation before `current` (`"1.225"` -> `"1.224"`): a
+    /// schema string an older producer wrote, never equal to `current`.
+    fn earlier_cache_generation(current: &str) -> Result<String, String> {
+        let (major, minor) = current
+            .split_once('.')
+            .ok_or_else(|| format!("cache generation `{current}` has no minor part"))?;
+        let minor: u32 = minor
+            .parse()
+            .map_err(|err| format!("cache generation `{current}` minor: {err}"))?;
+        let earlier = minor
+            .checked_sub(1)
+            .ok_or_else(|| format!("cache generation `{current}` has no earlier minor"))?;
+        Ok(format!("{major}.{earlier}"))
+    }
+
+    #[test]
+    fn typed_reach_limit_survives_cold_then_warm_and_previous_generation_is_a_miss()
+    -> Result<(), String> {
+        // #5492: the producer-owned `unresolved_reach_limit` is replayed on a
+        // warm hit (full and compact envelopes), and an entry an older
+        // producer wrote without it, under the generation before the field,
+        // is never reused by the current generation's key. The earlier
+        // generation is derived from the current one so a later bump cannot
+        // leave this literal stale.
+        for (compact, current) in [
+            (false, CACHE_SCHEMA_VERSION),
+            (true, COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION),
+        ] {
+            let previous = earlier_cache_generation(current)?;
+            let scratch = integrity_scratch(if compact {
+                "typed-reach-compact"
+            } else {
+                "typed-reach-full"
+            })?;
+            let cache = RepoSeamFactCache::at_dir(scratch.0.clone());
+            let mut key = empty_state().cache_key();
+            key.schema_version = current.to_owned();
+            let mut limited = sample_classified();
+            limited.evidence.reach = StageEvidence::new(
+                StageState::Opaque,
+                Confidence::Low,
+                "Reach unresolved (rust_trait_dispatch_unresolved): `fmt` is a trait method",
+            );
+            limited.evidence.unresolved_reach_limit =
+                Some(crate::domain::StaticLimitKind::RustTraitDispatchUnresolved);
+            let plain = sample_classified();
+            let seams = vec![limited.clone(), plain];
+
+            // Cold run stores; the warm run loads the same identity.
+            cache.store_classified_seams_with_limit(
+                &key,
+                &seams,
+                None,
+                CLASSIFIED_SEAM_CACHE_STORE_LIMIT,
+            )?;
+            let warm = match cache.load_classified_seams_with_fallback(&key) {
+                CacheLoad::Hit((loaded, None, _)) => loaded,
+                other => {
+                    return Err(format!(
+                        "compact={compact}: expected warm Hit, got {other:?}"
+                    ));
+                }
+            };
+            let limits: Vec<_> = warm
+                .iter()
+                .map(|seam| seam.evidence.unresolved_reach_limit)
+                .collect();
+            if limits
+                != [
+                    Some(crate::domain::StaticLimitKind::RustTraitDispatchUnresolved),
+                    None,
+                ]
+            {
+                return Err(format!(
+                    "compact={compact}: warm limits differ from cold: {limits:?}"
+                ));
+            }
+            if !warm[0]
+                .evidence
+                .names_static_limit(crate::domain::StaticLimitKind::RustTraitDispatchUnresolved)
+            {
+                return Err(format!(
+                    "compact={compact}: warm evidence lost the typed reach limit"
+                ));
+            }
+
+            // An older producer's entry: same identity, no typed limit.
+            let mut previous_key = key.clone();
+            previous_key.schema_version = previous.to_owned();
+            let mut stale = limited;
+            stale.evidence.unresolved_reach_limit = None;
+            cache.store_classified_seams_with_limit(
+                &previous_key,
+                &[stale],
+                None,
+                CLASSIFIED_SEAM_CACHE_STORE_LIMIT,
+            )?;
+            match cache.load_classified_seams_with_fallback(&previous_key) {
+                CacheLoad::Hit((loaded, _, _))
+                    if loaded[0].evidence.unresolved_reach_limit.is_none() => {}
+                other => {
+                    return Err(format!(
+                        "compact={compact}: seed sanity, previous key should read its own entry, got {other:?}"
+                    ));
+                }
+            }
+            let fresh_dir = integrity_scratch(if compact {
+                "typed-reach-compact-fresh"
+            } else {
+                "typed-reach-full-fresh"
+            })?;
+            let fresh = RepoSeamFactCache::at_dir(fresh_dir.0.clone());
+            fresh.store_classified_seams_with_limit(
+                &previous_key,
+                &[sample_classified()],
+                None,
+                CLASSIFIED_SEAM_CACHE_STORE_LIMIT,
+            )?;
+            match fresh.load_classified_seams_with_fallback(&key) {
+                CacheLoad::Miss => {}
+                other => {
+                    return Err(format!(
+                        "compact={compact}: previous-generation entry was reused: {other:?}"
+                    ));
                 }
             }
         }

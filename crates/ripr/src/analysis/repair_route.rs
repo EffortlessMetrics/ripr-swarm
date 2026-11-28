@@ -1182,6 +1182,7 @@ mod tests {
                 seam_id,
                 related_tests: related_tests.into_iter().map(std::sync::Arc::new).collect(),
                 reach: stage(StageState::Yes),
+                unresolved_reach_limit: None,
                 activate: stage(StageState::Yes),
                 propagate: stage(StageState::Yes),
                 observe: stage(StageState::Yes),

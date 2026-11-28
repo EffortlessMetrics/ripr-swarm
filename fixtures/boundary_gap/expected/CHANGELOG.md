@@ -1,5 +1,17 @@
 # Golden Output Changes
 
+## Pending — corpus cache generation 1.225 for the producer-owned reach limit (#5492)
+
+Repo-seam reach stages now carry a producer-owned typed
+`unresolved_reach_limit` through classified-seam cache round trips, which
+bumps the analyzer cache schema to 1.225. Move the portable
+unchanged-attempt snapshots to 1.225, recompute the
+`raw_json_placeholder_v1` artifact content commitment, then the dependent
+verify commitments and receipt byte hashes. Weak grip, unchanged movement,
+historical currentness, incomplete receipt status and fail-closed
+first-action routing remain the same. No other fixture output is
+regenerated.
+
 ## Pending — corpus cache generation 1.224 for expect-test fallback receivers (#7878)
 
 Expect-test fallback comparisons now require their macro receiver, which bumps
