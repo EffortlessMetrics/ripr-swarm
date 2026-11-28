@@ -66,6 +66,8 @@ pub(crate) enum BindingUseScope {
     /// The changed declaration's block ended before any predicate use;
     /// a later same-named binding is a different binding.
     ScopeExitedBeforeUse,
+    /// Binding patterns cannot be parsed, so declaration identity is unread.
+    BindingSyntaxUnsupported,
     /// No direct predicate use of the binding exists in the function.
     NoPredicateUse,
 }
@@ -152,6 +154,62 @@ fn scan_changed_binding_uses(
     body_start_line: usize,
     changed_line: usize,
 ) -> BindingPredicateResolution {
+    resolve_binding_uses(
+        binding,
+        initializer,
+        body,
+        body_start_line,
+        changed_line,
+        false,
+    )
+}
+
+/// The same liveness/scope authority for an exact `binding.len()` comparison.
+/// This relation establishes only the receiver binding, never its type or value.
+/// It is not memoized: the memo question does not carry the length form.
+pub(crate) fn resolve_changed_binding_length_uses(
+    binding: &str,
+    initializer: &str,
+    body: &str,
+    body_start_line: usize,
+    changed_line: usize,
+) -> BindingPredicateResolution {
+    resolve_binding_uses(
+        binding,
+        initializer,
+        body,
+        body_start_line,
+        changed_line,
+        true,
+    )
+}
+
+fn resolve_binding_uses(
+    binding: &str,
+    initializer: &str,
+    body: &str,
+    body_start_line: usize,
+    changed_line: usize,
+    length: bool,
+) -> BindingPredicateResolution {
+    let Some(declarations) = binding_declaration_sites(body, binding, body_start_line) else {
+        return BindingPredicateResolution::NoDirectUse {
+            scope: BindingUseScope::BindingSyntaxUnsupported,
+        };
+    };
+    let direct_operand = |line: &str| {
+        if length {
+            // Strip only the exact suffix for the existing whole-operand
+            // matcher. A field, longer receiver, call/index interior,
+            // arithmetic or subsequent method remains a non-direct operand.
+            let receiver = format!("{binding}.len()");
+            line.contains(&receiver)
+                .then(|| direct_predicate_operand(&line.replace(&receiver, binding), binding))
+                .flatten()
+        } else {
+            direct_predicate_operand(line, binding)
+        }
+    };
     let masked = mask_rust_comments_and_strings(body);
     let mut uses = Vec::new();
     let mut live = false;
@@ -217,17 +275,29 @@ fn scan_changed_binding_uses(
             continue;
         }
         if !inside_no_use {
+            // The parsed pattern, not a `let ` prefix or the last word before
+            // `=`, identifies shadows. This includes typed/multiline bindings.
+            let declarations_here = declarations.get(&absolute).copied().unwrap_or(0);
+            if live && absolute > changed_line && declarations_here > 0 {
+                live = false;
+                blocker.get_or_insert(BindingUseScope::ShadowedBeforeUse);
+            }
             if masked_trimmed.starts_with("let ") {
                 if let Some((declared, _)) = changed_let_binding(masked_trimmed) {
                     if declared == binding {
                         if absolute == changed_line {
-                            live = true;
-                            declaration_depth = Some(brace_regions.len());
+                            if declarations_here > 1 {
+                                live = false;
+                                blocker.get_or_insert(BindingUseScope::ShadowedBeforeUse);
+                            } else {
+                                live = true;
+                                declaration_depth = Some(brace_regions.len());
+                            }
                         } else if live {
                             live = false;
                             blocker.get_or_insert(BindingUseScope::ShadowedBeforeUse);
                         }
-                    } else if live && direct_predicate_operand(masked_trimmed, binding).is_some() {
+                    } else if live && direct_operand(masked_trimmed).is_some() {
                         // Another binding's `let` initializer may still
                         // carry a closure capture or macro use of ours.
                         // V1 relates no predicate inside a foreign
@@ -250,13 +320,8 @@ fn scan_changed_binding_uses(
                     open_parens = (open_parens + paren_delta(masked_line)).max(0);
                     continue;
                 }
-                // Non-simple `let` (destructuring or pattern): it can
-                // still re-bind the identifier, which ends the live
-                // span.
-                if live && pattern_rebinds_binding(masked_trimmed, binding) {
-                    live = false;
-                    blocker.get_or_insert(BindingUseScope::ShadowedBeforeUse);
-                }
+                // Parsed patterns above already adjudicate non-simple lets;
+                // a type name or initializer mention is not a new binding.
                 reconcile_braces(
                     &mut brace_regions,
                     opens,
@@ -277,7 +342,7 @@ fn scan_changed_binding_uses(
                 live = false;
                 blocker.get_or_insert(BindingUseScope::ReassignedBeforeUse);
             } else if live && !in_continuation {
-                let side = direct_predicate_operand(masked_trimmed, binding);
+                let side = direct_operand(masked_trimmed);
                 if let Some(side) = side {
                     if is_macro_invocation_line(masked_trimmed) {
                         blocker.get_or_insert(BindingUseScope::MacroExpansionUnsupported);
@@ -313,6 +378,72 @@ fn scan_changed_binding_uses(
     } else {
         BindingPredicateResolution::DirectUses(uses)
     }
+}
+
+/// Actual declaration sites for this value name in the owning function.
+/// Nested functions, closures and const/static initializers have other scopes.
+/// The bounded syntax memo retains the complete source text as its identity.
+fn binding_declaration_sites(
+    body: &str,
+    binding: &str,
+    body_start_line: usize,
+) -> Option<std::collections::BTreeMap<usize, usize>> {
+    use ra_ap_syntax::{AstNode, ast, ast::HasName};
+    let parsed = crate::analysis::syntax::parse_clean_source_file_memoized(body)?;
+    let owner = parsed.tree().syntax().children().find_map(ast::Fn::cast)?;
+    let mut sites = std::collections::BTreeMap::new();
+    for node in owner.syntax().descendants() {
+        let mut in_owner = false;
+        for ancestor in node.ancestors().skip(1) {
+            if ancestor == *owner.syntax() {
+                in_owner = true;
+                break;
+            }
+            if ast::Fn::can_cast(ancestor.kind())
+                || ast::ClosureExpr::can_cast(ancestor.kind())
+                || ast::Const::can_cast(ancestor.kind())
+                || ast::Static::can_cast(ancestor.kind())
+            {
+                break;
+            }
+        }
+        if !in_owner {
+            continue;
+        }
+        let (pattern, start) = if let Some(local) = ast::LetStmt::cast(node.clone()) {
+            (local.pat()?, local.let_token()?.text_range().start())
+        } else if let Some(local) = ast::LetExpr::cast(node.clone()) {
+            (local.pat()?, local.let_token()?.text_range().start())
+        } else if let Some(loop_) = ast::ForExpr::cast(node.clone()) {
+            (loop_.pat()?, loop_.for_token()?.text_range().start())
+        } else if let Some(arm) = ast::MatchArm::cast(node) {
+            let pattern = arm.pat()?;
+            let start = pattern.syntax().text_range().start();
+            (pattern, start)
+        } else {
+            continue;
+        };
+        let binds = pattern
+            .syntax()
+            .descendants()
+            .filter_map(ast::IdentPat::cast)
+            .any(|pattern| {
+                pattern.name().is_some_and(|name| {
+                    let text = name.text();
+                    text.strip_prefix("r#").unwrap_or(text) == binding
+                })
+            });
+        if binds {
+            let line = body_start_line
+                + body
+                    .get(..usize::from(start))?
+                    .bytes()
+                    .filter(|byte| *byte == b'\n')
+                    .count();
+            *sites.entry(line).or_insert(0) += 1;
+        }
+    }
+    Some(sites)
 }
 
 /// Apply a line's net brace effect to the region stack. Braces the line
@@ -378,16 +509,6 @@ fn is_item_line(line: &str) -> bool {
     ]
     .iter()
     .any(|prefix| line.starts_with(prefix))
-}
-
-/// A non-simple `let` line whose binding pattern mentions the
-/// identifier (e.g. `let (end, other) = pair;`) re-binds it.
-fn pattern_rebinds_binding(let_line: &str, binding: &str) -> bool {
-    let Some((lhs, _)) = let_line.split_once('=') else {
-        return false;
-    };
-    lhs.split(|ch: char| !ch.is_ascii_alphanumeric() && ch != '_')
-        .any(|token| token == binding)
 }
 
 /// An `if let`/`while let`/`for` line whose pattern binds the
@@ -1135,8 +1256,8 @@ mod tests {
 
     #[test]
     fn comment_and_string_mentions_never_relate() -> Result<(), String> {
-        let body = "// let end = 1;\nlet end = 1;\n// if end == start { }\nlet label = \"if end == start\";\n";
-        let resolution = resolve_end(body, 2);
+        let body = "fn f() {\n// let end = 1;\nlet end = 1;\n// if end == start { }\nlet label = \"if end == start\";\n}\n";
+        let resolution = resolve_end(body, 3);
         assert_eq!(blocked_scope(&resolution)?, BindingUseScope::NoPredicateUse);
         Ok(())
     }

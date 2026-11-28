@@ -93,7 +93,7 @@ fn cfg_gates(
     (test_gates, owner_gates)
 }
 
-fn test_shares_owner_cfg_gates(
+pub(super) fn test_shares_owner_cfg_gates(
     context: &ProbeContext<'_>,
     test: &TestSummary,
     local: &RefusalMemo,

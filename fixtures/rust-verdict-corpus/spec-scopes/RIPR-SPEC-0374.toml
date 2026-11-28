@@ -1,0 +1,3 @@
+id = "RIPR-SPEC-0374"
+unmeasured = true
+reason = "npm native bootstrap packaging; acceptance examples are unnumbered prose; verdict coverage is unmeasured"

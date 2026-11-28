@@ -171,28 +171,54 @@ The manifest shape is:
 
 ```json
 {
-  "version": "0.7.0",
+  "schema_version": "2",
+  "product_version": "0.11.0",
+  "distribution_generation": "<sha256 of product/candidate/target-set>",
+  "source_repository": "EffortlessMetrics/ripr",
+  "target_set": {
+    "targets": ["aarch64-apple-darwin", "..."],
+    "digest": "<sha256 of the configured target set>"
+  },
+  "producer": {"tool": "xtask release-server-manifest", "schema": "server-manifest/2"},
+  "build_identity": {"repository": "...", "candidate_sha": "...", "...": "..."},
   "assets": {
     "x86_64-pc-windows-msvc": {
-      "url": "https://github.com/EffortlessMetrics/ripr/releases/download/v0.7.0/ripr-server-v0.7.0-x86_64-pc-windows-msvc.zip",
-      "sha256": "..."
+      "subject": "ripr-server-v0.11.0-x86_64-pc-windows-msvc.zip",
+      "archive_format": "zip",
+      "archive_size": 123456,
+      "sha256": "...",
+      "executable": {"path": "ripr.exe", "size": 12345, "sha256": "..."},
+      "receipt": {"path": "...", "sha256": "...", "schema_version": "0.2", "target": "x86_64-pc-windows-msvc"}
     }
   }
 }
 ```
 
-The checksum is for the downloaded archive. The extension verifies the archive
-before extraction and admits the result only after the staged binary's
-`ripr --version` probe and completed-receipt validation pass.
+The manifest carries relative subject identity only: no scheme, host,
+repository, tag, port, query, fragment, or absolute URL may enter manifest
+bytes. Retrieval URLs compose later from the accepted installed catalog
+placement plus the relative subject. The checksum is for the downloaded
+archive. The extension verifies the archive before extraction and admits the
+result only after the staged binary's `ripr --version` probe and
+completed-receipt validation pass.
+
+The packaged extension embeds a `distribution.json` descriptor naming the
+server generation and its ordered release placements. Managed resolution
+binds the requested version, the cache identity, and the manifest URLs to
+that descriptor; a present but unreadable descriptor fails closed instead of
+falling back to the legacy version-pinned URL, and an explicit
+`ripr.server.version` bypasses the descriptor as a legacy transport
+override.
 
 ## Non-publishing packaged managed-download rehearsal
 
 The read-only `server-archive-qualification.yml` workflow consumes its own
 Linux x64 archive and schema-4 archive receipt in
 `editors/vscode/test/managedDownload/rehearse.ts` (#9469). After the existing
-manifest producer and archive readback checks, it binds a distinct local HTTPS
-mirror manifest with `release-bind-server-descriptor`, packages and verifies
-one VSIX, and installs those exact VSIX bytes through the VS Code CLI.
+manifest producer and archive readback checks, it binds the exact schema-2
+manifest digest with `release-bind-server-descriptor` and produces the release
+distribution catalog. It packages the catalog with `vscode-package --catalog`,
+verifies the VSIX, and installs those exact bytes through the VS Code CLI.
 
 Three fresh extension-host profiles exercise successful managed download,
 parseable raw-manifest tampering, and archive tampering. The successful case
@@ -202,8 +228,11 @@ negative requires the intended checksum diagnostic, no running fallback server,
 and no completed install receipt. Request counts distinguish manifest refusal
 from archive refusal. Tests cannot use `RIPR_TEST_SERVER_PATH`.
 
-The mirror changes only manifest placement URLs before descriptor binding;
-the original manifest, archive and qualification receipt remain intact. A
+The workflow acquires VS Code before entering a fresh Linux network namespace.
+The runner account serves the original placement-independent manifest and
+archive bytes at a documentation-only HTTPS address on port 443. The namespace
+has only its loopback interface. An empty server-version override selects the installed distribution
+catalog. Archive tampering changes one byte at the same size. A
 throwaway certificate is trusted only by the disposable test-host process via
 `NODE_EXTRA_CA_CERTS`; the CA private key is removed and excluded from uploads.
 Source and compiled descriptors are restored, and user profiles/settings are

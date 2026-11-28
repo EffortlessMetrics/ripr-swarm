@@ -3,9 +3,32 @@
 Status: active operator runbook for the `0.11.0` live-head transaction and
 future releases using the same two-repository history model.
 
+For the current public → swarm → public sequence, start with the
+[staged sync guide](SOURCE_PROMOTION.md#staged-integration). Resolve public
+conflicts and repairs in swarm before qualifying the exact return candidate.
+The direct-J commands below retain their historical controller/pin/receipt
+contracts; see [required reconciliation](SOURCE_PROMOTION.md#existing-contract-reconciliation)
+before executing them for a staged candidate. This documentation changes no
+runtime gate, protected merge policy or publication authority.
+
 This document is the canonical lifecycle from the release boundary through
 reopened swarm development. It sequences existing verifier contracts; it does
 not replace their semantics or make publication implicit.
+
+Before P0, merge the source control repair that consumes preflight v2 / handoff
+acceptance v2, then drain the source-writing queue under #1814. A green producer
+gate or historical v1 receipt does not qualify the selected candidate. Native
+selection (#1609) and complete-bundle acceptance (#2769) must bind that exact
+candidate, manifest, owner roster and retained packet bytes. No acceptance
+record is manufactured by the controller or inferred from CI.
+
+Before entering the 0.11 transaction, consume the
+[RC authority reconciliation](release/0.11.0/rc-authority-reconciliation.md).
+The historical #1818 carrier, fresh #1768–#1773 second sync, #1467 source freeze,
+#1578 package qualification and public RC are separate subjects. An ordinary
+source merge or accepted RC placement syntax establishes none of the later
+states. The dated observation is not an activation packet; re-read the live
+#2379/#1606 rulings and exact public ref/release inventory before proceeding.
 
 ## Canonical `#2379` public → swarm → public order
 
@@ -54,8 +77,10 @@ Every command is marked:
   branch, or receipt file.
 - **[EXTERNAL-PUBLISHING]** — changes a remote ref, policy, tag, release,
   registry, marketplace, or other external state. Public artifact, tag,
-  release, and store operations require explicit channel authorization in
-  source issue [#1470](https://github.com/EffortlessMetrics/ripr/issues/1470);
+  release, and store operations require exact channel authorization: GitHub-only
+  public RC through the source [#1606](https://github.com/EffortlessMetrics/ripr/issues/1606)
+  ruling and [#1634](https://github.com/EffortlessMetrics/ripr/issues/1634), stable
+  channels through [#1470](https://github.com/EffortlessMetrics/ripr/issues/1470);
   control-plane ref and policy operations require owner approval and a receipt.
 
 Examples use POSIX shell syntax. On Windows, translate syntax but preserve
@@ -1015,26 +1040,29 @@ SERVER_MANIFEST_SHA256="$(sha256sum "$PACKET_ROOT/ripr-server-manifest-v${VERSIO
 printf '%s\n' "$SERVER_MANIFEST_SHA256" > "$PACKET_ROOT/server-manifest.sha256"
 ```
 
-`publish-extension.yml` refuses a dispatch whose run commit is not `source_sha`
-or whose `v$VERSION` tag does not peel to it, re-downloads the manifest and
-every archive it names and compares them with `manifest_sha256`, requires
-`package.json` to equal the version, binds that digest into the VSIX through
-`cargo xtask release-bind-server-descriptor`, runs `npm run package` plus
-`cargo xtask vscode-verify-vsix`, and attaches one VSIX to the Release before
-either marketplace publish. Whichever marketplace dispatch runs first attaches
-the VSIX, so it also needs the VSIX-asset item; when VS Code Marketplace is
-withheld, skip its three blocks and the Open VSX dispatch becomes that first
-dispatch. The second channel's dispatch must pass the attached
-VSIX's digest as `vsix_sha256` (recorded below before that dispatch); it
-downloads the attached bytes, checks them against it, and each publish job
-re-checks their SHA-256 against the Release asset. The attach job re-checks the
-VSIX digest and the embedded `manifest_sha256` before its Release write. A
-publish job treats a version already on its channel as published only when the
-channel serves this release's exact bytes; other bytes, an unexpected status or
-a failed fetch fail the job (see
-[RELEASE_MARKETPLACE.md](RELEASE_MARKETPLACE.md#ci-publish)). The workflow cannot prove
-equivalence with the swarm qualification archives, whose commit and URLs
-differ; that remains outside this control (#3807 R8-F2).
+Before the source publisher can use the swarm workflow prepared under #9333,
+the source owner must adopt and verify it at the release commit. In that
+workflow the dispatch commit and the peeled stable tag must equal `source_sha`.
+The manifest's raw digest, product, repository, commit, tree, and target roster
+bind its relative subjects. Each expected archive must occur exactly once on
+the release and its size and SHA-256 must match the manifest.
+
+For a fresh VSIX the workflow binds the receipted digest into the editor
+descriptor and runs `cargo xtask vscode-package --catalog` with the stable
+catalog from `cargo xtask release-distribution-catalog`. It also checks the
+catalog bytes inside the VSIX against the generated catalog. On a second
+channel dispatch, supply the digest of the first attached VSIX as
+`vsix_sha256`. The workflow checks those exact bytes, the catalog, and the
+embedded manifest digest again. Each marketplace job rechecks the attachment
+digest. This stable dispatch accepts no RC placement. An RC catalog rehearsal
+requires an explicitly supplied RC tag and confers no publishing authority.
+The attach job re-checks the VSIX digest and the embedded `manifest_sha256`
+before its Release write. A publish job treats a version already on its channel
+as published only when the channel serves this release's exact bytes; other
+bytes, an unexpected status or a failed fetch fail the job (see
+[RELEASE_MARKETPLACE.md](RELEASE_MARKETPLACE.md#ci-publish)).
+Swarm qualification and source qualification have separate repository and
+commit identities (#3807 R8-F2).
 
 ```bash
 set -euo pipefail
@@ -1158,7 +1186,7 @@ printf '%s\n' "$SOURCE_RELEASE_HEAD" > "$PACKET_ROOT/SOURCE_RELEASE_HEAD"
 ```
 
 The exact-K contract is [`BACK_SYNC_VERIFIER.md`](BACK_SYNC_VERIFIER.md),
-[`RIPR-SPEC-0149`](specs/RIPR-SPEC-0149-back-sync-verifier.md), and
+[`RIPR-SPEC-0149`](specs/RIPR-SPEC-0149-back-sync-verifier.md) (renumbered from `RIPR-SPEC-0152` on the 0.11 J join to resolve the cross-repo number collision; content unchanged), and
 [#3100](https://github.com/EffortlessMetrics/ripr-swarm/issues/3100), merged
 at [`4589b85a`](https://github.com/EffortlessMetrics/ripr-swarm/commit/4589b85a8f63529c4838abe5ee54a78d28d989c7). Use its verifier and receipt;
 this runbook does not redefine its semantics.

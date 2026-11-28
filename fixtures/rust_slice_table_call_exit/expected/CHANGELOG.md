@@ -403,6 +403,7 @@ Updated:
 ## Pending — rust_slice_table_call_exit (32)
 
 Reason:
+RIPR-SPEC-0001 / RIPR-SPEC-0197: retain fixture classifications while refreshing composed producer guidance and assertion-local sink identity; owner-call proximity alone does not establish discriminator credit
 RIPR-SPEC-0224: report no established path for an assertion-free file-proximity row (#14808).
 
 Command:
@@ -410,6 +411,20 @@ Command:
 
 Updated:
 - `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
+
+## Pending — rust_slice_table_call_exit (33)
+
+Reason:
+RIPR-SPEC-0001 For rust_slice_table_call_exit, admit the discriminator only with assertion evidence linked to the changed result.
+
+Command:
+`cargo xtask goldens bless rust_slice_table_call_exit --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
 - `expected/human-full.txt`
 
 ## Pending — rust_slice_table_call_exit (33)

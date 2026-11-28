@@ -99,6 +99,11 @@ placement and policy state:
 The review-comments schema names producer caps `rendering_limits` so they are
 not confused with PR evidence `advisory_limits`.
 
+The `0.1` review-comments envelope accepts the archived `0.1` run receipt and
+the current `0.2` run receipt. The receipt's own `schema_version` selects its
+required fields. The current producer emits `requested_mode`, `analysis_identity`,
+`phase_evidence`, and `primary_failure` with the `0.2` receipt.
+
 Required review-comments fields:
 
 | Field | Contract |

@@ -17,7 +17,7 @@ export async function run(): Promise<void> {
     const config = vscode.workspace.getConfiguration('ripr');
     assert.strictEqual(config.get('server.path'), '');
     assert.strictEqual(config.get('server.autoDownload'), true);
-    assert.strictEqual(config.get('server.version'), input.version);
+    assert.strictEqual(config.get('server.version'), '');
     assert.strictEqual(config.get('server.downloadBaseUrl'), input.mirror);
     assert.ok(extension);
     assert.strictEqual(path.resolve(extension.extensionPath), path.resolve(input.installedExtension));
@@ -51,6 +51,9 @@ export async function run(): Promise<void> {
       assert.strictEqual(receipt.platformTarget, TARGET);
       assert.strictEqual(receipt.manifestSha256, input.manifestSha256);
       assert.strictEqual(receipt.archiveSha256, input.archiveSha256);
+      assert.strictEqual(receipt.executableSha256, input.executableSha256);
+      assert.strictEqual(receipt.manifestSelection, 'preferred_exact');
+      assert.strictEqual(receipt.selectedManifestUrl, `${input.mirror}/ripr-server-manifest-v${input.version}.json`);
       // A real round trip after initialize, using the client's standard LSP
       // connection. An installed file or version string alone cannot pass.
       const workspaceFolder = vscode.workspace.workspaceFolders?.[0];
@@ -67,7 +70,7 @@ export async function run(): Promise<void> {
       assert.strictEqual(controller.server, undefined, 'PATH/bundled/cache fallback must not satisfy a negative');
       assert.ok(!controller.client?.isRunning());
       const detail = JSON.stringify(controller.status);
-      assert.match(detail, input.kind === 'manifest_tampered' ? /admitted manifest SHA-256/ : /checksum mismatch/i);
+      assert.match(detail, input.kind === 'manifest_tampered' ? /digest does not match the descriptor-admitted manifest digest/ : /checksum mismatch/i);
       const storage = path.join(input.userData, 'User', 'globalStorage', 'effortlessmetrics.ripr', 'servers');
       const receipts = fs.existsSync(storage) ? fs.readdirSync(storage, { recursive: true }) : [];
       assert.ok(!receipts.some((entry) => String(entry).endsWith('install-receipt.json')));

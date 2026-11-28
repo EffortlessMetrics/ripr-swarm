@@ -1,0 +1,18 @@
+[[extend]]
+id = "RIPR-SPEC-0106"
+tests = [
+  "crates/ripr/src/analysis/test_grip_evidence/tests/error_variant_owner_identity.rs::error_variant_owner_original_other_owner_is_not_a_pin",
+  "crates/ripr/src/analysis/test_grip_evidence/tests/error_variant_owner_identity.rs::error_variant_owner_discarded_owner_does_not_lend_its_pin",
+  "crates/ripr/src/analysis/test_grip_evidence/tests/error_variant_owner_identity.rs::error_variant_owner_direct_pin_retained",
+  "crates/ripr/src/analysis/test_grip_evidence/tests/error_variant_owner_identity.rs::error_variant_owner_production_entry_receipt_retained",
+  "crates/ripr/src/analysis/test_grip_evidence/tests/error_variant_owner_identity.rs::error_variant_owner_authenticated_test_helper_receipt_retained",
+  "crates/ripr/src/analysis/test_grip_evidence/tests/error_variant_owner_identity.rs::error_variant_owner_discarded_helper_does_not_lend_its_pin",
+  "crates/ripr/src/analysis/test_grip_evidence/tests/error_variant_owner_identity.rs::error_variant_owner_bound_pin_with_expected_payload_helper_retained",
+  "crates/ripr/src/analysis/test_grip_evidence/tests/error_variant_owner_identity.rs::error_variant_owner_expected_side_and_message_calls_supply_no_custody",
+  "crates/ripr/src/analysis/test_grip_evidence/tests/error_variant_owner_identity.rs::error_variant_owner_multiline_test_helper_receipt_retained",
+  "crates/ripr/src/analysis/test_grip_evidence/tests/error_variant_owner_identity.rs::error_variant_owner_discarded_entry_in_argument_supplies_no_custody",
+]
+code = [
+  "crates/ripr/src/analysis/test_grip_evidence.rs::credited_related_tests",
+  "crates/ripr/src/analysis/extract/oracles/patterns.rs::inline_unwrap_err_error_read",
+]

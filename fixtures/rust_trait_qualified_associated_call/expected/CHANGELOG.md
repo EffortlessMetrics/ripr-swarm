@@ -45,3 +45,14 @@ Command:
 
 Updated:
 - `expected/human-full.txt`
+
+## Pending — rust_trait_qualified_associated_call (5)
+
+Reason:
+RIPR-SPEC-0108: merge swarm main 4badffabd0 (#16460 Terms wording and 1.217 composed tree) on Linux 1.95.0
+
+Command:
+`cargo xtask goldens bless rust_trait_qualified_associated_call --reason "..."`
+
+Updated:
+- `expected/human-full.txt`

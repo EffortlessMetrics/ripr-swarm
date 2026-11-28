@@ -328,13 +328,14 @@ pub(in crate::analysis) fn classify_probe_with_candidate_index_and_origins_with_
     });
     // #14936: a deleted early return giving the value the remaining tail
     // gives is not discriminated by a pin on the owner's return.
-    context.deleted_guard_agreement = changed_file.zip(owner_fn).and_then(|(changed, owner)| {
-        super::classify::deleted_guard_agreement(
+    context.deleted_guard_return = changed_file.zip(owner_fn).and_then(|(changed, owner)| {
+        super::classify::deleted_guard_return(
             probe,
             owner,
             changed,
             index,
             candidate_index.module_declarations(),
+            candidate_index.base_may_rebind_trusted_macros(),
         )
     });
     // #15104: the legacy constant-tail edge reads only the new-side owner,
@@ -4014,11 +4015,79 @@ fn far_above_threshold_discounts() {
         if finding.class != ExposureClass::Exposed {
             return Err(format!("parser payload was not discriminated: {finding:?}"));
         }
-        if finding.probe.expression != "watchdog_reason(" {
-            return Err(format!(
-                "emitted probe expression changed: {}",
-                finding.probe.expression
+
+        struct Workspace(PathBuf);
+        impl Drop for Workspace {
+            fn drop(&mut self) {
+                let _ = std::fs::remove_dir_all(&self.0);
+            }
+        }
+        for (body, expected) in [
+            (
+                "let input=();\n    assert_eq!(classify_gate_watchdog(&input), \"run-missing\");",
+                ExposureClass::Exposed,
+            ),
+            (
+                "let input=();\n    let _=classify_gate_watchdog(&input);\n    let unrelated=\"run-missing\";\n    assert_eq!(unrelated, \"run-missing\");",
+                ExposureClass::WeaklyExposed,
+            ),
+        ] {
+            // The call starts at line 190. Real parser facts establish both
+            // the payload shape and standard assertion execution; a discarded
+            // owner result cannot lend identity to the unrelated-value control.
+            let mut source = "\n".repeat(187);
+            source.push_str("pub fn classify_gate_watchdog(_input: &()) -> &'static str {\n    let mut reason=\"not-set\";\n    watchdog_reason(\n        \"run-missing\",\n        &mut reason,\n    );\n    reason\n}\nfn watchdog_reason(kind: &'static str, out: &mut &'static str) { *out=kind; }\n");
+            source.push_str(&format!(
+                "#[test]\nfn reports_run_missing() {{\n    {body}\n}}\n"
             ));
+            let root = Workspace(crate::analysis::facts::drop_in::temp_workspace(
+                "parser-payload-observer",
+                &[
+                    (
+                        "Cargo.toml",
+                        "[package]\nname='payload_evidence'\nversion='0.0.0'\nedition='2024'\n",
+                    ),
+                    ("src/lib.rs", &source),
+                ],
+            )?);
+            let path = PathBuf::from("src/lib.rs");
+            let facts = crate::analysis::syntax::ra::summarize_file_with_parser(&path, &source)?;
+            let mut index = RustIndex::from_owned(crate::analysis::facts::OwnedRustIndex {
+                functions: facts.functions.clone(),
+                tests: facts.tests.clone(),
+                files: BTreeMap::from([(path, facts)]),
+                ..Default::default()
+            });
+            index.member_crates = crate::analysis::facts::member_crates::MemberCrates::new(&root.0);
+            crate::analysis::facts::compose_fixture_source_roles(&mut index, &root.0);
+            let owner = index
+                .functions()
+                .iter()
+                .find(|owner| owner.name == "classify_gate_watchdog")
+                .ok_or("missing parsed owner")?;
+            let probe = Probe {
+                before_condition: None,
+                id: ProbeId("probe:watchdog-reason".to_string()),
+                location: SourceLocation::new(PathBuf::from("/repo/ub-review/src/lib.rs"), 190, 1),
+                owner: Some(owner.id.clone()),
+                family: ProbeFamily::CallDeletion,
+                delta: DeltaKind::Effect,
+                before: None,
+                after: Some("watchdog_reason(".to_string()),
+                expression: "watchdog_reason(".to_string(),
+                expected_sinks: vec![],
+                required_oracles: vec![],
+            };
+            let finding = classify_probe(&probe, &index, true, None);
+            if finding.class != expected {
+                return Err(format!("parser payload was not discriminated: {finding:?}"));
+            }
+            if finding.probe.expression != "watchdog_reason(" {
+                return Err(format!(
+                    "emitted probe expression changed: {}",
+                    finding.probe.expression
+                ));
+            }
         }
         Ok(())
     }

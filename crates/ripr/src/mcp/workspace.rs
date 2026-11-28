@@ -2894,7 +2894,7 @@ fn check_failure(
         {
             format!(
                 "fetch the missing history with `git -C {} fetch --unshallow` (in GitHub Actions, set `fetch-depth: 0` on actions/checkout), then retry ripr_refresh with {}; retrying before the fetch fails the same way",
-                crate::agent::loop_commands::shell_arg(&root.display().to_string()),
+                crate::agent::loop_commands::shell_arg(&crate::output::path::human_path(root)),
                 retry(base)
             )
         }

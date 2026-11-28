@@ -847,3 +847,14 @@ Command:
 
 Updated:
 - `expected/human-full.txt`
+
+## Pending — error_variant_boxed_wrapper_downcast_witness (63)
+
+Reason:
+RIPR-SPEC-0108: merge swarm main 4badffabd0 (#16460 Terms wording and 1.217 composed tree) on Linux 1.95.0
+
+Command:
+`cargo xtask goldens bless error_variant_boxed_wrapper_downcast_witness --reason "..."`
+
+Updated:
+- `expected/human-full.txt`

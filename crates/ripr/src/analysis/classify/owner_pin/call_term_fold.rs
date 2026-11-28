@@ -219,6 +219,29 @@ fn integer_value(text: &str) -> Option<i128> {
     Some(if negative { -value } else { value })
 }
 
+/// A decimal literal that Rust can use as this exact primitive integer:
+/// an explicit suffix must match and the value must be in range. Keep
+/// pointer-width integers outside this target-independent receipt.
+pub(super) fn integer_literal_fits_type(text: &str, ty: &str) -> bool {
+    if matches!(ty, "usize" | "isize")
+        || (ty.starts_with('u') && text.trim_start().starts_with('-'))
+    {
+        return false;
+    }
+    let Some(range) = int_range(ty) else {
+        return false;
+    };
+    let Some(value) = integer_value(text) else {
+        return false;
+    };
+    let unsigned = text.trim().strip_prefix('-').unwrap_or(text.trim());
+    let end = unsigned
+        .find(|ch: char| !(ch.is_ascii_digit() || ch == '_'))
+        .unwrap_or(unsigned.len());
+    let suffix = &unsigned[end..];
+    (suffix.is_empty() || suffix == ty) && in_range(value, range)
+}
+
 /// The built-in integer type a function declares as its return type.
 fn return_type(function_text: &str) -> Option<String> {
     let parse = parse_clean_source_file(function_text)?;
@@ -343,4 +366,26 @@ fn evaluate(expr: &ast::Expr, parameter: &str, value: i128, range: (i128, i128))
         _ => return None,
     };
     in_range(result, range).then_some(result)
+}
+
+#[cfg(test)]
+mod literal_type_tests {
+    use super::integer_literal_fits_type;
+
+    #[test]
+    fn literal_type_requires_valid_negation_suffix_and_range() {
+        for literal in ["-0u32", "-0", "-0_0u32"] {
+            assert!(!integer_literal_fits_type(literal, "u32"), "{literal}");
+        }
+        for literal in ["0", "0u32", "212u32", "4294967295u32"] {
+            assert!(integer_literal_fits_type(literal, "u32"), "{literal}");
+        }
+        for literal in ["0", "-0", "-0i32", "-2147483648i32"] {
+            assert!(integer_literal_fits_type(literal, "i32"), "{literal}");
+        }
+        assert!(!integer_literal_fits_type("212i32", "u32"));
+        assert!(!integer_literal_fits_type("212u32", "i32"));
+        assert!(!integer_literal_fits_type("4294967296u32", "u32"));
+        assert!(!integer_literal_fits_type("-2147483649i32", "i32"));
+    }
 }

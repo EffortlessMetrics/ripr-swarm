@@ -4,6 +4,7 @@
 # one (#1443 / #1624), that tree must stay packaged, not ignored.
 src/**
 test/**
+scripts/**
 test-fixtures/**
 tsconfig.json
 tsconfig.setup.json

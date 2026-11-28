@@ -440,7 +440,7 @@ enum GuardCmp {
 /// else (boolean combinators, method calls beyond `len()`, ordering
 /// comparisons on strings or chars, mixed types) refuses the whole
 /// match rather than guessing.
-fn evaluate_guard(guard: &str, inputs: &ExactInputs) -> Option<bool> {
+pub(super) fn evaluate_guard(guard: &str, inputs: &ExactInputs) -> Option<bool> {
     let guard = strip_outer_parens(guard);
     let (operator, lhs, rhs) = split_comparison(guard)?;
     let lhs = guard_operand(lhs, inputs)?;

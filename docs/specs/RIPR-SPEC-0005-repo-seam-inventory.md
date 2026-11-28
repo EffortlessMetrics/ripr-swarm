@@ -27,6 +27,21 @@ counts would be accidental.
 
 ## Behavior
 
+Repository inventory binds a shape to the innermost function whose validated
+half-open byte span contains it. A production function and a test sharing a
+physical line keep distinct ownership in either source order. Evidence-role
+functions and local helpers enclosed by evidence functions do not seed
+production seams. Unavailable or foreign source spans do not justify choosing
+between ambiguous same-line definitions. Full and bounded inventory use the
+same owner for construction and field admission; existing classification
+contracts remain separate from this inventory attribution.
+Grip evidence and new-test admission bind back to that same definition through
+its retained source anchor and normalized owner ID. Sharing a physical line
+with another function cannot change the production owner's test relation or
+classification. Geometry-free synthetic profiles retain a unique production
+line owner only when no measured function owns their anchor; this fallback
+cannot override another measured definition or choose among line siblings.
+
 Actual Rust match arms carry parser-owned geometry from the pattern start
 through the complete arm body and optional trailing comma (#5905). The
 `=>` token remains the identity and internal display anchor; the `match`
@@ -269,6 +284,13 @@ value), weak discriminate evidence or a missing-discriminator hint does not
 produce `weakly_gripped`; the seam classifies `activation_unknown` and keeps
 its missing-discriminator guidance. A seam with established activation and
 the same evidence stays `weakly_gripped`.
+
+A predicate boundary may be strongly gripped only when an admitted oracle is
+paired with a boundary call in the same test. An equality input in one test
+cannot borrow an exact assertion on an off-boundary call in another test, or
+on a different call in the same test. Full and compact grip evidence apply the
+same pairing rule; an unestablished pairing weakens discrimination. This is a
+static evidence rule, not a claim that a test was executed.
 
 Repository activation and equality pairing read a whole decimal integer
 argument with a primitive integer suffix (`100i32`, `-100i64`, `1_00u32`)
@@ -542,6 +564,22 @@ already-gripped and must not grow a missing fact. A name-related or
 proximity-related test with unknown owner activation must not receive a missing
 fact that would reclassify the seam as weakly gripped. Helper-transfer and
 unresolved callees remain named limitations, not ready repair routes.
+
+A transformed-field receipt must not turn source linkage into a strong field
+value discriminator when the transform can hide a different field value. In
+particular, `q.total + q.total / 10` on `u32` maps both `30` and `3904515754` to
+`33` when overflow checks are off. The latter sum is `4294967329` (`2^32 + 33`);
+with overflow checks on it instead panics. The static route does not establish
+which overflow profile the user's tests execute, and a small literal input or
+expected value does not bound the output of a mutated field initializer. Keep
+this wrapper uncredited. When the exact owner, field, wrapper arithmetic and
+same-test literal assertion are verified, retain that transformation as a named
+`rust_value_propagation_unresolved` limitation instead of prescribing the
+assertion already present. An independent established discriminator still
+keeps its credit. The corpus's recorded kills of two other mutants stay
+valid runtime evidence; they do not establish this stronger, profile-independent
+field discriminator or authorize transparent-forwarder identity. No corpus
+truth, case definition, or expected verdict is changed by this refusal.
 
 Diff-mode classification applies the same two identity rules, on test text
 with comments and strings masked. A field read on a receiver does not observe

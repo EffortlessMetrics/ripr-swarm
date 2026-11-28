@@ -174,14 +174,14 @@ pub(crate) fn instrument_controls(work_root: &Path, cases: &[Case]) -> Vec<Contr
         control.discriminated = row.result == expected && !row.result.is_pass();
         control.detail = row.detail.clone();
         if id == "instrument-hang" {
-            let reaped = child_gone(&hang_pid);
-            control.discriminated = control.discriminated && reaped;
+            let stopped = child_gone(&hang_pid);
+            control.discriminated = control.discriminated && stopped;
             control.detail = format!(
                 "deadline kill left the stub's child {}",
-                if reaped {
+                if stopped {
                     "terminated"
                 } else {
-                    "running (orphan)"
+                    "live or unverified"
                 }
             );
         }
@@ -251,12 +251,24 @@ fn child_gone(pid_file: &Path) -> bool {
     let Some(ps) = ps.iter().find(|path| path.is_file()) else {
         return false;
     };
+    ps_confirms_child_stopped(ps, pid)
+}
+
+#[cfg(unix)]
+pub(super) fn ps_confirms_child_stopped(ps: &Path, pid: u32) -> bool {
     let args = ["-o", "stat=", "-p", &pid.to_string()].map(str::to_string);
     let Ok(out) = crate::run::capture_bytes_in_dir_with_timeout(
         ps,
         &args,
         Path::new("/"),
-        &[("PATH", exec::CHILD_PATH)],
+        // procps can warn on stderr solely because the runner's terminal
+        // geometry is invalid, even for an absent pid. Fix only this probe's
+        // display environment so genuine diagnostics still fail closed.
+        &[
+            ("PATH", exec::CHILD_PATH),
+            ("COLUMNS", "80"),
+            ("LINES", "24"),
+        ],
         &[],
         Duration::from_secs(10),
         "termination child liveness",
@@ -264,10 +276,13 @@ fn child_gone(pid_file: &Path) -> bool {
         return false;
     };
     // `ps -p` exits 1 with no output when the pid does not exist.
+    if !out.stderr.is_empty() {
+        return false;
+    }
     let state = String::from_utf8_lossy(&out.stdout);
     match out.status.and_then(|status| status.code()) {
         Some(0) => state.trim().starts_with('Z'),
-        Some(1) => state.trim().is_empty() && out.stderr.is_empty(),
+        Some(1) => state.trim().is_empty(),
         _ => false,
     }
 }

@@ -223,7 +223,8 @@
     "fixtures/evidence-promotion-honesty-corpus/reports/rust-repo-exposure-unasserted-predicate-boundary.json",
     "fixtures/evidence-promotion-honesty-corpus/reports/rust-repo-exposure-rebound-assert-eq-match-arms.json",
     "fixtures/evidence-promotion-honesty-corpus/reports/rust-repo-exposure-late-assert-eq-definition-match-arms.json",
-    "fixtures/evidence-promotion-honesty-corpus/reports/rust-repo-exposure-rebound-read-macro-unselected-arm.json"
+    "fixtures/evidence-promotion-honesty-corpus/reports/rust-repo-exposure-rebound-read-macro-unselected-arm.json",
+    "fixtures/evidence-promotion-honesty-corpus/reports/rust-repo-exposure-bool-clone-trait-interception.json"
   ],
   "cases": [
     {
@@ -1048,11 +1049,24 @@
       "source_fixture": "fixtures/python_membership_removed_member",
       "vector": "literal_collection_member_removed_without_a_row_on_it_does_not_promote",
       "assertions": [
-        {"type": "must_not_report_clean"},
-        {"type": "expected_finding_count", "count": 1},
-        {"type": "must_not_promote"},
-        {"type": "expected_class", "class": "weakly_exposed"},
-        {"type": "expected_finding_owner", "owner": "python:truthy/convert.py::to_bool"}
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "expected_finding_count",
+          "count": 1
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "expected_class",
+          "class": "weakly_exposed"
+        },
+        {
+          "type": "expected_finding_owner",
+          "owner": "python:truthy/convert.py::to_bool"
+        }
       ]
     },
     {
@@ -1063,11 +1077,25 @@
       "vector": "count_does_not_pin_changed_argument",
       "probe_family": "side_effect",
       "assertions": [
-        {"type": "must_not_report_clean"},
-        {"type": "expected_finding_count", "count": 1},
-        {"type": "must_not_promote"},
-        {"type": "expected_class", "class": "weakly_exposed"},
-        {"type": "expected_oracle", "kind": "exact_value", "strength": "strong"}
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "expected_finding_count",
+          "count": 1
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "expected_class",
+          "class": "weakly_exposed"
+        },
+        {
+          "type": "expected_oracle",
+          "kind": "exact_value",
+          "strength": "strong"
+        }
       ]
     },
     {
@@ -1078,10 +1106,20 @@
       "vector": "exact_assertion_on_another_arm_does_not_pin_changed_arm",
       "probe_family": "return_value",
       "assertions": [
-        {"type": "must_not_report_clean"},
-        {"type": "expected_finding_count", "count": 1},
-        {"type": "must_not_promote"},
-        {"type": "expected_class", "class": "infection_unknown"}
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "expected_finding_count",
+          "count": 1
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "expected_class",
+          "class": "infection_unknown"
+        }
       ]
     },
     {
@@ -1092,10 +1130,20 @@
       "vector": "filled_argument_never_applies_changed_default",
       "probe_family": "field_construction",
       "assertions": [
-        {"type": "must_not_report_clean"},
-        {"type": "expected_finding_count", "count": 1},
-        {"type": "must_not_promote"},
-        {"type": "expected_class", "class": "reachable_unrevealed"}
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "expected_finding_count",
+          "count": 1
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "expected_class",
+          "class": "reachable_unrevealed"
+        }
       ]
     },
     {
@@ -12828,7 +12876,7 @@
         },
         {
           "type": "expected_class",
-          "class": "exposed"
+          "class": "weakly_exposed"
         },
         {
           "type": "expected_related_test",
@@ -22261,11 +22309,17 @@
           "count": 1
         },
         {
-          "type": "must_promote"
+          "type": "expected_class",
+          "class": "weakly_exposed"
         },
         {
-          "type": "expected_class",
-          "class": "exposed"
+          "type": "expected_related_test",
+          "name": "boiling_converts",
+          "file": "src/lib.rs",
+          "line": 17,
+          "kind": "exact_value",
+          "strength": "strong",
+          "relation_reason": "direct_owner_call"
         }
       ]
     },
@@ -22541,10 +22595,20 @@
       "vector": "unchanged_bench_test_in_package_rejected_by_enclosing_workspace",
       "probe_family": "return_value",
       "assertions": [
-        { "type": "must_not_report_clean" },
-        { "type": "expected_finding_count", "count": 1 },
-        { "type": "must_not_promote" },
-        { "type": "expected_class", "class": "no_static_path" }
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "expected_finding_count",
+          "count": 1
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "expected_class",
+          "class": "no_static_path"
+        }
       ]
     },
     {
@@ -23534,6 +23598,156 @@
         {
           "type": "expected_class",
           "class": "reachable_unrevealed"
+        }
+      ]
+    },
+    {
+      "id": "rust_guarded_error_return_limitation_error_path",
+      "language": "rust",
+      "tier": "pure",
+      "source_fixture": "fixtures/error_return_unresolved_guard",
+      "vector": "constructor_to_literal_change_keeps_guarded_error_producer_unresolved",
+      "probe_family": "error_path",
+      "assertions": [
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "must_emit_limitation",
+          "expected_limit_kind": "rust_value_propagation_unresolved"
+        }
+      ]
+    },
+    {
+      "id": "rust_guarded_error_return_limitation_return_value",
+      "language": "rust",
+      "tier": "pure",
+      "source_fixture": "fixtures/error_return_unresolved_guard",
+      "vector": "constructor_to_literal_change_keeps_guarded_error_producer_unresolved",
+      "probe_family": "return_value",
+      "assertions": [
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "must_emit_limitation",
+          "expected_limit_kind": "rust_value_propagation_unresolved"
+        }
+      ]
+    },
+    {
+      "id": "rust_guarded_error_return_limitation_field_construction",
+      "language": "rust",
+      "tier": "pure",
+      "source_fixture": "fixtures/error_return_unresolved_guard",
+      "vector": "constructor_to_literal_change_keeps_guarded_error_producer_unresolved",
+      "probe_family": "field_construction",
+      "assertions": [
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "must_emit_limitation",
+          "expected_limit_kind": "rust_value_propagation_unresolved"
+        }
+      ]
+    },
+    {
+      "id": "rust_effect_receiver_intercepted_first_side_effect",
+      "language": "rust",
+      "tier": "pure",
+      "source_fixture": "fixtures/rust_effect_receiver_intercepted_first",
+      "vector": "intercepted_first_returns_a_fixed_value_instead_of_the_changed_payload",
+      "probe_family": "side_effect",
+      "assertions": [
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "expected_finding_count",
+          "count": 1
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "expected_class",
+          "class": "weakly_exposed"
+        }
+      ]
+    },
+    {
+      "id": "rust_effect_receiver_intercepted_first_call_deletion",
+      "language": "rust",
+      "tier": "pure",
+      "source_fixture": "fixtures/rust_effect_receiver_intercepted_first",
+      "vector": "intercepted_first_returns_a_fixed_value_instead_of_the_changed_payload",
+      "probe_family": "call_deletion",
+      "assertions": [
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "expected_finding_count",
+          "count": 1
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "expected_class",
+          "class": "weakly_exposed"
+        }
+      ]
+    },
+    {
+      "id": "rust_binding_status_wrong_owner_observer",
+      "language": "rust",
+      "tier": "pure",
+      "source_fixture": "fixtures/rust_binding_status_wrong_owner_observer",
+      "vector": "nearby_value_oracle_does_not_observe_binding_decision",
+      "assertions": [
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "maximum_class",
+          "class": "weakly_exposed"
+        }
+      ]
+    },
+    {
+      "id": "rust_catalog_description_structural_oracle",
+      "language": "rust",
+      "tier": "pure",
+      "source_fixture": "fixtures/rust_catalog_description_structural_oracle",
+      "vector": "structural_oracle_with_coincidental_token_overlap_must_not_promote",
+      "assertions": [
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "expected_class",
+          "class": "weakly_exposed"
+        },
+        {
+          "type": "maximum_class",
+          "class": "weakly_exposed"
         }
       ]
     }

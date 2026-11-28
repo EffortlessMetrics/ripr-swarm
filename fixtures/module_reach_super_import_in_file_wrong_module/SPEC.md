@@ -19,7 +19,8 @@ The relative import, resolved from its inline module, names
 may still retain a weak transitive relation, but that relation supplies no
 trusted owner input. The predicate remains `infection_unknown` rather than
 inventing a missing boundary discriminator (RIPR-SPEC-0197, #10046). The
-return-value finding retains its weak transitive-reach limitation.
+return-value finding also reports `infection_unknown`. Its weak
+transitive reach supplies no argument for the changed owner.
 
 ## Must Not
 

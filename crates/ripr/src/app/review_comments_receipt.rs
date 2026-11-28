@@ -8,18 +8,21 @@ use crate::output::review_comments_receipt::{
     CANONICAL_ANALYSIS_NOT_RESUMABLE_NON_CLAIM, REVIEW_COMMENTS_RECEIPT_SCHEMA_VERSION,
     REVIEW_GUIDANCE_INDEX_RECOMPUTE_LIMITATION_CATEGORY, REVIEW_GUIDANCE_INDEX_RECOMPUTE_NON_CLAIM,
     REVIEW_GUIDANCE_INDEX_RECOMPUTE_REPAIR_ROUTE, REVIEW_GUIDANCE_OVERSIZED_LIMITATION_CATEGORY,
-    ReviewCommentsReceiptLimitation, ReviewCommentsRunReceipt,
+    ReviewCommentsPhaseEvidence, ReviewCommentsReceiptLimitation, ReviewCommentsRunReceipt,
 };
+use crate::review_input::canonical_root_identity;
 use sha2::{Digest, Sha256};
 use std::fs;
 use std::io::Write as _;
 use std::ops::{Deref, DerefMut};
 use std::path::{Path, PathBuf};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 /// Mutable review-comments run receipt with lifecycle orchestration.
 pub(crate) struct ReviewCommentsReceiptRun {
     receipt: ReviewCommentsRunReceipt,
+    /// Wall-clock start of the active phase; never serialized.
+    phase_started: Option<Instant>,
     /// Shell-ready absolute `--root` for the timeout recovery command. The
     /// receipt's `root_identity` is a normalized identity, not a replayable
     /// argument, so the analyzed directory is kept separately.
@@ -44,6 +47,7 @@ impl ReviewCommentsReceiptRun {
         root: &Path,
         base: &str,
         head: &str,
+        mode: &crate::app::Mode,
         timeout_ms: u64,
         expected_artifacts: &[String],
         revision_budget: Option<Duration>,
@@ -83,6 +87,10 @@ impl ReviewCommentsReceiptRun {
                 root_identity,
                 base_sha,
                 head_sha,
+                requested_mode: mode.as_str().to_string(),
+                analysis_identity: None,
+                phase_evidence: Vec::new(),
+                primary_failure: None,
                 configured_timeout_ms: timeout_ms,
                 last_completed_phase: None,
                 active_phase: Some("input_validation".to_string()),
@@ -98,14 +106,17 @@ impl ReviewCommentsReceiptRun {
                 ],
                 atomic_write_status: "not_written",
             },
+            phase_started: Some(Instant::now()),
         }
     }
 
     pub(crate) fn phase(&mut self, completed: &str, active: &str) {
+        self.finish_phase(completed, false, None, "complete", None);
         self.receipt.last_completed_phase = Some(completed.to_string());
         self.receipt.active_phase = Some(active.to_string());
         self.receipt.active_step = None;
         self.receipt.canonical_analysis_evaluated_seams = None;
+        self.phase_started = Some(Instant::now());
     }
 
     /// Records how many seams `canonical_analysis` had classified when the
@@ -120,6 +131,9 @@ impl ReviewCommentsReceiptRun {
     }
 
     pub(crate) fn complete(&mut self, artifacts: &[String]) {
+        if let Some(active) = self.receipt.active_phase.clone() {
+            self.finish_phase(&active, false, Some(artifacts.len()), "complete", None);
+        }
         self.receipt.status = "complete";
         self.receipt.last_completed_phase = Some("artifact_io".to_string());
         self.receipt.active_phase = None;
@@ -127,6 +141,31 @@ impl ReviewCommentsReceiptRun {
         self.receipt.canonical_analysis_evaluated_seams = None;
         self.receipt.completed_artifacts = artifacts.to_vec();
         self.receipt.missing_artifacts.clear();
+        self.phase_started = None;
+    }
+
+    fn finish_phase(
+        &mut self,
+        phase: &str,
+        reused: bool,
+        subject_count: Option<usize>,
+        stop_reason: &str,
+        input_identity_digest: Option<String>,
+    ) {
+        let duration_ms = self
+            .phase_started
+            .map(|started| started.elapsed().as_millis() as u64)
+            .unwrap_or_default();
+        self.receipt
+            .phase_evidence
+            .push(ReviewCommentsPhaseEvidence {
+                phase: phase.to_string(),
+                duration_ms,
+                reused,
+                subject_count,
+                stop_reason: stop_reason.to_string(),
+                input_identity_digest,
+            });
     }
 
     /// The repair route a timeout in `active_phase` records, shared by the
@@ -303,18 +342,6 @@ impl ReviewCommentsReceiptRun {
     }
 }
 
-fn canonical_root_identity(root: &Path) -> String {
-    let normalized = root
-        .canonicalize()
-        .unwrap_or_else(|_| root.to_path_buf())
-        .to_string_lossy()
-        .replace('\\', "/");
-    normalized
-        .strip_prefix("//?/")
-        .unwrap_or(&normalized)
-        .to_string()
-}
-
 fn reusable_cache_identity(root: &str, base: &str, head: &str) -> String {
     let mut hasher = Sha256::new();
     hasher.update(b"ripr-review-comments\0");
@@ -396,6 +423,7 @@ mod tests {
             Path::new("."),
             "HEAD",
             "HEAD",
+            &crate::app::Mode::Fast,
             30_000,
             &artifacts,
             Some(Duration::ZERO),
@@ -404,6 +432,7 @@ mod tests {
             Path::new("."),
             "not-a-git-sha",
             "also-not-a-sha",
+            &crate::app::Mode::Fast,
             30_000,
             &artifacts,
             Some(Duration::ZERO),
@@ -419,6 +448,7 @@ mod tests {
             Path::new("."),
             "origin/main",
             "HEAD",
+            &crate::app::Mode::Fast,
             30_000,
             &["comments.json".to_string()],
             None,
@@ -590,6 +620,7 @@ mod tests {
             &dir,
             "HEAD",
             "HEAD",
+            &crate::app::Mode::Fast,
             30_000,
             &artifacts,
             Some(Duration::from_secs(30)),
@@ -604,6 +635,7 @@ mod tests {
             &dir,
             "HEAD",
             "HEAD",
+            &crate::app::Mode::Fast,
             30_000,
             &artifacts,
             Some(Duration::ZERO),
@@ -614,7 +646,15 @@ mod tests {
                 skipped.base_sha, skipped.head_sha
             ));
         }
-        let ceiling = ReviewCommentsReceiptRun::new(&dir, "HEAD", "HEAD", 30_000, &artifacts, None);
+        let ceiling = ReviewCommentsReceiptRun::new(
+            &dir,
+            "HEAD",
+            "HEAD",
+            &crate::app::Mode::Fast,
+            30_000,
+            &artifacts,
+            None,
+        );
         if ceiling.base_sha != resolved.base_sha {
             return Err(format!(
                 "the no-budget fixed-ceiling path must still resolve, got {:?}",

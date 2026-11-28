@@ -196,7 +196,9 @@ mod tests {
         validate_identity(&source, &aligned)?;
         // Keep the basename so the real fixture-output route selects its guard.
         static SEQUENCE: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
-        let root = std::env::temp_dir().join(format!(
+        // The fixture workspace admits only normal relative paths, so stage the
+        // scratch fixture under the repository-relative `target/` tree.
+        let root = std::path::PathBuf::from("target/ripr/tests").join(format!(
             "8954-shifted-tail-return-{}-{}",
             std::process::id(),
             SEQUENCE.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
@@ -218,6 +220,7 @@ mod tests {
             assert!(error.contains("source/diff identity"), "{error}");
             assert!(error.contains("refusing fixture analysis"), "{error}");
         }
+        std::fs::remove_dir_all(&root).map_err(|e| e.to_string())?;
         Ok(())
     }
 }

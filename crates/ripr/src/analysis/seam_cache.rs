@@ -698,11 +698,19 @@ pub(crate) struct CachedSeamLimitInfo {
 /// statement through the same owner-pin decision as `ripr check` (#12394).
 /// `1.158`: a bounded `.map(owner)` chain is credited at the first input where
 /// the change is visible (#12841).
+/// `1.159`: repo boundary evidence requires the boundary input and admitted
+/// discriminating oracle in the same test (#7490).
+/// `1.159`: proximity-only and unchanged-return-token oracles cannot discriminate (#12010).
+/// `1.160`: compose #7490 boundary pairing with #12010 assertion-local sink identity
+/// and return-delta confirmation; neither independent `1.159` is reusable.
+/// `1.161`: external imported observers cannot inherit collection sink identity.
 /// `1.159`: a cloned call-making callback cannot borrow an unrelated plain
 /// helper assertion (#13219). Raw file facts are unchanged; helper credit is
 /// recomputed after loading them.
 /// `1.160`: same-named receiver and free calls no longer lend one another an
 /// assertion oracle; real opposite-kind wrappers retain reach uncertainty (#12234).
+/// `1.162`: compose successor 1.161 with main callback/call-kind semantics.
+/// `1.163`: collection observers require importer-bound crate identities.
 /// `1.161`: owner-bound field snapshots carry the shared framework limit
 /// through full and compact evidence before recommendation admission (#13278).
 /// Panic markers also use the producer-owned discrimination prefix (#13291).
@@ -835,10 +843,15 @@ pub(crate) struct CachedSeamLimitInfo {
 /// `1.217`: a rootless grouped drop-in import is verified by its own
 /// root, and body-scoped macro names join the scan only when invoked bare (#16388).
 /// `1.218`: an owner's receiver kind is read from its parameter list after
-/// the generics, including typed `self: &Self` receivers (#16352).
+/// the generics, including typed `self: &Self` receivers (#16352); the
+/// history-sync branch independently used `1.218` for composing its import
+/// (1.205) with protected swarm main (1.217) and public 352f9d796f (#16016).
 /// `1.219`: the transparent rebinding scan reads every transparent
 /// name as its standard macro unless an indexed file binds it (#16462).
-pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.219";
+/// `1.222`: join both `1.218` meanings — the history-sync import composition
+/// and receiver-kind reading after generics — with swarm main through
+/// eb93827b32 (#16016); 1.220–1.221 are claimed by concurrent lanes.
+pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.222";
 /// `0.2` → `0.3`: same semantic transition as the outer cache (#3273 /
 /// #3286) — sharded entries derive from the same facts and cannot bypass
 /// the outer generation bump.
@@ -1038,8 +1051,14 @@ pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.219";
 /// `0.158`: same different-arm error-pin rule as full `1.156` (#12733, #12734).
 /// `0.159`: same audit claims-payload crediting as full `1.157` (#12394).
 /// `0.160`: same all-input `.map(owner)` visibility rule as full `1.158` (#12841).
+/// `0.161`: same boundary-oracle pairing as full `1.159` (#7490).
+/// `0.161`: same sink-identity and return-delta refusal as full `1.159` (#12010).
+/// `0.162`: same combined #7490/#12010 semantics as full `1.160`.
+/// `0.163`: same external-observer refusal as full `1.161`.
 /// `0.161`: same cloned-callback withholding as full `1.159` (#13219).
 /// `0.162`: same assertion call-kind refusal as full `1.160` (#12234).
+/// `0.164`: composed successor and main semantics, matching full 1.162.
+/// `0.165`: same importer-bound observer semantics as full 1.163.
 /// `0.163`: same field-snapshot and panic marker authority as full `1.161`.
 /// `0.164`: same computed-local boundary rule as full `1.162` (#12981).
 /// `0.165`: same sibling-variant error-pin grade as full `1.163` (#12836).
@@ -1092,9 +1111,12 @@ pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.219";
 /// `0.217`: same json item-macro refusal as full `1.215` (#16388).
 /// `0.218`: same provider-failure limitation as full `1.216` (#10864).
 /// `0.219`: same rootless-group and body-scope reading as full `1.217` (#16388).
-/// `0.220`: same receiver kind reading after generics as full `1.218` (#16352).
+/// `0.220`: same receiver kind reading after generics as full `1.218`
+/// (#16352); the history-sync branch independently used `0.220` to match
+/// its composed-import full `1.218` (#16016).
 /// `0.221`: same transparent-context scan as full `1.219` (#16462).
-const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.221";
+/// `0.224`: match joined full `1.222` (#16016).
+const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.224";
 
 /// Compact-classified seam cache schema. This cache stores the same
 /// `ClassifiedSeam` envelope shape as the full repo exposure cache, but
@@ -1296,8 +1318,14 @@ const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.221";
 /// `0.158`: same different-arm error-pin rule as full `1.156` (#12733, #12734).
 /// `0.159`: same audit claims-payload crediting as full `1.157` (#12394).
 /// `0.160`: same all-input `.map(owner)` visibility rule as full `1.158` (#12841).
+/// `0.161`: same boundary-oracle pairing as full `1.159` (#7490).
+/// `0.161`: same sink-identity and return-delta refusal as full `1.159` (#12010).
+/// `0.162`: same combined #7490/#12010 semantics as full `1.160`.
+/// `0.163`: same external-observer refusal as full `1.161`.
 /// `0.161`: same cloned-callback withholding as full `1.159` (#13219).
 /// `0.162`: same assertion call-kind refusal as full `1.160` (#12234).
+/// `0.164`: composed successor and main semantics, matching full 1.162.
+/// `0.165`: same importer-bound observer semantics as full 1.163.
 /// `0.163`: same field-snapshot and panic marker authority as full `1.161`.
 /// `0.164`: same computed-local boundary rule as full `1.162` (#12981).
 /// `0.165`: same sibling-variant error-pin grade as full `1.163` (#12836).
@@ -1350,9 +1378,12 @@ const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.221";
 /// `0.217`: same json item-macro refusal as full `1.215` (#16388).
 /// `0.218`: same provider-failure limitation as full `1.216` (#10864).
 /// `0.219`: same rootless-group and body-scope reading as full `1.217` (#16388).
-/// `0.220`: same receiver kind reading after generics as full `1.218` (#16352).
+/// `0.220`: same receiver kind reading after generics as full `1.218`
+/// (#16352); the history-sync branch independently used `0.220` to match
+/// its composed-import full `1.218` (#16016).
 /// `0.221`: same transparent-context scan as full `1.219` (#16462).
-pub(crate) const COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.221";
+/// `0.224`: match joined full `1.222` (#16016).
+pub(crate) const COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.224";
 
 /// Compact class-count cache used by repo badge rendering. It keys off
 /// the same workspace state as the full fact cache, but stores only
@@ -1635,6 +1666,8 @@ mod scoped_inventory;
 mod semantic_identity_tests;
 mod store;
 pub(crate) use export::export_current;
+#[cfg(test)]
+pub(crate) use export::verify_current_export_for_test;
 #[cfg(test)]
 pub(crate) use scoped_inventory::SCOPED_INVENTORY_CACHE_SCHEMA_VERSION;
 pub(crate) use scoped_inventory::{
@@ -3036,6 +3069,26 @@ impl RepoSeamFactCache {
             None,
             lexical_fallback_files,
             store_limit,
+        )
+    }
+
+    /// Publish complete compact evidence while retaining one producer window at a time.
+    pub(crate) fn store_compact_classified_windows(
+        &self,
+        key: &RepoSeamCacheKey,
+        total_seams: usize,
+        lexical_fallback_files: &[PathBuf],
+        window_limit: usize,
+        producer: impl FnMut(usize) -> Result<Option<Vec<ClassifiedSeam>>, String>,
+    ) -> Result<CacheStoreStatus, String> {
+        store::publish_compact_windows(
+            self,
+            key,
+            total_seams,
+            lexical_fallback_files,
+            window_limit,
+            classified_seam_cache_encoded_shard_ceiling_bytes()?,
+            producer,
         )
     }
 
@@ -5972,8 +6025,12 @@ mod tests {
         // 1.155 -> 1.156: different-arm error pin is one fact in every view (#12733, #12734).
         // 1.156 -> 1.157: the audit credits claims payload equality via the owner pin (#12394).
         // 1.157 -> 1.158: `.map(owner)` chain credits at the first visible input (#12841).
+        // 1.158 -> 1.159: boundary and oracle must be paired in the same test (#7490).
+        // 1.159 -> 1.160: both independent predecessor semantics must be invalidated.
+        // 1.160 -> 1.161: unread external collection-observer interception.
         // 1.158 -> 1.159: cloned callbacks cannot borrow plain-helper oracles (#13219).
         // 1.159 -> 1.160: assertion call-kind identity separates same-named owners (#12234).
+        // Composed main and successor invalidate both predecessor branches.
         // 1.160 -> 1.161: unresolved field snapshots cannot remain marker-free (#13278).
         // 1.161 -> 1.162: computed local operands are not predicate boundaries (#12981).
         // 1.162 -> 1.163: a sibling-variant error pin reads weak in the record, as in the stage (#12836).
@@ -6027,9 +6084,11 @@ mod tests {
         // 1.214 -> 1.215: item macros naming serde_json refuse json! credit (#16388).
         // 1.215 -> 1.216: source-bound failed property verification is an opaque repo limit (#10864).
         // 1.216 -> 1.217: rootless groups and bare-invocation body scoping (#16388).
-        // 1.217 -> 1.218: receiver kinds read after generics (#16352).
+        // 1.217 -> 1.218: receiver kinds read after generics (#16352);
+        // the history-sync branch independently composed its import at 1.218.
         // 1.218 -> 1.219: verified calls of unrequested names stay known (#16462).
-        assert_eq!(CACHE_SCHEMA_VERSION, "1.219");
+        // 1.219 -> 1.222: join both 1.218 meanings with swarm main (#16016).
+        assert_eq!(CACHE_SCHEMA_VERSION, "1.222");
         // 1.168 -> 1.169: plain `assert_eq!` literal withhold in the audit (#13005).
         // 0.12 -> 0.13 through 0.14 / 0.15 / 0.16 / 0.17 / 0.18: same
         // #3731 semantic transition as the outer classified-seam cache,
@@ -6170,6 +6229,9 @@ mod tests {
         // 0.157 -> 0.158: same different-arm error-pin rule as full 1.156 (#12733, #12734).
         // 0.158 -> 0.159: same audit claims-payload crediting as full 1.157 (#12394).
         // 0.159 -> 0.160: same all-input visibility rule as full 1.158 (#12841).
+        // 0.160 -> 0.161: same boundary-oracle pairing as full 1.159 (#7490).
+        // 0.161 -> 0.162: compose both independent semantic generations.
+        // 0.162 -> 0.163: same external-observer refusal as full 1.161.
         // 0.160 -> 0.161: same cloned-callback withholding as full 1.159 (#13219).
         // 0.161 -> 0.162: same assertion call-kind identity as full 1.160 (#12234).
         // 0.162 -> 0.163: same field-snapshot limitation as full 1.161 (#13278).
@@ -6223,10 +6285,12 @@ mod tests {
         // 0.216 -> 0.217: same json item-macro refusal as full 1.215 (#16388).
         // 0.217 -> 0.218: same provider-failure limitation as full 1.216 (#10864).
         // 0.218 -> 0.219: same rootless-group and body-scope reading as full 1.217 (#16388).
-        // 0.219 -> 0.220: same receiver kind reading after generics as full 1.218 (#16352).
+        // 0.219 -> 0.220: same receiver kind reading after generics as full 1.218 (#16352);
+        // the history-sync branch independently matched its composed import at 0.220.
         // 0.220 -> 0.221: same transparent-context scan as full 1.219 (#16462).
-        assert_eq!(SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.221");
-        assert_eq!(COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.221");
+        // 0.221 -> 0.224: match joined full 1.222 (#16016).
+        assert_eq!(SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.224");
+        assert_eq!(COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.224");
         // 0.170 -> 0.171: same plain `assert_eq!` literal withhold as full 1.169 (#13005).
     }
 
@@ -6679,19 +6743,81 @@ mod tests {
 
     #[test]
     fn favorable_classified_predecessors_miss_and_current_values_reuse() -> Result<(), String> {
-        for (previous_full, previous_compact) in [
-            ("1.27", "0.33"),
-            ("1.32", "0.38"),
-            ("1.33", "0.39"),
-            ("1.34", "0.40"),
-            ("1.35", "0.41"),
-            ("1.36", "0.42"),
-            ("1.37", "0.43"),
-            ("1.38", "0.44"),
-            ("1.71", "0.77"),
-            ("1.72", "0.78"),
-            ("1.73", "0.79"),
-            ("1.184", "0.186"),
+        for (semantic_predecessor, previous_full, previous_compact) in [
+            ("historical", "1.27", "0.33"),
+            ("historical", "1.32", "0.38"),
+            ("historical", "1.33", "0.39"),
+            ("historical", "1.34", "0.40"),
+            ("historical", "1.35", "0.41"),
+            ("historical", "1.36", "0.42"),
+            ("historical", "1.37", "0.43"),
+            ("historical", "1.38", "0.44"),
+            ("historical", "1.71", "0.77"),
+            ("historical", "1.72", "0.78"),
+            ("historical", "1.73", "0.79"),
+            // #7490: preserve the immediately preceding main generation.
+            ("historical", "1.157", "0.159"),
+            ("historical", "1.158", "0.160"),
+            // Independent successors shared version numbers but not semantics.
+            ("7490-boundary-pairing", "1.159", "0.161"),
+            ("12010-sink-identity", "1.159", "0.161"),
+            ("external-observer-interception", "1.160", "0.162"),
+            ("pre-main-composition", "1.161", "0.163"),
+            ("crate-alias-interception", "1.162", "0.164"),
+            ("pre-field-snapshot-composition", "1.163", "0.165"),
+            ("pre-returned-boundary-pairing", "1.164", "0.166"),
+            ("pre-scalar-and-unit-error-identity", "1.165", "0.167"),
+            ("pre-helper-and-formatted-effect-identity", "1.166", "0.168"),
+            ("pre-tuple-component-identity", "1.167", "0.169"),
+            ("pre-sealed-tuple-iterator-scope", "1.168", "0.170"),
+            ("pre-complete-tuple-dispatch-context", "1.169", "0.171"),
+            ("pre-exact-tuple-field-owner", "1.170", "0.172"),
+            ("pre-main-glob-composition", "1.171", "0.173"),
+            ("pre-guarded-error-limitation", "1.172", "0.174"),
+            ("pre-guard-fn-token-lookup", "1.173", "0.175"),
+            ("pre-borrowed-bool-pairing", "1.174", "0.176"),
+            ("pre-selected-unit-error-row", "1.175", "0.177"),
+            ("pre-bool-clone-dispatch", "1.176", "0.178"),
+            ("pre-affirmative-observer-identity", "1.177", "0.179"),
+            ("pre-composed-method-getter-identity", "1.178", "0.180"),
+            ("pre-getter-default-dispatch-closure", "1.179", "0.181"),
+            (
+                "pre-closed-collection-and-qualified-observers",
+                "1.180",
+                "0.182",
+            ),
+            ("pre-typed-value-and-success-receipts", "1.181", "0.183"),
+            (
+                "pre-exact-observer-coordinates-and-scalars",
+                "1.182",
+                "0.184",
+            ),
+            ("pre-honest-transfer-and-dispatch-limits", "1.183", "0.185"),
+            ("pre-per-occurrence-observer-pairing", "1.184", "0.186"),
+            ("pre-typed-observer-preservation", "1.185", "0.187"),
+            ("pre-observer-binding-closure", "1.186", "0.188"),
+            ("pre-operator-drop-closure", "1.187", "0.189"),
+            ("pre-current-swarm-and-retained-source", "1.195", "0.197"),
+            ("pre-protected-rebound-and-deleted-guard", "1.196", "0.198"),
+            ("pre-base-constructor-identity", "1.197", "0.199"),
+            ("pre-unit-tail-statement-block", "1.201", "0.203"),
+            ("pre-test-local-empty-macro", "1.200", "0.202"),
+            ("pre-same-line-owner-inputs", "1.199", "0.201"),
+            ("pre-selected-cargo-target", "1.198", "0.200"),
+            // Protected main's last generation before this composition, and
+            // the import line's own predecessor.
+            ("protected-main-selected-cargo-target", "1.185", "0.187"),
+            ("pre-protected-main-composition", "1.202", "0.204"),
+            // Protected main's attribute-macro scope generation (#12857) and
+            // the first composition it was merged into.
+            ("protected-main-attribute-macro-scope", "1.187", "0.189"),
+            ("protected-main-std-rooted-import", "1.189", "0.191"),
+            ("pre-attribute-macro-scope-composition", "1.203", "0.205"),
+            ("pre-std-rooted-import-composition", "1.204", "0.206"),
+            // Both colliding 1.218/0.220 meanings must miss the joined 1.222.
+            ("history-sync-composition", "1.218", "0.220"),
+            ("receiver-kind-after-generics", "1.218", "0.220"),
+            ("transparent-context-scan", "1.219", "0.221"),
         ] {
             for compact in [false, true] {
                 for sharded in [false, true] {
@@ -6713,7 +6839,9 @@ mod tests {
                     };
                     // Representative synthesized favorable classification, not
                     // a claimed capture from the old whole-analyzer execution.
-                    let favorable = synthesized_discarded_oracle_classified();
+                    let mut favorable = synthesized_discarded_oracle_classified();
+                    favorable.evidence.discriminate.summary =
+                        format!("Synthesized favorable {semantic_predecessor} predecessor");
                     let count = if sharded { 2 } else { 1 };
                     let store_limit = if sharded { 1 } else { 10 };
                     let favorable = vec![favorable; count];
@@ -6762,7 +6890,9 @@ mod tests {
     #[test]
     fn favorable_shard_predecessors_are_refused_with_current_outer_key() -> Result<(), String> {
         for previous in [
-            "0.33", "0.38", "0.39", "0.40", "0.41", "0.42", "0.43", "0.44",
+            "0.33", "0.38", "0.39", "0.40", "0.41", "0.42", "0.43", "0.44", "0.159", "0.160",
+            "0.161", "0.162", "0.163", "0.164", "0.165", "0.166", "0.167", "0.168", "0.169",
+            "0.170",
         ] {
             for compact in [false, true] {
                 let scratch = integrity_scratch("property-shard-generation")?;

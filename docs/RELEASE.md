@@ -33,6 +33,13 @@ the canonical operator sequence. This checklist remains the release-surface
 and packaging reference; the runbook owns exact pins, J/K expected-head guards,
 receipts, invalidation, publication authorization, and cleanup.
 
+Before selecting a 0.11 prerelease ref, read the
+[RC authority reconciliation](release/0.11.0/rc-authority-reconciliation.md).
+It separates dated public inventory, historical conditional `rc.1` authority,
+tentative next-placement intent, and the still-unselected frozen subject.
+Refresh live inventory and controller rulings before execution; this packet
+does not authorize a cut or qualify a package.
+
 For the 0.11.0 release train, and as the standard two-repository pattern for
 future releases, use the `#2379` **public → swarm → public** authority sequence
 (see also [the 0.11.0 cut checklist](releases/0.11.0-cut-checklist.md#02-phase-vocabulary)):
@@ -58,18 +65,19 @@ that postponed the entire source sync until after the swarm cut is historical.
 Reordering the runbook does not invent transport authority, waive a protected
 check, select an RC ordinal, or authorize publication.
 
-The selected swarm head includes all history reachable from that exact commit,
-including the inbound public-history merge (`ripr#1627` →
-`ripr#1768`/`#1769`/`#1770`, tracked in `ripr-swarm#13325`). Do not squash,
-rebase, cherry-pick, reconstruct a tree-equivalent source join, or construct a
-raw `git merge` promotion branch by hand. For `0.11.0`, the return to
-`EffortlessMetrics/ripr` runs through the source repository's trusted/guarded
-admission, constructor, and merge route (`ripr#1627`/`#1889`, `ripr#1771` →
-`ripr#1772`/`#1773`; see `ripr` `docs/SOURCE_PROMOTION.md`) with source as
-parent 1 and the selected qualified swarm head as parent 2. The post-release
-back-sync `K` must preserve the source release ancestry through a controlled
-merge exception or another explicitly reviewed ancestry-preserving path, even
-when swarm branch settings normally disable merge commits.
+Follow the [staged integration guide](SOURCE_PROMOTION.md#staged-integration)
+for this direction and the [existing-contract reconciliation](SOURCE_PROMOTION.md#existing-contract-reconciliation)
+for the older direct-J/pin/controller commands below. Public main movement
+requires returning to swarm and renewing affected proof before promotion.
+
+The selected swarm head includes all history reachable from that exact commit.
+Do not squash, rebase, cherry-pick, or reconstruct a tree-equivalent source
+join. The staged target uses exact swarm S as the PR head, with separate
+preview and actual merge identities. Historical direct-J commands below still
+require explicit source-contract reconciliation. The back-sync must preserve
+the source release ancestry through a controlled merge exception or another
+explicitly reviewed ancestry-preserving path, even when swarm branch settings
+normally disable merge commits.
 
 After the swarm pin, later `ripr-swarm/main` merges are outside the release and
 must not move the pin. Development may continue on branches, but no main merge
@@ -78,9 +86,11 @@ only for an exact-candidate semantic or policy failure, or a source-preflight
 failure that prevents a required survivor or release contract. Main movement
 alone never repins.
 
-The ship packet is evidence, not authorization. Only source issue `#1470`
-authorizes tagging, publication, signing, marketplace mutation, or other
-external release operations. Re-baseline 0.11.1 only after 0.11.0 publication
+The ship packet is evidence, not authorization. GitHub-only public RC authority
+is the exact source `#1606` owner ruling consumed by `#1632/#1634`; a different
+ref requires a new explicit ruling. Source issue `#1470` separately owns stable
+channel and secret authorization. Neither grants authority for a cut or a
+different channel by implication. Re-baseline 0.11.1 only after 0.11.0 publication
 and closeout; merged current-head work belongs to 0.11.0 rather than 0.11.1.
 
 The release claims must be regenerated from the selected tree. Distinguish
@@ -89,9 +99,10 @@ issuance. Never copy a historical blanket no-execution sentence, and never
 claim correctness, test adequacy, mutation adequacy, requirement satisfaction,
 or merge safety.
 
-The history-preserving public return (`J`, via `ripr#1627`/`#1889` and
-`ripr#1771`–`#1773`) and post-publication back-sync (`K`, via `#3419`–`#3313`)
-have separate identities and parent order:
+The following **historical direct-J/back-sync contract** still needs
+reconciliation before staged execution. Its `K` names post-publication
+back-sync, distinct from the contained proposal's preview K. These historical
+joins have separate identities and parent order:
 
 ```text
 J = guarded public return (source promotion after swarm qualification)
@@ -103,9 +114,7 @@ K.parent[0] = exact swarm main before back-sync
 K.parent[1] = exact released source main
 ```
 
-For `0.11.0`, `J` is built and merged only through the source repository's
-guarded constructor and merge route (`ripr#1772`/`#1773`), never by raw
-`git merge` or a direct branch push; an appended repair commit, squash,
+The historical promotion head must itself be `J`; an appended repair commit, squash,
 rebase, cherry-pick, or tree-equivalent reconstruction fails the promotion
 contract. After public verification, review and transport `K` under an
 expected-head guard. If swarm policy has merge commits disabled, use a
@@ -662,6 +671,17 @@ without implying runtime mutation execution, generated tests, provider-backed
 analysis, default blocking, or stable preview-language gate authority.
 
 ## Recovery
+
+The following recipe records historical stable-release recovery (including
+`v0.5.0`); it is not the public-RC resume contract. For an RC, preserve the
+exact tag and all published subject bytes. A candidate or subject change
+requires fresh qualification/ship evidence and a separately authorized exact
+RC ref through #1634; never rebuild mutable `main` into an existing RC or
+overlay its assets. A same-ref retry may proceed only when the existing
+transaction owner establishes unchanged candidate, authority, workflow and
+subject bytes under its reviewed resume contract. See the
+[RC reconciliation](release/0.11.0/rc-authority-reconciliation.md) and canonical
+transaction runbook before recovery.
 
 If a release workflow fails after the tag has been pushed, prefer
 fix-forward over retagging. Workflow reruns (`gh workflow run ...`) also

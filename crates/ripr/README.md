@@ -30,10 +30,10 @@ for the analysis behind a finding.
 ## Install
 
 ```bash
-cargo install ripr
+cargo install ripr --locked
 ```
 
-Cargo installation requires Rust 1.95 or newer. Git is required for the diff
+The published lockfile pins the dependency versions used by `cargo install --locked`. Cargo installation requires Rust 1.95 or newer. Git is required for the diff
 workflow. The package installs the `ripr` binary; you do not need a checkout of
 ripr to analyze your own repository.
 

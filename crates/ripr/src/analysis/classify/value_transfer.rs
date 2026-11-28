@@ -12,7 +12,7 @@
 //! - `chars().next()` / `chars().next_back()`
 //! - `char::len_utf8`
 //! - `Option::map_or` with an evaluated bounded default and the identity closure
-//!   (`|idx| idx`, `|c| c`)
+//!   (`|idx| idx`, `|c| c`), plus typed eager `Option::unwrap_or`
 //! - `checked_add` / `checked_sub` on exact integers
 //! - bounded string slicing from exact indices on established UTF-8
 //!   boundaries
@@ -226,9 +226,6 @@ fn eval_expression(text: &str, inputs: &ExactInputs, steps: &mut Vec<EvalStep>) 
     if let Some(outcome) = eval_slicing(text, inputs, steps) {
         return outcome;
     }
-    if let Some(outcome) = eval_map_or(text, inputs, steps) {
-        return outcome;
-    }
     eval_method_chain(text, inputs, steps)
 }
 
@@ -399,6 +396,19 @@ fn eval_method_chain(text: &str, inputs: &ExactInputs, steps: &mut Vec<EvalStep>
             "expression `{text}` is not a supported operation chain"
         )));
     }
+    // A `?` try operator is never evaluated: the chain may propagate
+    // `None`/`Err`, so the value is statically unknown. Report the
+    // complete operation instead of a fragment of the final segment
+    // (#1724 review: `rest.rfind(close)?` reported `close)?`).
+    if segments
+        .iter()
+        .skip(1)
+        .any(|segment| segment.trim_end().ends_with('?'))
+    {
+        return Err(unsupported(&format!(
+            "expression `{text}` is not a supported operation chain"
+        )));
+    }
     let mut value = eval_expression(segments[0], inputs, steps)?;
     for segment in &segments[1..] {
         value = apply_method(value, segment, inputs, steps)?;
@@ -424,7 +434,7 @@ fn apply_method(
     };
     // Reject an unknown family before evaluating its arguments so the
     // named edge is the unsupported method itself, not its argument.
-    const EVALUATED_METHODS: [&str; 21] = [
+    const EVALUATED_METHODS: [&str; 23] = [
         "rfind",
         "find",
         "len",
@@ -433,6 +443,8 @@ fn apply_method(
         "contains",
         "strip_prefix",
         "strip_suffix",
+        "map_or",
+        "unwrap_or",
         "len_utf8",
         "checked_add",
         "checked_sub",
@@ -451,6 +463,13 @@ fn apply_method(
         return Err(unsupported(&format!(
             "method `.{name}({argument})` is not an evaluated operation family"
         )));
+    }
+    if name == "map_or" {
+        return eval_map_or(receiver, argument, inputs, steps);
+    }
+    if name == "unwrap_or" {
+        let default = eval_expression(argument, inputs, steps)?;
+        return option_default(receiver, default, argument, "unwrap_or", steps);
     }
     let evaluated_argument = if argument.is_empty() {
         None
@@ -501,6 +520,9 @@ fn apply_method(
         }
         (TypedValue::Str(value), "contains", Some(TypedValue::Str(needle))) => {
             TypedValue::Bool(value.contains(&needle))
+        }
+        (TypedValue::Str(value), "contains", Some(TypedValue::Char(needle))) => {
+            TypedValue::Bool(value.contains(needle))
         }
         (TypedValue::Str(value), "strip_prefix", Some(TypedValue::Str(prefix))) => {
             TypedValue::OptStr(value.strip_prefix(&prefix).map(str::to_string))
@@ -636,74 +658,87 @@ fn take_braced(text: &str) -> Option<(&str, &str)> {
 
 /// `Option::map_or(default, |param| param)`: the default must evaluate
 /// before selecting either option arm, as it does in Rust.
-fn eval_map_or(text: &str, inputs: &ExactInputs, steps: &mut Vec<EvalStep>) -> Option<EvalResult> {
-    let dot = text.find(".map_or(")?;
-    let (receiver_text, rest) = text.split_at(dot);
-    let argument = rest
-        .strip_prefix(".map_or(")
-        .and_then(|inner| inner.strip_suffix(')'))?;
-    let (default_text, closure_text) = split_call_arguments(argument)?;
-    let closure = closure_text.trim();
-    let identity_param = closure
+fn eval_map_or(
+    receiver: TypedValue,
+    argument: &str,
+    inputs: &ExactInputs,
+    steps: &mut Vec<EvalStep>,
+) -> EvalResult {
+    let Some((default_text, closure_text)) = split_call_arguments(argument) else {
+        return Err(unsupported(
+            "map_or requires a default and identity closure",
+        ));
+    };
+    // Rust evaluates the eager default even on Some, before invoking the closure.
+    let default = eval_expression(default_text.trim(), inputs, steps)?;
+    let identity = closure_text
+        .trim()
         .strip_prefix('|')
         .and_then(|rest| rest.split_once('|'))
         .map(|(parameter, body)| (parameter.trim(), body.trim().trim_end_matches(';').trim()));
-    let receiver = match eval_expression(receiver_text, inputs, steps) {
-        Ok(value) => value,
-        Err(outcome) => return Some(Err(outcome)),
-    };
-    let default_value = match eval_expression(default_text.trim(), inputs, steps) {
-        Ok(value) => value,
-        Err(outcome) => return Some(Err(outcome)),
-    };
-    let Some((parameter, body)) = identity_param else {
-        return Some(Err(unsupported(
+    let Some((parameter, body)) = identity else {
+        return Err(unsupported(
             "map_or closure is not the supported identity form",
-        )));
+        ));
     };
-    if body != parameter {
-        return Some(Err(unsupported(
+    if !is_identifier(parameter) || body != parameter {
+        return Err(unsupported(
             "map_or closure body is not the identity (only `|p| p` is evaluated)",
-        )));
+        ));
     }
+    option_default(receiver, default, default_text.trim(), "map_or", steps)
+}
+
+/// Both supported option consumers evaluate the eager default once and require
+/// its type to agree with the option's intrinsic element, including on Some.
+fn option_default(
+    receiver: TypedValue,
+    default: TypedValue,
+    default_source: &str,
+    operation: &str,
+    steps: &mut Vec<EvalStep>,
+) -> EvalResult {
     if steps.len() >= MAX_CHAIN_STEPS {
-        return Some(Err(unsupported(
-            "chain depth exceeds the bounded step limit",
-        )));
+        return Err(unsupported("chain depth exceeds the bounded step limit"));
     }
-    let applied = match receiver {
-        TypedValue::OptIndex(Some(value)) => TypedValue::Index(value),
-        TypedValue::OptChar(Some(value)) => TypedValue::Char(value),
-        TypedValue::OptStr(Some(value)) => TypedValue::Str(value),
-        TypedValue::OptIndex(None) | TypedValue::OptChar(None) | TypedValue::OptStr(None) => {
-            // The default was evaluated once, including its provenance,
-            // before selecting the None arm (#3295 review).
-            steps.push(EvalStep {
-                operation: "map_or".to_string(),
-                detail: format!(
-                    "default {} over none, default {}",
-                    default_text.trim(),
-                    default_value.render()
-                ),
-            });
-            return Some(Ok(default_value));
+    let receiver_text = receiver.render();
+    let absent = matches!(
+        &receiver,
+        TypedValue::OptIndex(None) | TypedValue::OptChar(None) | TypedValue::OptStr(None)
+    );
+    let default_text = default.render();
+    let value = match (receiver, default) {
+        (TypedValue::OptIndex(value), TypedValue::Index(default)) => {
+            TypedValue::Index(value.unwrap_or(default))
         }
-        other => {
-            return Some(Err(unsupported(&format!(
-                "map_or receiver {} is not an option value",
-                other.render()
-            ))));
+        (TypedValue::OptChar(value), TypedValue::Char(default)) => {
+            TypedValue::Char(value.unwrap_or(default))
+        }
+        (TypedValue::OptStr(value), TypedValue::Str(default)) => {
+            TypedValue::Str(value.unwrap_or(default))
+        }
+        _ => {
+            return Err(unsupported(&format!(
+                "{operation} receiver and default do not have matching option element types"
+            )));
         }
     };
     steps.push(EvalStep {
-        operation: "map_or".to_string(),
-        detail: format!(
-            "identity closure over {}, default {}",
-            applied.render(),
-            default_text.trim()
-        ),
+        operation: operation.to_string(),
+        detail: if operation == "map_or" {
+            if absent {
+                format!("default {default_source} over none, default {default_text}")
+            } else {
+                format!(
+                    "identity closure over {}, default {default_source}",
+                    value.render()
+                )
+            }
+        } else {
+            format!("{receiver_text} with eager default {default_text}")
+        },
     });
-    Some(Ok(applied))
+    Ok(value)
 }
 
 /// `&receiver[start..end]` / `&receiver[..end]` / `&receiver[start..]`
@@ -904,7 +939,9 @@ fn parse_index_literal(text: &str) -> Option<usize> {
     trimmed.parse().ok()
 }
 
-fn is_identifier(text: &str) -> bool {
+// Shared bare-identifier predicate so the guard producer (`activation`)
+// and the evaluator apply the same identifier rule.
+pub(in crate::analysis) fn is_identifier(text: &str) -> bool {
     !text.is_empty()
         && text
             .chars()
@@ -1230,6 +1267,85 @@ mod tests {
             exact("input.rfind(delim).map_or(0, |idx| idx)", present),
             TypedValue::Index(1)
         );
+    }
+
+    #[test]
+    fn try_operator_reports_the_complete_operation() {
+        // #1724 review: `rest.rfind(close)?` reported the malformed edge
+        // `close)?`. A `?` try operator is never evaluated, so the outcome
+        // stays Unsupported — but the edge must name the complete operation.
+        let table = &[("rest", "\"ab\""), ("close", "'b'")];
+        assert_eq!(
+            unsupported_edge("rest.rfind(close)?", table),
+            "expression `rest.rfind(close)?` is not a supported operation chain"
+        );
+    }
+
+    #[test]
+    fn option_defaults_compose_with_length_and_preserve_both_arms() -> Result<(), String> {
+        for (argument, length) in [("\"--ab\"", 2), ("\"--a\"", 1), ("\"ab\"", 0)] {
+            for (consumer, operation) in [
+                ("map_or(\"\", |rest| rest)", "map_or"),
+                ("unwrap_or(\"\")", "unwrap_or"),
+            ] {
+                let expression = format!("arg.strip_prefix(\"--\").{consumer}.len()");
+                let outcome = evaluate_initializer(&expression, &inputs(&[("arg", argument)]));
+                let EvalOutcome::Exact { value, provenance } = outcome else {
+                    return Err(format!("expected exact chain: {outcome:?}"));
+                };
+                assert_eq!(value, TypedValue::Index(length));
+                assert_eq!(
+                    provenance
+                        .iter()
+                        .map(|step| step.operation.as_str())
+                        .collect::<Vec<_>>(),
+                    ["strip_prefix", operation, "len"]
+                );
+            }
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn option_chains_preserve_byte_lengths_and_the_work_limit() {
+        assert_eq!(
+            exact(
+                "input.strip_prefix(\"--\").map_or(\"\", |rest| rest).len()",
+                &[("input", "\"--é\"")]
+            ),
+            TypedValue::Index(2)
+        );
+        let long_chain = format!(
+            "input.strip_prefix(\"--\").unwrap_or(\"\"){}.len()",
+            ".trim()".repeat(8)
+        );
+        assert!(matches!(
+            evaluate_initializer(&long_chain, &inputs(&[("input", "\"--ab\"")])),
+            EvalOutcome::Unsupported { .. }
+        ));
+    }
+
+    #[test]
+    fn option_defaults_refuse_wrong_element_types_and_opaque_defaults() {
+        for argument in ["\"--ab\"", "\"ab\""] {
+            let table = &[("arg", argument)];
+            for expression in [
+                "arg.strip_prefix(\"--\").map_or(0, |rest| rest).len()",
+                "arg.strip_prefix(\"--\").unwrap_or(0).len()",
+                "arg.strip_prefix(\"--\").unwrap_or(lookup()).len()",
+                "arg.strip_prefix(\"--\").map_or(lookup(), |rest| rest).len()",
+                "arg.strip_prefix(\"--\").map_or(\"\", |rest| other).len()",
+                "arg.strip_prefix(\"--\").unwrap_or_else(|| \"\").len()",
+            ] {
+                assert!(
+                    matches!(
+                        evaluate_initializer(expression, &inputs(table)),
+                        EvalOutcome::Unsupported { .. }
+                    ),
+                    "{expression}"
+                );
+            }
+        }
     }
 
     #[test]

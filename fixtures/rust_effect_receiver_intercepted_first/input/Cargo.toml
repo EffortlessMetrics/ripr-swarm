@@ -1,0 +1,6 @@
+[package]
+name = "rust_effect_receiver_intercepted_first_fixture"
+version = "0.0.0"
+edition = "2024"
+
+[workspace]

@@ -3,7 +3,9 @@
 //! the candidate never reads the baseline body.
 
 use super::super::value_contradiction::FOLD_PLAN_READS;
-use super::test_fails_on_both_diff_versions;
+// The fold-only reading is the subject here; the entry point adds the
+// predicate projection on top of it.
+use super::fold_fails_on_both_diff_versions as test_fails_on_both_diff_versions;
 use crate::analysis::facts::{FunctionSummary, RustIndex, TestSummary};
 use crate::analysis::rust_index::summarize_file;
 use crate::analysis::syntax::run_memo;

@@ -18,9 +18,15 @@ cargo xtask fixtures rust_trait_qualified_associated_call
 
 ## Then
 
-Exactly one `return_value` finding reads `exposed`. The related test's
+Exactly one `return_value` finding reads `weakly_exposed`. The related test's
 relation is `direct_owner_call`: the fully qualified path names `Square`'s
 impl of `Make` outright, as `Square::make(2)` does.
+
+The class is a known under-credit. `Square` survives the edit, so it is not a
+confirming token for a plain return, and the owner-return pin does not yet
+read a trait-impl associated function without `self` in either spelling
+(`Square::make(2)` reads the same). The relation is the #15277 claim this
+fixture keeps; the pin is follow-up work.
 
 The authored crate compiles, its test passes before the diff and fails after
 it (`2 * 3` is `6`, not `4`).

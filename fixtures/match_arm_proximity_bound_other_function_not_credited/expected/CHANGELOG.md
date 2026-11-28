@@ -89,3 +89,36 @@ Command:
 
 Updated:
 - `expected/check.json`
+
+## Pending — match_arm_proximity_bound_other_function_not_credited (9)
+
+Reason:
+RIPR-SPEC-0108: compose PR #16016 history-sync with protected swarm main (baaaa92024)
+
+Command:
+`cargo xtask goldens bless match_arm_proximity_bound_other_function_not_credited --reason "..."`
+
+Updated:
+- `expected/human.txt`
+
+## Pending — match_arm_proximity_bound_other_function_not_credited (10)
+
+Reason:
+RIPR-SPEC-0108: merge swarm main 14e4b0caf9 (#16429 legend wording and #15526 composed fixtures) on Linux 1.95.0
+
+Command:
+`cargo xtask goldens bless match_arm_proximity_bound_other_function_not_credited --reason "..."`
+
+Updated:
+- `expected/human.txt`
+
+## Pending — match_arm_proximity_bound_other_function_not_credited (11)
+
+Reason:
+RIPR-SPEC-0311: untied-spot count retained when match-arm owner identity is unestablished (#12241)(#16016)
+
+Command:
+`cargo xtask goldens bless match_arm_proximity_bound_other_function_not_credited --reason "..."`
+
+Updated:
+- `expected/human.txt`

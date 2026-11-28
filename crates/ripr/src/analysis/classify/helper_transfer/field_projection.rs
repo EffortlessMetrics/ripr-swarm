@@ -3,6 +3,11 @@
 //! This receipt extends the existing local-field witness with observer identity;
 //! it does not claim that the wrapper returns the owner's whole record.
 
+mod arithmetic_limit;
+pub(in crate::analysis) use arithmetic_limit::{
+    ARITHMETIC_FIELD_LIMIT_PREFIX, transformed_field_arithmetic_limitation,
+};
+
 use super::{callee_is_unique, helper_only_reach, is_exact_call, split_call_arguments_text};
 use crate::analysis::classify::owner_pin::{
     field_builtin_integer, targeted_free_call_reaches_owner,

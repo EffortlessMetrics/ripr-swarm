@@ -38,9 +38,15 @@ mod typescript;
 #[cfg(feature = "lang-typescript")]
 pub(crate) use typescript::TypeScriptFileFactStore;
 
+#[cfg(any(
+    test,
+    feature = "lang-python",
+    feature = "lang-typescript",
+    feature = "lang-perl"
+))]
+pub(crate) use adapter::RepoFileAccounting;
 pub(crate) use adapter::{
     LanguageAdapter, LanguageDiffResult, LanguageRepoResult, PreviewFactCacheStats,
-    RepoFileAccounting,
 };
 #[cfg(any(test, feature = "lang-python", feature = "lang-typescript"))]
 pub(crate) use adapter::{RepoCapFired, RepoLimitingStage};

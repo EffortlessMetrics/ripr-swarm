@@ -258,13 +258,19 @@ pub(in crate::analysis) fn owner_record_read_masked_anywhere(
 /// kept (directly, through a once-bound `let`, or through a method that hands
 /// the record back). `assert!` takes a `bool`, so the assertion is
 /// `assert_eq!(owner(..).field, true)` (or `false`) spelled another way.
+/// A plain equality or inequality against a boolean literal reads the same
+/// field, including when the literal is on the left.
 pub(in crate::analysis) fn bool_field_assertion(
     test: &TestSummary,
     assertion_text: &str,
     owner: &str,
     field: &str,
 ) -> bool {
-    if owner.is_empty() || !super::owner_pin::is_plain_macro(assertion_text, "assert") {
+    let plain_assert = super::owner_pin::is_plain_macro(assertion_text, "assert");
+    let comparison = ["assert_eq", "assert_ne"]
+        .iter()
+        .any(|name| super::owner_pin::is_plain_macro(assertion_text, name));
+    if owner.is_empty() || !(plain_assert || comparison) {
         return false;
     }
     let Some(operands) = assertion_oracle_text(assertion_text) else {
@@ -279,8 +285,11 @@ pub(in crate::analysis) fn bool_field_assertion(
     else {
         return false;
     };
-    let [operand] = operands.as_slice() else {
-        return false;
+    let operand = match operands.as_slice() {
+        [operand] if plain_assert => operand,
+        [left, right] if comparison && matches!(right.trim(), "true" | "false") => left,
+        [left, right] if comparison && matches!(left.trim(), "true" | "false") => right,
+        _ => return false,
     };
     let Some(mut expr) = parse_expression(operand) else {
         return false;
@@ -1102,7 +1111,7 @@ impl Reader<'_> {
 }
 
 /// `text` parsed as one expression.
-fn parse_expression(text: &str) -> Option<ast::Expr> {
+pub(super) fn parse_expression(text: &str) -> Option<ast::Expr> {
     let wrapped = format!("fn ripr_operand() {{ let _ = {text}\n; }}");
     let parse = parse_clean_source_file_memoized(&wrapped)?;
     parse

@@ -48,17 +48,23 @@
         {"stage":"observe","state":"yes","confidence":"medium"},
         {"stage":"discriminate","state":"weak","confidence":"high"}
       ],
-      "evidence_path": ["reach yes: Related tests appear to reach is_separator: comma_separates, dot_does_not_separate", "infection weak: Related tests contain input values, but the equality-boundary check is missing", "propagation yes: Changed behavior appears to influence returned value: c ==     || c ==", "observation yes: A related test observes a value or effect near the changed behavior", "discriminator weak: Only relational oracle found; it may not discriminate the changed value exactly", "local flow reaches returned value: c ==     || c == (line 2)", "related test src/lib.rs:9 comma_separates uses weak relational check oracle: assert!(is_separator(','));", "related test src/lib.rs:11 dot_does_not_separate uses weak relational check oracle: assert!(!is_separator('.'));", "source function argument value c = '.' at line 11", "missing discriminator c == ';': No related test call uses c equal to ';'; observed c values: '.'; target ';' value: ';'"],
+      "evidence_path": ["reach yes: Related tests appear to reach is_separator: comma_separates, dot_does_not_separate", "infection weak: Related tests contain input values, but the equality-boundary check is missing", "propagation yes: Changed behavior appears to influence returned value: c ==     || c ==", "observation yes: A related test observes a value or effect near the changed behavior", "discriminator weak: Only relational oracle found; it may not discriminate the changed value exactly", "local flow reaches returned value: c ==     || c == (line 2)", "related test src/lib.rs:9 comma_separates uses weak relational check oracle: assert!(is_separator(','));", "related test src/lib.rs:11 dot_does_not_separate uses weak relational check oracle: assert!(!is_separator('.'));", "source function argument value c = ',' at line 9", "source function argument value c = '.' at line 11", "missing discriminator c == ';': No related test call uses c equal to ';'; observed c values: ',', '.'; target ';' value: ';'"],
       "flow_sinks": [
         {"kind":"return_value","text":"c ==     || c ==","line":2}
       ],
       "evidence": ["A related test observes a value or effect near the changed behavior", "Changed behavior appears to influence returned value: c ==     || c ==", "Only relational oracle found; it may not discriminate the changed value exactly", "Related tests appear to reach is_separator: comma_separates, dot_does_not_separate", "Related tests contain input values, but the equality-boundary check is missing"],
       "missing": ["Missing check value: c == ';'", "No strong discriminator was detected"],
       "assertion_texts": {
+        "9": "fn comma_separates() { assert!(is_separator(',')); }",
         "11": "fn dot_does_not_separate() { assert!(!is_separator('.')); }"
       },
       "activation": {
         "observed_values": [
+          {
+            "line": 9,
+            "value": "c = ','",
+            "context": "function_argument"
+          },
           {
             "line": 11,
             "value": "c = '.'",
@@ -68,12 +74,17 @@
         "missing_discriminators": [
           {
             "value": "c == ';'",
-            "reason": "No related test call uses c equal to ';'; observed c values: '.'; target ';' value: ';'",
+            "reason": "No related test call uses c equal to ';'; observed c values: ',', '.'; target ';' value: ';'",
             "flow_sink": {"kind":"return_value","text":"c ==     || c ==","line":2}
           }
         ]
       },
       "observed_values": [
+        {
+          "line": 9,
+          "value": "c = ','",
+          "context": "function_argument"
+        },
         {
           "line": 11,
           "value": "c = '.'",
@@ -83,7 +94,7 @@
       "missing_discriminators": [
         {
           "value": "c == ';'",
-          "reason": "No related test call uses c equal to ';'; observed c values: '.'; target ';' value: ';'",
+          "reason": "No related test call uses c equal to ';'; observed c values: ',', '.'; target ';' value: ';'",
           "flow_sink": {"kind":"return_value","text":"c ==     || c ==","line":2}
         }
       ],
@@ -161,17 +172,23 @@
         {"stage":"observe","state":"yes","confidence":"medium"},
         {"stage":"discriminate","state":"weak","confidence":"medium"}
       ],
-      "evidence_path": ["reach yes: Related tests appear to reach is_separator: comma_separates, dot_does_not_separate", "infection yes: Reachable tests can plausibly activate this changed behavior", "propagation yes: Complete propagation witness reaches returned value: c == ',' || c == ';'", "observation yes: A related test observes a value or effect near the changed behavior", "discriminator weak: Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)", "local flow reaches returned value: c == ',' || c == ';' (line 2)", "related test src/lib.rs:9 comma_separates uses weak relational check oracle: assert!(is_separator(','));", "related test src/lib.rs:11 dot_does_not_separate uses weak relational check oracle: assert!(!is_separator('.'));", "source function argument value c = '.' at line 11"],
+      "evidence_path": ["reach yes: Related tests appear to reach is_separator: comma_separates, dot_does_not_separate", "infection yes: Reachable tests can plausibly activate this changed behavior", "propagation yes: Complete propagation witness reaches returned value: c == ',' || c == ';'", "observation yes: A related test observes a value or effect near the changed behavior", "discriminator weak: Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)", "local flow reaches returned value: c == ',' || c == ';' (line 2)", "related test src/lib.rs:9 comma_separates uses weak relational check oracle: assert!(is_separator(','));", "related test src/lib.rs:11 dot_does_not_separate uses weak relational check oracle: assert!(!is_separator('.'));", "source function argument value c = ',' at line 9", "source function argument value c = '.' at line 11"],
       "flow_sinks": [
         {"kind":"return_value","text":"c == ',' || c == ';'","line":2}
       ],
       "evidence": ["A related test observes a value or effect near the changed behavior", "Complete propagation witness reaches returned value: c == ',' || c == ';'", "Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)", "Reachable tests can plausibly activate this changed behavior", "Related tests appear to reach is_separator: comma_separates, dot_does_not_separate"],
       "missing": ["No strong discriminator was detected"],
       "assertion_texts": {
+        "9": "fn comma_separates() { assert!(is_separator(',')); }",
         "11": "fn dot_does_not_separate() { assert!(!is_separator('.')); }"
       },
       "activation": {
         "observed_values": [
+          {
+            "line": 9,
+            "value": "c = ','",
+            "context": "function_argument"
+          },
           {
             "line": 11,
             "value": "c = '.'",
@@ -182,6 +199,11 @@
         ]
       },
       "observed_values": [
+        {
+          "line": 9,
+          "value": "c = ','",
+          "context": "function_argument"
+        },
         {
           "line": 11,
           "value": "c = '.'",

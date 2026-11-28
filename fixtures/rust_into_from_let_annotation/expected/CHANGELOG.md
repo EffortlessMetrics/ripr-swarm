@@ -45,3 +45,14 @@ Command:
 
 Updated:
 - `expected/human-full.txt`
+
+## Pending — rust_into_from_let_annotation (5)
+
+Reason:
+RIPR-SPEC-0108: merge swarm main 4badffabd0 (#16460 Terms wording and 1.217 composed tree) on Linux 1.95.0
+
+Command:
+`cargo xtask goldens bless rust_into_from_let_annotation --reason "..."`
+
+Updated:
+- `expected/human-full.txt`

@@ -20,6 +20,9 @@ use std::io::{self, Write};
 use std::ops::Range;
 use std::path::{Component, Path, PathBuf};
 
+mod windows;
+pub(super) use windows::publish_compact_windows;
+
 #[cfg(test)]
 std::thread_local! {
     static STORE_IO_HIGH_WATER: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
@@ -1712,6 +1715,7 @@ impl RepoSeamFactCache {
 
 #[cfg(test)]
 mod tests {
+    include!("store/window_tests.rs");
     use super::super::{
         CLASSIFIED_SEAM_CACHE_ENCODED_SHARD_CEILING_BYTES,
         CLASSIFIED_SEAM_CACHE_STORE_IO_BUFFER_BYTES, CacheEnvelope, CacheLoad,

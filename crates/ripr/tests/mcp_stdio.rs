@@ -6284,18 +6284,37 @@ fn shallow_clone_without_merge_base_recovers_by_fetching_history() -> Result<(),
             "shallow recovery must name the history fetch before the retry: {recovery}"
         ));
     }
-    // The whole spaced root arrives quoted as one `-C` argument.
-    let clone_text = clone.display().to_string();
+    // The whole spaced root arrives quoted as one `-C` argument without a Windows verbatim prefix.
+    let clone_text = if cfg!(windows) {
+        clone.to_string_lossy().replace('\\', "/")
+    } else {
+        clone.display().to_string()
+    };
     let quoted_root = if cfg!(windows) {
         format!("\"{clone_text}\"")
     } else {
         format!("'{clone_text}'")
     };
     if !clone_text.contains(' ')
+        || (cfg!(windows) && recovery.contains(r"\\?\"))
         || !recovery.contains(&format!("git -C {quoted_root} fetch --unshallow"))
     {
         return Err(format!(
             "shallow recovery must quote the spaced root {clone_text:?} as one argument: {recovery}"
+        ));
+    }
+    // Execute the emitted fetch target against the spaced clone to verify recovery works.
+    fixture_git_ok(parent, &["-C", &clone_text, "fetch", "--unshallow"])?;
+    let recovered = session.call_tool(
+        "unshallowed",
+        "ripr_refresh",
+        json!({"base": "origin/main"}),
+        timeout,
+    )?;
+    let recovered = structured_tool_success(&recovered, "unshallowed ripr_refresh")?;
+    if recovered.pointer("/attempt/state").and_then(Value::as_str) != Some("completed") {
+        return Err(format!(
+            "refresh must succeed after executing the emitted unshallow fetch: {recovered}"
         ));
     }
     Ok(())

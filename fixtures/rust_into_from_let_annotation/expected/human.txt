@@ -2,20 +2,26 @@ ripr static RIPR exposure analysis
 mode: fast
 root: fixtures/rust_into_from_let_annotation/input
 
-Summary: 1 changed behavior checked: 1 appear noticed by tests, 0 partly noticed, 0 reached but not noticed, 0 no test path. No test gap: 1 listed, 0 suppressed by your settings
+Summary: 1 changed behavior checked: 0 appear noticed by tests, 1 partly noticed, 0 reached but not noticed, 0 no test path. 1 found, 0 suppressed by your settings
 
 Analysis outcome: findings below (analysis complete)
   Counts: 1 changed file(s), 2 changed line(s), 1 candidate line(s), 1 changed behavior(s) checked, 1 finding(s)
 
 Start here:
-  State: no test gap found
-  Safe next action: none needed; tests appear to notice every changed behavior ripr checked. This is a static reading of the code, not a test run
+  State: a test gap to inspect or repair
+  Safe next action: follow the Next step below; this is static advisory evidence only
   File: ./src/lib.rs:8
-  Static exposure: exposed (severity: info, confidence 1.00)
+  Static exposure: weak (severity: warning, confidence 0.92)
+  Why weak: a related test reaches this change but does not observe the exact changed value
   Gap ID (for scripts): gap:rust:src/lib.rs:impl From<Celsius> for Fahrenheit::from:return_value:return_value:fahrenheit_c.0*9/5+32
   Changed behavior: Fahrenheit(c.0 * 9 / 5 + 32)
-  Related test: src/lib.rs:17 boiling_converts
-  Evidence: reach yes · infection yes · propagation yes · observation yes · assertion yes
+  Missing check: No assertion was tied to the changed value
+  Related test: src/lib.rs:17 boiling_converts (ripr could not confirm that this assertion observes the changed behavior)
+  Next step: The related test `boiling_converts` already has an exact assertion; this does not
+    establish observation of the returned value. Check whether the change can affect the returned
+    value. If it can, add a separating input and assert the exact returned value. If it cannot, test
+    the changed effect separately; another input cannot distinguish unchanged returns
+  Evidence: reach yes · infection yes · propagation yes · observation yes · assertion weak
     Stages (static evidence): reach = test path to changed owner; infection = inputs can activate change;
       propagation = changed effect reaches output; observation = related test/assertion evidence;
       assertion = a test assertion tells intended from wrong behavior
@@ -35,7 +41,9 @@ Next: drill into the top finding:
   (finding id, for explain/context)
   ripr explain --root <cwd>/fixtures/rust_into_from_let_annotation/input --diff <cwd>/fixtures/rust_into_from_let_annotation/diff.patch --mode fast probe:src_lib.rs:return_value:a379808a
   ripr context --root <cwd>/fixtures/rust_into_from_let_annotation/input --diff <cwd>/fixtures/rust_into_from_let_annotation/diff.patch --mode fast --at probe:src_lib.rs:return_value:a379808a
-  no repair start offered: nothing to repair here; the related tests already notice this change (exposed)
+  no repair start offered: ripr cannot build a repair packet for this finding yet because it is still missing: a test assertion that checks the changed return value; a test input that reaches the changed code; follow the Next step above, then rerun `ripr check`
+Write a test for it:
+  ripr agent stub --root <cwd>/fixtures/rust_into_from_let_annotation/input --at src/lib.rs:8 --kind return_value
 
 More:
   Full evidence: rerun with --format human-full
