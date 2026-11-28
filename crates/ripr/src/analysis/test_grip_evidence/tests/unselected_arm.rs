@@ -1,6 +1,8 @@
 //! #12078: a strong oracle from a test whose input selects another arm must
 //! not grip a `match_arm` seam. The repo seam reads `ripr check`'s own arm
 //! selection (RIPR-SPEC-0229), in the full and the compact grip paths alike.
+//! When that reading refuses to name the arm and no test input is read as
+//! selecting it, activation is unknown, never strongly gripped (#15359).
 
 use super::*;
 
@@ -93,24 +95,186 @@ fn an_arm_a_test_input_selects_keeps_its_strong_grip() -> Result<(), String> {
     Ok(())
 }
 
+/// #15359 review: a constant-row table's cell selects the arm the way a
+/// literal input does (RIPR-SPEC-0229 decision 7), so the loop variable a
+/// table test passes does not leave the arm's activation unknown.
 #[test]
-fn an_input_the_reading_cannot_resolve_leaves_the_arm_unnamed() -> Result<(), String> {
-    // A computed input may select the arm, so the shared reading refuses and
-    // the seam keeps the stage it had before #12078.
+fn a_constant_table_row_selects_the_arm() -> Result<(), String> {
+    let (full, compact, class) = arm_evidence(
+        "    for (size, expected) in [(Size::Medium, 450)] {\n        assert_eq!(price_cents(size), expected);\n    }",
+        "Size::Medium",
+    )?;
+    for evidence in [&full, &compact] {
+        assert_eq!(evidence.activate.state, StageState::Yes, "{evidence:?}");
+    }
+    assert_eq!(class, [SeamGripClass::StronglyGripped; 2]);
+    let (full, compact, class) = arm_evidence(
+        "    for (size, expected) in [(Size::Small, 300)] {\n        assert_eq!(price_cents(size), expected);\n    }",
+        "Size::Medium",
+    )?;
+    for evidence in [&full, &compact] {
+        assert_ne!(evidence.activate.state, StageState::Yes, "{evidence:?}");
+    }
+    assert_ne!(class[0], SeamGripClass::StronglyGripped, "{full:?}");
+    assert_ne!(class[1], SeamGripClass::StronglyGripped, "{compact:?}");
+    Ok(())
+}
+
+/// #15359 review: a mention the reading cannot read (a function value)
+/// never proves an arm unselected, but it does not undo a direct call on
+/// another line whose input selects the arm. The arm that call does not
+/// select stays unnamed with its activation unknown.
+#[test]
+fn an_unreadable_mention_beside_a_selecting_call_keeps_the_selection() -> Result<(), String> {
+    let body = "    let saved = price_cents;\n    assert_eq!(price_cents(Size::Medium), 450);\n    assert_eq!(saved(Size::Large), 500);";
+    let (full, compact, class) = arm_evidence(body, "Size::Medium")?;
+    for evidence in [&full, &compact] {
+        assert_eq!(evidence.activate.state, StageState::Yes, "{evidence:?}");
+    }
+    assert_eq!(class, [SeamGripClass::StronglyGripped; 2]);
+    let (full, compact, class) = arm_evidence(body, "Size::Small")?;
+    for evidence in [&full, &compact] {
+        assert_eq!(evidence.activate.state, StageState::Unknown, "{evidence:?}");
+        assert!(
+            !missing_values(evidence).contains(&"Size::Small"),
+            "{:?}",
+            evidence.missing_discriminators
+        );
+    }
+    assert_ne!(class[0], SeamGripClass::StronglyGripped, "{full:?}");
+    assert_ne!(class[1], SeamGripClass::StronglyGripped, "{compact:?}");
+    Ok(())
+}
+
+/// #15359 review: a test that rebinds the owner's name (a closure or
+/// another function under the same name) may run that binding instead, so
+/// a selecting call after it does not show the owner's arm runs.
+#[test]
+fn a_rebound_owner_name_does_not_credit_a_selecting_call() -> Result<(), String> {
+    for rebind in [
+        "    let price_cents = |_s: Size| 450;",
+        "    let price_cents = other::price_cents;",
+        "    let (price_cents, _) = (|_s: Size| 450, ());",
+        "    if let Some(price_cents) = Some(|_s: Size| 450) {}",
+        "    let _f = |(price_cents, _x): (u32, u32)| price_cents;",
+        "    let (price_cents, Pair { a: _a }) = (|_s: Size| 450, Pair { a: 0 });",
+    ] {
+        let body = format!("{rebind}\n    assert_eq!(price_cents(Size::Medium), 450);");
+        let (full, compact, class) = arm_evidence(&body, "Size::Medium")?;
+        for evidence in [&full, &compact] {
+            assert_ne!(
+                evidence.activate.state,
+                StageState::Yes,
+                "{rebind}: {evidence:?}"
+            );
+        }
+        assert_ne!(
+            class[0],
+            SeamGripClass::StronglyGripped,
+            "{rebind}: {full:?}"
+        );
+        assert_ne!(
+            class[1],
+            SeamGripClass::StronglyGripped,
+            "{rebind}: {compact:?}"
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn an_input_the_reading_cannot_resolve_leaves_the_arm_unnamed_and_its_activation_unknown()
+-> Result<(), String> {
+    // A computed input may select the arm, so the shared reading refuses to
+    // name it. No input is read as selecting it either, so activation is
+    // unknown (#15359), never strongly gripped.
     let (full, compact, class) = arm_evidence(
         "    let size = if std::env::args().count() > 99 { Size::Small } else { Size::Medium };\n    \
          assert_eq!(price_cents(size), 450);\n    \
          assert_eq!(price_cents(Size::Large), 500);",
         "Size::Medium",
     )?;
-    assert_eq!(class, [SeamGripClass::StronglyGripped; 2]);
+    assert_eq!(class, [SeamGripClass::ActivationUnknown; 2]);
     for evidence in [&full, &compact] {
-        assert_eq!(evidence.activate.state, StageState::Yes);
+        assert_eq!(evidence.activate.state, StageState::Unknown);
         assert!(
             !missing_values(evidence).contains(&"Size::Medium"),
             "{:?}",
             evidence.missing_discriminators
         );
+    }
+    Ok(())
+}
+
+/// #15359: semver's `Prerelease` ordering shape. The arm's scrutinee is
+/// computed inside the owner from each identifier, so a call to the owner
+/// says nothing about which arm it runs.
+const PRERELEASE: &str = "use std::cmp::Ordering;\n\n\
+pub fn cmp_pre(left: &str, right: &str) -> Ordering {\n    \
+for (a, b) in left.split('.').zip(right.split('.')) {\n        \
+let order = match (a.parse::<u64>(), b.parse::<u64>()) {\n            \
+(Ok(x), Ok(y)) => x.cmp(&y),\n            \
+(Ok(_), Err(_)) => Ordering::Less,\n            \
+(Err(_), Ok(_)) => Ordering::Greater,\n            \
+(Err(_), Err(_)) => a.cmp(b),\n        };\n        \
+if order != Ordering::Equal {\n            return order;\n        }\n    }\n    \
+left.split('.').count().cmp(&right.split('.').count())\n}\n";
+
+#[test]
+fn an_arm_of_a_scrutinee_computed_in_the_owner_is_never_strongly_gripped() -> Result<(), String> {
+    for arm in ["(Ok(x), Ok(y))", "(Err(_), Err(_))"] {
+        let (full, compact, class) = arm_evidence_in(
+            PRERELEASE,
+            "    assert_eq!(cmp_pre(\"alpha\", \"beta\"), std::cmp::Ordering::Less);",
+            arm,
+        )?;
+        assert_eq!(class, [SeamGripClass::ActivationUnknown; 2], "{arm}");
+        for evidence in [&full, &compact] {
+            assert_eq!(evidence.activate.state, StageState::Unknown, "{arm}");
+            assert!(
+                evidence
+                    .activate
+                    .summary
+                    .starts_with(super::super::ARM_SELECTION_UNREAD_REASON_PREFIX),
+                "{arm}: {}",
+                evidence.activate.summary
+            );
+            assert!(
+                evidence.missing_discriminators.is_empty(),
+                "{arm}: {:?}",
+                evidence.missing_discriminators
+            );
+        }
+    }
+    // The `match` header runs on every call that reaches it, so its
+    // activation stays established.
+    let (full, compact, _class) = arm_evidence_in(
+        PRERELEASE,
+        "    assert_eq!(cmp_pre(\"alpha\", \"beta\"), std::cmp::Ordering::Less);",
+        "match (a.parse",
+    )?;
+    for evidence in [&full, &compact] {
+        assert_eq!(evidence.activate.state, StageState::Yes);
+    }
+    Ok(())
+}
+
+#[test]
+fn a_guarded_arm_a_test_input_names_reads_activation_unknown() -> Result<(), String> {
+    // The guard decides the arm too, and the reading does not evaluate it, so
+    // even an input naming the arm's pattern does not show the arm runs.
+    let source = "pub enum Size {\n    Small,\n    Medium,\n}\n\n\
+pub fn price_cents(size: Size, rush: bool) -> u32 {\n    match size {\n        \
+Size::Medium if rush => 900,\n        Size::Medium => 450,\n        \
+Size::Small => 300,\n    }\n}\n";
+    let (full, compact, class) = arm_evidence_in(
+        source,
+        "    assert_eq!(price_cents(Size::Medium, false), 450);",
+        "Size::Medium if rush",
+    )?;
+    assert_eq!(class, [SeamGripClass::ActivationUnknown; 2]);
+    for evidence in [&full, &compact] {
+        assert_eq!(evidence.activate.state, StageState::Unknown);
     }
     Ok(())
 }
@@ -157,7 +321,7 @@ fn an_owner_that_may_call_itself_leaves_the_arm_unnamed() -> Result<(), String> 
             "{label}: {compact:?}"
         );
         for evidence in [&full, &compact] {
-            assert_eq!(evidence.activate.state, StageState::Yes, "{label}");
+            assert_eq!(evidence.activate.state, StageState::Unknown, "{label}");
             assert_eq!(
                 missing_values(evidence),
                 Vec::<&str>::new(),
@@ -193,7 +357,7 @@ fn a_trait_method_owner_leaves_the_arm_unnamed() -> Result<(), String> {
     assert_ne!(class[0], SeamGripClass::WeaklyGripped, "{full:?}");
     assert_ne!(class[1], SeamGripClass::WeaklyGripped, "{compact:?}");
     for evidence in [&full, &compact] {
-        assert_eq!(evidence.activate.state, StageState::Yes);
+        assert_eq!(evidence.activate.state, StageState::Unknown);
         assert_eq!(missing_values(evidence), Vec::<&str>::new());
     }
     // Control: the same arms and calls on an inherent method name the arm.
@@ -237,7 +401,7 @@ fn an_uncalled_wrapper_keeps_the_arm_named_and_a_called_one_does_not() -> Result
     assert_ne!(class[0], SeamGripClass::WeaklyGripped, "{full:?}");
     assert_ne!(class[1], SeamGripClass::WeaklyGripped, "{compact:?}");
     for evidence in [&full, &compact] {
-        assert_eq!(evidence.activate.state, StageState::Yes);
+        assert_eq!(evidence.activate.state, StageState::Unknown);
         assert_eq!(missing_values(evidence), Vec::<&str>::new());
     }
     Ok(())
@@ -363,7 +527,7 @@ fn a_string_named_or_live_caller_keeps_the_arm_unnamed() -> Result<(), String> {
             "{label}: {compact:?}"
         );
         for evidence in [&full, &compact] {
-            assert_eq!(evidence.activate.state, StageState::Yes, "{label}");
+            assert_eq!(evidence.activate.state, StageState::Unknown, "{label}");
             assert_eq!(missing_values(evidence), Vec::<&str>::new(), "{label}");
         }
     }
@@ -389,7 +553,7 @@ fn an_impl_inside_an_uncalled_function_keeps_the_arm_unnamed() -> Result<(), Str
     assert_ne!(class[0], SeamGripClass::WeaklyGripped, "{full:?}");
     assert_ne!(class[1], SeamGripClass::WeaklyGripped, "{compact:?}");
     for evidence in [&full, &compact] {
-        assert_eq!(evidence.activate.state, StageState::Yes);
+        assert_eq!(evidence.activate.state, StageState::Unknown);
         assert_eq!(missing_values(evidence), Vec::<&str>::new());
     }
     Ok(())
@@ -518,7 +682,7 @@ fn a_scalar_foreign_callee_keeps_the_arm_and_an_owning_crate_import_names_it() -
             let weak = classify_seam(seam, evidence) == SeamGripClass::WeaklyGripped;
             assert_eq!(weak, named, "{import}: {evidence:?}");
             if !named {
-                assert_eq!(evidence.activate.state, StageState::Yes, "{import}");
+                assert_eq!(evidence.activate.state, StageState::Unknown, "{import}");
             }
         }
     }
@@ -563,6 +727,38 @@ let _ = $f(Size::Medium);\n    };\n}\n",
                 StageState::Unknown
             };
             assert_eq!(evidence.activate.state, state, "{prelude}: {evidence:?}");
+        }
+    }
+    Ok(())
+}
+
+/// #15359 review: a selecting input read through a rebound read macro never
+/// grips the arm strongly. The rebound `assert_eq!` below drops its call
+/// and runs the owner with `Size::Small`, so `Size::Medium` may never run
+/// although the visible input names it. The arm reading keeps the visible
+/// selection (activation `yes`); the oracle reading of the rebound macro
+/// (#15183) is what refuses the strong grip. The standard macro grips it.
+#[test]
+fn a_selecting_input_read_through_a_rebound_read_macro_is_not_strongly_gripped()
+-> Result<(), String> {
+    let body = "#[test]\nfn prices() {\n    assert_eq!(price_cents(Size::Medium), 450);\n    \
+assert_eq!(price_cents(Size::Small), 300);\n}\n";
+    let rebind = "macro_rules! assert_eq {\n    ($f:ident ( $($arg:tt)* ), $expected:expr) => {\n        \
+let _ = $f(Size::Small);\n    };\n}\n";
+    for (prelude, rebound) in [(rebind, true), ("", false)] {
+        let tests = format!("use prices::*;\n\n{prelude}\n{body}");
+        // Fixture premise: the visible input selects the arm in both files.
+        assert_eq!(tests.matches("price_cents(Size::Medium)").count(), 1);
+        assert_eq!(tests.contains("macro_rules! assert_eq"), rebound);
+        let (full, compact, class) = arm_evidence_with_tests(PRICES, &tests, "Size::Medium")?;
+        for (evidence, class) in [(&full, class[0]), (&compact, class[1])] {
+            assert_eq!(missing_values(evidence), Vec::<&str>::new(), "{prelude}");
+            assert_eq!(evidence.activate.state, StageState::Yes, "{evidence:?}");
+            assert_eq!(
+                class == SeamGripClass::StronglyGripped,
+                !rebound,
+                "{prelude}: {evidence:?}"
+            );
         }
     }
     Ok(())
@@ -714,6 +910,176 @@ let _ = $f(Size::Medium);\n    };\n}\n";
                 assert_eq!(missing_values(evidence), ["Size::Medium"]);
             }
         }
+    }
+    Ok(())
+}
+
+/// #15359 review: a selecting input keeps an arm's activation only when the
+/// call reaches the owner. `use foreign::score;` makes `score(1)` a call to a
+/// dependency, so it selects nothing in production `score`; the same call
+/// through the owning crate's import does select `1 =>`.
+#[test]
+fn a_selecting_input_to_a_foreign_callee_leaves_the_arm_activation_unknown() -> Result<(), String> {
+    const SCORE: &str = "pub fn score(x: u32) -> u32 {\n    match x {\n        0 => 10,\n        1 => 20,\n        _ => 30,\n    }\n}\n";
+    for (import, selected) in [("use foreign::score;", false), ("use scorer::score;", true)] {
+        let tests =
+            format!("{import}\n\n#[test]\nfn scores() {{\n    assert_eq!(score(1), 20);\n}}\n");
+        let files: Vec<(PathBuf, &str)> = vec![
+            (PathBuf::from("src/lib.rs"), SCORE),
+            (PathBuf::from("tests/foreign.rs"), tests.as_str()),
+        ];
+        let mut index = index_from_files(&files)?;
+        index.package_names = ["scorer".to_string()].into_iter().collect();
+        let seams = inventory_seams_from_index(&[PathBuf::from("src/lib.rs")], &index);
+        let seam = seams
+            .iter()
+            .find(|seam| seam.kind() == SeamKind::MatchArm && seam.expression().starts_with("1 =>"))
+            .ok_or_else(|| format!("expected the `1 =>` match-arm seam: {seams:?}"))?;
+        let context = CompactGripContext::new(&index);
+        let full = evidence_for_seam(seam, &index);
+        let compact = compact_evidence_for_seam(seam, &context);
+        let expected = if selected {
+            StageState::Yes
+        } else {
+            StageState::Unknown
+        };
+        for evidence in [&full, &compact] {
+            assert_eq!(evidence.activate.state, expected, "{import}: {evidence:?}");
+        }
+    }
+    Ok(())
+}
+
+/// #15359 review: a trait method runs from calls that never name it, and a
+/// call naming it may reach another impl, so a selecting input to
+/// `u32::from` does not show this impl's arm runs.
+#[test]
+fn a_selecting_input_to_a_trait_method_owner_leaves_the_arm_activation_unknown()
+-> Result<(), String> {
+    let (full, compact, class) = arm_evidence_in(
+        TRAIT_IMPL,
+        "    assert_eq!(u32::from(Size::Medium), 450);",
+        "Size::Medium",
+    )?;
+    assert_ne!(class[0], SeamGripClass::StronglyGripped, "{full:?}");
+    assert_ne!(class[1], SeamGripClass::StronglyGripped, "{compact:?}");
+    for evidence in [&full, &compact] {
+        assert_eq!(evidence.activate.state, StageState::Unknown);
+    }
+    Ok(())
+}
+
+const WINDOW_RATE: &str = "pub struct Window {\n    pub tier: u32,\n}\n\nimpl Window {\n    pub fn rate(&self, kind: &str) -> u32 {\n        match kind {\n            \"gold\" => 10,\n            \"silver\" => 5,\n            _ => self.tier,\n        }\n    }\n}\n";
+
+/// #15359 CI: a same-named method on another type leaves the name
+/// ambiguous, but a call whose receiver the test built as the owner's impl
+/// type reaches the owner, so its selecting input shows the arm runs. A
+/// selecting input passed to the other type's method does not.
+#[test]
+fn a_typed_receiver_selects_a_method_arm_beside_a_same_named_method() -> Result<(), String> {
+    for (body, selected) in [
+        (
+            "    let window = Window { tier: 1 };\n    assert_eq!(window.rate(\"silver\"), 5);",
+            true,
+        ),
+        (
+            "    let window = Window { tier: 1 };\n    let _o = Other.rate(\"silver\");\n    assert_eq!(window.rate(\"gold\"), 10);",
+            false,
+        ),
+        (
+            "    let window = Window { tier: 1 };\n    assert_eq!(Window::rate(&window, \"silver\"), 5);",
+            false,
+        ),
+    ] {
+        let tests = format!(
+            "use prices::Window;\n\nstruct Other;\nimpl Other {{\n    fn rate(&self, _k: &str) -> u32 {{\n        1\n    }}\n}}\n\n#[test]\nfn rates() {{\n{body}\n}}\n"
+        );
+        let (full, compact, class) = arm_evidence_with_tests(WINDOW_RATE, &tests, "\"silver\"")?;
+        let expected = if selected {
+            StageState::Yes
+        } else {
+            StageState::Unknown
+        };
+        for evidence in [&full, &compact] {
+            assert_eq!(evidence.activate.state, expected, "{body}: {evidence:?}");
+        }
+        if !selected {
+            assert_ne!(class[0], SeamGripClass::StronglyGripped, "{body}: {full:?}");
+            assert_ne!(
+                class[1],
+                SeamGripClass::StronglyGripped,
+                "{body}: {compact:?}"
+            );
+        }
+    }
+    Ok(())
+}
+
+/// #15359 review: with the method name unique in the workspace, a call on a
+/// receiver the reading cannot tie to the owner's type (a dependency value)
+/// does not show the owner's arm runs, while a receiver built as the owner's
+/// type still does.
+#[test]
+fn a_unique_method_name_on_an_unresolved_receiver_does_not_select_the_arm() -> Result<(), String> {
+    for (body, selected) in [
+        (
+            "    let window = Window { tier: 1 };\n    assert_eq!(window.rate(\"silver\"), 5);",
+            true,
+        ),
+        (
+            "    let window = Window { tier: 1 };\n    let other = meter::Meter::default();\n    let _o = other.rate(\"silver\");\n    assert_eq!(window.rate(\"gold\"), 10);",
+            false,
+        ),
+    ] {
+        let tests = format!("use prices::Window;\n\n#[test]\nfn rates() {{\n{body}\n}}\n");
+        let (full, compact, class) = arm_evidence_with_tests(WINDOW_RATE, &tests, "\"silver\"")?;
+        let expected = if selected {
+            StageState::Yes
+        } else {
+            StageState::Unknown
+        };
+        for evidence in [&full, &compact] {
+            assert_eq!(evidence.activate.state, expected, "{body}: {evidence:?}");
+        }
+        if !selected {
+            assert_ne!(class[0], SeamGripClass::StronglyGripped, "{body}: {full:?}");
+            assert_ne!(
+                class[1],
+                SeamGripClass::StronglyGripped,
+                "{body}: {compact:?}"
+            );
+        }
+    }
+    Ok(())
+}
+
+/// #15359 review: the receiver reading compares bare type names, so a
+/// same-named method on another impl of the same bare type (a typestate
+/// `Window<Silver>` beside `Window<Gold>`) or a trait method on the type
+/// (a by-value `self` method is found before the inherent `&self` one)
+/// leaves a typed-receiver call ambiguous.
+#[test]
+fn a_same_named_method_on_the_same_bare_type_leaves_the_arm_activation_unknown()
+-> Result<(), String> {
+    const TYPESTATE: &str = "pub struct Gold;\npub struct Silver;\npub struct Window<T> {\n    pub tier: T,\n}\n\nimpl Window<Gold> {\n    pub fn rate(&self, kind: &str) -> u32 {\n        match kind {\n            \"gold\" => 10,\n            \"silver\" => 5,\n            _ => 1,\n        }\n    }\n}\n\nimpl Window<Silver> {\n    pub fn rate(&self, _kind: &str) -> u32 {\n        2\n    }\n}\n";
+    const TRAIT_SIBLING: &str = "pub struct Window {\n    pub tier: u32,\n}\n\npub trait Rate {\n    fn rate(self, kind: &str) -> u32;\n}\n\nimpl Rate for Window {\n    fn rate(self, _kind: &str) -> u32 {\n        2\n    }\n}\n\nimpl Window {\n    pub fn rate(&self, kind: &str) -> u32 {\n        match kind {\n            \"gold\" => 10,\n            \"silver\" => 5,\n            _ => self.tier,\n        }\n    }\n}\n";
+    for (source, construct) in [
+        (TYPESTATE, "Window { tier: Silver }"),
+        (TRAIT_SIBLING, "Window { tier: 1 }"),
+    ] {
+        let tests = format!(
+            "use prices::*;\n\n#[test]\nfn rates() {{\n    let window = {construct};\n    assert_eq!(window.rate(\"silver\"), 5);\n}}\n"
+        );
+        let (full, compact, class) = arm_evidence_with_tests(source, &tests, "\"silver\"")?;
+        for evidence in [&full, &compact] {
+            assert_eq!(
+                evidence.activate.state,
+                StageState::Unknown,
+                "{construct}: {evidence:?}"
+            );
+        }
+        assert_ne!(class[0], SeamGripClass::StronglyGripped, "{full:?}");
+        assert_ne!(class[1], SeamGripClass::StronglyGripped, "{compact:?}");
     }
     Ok(())
 }

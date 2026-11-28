@@ -3845,9 +3845,10 @@ pub(crate) fn ts_predicate_boundary_row_activation(
             // expected literal (`toBe(999)` when the changed behavior
             // produces `90` at the boundary input) proves nothing — the
             // changed value never reaches a passing assertion.
-            if call_spellings.iter().any(|(name, _)| {
-                expected_side_calls_owner(&candidate.test.body_text, observed, name)
-            }) {
+            if call_spellings
+                .iter()
+                .any(|(name, _)| expected_side_calls_owner(assertion, name))
+            {
                 reached = true;
                 continue;
             }
@@ -4250,7 +4251,7 @@ pub(crate) fn ts_loop_bound_witnessed(
             if assertion_is_self_comparing(assertion, observed)
                 || names
                     .iter()
-                    .any(|name| expected_side_calls_owner(&test.body_text, observed, name))
+                    .any(|name| expected_side_calls_owner(assertion, name))
             {
                 return false;
             }
@@ -7449,60 +7450,26 @@ fn object_argument_pins_literal(argument: &str, operand: &str, literal: &str) ->
     })
 }
 
-/// `true` when the matcher argument of the `expect(<observed>)...` assertion
-/// itself calls the owner (`expect(applyDiscount(100)).toBe(applyDiscount(
-/// 100))`) — a self-comparing tautology that can never discriminate the
-/// changed behavior (#4102 expected-side liveness).
-fn expected_side_calls_owner(body_text: &str, observed: &str, owner_name: &str) -> bool {
-    let observed = observed.trim();
-    if observed.is_empty() {
-        return false;
-    }
-    for (idx, _) in body_text.match_indices("expect(") {
-        if line_prefix_looks_like_comment_or_string(body_text, idx)
-            || inside_block_comment(body_text, idx)
-        {
-            continue;
-        }
-        let Some(after_open) = body_text.get(idx + "expect(".len()..) else {
-            continue;
-        };
-        if !after_open.trim_start().starts_with(observed) {
-            continue;
-        }
-        let Some(close) = balanced_close_offset(after_open) else {
-            continue;
-        };
-        // Walk the `.resolves` / `.rejects` / matcher member chain after the
-        // expect(...) call to the matcher's argument list.
-        let mut rest = &after_open[close + 1..];
-        loop {
-            rest = rest.trim_start();
-            let Some(after_dot) = rest.strip_prefix('.') else {
-                break;
-            };
-            let ident_len = after_dot
-                .chars()
-                .take_while(|ch| ch.is_ascii_alphanumeric() || *ch == '_' || *ch == '$')
-                .count();
-            if ident_len == 0 {
-                break;
-            }
-            rest = &after_dot[ident_len..];
-        }
-        let Some(after_paren) = rest.trim_start().strip_prefix('(') else {
-            continue;
-        };
-        let Some(argument_close) = balanced_close_offset(after_paren) else {
-            continue;
-        };
-        // The tautology shape is the bare owner call; receiver resolution is
-        // not needed to detect the expected side re-calling the owner.
-        if !owner_call_arguments(&after_paren[..argument_close], owner_name, &[]).is_empty() {
-            return true;
-        }
-    }
-    false
+/// `true` when this assertion's own matcher argument calls the owner
+/// (`expect(applyDiscount(100)).toBe(applyDiscount(100))`): a self-comparing
+/// tautology that can never discriminate the changed behavior (#4102
+/// expected-side liveness). Only the assertion's own expected side counts
+/// (#16458): a sibling assertion with the same observed text and an
+/// owner-calling matcher does not veto this one.
+fn expected_side_calls_owner(assertion: &TypeScriptAssertion, owner_name: &str) -> bool {
+    // The tautology shape is the bare owner call; receiver resolution is
+    // not needed to detect the expected side re-calling the owner.
+    [
+        assertion.dynamic_expected_text.as_deref(),
+        assertion.expected_value_or_variant.as_deref(),
+    ]
+    .into_iter()
+    .flatten()
+    .any(|expected| {
+        // A quoted expectation (`"format(100)"`) or a comment is not a call.
+        let code = ts_mask_literals_and_comments(expected);
+        !owner_call_arguments(&code, owner_name, &[]).is_empty()
+    })
 }
 
 /// Byte offset of the matching close parenthesis within `inner` (which

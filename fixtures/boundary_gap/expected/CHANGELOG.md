@@ -1,14 +1,25 @@
 # Golden Output Changes
 
-## Pending — corpus cache generation 1.220 for expect-test fallback receivers (#7878)
+## Pending — corpus cache generation 1.224 for expect-test fallback receivers (#7878)
 
 Expect-test fallback comparisons now require their macro receiver, which bumps
-the analyzer cache schema to 1.220. Move the portable unchanged-attempt
-snapshots to 1.220, recompute the `raw_json_placeholder_v1` artifact content
+the analyzer cache schema to 1.224. Move the portable unchanged-attempt
+snapshots to 1.224, recompute the `raw_json_placeholder_v1` artifact content
 commitment, then the dependent verify commitments and receipt byte hashes. Weak
 grip, unchanged movement, historical currentness, incomplete receipt status and
 fail-closed first-action routing remain unchanged. No other fixture output is
 regenerated.
+
+## Pending — corpus cache generation 1.220 for unselected match arms (#15359)
+
+A match arm whose selecting input no visible test passes now reads activation
+unknown instead of strongly gripped, which bumps the analyzer cache schema to
+1.220. Move the portable
+unchanged-attempt snapshots to 1.220, recompute the
+`raw_json_placeholder_v1` artifact content commitment, then the dependent
+verify commitments and receipt byte hashes. Weak grip, unchanged movement,
+historical currentness, incomplete receipt status and fail-closed first-action
+routing remain unchanged. No other fixture output is regenerated.
 
 ## Pending — corpus cache generation 1.219 for verified calls outside the rebinding query (#16462)
 
