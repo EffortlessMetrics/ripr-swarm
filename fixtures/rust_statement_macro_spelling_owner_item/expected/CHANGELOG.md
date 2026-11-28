@@ -58,3 +58,14 @@ Command:
 
 Updated:
 - `expected/human.txt`
+
+## Pending — rust_statement_macro_spelling_owner_item (6)
+
+Reason:
+RIPR-SPEC-0311: no-binding-seam refusals (untied count, gripped-sibling) retained when match-arm owner identity is unestablished (#12241)(#16016)
+
+Command:
+`cargo xtask goldens bless rust_statement_macro_spelling_owner_item --reason "..."`
+
+Updated:
+- `expected/human.txt`
