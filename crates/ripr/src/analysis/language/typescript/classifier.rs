@@ -3751,16 +3751,21 @@ pub(crate) fn ts_predicate_boundary_row_activation(
         // outer call's arguments count: matches come in source order, so the
         // whole-call check makes the first one the outer call, and a nested
         // `d(90, d(100))` must not witness through its inner call.
-        argument_lists.extend(
-            alias_locals
-                .iter()
-                .filter(|alias| observed_is_one_owner_call_spelling(observed, alias, no_receivers))
-                .filter_map(|alias| {
-                    owner_call_arguments(observed, alias, no_receivers)
-                        .into_iter()
-                        .next()
-                }),
-        );
+        //
+        // When the whole asserted value is one alias call, the owner-name
+        // calls found above sit inside its arguments (`d(90, discount(100))`),
+        // so they are dropped: the outer call alone is asserted.
+        if let Some(outer_alias_arguments) = alias_locals
+            .iter()
+            .filter(|alias| observed_is_one_owner_call_spelling(observed, alias, no_receivers))
+            .find_map(|alias| {
+                owner_call_arguments(observed, alias, no_receivers)
+                    .into_iter()
+                    .next()
+            })
+        {
+            argument_lists = vec![outer_alias_arguments];
+        }
         // #4104-E1: the canonical `const result = owner(...);
         // expect(result).toBe(...)` idiom observes the owner call through
         // a one-hop local binding. When the bare local carries no owner

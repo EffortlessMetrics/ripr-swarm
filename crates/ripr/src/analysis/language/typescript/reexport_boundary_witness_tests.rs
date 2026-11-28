@@ -22,6 +22,16 @@ const OWNER_SOURCE: &str = concat!(
     "  return total;\n",
     "}\n",
 );
+/// The same owner with an optional second parameter, so a nested call can sit
+/// in an argument position the owner accepts.
+const TWO_PARAMETER_OWNER_SOURCE: &str = concat!(
+    "export function discount(total: number, extra?: number): number {\n",
+    "  if (total >= 100) {\n",
+    "    return total * 0.9;\n",
+    "  }\n",
+    "  return total;\n",
+    "}\n",
+);
 const CHANGED_LINE: &str = "  if (total >= 100) {";
 const BARREL: &str = "export { discount } from './price';\n";
 const RENAMED: &str = "export { discount as applyDiscount } from './price';\n";
@@ -36,7 +46,15 @@ struct Row {
 /// `extra` plus the owner, and evaluates its boundary row with and without
 /// the re-export index. `None` when the test is not related at all.
 fn evaluate(extra: &[(&str, &str)], test_source: &str) -> Result<Option<Row>, String> {
-    let mut files: Vec<(&str, &str)> = vec![(OWNER_FILE, OWNER_SOURCE)];
+    evaluate_owner(OWNER_SOURCE, extra, test_source)
+}
+
+fn evaluate_owner(
+    owner_source: &str,
+    extra: &[(&str, &str)],
+    test_source: &str,
+) -> Result<Option<Row>, String> {
+    let mut files: Vec<(&str, &str)> = vec![(OWNER_FILE, owner_source)];
     files.extend_from_slice(extra);
     files.push((TEST_FILE, test_source));
     let workspace_files: Vec<PathBuf> = files.iter().map(|(p, _)| PathBuf::from(p)).collect();
@@ -47,11 +65,11 @@ fn evaluate(extra: &[(&str, &str)], test_source: &str) -> Result<Option<Row>, St
     let index = ReExportIndex::build(&workspace_files, &sources, Path::new(""), None, |path| {
         path.starts_with("tests")
     });
-    let owner = extract_owners(Path::new(OWNER_FILE), OWNER_SOURCE)
+    let owner = extract_owners(Path::new(OWNER_FILE), owner_source)
         .into_iter()
         .find(|owner| owner.name == "discount")
         .ok_or("fixture owner `discount` not extracted")?;
-    if OWNER_SOURCE.lines().nth(1) != Some(CHANGED_LINE) {
+    if owner_source.lines().nth(1) != Some(CHANGED_LINE) {
         return Err("fixture changed line moved".to_string());
     }
     let tests = extract_tests(Path::new(TEST_FILE), test_source);
@@ -192,6 +210,52 @@ fn a_destructured_shadow_of_a_barrel_local_is_not_related() -> Result<(), String
     assert!(
         evaluate(&[("src/index.ts", BARREL)], &source)?.is_none(),
         "`const {{ d }} = helpers` shadows the barrel import"
+    );
+    Ok(())
+}
+
+#[test]
+fn an_owner_call_nested_in_a_whole_alias_call_does_not_witness() -> Result<(), String> {
+    let barrel = [("src/index.ts", BARREL)];
+    let imports =
+        "import { discount as d } from '../src';\nimport { discount } from '../src/price';";
+    // Control: the two-parameter owner still witnesses a whole alias call.
+    let control = evaluate_owner(
+        TWO_PARAMETER_OWNER_SOURCE,
+        &barrel,
+        &vitest(imports, "  expect(d(100)).toBe(90);"),
+    )?
+    .ok_or("control: the test must be related")?;
+    assert_eq!(
+        control.with_index,
+        A::Witnessed,
+        "whole alias call at the boundary"
+    );
+    // The asserted value is the outer `d(90, ...)`, whose own input is off
+    // the boundary; the inner `discount(100)` lands in an ignored argument.
+    let nested = evaluate_owner(
+        TWO_PARAMETER_OWNER_SOURCE,
+        &barrel,
+        &vitest(imports, "  expect(d(90, discount(100))).toBe(90);"),
+    )?
+    .ok_or("nested: the test must be related")?;
+    assert_ne!(
+        nested.with_index,
+        A::Witnessed,
+        "an owner call nested in the alias call"
+    );
+    Ok(())
+}
+
+#[test]
+fn a_destructured_shadow_in_a_later_declarator_is_not_related() -> Result<(), String> {
+    let source = vitest(
+        "import { discount as d } from '../src';",
+        "  const helpers = { d: (_n: number) => 90 }, { d } = helpers;\n  expect(d(100)).toBe(90);",
+    );
+    assert!(
+        evaluate(&[("src/index.ts", BARREL)], &source)?.is_none(),
+        "the second declarator `{{ d }}` shadows the barrel import"
     );
     Ok(())
 }

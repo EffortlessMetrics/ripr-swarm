@@ -5704,7 +5704,8 @@ pub(crate) fn import_alias_owner_locals<'t>(
 /// `const { a: cost } = h`, `let [cost] = fns`) names `local` anywhere in
 /// its pattern, read from the opening bracket to its match so a pattern
 /// spread over several lines or holding a default initializer
-/// (`const { cost = fallback } = h`) is read whole. Any mention counts as a shadow: a renamed import local
+/// (`const { cost = fallback } = h`) is read whole, in every declarator of
+/// the statement. Any mention counts as a shadow: a renamed import local
 /// (`import { owner as local }`, `import local from`) has no destructuring
 /// that could re-anchor it to the owner, so this reads more widely than the
 /// owner-name check and fails closed.
@@ -5712,32 +5713,68 @@ fn local_destructured_in_test_body(body: &str, local: &str) -> bool {
     let masked = ts_mask_literals_and_comments(body);
     ["const", "let", "var"].into_iter().any(|keyword| {
         identifier_offsets(&masked, keyword).into_iter().any(|at| {
-            let after_keyword = &masked[at + keyword.len()..];
-            let pattern = after_keyword.trim_start();
-            // The binding pattern runs from its opening `{` or `[` to the
-            // matching close, across lines, so a default initializer
-            // (`{ cost = fallback }`) and a multi-line pattern stay inside it.
-            if !pattern.starts_with(['{', '[']) {
-                return false;
-            }
-            let mut depth = 0usize;
-            let mut end = pattern.len();
-            for (offset, c) in pattern.char_indices() {
-                match c {
-                    '{' | '[' | '(' => depth += 1,
-                    '}' | ']' | ')' => {
-                        depth = depth.saturating_sub(1);
-                        if depth == 0 {
-                            end = offset + 1;
-                            break;
-                        }
-                    }
-                    _ => {}
-                }
-            }
-            ts_references_identifier(&pattern[..end], local)
+            declarator_patterns(&masked[at + keyword.len()..])
+                .any(|pattern| ts_references_identifier(pattern, local))
         })
     })
+}
+
+/// The destructuring patterns of one declaration statement, read from the
+/// text after its `const`/`let`/`var` keyword: every declarator that opens
+/// with `{` or `[`, not only the first, so `const h = make(), { d } = h`
+/// yields `{ d }` (#16470). Each pattern runs from its opening bracket to the
+/// matching close, across lines, so a default initializer (`{ cost =
+/// fallback }`) and a multi-line pattern stay inside it. The statement ends
+/// at a top-level `;`, at a closing bracket of the enclosing block, or at a
+/// top-level line break that follows neither `,` nor `=`.
+fn declarator_patterns(declaration: &str) -> impl Iterator<Item = &str> {
+    let mut patterns = Vec::new();
+    let mut depth = 0usize;
+    let mut declarator_start = true;
+    let mut last_significant = ' ';
+    for (offset, c) in declaration.char_indices() {
+        if depth == 0 && declarator_start && !c.is_whitespace() {
+            declarator_start = false;
+            if matches!(c, '{' | '[') {
+                let pattern = &declaration[offset..];
+                let mut inner = 0usize;
+                let mut end = pattern.len();
+                for (inner_offset, inner_c) in pattern.char_indices() {
+                    match inner_c {
+                        '{' | '[' | '(' => inner += 1,
+                        '}' | ']' | ')' => {
+                            inner = inner.saturating_sub(1);
+                            if inner == 0 {
+                                end = inner_offset + 1;
+                                break;
+                            }
+                        }
+                        _ => {}
+                    }
+                }
+                patterns.push(&pattern[..end]);
+            }
+        }
+        match c {
+            '{' | '[' | '(' => depth += 1,
+            '}' | ']' | ')' => {
+                if depth == 0 {
+                    break;
+                }
+                depth -= 1;
+            }
+            ',' if depth == 0 => declarator_start = true,
+            ';' if depth == 0 => break,
+            '\n' if depth == 0 && !declarator_start && !matches!(last_significant, ',' | '=') => {
+                break;
+            }
+            _ => {}
+        }
+        if !c.is_whitespace() {
+            last_significant = c;
+        }
+    }
+    patterns.into_iter()
 }
 
 /// The locals of every default import (`import local from "./owner"`) of
