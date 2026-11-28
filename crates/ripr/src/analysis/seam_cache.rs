@@ -840,7 +840,9 @@ pub(crate) struct CachedSeamLimitInfo {
 /// name as its standard macro unless an indexed file binds it (#16462).
 /// `1.220`: a match arm whose selecting input no visible test passes reads
 /// activation unknown instead of strongly gripped (#15359).
-pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.220";
+/// `1.221`: a path-qualified pin is read as unpinned
+/// and a peeled bool payload is compared (#16400).
+pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.221";
 /// `0.2` → `0.3`: same semantic transition as the outer cache (#3273 /
 /// #3286) — sharded entries derive from the same facts and cannot bypass
 /// the outer generation bump.
@@ -1098,7 +1100,9 @@ pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.220";
 /// `0.221`: same transparent-context scan as full `1.219` (#16462).
 /// `0.222`: same unselected match-arm activation reading as full `1.220`
 /// (#15359).
-const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.222";
+/// `0.223`: same reading as full `1.221`: a path-qualified pin is unpinned
+/// and a peeled bool payload is compared (#16400).
+const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.223";
 
 /// Compact-classified seam cache schema. This cache stores the same
 /// `ClassifiedSeam` envelope shape as the full repo exposure cache, but
@@ -1358,7 +1362,9 @@ const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.222";
 /// `0.221`: same transparent-context scan as full `1.219` (#16462).
 /// `0.222`: same unselected match-arm activation reading as full `1.220`
 /// (#15359).
-pub(crate) const COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.222";
+/// `0.223`: same reading as full `1.221`: a path-qualified pin is unpinned
+/// and a peeled bool payload is compared (#16400).
+pub(crate) const COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.223";
 
 /// Compact class-count cache used by repo badge rendering. It keys off
 /// the same workspace state as the full fact cache, but stores only
@@ -6036,7 +6042,9 @@ mod tests {
         // 1.217 -> 1.218: receiver kinds read after generics (#16352).
         // 1.218 -> 1.219: verified calls of unrequested names stay known (#16462).
         // 1.219 -> 1.220: an unselected match arm reads activation unknown (#15359).
-        assert_eq!(CACHE_SCHEMA_VERSION, "1.220");
+        // 1.220 -> 1.221: a path-qualified pin is read as unpinned and a peeled
+        // bool payload is compared (#16400).
+        assert_eq!(CACHE_SCHEMA_VERSION, "1.221");
         // 1.168 -> 1.169: plain `assert_eq!` literal withhold in the audit (#13005).
         // 0.12 -> 0.13 through 0.14 / 0.15 / 0.16 / 0.17 / 0.18: same
         // #3731 semantic transition as the outer classified-seam cache,
@@ -6233,8 +6241,10 @@ mod tests {
         // 0.219 -> 0.220: same receiver kind reading after generics as full 1.218 (#16352).
         // 0.220 -> 0.221: same transparent-context scan as full 1.219 (#16462).
         // 0.221 -> 0.222: same unselected match-arm reading as full 1.220 (#15359).
-        assert_eq!(SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.222");
-        assert_eq!(COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.222");
+        // 0.222 -> 0.223: same as full 1.221; a path-qualified pin is read as
+        // unpinned and a peeled bool payload is compared (#16400).
+        assert_eq!(SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.223");
+        assert_eq!(COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.223");
         // 0.170 -> 0.171: same plain `assert_eq!` literal withhold as full 1.169 (#13005).
     }
 
