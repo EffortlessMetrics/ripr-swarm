@@ -788,8 +788,7 @@ const FEE: &str = "pub fn fee(x: u32) -> u32 {\n    x * 3\n}\n";
 const FEE_OLD: &str = "    x * 2";
 
 #[test]
-fn a_path_qualified_pin_neither_version_returns_does_not_expose_the_change() -> Result<(), String>
-{
+fn a_path_qualified_pin_neither_version_returns_does_not_expose_the_change() -> Result<(), String> {
     // #16400: `fee(4)` is 8 before and 12 after, so a pin on 99 fails on both
     // versions; the path-qualified spelling must not earn the credit the bare
     // call is already refused.
@@ -859,8 +858,7 @@ fn a_wrapped_bool_pin_at_an_agreeing_input_does_not_expose_the_change() -> Resul
 }
 
 #[test]
-fn a_wrapped_bool_equality_at_an_agreeing_input_does_not_expose_the_change() -> Result<(), String>
-{
+fn a_wrapped_bool_equality_at_an_agreeing_input_does_not_expose_the_change() -> Result<(), String> {
     let findings = findings(
         SOME_CHECK,
         SOME_CHECK_OLD,

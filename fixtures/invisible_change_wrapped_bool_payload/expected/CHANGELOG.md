@@ -34,3 +34,15 @@ Command:
 
 Updated:
 - `expected/human.txt`
+
+## Pending — invisible_change_wrapped_bool_payload (4)
+
+Reason:
+RIPR-SPEC-0122: #15336 Evidence legend and human-full Terms line stop claiming test reach (#16429, #16460) after merging main; wording only, classes and stage states unchanged
+
+Command:
+`cargo xtask goldens bless invisible_change_wrapped_bool_payload --reason "..."`
+
+Updated:
+- `expected/human.txt`
+- `expected/human-full.txt`

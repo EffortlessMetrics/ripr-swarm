@@ -9052,7 +9052,9 @@ fn strip_module_path<'a>(call: &'a str, name: &str) -> &'a str {
             .chars()
             .next()
             .is_some_and(|first| first.is_ascii_alphabetic() || first == '_')
-            && segment.chars().all(|ch| ch.is_ascii_alphanumeric() || ch == '_')
+            && segment
+                .chars()
+                .all(|ch| ch.is_ascii_alphanumeric() || ch == '_')
     };
     if !path.is_empty() && path.split("::").all(plain_segment) {
         &call[at + 2..]
