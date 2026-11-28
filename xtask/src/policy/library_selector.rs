@@ -167,65 +167,47 @@ fn is_inert_attribute(text: &str) -> bool {
     }
 }
 
-/// Splits a whitespace-free attribute argument list at its top-level commas,
-/// dropping one trailing comma, or returns `None` when its parentheses or
-/// quotes do not balance. A backslash inside a string escapes the next
-/// character, so `\"` does not end the string.
-fn split_top_level(list: &str) -> Option<Vec<&str>> {
-    let mut parts = Vec::new();
-    let (mut depth, mut quoted, mut escaped, mut start) = (0usize, false, false, 0usize);
-    for (index, ch) in list.char_indices() {
-        if escaped {
-            escaped = false;
-            continue;
-        }
-        match ch {
-            '\\' if quoted => escaped = true,
-            '"' => quoted = !quoted,
-            '(' if !quoted => depth += 1,
-            ')' if !quoted => depth = depth.checked_sub(1)?,
-            ',' if !quoted && depth == 0 => {
-                parts.push(&list[start..index]);
-                start = index + 1;
-            }
-            _ => {}
-        }
-    }
-    if depth != 0 || quoted {
-        return None;
-    }
-    let last = &list[start..];
-    if !(last.is_empty() && !parts.is_empty()) {
-        parts.push(last);
-    }
-    Some(parts)
-}
-
-/// Whether a whitespace-free `#[cfg_attr(..)]` only sets lint levels under a
-/// predicate [`host_cfg_value`] understands, such as
+/// Whether a `#[cfg_attr(..)]` only sets lint levels under a predicate
+/// [`host_cfg_value`] understands, such as
 /// `#![cfg_attr(not(test), deny(missing_docs))]`. A lint level cannot add,
 /// remove or rename items, so whichever way the predicate goes the build sees
-/// the same items. Any other payload, including another inert attribute such
-/// as `must_use`, is not treated as inert: only lint levels are admitted.
-fn is_lint_only_cfg_attr(text: &str) -> bool {
-    let Some(body) = text
-        .strip_prefix("#[cfg_attr(")
-        .and_then(|rest| rest.strip_suffix(")]"))
-    else {
+/// the same items. The payload is read from the parsed attribute, so string
+/// literals in lint reasons (escaped or raw quotes, commas, parentheses) never
+/// regroup it. Any other payload, including another inert attribute such as
+/// `must_use`, a nested `cfg` or `cfg_attr`, or a bare lint name, is not
+/// treated as inert: only lint levels with arguments are admitted.
+fn is_lint_only_cfg_attr(attr: &ast::Attr) -> bool {
+    let Some(ast::Meta::CfgAttrMeta(cfg_attr)) = attr.meta() else {
         return false;
     };
-    let Some((predicate, payload)) = split_top_level(body).and_then(|parts| {
-        let (predicate, payload) = parts.split_first()?;
-        Some((*predicate, payload.to_vec()))
-    }) else {
+    let Some(predicate) = cfg_attr.cfg_predicate() else {
         return false;
     };
-    host_cfg_value(predicate).is_some()
-        && !payload.is_empty()
-        && payload.iter().all(|attribute| {
-            let name = attribute.split('(').next().unwrap_or_default();
-            matches!(name, "allow" | "expect" | "warn" | "deny" | "forbid")
-                && attribute.len() > name.len()
+    let predicate = predicate
+        .syntax()
+        .text()
+        .to_string()
+        .chars()
+        .filter(|ch| !ch.is_whitespace())
+        .collect::<String>();
+    let mut payload = cfg_attr.metas().peekable();
+    host_cfg_value(&predicate).is_some()
+        && payload.peek().is_some()
+        && payload.all(|meta| is_lint_level(&meta))
+}
+
+/// Whether one parsed attribute is `allow`, `expect`, `warn`, `deny` or
+/// `forbid` with an argument list.
+fn is_lint_level(meta: &ast::Meta) -> bool {
+    let ast::Meta::TokenTreeMeta(meta) = meta else {
+        return false;
+    };
+    meta.token_tree().is_some()
+        && meta.path().is_some_and(|path| {
+            matches!(
+                path.syntax().text().to_string().as_str(),
+                "allow" | "expect" | "warn" | "deny" | "forbid"
+            )
         })
 }
 
@@ -237,10 +219,11 @@ fn is_lint_only_cfg_attr(text: &str) -> bool {
 /// which can change what is built.
 fn presence_in_test_build<T: HasAttrs>(item: &T) -> Option<bool> {
     let mut present = true;
-    for text in item.attrs().map(|attr| attribute_text(&attr)) {
-        if is_lint_only_cfg_attr(&text) {
+    for attr in item.attrs() {
+        if is_lint_only_cfg_attr(&attr) {
             continue;
         }
+        let text = attribute_text(&attr);
         if text.starts_with("#[cfg_attr") || text.starts_with("#[path") {
             return None;
         }
@@ -510,10 +493,10 @@ mod tests {
             tests == expected,
             format!("module lint cfg_attr: {tests:?}"),
         )?;
-        // A trailing comma and an escaped quote in a lint reason are valid
-        // Rust and still lint-only.
+        // A trailing comma, an escaped quote and a raw string ending in a
+        // backslash in a lint reason are valid Rust and still lint-only.
         let punctuated = format!(
-            "#![cfg_attr(unix, deny(missing_docs),)]\n#![cfg_attr(not(windows), expect(unused, reason = \"a \\\") b\"))]\n{INNER}"
+            "#![cfg_attr(unix, deny(missing_docs),)]\n#![cfg_attr(not(windows), expect(unused, reason = \"a \\\") b\"))]\n#![cfg_attr(unix, warn(unused, reason = r\"c\\\"), allow(dead_code, reason = \"(\"))]\n{INNER}"
         );
         let workspace = layout("lint-cfg-attr-punctuated", &punctuated)?;
         let tests = resolve_in_source(workspace.root(), SELECTOR);
@@ -555,6 +538,10 @@ mod tests {
         let bare_cfg_attr = "#![cfg_attr(unix, deny)]\n#[cfg(test)]\nmod tests {\n    #[test]\n    fn always() {}\n}\n";
         let empty_cfg_attr =
             "#![cfg_attr(unix,)]\n#[cfg(test)]\nmod tests {\n    #[test]\n    fn always() {}\n}\n";
+        // Escaped quotes in lint reasons on both sides of a non-lint
+        // conditional attribute must not hide it inside a lint payload: on
+        // unix the middle `cfg(any())` removes the module file from the build.
+        let quoted_cfg_attr = "#![cfg_attr(unix, allow(dead_code, reason = \"a\\\"\"), cfg(any()), allow(unused, reason = \"\\\"b\"))]\n#[cfg(test)]\nmod tests {\n    #[test]\n    fn always() {}\n}\n";
         // An inner attribute at the top of the module file itself.
         let file_inner_feature = "#![cfg(feature = \"x\")]\n#[cfg(test)]\nmod tests {\n    #[test]\n    fn always() {}\n}\n";
         // An attribute macro can remove or rename the test it sits on, or
@@ -585,6 +572,7 @@ mod tests {
             ("feature-cfg-attr", feature_cfg_attr),
             ("bare-cfg-attr", bare_cfg_attr),
             ("empty-cfg-attr", empty_cfg_attr),
+            ("quoted-cfg-attr", quoted_cfg_attr),
             ("file-inner-feature", file_inner_feature),
         ] {
             let workspace = layout(label, inner)?;
