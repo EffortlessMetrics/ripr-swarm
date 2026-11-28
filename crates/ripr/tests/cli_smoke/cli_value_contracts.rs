@@ -11,6 +11,37 @@ fn assert_usage_error(output: Output, diagnostic: &str) {
 }
 
 #[test]
+fn misplaced_agent_pilot_preserves_usage_refusal_and_suggests_top_level() -> Result<(), String> {
+    let accepted = "Accepted: start, brief, packet, card, stub, verify, verify-execute, receipt, status, review-summary, repair.";
+    let hint = " `pilot` is a top-level command. Try `ripr pilot --root <dir>`.";
+    for (token, suffix) in [("pilot", hint), ("other", "")] {
+        let message = format!("unknown agent subcommand {token:?}. {accepted}{suffix}");
+        assert_usage_error(run_ripr(&["agent", token, "--root", "."]), &message);
+
+        let output = run_ripr(&["agent", token, "--root", ".", "--json"]);
+        assert_eq!(output.status.code(), Some(2), "{output:?}");
+        assert_eq!(
+            String::from_utf8_lossy(&output.stderr),
+            format!("ripr: {message}\n")
+        );
+        let document: serde_json::Value =
+            serde_json::from_slice(&output.stdout).map_err(|err| format!("{err}: {output:?}"))?;
+        assert_eq!(document["schema_version"], "0.1", "{document}");
+        assert_eq!(document["status"], "refused", "{document}");
+        assert_eq!(document["tool"], "ripr", "{document}");
+        assert_eq!(document["error"]["code"], "unknown_value", "{document}");
+        assert_eq!(document["error"]["token"], token, "{document}");
+        assert_eq!(document["error"]["message"], message, "{document}");
+        assert_eq!(
+            document["error"].get("next"),
+            Some(&serde_json::Value::Null),
+            "{document}"
+        );
+    }
+    Ok(())
+}
+
+#[test]
 fn diff_format_errors_preserve_exit_and_suggestions() {
     for (value, diagnostic) in [
         (

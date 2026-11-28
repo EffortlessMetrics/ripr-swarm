@@ -259,23 +259,29 @@ pub(super) fn parse_agent_args(args: &[String]) -> Result<AgentCommand, String> 
         Some("status") => parse_agent_status_command(&args[1..]),
         Some("review-summary") => parse_agent_review_summary_command(&args[1..]),
         Some("repair") => parse_agent_repair_command(&args[1..]),
-        Some(other) => Err(unknown_value(
-            "agent subcommand",
-            other,
-            &[
-                "start",
-                "brief",
-                "packet",
-                "card",
-                "stub",
-                "verify",
-                "verify-execute",
-                "receipt",
-                "status",
-                "review-summary",
-                "repair",
-            ],
-        )),
+        Some(other) => {
+            let mut message = unknown_value(
+                "agent subcommand",
+                other,
+                &[
+                    "start",
+                    "brief",
+                    "packet",
+                    "card",
+                    "stub",
+                    "verify",
+                    "verify-execute",
+                    "receipt",
+                    "status",
+                    "review-summary",
+                    "repair",
+                ],
+            );
+            if other == "pilot" {
+                message.push_str(" `pilot` is a top-level command. Try `ripr pilot --root <dir>`.");
+            }
+            Err(message)
+        }
     }
 }
 
@@ -1954,6 +1960,17 @@ mod tests {
             parse_agent_args(&args(&["other"])),
             Err(
                 "unknown agent subcommand \"other\". Accepted: start, brief, packet, card, stub, verify, verify-execute, receipt, status, review-summary, repair."
+                    .to_string()
+            )
+        );
+    }
+
+    #[test]
+    fn agent_args_guide_misplaced_pilot_to_top_level() {
+        assert_eq!(
+            parse_agent_args(&args(&["pilot", "--root", "."])),
+            Err(
+                "unknown agent subcommand \"pilot\". Accepted: start, brief, packet, card, stub, verify, verify-execute, receipt, status, review-summary, repair. `pilot` is a top-level command. Try `ripr pilot --root <dir>`."
                     .to_string()
             )
         );
