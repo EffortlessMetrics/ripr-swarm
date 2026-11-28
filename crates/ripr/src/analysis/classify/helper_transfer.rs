@@ -3807,7 +3807,7 @@ fn transparent_macro_name_rebound_for_names(index: &RustIndex, names: &[&str]) -
         .collect();
     let bound_anywhere = std::cell::OnceCell::new();
     index.files().iter().any(|(path, file)| {
-        if !may_bind_any(&file, &names) || sites(&file, path, &names, &names).is_empty() {
+        if !may_bind_any(&file, names) || sites(&file, path, names, names).is_empty() {
             return false;
         }
         let bound: &BTreeSet<String> = bound_anywhere.get_or_init(|| {
@@ -3824,7 +3824,7 @@ fn transparent_macro_name_rebound_for_names(index: &RustIndex, names: &[&str]) -
             .copied()
             .chain(extra.iter().copied().filter(|name| !bound.contains(*name)))
             .collect();
-        !sites(&file, path, &names, &context).is_empty()
+        !sites(&file, path, names, &context).is_empty()
     })
 }
 
