@@ -883,3 +883,62 @@ fn a_wrapped_bool_pin_at_the_separating_input_keeps_the_credit() -> Result<(), S
     assert!(!same_value(finding), "{finding:?}");
     Ok(())
 }
+
+#[test]
+fn a_wrapped_bool_payload_that_overflows_its_operand_width_is_not_read_as_the_same_value()
+-> Result<(), String> {
+    // `x + 1` overflows `i32` at `i32::MAX`, so the current version panics in
+    // a debug build where the baseline returns `Some(true)`: the pin can tell
+    // the versions apart, and exact arithmetic must not fold them equal.
+    let findings = findings(
+        "pub fn check(x: i32) -> Option<bool> {\n    Some(x + 1 > 0)\n}\n",
+        "    Some(x > 0)",
+        "use invisible::check;\n\n#[test]\nfn max() {\n    assert_eq!(check(2147483647), Some(true));\n}\n",
+    )?;
+    let finding = return_value(&findings)?;
+    assert!(!same_value(finding), "{finding:?}");
+    Ok(())
+}
+
+#[test]
+fn a_wrapped_bool_payload_whose_product_overflows_is_not_read_as_the_same_value()
+-> Result<(), String> {
+    // `3_000_000 * 1000` does not fit `i32`.
+    let findings = findings(
+        "pub fn check(x: i32) -> Option<bool> {\n    Some(x * 1000 > 5000)\n}\n",
+        "    Some(x > 0)",
+        "use invisible::check;\n\n#[test]\nfn big() {\n    assert_eq!(check(3000000), Some(true));\n}\n",
+    )?;
+    let finding = return_value(&findings)?;
+    assert!(!same_value(finding), "{finding:?}");
+    Ok(())
+}
+
+#[test]
+fn a_wrapped_bool_payload_within_its_operand_width_is_read_as_the_same_value()
+-> Result<(), String> {
+    // Control: `3000 * 1000` fits `i32`, so both versions are `Some(true)`.
+    let findings = findings(
+        "pub fn check(x: i32) -> Option<bool> {\n    Some(x * 1000 > 5000)\n}\n",
+        "    Some(x > 0)",
+        "use invisible::check;\n\n#[test]\nfn big() {\n    assert_eq!(check(3000), Some(true));\n}\n",
+    )?;
+    let finding = return_value(&findings)?;
+    assert!(same_value(finding), "{finding:?}");
+    Ok(())
+}
+
+#[test]
+fn a_wrapped_bool_payload_over_mixed_parameter_widths_is_not_read_as_the_same_value()
+-> Result<(), String> {
+    // No one operand width covers `i32` and `i64` parameters, so the peeled
+    // boolean stays unread.
+    let findings = findings(
+        "pub fn check(x: i32, y: i64) -> Option<bool> {\n    Some(x > 1)\n}\n",
+        "    Some(x > 0)",
+        "use invisible::check;\n\n#[test]\nfn five() {\n    assert_eq!(check(5, 0), Some(true));\n}\n",
+    )?;
+    let finding = return_value(&findings)?;
+    assert!(!same_value(finding), "{finding:?}");
+    Ok(())
+}
