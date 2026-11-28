@@ -834,9 +834,10 @@ pub(crate) struct CachedSeamLimitInfo {
 /// with distinct typed failure outcomes in the provider identity (#10864).
 /// `1.217`: a rootless grouped drop-in import is verified by its own
 /// root, and body-scoped macro names join the scan only when invoked bare (#16388).
-/// `1.218`: a match arm whose selecting input no visible test passes reads
-/// activation unknown instead of strongly gripped (#15359).
-pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.218";
+/// `1.220`: a match arm whose selecting input no visible test passes reads
+/// activation unknown instead of strongly gripped (#15359; `1.218` and
+/// `1.219` are held by concurrent lanes).
+pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.220";
 /// `0.2` → `0.3`: same semantic transition as the outer cache (#3273 /
 /// #3286) — sharded entries derive from the same facts and cannot bypass
 /// the outer generation bump.
@@ -1090,9 +1091,9 @@ pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.218";
 /// `0.217`: same json item-macro refusal as full `1.215` (#16388).
 /// `0.218`: same provider-failure limitation as full `1.216` (#10864).
 /// `0.219`: same rootless-group and body-scope reading as full `1.217` (#16388).
-/// `0.220`: same unselected match-arm activation reading as full `1.218`
-/// (#15359).
-const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.220";
+/// `0.222`: same unselected match-arm activation reading as full `1.220`
+/// (#15359; `0.220` and `0.221` are held by concurrent lanes).
+const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.222";
 
 /// Compact-classified seam cache schema. This cache stores the same
 /// `ClassifiedSeam` envelope shape as the full repo exposure cache, but
@@ -1348,9 +1349,9 @@ const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.220";
 /// `0.217`: same json item-macro refusal as full `1.215` (#16388).
 /// `0.218`: same provider-failure limitation as full `1.216` (#10864).
 /// `0.219`: same rootless-group and body-scope reading as full `1.217` (#16388).
-/// `0.220`: same unselected match-arm activation reading as full `1.218`
-/// (#15359).
-pub(crate) const COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.220";
+/// `0.222`: same unselected match-arm activation reading as full `1.220`
+/// (#15359; `0.220` and `0.221` are held by concurrent lanes).
+pub(crate) const COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.222";
 
 /// Compact class-count cache used by repo badge rendering. It keys off
 /// the same workspace state as the full fact cache, but stores only
@@ -6025,8 +6026,8 @@ mod tests {
         // 1.214 -> 1.215: item macros naming serde_json refuse json! credit (#16388).
         // 1.215 -> 1.216: source-bound failed property verification is an opaque repo limit (#10864).
         // 1.216 -> 1.217: rootless groups and bare-invocation body scoping (#16388).
-        // 1.217 -> 1.218: an unselected match arm reads activation unknown (#15359).
-        assert_eq!(CACHE_SCHEMA_VERSION, "1.218");
+        // 1.217 -> 1.220: an unselected match arm reads activation unknown (#15359).
+        assert_eq!(CACHE_SCHEMA_VERSION, "1.220");
         // 1.168 -> 1.169: plain `assert_eq!` literal withhold in the audit (#13005).
         // 0.12 -> 0.13 through 0.14 / 0.15 / 0.16 / 0.17 / 0.18: same
         // #3731 semantic transition as the outer classified-seam cache,
@@ -6220,9 +6221,9 @@ mod tests {
         // 0.216 -> 0.217: same json item-macro refusal as full 1.215 (#16388).
         // 0.217 -> 0.218: same provider-failure limitation as full 1.216 (#10864).
         // 0.218 -> 0.219: same rootless-group and body-scope reading as full 1.217 (#16388).
-        // 0.219 -> 0.220: same unselected match-arm reading as full 1.218 (#15359).
-        assert_eq!(SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.220");
-        assert_eq!(COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.220");
+        // 0.219 -> 0.222: same unselected match-arm reading as full 1.220 (#15359).
+        assert_eq!(SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.222");
+        assert_eq!(COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.222");
         // 0.170 -> 0.171: same plain `assert_eq!` literal withhold as full 1.169 (#13005).
     }
 

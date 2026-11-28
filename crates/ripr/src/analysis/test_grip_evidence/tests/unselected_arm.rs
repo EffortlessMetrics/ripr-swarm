@@ -158,10 +158,22 @@ fn a_rebound_owner_name_does_not_credit_a_selecting_call() -> Result<(), String>
         let body = format!("{rebind}\n    assert_eq!(price_cents(Size::Medium), 450);");
         let (full, compact, class) = arm_evidence(&body, "Size::Medium")?;
         for evidence in [&full, &compact] {
-            assert_ne!(evidence.activate.state, StageState::Yes, "{rebind}: {evidence:?}");
+            assert_ne!(
+                evidence.activate.state,
+                StageState::Yes,
+                "{rebind}: {evidence:?}"
+            );
         }
-        assert_ne!(class[0], SeamGripClass::StronglyGripped, "{rebind}: {full:?}");
-        assert_ne!(class[1], SeamGripClass::StronglyGripped, "{rebind}: {compact:?}");
+        assert_ne!(
+            class[0],
+            SeamGripClass::StronglyGripped,
+            "{rebind}: {full:?}"
+        );
+        assert_ne!(
+            class[1],
+            SeamGripClass::StronglyGripped,
+            "{rebind}: {compact:?}"
+        );
     }
     Ok(())
 }
