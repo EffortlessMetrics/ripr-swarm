@@ -2179,6 +2179,12 @@ never above `snapshot` / medium, read from its parsed shape, so a
 single-bracket, spaced (`expect! [[..]]`, `.assert_eq (..)`) or line-split
 call grades as the canonical spelling does. A weaker reading of the compared
 value (a tautology, a broad `is_err()`) is kept.
+In a file the parser rejects, the lexical fallback grades the same comparison
+`snapshot` / medium only when its original statement text, joined through a
+method rustfmt wraps onto the next line, parses as that method on a bracketed
+`expect!`/`expect_file!` receiver outside any closure; a row wholly inside a
+block comment or string literal opened on an earlier row starts no
+comparison (#7878).
 The oracle keeps RIPR-SPEC-0231's step-6 `snapshot` kind; as for the
 bool-owner pin, only its probe-relative strength rises once the pin admits
 it. `assert_debug_eq` (which compares the `Debug` text), a qualified
