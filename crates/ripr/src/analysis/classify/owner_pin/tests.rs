@@ -13685,12 +13685,21 @@ fn associated_function_pin_resolves_the_importing_crate_through_manifests() -> R
     ));
     let _ = std::fs::remove_dir_all(&root);
     assert_eq!(direct, Some(1), "`use meter::Gauge;` must pin the owner");
+    // The imported associated-glob exception authenticates this glob: the
+    // manifest names `meter` as the owner's crate, the owner library cannot
+    // supply the `meter` root name, and no captured file binds that root, so
+    // `use meter::*;` is proved to reach the owner (see
+    // `associated_glob_memo`). Unauthenticated globs still refuse.
+    assert_eq!(
+        globbed,
+        Some(1),
+        "authenticated owner-crate glob must pin the owner"
+    );
     for (label, refused) in [
         ("sibling crate", sibling),
         ("registry dependency", registry),
         ("undeclared crate", synthetic_name),
         ("alias", aliased),
-        ("glob", globbed),
         ("bare free call", bare),
     ] {
         assert_eq!(refused, Some(0), "{label}");

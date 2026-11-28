@@ -1103,7 +1103,10 @@ pub(crate) fn trusted_macro_binding_sites_in_context(
         );
     };
     let binding_free = BindingFreeFileIndex::collect(parse.tree().syntax());
-    let inline_globs = RootInlineGlobIndex::collect(parse.tree().syntax(), packages);
+    // The in-context scan (#16462) has no inline-glob proof: an empty index
+    // keeps glob imports unpermitted here, as on main, while the union and
+    // singleton scans above pass the collected index.
+    let inline_globs = RootInlineGlobIndex::default();
     let indexes = MacroBindingTreeIndexes {
         binding_free: &binding_free,
         inline_globs: &inline_globs,
