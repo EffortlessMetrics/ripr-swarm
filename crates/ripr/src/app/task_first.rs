@@ -3564,21 +3564,21 @@ pub(crate) fn check_repair_route(
         }
     }
     let owner_receipt = if finding.probe.family == crate::domain::ProbeFamily::MatchArm {
-        let receipt = output.analysis_outcome.as_ref().and_then(|outcome| {
+        output.analysis_outcome.as_ref().and_then(|outcome| {
             outcome
                 .rust_match_arm_scope
                 .as_ref()?
                 .receipt(finding, outcome.identity.input_identity.as_deref())
-        });
-        if receipt.is_none() {
-            return CheckRepairRoute::Refused(RepairRouteRefusal::GapRouteUnavailable {
-                reason: "the producer did not establish the owner identity for this bounded match-arm scope",
-            });
-        }
-        receipt
+        })
     } else {
         None
     };
+    // Without an owner receipt no start may be offered for a match-arm
+    // finding, but the file is still classified below so a finding no seam
+    // binds keeps the untied-spot count (#12241) instead of the owner
+    // refusal; the refusal applies only when a seam would otherwise bind.
+    let owner_identity_missing =
+        finding.probe.family == crate::domain::ProbeFamily::MatchArm && owner_receipt.is_none();
     let Ok(config) = load_for_root(root) else {
         return CheckRepairRoute::Refused(RepairRouteRefusal::ConfigUnreadable);
     };
@@ -3663,6 +3663,11 @@ pub(crate) fn check_repair_route(
             seams_in_file: classified.len(),
         });
     };
+    if owner_identity_missing {
+        return CheckRepairRoute::Refused(RepairRouteRefusal::GapRouteUnavailable {
+            reason: "the producer did not establish the owner identity for this bounded match-arm scope",
+        });
+    }
     if bound.next().is_some() {
         return CheckRepairRoute::Refused(RepairRouteRefusal::SeveralBindingSeams);
     }
