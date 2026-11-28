@@ -3,9 +3,10 @@
 ## Pending — corpus cache generation 1.219 for verified calls outside the rebinding query (#16462)
 
 The transparent-macro rebinding scan now reads a call of any transparent
-name as that standard macro unless the file binds it, so a verified
-`anyhow!(format!(..))` elsewhere no longer reads as a `format` binding,
-which bumps the analyzer cache schema to 1.219. Move the portable
+name as that standard macro unless the file or any other indexed file
+binds it (a parent module's `macro_rules!` reaches its out-of-line
+children), so a verified `anyhow!(format!(..))` elsewhere no longer reads
+as a `format` binding, which bumps the analyzer cache schema to 1.219. Move the portable
 unchanged-attempt snapshots to 1.219, recompute the
 `raw_json_placeholder_v1` artifact content commitment, then the dependent
 verify commitments and receipt byte hashes. Weak grip, unchanged movement,
