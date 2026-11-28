@@ -6,6 +6,9 @@ use super::*;
 use crate::domain::{ExposureClass, OracleKind, OracleStrength, RelationReason};
 
 impl RiprProviderCapabilitySetV1 {
+    /// The capability set this build advertises: every capability, read-only,
+    /// offline and non-executing, with the canonical schemas, claim boundary
+    /// and excluded claims.
     pub fn read_only(provider_version: impl Into<String>) -> Self {
         let capabilities = [
             RiprProviderCapabilityV1::TestGripSummary,
@@ -27,6 +30,10 @@ impl RiprProviderCapabilitySetV1 {
         }
     }
 
+    /// Checks the schema version, the `ripr` provider identity, a nonempty set
+    /// with no duplicate capability, and that each descriptor is read-only,
+    /// offline and non-executing with the canonical schemas, claim boundary
+    /// and excluded claims.
     pub fn validate(&self) -> Result<(), RiprProviderContractErrorV1> {
         if self.schema_version != RIPR_PROVIDER_CAPABILITY_SCHEMA_VERSION {
             return Err(error(
@@ -81,6 +88,10 @@ impl RiprProviderCapabilitySetV1 {
 }
 
 impl RiprRepositorySnapshotV1 {
+    /// Checks the repository identity, the `sha256:` source digest, and that
+    /// `snapshot_id` binds the source view to it: a lowercase 40- or 64-hex
+    /// `git-tree:` id whose UTF-8 bytes hash to `source_digest`, or
+    /// `<view-prefix><source_digest>` for derived views.
     pub fn validate(&self) -> Result<(), RiprProviderContractErrorV1> {
         require_non_empty("repository_id", &self.repository_id)?;
         require_sha256("source_digest", &self.source_digest)?;
@@ -116,6 +127,9 @@ impl RiprRepositorySnapshotV1 {
 }
 
 impl RiprAnalysisRequestV1 {
+    /// Checks the schema version, the snapshot, the subject's identities and
+    /// digest, the config digest, the nonblank text fields, and that
+    /// `output_root` is a portable relative path.
     pub fn validate(&self) -> Result<(), RiprProviderContractErrorV1> {
         if self.schema_version != RIPR_ANALYSIS_REQUEST_SCHEMA_VERSION {
             return Err(error(
@@ -144,6 +158,10 @@ impl RiprAnalysisRequestV1 {
 }
 
 impl RiprAnalysisReceiptV1 {
+    /// Checks the schema version, the request, the provider and binary
+    /// identity, that the analyzer generation matches the request, the claim
+    /// boundary and excluded claims, the diagnostics, and that the result
+    /// class agrees with completeness, truncation, status and summary.
     pub fn validate(&self) -> Result<(), RiprProviderContractErrorV1> {
         if self.schema_version != RIPR_ANALYSIS_RECEIPT_SCHEMA_VERSION {
             return Err(error(
