@@ -525,10 +525,14 @@ impl MacroVisibility {
             {
                 true
             }
-            Some("build.rs") => !file
-                .ancestors()
-                .skip(1)
-                .any(|directory| directory.file_name().is_some_and(|name| name == "src")),
+            // `src/bin/build.rs` is a binary named `build`.
+            Some("build.rs") => {
+                file.parent().is_some_and(is_root_directory)
+                    || !file
+                        .ancestors()
+                        .skip(1)
+                        .any(|directory| directory.file_name().is_some_and(|name| name == "src"))
+            }
             _ => file.parent().is_some_and(is_root_directory),
         }
     }
@@ -758,11 +762,15 @@ impl MacroVisibility {
             declarer.file_name().and_then(|name| name.to_str()),
             Some("lib.rs" | "main.rs" | "mod.rs" | "build.rs")
         );
+        let in_root_directory = is_root_directory(directory);
+        // A file in a root directory that no module declares is a crate
+        // root, whose children rustc reads only beside it (#10298).
+        let crate_root_here = in_root_directory && !root_like && self.parent(declarer).is_none();
         let mut bases = Vec::new();
-        if root_like || is_root_directory(directory) {
+        if root_like || in_root_directory {
             bases.push(directory.to_path_buf());
         }
-        if !root_like {
+        if !root_like && !crate_root_here {
             bases.push(directory.join(stem));
         }
         let mut found = BTreeSet::new();

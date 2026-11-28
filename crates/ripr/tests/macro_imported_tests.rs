@@ -324,14 +324,31 @@ fn a_table_from_a_binary_roots_macro_use_module_reads_like_the_hand_written_test
         );
     }
 
-    // A crate root's child lives beside it, not under `src/bin/tool/`; rustc
-    // rejects this layout, so it must not read exposed.
+    // A crate root's child lives beside it, not under `src/bin/tool/`
+    // (rustc rejects this layout), so the module resolves to no file.
     let misplaced = TempRepo::create(&[
         ("src/bin/tool.rs", tool),
         ("src/bin/tool/common/mod.rs", TABLE.to_string()),
     ])?
     .predicate()?;
+    assert!(misplaced.related_tests.is_empty(), "{misplaced:?}");
     assert_ne!(misplaced.class, ExposureClass::Exposed, "{misplaced:?}");
+
+    // The path route needs the binary to be its own crate root, also for
+    // `src/bin/build.rs`, a binary named `build` rather than a build script.
+    for root in ["src/bin/tool.rs", "src/bin/build.rs"] {
+        let by_path = TempRepo::create(&[
+            (
+                root,
+                format!(
+                    "mod common;\n{USE_GATE}use crate::gate_table;\nfn main() {{}}\n{BOUNDARY_ROWS}"
+                ),
+            ),
+            ("src/bin/common/mod.rs", exported_table()),
+        ])?
+        .predicate()?;
+        assert_eq!(by_path.class, ExposureClass::Exposed, "{root}: {by_path:?}");
+    }
     Ok(())
 }
 

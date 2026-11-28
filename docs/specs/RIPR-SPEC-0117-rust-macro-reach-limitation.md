@@ -357,7 +357,8 @@ ambiguous and indexes nothing. A definition containing a token that spans
 lines (a multi-line string literal) is left out, a file that does not parse
 cleanly resolves nothing, and only a file that spells `name!` for a macro whose
 definition mentions `test` is resolved at all. `build.rs`, `main.rs`,
-`lib.rs` and a file directly in `src/bin/` are crate roots (#10298). Parents are followed up to four modules, and
+`lib.rs` and a file directly in `src/bin/` (including `src/bin/build.rs`, a
+binary rather than a build script) are crate roots (#10298). Parents are followed up to four modules, and
 `#[macro_use]` modules down to about four.
 
 A text precheck may avoid the generator-call parse only when it cannot hide
@@ -375,7 +376,9 @@ and distinguish absent names, incidental hits and real calls on identical inputs
 A module resolves only to one file: `name.rs` or `name/mod.rs` under the
 declaring file's anchor (a crate root, `mod.rs`, or a file directly in
 `tests`, `benches`, `examples` or `src/bin` has its children beside it; any other file
-has them under `<stem>/`; a file in a root directory is tried under both).
+has them under `<stem>/`; a file in a root directory is tried under both
+when some module declares it, and only beside itself when it is its own crate
+root).
 Nothing is resolved, and the invocation indexes nothing, when the
 declaration has a `#[path]` or any attribute other than `macro_use`,
 `cfg(test)`, `allow`, `warn`, `deny` or `doc`; when zero or several files
