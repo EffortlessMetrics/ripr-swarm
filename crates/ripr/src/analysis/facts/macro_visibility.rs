@@ -757,7 +757,8 @@ impl MacroVisibility {
             let needle = format!("{file_name}\"");
             let mut found = Vec::new();
             for (path, source) in &self.sources {
-                if spells_path_value_ending_in(source, &needle) {
+                if spells_path_value_ending_in(source, &needle) || spells_escaped_path_value(source)
+                {
                     found.push(path.clone());
                     if found.len() == 2 {
                         break;
@@ -892,6 +893,28 @@ fn spells_path_value_ending_in(source: &str, needle: &str) -> bool {
         };
         let before = before.trim_end_matches(is_lexer_whitespace);
         before.ends_with("path") || ends_in_comment_or_unicode(before, false)
+    })
+}
+
+/// Whether `source` spells `path = "…"` with an escape (`\`) in the value,
+/// such as `"\x74ool.rs"`: the decoded name can be any file, so the value
+/// counts as a mount of every file name.
+fn spells_escaped_path_value(source: &str) -> bool {
+    source.match_indices("path").any(|(start, word)| {
+        let rest = source[start + word.len()..].trim_start_matches(is_lexer_whitespace);
+        let Some(rest) = rest.strip_prefix('=') else {
+            return false;
+        };
+        let Some(value) = rest
+            .trim_start_matches(is_lexer_whitespace)
+            .strip_prefix('"')
+        else {
+            return false;
+        };
+        value
+            .split('"')
+            .next()
+            .is_some_and(|text| text.contains('\\'))
     })
 }
 
@@ -1446,6 +1469,12 @@ mod tests {
         ] {
             assert!(spells_path_value_ending_in(source, needle), "{source}");
         }
+        assert!(spells_escaped_path_value(
+            "#[path = \"\\x74ool.rs\"]\nmod mounted;\n"
+        ));
+        assert!(!spells_escaped_path_value(
+            "#[path = \"tool.rs\"]\nmod mounted;\n"
+        ));
         for source in [
             "const NAME: &str = \"tool.rs\";\n",
             "#[doc = \"tool.rs\"]\nfn f() {}\n",
