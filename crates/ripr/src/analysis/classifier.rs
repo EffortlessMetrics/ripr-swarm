@@ -4012,7 +4012,12 @@ fn far_above_threshold_discounts() {
         };
 
         let finding = classify_probe(&probe, &index, true, None);
-        if finding.class != ExposureClass::Exposed {
+        // The hand-built index carries no producer pin, so under the #12010
+        // sink-identity gate this synthetic oracle (a field read naming the
+        // payload, with no bound owner result in the test) is only weakly
+        // exposed. The parser-backed cases below establish the same payload
+        // end to end and keep the exposed expectation.
+        if finding.class != ExposureClass::WeaklyExposed {
             return Err(format!("parser payload was not discriminated: {finding:?}"));
         }
 

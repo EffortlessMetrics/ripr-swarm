@@ -3623,6 +3623,19 @@ fn analyze_related_assertions(
                             | RelationReason::AssertionTargetAffinity
                             | RelationReason::OwnerNamedTest
                     ))
+                    || (!import_defeats_owner
+                        && !cross_package_defeats_owner
+                        && !match_context.owner_shadowed
+                        && matches!(
+                            reason,
+                            RelationReason::DirectOwnerCall
+                                | RelationReason::HelperOwnerCall
+                                | RelationReason::AssertionTargetAffinity
+                                | RelationReason::OwnerNamedTest
+                        )
+                        && match_context
+                            .owner_callee
+                            .is_some_and(|owner| bound_result_identity(test, assertion, owner)))
                     || record_field_identity
                     || owner_return_pin_holds(
                         &assertion_context,
@@ -3926,6 +3939,93 @@ pub(super) fn macro_arguments(rest: &str) -> Vec<&str> {
 
 /// Whether `operand` is exactly one bare call `owner(..)`: not a path
 /// segment, method, nested argument or larger expression.
+/// Whether an assertion operand is a test local bound from a direct owner
+/// call and never rebound before the assertion: `let amount = tax(1250);`
+/// then `assert_eq!(amount, 100)` reads the owner's result through the
+/// binding, which is sink-level identity for that assertion. Fail closed:
+/// a second binding of the name, an assignment to it, a binding after the
+/// assertion, or a right-hand side that is not a whole owner call refuses.
+fn bound_result_identity(test: &TestSummary, assertion: &OracleFact, owner: &str) -> bool {
+    let masked = crate::analysis::extract::mask_comments_and_strings(&test.body);
+    let Some(assertion_at) = masked.find(assertion.text.trim()) else {
+        return false;
+    };
+    let mut operands: Vec<String> = assertion_comparison_operands(&assertion.text)
+        .map(|pair| pair.iter().map(|operand| operand.trim().to_string()).collect())
+        .unwrap_or_default();
+    if let Some(observed) = crate::analysis::extract::assertion_observed_operand(&assertion.text) {
+        operands.push(observed.trim().to_string());
+    }
+    operands.iter().any(|operand| {
+        let name = operand.as_str();
+        if name.is_empty()
+            || !name
+                .chars()
+                .all(|ch| ch.is_ascii_alphanumeric() || ch == '_')
+            || name.chars().next().is_some_and(|ch| ch.is_ascii_digit())
+        {
+            return false;
+        }
+        let mut binding_rhs: Option<&str> = None;
+        let mut search_from = 0usize;
+        while let Some(relative) = masked[search_from..].find("let ") {
+            let start = search_from + relative;
+            if start >= assertion_at {
+                break;
+            }
+            let rest = masked[start + 4..].trim_start();
+            let rest = rest.strip_prefix("mut ").unwrap_or(rest);
+            let name_end = rest
+                .find(|ch: char| !(ch.is_ascii_alphanumeric() || ch == '_'))
+                .unwrap_or(rest.len());
+            if &rest[..name_end] == name {
+                if binding_rhs.is_some() {
+                    return false;
+                }
+                let Some(equals) = rest.find('=') else {
+                    return false;
+                };
+                if rest[..equals].contains("==") {
+                    return false;
+                }
+                let rhs = rest[equals + 1..].trim_start();
+                binding_rhs = Some(rhs);
+            }
+            search_from = start + 4;
+        }
+        let Some(rhs) = binding_rhs else {
+            return false;
+        };
+        let rhs = rhs.split(';').next().unwrap_or(rhs).trim();
+        if !is_whole_owner_call(rhs, owner) {
+            return false;
+        }
+        // No assignment to the name between its binding and the assertion
+        // rebinds it: a `<name> =` word occurrence that is not the binding's
+        // own `let` and not an `==` comparison refuses.
+        let mut scan_from = 0usize;
+        while let Some(relative) = masked[scan_from..assertion_at].find(name) {
+            let at = scan_from + relative;
+            let before_ok = at == 0
+                || !(masked.as_bytes()[at - 1].is_ascii_alphanumeric()
+                    || masked.as_bytes()[at - 1] == b'_');
+            let after = masked[at + name.len()..assertion_at].trim_start();
+            let statement_start = masked[..at]
+                .rfind([';', '{', '}'])
+                .map_or(0, |index| index + 1);
+            if before_ok
+                && after.starts_with('=')
+                && !after[1..].starts_with('=')
+                && !masked[statement_start..at].contains("let ")
+            {
+                return false;
+            }
+            scan_from = at + name.len();
+        }
+        true
+    })
+}
+
 fn is_whole_owner_call(operand: &str, owner: &str) -> bool {
     operand.strip_prefix(owner).is_some_and(|rest| {
         let rest = rest.trim_start();
@@ -14116,7 +14216,18 @@ impl RetryBuilder { pub fn new()->Self { Self { attempts: 4, delay_ms: 100 } } p
         let (observe, discriminate, _) =
             reveal_evidence_closed_constant(&probe, &related, &|_, _, _| false);
         assert_eq!(observe.state, StageState::Yes);
-        assert_eq!(discriminate.state, StageState::Yes);
+        // #12010: the assertion still observes through token confirmation,
+        // but it names no sink-level identity for the changed predicate (it
+        // asserts on another function's constant), so discrimination stays
+        // weak. The closed-constant drop above is what removes observation
+        // entirely; identity is a separate gate.
+        assert_eq!(
+            discriminate.state,
+            StageState::Weak,
+            "{}",
+            discriminate.summary
+        );
+        assert!(discriminate.summary.contains("identity_unresolved"));
     }
 
     /// #15476: only a test tied to the owner by a reach relation drops a
