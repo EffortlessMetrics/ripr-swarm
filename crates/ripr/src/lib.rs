@@ -1,4 +1,5 @@
 #![forbid(unsafe_code)]
+#![cfg_attr(not(test), deny(missing_docs))]
 //! `ripr` is a static RIPR mutation-exposure analyzer for Rust workspaces.
 //!
 //! It does not run mutants. It reads changed Rust code, creates mutation-shaped
