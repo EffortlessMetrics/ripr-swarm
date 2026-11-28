@@ -305,7 +305,9 @@ pub struct RiprAnalysisReceiptV1 {
 /// Which rule a provider contract document broke.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum RiprProviderContractErrorCodeV1 {
-    /// A required value is blank or absent, or a required set is incomplete.
+    /// A required value is blank or absent, or a required set is incomplete
+    /// or not exactly the required set (for example a duplicate or extra
+    /// excluded claim).
     MissingField,
     /// A schema version is not the supported one.
     UnsupportedSchema,
