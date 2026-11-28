@@ -76,6 +76,13 @@ const OWNER_SOURCE: &str = concat!(
     "export function resolveValue(input: unknown): unknown {\n",
     "  return typeof input !== \"function\" ? (input as any)() : input;\n",
     "}\n",
+    "\n",
+    "export function label(total: number): string {\n",
+    "  if (total >= 100) {\n",
+    "    return \"label(100)\";\n",
+    "  }\n",
+    "  return \"default\";\n",
+    "}\n",
 );
 
 /// A changed line of `OWNER_SOURCE`, with the owner it belongs to.
@@ -88,6 +95,11 @@ struct Change {
 const DISCOUNT: Change = Change {
     owner: "applyDiscount",
     line: 5,
+    text: "  if (total >= 100) {",
+};
+const LABEL: Change = Change {
+    owner: "label",
+    line: 64,
     text: "  if (total >= 100) {",
 };
 const FEE: Change = Change {
@@ -399,7 +411,7 @@ fn wrapped_or_nested_owner_call_does_not_witness() -> Result<(), String> {
 /// sibling with the same observed call and an owner-calling matcher
 /// (`toBeLessThan(applyDiscount(200))`, or a tautology) leaves the pinned
 /// assertion witnessed; an assertion whose own matcher calls the owner never
-/// witnesses.
+/// witnesses, and a quoted expectation that spells a call is not one.
 #[test]
 fn only_the_assertions_own_expected_side_vetoes_its_witness() -> Result<(), String> {
     for (title, body) in [
@@ -436,6 +448,25 @@ fn only_the_assertions_own_expected_side_vetoes_its_witness() -> Result<(), Stri
     let evaluated = evaluate(&DISCOUNT, &source, true)?;
     assert_ne!(evaluated.activation(title)?, A::Witnessed);
     assert!(!evaluated.witnessed);
+
+    // A quoted expectation that spells an owner call is a string, not a
+    // call: it pins the boundary branch's return and keeps the witness.
+    for (title, imports, body) in [
+        (
+            "quoted expectation",
+            "import { label } from '../src/pricing';",
+            "  expect(label(100)).toBe(\"label(100)\");",
+        ),
+        (
+            "node assert quoted expectation",
+            "import assert from 'node:assert';\nimport { label } from '../src/pricing';",
+            "  assert.strictEqual(label(100), \"label(100)\");",
+        ),
+    ] {
+        let evaluated = evaluate(&LABEL, &one_test(title, imports, body), true)?;
+        assert_eq!(evaluated.activation(title)?, A::Witnessed, "{title}");
+        assert!(evaluated.witnessed, "{title}");
+    }
     Ok(())
 }
 

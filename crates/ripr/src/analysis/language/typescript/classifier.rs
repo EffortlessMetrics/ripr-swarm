@@ -7465,7 +7465,11 @@ fn expected_side_calls_owner(assertion: &TypeScriptAssertion, owner_name: &str) 
     ]
     .into_iter()
     .flatten()
-    .any(|expected| !owner_call_arguments(expected, owner_name, &[]).is_empty())
+    .any(|expected| {
+        // A quoted expectation (`"format(100)"`) or a comment is not a call.
+        let code = ts_mask_literals_and_comments(expected);
+        !owner_call_arguments(&code, owner_name, &[]).is_empty()
+    })
 }
 
 /// Byte offset of the matching close parenthesis within `inner` (which
