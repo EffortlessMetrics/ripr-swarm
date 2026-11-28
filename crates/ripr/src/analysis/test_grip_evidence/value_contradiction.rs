@@ -476,9 +476,17 @@ pub(in crate::analysis) fn change_is_invisible_to_every_assertion(
     let peeled = shared_constructor_payloads(current, &baseline);
     // #16400: a peeled boolean payload (`Some(x >= 0)` to `Some(x > 0)`) is
     // read like any other payload: equal payloads under the one shared
-    // constructor are equal values. Only an unwrapped bare boolean result
-    // stays unread below.
-    let payload_peeled = peeled.is_some();
+    // constructor are equal values. An unwrapped bare boolean result stays
+    // unread below.
+    // The rebuilt `-> bool` names no integer width, so the peeled payload's
+    // intermediates are held to the parameters' one shared declared width;
+    // without one the peeled boolean stays unread like a bare one.
+    let bool_operand_range = peeled
+        .as_ref()
+        .and_then(|(current_payload, baseline_payload)| {
+            let range = bool_payload_operand_range(current_payload)?;
+            (bool_payload_operand_range(baseline_payload) == Some(range)).then_some(range)
+        });
     let (current_value, baseline_value) =
         peeled.unwrap_or_else(|| (current.to_string(), baseline.clone()));
     // An equivalent rewrite (`x * 3` to `3 * x`) is invisible to every test
@@ -489,6 +497,10 @@ pub(in crate::analysis) fn change_is_invisible_to_every_assertion(
     // through the receiver's fields, and a tuple tail per component.
     let (current_fold, baseline_fold) =
         OwnerFold::read(&current_value).zip(OwnerFold::read(&baseline_value))?;
+    let (current_fold, baseline_fold) = (
+        current_fold.with_operand_range(bool_operand_range),
+        baseline_fold.with_operand_range(bool_operand_range),
+    );
     if !versions_differ_on_small_inputs(&current_fold, &baseline_fold) {
         return None;
     }
@@ -602,8 +614,9 @@ pub(in crate::analysis) fn change_is_invisible_to_every_assertion(
                 baseline_fold.at(receiver.as_ref(), &values),
             ) {
                 // A bare boolean result stays unread here, as before; a
-                // peeled boolean payload is read (#16400).
-                (Some(Folded::Scalar(Value::Bool(_))), _) if !payload_peeled => false,
+                // peeled boolean payload is read only under its parameters'
+                // shared width guard (#16400).
+                (Some(Folded::Scalar(Value::Bool(_))), _) if bool_operand_range.is_none() => false,
                 (Some(changed), Some(unchanged)) => changed == unchanged,
                 _ => false,
             }
@@ -1260,12 +1273,41 @@ fn invisibility_operands(oracle_text: &str, test_body: &str) -> Vec<ResolvedOper
 /// a different constructor on either side (`Ok(x)` to `Err(x)`) or any
 /// statement, generic or receiver refuses, so a peeled fold can only say two
 /// values are equal when the real ones are (#15414). The rebuilt function
-/// returns the payload's declared type, so the fold keeps its width guard;
-/// a return type that does not spell it (an alias) refuses.
+/// returns the payload's declared type, so an integer payload keeps its
+/// return-width guard; a return type that does not spell it (an alias)
+/// refuses. A `bool` payload names no width: its caller guards it with
+/// [`bool_payload_operand_range`] or leaves it unread (#16400).
 fn shared_constructor_payloads(current: &str, baseline: &str) -> Option<(String, String)> {
     let (current_constructor, current_payload) = constructor_payload_function(current)?;
     let (baseline_constructor, baseline_payload) = constructor_payload_function(baseline)?;
     (current_constructor == baseline_constructor).then_some((current_payload, baseline_payload))
+}
+
+/// The one declared integer width every parameter of a rebuilt `-> bool`
+/// payload function shares, which its intermediates must fit (#16400). A
+/// non-`bool` return, no parameter, a parameter of no recognized integer
+/// width, or parameters of two widths is `None`: no single width then bounds
+/// the arithmetic, and the peeled boolean stays unread.
+fn bool_payload_operand_range(function_text: &str) -> Option<(i128, i128)> {
+    let parse = parse_clean_source_file(function_text)?;
+    let function = parse
+        .tree()
+        .syntax()
+        .descendants()
+        .find_map(ast::Fn::cast)?;
+    let return_type = function.ret_type()?.ty()?.syntax().text().to_string();
+    if return_type.trim() != "bool" {
+        return None;
+    }
+    let mut shared = None;
+    for param in function.param_list()?.params() {
+        let width = declared_integer_range(&param.ty()?.syntax().text().to_string())?;
+        if shared.is_some_and(|range| range != width) {
+            return None;
+        }
+        shared = Some(width);
+    }
+    shared
 }
 
 /// One function text's constructor name and its payload-returning rewrite;
@@ -2085,10 +2127,24 @@ fn fold_function_text(body: &str, arguments: &[i128]) -> Option<i128> {
 /// every changed line it holds, and re-reading the body each time made a
 /// long owner cost its length squared (#11738).
 fn fold_function_value(body: &str, arguments: &[i128]) -> Option<Value> {
+    fold_function_value_within(body, arguments, None)
+}
+
+/// [`fold_function_value`], with every integer the body produces also held
+/// to `operand_range` when the return type names no integer width. A peeled
+/// boolean payload (`Some(x + 1 > 0)` read as `-> bool`) has no return width
+/// to guard its intermediates, so its caller passes the parameters' shared
+/// declared width: a value outside it is one the real owner overflows on,
+/// and the fold is `None` instead of an exact-arithmetic answer (#16400).
+fn fold_function_value_within(
+    body: &str,
+    arguments: &[i128],
+    operand_range: Option<(i128, i128)>,
+) -> Option<Value> {
     let plan = run_memo::memoize(Product::OwnerFoldPlan, 0, body, || {
         Rc::new(FoldPlan::read(body))
     });
-    plan.as_ref().as_ref()?.fold(arguments)
+    plan.as_ref().as_ref()?.fold(arguments, operand_range)
 }
 
 /// The argument-independent reading of one function text for the fold.
@@ -2177,7 +2233,7 @@ impl FoldPlan {
         })
     }
 
-    fn fold(&self, arguments: &[i128]) -> Option<Value> {
+    fn fold(&self, arguments: &[i128], operand_range: Option<(i128, i128)>) -> Option<Value> {
         if self.names.len() != arguments.len() {
             return None;
         }
@@ -2194,13 +2250,19 @@ impl FoldPlan {
             .cloned()
             .zip(arguments.iter().copied())
             .collect();
+        // The operand guard stands in only where no return width does. A
+        // range-shaped tail reads its bounds without a width check, so a
+        // guarded fold refuses it rather than fold it unguarded.
+        let guarded = self.fold_range.is_none() && operand_range.is_some();
+        let range = self.fold_range.or(operand_range);
         match &self.block {
+            FoldPlanBlock::Tail(_) if guarded => None,
             FoldPlanBlock::Tail(tail) => tail.fold(&environment, self.fold_range),
             FoldPlanBlock::Tokens(tokens) => {
                 let uniform = self
                     .fold_range
                     .filter(|range| self.widths.iter().all(|width| *width == Some(*range)));
-                fold_block(tokens, &environment, self.fold_range, uniform)
+                fold_block(tokens, &environment, range, uniform)
             }
         }
     }

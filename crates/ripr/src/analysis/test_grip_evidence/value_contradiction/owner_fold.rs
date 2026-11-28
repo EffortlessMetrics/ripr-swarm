@@ -16,7 +16,7 @@
 //! the callers leave a differing receiver call or tuple unread, so the
 //! readings can withhold credit and cannot grant it.
 
-use super::{Value, fold_expression, fold_function_value, strip_parens};
+use super::{Value, fold_expression, fold_function_value_within, strip_parens};
 use crate::analysis::syntax::parse_clean_source_file;
 use crate::analysis::syntax::parse_clean_source_file_memoized;
 use ra_ap_syntax::{
@@ -62,6 +62,9 @@ pub(super) struct OwnerFold {
     parameters: usize,
     /// One free function per component of a tuple tail, read on first use.
     components: OnceCell<Option<Vec<String>>>,
+    /// The width every integer the fold produces must fit when the return
+    /// type names none (a peeled `bool` payload, #16400); `None` otherwise.
+    operand_range: Option<(i128, i128)>,
 }
 
 impl OwnerFold {
@@ -84,6 +87,7 @@ impl OwnerFold {
                 receiver_fields: None,
                 parameters,
                 components: OnceCell::new(),
+                operand_range: None,
             });
         };
         // `&mut self` and `mut self` may write a field before reading it, and
@@ -146,7 +150,17 @@ impl OwnerFold {
             receiver_fields: Some(fields),
             parameters,
             components: OnceCell::new(),
+            operand_range: None,
         })
+    }
+
+    /// This fold with its intermediates held to `operand_range`; see
+    /// [`fold_function_value_within`].
+    pub(super) fn with_operand_range(self, operand_range: Option<(i128, i128)>) -> Self {
+        Self {
+            operand_range,
+            ..self
+        }
     }
 
     /// The owner's value at `arguments`, called on a receiver whose fields
@@ -168,14 +182,14 @@ impl OwnerFold {
             _ => return None,
         }
         values.extend_from_slice(arguments);
-        if let Some(value) = fold_function_value(&self.text, &values) {
+        if let Some(value) = fold_function_value_within(&self.text, &values, self.operand_range) {
             return Some(Folded::Scalar(value));
         }
         self.components
             .get_or_init(|| tuple_tail_components(&self.text))
             .as_ref()?
             .iter()
-            .map(|component| fold_function_value(component, &values))
+            .map(|component| fold_function_value_within(component, &values, self.operand_range))
             .collect::<Option<Vec<_>>>()
             .map(Folded::Tuple)
     }

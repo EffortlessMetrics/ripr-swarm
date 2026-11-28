@@ -915,8 +915,8 @@ fn a_wrapped_bool_payload_whose_product_overflows_is_not_read_as_the_same_value(
 }
 
 #[test]
-fn a_wrapped_bool_payload_within_its_operand_width_is_read_as_the_same_value()
--> Result<(), String> {
+fn a_wrapped_bool_payload_within_its_operand_width_is_read_as_the_same_value() -> Result<(), String>
+{
     // Control: `3000 * 1000` fits `i32`, so both versions are `Some(true)`.
     let findings = findings(
         "pub fn check(x: i32) -> Option<bool> {\n    Some(x * 1000 > 5000)\n}\n",
