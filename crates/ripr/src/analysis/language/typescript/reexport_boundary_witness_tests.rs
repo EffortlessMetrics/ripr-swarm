@@ -259,3 +259,17 @@ fn a_destructured_shadow_in_a_later_declarator_is_not_related() -> Result<(), St
     );
     Ok(())
 }
+
+#[test]
+fn a_generic_type_annotation_is_not_a_destructured_shadow() -> Result<(), String> {
+    // The comma inside `Map<string, { d: number }>` does not start a second
+    // declarator, so `{ d: number }` is a type, not a pattern binding `d`.
+    let source = vitest(
+        "import { discount as d } from '../src';",
+        "  const cache: Map<string, { d: number }> = new Map();\n  expect(d(100)).toBe(90);",
+    );
+    let row = related(&[("src/index.ts", BARREL)], &source, "generic annotation")?;
+    assert_eq!(row.relation, R::ReExportChainFollowed);
+    assert_eq!(row.with_index, A::Witnessed);
+    Ok(())
+}

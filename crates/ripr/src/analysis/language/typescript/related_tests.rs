@@ -5724,35 +5724,25 @@ fn local_destructured_in_test_body(body: &str, local: &str) -> bool {
 /// with `{` or `[`, not only the first, so `const h = make(), { d } = h`
 /// yields `{ d }` (#16470). Each pattern runs from its opening bracket to the
 /// matching close, across lines, so a default initializer (`{ cost =
-/// fallback }`) and a multi-line pattern stay inside it. The statement ends
+/// fallback }`) and a multi-line pattern stay inside it. A comma inside a
+/// type annotation's `<...>` does not start a declarator. The statement ends
 /// at a top-level `;`, at a closing bracket of the enclosing block, or at a
-/// top-level line break that follows neither `,` nor `=`.
+/// top-level line break that follows none of `,`, `=` or `:`.
 fn declarator_patterns(declaration: &str) -> impl Iterator<Item = &str> {
     let mut patterns = Vec::new();
     let mut depth = 0usize;
+    // A type annotation (`: Map<string, { d: number }>`) runs from a
+    // top-level `:` to the declarator's `=`; its `<...>` commas never start
+    // a declarator.
+    let mut in_type = false;
+    let mut angle_depth = 0usize;
     let mut declarator_start = true;
     let mut last_significant = ' ';
     for (offset, c) in declaration.char_indices() {
         if depth == 0 && declarator_start && !c.is_whitespace() {
             declarator_start = false;
             if matches!(c, '{' | '[') {
-                let pattern = &declaration[offset..];
-                let mut inner = 0usize;
-                let mut end = pattern.len();
-                for (inner_offset, inner_c) in pattern.char_indices() {
-                    match inner_c {
-                        '{' | '[' | '(' => inner += 1,
-                        '}' | ']' | ')' => {
-                            inner = inner.saturating_sub(1);
-                            if inner == 0 {
-                                end = inner_offset + 1;
-                                break;
-                            }
-                        }
-                        _ => {}
-                    }
-                }
-                patterns.push(&pattern[..end]);
+                patterns.push(balanced_pattern(&declaration[offset..]));
             }
         }
         match c {
@@ -5763,9 +5753,20 @@ fn declarator_patterns(declaration: &str) -> impl Iterator<Item = &str> {
                 }
                 depth -= 1;
             }
-            ',' if depth == 0 => declarator_start = true,
+            ':' if depth == 0 && !in_type => in_type = true,
+            '<' if depth == 0 && in_type => angle_depth += 1,
+            '>' if depth == 0 && in_type => angle_depth = angle_depth.saturating_sub(1),
+            '=' if depth == 0 && angle_depth == 0 => in_type = false,
+            ',' if depth == 0 && angle_depth == 0 => {
+                declarator_start = true;
+                in_type = false;
+            }
             ';' if depth == 0 => break,
-            '\n' if depth == 0 && !declarator_start && !matches!(last_significant, ',' | '=') => {
+            '\n' if depth == 0
+                && !declarator_start
+                && angle_depth == 0
+                && !matches!(last_significant, ',' | '=' | ':') =>
+            {
                 break;
             }
             _ => {}
@@ -5775,6 +5776,25 @@ fn declarator_patterns(declaration: &str) -> impl Iterator<Item = &str> {
         }
     }
     patterns.into_iter()
+}
+
+/// `text` from its opening `{` or `[` to the matching close (the whole rest
+/// when unbalanced).
+fn balanced_pattern(text: &str) -> &str {
+    let mut depth = 0usize;
+    for (offset, c) in text.char_indices() {
+        match c {
+            '{' | '[' | '(' => depth += 1,
+            '}' | ']' | ')' => {
+                depth = depth.saturating_sub(1);
+                if depth == 0 {
+                    return &text[..offset + 1];
+                }
+            }
+            _ => {}
+        }
+    }
+    text
 }
 
 /// The locals of every default import (`import local from "./owner"`) of
