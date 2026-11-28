@@ -258,6 +258,249 @@ fn a_module_the_resolver_cannot_name_exactly_adds_no_test() -> Result<(), String
     Ok(())
 }
 
+#[test]
+fn a_table_from_a_binary_roots_macro_use_module_reads_like_the_hand_written_test()
+-> Result<(), String> {
+    // #10298: `src/bin/tool.rs` is a crate root, so its `mod common;` is
+    // `src/bin/common/mod.rs`, as it is for `src/bin/tool/main.rs` and
+    // `src/bin/tool/common.rs`.
+    let tool = format!("#[macro_use]\nmod common;\n{USE_GATE}fn main() {{}}\n{BOUNDARY_ROWS}");
+    for (label, files) in [
+        (
+            "flat binary root",
+            vec![
+                ("src/bin/tool.rs", tool.clone()),
+                ("src/bin/common/mod.rs", TABLE.to_string()),
+            ],
+        ),
+        (
+            "binary directory root",
+            vec![
+                ("src/bin/tool/main.rs", tool.clone()),
+                ("src/bin/tool/common.rs", TABLE.to_string()),
+            ],
+        ),
+    ] {
+        let credited = TempRepo::create(&files)?.predicate()?;
+        assert_eq!(
+            credited.class,
+            ExposureClass::Exposed,
+            "{label}: {credited:?}"
+        );
+        assert_eq!(
+            related_names(&credited),
+            vec!["nine_is_closed", "ten_is_open"],
+            "{label}: {credited:?}"
+        );
+    }
+
+    // The path route: the root declares the exporting module and a child
+    // that imports the generator. A `use crate::gate_table;` in the root
+    // itself would clash with the export there (E0255).
+    let path_tool = "mod common;\nmod cases;\nfn main() {}\n".to_string();
+    let path_cases = format!("{USE_GATE}use crate::gate_table;\n{BOUNDARY_ROWS}");
+    for (label, files) in [
+        // No `#[macro_use]`: the generator stays inside `common`.
+        (
+            "no macro_use",
+            vec![
+                (
+                    "src/bin/tool.rs",
+                    format!("mod common;\n{USE_GATE}fn main() {{}}\n{BOUNDARY_ROWS}"),
+                ),
+                ("src/bin/common/mod.rs", TABLE.to_string()),
+            ],
+        ),
+        // A `bin/` outside `src/` holds no crate roots of its own.
+        (
+            "bin outside src",
+            vec![
+                ("bin/tool.rs", tool.clone()),
+                ("bin/common/mod.rs", TABLE.to_string()),
+            ],
+        ),
+        // Two flat binaries that declare each other form a module cycle
+        // with no crate root: the answer is unknown, not a crate root.
+        (
+            "cyclic flat binaries",
+            vec![
+                ("src/bin/tool.rs", tool.replace("mod common;", "mod common;\nmod other;")),
+                ("src/bin/other.rs", "mod tool;\n".to_string()),
+                ("src/bin/common/mod.rs", TABLE.to_string()),
+            ],
+        ),
+        // The path route needs a confirmed crate root. Two other binaries
+        // declare `mod tool;`, so which crate `crate::` names is ambiguous.
+        (
+            "ambiguous declarers",
+            vec![
+                ("src/bin/tool.rs", path_tool.clone()),
+                ("src/bin/first.rs", "mod tool;\nfn main() {}\n".to_string()),
+                ("src/bin/second.rs", "mod tool;\nfn main() {}\n".to_string()),
+                ("src/bin/common/mod.rs", exported_table()),
+                ("src/bin/cases/mod.rs", path_cases.clone()),
+            ],
+        ),
+        // A `#[path]` declaration can include the file in another crate.
+        (
+            "attributed declarer",
+            vec![
+                ("src/bin/tool.rs", path_tool.clone()),
+                (
+                    "src/bin/other.rs",
+                    "#[path = \"tool.rs\"]\nmod tool;\nfn main() {}\n".to_string(),
+                ),
+                ("src/bin/common/mod.rs", exported_table()),
+                ("src/bin/cases/mod.rs", path_cases.clone()),
+            ],
+        ),
+        // A `#[path]` mount under another module name also includes it.
+        (
+            "renamed path mount",
+            vec![
+                ("src/bin/tool.rs", path_tool.clone()),
+                (
+                    "src/bin/other.rs",
+                    "#[path = \"tool.rs\"]\nmod mounted;\nfn main() {}\n".to_string(),
+                ),
+                ("src/bin/common/mod.rs", exported_table()),
+                ("src/bin/cases/mod.rs", path_cases.clone()),
+            ],
+        ),
+        // An escaped `#[path]` value (`\x74` is `t`) can name it too.
+        (
+            "escaped path mount",
+            vec![
+                ("src/bin/tool.rs", path_tool.clone()),
+                (
+                    "src/bin/other.rs",
+                    "#[path = \"\\x74ool.rs\"]\nmod mounted;\nfn main() {}\n".to_string(),
+                ),
+                ("src/bin/common/mod.rs", exported_table()),
+                ("src/bin/cases/mod.rs", path_cases.clone()),
+            ],
+        ),
+        // A comment between `path` and `=` does not hide an escaped value.
+        (
+            "commented escaped path mount",
+            vec![
+                ("src/bin/tool.rs", path_tool.clone()),
+                (
+                    "src/bin/other.rs",
+                    "#[path /* c */ = \"\\x74ool.rs\"]\nmod mounted;\nfn main() {}\n"
+                        .to_string(),
+                ),
+                ("src/bin/common/mod.rs", exported_table()),
+                ("src/bin/cases/mod.rs", path_cases.clone()),
+            ],
+        ),
+        // Windows reads `\` as a separator, so this names the root too.
+        (
+            "backslash path mount",
+            vec![
+                ("src/bin/tool.rs", path_tool.clone()),
+                (
+                    "src/bin/other.rs",
+                    "#[path = \"..\\\\bin\\\\tool.rs\"]\nmod mounted;\nfn main() {}\n"
+                        .to_string(),
+                ),
+                ("src/bin/common/mod.rs", exported_table()),
+                ("src/bin/cases/mod.rs", path_cases.clone()),
+            ],
+        ),
+        // `autobins = false` with no `[[bin]]`: Cargo builds no binary
+        // from `src/bin/tool.rs`, so its rows are no test of the gate.
+        (
+            "autobins disabled",
+            vec![
+                (
+                    "Cargo.toml",
+                    "[package]\nname = \"macro-imported-tests\"\nversion = \"0.0.0\"\nedition = \"2024\"\nautobins = false\n\n[workspace]\n".to_string(),
+                ),
+                ("src/bin/tool.rs", tool.clone()),
+                ("src/bin/common/mod.rs", TABLE.to_string()),
+            ],
+        ),
+    ] {
+        let refused = TempRepo::create(&files)?.predicate()?;
+        assert!(refused.related_tests.is_empty(), "{label}: {refused:?}");
+        assert_ne!(
+            refused.class,
+            ExposureClass::Exposed,
+            "{label}: {refused:?}"
+        );
+    }
+
+    // A crate root's child lives beside it, not under `src/bin/tool/`
+    // (rustc rejects this layout), so the module resolves to no file.
+    let misplaced = TempRepo::create(&[
+        ("src/bin/tool.rs", tool),
+        ("src/bin/tool/common/mod.rs", TABLE.to_string()),
+    ])?
+    .predicate()?;
+    assert!(misplaced.related_tests.is_empty(), "{misplaced:?}");
+    assert_ne!(misplaced.class, ExposureClass::Exposed, "{misplaced:?}");
+
+    // The path route needs the binary to be its own crate root, also for
+    // `src/bin/build.rs`. Cargo forbids a binary named `build`, so that file
+    // is a binary only through an explicit `[[bin]]` with another name.
+    let builder_manifest = "[package]\nname = \"macro-imported-tests\"\nversion = \"0.0.0\"\nedition = \"2024\"\n\n[[bin]]\nname = \"builder\"\npath = \"src/bin/build.rs\"\n\n[workspace]\n";
+    for (root, manifest) in [
+        ("src/bin/tool.rs", None),
+        ("src/bin/build.rs", Some(builder_manifest)),
+    ] {
+        let mut files = vec![
+            (root, path_tool.clone()),
+            ("src/bin/common/mod.rs", exported_table()),
+            ("src/bin/cases/mod.rs", path_cases.clone()),
+        ];
+        if let Some(manifest) = manifest {
+            files.push(("Cargo.toml", manifest.to_string()));
+        }
+        let by_path = TempRepo::create(&files)?.predicate()?;
+        assert_eq!(by_path.class, ExposureClass::Exposed, "{root}: {by_path:?}");
+    }
+
+    // A root-named file is not confirmed as a crate root when a sibling
+    // declares it, plainly twice or once with `#[path]`.
+    for (label, declarers) in [
+        (
+            "two plain declarers",
+            vec![
+                ("src/bin/first.rs", "mod build;\nfn main() {}\n"),
+                ("src/bin/second.rs", "mod build;\nfn main() {}\n"),
+            ],
+        ),
+        (
+            "attributed declarer",
+            vec![(
+                "src/bin/other.rs",
+                "#[path = \"build.rs\"]\nmod build;\nfn main() {}\n",
+            )],
+        ),
+    ] {
+        let mut files = vec![
+            ("src/bin/build.rs", path_tool.clone()),
+            ("src/bin/common/mod.rs", exported_table()),
+            ("src/bin/cases/mod.rs", path_cases.clone()),
+            ("Cargo.toml", builder_manifest.to_string()),
+        ];
+        files.extend(
+            declarers
+                .into_iter()
+                .map(|(path, text)| (path, text.to_string())),
+        );
+        let refused = TempRepo::create(&files)?.predicate()?;
+        assert!(refused.related_tests.is_empty(), "{label}: {refused:?}");
+        assert_ne!(
+            refused.class,
+            ExposureClass::Exposed,
+            "{label}: {refused:?}"
+        );
+    }
+    Ok(())
+}
+
 fn exported_table() -> String {
     format!("#[macro_export]\n{TABLE}")
 }

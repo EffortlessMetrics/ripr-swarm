@@ -25,6 +25,7 @@ use crate::analysis::sync_memo::SyncMemo;
 use crate::analysis::syntax::{
     ImportedMacros, MacroScope, first_macro_call, generator_calls, macro_scope,
 };
+use std::borrow::Cow;
 use std::collections::HashMap;
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
@@ -64,6 +65,10 @@ pub(crate) struct MacroVisibility {
     /// first ask, parsing only the files whose text can spell such a
     /// declaration.
     attributed: SyncMemo<BTreeMap<String, Arc<Vec<PathBuf>>>>,
+    /// File name to the files (the first two found suffice) whose text
+    /// spells it as the end of a string next to `path`, so a
+    /// `#[path = "tool.rs"] mod other;` may mount it under another name.
+    path_mounts: SyncMemo<BTreeMap<String, Arc<Vec<PathBuf>>>>,
     /// Generator name to every file that defines a macro of that name, with
     /// the definition when it is a plain `#[macro_export]`; files that spell
     /// `macro_export` somewhere unlisted. Built on first use.
@@ -135,6 +140,7 @@ impl Clone for MacroVisibility {
             generators: self.generators.clone(),
             scopes: SyncMemo::default(),
             attributed: SyncMemo::default(),
+            path_mounts: SyncMemo::default(),
             exports: OnceLock::new(),
             fn_nested_calls: self.fn_nested_calls,
         }
@@ -361,6 +367,7 @@ impl MacroVisibility {
             generators,
             scopes: SyncMemo::default(),
             attributed: SyncMemo::default(),
+            path_mounts: SyncMemo::default(),
             exports: OnceLock::new(),
             fn_nested_calls: false,
         }
@@ -500,7 +507,11 @@ impl MacroVisibility {
             // by `mod build;` is a module, not a crate root.
             match self.parent(&current) {
                 Some((parent, _)) => current = parent,
-                None if self.is_crate_root(&current) => return Some(current),
+                // No unique parent is not proof of a root: an ambiguous
+                // or attributed declaration leaves ownership unknown.
+                None if self.is_crate_root(&current) && !self.may_be_declared(&current) => {
+                    return Some(current);
+                }
                 None => return None,
             }
         }
@@ -509,7 +520,7 @@ impl MacroVisibility {
 
     /// A root file nothing declares: `lib.rs`, `main.rs`, `build.rs` (not
     /// inside a `src` tree, where it is a module), or a file directly in
-    /// `tests`, `benches` or `examples`.
+    /// `tests`, `benches`, `examples` or `src/bin`.
     fn is_crate_root(&self, file: &Path) -> bool {
         match file.file_name().and_then(|name| name.to_str()) {
             // `src/lib.rs`, `src/main.rs` and `src/bin/<name>/main.rs`; a
@@ -525,10 +536,15 @@ impl MacroVisibility {
             {
                 true
             }
-            Some("build.rs") => !file
-                .ancestors()
-                .skip(1)
-                .any(|directory| directory.file_name().is_some_and(|name| name == "src")),
+            // `src/bin/build.rs` is a binary (Cargo needs an explicit
+            // `[[bin]]` name for it, since `build` is reserved).
+            Some("build.rs") => {
+                file.parent().is_some_and(is_root_directory)
+                    || !file
+                        .ancestors()
+                        .skip(1)
+                        .any(|directory| directory.file_name().is_some_and(|name| name == "src"))
+            }
             _ => file.parent().is_some_and(is_root_directory),
         }
     }
@@ -729,6 +745,34 @@ impl MacroVisibility {
         declarers.iter().any(|candidate| candidate != file)
     }
 
+    /// Whether a file other than `file` may name it in a `#[path]`
+    /// attribute, under any module name (see `may_mount_file_named`). A
+    /// superset of the real mounts, read without parsing. Each file name is
+    /// answered once per run.
+    fn path_mounted_elsewhere(&self, file: &Path) -> bool {
+        let Some(file_name) = file.file_name().and_then(|name| name.to_str()) else {
+            return true;
+        };
+        let cached = self.path_mounts.borrow().get(file_name).cloned();
+        let mounts = cached.unwrap_or_else(|| {
+            let mut found = Vec::new();
+            for (path, source) in &self.sources {
+                if source.contains("path") && may_mount_file_named(source, file_name) {
+                    found.push(path.clone());
+                    if found.len() == 2 {
+                        break;
+                    }
+                }
+            }
+            let found = Arc::new(found);
+            self.path_mounts
+                .borrow()
+                .insert(file_name.to_string(), found.clone());
+            found
+        });
+        mounts.iter().any(|candidate| candidate != file)
+    }
+
     /// Files whose `mod name;` could resolve into `location`.
     fn declarer_candidates(&self, location: &Path) -> Vec<PathBuf> {
         let mut candidates = BTreeSet::new();
@@ -748,6 +792,48 @@ impl MacroVisibility {
         candidates.into_iter().collect()
     }
 
+    /// Whether some file may hold `file` as a module: another file that
+    /// could hold it declares its name with a plain `mod`, whichever file
+    /// that declaration resolves to, or any file declares the name with a
+    /// `#[path]` or other attribute. Declarations are read, not resolved,
+    /// so the answer never recurses through `child_file`. Only `false`
+    /// confirms a root-directory file as a crate root.
+    fn may_be_declared(&self, file: &Path) -> bool {
+        // `src/bin/build.rs` or `src/bin/main.rs` has no module identity of
+        // its own, but a sibling's `mod build;` can still name it.
+        let Some((name, location)) = module_identity(file).or_else(|| {
+            let directory = file
+                .parent()
+                .filter(|directory| is_root_directory(directory))?;
+            let stem = file.file_stem()?.to_str()?;
+            Some((stem.to_string(), directory.to_path_buf()))
+        }) else {
+            return false;
+        };
+        if self.attributed_elsewhere(&name, file) {
+            return true;
+        }
+        // A file directly in a root directory is confirmed as a crate root
+        // only when no `#[path]` can mount it under a different name either.
+        if file.parent().is_some_and(is_root_directory) && self.path_mounted_elsewhere(file) {
+            return true;
+        }
+        self.declarer_candidates(&location)
+            .into_iter()
+            .filter(|candidate| candidate != file)
+            .any(|candidate| {
+                self.sources
+                    .get(&candidate)
+                    .is_some_and(|source| may_declare_module_named(source, &name, false))
+                    && self.scope(&candidate).is_some_and(|scope| {
+                        scope
+                            .modules
+                            .iter()
+                            .any(|module| module.plain && module.name == name)
+                    })
+            })
+    }
+
     /// The one file `mod name;` in `declarer` resolves to, over every
     /// anchor the declarer could have. Zero or several candidates is
     /// unresolved.
@@ -758,11 +844,17 @@ impl MacroVisibility {
             declarer.file_name().and_then(|name| name.to_str()),
             Some("lib.rs" | "main.rs" | "mod.rs" | "build.rs")
         );
+        let in_root_directory = is_root_directory(directory);
+        // A file in a root directory that no module declares is a crate
+        // root, whose children rustc reads only beside it (#10298). The
+        // check reads declarations without resolving them, since `parent`
+        // itself resolves through `child_file`.
+        let crate_root_here = in_root_directory && !root_like && !self.may_be_declared(declarer);
         let mut bases = Vec::new();
-        if root_like || is_root_directory(directory) {
+        if root_like || in_root_directory {
             bases.push(directory.to_path_buf());
         }
-        if !root_like {
+        if !root_like && !crate_root_here {
             bases.push(directory.join(stem));
         }
         let mut found = BTreeSet::new();
@@ -782,17 +874,202 @@ impl MacroVisibility {
     }
 }
 
-/// `tests/`, `benches/` or `examples/` of a package. A `src/tests/` is an
-/// ordinary module directory.
+/// Whether `source` may hold a `path = …` attribute argument that names a
+/// file called `file_name`, under any module name. Comments may sit
+/// between the tokens. A plain or raw string value names the file when it
+/// has the file name as its last component, split at `/` or `\` (Windows
+/// accepts both; elsewhere a backslash counts too, which only refuses
+/// more) and compared without ASCII case, after decoding
+/// escapes such as `"\x74ool.rs"`. An escape that does not decode, trivia
+/// this does not skip, or a non-string value right after `#[path` (a macro
+/// fragment) can name any file, so each counts as a mount.
+fn may_mount_file_named(source: &str, file_name: &str) -> bool {
+    let bytes = source.as_bytes();
+    let is_ident = |byte: u8| byte == b'_' || byte.is_ascii_alphanumeric();
+    source.match_indices("path").any(|(start, word)| {
+        let end = start + word.len();
+        if start > 0 && is_ident(bytes[start - 1]) {
+            return false;
+        }
+        if bytes.get(end).is_some_and(|&byte| is_ident(byte)) {
+            return false;
+        }
+        // Attribute argument position: `#[path`, or `path` after `(` or `,`
+        // as in `cfg_attr(test, path = …)`.
+        let before = source[..start].trim_end_matches(is_lexer_whitespace);
+        let direct = before.ends_with('[') || ends_in_comment_or_unicode(before, true);
+        if !direct && !before.ends_with(['(', ',']) {
+            return false;
+        }
+        let Some(after) = skip_trivia(&source[end..]) else {
+            return true;
+        };
+        let Some(after) = after.strip_prefix('=') else {
+            return false;
+        };
+        let Some(value) = skip_trivia(after) else {
+            return true;
+        };
+        match string_literal_value(value) {
+            // Compared without ASCII case, since a case-insensitive file
+            // system (the Windows and macOS defaults) opens `Tool.rs` as
+            // `tool.rs`.
+            Some(Some(text)) => {
+                let base = text.rsplit(['/', '\\']).next().unwrap_or(&text);
+                base.eq_ignore_ascii_case(file_name)
+            }
+            // An escape or literal the scan cannot decode.
+            Some(None) => true,
+            // Not a string: a macro fragment such as `$file` after `#[path`.
+            None => direct,
+        }
+    })
+}
+
+/// `text` past leading whitespace and comments, or `None` when a comment
+/// is unterminated or a non-ASCII character (possibly whitespace) comes
+/// first.
+fn skip_trivia(mut text: &str) -> Option<&str> {
+    loop {
+        text = text.trim_start_matches(is_lexer_whitespace);
+        if let Some(rest) = text.strip_prefix("//") {
+            text = rest.split_once('\n').map_or("", |(_, next)| next);
+        } else if text.starts_with("/*") {
+            let mut depth = 0usize;
+            let mut index = 0;
+            let bytes = text.as_bytes();
+            loop {
+                match (bytes.get(index), bytes.get(index + 1)) {
+                    (Some(b'/'), Some(b'*')) => {
+                        depth += 1;
+                        index += 2;
+                    }
+                    (Some(b'*'), Some(b'/')) => {
+                        depth -= 1;
+                        index += 2;
+                        if depth == 0 {
+                            break;
+                        }
+                    }
+                    (Some(_), _) => index += 1,
+                    (None, _) => return None,
+                }
+            }
+            text = text.get(index..)?;
+        } else if text.chars().next().is_some_and(|c| !c.is_ascii()) {
+            return None;
+        } else {
+            return Some(text);
+        }
+    }
+}
+
+/// The value of the string literal `text` starts with: `Some(Some(value))`
+/// for a raw string or a cooked one whose escapes decode, `Some(None)` for
+/// an escape this does not decode or an unterminated literal, and `None`
+/// when `text` does not start with a string literal.
+fn string_literal_value(text: &str) -> Option<Option<Cow<'_, str>>> {
+    if let Some(raw) = text.strip_prefix('r') {
+        let hashes = raw.len() - raw.trim_start_matches('#').len();
+        let body = raw[hashes..].strip_prefix('"')?;
+        let close = format!("\"{}", "#".repeat(hashes));
+        return Some(
+            body.find(close.as_str())
+                .map(|end| Cow::Borrowed(&body[..end])),
+        );
+    }
+    let body = text.strip_prefix('"')?;
+    let mut value = String::new();
+    let mut escaped = false;
+    let mut chars = body.char_indices();
+    while let Some((index, c)) = chars.next() {
+        match c {
+            '"' if escaped => return Some(Some(Cow::Owned(value))),
+            '"' => return Some(Some(Cow::Borrowed(&body[..index]))),
+            '\\' => {
+                escaped = true;
+                match decode_escape(&mut chars) {
+                    Some(Some(decoded)) => value.push(decoded),
+                    Some(None) => {}
+                    None => return Some(None),
+                }
+            }
+            other => value.push(other),
+        }
+    }
+    Some(None)
+}
+
+/// The character a cooked-string escape (after its `\`) stands for:
+/// `Some(None)` for a line continuation, `None` when it is not one of the
+/// escapes Rust accepts in a string literal.
+fn decode_escape(chars: &mut std::str::CharIndices<'_>) -> Option<Option<char>> {
+    let decoded = match chars.next()?.1 {
+        'n' => '\n',
+        'r' => '\r',
+        't' => '\t',
+        '0' => '\0',
+        '\\' => '\\',
+        '\'' => '\'',
+        '"' => '"',
+        'x' => {
+            let high = chars.next()?.1.to_digit(8)?;
+            let low = chars.next()?.1.to_digit(16)?;
+            char::from_u32(high * 16 + low)?
+        }
+        'u' => {
+            if chars.next()?.1 != '{' {
+                return None;
+            }
+            let mut code = 0u32;
+            let mut digits = 0;
+            loop {
+                match chars.next()?.1 {
+                    '}' if digits > 0 => break,
+                    '_' if digits > 0 => {}
+                    digit => {
+                        code = code.checked_mul(16)? + digit.to_digit(16)?;
+                        digits += 1;
+                        if digits > 6 {
+                            return None;
+                        }
+                    }
+                }
+            }
+            char::from_u32(code)?
+        }
+        '\n' => {
+            // Line continuation: the newline and the whitespace after it
+            // are dropped. Peek without consuming the next character.
+            let mut ahead = chars.clone();
+            while ahead
+                .next()
+                .is_some_and(|(_, c)| matches!(c, ' ' | '\t' | '\n' | '\r'))
+            {
+                *chars = ahead.clone();
+            }
+            return Some(None);
+        }
+        _ => return None,
+    };
+    Some(Some(decoded))
+}
+
+/// `tests/`, `benches/` or `examples/` of a package, or its `src/bin/`, whose
+/// files are binary crate roots (#10298). A `src/tests/` is an ordinary
+/// module directory, and so is a `bin/` outside `src/`.
 fn is_root_directory(directory: &Path) -> bool {
-    directory
-        .file_name()
-        .and_then(|name| name.to_str())
-        .is_some_and(|name| ROOT_DIRECTORIES.contains(&name))
-        && directory
-            .parent()
-            .and_then(Path::file_name)
-            .is_none_or(|parent| parent != "src")
+    let Some(name) = directory.file_name().and_then(|name| name.to_str()) else {
+        return false;
+    };
+    let in_src = directory
+        .parent()
+        .and_then(Path::file_name)
+        .is_some_and(|parent| parent == "src");
+    if name == "bin" {
+        return in_src;
+    }
+    ROOT_DIRECTORIES.contains(&name) && !in_src
 }
 
 /// State of one resolution walk.
@@ -1315,6 +1592,57 @@ mod tests {
             ("tests/cases.rs", "t!(a);\n"),
         ];
         assert_eq!(imported(&files, "tests/cases.rs"), "");
+    }
+
+    #[test]
+    fn a_path_value_ending_in_the_file_name_may_mount_it() {
+        for source in [
+            "#[path = \"tool.rs\"]\nmod mounted;\n",
+            "#[path=\"../bin/tool.rs\"]\nmod mounted;\n",
+            "#[path = r\"tool.rs\"]\nmod mounted;\n",
+            "#[path = r#\"tool.rs\"#]\nmod mounted;\n",
+            "#[path /* x */ = \"tool.rs\"]\nmod mounted;\n",
+            "#[path = \"\\x74ool.rs\"]\nmod mounted;\n",
+            "#[path /* x */ = \"\\x74ool.rs\"]\nmod mounted;\n",
+            "#[path // x\n= \"\\x74ool.rs\"]\nmod mounted;\n",
+            "#[path = \"\\u{74}o\\u{6F}l.rs\"]\nmod mounted;\n",
+            "#[path = \"../bin/\\\n    tool.rs\"]\nmod mounted;\n",
+            "#[path = \"\\q.rs\"]\nmod mounted;\n",
+            "#[path = \"..\\\\bin\\\\tool.rs\"]\nmod mounted;\n",
+            "#[path = r\"..\\bin\\tool.rs\"]\nmod mounted;\n",
+            "#[path = \"../bin/Tool.RS\"]\nmod mounted;\n",
+            "#[cfg_attr(test, path = \"tool.rs\")]\nmod mounted;\n",
+            "macro_rules! m { ($f:literal) => { #[path = $f] mod mounted; }; }\n",
+        ] {
+            assert!(may_mount_file_named(source, "tool.rs"), "{source}");
+        }
+        for source in [
+            "const NAME: &str = \"tool.rs\";\n",
+            "let path = \"tool.rs\";\n",
+            "#[doc = \"tool.rs\"]\nfn f() {}\n",
+            "#[path = \"tool.rs.bak\"]\nmod mounted;\n",
+            "#[path = \"mytool.rs\"]\nmod mounted;\n",
+            "#[serde(path = some::module)]\nstruct S;\n",
+            "#[path = \"\\x6Fther.rs\"]\nmod mounted;\n",
+            "#[path = \"a\\\"tool.rs\"]\nmod mounted;\n",
+        ] {
+            assert!(!may_mount_file_named(source, "tool.rs"), "{source}");
+        }
+    }
+
+    #[test]
+    fn only_a_mount_that_decodes_to_the_file_name_unseats_a_binary_root() {
+        let tool = ("src/bin/tool.rs", "fn main() {}\n");
+        for (sibling, root) in [
+            ("#[path = \"helpers/\\x78.rs\"]\nmod helper;\n", true),
+            ("#[path = \"\\x6Fther_tool.rs\"]\nmod helper;\n", true),
+            ("#[path = \"\\x74ool.rs\"]\nmod mounted;\n", false),
+            ("#[path = \"\\u{74}ool.rs\"]\nmod mounted;\n", false),
+        ] {
+            let v = visibility(&[tool, ("src/bin/other.rs", sibling)]);
+            let found = v.crate_root(Path::new("src/bin/tool.rs"));
+            assert_eq!(found.is_some(), root, "{sibling}");
+        }
     }
 
     #[test]
