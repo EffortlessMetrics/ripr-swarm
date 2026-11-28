@@ -5737,6 +5737,11 @@ impl OwnerReturnPin {
         self.returns_bool && matches!(self.path, ReturnPathGate::Any)
     }
 
+    /// Whether this pin is the RIPR-SPEC-0225 whole-value field authority (#7894).
+    pub(in crate::analysis) fn credits_whole_value_field(&self) -> bool {
+        matches!(self.path, ReturnPathGate::WholeValueField(_))
+    }
+
     /// #14387: whether a guard-return pin's rebuilt old line is the diff's own
     /// old text for the owner's only changed line (`sole_change`). Every
     /// other gate does not read it and answers `true`.
@@ -7107,7 +7112,8 @@ impl OwnerReturnPin {
                             let bound_whole = |at: usize| {
                                 let initializer =
                                     bound_owner_initializer(test, operands[at], &self.name)?;
-                                self.awaited_call_shape(poll_context, initializer, &self.name)
+                                let shape = self
+                                    .awaited_call_shape(poll_context, initializer, &self.name)
                                     .map(|call| (call, false))
                                     .or_else(|| {
                                         unwrap_wrapper
@@ -7160,16 +7166,24 @@ impl OwnerReturnPin {
                                             })
                                             .flatten()
                                             .map(|call| (call, true))
-                                    })
+                                    });
+                                // #7894 review: a whole-value field gate reads the
+                                // bound call's literal arguments, so the #12394 item 5
+                                // check below can refuse a pinned field value the owner
+                                // provably does not compute for them. Other gates keep
+                                // reading no call text here.
+                                let text = matches!(self.path, ReturnPathGate::WholeValueField(_))
+                                    .then_some(initializer);
+                                shape.map(|(call, unwraps)| (call, unwraps, text))
                             };
                             match (bound_whole(0), bound_whole(1)) {
-                                (Some((call, unwraps)), None) => {
+                                (Some((call, unwraps, text)), None) => {
                                     unwrapped = unwraps;
-                                    (call, operands[1], None)
+                                    (call, operands[1], text)
                                 }
-                                (None, Some((call, unwraps))) => {
+                                (None, Some((call, unwraps, text))) => {
                                     unwrapped = unwraps;
-                                    (call, operands[0], None)
+                                    (call, operands[0], text)
                                 }
                                 _ => return false,
                             }

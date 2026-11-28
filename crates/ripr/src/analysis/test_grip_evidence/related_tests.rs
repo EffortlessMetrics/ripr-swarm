@@ -915,6 +915,8 @@ pub(super) fn sort_related_tests_for_seam<'a>(
 ) -> Vec<BestOracle> {
     let owner = seam_owner_activation(seam, context);
     let boolean_pin = BooleanBoundaryPin::establish(seam, owner_fn, context.index);
+    let whole_value_field_pin =
+        super::whole_value_field_pin::WholeValueFieldPin::establish(seam, owner_fn, context.index);
     // The gate reads the complete relation set of this seam (#12434); asking
     // per test would see a lone proximity relation and disagree with the
     // stage views.
@@ -992,6 +994,7 @@ pub(super) fn sort_related_tests_for_seam<'a>(
                 // lazily computed facts once per (seam, related test) rank.
                 context.pin_syntax(),
                 boolean_pin.as_ref(),
+                whole_value_field_pin.as_ref(),
             );
             let near = owner_near
                 .as_ref()

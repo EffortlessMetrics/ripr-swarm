@@ -843,7 +843,9 @@ pub(crate) struct CachedSeamLimitInfo {
 /// `1.224`: expect-test fallback comparisons require their macro receiver (#7878).
 /// `1.225`: repo-seam reach stages carry the producer-owned typed
 /// `unresolved_reach_limit` through classified-seam cache round trips (#5492).
-pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.225";
+/// `1.228`: repo field discrimination reuses the bounded whole-value field
+/// pin beside legacy token matching (#7894).
+pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.228";
 /// `0.2` → `0.3`: same semantic transition as the outer cache (#3273 /
 /// #3286) — sharded entries derive from the same facts and cannot bypass
 /// the outer generation bump.
@@ -1103,7 +1105,8 @@ pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.225";
 /// (#15359).
 /// `0.226`: same expect-test fallback classification as full `1.224` (#7878).
 /// `0.227`: same producer-owned reach `unresolved_reach_limit` as full `1.225` (#5492).
-const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.227";
+/// `0.230`: same whole-value repo field discrimination as full `1.228` (#7894).
+const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.230";
 
 /// Compact-classified seam cache schema. This cache stores the same
 /// `ClassifiedSeam` envelope shape as the full repo exposure cache, but
@@ -1365,7 +1368,8 @@ const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.227";
 /// (#15359).
 /// `0.226`: same expect-test fallback classification as full `1.224` (#7878).
 /// `0.227`: same producer-owned reach `unresolved_reach_limit` as full `1.225` (#5492).
-pub(crate) const COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.227";
+/// `0.230`: same whole-value repo field discrimination as full `1.228` (#7894).
+pub(crate) const COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.230";
 
 /// Compact class-count cache used by repo badge rendering. It keys off
 /// the same workspace state as the full fact cache, but stores only
@@ -6049,7 +6053,8 @@ mod tests {
         // 1.219 -> 1.220: an unselected match arm reads activation unknown (#15359).
         // 1.223 -> 1.224: expect-test fallback comparisons require their macro receiver (#7878).
         // 1.224 -> 1.225: producer-owned reach limit survives cache round trip (#5492).
-        assert_eq!(CACHE_SCHEMA_VERSION, "1.225");
+        // 1.225 -> 1.228: repo field seams credit bounded whole-value pins (#7894).
+        assert_eq!(CACHE_SCHEMA_VERSION, "1.228");
         // 1.168 -> 1.169: plain `assert_eq!` literal withhold in the audit (#13005).
         // 0.12 -> 0.13 through 0.14 / 0.15 / 0.16 / 0.17 / 0.18: same
         // #3731 semantic transition as the outer classified-seam cache,
@@ -6248,8 +6253,9 @@ mod tests {
         // 0.221 -> 0.222: same unselected match-arm reading as full 1.220 (#15359).
         // 0.225 -> 0.226: same expect-test fallback classification as full 1.224 (#7878).
         // 0.226 -> 0.227: same producer-owned reach limit as full 1.225 (#5492).
-        assert_eq!(SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.227");
-        assert_eq!(COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.227");
+        // 0.227 -> 0.230: same whole-value repo field rule as full 1.228 (#7894).
+        assert_eq!(SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.230");
+        assert_eq!(COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.230");
         // 0.170 -> 0.171: same plain `assert_eq!` literal withhold as full 1.169 (#13005).
     }
 

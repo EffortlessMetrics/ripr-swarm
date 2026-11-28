@@ -10,6 +10,7 @@ mod shared_execution_context;
 mod unread_owner_result_field;
 mod unselected_arm;
 mod warm_entrypoint;
+mod whole_value_field_pin;
 
 use super::related_tests::context::*;
 use super::related_tests::*;
